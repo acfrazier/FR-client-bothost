@@ -3,6 +3,8 @@
 // table; all value math uses i32 wrapping like JS `| 0`.
 use std::cell::RefCell;
 
+use num_bigint::BigUint;
+
 use super::isaac::Isaac;
 
 const CRC32_POLYNOMIAL: u32 = 0xedb8_8320;
@@ -221,6 +223,12 @@ impl Packet {
         self.pos = end;
     }
 
+    pub fn p1_enc(&mut self, opcode: i32) {
+        let r = self.random.as_mut().map(|r| r.next_int()).unwrap_or(0);
+        self.data[self.pos] = opcode.wrapping_add(r) as u8;
+        self.pos += 1;
+    }
+
     pub fn p1(&mut self, value: i32) {
         self.data[self.pos] = value as u8;
         self.pos += 1;
@@ -319,5 +327,25 @@ impl Packet {
         }
 
         value
+    }
+
+    // Packet.ts `rsaenc` (lines 277-291): treat the written bytes as a big-endian
+    // integer, modpow it, then write p1(len) + big-endian ciphertext.
+    pub fn rsaenc(&mut self, modulus: &BigUint, exponent: &BigUint) {
+        let length = self.pos;
+        self.pos = 0;
+        let mut temp = vec![0u8; length];
+        self.gdata(length, 0, &mut temp);
+
+        let big_raw = BigUint::from_bytes_be(&temp);
+        let big_enc = big_raw.modpow(exponent, modulus);
+        let mut raw_enc = big_enc.to_bytes_be();
+        if raw_enc.first().is_some_and(|b| b & 0x80 != 0) {
+            raw_enc.insert(0, 0);
+        }
+
+        self.pos = 0;
+        self.p1(raw_enc.len() as i32);
+        self.pdata(&raw_enc, 0, raw_enc.len());
     }
 }
