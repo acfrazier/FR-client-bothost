@@ -1,4 +1,8 @@
+pub mod client_prot;
+pub use client_prot::ClientProt;
 pub mod isaac;
 pub use isaac::Isaac;
 pub mod packet;
 pub use packet::Packet;
+pub mod server_prot;
+pub use server_prot::{SERVER_PROT_SIZES, ServerProt};
