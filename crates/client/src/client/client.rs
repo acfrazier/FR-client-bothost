@@ -273,6 +273,9 @@ pub struct Client {
     pub last_progress_percent: i32,
     pub last_progress_message: String,
     pub http_port: u16,
+    /// `alreadyStarted` from client-ts: set at the start of `maininit`;
+    /// a second `maininit` call is a no-op.
+    pub already_started: bool,
 
     /// Title screen state (`Client.ts` `prepareTitle`/`titleScreenDraw`):
     /// the 765×503 CPU framebuffer every frame draws into (`drawArea`), the
@@ -607,6 +610,7 @@ impl Client {
             last_progress_percent: 0,
             last_progress_message: String::new(),
             http_port: 80,
+            already_started: false,
             draw_area: PixMap::new(APPLET_W, APPLET_H),
             pix3d: Pix3DDraw::default(),
             title: None,
@@ -741,7 +745,8 @@ impl Client {
 
     /// Unpack `config` (and `interface` when present) from `cache_dir`. An
     /// empty dir (tests, no pack) yields `Cache::default()`. A real cache
-    /// missing the required `config` jag is `Err`, which becomes
+    /// missing the required `config` jag — or one whose bytes are not a
+    /// valid jag (dummy test files) — is `Err`, which becomes
     /// `errorLoading`.
     fn load_cache(cache_dir: &str) -> Result<Cache, ()> {
         let cache_present = JAG_FILES
@@ -751,9 +756,14 @@ impl Client {
             return Ok(Cache::default());
         }
         let bytes = std::fs::read(format!("{cache_dir}/config")).map_err(|_| ())?;
-        let mut cache = Cache::unpack(&JagFile::new(bytes));
+        let mut cache = catch_unwind(AssertUnwindSafe(|| Cache::unpack(&JagFile::new(bytes))))
+            .map_err(|_| ())?;
         if let Ok(iface_bytes) = std::fs::read(format!("{cache_dir}/interface")) {
-            cache.ifaces = IfType::unpack(&JagFile::new(iface_bytes));
+            if let Ok(ifaces) =
+                catch_unwind(AssertUnwindSafe(|| IfType::unpack(&JagFile::new(iface_bytes))))
+            {
+                cache.ifaces = ifaces;
+            }
         }
         Ok(cache)
     }
@@ -841,16 +851,169 @@ impl Client {
     /// Start the OnDemand worker when the cache dir has a `versionlist` pack
     /// (the TS update-server fetch is a cache read here; the engine packs the
     /// same file). Missing cache → `None`, matching TS `onDemand === null`.
+    /// A `versionlist` that is not a valid jag (dummy test files) also reads
+    /// as `None` — `JagFile`/`OnDemand::new` panic on garbage offsets, so
+    /// the whole parse is unwind-caught.
     fn load_on_demand(config: &ClientConfig) -> Option<OnDemand> {
         let bytes = std::fs::read(format!("{}/versionlist", config.cache_dir)).ok()?;
-        let versionlist = JagFile::new(bytes);
-        OnDemand::new(
-            &versionlist,
-            &config.host,
-            config.port,
-            &config.cache_dir,
-            Arc::new(AtomicBool::new(false)),
-        )
+        catch_unwind(AssertUnwindSafe(|| {
+            let versionlist = JagFile::new(bytes);
+            OnDemand::new(
+                &versionlist,
+                &config.host,
+                config.port,
+                &config.cache_dir,
+                Arc::new(AtomicBool::new(false)),
+            )
+        }))
+        .ok()
+        .flatten()
+    }
+
+    /// TS `Client.maininit` (819-1178): the one-shot loading screen — fetch
+    /// the 8 JAG archives over HTTP (CRC-hit on the local cache), unpack
+    /// config/interface, start OnDemand from the versionlist, and prefetch
+    /// anims/models. `already_started` is set first, so a second call is a
+    /// no-op (TS `alreadyStarted`). A failed or invalid jag sets
+    /// `error_loading` but does not abort the fetch loop or reset the flag;
+    /// progress always ends at 100.
+    pub fn maininit(&mut self) {
+        if self.already_started {
+            return;
+        }
+        self.already_started = true;
+
+        self.draw_progress("Loading...", 0);
+
+        // TS `getJagChecksums` (694-748): `/crc` retried with a 5 s wait
+        // doubling to 60 s, forever. Capped at 10 retries so a dead web
+        // server cannot hang the caller; tests plant a listener so the
+        // first attempt succeeds.
+        let checksums = match self.fetch_jag_checksums() {
+            Some(c) => c,
+            None => {
+                self.error_loading = true;
+                self.shell.set_framerate(1);
+                return;
+            }
+        };
+        self.jag_checksum = checksums;
+
+        // TS maininit fetch order/progress: title 25, config 30, interface
+        // 35, media 40, textures 45, wordenc 50, sounds 55, versionlist 60
+        // (checksum slots 1-8 of `JAG_FILES`). `wordenc` is fetched and
+        // persisted but not unpacked (WordFilter is a later slice).
+        const JAG_FETCH: [(&str, &str, usize, i32); 8] = [
+            ("title screen", "title", 1, 25),
+            ("config", "config", 2, 30),
+            ("interface", "interface", 3, 35),
+            ("2d graphics", "media", 4, 40),
+            ("textures", "textures", 6, 45),
+            ("chat system", "wordenc", 7, 50),
+            ("sound effects", "sounds", 8, 55),
+            ("update list", "versionlist", 5, 60),
+        ];
+        for (display, filename, index, progress) in JAG_FETCH {
+            self.draw_progress(&format!("Requesting {display}"), progress);
+            if Self::get_jag_file(
+                &self.config.cache_dir,
+                &self.config.host,
+                self.http_port,
+                filename,
+                index,
+                &checksums,
+            )
+            .is_none()
+            {
+                self.error_loading = true;
+            }
+        }
+
+        // Unpack config/interface from the files now on disk (`load_cache`
+        // reads the same persisted paths `get_jag_file` wrote). A missing or
+        // invalid config jag is `Err` → `errorLoading`.
+        match Self::load_cache(&self.config.cache_dir) {
+            Ok(cache) => self.cache = cache,
+            Err(()) => {
+                self.error_loading = true;
+                self.shell.set_framerate(1);
+            }
+        }
+
+        self.on_demand = Self::load_on_demand(&self.config);
+
+        // TS maininit 886-888: `AnimFrame.init`/`Model.init` size the
+        // process-wide stores from the versionlist before any prefetch.
+        if let Some(od) = self.on_demand.as_ref() {
+            AnimFrame::init(od.get_anim_frame_count());
+        }
+
+        // TS anim/model prefetch (893-960): request every anim, then the
+        // in-use models, draining with `on_demand_loop` until the request
+        // lists empty. Skipped when OnDemand is `None` (no versionlist —
+        // the dummy-file tests).
+        if self.on_demand.is_some() {
+            self.draw_progress("Requesting animations", 65);
+            let anim_count = self.on_demand.as_ref().unwrap().get_file_count(1);
+            for i in 0..anim_count {
+                self.on_demand.as_mut().unwrap().request(1, i);
+            }
+            while self.on_demand.as_ref().unwrap().remaining() > 0 {
+                let progress = anim_count - self.on_demand.as_ref().unwrap().remaining() as i32;
+                if progress > 0 {
+                    self.draw_progress(
+                        &format!("Loading animations - {}%", (progress * 100) / anim_count),
+                        65,
+                    );
+                }
+                self.on_demand_loop();
+                thread::sleep(Duration::from_millis(100));
+            }
+
+            self.draw_progress("Requesting models", 70);
+            let model_count = self.on_demand.as_ref().unwrap().get_file_count(0);
+            for i in 0..model_count {
+                if self.on_demand.as_ref().unwrap().get_model_use(i) & 0x1 != 0 {
+                    self.on_demand.as_mut().unwrap().request(0, i);
+                }
+            }
+            let model_prefetch = self.on_demand.as_ref().unwrap().remaining() as i32;
+            while self.on_demand.as_ref().unwrap().remaining() > 0 {
+                let progress = model_prefetch - self.on_demand.as_ref().unwrap().remaining() as i32;
+                if progress > 0 {
+                    self.draw_progress(
+                        &format!("Loading models - {}%", (progress * 100) / model_prefetch),
+                        70,
+                    );
+                }
+                self.on_demand_loop();
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
+
+        self.draw_progress("Preparing game engine", 100);
+    }
+
+    /// TS `getJagChecksums` retry policy (694-748): attempt `/crc`, then
+    /// wait 5 s doubling to 60 s before the next attempt, forever. Capped
+    /// here at 10 retries (TS switches to its "Game updated" message at
+    /// `retries >= 10`); `None` lets `maininit` fail with `errorLoading`
+    /// instead of hanging. The per-second countdown messages are not ported.
+    fn fetch_jag_checksums(&mut self) -> Option<[i32; 9]> {
+        let mut wait: u64 = 5;
+        let mut retries = 0;
+        loop {
+            self.draw_progress("Connecting to web server", 10);
+            if let Some(checksums) = Self::get_jag_checksums(&self.config.host, self.http_port) {
+                return Some(checksums);
+            }
+            retries += 1;
+            if retries >= 10 {
+                return None;
+            }
+            thread::sleep(Duration::from_secs(wait));
+            wait = (wait * 2).min(60);
+        }
     }
 
     /// Login handshake, 1:1 of `Client.ts` `login` (1719-1867) / Java
@@ -3928,6 +4091,9 @@ impl Client {
     /// (`poll` false) sets `shell.state = -1`, which stops the machine on
     /// the next iteration like Java `GameShell.run`.
     pub fn run<F: FnMut(&mut Self)>(&mut self, mut on_loop: F) {
+        if !self.already_started {
+            self.maininit();
+        }
         while self.shell.state >= 0 {
             if self.shell.state > 0 {
                 self.shell.state -= 1;

@@ -72,6 +72,60 @@ fn serve_once(body: Vec<u8>) -> (u16, thread::JoinHandle<()>) {
 }
 
 #[test]
+fn maininit_is_oneshot_and_sets_progress_100_on_crc_hit() {
+    let dir = std::env::temp_dir().join("274-maininit");
+    let _ = std::fs::create_dir_all(&dir);
+    let mut checksums = [0i32; 9];
+    let names = [
+        "title",
+        "config",
+        "interface",
+        "media",
+        "versionlist",
+        "textures",
+        "wordenc",
+        "sounds",
+    ];
+    for (i, name) in names.iter().enumerate() {
+        let bytes = format!("{name}-seed").into_bytes();
+        std::fs::write(dir.join(name), &bytes).unwrap();
+        checksums[i + 1] = Packet::getcrc(&bytes, 0, bytes.len());
+    }
+    // serve /crc : 9×g4 + hash
+    let mut body = client::io::Packet::alloc(0);
+    for c in checksums {
+        body.p4(c);
+    }
+    let mut h = 1234i32;
+    for c in checksums {
+        h = h.wrapping_shl(1).wrapping_add(c);
+    }
+    body.p4(h);
+    let (port, th) = serve_once(body.data()[..body.pos].to_vec());
+
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: dir.to_str().unwrap().into(),
+        members: true,
+        lowmem: false,
+    });
+    c.http_port = port;
+    c.maininit();
+    th.join().ok();
+    assert!(c.already_started);
+    assert_eq!(c.last_progress_percent, 100);
+    // dummy jags were all CRC hits: files unchanged, no HTTP after /crc
+    for (i, name) in names.iter().enumerate() {
+        let bytes = std::fs::read(dir.join(name)).unwrap();
+        assert_eq!(bytes, format!("{name}-seed").into_bytes());
+        assert_eq!(Packet::getcrc(&bytes, 0, bytes.len()), checksums[i + 1]);
+    }
+    c.maininit(); // oneshot
+    assert_eq!(c.last_progress_percent, 100);
+}
+
+#[test]
 fn get_jag_file_crc_hit_skips_http() {
     let dir = std::env::temp_dir().join("274-jag-hit");
     let _ = std::fs::create_dir_all(&dir);

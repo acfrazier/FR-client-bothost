@@ -69,10 +69,15 @@ fn cache_obj_by_id_matches_unpacked_table() {
 
 #[test]
 fn client_owns_an_empty_cache_until_unpacked() {
+    // Private scratch dir: `/tmp` is the live cache that `run`'s `maininit`
+    // fetch loop persists jags into, so it is not reliably empty.
+    let dir = std::env::temp_dir().join("274-empty-cache");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
     let mut c = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: dir.to_str().unwrap().into(),
         members: true,
         lowmem: false,
     });

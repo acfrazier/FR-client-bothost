@@ -150,6 +150,11 @@ fn main() -> ExitCode {
         }
     }
 
+    // Jag fetch (`maininit`) runs before login no matter what: the optional
+    // `--user/--pass` only skip the title *form* (the username/password
+    // fields), not `maininit`. `run`'s guard is then a no-op.
+    client.maininit();
+
     // `--user/--pass` skip title login; without them, run straight to the
     // title screen — it is the control plane (no usage exit).
     if !(args.user.is_empty() || args.pass.is_empty()) {
