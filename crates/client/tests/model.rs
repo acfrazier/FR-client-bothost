@@ -250,3 +250,141 @@ fn world_render_skips_faces_with_missing_colours() {
     assert!(pix.picked_count >= 1, "the geometric pick still fires");
     assert!(map.pixels.iter().all(|&p| p == 0), "the face is not drawn");
 }
+
+#[test]
+fn obj_render_vertex_on_camera_plane_does_not_panic() {
+    Pix3D::init_colour_table(0.6);
+    let mut model = Model::default();
+    model.num_points = 1;
+    model.point_x = Some(vec![10]);
+    model.point_y = Some(vec![10]);
+    model.point_z = Some(vec![0]);
+    model.num_faces = 0;
+    model.calc_bounding_cylinder();
+
+    let mut pix = Pix3DDraw::default();
+    let mut map = PixMap::new(512, 334);
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        viewport(&mut pix, &mut surface);
+        // The vertex lands exactly on the camera plane (view z == 0): the TS
+        // `((x << 9) / z) | 0` is 0, so the port must not divide by zero.
+        model.obj_render(&mut pix, &mut surface, 0, 0, 0, 0, 0, 0, 0);
+    }
+    assert_eq!(pix.model_scratch.vertex_screen_x[0], 256);
+    assert_eq!(pix.model_scratch.vertex_screen_y[0], 167);
+}
+
+#[test]
+fn world_render_wide_winding_cross_does_not_overflow() {
+    Pix3D::init_colour_table(0.6);
+    let mut model = Model::default();
+    // Vertices far from the camera axis: projected screen coordinates reach
+    // ±100k, so the winding cross product overflows i32 (TS computes it in
+    // doubles). relative_x = 20 * 65536 wraps to mid_x = 0 in the eye
+    // transform, keeping the model on screen while its vertices spread.
+    model.num_points = 3;
+    model.point_x = Some(vec![20000, -20000, 500]);
+    model.point_y = Some(vec![10000, -10000, 500]);
+    model.point_z = Some(vec![0, 0, 0]);
+    model.num_faces = 1;
+    model.face_vertex_a = Some(vec![0]);
+    model.face_vertex_b = Some(vec![2]);
+    model.face_vertex_c = Some(vec![1]);
+    model.face_colour_a = Some(vec![SHADE]);
+    model.face_colour_b = Some(vec![SHADE]);
+    model.face_colour_c = Some(vec![SHADE]);
+    model.calc_bounding_cylinder();
+
+    let mut pix = Pix3DDraw::default();
+    let mut map = PixMap::new(512, 334);
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        viewport(&mut pix, &mut surface);
+        pix.mouse_check = true;
+        pix.mouse_x = 256;
+        pix.mouse_y = 160;
+        model.world_render(
+            &mut pix,
+            &mut surface,
+            0,
+            0,
+            65536,
+            0,
+            65536,
+            20 * 65536,
+            0,
+            100,
+            5,
+        );
+    }
+
+    // No panic, and the (culled, clockwise-on-screen) face draws nothing.
+    assert_eq!(pix.picked_count, 1, "the pick pre-test fires before winding");
+    assert!(map.pixels.iter().all(|&p| p == 0));
+}
+
+#[test]
+fn depth_bucket_overflow_does_not_spill_into_next_row() {
+    Pix3D::init_colour_table(0.6);
+    let mut model = Model::default();
+    // 600 identical faces at one depth: more than the 512-slot bucket row.
+    model.num_points = 3;
+    model.point_x = Some(vec![-50, 50, 50]);
+    model.point_y = Some(vec![-50, -50, 50]);
+    model.point_z = Some(vec![0, 0, 0]);
+    model.num_faces = 600;
+    model.face_vertex_a = Some(vec![0; 600]);
+    model.face_vertex_b = Some(vec![2; 600]);
+    model.face_vertex_c = Some(vec![1; 600]);
+    model.face_colour_a = Some(vec![SHADE; 600]);
+    model.face_colour_b = Some(vec![SHADE; 600]);
+    model.face_colour_c = Some(vec![SHADE; 600]);
+    model.calc_bounding_cylinder();
+
+    let mut pix = Pix3DDraw::default();
+    let mut map = PixMap::new(512, 334);
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        viewport(&mut pix, &mut surface);
+        model.world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 500, 0);
+    }
+
+    // The count advances past the row width (like TS), but the face writes
+    // past slot 511 must be dropped, not spilled into the next bucket.
+    let bucket = model.min_depth as usize; // every vertex projects to z 0
+    assert_eq!(pix.model_scratch.tmp_depth_face_count[bucket], 600);
+    assert_eq!(pix.model_scratch.tmp_depth_faces[bucket * 512 + 512], 0);
+}
+
+#[test]
+fn world_render_priority_model_draws_via_merge_buckets() {
+    Pix3D::init_colour_table(0.6);
+    let mut model = Model::default();
+    // Two identical faces both at priority 10: they route through the
+    // bucket-10 merge loop (and its rollover to bucket 11).
+    model.num_points = 3;
+    model.point_x = Some(vec![-50, 50, 50]);
+    model.point_y = Some(vec![-50, -50, 50]);
+    model.point_z = Some(vec![0, 0, 0]);
+    model.num_faces = 2;
+    model.face_vertex_a = Some(vec![0, 0]);
+    model.face_vertex_b = Some(vec![2, 2]);
+    model.face_vertex_c = Some(vec![1, 1]);
+    model.face_colour_a = Some(vec![SHADE, SHADE]);
+    model.face_colour_b = Some(vec![SHADE, SHADE]);
+    model.face_colour_c = Some(vec![SHADE, SHADE]);
+    model.face_priority = Some(vec![10, 10]);
+    model.calc_bounding_cylinder();
+
+    let mut pix = Pix3DDraw::default();
+    let mut map = PixMap::new(512, 334);
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        viewport(&mut pix, &mut surface);
+        model.world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 500, 0);
+    }
+
+    let rgb = Pix3D::colour_table()[SHADE as usize];
+    assert_eq!(map.pixels[160 * 512 + 256], rgb);
+}

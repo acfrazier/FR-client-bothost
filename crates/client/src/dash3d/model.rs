@@ -1788,10 +1788,13 @@ impl Model {
                 *slot = z.wrapping_sub(mid_z);
             }
             if let Some(slot) = pix.model_scratch.vertex_screen_x.get_mut(v) {
-                *slot = pix.origin_x + x.wrapping_shl(9).wrapping_div(z);
+                // TS `((x << 9) / z) | 0` is 0 for a vertex exactly on the
+                // camera plane (z == 0 → Infinity → 0); `checked_div` keeps
+                // that from panicking where TS silently writes 0.
+                *slot = pix.origin_x + x.wrapping_shl(9).checked_div(z).unwrap_or(0);
             }
             if let Some(slot) = pix.model_scratch.vertex_screen_y.get_mut(v) {
-                *slot = pix.origin_y + y.wrapping_shl(9).wrapping_div(z);
+                *slot = pix.origin_y + y.wrapping_shl(9).checked_div(z).unwrap_or(0);
             }
 
             if self.num_t > 0 {
@@ -2045,12 +2048,19 @@ impl Model {
                 {
                     let index = *count as usize;
                     *count += 1;
-                    if let Some(slot) = pix
-                        .model_scratch
-                        .tmp_depth_faces
-                        .get_mut(depth_average as usize * 512 + index)
-                    {
-                        *slot = f as i32;
+                    // The count advances past the 512-slot row (TS
+                    // `tmpDepthFaceCount[depthAverage]++` always runs) but
+                    // the face write is dropped out of range like a TS
+                    // typed-array write, so it cannot spill into the next
+                    // depth bucket's row.
+                    if index < 512 {
+                        if let Some(slot) = pix
+                            .model_scratch
+                            .tmp_depth_faces
+                            .get_mut(depth_average as usize * 512 + index)
+                        {
+                            *slot = f as i32;
+                        }
                     }
                 }
             } else {
@@ -2068,7 +2078,11 @@ impl Model {
                 let dx_cb = x_c - x_b;
                 let dy_cb = y_c - y_b;
 
-                if dx_ab * dy_cb - dy_ab * dx_cb <= 0 {
+                // Screen coordinates are unbounded by the viewport here
+                // (they can reach ±335k), so the TS double-precision cross
+                // product overflows i32; compute it in i64 to preserve its
+                // sign exactly.
+                if dx_ab as i64 * dy_cb as i64 - dy_ab as i64 * dx_cb as i64 <= 0 {
                     continue;
                 }
 
@@ -2092,12 +2106,14 @@ impl Model {
                 {
                     let index = *count as usize;
                     *count += 1;
-                    if let Some(slot) = pix
-                        .model_scratch
-                        .tmp_depth_faces
-                        .get_mut(depth_average as usize * 512 + index)
-                    {
-                        *slot = f as i32;
+                    if index < 512 {
+                        if let Some(slot) = pix
+                            .model_scratch
+                            .tmp_depth_faces
+                            .get_mut(depth_average as usize * 512 + index)
+                        {
+                            *slot = f as i32;
+                        }
                     }
                 }
             }
@@ -2115,8 +2131,10 @@ impl Model {
                     continue;
                 }
 
+                // A bucket count past 512 has no stored faces (the writes are
+                // dropped out of range); TS reads `undefined` and skips them.
                 let base = depth * 512;
-                for i in 0..count as usize {
+                for i in 0..count.min(512) as usize {
                     let face = pix
                         .model_scratch
                         .tmp_depth_faces
@@ -2150,7 +2168,7 @@ impl Model {
                 .unwrap_or(0);
             if face_count > 0 {
                 let base = depth * 512;
-                for i in 0..face_count as usize {
+                for i in 0..face_count.min(512) as usize {
                     let priority_depth = pix
                         .model_scratch
                         .tmp_depth_faces
@@ -2166,12 +2184,19 @@ impl Model {
                     {
                         let index = *count as usize;
                         *count += 1;
-                        if let Some(slot) = pix
-                            .model_scratch
-                            .tmp_priority_faces
-                            .get_mut(priority_face as usize * 2000 + index)
-                        {
-                            *slot = priority_depth as i32;
+                        // The count advances past the 2000-slot row (TS
+                        // `tmpPriorityFaceCount[priorityFace]++` always runs)
+                        // but the face write is dropped out of range like a
+                        // TS typed-array write, so it cannot spill into the
+                        // next priority bucket's row.
+                        if index < 2000 {
+                            if let Some(slot) = pix
+                                .model_scratch
+                                .tmp_priority_faces
+                                .get_mut(priority_face as usize * 2000 + index)
+                            {
+                                *slot = priority_depth as i32;
+                            }
                         }
 
                         if priority_face < 10 {
@@ -2286,7 +2311,7 @@ impl Model {
                 .unwrap_or(0);
             if count > 0 {
                 let base = priority as usize * 2000;
-                for i in 0..count as usize {
+                for i in 0..count.min(2000) as usize {
                     let face = pix
                         .model_scratch
                         .tmp_priority_faces
@@ -2326,14 +2351,20 @@ impl Model {
         on_11: &mut bool,
         priority_depth: &mut i32,
     ) {
-        let face = pix
-            .model_scratch
-            .tmp_priority_faces
-            .get((if *on_11 { 11 } else { 10 }) * 2000 + *priority_face)
-            .copied()
-            .unwrap_or(0) as usize;
+        let index = *priority_face;
         *priority_face += 1;
-        self.render3(pix, surface, face);
+        // Past the 2000-slot row the TS read is `undefined` and render3
+        // throws (swallowed by the merge loop's try/catch): skip the face
+        // instead of reading the next bucket's row.
+        if index < 2000 {
+            let face = pix
+                .model_scratch
+                .tmp_priority_faces
+                .get((if *on_11 { 11 } else { 10 }) * 2000 + index)
+                .copied()
+                .unwrap_or(0) as usize;
+            self.render3(pix, surface, face);
+        }
 
         let (new_face, new_count, new_on_11, new_depth) = Self::advance_priority(
             pix,
@@ -2769,7 +2800,10 @@ impl Model {
         let y1 = pix.model_scratch.clipped_y.get(1).copied().unwrap_or(0);
         let y2 = pix.model_scratch.clipped_y.get(2).copied().unwrap_or(0);
 
-        if (x0 - x1) * (y2 - y1) - (y0 - y1) * (x2 - x1) <= 0 {
+        if (x0 as i64 - x1 as i64) * (y2 as i64 - y1 as i64)
+            - (y0 as i64 - y1 as i64) * (x2 as i64 - x1 as i64)
+            <= 0
+        {
             return;
         }
 
