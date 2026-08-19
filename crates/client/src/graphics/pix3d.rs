@@ -330,6 +330,11 @@ impl Pix3DDraw {
         let Some(palette) = self.tex_pal[id].as_ref() else {
             return 0;
         };
+        if palette.is_empty() {
+            // TS: 0/0 → NaN → `| 0` → 0, then the `rgb === 0` bump → 1.
+            self.tex_average[id] = 1;
+            return 1;
+        }
         let mut r = 0;
         let mut g = 0;
         let mut b = 0;
@@ -357,7 +362,12 @@ impl Pix3DDraw {
         if self.active_texels[id].is_some() && self.texel_pool.is_some() {
             let row = self.active_texels[id].take().unwrap();
             let pool = self.texel_pool.as_mut().unwrap();
-            pool[self.pool_size as usize] = row;
+            // TS writes `texelPool[poolSize++]` and ignores an out-of-bounds
+            // write while still bumping `poolSize`; guard the slot the same
+            // way (the invariant keeps poolSize within the pool anyway).
+            if let Some(slot) = pool.get_mut(self.pool_size as usize) {
+                *slot = row;
+            }
             self.pool_size += 1;
         }
     }
@@ -495,6 +505,10 @@ impl Pix3DDraw {
         colour_b: i32,
         colour_c: i32,
     ) {
+        debug_assert!(
+            !self.scanline.is_empty(),
+            "set_clipping/set_render_clipping must be called before rasterising"
+        );
         let (mut x_a, mut x_b, mut x_c) = (x_a, x_b, x_c);
         let (mut y_a, mut y_b, mut y_c) = (y_a, y_b, y_c);
         let (mut colour_a, mut colour_b, mut colour_c) = (colour_a, colour_b, colour_c);
@@ -1169,6 +1183,12 @@ impl Pix3DDraw {
     /// `off`, `colourA/B` are shade values (the colour table is indexed by
     /// `colour >> 8`). The TS `len` parameter is dropped: it is always 0 and
     /// recomputed here.
+    ///
+    /// The writes below index `surface.pixels` directly (TS out-of-bounds
+    /// typed-array writes are silently ignored; a Rust index would panic).
+    /// The caller must set `hclip` whenever a span can leave the viewport —
+    /// Model/World do that exactly when projected vertices exit `sizeX` —
+    /// so spans are clamped to `[0, size_x]` before any write.
     fn gouraud_raster(
         &self,
         surface: &mut Pix2D,
@@ -1466,6 +1486,10 @@ impl Pix3DDraw {
         y_c: i32,
         colour: i32,
     ) {
+        debug_assert!(
+            !self.scanline.is_empty(),
+            "set_clipping/set_render_clipping must be called before rasterising"
+        );
         let (mut x_a, mut x_b, mut x_c) = (x_a, x_b, x_c);
         let (mut y_a, mut y_b, mut y_c) = (y_a, y_b, y_c);
 
@@ -1872,6 +1896,10 @@ impl Pix3DDraw {
     }
 
     /// TS `flatRaster`: a flat span of `surface.pixels` starting at `off`.
+    ///
+    /// Writes index `surface.pixels` directly (TS out-of-bounds writes are
+    /// ignored; a Rust index would panic): `hclip` must be set whenever a
+    /// span can leave the viewport so spans are clamped to `[0, size_x]`.
     fn flat_raster(
         &self,
         surface: &mut Pix2D,
@@ -1989,6 +2017,10 @@ impl Pix3DDraw {
         tz_c: i32,
         texture: i32,
     ) {
+        debug_assert!(
+            !self.scanline.is_empty(),
+            "set_clipping/set_render_clipping must be called before rasterising"
+        );
         let texels = match self.get_texels(texture as usize) {
             Some(t) => t,
             None => return,
@@ -2004,29 +2036,35 @@ impl Pix3DDraw {
         let horizontal_y = ty_c - origin_y;
         let horizontal_z = tz_c - origin_z;
 
-        let mut u = (horizontal_x.wrapping_mul(origin_y) - horizontal_y.wrapping_mul(origin_x))
+        let mut u = (horizontal_x.wrapping_mul(origin_y))
+            .wrapping_sub(horizontal_y.wrapping_mul(origin_x))
             .wrapping_shl(14);
-        let u_stride = (horizontal_y.wrapping_mul(origin_z) - horizontal_z.wrapping_mul(origin_y))
+        let u_stride = (horizontal_y.wrapping_mul(origin_z))
+            .wrapping_sub(horizontal_z.wrapping_mul(origin_y))
             .wrapping_shl(8);
-        let u_step_vertical = (horizontal_z.wrapping_mul(origin_x)
-            - horizontal_x.wrapping_mul(origin_z))
-        .wrapping_shl(5);
+        let u_step_vertical = (horizontal_z.wrapping_mul(origin_x))
+            .wrapping_sub(horizontal_x.wrapping_mul(origin_z))
+            .wrapping_shl(5);
 
-        let mut v = (vertical_x.wrapping_mul(origin_y) - vertical_y.wrapping_mul(origin_x))
+        let mut v = (vertical_x.wrapping_mul(origin_y))
+            .wrapping_sub(vertical_y.wrapping_mul(origin_x))
             .wrapping_shl(14);
-        let v_stride =
-            (vertical_y.wrapping_mul(origin_z) - vertical_z.wrapping_mul(origin_y)).wrapping_shl(8);
-        let v_step_vertical =
-            (vertical_z.wrapping_mul(origin_x) - vertical_x.wrapping_mul(origin_z)).wrapping_shl(5);
+        let v_stride = (vertical_y.wrapping_mul(origin_z))
+            .wrapping_sub(vertical_z.wrapping_mul(origin_y))
+            .wrapping_shl(8);
+        let v_step_vertical = (vertical_z.wrapping_mul(origin_x))
+            .wrapping_sub(vertical_x.wrapping_mul(origin_z))
+            .wrapping_shl(5);
 
-        let mut w = (vertical_y.wrapping_mul(horizontal_x) - vertical_x.wrapping_mul(horizontal_y))
+        let mut w = (vertical_y.wrapping_mul(horizontal_x))
+            .wrapping_sub(vertical_x.wrapping_mul(horizontal_y))
             .wrapping_shl(14);
-        let w_stride = (vertical_z.wrapping_mul(horizontal_y)
-            - vertical_y.wrapping_mul(horizontal_z))
-        .wrapping_shl(8);
-        let w_step_vertical = (vertical_x.wrapping_mul(horizontal_z)
-            - vertical_z.wrapping_mul(horizontal_x))
-        .wrapping_shl(5);
+        let w_stride = (vertical_z.wrapping_mul(horizontal_y))
+            .wrapping_sub(vertical_y.wrapping_mul(horizontal_z))
+            .wrapping_shl(8);
+        let w_step_vertical = (vertical_x.wrapping_mul(horizontal_z))
+            .wrapping_sub(vertical_z.wrapping_mul(horizontal_x))
+            .wrapping_shl(5);
 
         let mut x_step_ab = 0;
         let mut shade_step_ab = 0;
@@ -2967,6 +3005,10 @@ impl Pix3DDraw {
     /// TS `textureRaster`: a perspective-correct texture span of
     /// `surface.pixels` starting at `off`. The TS `curU`/`curV` parameters
     /// are dropped: they are always 0 and immediately recomputed here.
+    ///
+    /// Writes index `surface.pixels` directly (TS out-of-bounds writes are
+    /// ignored; a Rust index would panic): `hclip` must be set whenever a
+    /// span can leave the viewport so spans are clamped to `[0, size_x]`.
     #[allow(clippy::too_many_arguments)]
     fn texture_raster(
         &self,
@@ -3062,7 +3104,7 @@ impl Pix3DDraw {
             }
 
             step_u = (next_u - cur_u) >> 3;
-            step_v = (next_v - cur_v) >> 3;
+            step_v = next_v.wrapping_sub(cur_v) >> 3;
             cur_u = cur_u.wrapping_add((shade_a >> 3) & 0xc0000);
             shade_shift = shade_a >> 23;
 
@@ -3097,7 +3139,7 @@ impl Pix3DDraw {
                         }
                     }
                     step_u = (next_u - cur_u) >> 3;
-                    step_v = (next_v - cur_v) >> 3;
+                    step_v = next_v.wrapping_sub(cur_v) >> 3;
                     shade_a = shade_a.wrapping_add(shade_strides);
                     cur_u = cur_u.wrapping_add((shade_a >> 3) & 0xc0000);
                     shade_shift = shade_a >> 23;
@@ -3146,7 +3188,7 @@ impl Pix3DDraw {
                         }
                     }
                     step_u = (next_u - cur_u) >> 3;
-                    step_v = (next_v - cur_v) >> 3;
+                    step_v = next_v.wrapping_sub(cur_v) >> 3;
                     shade_a = shade_a.wrapping_add(shade_strides);
                     cur_u = cur_u.wrapping_add((shade_a >> 3) & 0xc0000);
                     shade_shift = shade_a >> 23;
@@ -3206,7 +3248,7 @@ impl Pix3DDraw {
             }
 
             step_u = (next_u - cur_u) >> 3;
-            step_v = (next_v - cur_v) >> 3;
+            step_v = next_v.wrapping_sub(cur_v) >> 3;
             cur_u = cur_u.wrapping_add(shade_a & 0x600000);
             shade_shift = shade_a >> 23;
 
@@ -3241,7 +3283,7 @@ impl Pix3DDraw {
                         }
                     }
                     step_u = (next_u - cur_u) >> 3;
-                    step_v = (next_v - cur_v) >> 3;
+                    step_v = next_v.wrapping_sub(cur_v) >> 3;
                     shade_a = shade_a.wrapping_add(shade_strides);
                     cur_u = cur_u.wrapping_add(shade_a & 0x600000);
                     shade_shift = shade_a >> 23;
@@ -3290,7 +3332,7 @@ impl Pix3DDraw {
                         }
                     }
                     step_u = (next_u - cur_u) >> 3;
-                    step_v = (next_v - cur_v) >> 3;
+                    step_v = next_v.wrapping_sub(cur_v) >> 3;
                     shade_a = shade_a.wrapping_add(shade_strides);
                     cur_u = cur_u.wrapping_add(shade_a & 0x600000);
                     shade_shift = shade_a >> 23;
