@@ -1492,6 +1492,11 @@ impl Client {
                 self.ptype = -1;
             }
 
+            ServerProt::LOGOUT => {
+                self.logout();
+                self.ptype = -1;
+            }
+
             ServerProt::VARP_SMALL => {
                 let varp_id = payload.g2();
                 let value = payload.g1b();

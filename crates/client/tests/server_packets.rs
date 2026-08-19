@@ -68,6 +68,17 @@ fn logout_clears_ingame() {
     assert!(!c.ingame);
 }
 
+/// The dedicated LOGOUT arm resets `ptype` like every handled packet; the
+/// unknown-opcode default does not, so this pins the branch.
+#[test]
+fn logout_resets_ptype() {
+    let mut c = client();
+    c.ptype = 7;
+    let mut p = Packet::alloc(0);
+    c.handle_packet(ServerProt::LOGOUT, &mut p);
+    assert_eq!(c.ptype, -1);
+}
+
 #[test]
 fn midi_song_sets_next() {
     let mut c = client();
