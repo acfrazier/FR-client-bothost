@@ -528,6 +528,30 @@ fn pixfont_draw_string_tag_colour() {
 }
 
 #[test]
+fn pixfont_anti_macro_plot_trans_blends() {
+    let mut font = PixFont::new();
+    font.char_mask[104] = vec![1]; // 'h'
+    font.char_mask_width[104] = 1;
+    font.char_mask_height[104] = 1;
+    font.char_advance[104] = 2;
+    let mut map = PixMap::new(4, 4);
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        surface.fill_rect(0, 0, 4, 4, 0xffffff);
+        // seed 42 → first nextInt = -1170105035 → alpha = (… & 0x1f) + 192 = 213;
+        // shadow is black @ alpha 192 at (+1, +1). Expected values computed
+        // from the TS PixFont.plotTrans expression with int32 wrapping
+        // (per-term masks, separate shifts, then add — unlike Pix32.tranSprite,
+        // whose mask-after-sum grouping genuinely differs in the TS source).
+        font.draw_string_anti_macro(&mut surface, "h", 0, 0, 0xff0000, true, 42);
+    }
+    assert_eq!(map.pixels[0], 0xfffe_2a2au32 as i32); // main glyph blend
+    assert_eq!(map.pixels[5], 0x3f3f3f); // shadow at (1,1)
+    assert_eq!(map.pixels[1], 0xffffff); // untouched
+    assert_eq!(map.pixels[4], 0xffffff); // untouched
+}
+
+#[test]
 fn pixfont_update_state_tags() {
     let mut font = PixFont::new();
     assert_eq!(font.update_state("red"), Colour::RED);
