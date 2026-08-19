@@ -1,3 +1,4 @@
+pub mod client;
 pub mod datastruct;
 pub mod io;
 pub mod login_rsa;
