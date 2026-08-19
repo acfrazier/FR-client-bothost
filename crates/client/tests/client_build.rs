@@ -4,9 +4,14 @@
 // far outside anything a real pack could load, so `Model::requestDownload`
 // can never see them as ready; planted locs have `model: None` so `getModel`
 // yields nothing and only the collision side-effects are observable.
+//
+// The finishBuild tests (TS 75-541) drive real ground data: the src packets
+// carry opcode-0 tiles (perlin fallback heights) plus one planted floor
+// tile, so the blend pass has something to lay down.
 use client::client::{Client, ClientBuild, ClientConfig};
-use client::config::{Cache, LocType};
-use client::dash3d::{BuildArea, CollisionFlag, MapFlag};
+use client::config::{Cache, FloType, LocType};
+use client::dash3d::{BuildArea, CollisionFlag, LocAngle, MapFlag, TerrainOverlayShape};
+use client::graphics::Colour;
 use client::io::{OnDemand, Packet};
 
 #[test]
@@ -301,4 +306,203 @@ fn load_locations_places_at_offset_tiles() {
     );
     assert_ne!(c.collision[0].flags[10][2] & CollisionFlag::W_W, 0);
     assert_eq!(c.collision[0].flags[2][2] & CollisionFlag::W_W, 0);
+}
+
+// --- finishBuild (TS 75-497) / fadeAdjacent (TS 543-565) ---
+
+/// Build a ground packet: every tile is a single opcode-0 byte (perlin
+/// fallback on level 0, `groundh[level-1] - 240` above), except `tiles`,
+/// whose extra bytes (`82` = floort1 = 1, or `2, v` = floort2 = v with
+/// shape 0) precede the terminating 0.
+fn ground_src(tiles: &[(i32, i32, i32, &[u8])]) -> Vec<u8> {
+    let mut src = Vec::new();
+    for level in 0..BuildArea::LEVELS {
+        for x in 0..64 {
+            for z in 0..64 {
+                if let Some((_, _, _, extra)) = tiles
+                    .iter()
+                    .find(|(l, tx, tz, _)| (*l, *tx, *tz) == (level, x, z))
+                {
+                    src.extend_from_slice(extra);
+                }
+                src.push(0);
+            }
+        }
+    }
+    src
+}
+
+/// The brief's Step-1 scenario: one level-0 floor tile (opcode 82, floort1
+/// = 1) with a configured flo, so `finishBuild`'s blend pass calls
+/// `setGround` for it. The all-zero src from the brief lays down no floors
+/// and no ground (TS `setGround` only fires inside `t1 > 0 || t2 > 0`), so
+/// the planted tile is what makes "at least one tile" true.
+#[test]
+fn finish_build_sets_quick_ground_after_load_ground() {
+    let mut c = client();
+    c.cache.flos.push(FloType {
+        chroma: 10,
+        underlay_hue: 5,
+        saturation: 100,
+        lightness: 128,
+        ..FloType::default()
+    });
+    let mut build = ClientBuild::new();
+    let src = ground_src(&[(0, 2, 2, &[82])]);
+    build.load_ground(&mut c.groundh, &mut c.mapl, &src, 0, 0, 0, 0);
+    c.world.fill_base_level(0);
+    build.finish_build(&c.cache, &mut c.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+
+    // the floor tile gets a PLAIN quick ground (t2 == 0 path, TS 254-273)
+    let sq = c.world.square(0, 2, 2).expect("floor tile square");
+    assert!(sq.quick_ground.is_some(), "finishBuild must setGround at least one tile");
+
+    let mut any = false;
+    for level in 0..BuildArea::LEVELS {
+        for x in 0..BuildArea::SIZE {
+            for z in 0..BuildArea::SIZE {
+                if let Some(sq) = c.world.square(level, x, z) {
+                    if sq.quick_ground.is_some() || sq.ground.is_some() {
+                        any = true;
+                    }
+                }
+            }
+        }
+    }
+    assert!(any, "finishBuild must setGround at least one tile");
+}
+
+#[test]
+fn finish_build_blocks_map_flag_block_tiles() {
+    let mut c = client();
+    c.mapl[0][2][2] = MapFlag::BLOCK as u8;
+    let mut build = ClientBuild::new();
+    build.finish_build(&c.cache, &mut c.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    assert_ne!(c.collision[0].flags[2][2] & CollisionFlag::WR_GRND, 0);
+}
+
+#[test]
+fn finish_build_link_below_blocks_lower_level() {
+    let mut c = client();
+    // a level-1 Block with LinkBelow lands on level 0's collision grid
+    // (TS 79-87: trueLevel = level - 1)
+    c.mapl[1][2][2] = (MapFlag::BLOCK | MapFlag::LINK_BELOW) as u8;
+    let mut build = ClientBuild::new();
+    build.finish_build(&c.cache, &mut c.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    assert_ne!(c.collision[0].flags[2][2] & CollisionFlag::WR_GRND, 0);
+    assert_eq!(c.collision[1].flags[2][2] & CollisionFlag::WR_GRND, 0);
+}
+
+#[test]
+fn finish_build_clamps_hue_and_lig_off() {
+    let mut c = client();
+    let mut build = ClientBuild::new();
+    assert!((-8..=8).contains(&build.hue_off), "hue_off {}", build.hue_off);
+    assert!((-16..=16).contains(&build.lig_off), "lig_off {}", build.lig_off);
+    for _ in 0..200 {
+        build.finish_build(&c.cache, &mut c.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    }
+    assert!((-8..=8).contains(&build.hue_off), "hue_off {}", build.hue_off);
+    assert!((-16..=16).contains(&build.lig_off), "lig_off {}", build.lig_off);
+}
+
+#[test]
+fn finish_build_push_down_link_below() {
+    let mut c = client();
+    c.world.fill_base_level(0);
+    // a level-1 PLAIN tile at (2,2); LinkBelow pushes it down to level 0
+    // (TS 333-339 + World.pushDown)
+    c.world.set_ground(
+        1,
+        2,
+        2,
+        TerrainOverlayShape::PLAIN,
+        LocAngle::WEST,
+        -1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    );
+    c.mapl[1][2][2] = MapFlag::LINK_BELOW as u8;
+    let mut build = ClientBuild::new();
+    build.finish_build(&c.cache, &mut c.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    let sq = c.world.square(0, 2, 2).expect("pushed-down tile");
+    assert_eq!(sq.level, 0);
+    assert!(sq.quick_ground.is_some());
+}
+
+#[test]
+fn finish_build_clears_flat_floor_occluder_bits() {
+    let mut c = client();
+    let mut build = ClientBuild::new();
+    // a 1x5 flat-floor run (bit 0x4) at level 0: area 5 >= 4 so it becomes
+    // a `setOcclude(level, 4, ...)` box and the bits are cleared (TS 472-496)
+    for z in 8..=12 {
+        build.mapo[0][10][z] |= 0x4;
+    }
+    build.finish_build(&c.cache, &mut c.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    for z in 8..=12 {
+        assert_eq!(build.mapo[0][10][z] & 0x4, 0, "floor bit cleared at z={z}");
+    }
+}
+
+#[test]
+fn finish_build_clears_wall_occluder_bits() {
+    let mut c = client();
+    let mut build = ClientBuild::new();
+    // an 8-tile wall0 run (bit 0x1) along z at level 0: area 8 >= 8 so it
+    // becomes a `setOcclude(level, 1, ...)` box (TS 343-405)
+    for z in 2..=9 {
+        build.mapo[0][10][z] |= 0x1;
+    }
+    build.finish_build(&c.cache, &mut c.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    for z in 2..=9 {
+        assert_eq!(build.mapo[0][10][z] & 0x1, 0, "wall bit cleared at z={z}");
+    }
+}
+
+#[test]
+fn finish_build_magenta_overlay_floor() {
+    let mut c = client();
+    c.cache.flos.push(FloType {
+        colour: Colour::MAGENTA,
+        ..FloType::default()
+    });
+    let mut build = ClientBuild::new();
+    // opcode 2: floort2 = 1 (the g1b), floors = 0 -> DIAGONAL overlay, so
+    // the t2 > 0 branch runs the magenta path (TS 280-318)
+    let src = ground_src(&[(0, 2, 2, &[2, 1])]);
+    build.load_ground(&mut c.groundh, &mut c.mapl, &src, 0, 0, 0, 0);
+    c.world.fill_base_level(0);
+    build.finish_build(&c.cache, &mut c.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    let sq = c.world.square(0, 2, 2).expect("overlay tile square");
+    assert!(sq.quick_ground.is_some());
+}
+
+#[test]
+fn fade_adjacent_level0_seam() {
+    let mut c = client();
+    c.groundh[0][64][5] = 100;
+    c.groundh[0][65][5] = 50;
+    c.groundh[0][5][64] = 100;
+    c.groundh[0][5][65] = 50;
+    let mut build = ClientBuild::new();
+    // the TS mapBuild call is fadeAdjacent(z, x, 64, 64)
+    build.fade_adjacent(&mut c.groundh, 0, 0, 64, 64);
+    assert_eq!(c.groundh[0][64][5], 50, "east seam inherits x + 1");
+    assert_eq!(c.groundh[0][5][64], 50, "south seam inherits z + 1");
+    assert_eq!(build.shadow[0][10][10], 127);
+    // the far edge keeps its own value
+    assert_eq!(c.groundh[0][65][5], 50);
 }

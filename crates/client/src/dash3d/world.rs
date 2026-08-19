@@ -744,6 +744,12 @@ impl World {
         self.dynamic_count = 0;
     }
 
+    /// Read access to one tile (`squares` is private; the scene tests and
+    /// `mapBuild`-adjacent queries read through this).
+    pub fn square(&self, level: i32, x: i32, z: i32) -> Option<&Square> {
+        self.squares[level as usize][x as usize][z as usize].as_ref()
+    }
+
     pub fn get_wall(&self, level: i32, x: i32, z: i32) -> Option<&Wall> {
         self.squares[level as usize][x as usize][z as usize]
             .as_ref()
