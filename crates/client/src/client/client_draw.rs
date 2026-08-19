@@ -1,28 +1,28 @@
 //! Frame draw (Tasks 4/5: title, then in-game). 1:1 port of `Client.ts`
-//! `prepareTitle`, `loadTitleBackground` (logo only), `loadTitleImages`,
+//! `prepareTitle`, `loadTitleBackground`, `loadTitleImages`, `TitleFlames`,
 //! `titleScreenDraw` (1489–1694), and `gameDraw` with its `prepareGame`/
 //! `drawSide`/`drawChat` helpers (3890–4170, 2001, 11098, 11125). Draws
-//! always into `Client::draw_area` (789×532 `PixMap`); present (feature
+//! always into `Client::draw_area` (765×503 `PixMap`); present (feature
 //! `window`) only blits.
 //!
-//! Out of scope: the `title.dat` JPEG background (`Pix32.fromJpeg` — no JPEG
-//! crate), so the title regions stay black apart from the logo and the login
-//! UI; `TitleFlames` (no type in this crate), so `image_title0/1` stay
-//! empty; and the in-game `gameDrawMain` 3D pass (`World::render_all` not
-//! implemented), so `area_game` is a black hole blitted at (4, 4). The
-//! `drawInterface` panels, the minimap/compass, and the side-icon strip
-//! (`sideicons`/`redstone*`) are not ported; the chrome strips, side, chat,
-//! icon-strip backgrounds, and chat-mode panels draw 1:1. Both still leave
-//! the titlebox/fonts/logo writing non-zero pixels.
-//! The TS source's dead `y += 30` / `y += 15` stores (values never read
-//! again) are dropped.
+//! The in-game `gameDrawMain` 3D pass (`World::render_all` not implemented)
+//! leaves `area_game` a black hole at (4, 4). `drawInterface`, minimap, and
+//! the side-icon strip (`sideicons`/`redstone*`) are not ported.
 
 use std::path::Path;
 
 use crate::client::client::Client;
+use crate::client::title_flames::TitleFlames;
 use crate::graphics::{Colour, Pix2D, Pix32, Pix8, PixFont, PixMap};
 use crate::io::JagFile;
 use crate::util::JString;
+
+fn plot_title_bg(map: &mut Option<PixMap>, background: &Pix32, x: i32, y: i32) {
+    if let Some(map) = map {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        background.quick_plot_sprite(&mut surface, x, y);
+    }
+}
 
 impl Client {
     /// `titleScreenDraw` from client-ts (1489): draw the login UI into
@@ -167,12 +167,35 @@ impl Client {
                 t8.blit_into(&mut self.draw_area, 562, 171);
             }
         }
+
+        // TitleFlames.ts drawFlames: the torch columns redraw every frame
+        // (TS PixMap.draw onto the canvas). Inactive flames still blit the
+        // JPEG background that loadTitleBackground plotted into 0/1.
+        self.tick_title_flames();
+        if let Some(t0) = &self.image_title0 {
+            t0.blit_into(&mut self.draw_area, 0, 0);
+        }
+        if let Some(t1) = &self.image_title1 {
+            t1.blit_into(&mut self.draw_area, 637, 0);
+        }
+    }
+
+    fn tick_title_flames(&mut self) {
+        let Some(flames) = self.title_flames.as_mut() else {
+            return;
+        };
+        if !flames.active {
+            return;
+        }
+        let (Some(left), Some(right)) = (self.image_title0.as_mut(), self.image_title1.as_mut()) else {
+            return;
+        };
+        flames.render_flames(left, right, self.loop_cycle);
     }
 
     /// `prepareTitle` from client-ts (1579): create the 9 title `PixMap`
     /// regions (sizes as TS) on the first frame, load the `title` jag from
     /// the cache, the four fonts, and the titlebox/titlebutton sprites.
-    /// The `title.dat` JPEG background is skipped; the logo still plots.
     fn prepare_title(&mut self) {
         if self.image_title2.is_some() {
             return;
@@ -234,16 +257,43 @@ impl Client {
         }
     }
 
-    /// `loadTitleBackground` from client-ts (1627) minus the JPEG
-    /// `title.dat` decode: only the `logo` (a `Pix32` depack) plots, into
-    /// `image_title2` at the TS position (`sWid` = 789).
+    /// `loadTitleBackground` from client-ts (1627): JPEG `title.dat` tiled
+    /// across the 9 title regions, mirrored, then the `logo` sprite.
     fn load_title_background(&mut self, jag: &JagFile) {
+        if let Ok(mut background) = Pix32::from_jpeg(jag, "title.dat") {
+            plot_title_bg(&mut self.image_title0, &background, 0, 0);
+            plot_title_bg(&mut self.image_title1, &background, -637, 0);
+            plot_title_bg(&mut self.image_title2, &background, -128, 0);
+            plot_title_bg(&mut self.image_title3, &background, -202, -371);
+            plot_title_bg(&mut self.image_title4, &background, -202, -171);
+            plot_title_bg(&mut self.image_title5, &background, 0, -265);
+            plot_title_bg(&mut self.image_title6, &background, -562, -265);
+            plot_title_bg(&mut self.image_title7, &background, -128, -171);
+            plot_title_bg(&mut self.image_title8, &background, -562, -171);
+
+            background.hflip();
+
+            plot_title_bg(&mut self.image_title0, &background, 382, 0);
+            plot_title_bg(&mut self.image_title1, &background, -255, 0);
+            plot_title_bg(&mut self.image_title2, &background, 254, 0);
+            plot_title_bg(&mut self.image_title3, &background, 180, -371);
+            plot_title_bg(&mut self.image_title4, &background, 180, -171);
+            plot_title_bg(&mut self.image_title5, &background, 382, -265);
+            plot_title_bg(&mut self.image_title6, &background, -180, -265);
+            plot_title_bg(&mut self.image_title7, &background, 254, -171);
+            plot_title_bg(&mut self.image_title8, &background, -180, -171);
+        }
+
         if let Ok(logo) = Pix32::depack(jag, "logo", 0) {
             if let Some(map2) = self.image_title2.as_mut() {
                 let w = map2.width;
                 let h = map2.height;
                 let mut surface = Pix2D::with_pixels(&mut map2.pixels, w, h);
-                logo.plot_sprite(&mut surface, (789 / 2) - (logo.wi / 2) - 128, 18);
+                logo.plot_sprite(
+                    &mut surface,
+                    (crate::client::client::APPLET_W / 2) - (logo.wi / 2) - 128,
+                    18,
+                );
             }
         }
     }
@@ -263,15 +313,23 @@ impl Client {
                 self.image_runes.push(rune);
             }
         }
-        // TS then builds `TitleFlames` over `imageRunes` and
-        // `imageTitle0/1` — no such type in this crate, so the flames stay
-        // unstarted (and `imageTitle0/1` empty).
+        if self.title_flames.is_none() {
+            if let (Some(left), Some(right)) = (&self.image_title0, &self.image_title1) {
+                let mut flames = TitleFlames::new(self.image_runes.clone());
+                flames.setup_fire(left, right);
+                flames.start();
+                self.title_flames = Some(flames);
+            }
+        }
     }
 
-    /// `unloadTitle` from client-ts (1992): drop the title sprites. The
-    /// `TitleFlames` close is a no-op (no such type in this crate). TS calls
-    /// this from `prepareGame`/`mainquit`, neither ported yet.
+    /// `unloadTitle` from client-ts (1992): drop the title sprites and stop
+    /// the torch flames. TS calls this from `prepareGame`/`mainquit`.
     pub fn unload_title(&mut self) {
+        if let Some(flames) = self.title_flames.as_mut() {
+            flames.close();
+        }
+        self.title_flames = None;
         self.image_titlebox = None;
         self.image_titlebutton = None;
         self.image_runes.clear();

@@ -987,6 +987,15 @@ impl Worker {
 /// engine `FileStream.read` / Java `FileStream.readFromFile` (the client
 /// never writes its cache, so the write path is not ported).
 fn cache_read(cache_dir: &str, archive: i32, file: i32) -> Option<Vec<u8>> {
+    cache_read_in(cache_dir, archive, file).or_else(|| {
+        // Engine layout: jag packs live in pack/client, the main_file_cache
+        // lives in pack/ (one directory up).
+        let parent = std::path::Path::new(cache_dir).parent()?;
+        cache_read_in(parent.to_str()?, archive, file)
+    })
+}
+
+fn cache_read_in(cache_dir: &str, archive: i32, file: i32) -> Option<Vec<u8>> {
     if !(1..=4).contains(&archive) || file < 0 {
         return None;
     }

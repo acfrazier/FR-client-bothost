@@ -1,5 +1,5 @@
 //! Window present behind feature `window`: winit + softbuffer CPU blit of the
-//! 789×532 `PixMap`. `pack_rgb` is always-on so the pixel layout compiles
+//! 765×503 `PixMap`. `pack_rgb` is always-on so the pixel layout compiles
 //! headless; only the `Present` window is feature-gated.
 
 /// Pack a PixMap pixel into the softbuffer `u32` layout.
@@ -62,7 +62,7 @@ mod window {
     }
 
     impl Present {
-        /// Create the fixed-size window (789×532 applet). The window is sized
+        /// Create the fixed-size window (765×503 applet). The window is sized
         /// in physical pixels and non-resizable so present, surface, and the
         /// `apply_mouse_*` coordinates share the 1:1 applet pixel space: no
         /// resize-to-fit, no upscale.
@@ -92,7 +92,7 @@ mod window {
         }
 
         /// Pack `pixels` (`0x00RRGGBB` `i32`s) into the surface and present
-        /// it. Frames are 789×532; anything shorter leaves the tail stale.
+        /// it. Frames are 765×503; anything shorter leaves the tail stale.
         pub fn blit(&mut self, pixels: &[i32], width: u32, height: u32) {
             let mut buffer = match self.surface.buffer_mut() {
                 Ok(buffer) => buffer,

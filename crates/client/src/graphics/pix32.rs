@@ -1,9 +1,10 @@
 // Port of `~/experiments/Server/webclient/src/graphics/Pix32.ts`. The TS
 // `extends Pix2D` inheritance collapses: plotting targets a `&mut Pix2D`.
-// `fromJpeg` (browser image decode) is out of scope; `depack` returns
-// `Result`. Rotated plots read the source through `.get()` because out-of-bounds
-// samples are normal there (TS typed arrays return `undefined` → 0); destination
-// writes outside the framebuffer are skipped (TS silently ignores them).
+// `fromJpeg` decodes a jag JPEG (title.dat); a 0x00 first byte is patched
+// to 0xFF as client-ts `decodeJpeg`. Rotated plots read the source through
+// `.get()` because out-of-bounds samples are normal there (TS typed arrays
+// return `undefined` → 0); destination writes outside the framebuffer are
+// skipped (TS silently ignores them).
 
 use super::pix2d::Pix2D;
 use super::pix8::Pix8;
@@ -30,6 +31,37 @@ impl Pix32 {
             xof: 0,
             yof: 0,
         }
+    }
+
+    /// `Pix32.fromJpeg(archive, name)`: decode a JPEG stored in the jag.
+    /// Client-ts `decodeJpeg` patches a missing SOI (`data[0] !== 0xff`).
+    pub fn from_jpeg(jag: &JagFile, name: &str) -> Result<Self, ()> {
+        let mut bytes = jag.read(name).ok_or(())?;
+        if bytes.first().copied() != Some(0xff) {
+            if bytes.is_empty() {
+                return Err(());
+            }
+            bytes[0] = 0xff;
+        }
+        let decoded = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg)
+            .map_err(|_| ())?
+            .to_rgb8();
+        let wi = decoded.width() as i32;
+        let hi = decoded.height() as i32;
+        let mut data = Vec::with_capacity((wi as usize) * (hi as usize));
+        for pixel in decoded.pixels() {
+            let [r, g, b] = pixel.0;
+            data.push(((r as i32) << 16) | ((g as i32) << 8) | (b as i32));
+        }
+        Ok(Pix32 {
+            data,
+            wi,
+            hi,
+            owi: wi,
+            ohi: hi,
+            xof: 0,
+            yof: 0,
+        })
     }
 
     pub fn depack(jag: &JagFile, name: &str, sprite: i32) -> Result<Self, ()> {

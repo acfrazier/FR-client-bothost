@@ -29,7 +29,28 @@ impl Midi for NullMidi {
 mod rusty {
     use std::fs::File;
     use std::io::Cursor;
+    use std::path::Path;
     use std::sync::Arc;
+
+    fn sound_font_candidates(cache_dir: &str) -> Vec<String> {
+        let mut out = vec![
+            format!("{cache_dir}/soundfont.sf2"),
+            format!("{cache_dir}/Florestan.sf2"),
+            format!("{cache_dir}/SCC1_Florestan.sf2"),
+            "Florestan.sf2".into(),
+            "SCC1_Florestan.sf2".into(),
+        ];
+        // pack/client → engine/public/client (three parents up).
+        if let Some(engine) = Path::new(cache_dir).parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+            out.push(engine.join("public/client/SCC1_Florestan.sf2").display().to_string());
+            out.push(engine.join("public/bot/SCC1_Florestan.sf2").display().to_string());
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            out.push(format!("{home}/experiments/Server/engine/public/client/SCC1_Florestan.sf2"));
+            out.push(format!("{home}/experiments/Server/engine/public/bot/SCC1_Florestan.sf2"));
+        }
+        out
+    }
 
     use rustysynth::{MidiFile, MidiFileLoopType, MidiFileSequencer, SoundFont, Synthesizer, SynthesizerSettings};
 
@@ -51,16 +72,20 @@ mod rusty {
 
     impl RustyMidi {
         pub fn new(cache_dir: &str) -> Self {
-            for candidate in [
-                format!("{cache_dir}/soundfont.sf2"),
-                format!("{cache_dir}/Florestan.sf2"),
-                "Florestan.sf2".to_string(),
-            ] {
+            for candidate in sound_font_candidates(cache_dir) {
                 if let Some(midi) = Self::with_sound_font(&candidate) {
                     return midi;
                 }
             }
+            eprintln!(
+                "audio: no soundfont (looked for Florestan.sf2 / SCC1_Florestan.sf2 under {cache_dir} and engine/public); midi silent"
+            );
             Self { sequencer: None, volume: 0 }
+        }
+
+        /// True when an SF2 loaded and rustysynth can render.
+        pub fn has_sound_font(&self) -> bool {
+            self.sequencer.is_some()
         }
 
         /// Load an explicit SF2; a missing/unreadable font yields a silent

@@ -107,6 +107,12 @@ fn midi_backend(cache_dir: &str) -> Arc<Mutex<dyn Midi>> {
     }
 }
 
+/// Period 274 applet size (engine `bot.html` canvas and title.dat).
+/// The title JPEG / in-game chrome are 765×503; 789×532 was leftover
+/// webclient padding around that art.
+pub const APPLET_W: i32 = 765;
+pub const APPLET_H: i32 = 503;
+
 pub struct Client {
     pub shell: GameShell,
     /// The `--window` applet (`Present`), opened by the driver. `run` polls
@@ -246,7 +252,7 @@ pub struct Client {
     pub loop_cycle: i32,
 
     /// Title screen state (`Client.ts` `prepareTitle`/`titleScreenDraw`):
-    /// the 789×532 CPU framebuffer every frame draws into (`drawArea`), the
+    /// the 765×503 CPU framebuffer every frame draws into (`drawArea`), the
     /// `title` jag with the fonts and sprites, the 9 title `PixMap` regions
     /// (0/1 are the flame frames — empty here, `TitleFlames` is out of
     /// scope), and the login UI fields.
@@ -270,6 +276,8 @@ pub struct Client {
     /// `imageRunes` from client-ts: the 12 rune sprites the title flames
     /// animate (loaded with `fl_icon` default 0 → sprites 0..11).
     pub image_runes: Vec<Pix8>,
+    /// `titleFlames` from client-ts: the torch animation over imageTitle0/1.
+    pub title_flames: Option<crate::client::title_flames::TitleFlames>,
     pub loginscreen: i32,
     pub login_select: i32,
     pub redraw_frame: bool,
@@ -459,7 +467,7 @@ impl Client {
             login_mes1: String::new(),
             login_mes2: String::new(),
             loop_cycle: 0,
-            draw_area: PixMap::new(789, 532),
+            draw_area: PixMap::new(APPLET_W, APPLET_H),
             title: None,
             p11: None,
             p12: None,
@@ -477,6 +485,7 @@ impl Client {
             image_titlebox: None,
             image_titlebutton: None,
             image_runes: Vec::new(),
+            title_flames: None,
             loginscreen: 0,
             login_select: 0,
             redraw_frame: true,
@@ -515,6 +524,15 @@ impl Client {
         };
         if client.error_loading {
             client.shell.set_framerate(1);
+        }
+        // Client.ts maininit (!lowMem): scape_main (midiSong = 0) with fade,
+        // requested from on-demand archive 2 so the title screen has music.
+        if !client.config.lowmem {
+            if let Some(od) = &mut client.on_demand {
+                client.midi_song = 0;
+                client.midi_fading = true;
+                od.request(2, 0);
+            }
         }
         client
     }
@@ -2872,11 +2890,11 @@ impl Client {
     /// (GameShell.run 186-190); keys via `shell.poll_key`. A Login click
     /// runs the full handshake (blocking) and returns once `ingame`; on
     /// failure `login_mes1/2` carry the error to the title draw, as TS.
-    /// Coordinates use the 789×532 applet (`sWid`/`sHei`).
+    /// Coordinates use the 765×503 applet (`sWid`/`sHei`).
     pub fn title_screen_loop(&mut self) {
         if self.loginscreen == 0 {
-            let mut x = (789 / 2) - 80;
-            let mut y = (532 / 2) + 20;
+            let mut x = (APPLET_W / 2) - 80;
+            let mut y = (APPLET_H / 2) + 20;
 
             y += 20;
             if title_button_clicked(
@@ -2890,7 +2908,7 @@ impl Client {
                 self.login_select = 0;
             }
 
-            x = (789 / 2) + 80;
+            x = (APPLET_W / 2) + 80;
             if title_button_clicked(
                 self.shell.mouse_click_button,
                 self.shell.mouse_click_x,
@@ -2904,7 +2922,7 @@ impl Client {
                 self.login_select = 0;
             }
         } else if self.loginscreen == 2 {
-            let mut y = (532 / 2) - 40;
+            let mut y = (APPLET_H / 2) - 40;
             y += 30;
 
             y += 25;
@@ -2924,8 +2942,8 @@ impl Client {
             }
             // y += 15; dead code
 
-            let mut x = (789 / 2) - 80;
-            y = (532 / 2) + 50;
+            let mut x = (APPLET_W / 2) - 80;
+            y = (APPLET_H / 2) + 50;
             y += 20;
 
             if title_button_clicked(
@@ -2943,7 +2961,7 @@ impl Client {
                 }
             }
 
-            x = (789 / 2) + 80;
+            x = (APPLET_W / 2) + 80;
             if title_button_clicked(
                 self.shell.mouse_click_button,
                 self.shell.mouse_click_x,
@@ -2998,8 +3016,8 @@ impl Client {
                 }
             }
         } else if self.loginscreen == 3 {
-            let x = 789 / 2;
-            let mut y = (532 / 2) + 50;
+            let x = APPLET_W / 2;
+            let mut y = (APPLET_H / 2) + 50;
 
             y += 20;
             if title_button_clicked(

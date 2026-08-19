@@ -24,7 +24,7 @@ client machine. RSA is baked at compile time; run the binary
 
    Options (defaults): `--host` `127.0.0.1`, `--port` `43594`, `--cache`
    `$HOME/experiments/Server/engine/data/pack/client`. `--window` opens the
-   789×532 applet (redeploy builds the `window,audio` features in) and opens
+   765×503 applet (redeploy builds the `window,audio` features in) and opens
    the cpal speaker; a window open failure exits 1, an audio device failure
    logs and continues without sound. Omit `--window` for headless — the same
    binary, no window and no audio. Nothing here is required to log in.

@@ -1,7 +1,7 @@
 //! `client-play`: log into a local 274 engine over TCP and run the client
 //! machine on the calling thread (`Client::new` + `run`). `--user/--pass`
 //! skip title login; without them the title screen is the control plane.
-//! `--window` presents the 789×532 applet (feature `window`); `--audio`
+//! `--window` presents the 765×503 applet (feature `window`); `--audio`
 //! opens the cpal speaker (feature `audio`).
 //!
 //! The RSA public half is baked at compile time (`LOGIN_RSAN`/`LOGIN_RSAE`).
@@ -111,11 +111,15 @@ fn main() -> ExitCode {
     };
     let mut client = Client::new(config);
 
-    // The 789×532 applet. Open failure is fatal (`--window` asked for a
-    // control plane); audio failure is not.
+    // The 765×503 applet (engine canvas / title.dat). Open failure is fatal
+    // (`--window` asked for a control plane); audio failure is not.
     #[cfg(feature = "window")]
     if args.window {
-        match Present::open(789, 532, "RuneScape") {
+        match Present::open(
+            client::client::APPLET_W as u32,
+            client::client::APPLET_H as u32,
+            "RuneScape",
+        ) {
             Ok(present) => client.present = Some(present),
             Err(e) => {
                 eprintln!("window: {e}");
@@ -135,7 +139,10 @@ fn main() -> ExitCode {
     if args.window || args.audio {
         match AudioOut::try_open(client.midi.clone(), client.waves.clone(), client.fade.clone())
         {
-            Ok(out) => _audio_out = Some(out),
+            Ok(out) => {
+                eprintln!("audio: speaker {} Hz", out.sample_rate);
+                _audio_out = Some(out);
+            }
             Err(e) => eprintln!("audio: {e}; continuing without sound"),
         }
     }

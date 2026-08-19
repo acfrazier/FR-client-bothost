@@ -7,6 +7,7 @@
 use super::pix2d::Pix2D;
 use crate::io::{JagFile, Packet};
 
+#[derive(Clone)]
 pub struct Pix8 {
     pub data: Vec<i8>,
     pub bpal: Vec<i32>, // base palette

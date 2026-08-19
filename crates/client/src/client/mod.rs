@@ -1,5 +1,5 @@
 pub mod client;
-pub use client::{Client, ClientNpc, ClientPlayer};
+pub use client::{APPLET_H, APPLET_W, Client, ClientNpc, ClientPlayer};
 pub mod client_build;
 pub use client_build::ClientBuild;
 pub mod client_draw;
@@ -17,3 +17,5 @@ pub use mini_menu_action::MiniMenuAction;
 pub mod present;
 pub mod skill;
 pub use skill::Skill;
+pub mod title_flames;
+pub use title_flames::TitleFlames;
