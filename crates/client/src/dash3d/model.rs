@@ -46,6 +46,12 @@ pub struct ModelStore {
     pub loaded: i32,
 }
 
+// Process-wide by design: the unpacked model metadata + provider are the TS
+// `Model.meta`/`provider` statics, which all clients share. The metadata is
+// immutable once `unpack`ed (the design rule "mutable statics live on
+// Client" is about per-client draw/type state), so a `Mutex` around the
+// store only serialises concurrent decode requests. The `provider` is the
+// OnDemand hook (a shared client resource), set once at startup.
 static STORE: OnceLock<Mutex<ModelStore>> = OnceLock::new();
 
 fn store() -> &'static Mutex<ModelStore> {

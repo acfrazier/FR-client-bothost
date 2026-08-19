@@ -7,6 +7,9 @@ use crate::dash3d::Model;
 use crate::datastruct::LruCache;
 use crate::io::{JagFile, Packet};
 
+// Process-wide by design: an LRU of decoded, immutable models shared by
+// every client (the TS `modelCache` static). Cache bookkeeping, not
+// per-client draw state; eviction is LRU so clients only contend on the lock.
 fn model_cache() -> &'static Mutex<LruCache<Model>> {
     static CACHE: OnceLock<Mutex<LruCache<Model>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(LruCache::new(30)))
@@ -92,6 +95,10 @@ impl SpotType {
 
         let mut model = Model::load(self.model)?;
 
+        // The guard is `recol_s[0] != 0`, matching `SpotType.ts` `getTempModel2`
+        // and the Java 274 client (`SpotType.java`): if the first recolor
+        // source is set, ALL six pairs are applied. Deliberately not per-index
+        // — that would deviate from both sources of truth.
         for i in 0..6 {
             if self.recol_s[0] != 0 {
                 model.recolour(self.recol_s[i] as i32, self.recol_d[i] as i32);

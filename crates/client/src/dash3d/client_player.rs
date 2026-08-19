@@ -12,6 +12,10 @@ use crate::datastruct::LruCache;
 use crate::io::Packet;
 use crate::util::JString;
 
+// Process-wide by design: an LRU of decoded, immutable player models shared
+// by every client (the TS `ClientPlayer.modelCache` static). Cache
+// bookkeeping, not per-client draw state; eviction is LRU so clients only
+// contend on the lock.
 fn model_cache() -> &'static Mutex<LruCache<Model>> {
     static CACHE: OnceLock<Mutex<LruCache<Model>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(LruCache::new(200)))

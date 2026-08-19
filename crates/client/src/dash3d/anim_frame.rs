@@ -23,6 +23,9 @@ pub struct AnimFrameStore {
     pub opaque: Vec<bool>,
 }
 
+// Process-wide by design: the decoded frame tables are the TS `AnimFrame`
+// statics shared by every client; the data is immutable once `unpack`ed, so
+// the `Mutex` only serialises concurrent access (see `Model::STORE`).
 static STORE: OnceLock<Mutex<AnimFrameStore>> = OnceLock::new();
 
 fn store() -> &'static Mutex<AnimFrameStore> {

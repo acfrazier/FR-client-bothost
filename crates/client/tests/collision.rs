@@ -123,3 +123,43 @@ fn client_npc_route_readable() {
     assert_eq!(n.route_x[0], 8);
     assert_eq!(n.route_z[0], 9);
 }
+
+#[test]
+fn spot_recolour_guard_matches_ts() {
+    use client::config::{Cache, SpotType};
+    use client::dash3d::Model;
+
+    // a one-face model whose face colour is 0x1122 (hand-crafted to avoid
+    // needing OnDemand: 3 zero-delta vertices, face (0,1,2), colour 0x1122,
+    // followed by the 18-byte trailer)
+    const MODEL: &[u8] = &[
+        7, 7, 7, // vertex order: x+y+z present for each of 3 vertices
+        1, // face index order: 1 (a,b,c are deltas)
+        0, 1, 2, // face index deltas: a=0, b=1, c=2
+        0x11, 0x22, // face colour
+        0, 0, 0, // vertexX deltas
+        0, 0, 0, // vertexY deltas
+        0, 0, 0, // vertexZ deltas
+        0, 3, 0, 1, 0, 0, 0, 0, 0, 0, 0, 3, 0, 3, 0, 3, 0, 3, // trailer
+    ];
+    Model::unpack(0, Some(MODEL));
+
+    // recol_s[0] == 0: the TS (`SpotType.ts` line 91) and Java 274 guard
+    // skip the whole loop, so the face colour is untouched
+    let mut spot = SpotType::default();
+    spot.id = 71;
+    spot.model = 0;
+    spot.recol_s[1] = 0x1122;
+    spot.recol_d[1] = 0x9999;
+    let model = spot.get_temp_model2(&Cache::default()).unwrap();
+    assert_eq!(model.face_colour.as_ref().unwrap()[0], 0x1122);
+
+    // recol_s[0] != 0: all six pairs apply, so 0x1122 recolours to 0x9999
+    let mut spot2 = SpotType::default();
+    spot2.id = 72;
+    spot2.model = 0;
+    spot2.recol_s[0] = 0x1122;
+    spot2.recol_d[0] = 0x9999;
+    let model2 = spot2.get_temp_model2(&Cache::default()).unwrap();
+    assert_eq!(model2.face_colour.as_ref().unwrap()[0], 0x9999);
+}

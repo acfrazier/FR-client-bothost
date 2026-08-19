@@ -7,10 +7,8 @@
 // Sprites are arena-allocated (`World.sprites`) and tiles hold arena indices,
 // matching the TS sharing of one sprite object across every tile it spans.
 // The TS static `lowMem`, camera state, fill queue and sprite buffer are
-// render-only and omitted. `numOccluders`/`occluders` stay process-wide (the
-// TS statics), guarded by a `Mutex` so the port stays `Send`.
-use std::sync::{Mutex, OnceLock};
-
+// render-only and omitted; `numOccluders`/`occluders` (per-scene mutable)
+// live on the `World` instance.
 use crate::dash3d::TerrainOverlayShape;
 use crate::dash3d::{
     Decor, Ground, GroundDecor, GroundObject, Occlude, QuickGround, SceneModel, Sprite, Square,
@@ -20,25 +18,6 @@ use crate::dash3d::{
 const OCCLUDER_LEVELS: usize = 4;
 const MAX_OCCLUDERS: usize = 500;
 const MAX_DYNAMIC_SPRITES: usize = 5000;
-
-/// Occluder table for the (deferred) render pass. Heap-backed: a by-value
-/// `[[Option<Occlude>; 500]; 4]` static overflows small test-thread stacks
-/// in debug builds.
-struct OccluderStore {
-    num_occluders: [i32; OCCLUDER_LEVELS],
-    occluders: Vec<Option<Occlude>>,
-}
-
-static OCCLUDERS: OnceLock<Mutex<OccluderStore>> = OnceLock::new();
-
-fn occluders() -> &'static Mutex<OccluderStore> {
-    OCCLUDERS.get_or_init(|| {
-        Mutex::new(OccluderStore {
-            num_occluders: [0; OCCLUDER_LEVELS],
-            occluders: (0..OCCLUDER_LEVELS * MAX_OCCLUDERS).map(|_| None).collect(),
-        })
-    })
-}
 
 /// `levelHeightmaps[level][x][z]` ground heights, sized
 /// `[maxLevel][maxTileX + 1][maxTileZ + 1]` (one extra row/column of corners).
@@ -56,6 +35,13 @@ pub struct World {
     sprites: Vec<Option<Sprite>>,
     dynamic_count: i32,
     dynamic_sprites: Vec<Option<usize>>,
+    /// Occluder table for the (deferred) render pass. Per-scene mutable
+    /// state (the TS `World.occluders`/`numOccluders` statics), so it lives
+    /// on the `World` instance. Heap-backed because a by-value
+    /// `[[Option<Occlude>; 500]; 4]` overflows small test-thread stacks in
+    /// debug builds.
+    num_occluders: [i32; OCCLUDER_LEVELS],
+    occluders: Vec<Option<Occlude>>,
 }
 
 impl World {
@@ -83,6 +69,8 @@ impl World {
             sprites: Vec::new(),
             dynamic_count: 0,
             dynamic_sprites: vec![None; MAX_DYNAMIC_SPRITES],
+            num_occluders: [0; OCCLUDER_LEVELS],
+            occluders: (0..OCCLUDER_LEVELS * MAX_OCCLUDERS).map(|_| None).collect(),
         };
         world.reset_map();
         world
@@ -97,14 +85,12 @@ impl World {
             }
         }
 
-        let mut occluders = occluders().lock().unwrap();
         for l in 0..OCCLUDER_LEVELS {
-            for o in 0..occluders.num_occluders[l] as usize {
-                occluders.occluders[l * MAX_OCCLUDERS + o] = None;
+            for o in 0..self.num_occluders[l] as usize {
+                self.occluders[l * MAX_OCCLUDERS + o] = None;
             }
-            occluders.num_occluders[l] = 0;
+            self.num_occluders[l] = 0;
         }
-        drop(occluders);
 
         for sprite in self.dynamic_sprites.iter_mut() {
             *sprite = None;
@@ -163,6 +149,7 @@ impl World {
     }
 
     pub fn set_occlude(
+        &mut self,
         level: i32,
         r#type: i32,
         min_x: i32,
@@ -172,12 +159,11 @@ impl World {
         max_y: i32,
         max_z: i32,
     ) {
-        let mut occluders = occluders().lock().unwrap();
-        let count = occluders.num_occluders[level as usize] as usize;
+        let count = self.num_occluders[level as usize] as usize;
         if count >= MAX_OCCLUDERS {
             return;
         }
-        occluders.occluders[level as usize * MAX_OCCLUDERS + count] = Some(Occlude::new(
+        self.occluders[level as usize * MAX_OCCLUDERS + count] = Some(Occlude::new(
             min_x / 128,
             max_x / 128,
             min_z / 128,
@@ -190,7 +176,7 @@ impl World {
             min_y,
             max_y,
         ));
-        occluders.num_occluders[level as usize] += 1;
+        self.num_occluders[level as usize] += 1;
     }
 
     pub fn set_layer(&mut self, level: i32, stx: i32, stz: i32, draw_level: i32) {
