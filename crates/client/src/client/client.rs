@@ -268,6 +268,38 @@ pub struct Client {
     pub login_select: i32,
     pub redraw_frame: bool,
 
+    /// In-game draw state (`Client.ts` `prepareGame`/`gameDraw`): the
+    /// viewport/side/chat/chrome `PixMap` areas and the `media` jag sprites
+    /// that plot into them, plus the chat-mode redraw flag and the three
+    /// chat mode settings. Lazy-allocated on the first `game_draw`; a
+    /// missing `media` pack leaves the sprites `None` and the areas black.
+    pub area_game: Option<PixMap>,
+    pub area_map: Option<PixMap>,
+    pub area_side: Option<PixMap>,
+    pub area_chat: Option<PixMap>,
+    pub area_backleft1: Option<PixMap>,
+    pub area_backleft2: Option<PixMap>,
+    pub area_backright1: Option<PixMap>,
+    pub area_backright2: Option<PixMap>,
+    pub area_backtop1: Option<PixMap>,
+    pub area_backvmid1: Option<PixMap>,
+    pub area_backvmid2: Option<PixMap>,
+    pub area_backvmid3: Option<PixMap>,
+    pub area_backhmid2: Option<PixMap>,
+    pub area_backbase1: Option<PixMap>,
+    pub area_backbase2: Option<PixMap>,
+    pub area_backhmid1: Option<PixMap>,
+    pub invback: Option<Pix8>,
+    pub chatback: Option<Pix8>,
+    pub backbase1: Option<Pix8>,
+    pub backbase2: Option<Pix8>,
+    pub backhmid1: Option<Pix8>,
+    pub redraw_chat: bool,
+    pub redraw_chat_mode: bool,
+    pub chat_public_mode: i32,
+    pub chat_private_mode: i32,
+    pub chat_trade_mode: i32,
+
     /// Reconnect flag of the most recent `login` call (`None` until the
     /// first login). `lostCon` reestablishes with `reconnect = true`
     /// (wrapper opcode 18); the flag is how the reconnect path is observed.
@@ -439,6 +471,32 @@ impl Client {
             loginscreen: 0,
             login_select: 0,
             redraw_frame: true,
+            area_game: None,
+            area_map: None,
+            area_side: None,
+            area_chat: None,
+            area_backleft1: None,
+            area_backleft2: None,
+            area_backright1: None,
+            area_backright2: None,
+            area_backtop1: None,
+            area_backvmid1: None,
+            area_backvmid2: None,
+            area_backvmid3: None,
+            area_backhmid2: None,
+            area_backbase1: None,
+            area_backbase2: None,
+            area_backhmid1: None,
+            invback: None,
+            chatback: None,
+            backbase1: None,
+            backbase2: None,
+            backhmid1: None,
+            redraw_chat: false,
+            redraw_chat_mode: false,
+            chat_public_mode: 0,
+            chat_private_mode: 0,
+            chat_trade_mode: 0,
             last_login_reconnect: None,
             logout_timer: 0,
             timeout_timer: 0,
@@ -2841,11 +2899,12 @@ impl Client {
         }
     }
 
-    /// `mainredraw` from Java — the frame render pass. When not in-game the
-    /// title screen draws into `draw_area` (which the `window` feature
-    /// presents); in-game draw lands with Task 5.
+    /// `mainredraw` from Java — the frame render pass: title screen or
+    /// in-game draw into `draw_area` (which the `window` feature presents).
     pub fn mainredraw(&mut self) {
-        if !self.ingame {
+        if self.ingame {
+            self.game_draw();
+        } else {
             self.title_screen_draw();
         }
     }
