@@ -215,6 +215,122 @@ impl Client {
         }
     }
 
+    /// `drawProgress` from client-ts (3840): the loading-progress bar.
+    /// Always records `last_progress_percent`/`last_progress_message`;
+    /// with `draw` off that is all it does. With `draw` on and no title
+    /// pixmaps yet, paints the `GameShell.drawProgress` fallback (274)
+    /// into `draw_area`: 304×34 outline, `progress * 3` × 30 fill in
+    /// `0x8c1111`, remainder black, centred at `(width/2, height/2 - 18)`
+    /// (the message text no-ops while `b12` is not loaded). With title
+    /// pixmaps present, draws the TS 3840 bar on `image_title4` (360×200)
+    /// and blits the title regions as TS 3868-3883, compositing
+    /// `draw_area` the way `title_screen_draw` does.
+    pub fn draw_progress(&mut self, message: &str, progress: i32) {
+        self.last_progress_percent = progress;
+        self.last_progress_message = message.to_string();
+
+        if !self.draw {
+            return;
+        }
+
+        if self.image_title4.is_none() {
+            let width = self.draw_area.width;
+            let height = self.draw_area.height;
+            let y = (height / 2) - 18;
+            let mid_x = width / 2;
+            let mut surface = Pix2D::with_pixels(&mut self.draw_area.pixels, width, height);
+            surface.draw_rect(mid_x - 152, y, 304, 34, 0x8c1111);
+            surface.fill_rect(mid_x - 150, y + 2, progress * 3, 30, 0x8c1111);
+            surface.fill_rect(
+                mid_x - 150 + progress * 3,
+                y + 2,
+                300 - progress * 3,
+                30,
+                Colour::BLACK,
+            );
+            if let Some(b12) = self.b12.as_mut() {
+                b12.centre_string_tag(&mut surface, message, mid_x, y + 22, Colour::WHITE, true);
+            }
+            return;
+        }
+
+        // TS 3840-3866: the loading bar on image_title4.
+        let w = 360;
+        let h = 200;
+        let offset_y = 20;
+        if let Some(map4) = self.image_title4.as_mut() {
+            let mut surface = Pix2D::with_pixels(&mut map4.pixels, w, h);
+            if let Some(b12) = self.b12.as_mut() {
+                b12.centre_string_tag(
+                    &mut surface,
+                    "RuneScape is loading - please wait...",
+                    w / 2,
+                    (h / 2) - offset_y - 26,
+                    Colour::WHITE,
+                    true,
+                );
+            }
+            let mid_y = (h / 2) - 18 - offset_y;
+            surface.draw_rect((w / 2) - 152, mid_y, 304, 34, 0x8c1111);
+            surface.draw_rect((w / 2) - 151, mid_y + 1, 302, 32, Colour::BLACK);
+            surface.fill_rect((w / 2) - 150, mid_y + 2, progress * 3, 30, 0x8c1111);
+            surface.fill_rect(
+                (w / 2) - 150 + progress * 3,
+                mid_y + 2,
+                300 - progress * 3,
+                30,
+                Colour::BLACK,
+            );
+            if let Some(b12) = self.b12.as_mut() {
+                b12.centre_string_tag(
+                    &mut surface,
+                    message,
+                    w / 2,
+                    (h / 2) + 5 - offset_y,
+                    Colour::WHITE,
+                    true,
+                );
+            }
+        }
+
+        // TS 3868-3883: composite the title regions into draw_area. The
+        // 0/1 torch columns blit only while the flames are inactive (the
+        // TS guard); the rest redraw only on `redraw_frame`.
+        if let Some(t4) = &self.image_title4 {
+            t4.blit_into(&mut self.draw_area, 202, 171);
+        }
+
+        if self.redraw_frame {
+            self.redraw_frame = false;
+            if !self.title_flames.as_ref().is_some_and(|f| f.active) {
+                if let Some(t0) = &self.image_title0 {
+                    t0.blit_into(&mut self.draw_area, 0, 0);
+                }
+                if let Some(t1) = &self.image_title1 {
+                    t1.blit_into(&mut self.draw_area, 637, 0);
+                }
+            }
+            if let Some(t2) = &self.image_title2 {
+                t2.blit_into(&mut self.draw_area, 128, 0);
+            }
+            if let Some(t3) = &self.image_title3 {
+                t3.blit_into(&mut self.draw_area, 202, 371);
+            }
+            if let Some(t5) = &self.image_title5 {
+                t5.blit_into(&mut self.draw_area, 0, 265);
+            }
+            if let Some(t6) = &self.image_title6 {
+                t6.blit_into(&mut self.draw_area, 562, 265);
+            }
+            if let Some(t7) = &self.image_title7 {
+                t7.blit_into(&mut self.draw_area, 128, 171);
+            }
+            if let Some(t8) = &self.image_title8 {
+                t8.blit_into(&mut self.draw_area, 562, 171);
+            }
+        }
+    }
+
     fn tick_title_flames(&mut self) {
         let Some(flames) = self.title_flames.as_mut() else {
             return;

@@ -265,6 +265,15 @@ pub struct Client {
     pub login_mes2: String,
     pub loop_cycle: i32,
 
+    /// `lastProgressPercent`/`lastProgressMessage` from client-ts (144-145):
+    /// the most recent `draw_progress` values, readable even headless.
+    /// `http_port` is the web-origin port of the later HTTP jag fetch (TS
+    /// `getJagChecksums` downloads `/crc` from it); default 80, tests that
+    /// stub HTTP set it.
+    pub last_progress_percent: i32,
+    pub last_progress_message: String,
+    pub http_port: u16,
+
     /// Title screen state (`Client.ts` `prepareTitle`/`titleScreenDraw`):
     /// the 765×503 CPU framebuffer every frame draws into (`drawArea`), the
     /// `title` jag with the fonts and sprites, the 9 title `PixMap` regions
@@ -595,6 +604,9 @@ impl Client {
             login_mes1: String::new(),
             login_mes2: String::new(),
             loop_cycle: 0,
+            last_progress_percent: 0,
+            last_progress_message: String::new(),
+            http_port: 80,
             draw_area: PixMap::new(APPLET_W, APPLET_H),
             pix3d: Pix3DDraw::default(),
             title: None,
