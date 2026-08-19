@@ -1,9 +1,13 @@
+pub mod bzip2;
+pub use bzip2::bunzip2;
 pub mod client_prot;
 pub use client_prot::ClientProt;
 pub mod client_stream;
 pub use client_stream::ClientStream;
 pub mod isaac;
 pub use isaac::Isaac;
+pub mod jagfile;
+pub use jagfile::JagFile;
 pub mod packet;
 pub use packet::Packet;
 pub mod server_prot;
