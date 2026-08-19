@@ -6,7 +6,7 @@ edition = "2021"
 [features]
 default = []
 audio = ["client/audio"]
-window = []
+window = ["client/window"]
 
 [dependencies]
 client = { path = "../client" }

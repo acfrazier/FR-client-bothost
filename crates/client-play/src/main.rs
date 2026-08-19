@@ -1,5 +1,8 @@
 //! `client-play`: log into a local 274 engine over TCP and run the client
-//! machine on the calling thread (`Client::new` + `login` + `run`).
+//! machine on the calling thread (`Client::new` + `run`). `--user/--pass`
+//! skip title login; without them the title screen is the control plane.
+//! `--window` presents the 789×532 applet (feature `window`); `--audio`
+//! opens the cpal speaker (feature `audio`).
 //!
 //! The RSA public half is baked at compile time (`LOGIN_RSAN`/`LOGIN_RSAE`).
 //! `tools/redeploy.sh` extracts the engine's `private.pem` and rebuilds this
@@ -11,6 +14,12 @@ use std::env;
 use std::process::ExitCode;
 
 use client::client::{Client, ClientConfig};
+
+#[cfg(feature = "window")]
+use client::client::present::Present;
+
+#[cfg(feature = "audio")]
+use client::sound::output::AudioOut;
 
 const DEFAULT_PORT: u16 = 43594;
 
@@ -32,8 +41,8 @@ fn default_cache_dir() -> String {
 }
 
 /// clap-free argv parse: `--key value` pairs plus the `--window`/`--audio`
-/// flags. A missing value, an unknown key, or a missing user/pass prints the
-/// usage and exits.
+/// flags. A missing value or an unknown key prints the usage and exits.
+/// Credentials are optional: the title screen is the control plane.
 fn parse_args() -> Args {
     let mut args = Args {
         host: "127.0.0.1".into(),
@@ -58,15 +67,12 @@ fn parse_args() -> Args {
             _ => usage(),
         }
     }
-    if args.user.is_empty() || args.pass.is_empty() {
-        usage();
-    }
     args
 }
 
 fn usage() -> ! {
     eprintln!(
-        "usage: client-play --user USER --pass PASS \
+        "usage: client-play [--user USER --pass PASS] \
          [--host HOST] [--port PORT] [--cache DIR] [--window] [--audio]"
     );
     std::process::exit(2);
@@ -81,16 +87,14 @@ fn value(it: &mut std::iter::Skip<env::Args>) -> String {
 fn main() -> ExitCode {
     let args = parse_args();
 
-    // Feature backends: `window` has no present backend in this spec and
-    // `audio` needs the `audio` feature (rustysynth). Without them — or on
-    // device failure — log and continue headless, per the spec.
+    // `--window` without the `window` feature compiled in cannot provide a
+    // control plane: refuse to run blind.
+    #[cfg(not(feature = "window"))]
     if args.window {
-        eprintln!("window: no present backend in this spec; continuing headless");
+        eprintln!("window: feature not compiled in (build with --features window) - no control plane");
+        return ExitCode::FAILURE;
     }
-    #[cfg(feature = "audio")]
-    if args.audio {
-        eprintln!("audio: rustysynth backend active (missing SF2 stays silent)");
-    }
+
     #[cfg(not(feature = "audio"))]
     if args.audio {
         eprintln!(
@@ -106,34 +110,60 @@ fn main() -> ExitCode {
         lowmem: false,
     };
     let mut client = Client::new(config);
-    client.login_user = args.user.clone();
-    client.login_pass = args.pass.clone();
 
-    match client.login(&args.user, &args.pass, false) {
-        Ok(()) => {
-            println!("ingame");
-            // Live proof: print the local-player tile every 50 loop_cycle
-            // once player info arrives (after REBUILD_NORMAL).
-            client.run(|c| {
-                if c.loop_cycle % 50 == 0 {
-                    if let Some(p) = &c.local_player {
-                        println!(
-                            "tile: {} {} (cycle {})",
-                            c.map_build_base_x + p.route_x[0],
-                            c.map_build_base_z + p.route_z[0],
-                            c.loop_cycle
-                        );
-                    }
-                }
-            });
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            eprintln!("login {} {} {}", e.code, e.mes1, e.mes2);
-            if e.code == 6 {
-                eprintln!("wrong RSA key for this engine - run tools/redeploy.sh and rebuild");
+    // The 789×532 applet. Open failure is fatal (`--window` asked for a
+    // control plane); audio failure is not.
+    #[cfg(feature = "window")]
+    if args.window {
+        match Present::open(789, 532, "RuneScape") {
+            Ok(present) => client.present = Some(present),
+            Err(e) => {
+                eprintln!("window: {e}");
+                return ExitCode::FAILURE;
             }
-            ExitCode::FAILURE
         }
     }
+
+    // On `--window` (or `--audio`) open the speaker: rustysynth render
+    // scaled by the shared fade, mixed with the JagFX wave queue. A device
+    // failure logs and keeps the picture.
+    #[cfg(feature = "audio")]
+    if args.window || args.audio {
+        match AudioOut::try_open(client.midi.clone(), client.waves.clone(), client.fade.clone())
+        {
+            Ok(_out) => println!("audio: speaker open"),
+            Err(e) => eprintln!("audio: {e}; continuing without sound"),
+        }
+    }
+
+    // `--user/--pass` skip title login; without them, run straight to the
+    // title screen — it is the control plane (no usage exit).
+    if !(args.user.is_empty() || args.pass.is_empty()) {
+        match client.login(&args.user, &args.pass, false) {
+            Ok(()) => println!("ingame"),
+            Err(e) => {
+                eprintln!("login {} {} {}", e.code, e.mes1, e.mes2);
+                if e.code == 6 {
+                    eprintln!("wrong RSA key for this engine - run tools/redeploy.sh and rebuild");
+                }
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    // Live proof: print the local-player tile every 50 loop_cycle once
+    // player info arrives (after REBUILD_NORMAL).
+    client.run(|c| {
+        if c.loop_cycle % 50 == 0 {
+            if let Some(p) = &c.local_player {
+                println!(
+                    "tile: {} {} (cycle {})",
+                    c.map_build_base_x + p.route_x[0],
+                    c.map_build_base_z + p.route_z[0],
+                    c.loop_cycle
+                );
+            }
+        }
+    });
+    ExitCode::SUCCESS
 }

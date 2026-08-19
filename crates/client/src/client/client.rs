@@ -109,6 +109,12 @@ fn midi_backend(cache_dir: &str) -> Arc<Mutex<dyn Midi>> {
 
 pub struct Client {
     pub shell: GameShell,
+    /// The `--window` applet (`Present`), opened by the driver. `run` polls
+    /// it for events each frame and blits `draw_area` after the redraw; a
+    /// closed window sets `shell.state = -1` to stop the machine. Headless
+    /// builds keep this `None`.
+    #[cfg(feature = "window")]
+    pub present: Option<crate::client::present::Present>,
     pub config: ClientConfig,
     /// Config type tables (`obj`, `npc`, `loc`, ...), unpacked from the
     /// `config` jag by `Cache::unpack`; empty until loaded.
@@ -339,6 +345,8 @@ impl Client {
             ];
         let mut client = Client {
             shell: GameShell::new(),
+            #[cfg(feature = "window")]
+            present: None,
             config,
             cache,
 
@@ -2842,8 +2850,9 @@ impl Client {
 
     /// `mainloop` from Java (`Client.java` 1823): one 20 ms pass. An
     /// `errorLoading` flag (missing required jag / failed map) returns
-    /// immediately like TS. In-game runs `gameLoop`; always drain OnDemand
-    /// completions via `onDemandLoop` (not the bare worker heartbeat).
+    /// immediately like TS. In-game runs `gameLoop`; on the title screen
+    /// `titleScreenLoop`; always drain OnDemand completions via
+    /// `onDemandLoop` (not the bare worker heartbeat).
     pub fn mainloop(&mut self) {
         if self.error_loading {
             return;
@@ -2851,8 +2860,158 @@ impl Client {
         self.loop_cycle = self.loop_cycle.wrapping_add(1);
         if self.ingame {
             self.game_loop();
+        } else {
+            self.title_screen_loop();
         }
         self.on_demand_loop();
+    }
+
+    /// `titleScreenLoop` from client-ts (1378): the title-screen input pass,
+    /// 1:1 port of the click regions, field selection, and the CHARSET
+    /// filtered key entry. Clicks arrive latched on `shell.mouse_click_*`
+    /// (GameShell.run 186-190); keys via `shell.poll_key`. A Login click
+    /// runs the full handshake (blocking) and returns once `ingame`; on
+    /// failure `login_mes1/2` carry the error to the title draw, as TS.
+    /// Coordinates use the 789×532 applet (`sWid`/`sHei`).
+    pub fn title_screen_loop(&mut self) {
+        if self.loginscreen == 0 {
+            let mut x = (789 / 2) - 80;
+            let mut y = (532 / 2) + 20;
+
+            y += 20;
+            if title_button_clicked(
+                self.shell.mouse_click_button,
+                self.shell.mouse_click_x,
+                self.shell.mouse_click_y,
+                x,
+                y,
+            ) {
+                self.loginscreen = 3;
+                self.login_select = 0;
+            }
+
+            x = (789 / 2) + 80;
+            if title_button_clicked(
+                self.shell.mouse_click_button,
+                self.shell.mouse_click_x,
+                self.shell.mouse_click_y,
+                x,
+                y,
+            ) {
+                self.login_mes1.clear();
+                self.login_mes2 = "Enter your username & password.".into();
+                self.loginscreen = 2;
+                self.login_select = 0;
+            }
+        } else if self.loginscreen == 2 {
+            let mut y = (532 / 2) - 40;
+            y += 30;
+
+            y += 25;
+            if self.shell.mouse_click_button == 1
+                && self.shell.mouse_click_y >= y - 15
+                && self.shell.mouse_click_y < y
+            {
+                self.login_select = 0;
+            }
+
+            y += 15;
+            if self.shell.mouse_click_button == 1
+                && self.shell.mouse_click_y >= y - 15
+                && self.shell.mouse_click_y < y
+            {
+                self.login_select = 1;
+            }
+            // y += 15; dead code
+
+            let mut x = (789 / 2) - 80;
+            y = (532 / 2) + 50;
+            y += 20;
+
+            if title_button_clicked(
+                self.shell.mouse_click_button,
+                self.shell.mouse_click_x,
+                self.shell.mouse_click_y,
+                x,
+                y,
+            ) {
+                let user = self.login_user.clone();
+                let pass = self.login_pass.clone();
+                let _ = self.login(&user, &pass, false);
+                if self.ingame {
+                    return;
+                }
+            }
+
+            x = (789 / 2) + 80;
+            if title_button_clicked(
+                self.shell.mouse_click_button,
+                self.shell.mouse_click_x,
+                self.shell.mouse_click_y,
+                x,
+                y,
+            ) {
+                self.loginscreen = 0;
+                self.login_user.clear();
+                self.login_pass.clear();
+            }
+
+            loop {
+                let key = self.shell.poll_key();
+                if key == -1 {
+                    break;
+                }
+                let valid = char::from_u32(key as u32).is_some_and(|c| TITLE_CHARSET.contains(c));
+
+                if self.login_select == 0 {
+                    if key == 8 && !self.login_user.is_empty() {
+                        self.login_user.pop();
+                    }
+
+                    if key == 9 || key == 10 || key == 13 {
+                        self.login_select = 1;
+                    }
+
+                    if valid {
+                        self.login_user.push(char::from_u32(key as u32).unwrap());
+                    }
+
+                    if self.login_user.len() > 12 {
+                        self.login_user.truncate(12);
+                    }
+                } else if self.login_select == 1 {
+                    if key == 8 && !self.login_pass.is_empty() {
+                        self.login_pass.pop();
+                    }
+
+                    if key == 9 || key == 10 || key == 13 {
+                        self.login_select = 0;
+                    }
+
+                    if valid {
+                        self.login_pass.push(char::from_u32(key as u32).unwrap());
+                    }
+
+                    if self.login_pass.len() > 20 {
+                        self.login_pass.truncate(20);
+                    }
+                }
+            }
+        } else if self.loginscreen == 3 {
+            let x = 789 / 2;
+            let mut y = (532 / 2) + 50;
+
+            y += 20;
+            if title_button_clicked(
+                self.shell.mouse_click_button,
+                self.shell.mouse_click_x,
+                self.shell.mouse_click_y,
+                x,
+                y,
+            ) {
+                self.loginscreen = 0;
+            }
+        }
     }
 
     /// `gameLoop` from Java (`Client.java` 9341): count down a pending
@@ -2916,6 +3075,12 @@ impl Client {
     /// ratio/count catch-up. `on_loop` runs after each `mainloop` pass so a
     /// driver (client-play) can read Java-public state — e.g. print the
     /// local-player tile for live proof — without a snapshot API.
+    ///
+    /// With `window` the `Present` drives the frame: events are pumped into
+    /// the shell before the mainloop pass (via `latch_click`, GameShell.ts
+    /// 186-190), and `draw_area` blits after the redraw. Closing the window
+    /// (`poll` false) sets `shell.state = -1`, which stops the machine on
+    /// the next iteration like Java `GameShell.run`.
     pub fn run<F: FnMut(&mut Self)>(&mut self, mut on_loop: F) {
         while self.shell.state >= 0 {
             if self.shell.state > 0 {
@@ -2926,13 +3091,22 @@ impl Client {
                 }
             }
 
+            #[cfg(feature = "window")]
+            if let Some(present) = self.present.as_mut() {
+                if !present.poll(&mut self.shell) {
+                    self.shell.state = -1;
+                }
+            }
+
             let delta = self.shell.begin_frame();
             if delta > 0 {
                 thread::sleep(Duration::from_millis(delta as u64));
             }
 
             while self.shell.count < 256 {
+                self.shell.latch_click();
                 self.mainloop();
+                self.shell.key_queue_read = self.shell.key_queue_write;
                 on_loop(self);
                 self.shell.count += self.shell.ratio;
             }
@@ -2940,6 +3114,15 @@ impl Client {
             self.shell.end_frame();
 
             self.mainredraw();
+
+            #[cfg(feature = "window")]
+            if let Some(present) = self.present.as_mut() {
+                present.blit(
+                    &self.draw_area.pixels,
+                    self.draw_area.width as u32,
+                    self.draw_area.height as u32,
+                );
+            }
         }
 
         if self.shell.state == -1 {
@@ -3179,6 +3362,20 @@ fn io_error() -> LoginError {
         mes1: String::new(),
         mes2: "Error connecting to server.".into(),
     }
+}
+
+/// `Client.CHARSET` from client-ts (118): the characters the title fields
+/// accept. UTF-8 source is fine — the literal is the TS string verbatim.
+const TITLE_CHARSET: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!\"£$%^&*()-_=+[{]};:'@#~,<.>/?\\| ";
+
+/// The TS title button hit test: a left click within ±75×±20 of the
+/// button's centre (the `titlebutton` sprite is 150×40).
+fn title_button_clicked(button: i32, x: i32, y: i32, centre_x: i32, centre_y: i32) -> bool {
+    button == 1
+        && x >= centre_x - 75
+        && x <= centre_x + 75
+        && y >= centre_y - 20
+        && y <= centre_y + 20
 }
 
 /// `Client.levelExperience` from client-ts: cumulative XP thresholds for

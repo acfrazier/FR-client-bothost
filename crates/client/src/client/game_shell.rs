@@ -28,9 +28,12 @@ pub struct GameShell {
     next_mouse_click_x: i32,
     next_mouse_click_y: i32,
     /// Text/key ring, Java `GameShell.keyQueue` (`number[]`); the write index
-    /// wraps with mask `0x7f`.
+    /// wraps with mask `0x7f`. `key_queue_read` is the TS
+    /// `keyQueueReadPos`, caught up to the write pos after each mainloop
+    /// pass (GameShell.ts 194) so `pollKey` sees only keys queued since.
     pub key_queue: [i32; 128],
     pub key_queue_write: usize,
+    pub key_queue_read: usize,
     otim: [u64; 10],
     opos: usize,
     /// `pub(crate)` so `Client::run` can drive the catch-up loop itself.
@@ -58,6 +61,7 @@ impl GameShell {
             next_mouse_click_y: -1,
             key_queue: [0; 128],
             key_queue_write: 0,
+            key_queue_read: 0,
             otim: [Self::now_millis(); 10],
             opos: 0,
             ratio: 256,
@@ -119,6 +123,18 @@ impl GameShell {
             self.key_queue[self.key_queue_write] = ch;
             self.key_queue_write = (self.key_queue_write + 1) & 0x7f;
         }
+    }
+
+    /// TS `GameShell.pollKey` (535): pop the next queued key, or -1 when the
+    /// ring is drained. `run` catches the read pos up to the write pos after
+    /// each mainloop pass, so a pass consumes only the keys queued since.
+    pub fn poll_key(&mut self) -> i32 {
+        if self.key_queue_write == self.key_queue_read {
+            return -1;
+        }
+        let key = self.key_queue[self.key_queue_read];
+        self.key_queue_read = (self.key_queue_read + 1) & 0x7f;
+        key
     }
 
     /// Overridable mainloop hook; `Client` supplies the real body via `run`.
