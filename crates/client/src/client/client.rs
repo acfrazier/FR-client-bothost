@@ -6,6 +6,7 @@
 //! 16 cold / 18 reconnect) over Java-style TCP `ClientStream`.
 //! There is no snapshot/query API.
 
+use std::collections::HashMap;
 use std::io;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
@@ -30,7 +31,7 @@ use crate::dash3d::{
     AnimFrame, BuildArea, CollisionFlag, CollisionMap, DirectionFlag, LocShape, Model, World,
 };
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
-use crate::graphics::{Pix8, PixFont, PixMap};
+use crate::graphics::{Pix32, Pix8, PixFont, PixMap};
 use crate::io::{
     ClientProt, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt, SERVER_PROT_SIZES,
 };
@@ -334,6 +335,12 @@ pub struct Client {
     pub redraw_icons: bool,
     pub redraw_chat: bool,
     pub redraw_chat_mode: bool,
+    /// Depacked `TYPE_GRAPHIC` sprites (`IfType.graphic`/`graphic2` from
+    /// client-ts), keyed by the `"name,index"` of `graphic_name`/
+    /// `graphic2_name`. Filled lazily from `{cache_dir}/media` by
+    /// `draw_interface`; a failed depack caches as `None` so a missing
+    /// sprite does not re-read the jag every draw.
+    pub graphic_sprites: HashMap<(String, i32), Option<Pix32>>,
     pub chat_public_mode: i32,
     pub chat_private_mode: i32,
     pub chat_trade_mode: i32,
@@ -560,6 +567,7 @@ impl Client {
             redraw_icons: false,
             redraw_chat: false,
             redraw_chat_mode: false,
+            graphic_sprites: HashMap::new(),
             chat_public_mode: 0,
             chat_private_mode: 0,
             chat_trade_mode: 0,

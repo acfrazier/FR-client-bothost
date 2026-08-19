@@ -7,9 +7,10 @@
 //!
 //! The in-game `gameDrawMain` 3D pass (`World::render_all` not implemented)
 //! leaves `area_game` a black hole at (4, 4). `drawInterface` draws the
-//! side-tab interfaces (`TYPE_LAYER`/`TYPE_RECT`/`TYPE_TEXT`); the minimap is
-//! not ported.
+//! side-tab interfaces (`TYPE_LAYER`/`TYPE_RECT`/`TYPE_TEXT`/`TYPE_GRAPHIC`);
+//! the minimap is not ported.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use crate::client::client::Client;
@@ -615,12 +616,12 @@ impl Client {
     }
 
     /// `drawInterface` from client-ts (9900) for the 2D component types:
-    /// recurse `TYPE_LAYER` children, draw `TYPE_RECT` fill/outline and
-    /// `TYPE_TEXT` with the font at `com.font` index 0-3 (p11/p12/b12/q8).
-    /// `TYPE_INV` item sprites, `TYPE_GRAPHIC`, and `TYPE_MODEL` (3D) are
-    /// skipped; the `clientComponent` scripts and `drawScrollbar` sprites
-    /// load with Task 14, and the `%1`-`%5` `getIfVar` substitution is
-    /// skipped with the script VM.
+    /// recurse `TYPE_LAYER` children, draw `TYPE_RECT` fill/outline,
+    /// `TYPE_TEXT` with the font at `com.font` index 0-3 (p11/p12/b12/q8),
+    /// and `TYPE_GRAPHIC` from its `media` sprite. `TYPE_INV` item sprites
+    /// and `TYPE_MODEL` (3D) are skipped; the `clientComponent` scripts and
+    /// `drawScrollbar` sprites load with Task 14, and the `%1`-`%5`
+    /// `getIfVar` substitution is skipped with the script VM.
     pub fn draw_interface(&mut self, com_id: i32, x: i32, y: i32, scroll_y: i32, surface: &mut Pix2D) {
         let Some(com) = self.cache.ifaces.get(com_id as usize).and_then(|o| o.as_ref()) else {
             return;
@@ -751,14 +752,57 @@ impl Client {
                         text = rest;
                     }
                 }
+                ComponentType::TYPE_GRAPHIC => {
+                    // TS 10187-10190: `getIfActive` picks graphic2, else
+                    // graphic.
+                    let graphic_name =
+                        if self.get_if_active(child) && !child.graphic2_name.is_empty() {
+                            &child.graphic2_name
+                        } else {
+                            &child.graphic_name
+                        };
+                    // "name,index" as unpacked from IfType.ts 251-262.
+                    if let Some((name, index)) = graphic_name.rsplit_once(',') {
+                        if let Ok(index) = index.trim().parse::<i32>() {
+                            if let Some(sprite) = Self::graphic_sprite(
+                                &mut self.graphic_sprites,
+                                &self.config.cache_dir,
+                                name,
+                                index,
+                            ) {
+                                sprite.plot_sprite(surface, child_x, child_y);
+                            }
+                        }
+                    }
+                }
                 _ => {
-                    // TYPE_INV item sprites, TYPE_GRAPHIC, TYPE_MODEL (3D),
-                    // and TYPE_INV_TEXT are skipped this task.
+                    // TYPE_INV item sprites, TYPE_MODEL (3D), and
+                    // TYPE_INV_TEXT are skipped this task.
                 }
             }
         }
 
         surface.set_clipping(left, top, right, bottom);
+    }
+
+    /// `IfType.getSprite` from client-ts (IfType.ts 232): depack a `Pix32`
+    /// from the `media` jag on demand, cached per `(name, index)` so the
+    /// jag is only read on a miss. A failed depack caches as `None`, so a
+    /// sprite missing from the pack does not re-read the jag every draw.
+    fn graphic_sprite<'a>(
+        cache: &'a mut HashMap<(String, i32), Option<Pix32>>,
+        cache_dir: &str,
+        name: &str,
+        index: i32,
+    ) -> Option<&'a Pix32> {
+        let key = (name.to_string(), index);
+        if !cache.contains_key(&key) {
+            let sprite = std::fs::read(format!("{cache_dir}/media"))
+                .ok()
+                .and_then(|bytes| Pix32::depack(&JagFile::new(bytes), name, index).ok());
+            cache.insert(key.clone(), sprite);
+        }
+        cache.get(&key).and_then(|s| s.as_ref())
     }
 
     /// `getIfActive` from client-ts (10361): comparator scripts pick the

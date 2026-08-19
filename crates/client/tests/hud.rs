@@ -158,6 +158,79 @@ fn draw_interface_text_writes_pixels() {
 }
 
 #[test]
+fn iftype_keeps_graphic_name() {
+    // the logout tab's red button is a TYPE_GRAPHIC sibling of its text
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("interface").is_file() {
+        return;
+    }
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache,
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    c.game_draw();
+    assert!(
+        c.cache
+            .ifaces
+            .iter()
+            .flatten()
+            .any(|i| i.r#type == ComponentType::TYPE_GRAPHIC && !i.graphic_name.is_empty()),
+        "the interface jag should hold a TYPE_GRAPHIC with a graphic_name"
+    );
+}
+
+#[test]
+fn draw_graphic_writes_pixels() {
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("media").is_file() {
+        return;
+    }
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache,
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    c.game_draw();
+
+    // hand-built tree: a TYPE_LAYER root with a TYPE_GRAPHIC child using a
+    // real media sprite ("miscgraphics,0" is present in the pack)
+    let layer = IfType {
+        id: 1,
+        r#type: ComponentType::TYPE_LAYER,
+        width: 190,
+        height: 261,
+        children: Some(vec![2]),
+        child_x: Some(vec![0]),
+        child_y: Some(vec![0]),
+        ..IfType::default()
+    };
+    let graphic = IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_GRAPHIC,
+        graphic_name: "miscgraphics,0".into(),
+        ..IfType::default()
+    };
+    c.cache.ifaces.resize(3, None);
+    c.cache.ifaces[1] = Some(layer);
+    c.cache.ifaces[2] = Some(graphic);
+
+    let mut map = PixMap::new(190, 261);
+    let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+    c.draw_interface(1, 0, 0, 0, &mut surface);
+    assert!(
+        map.pixels.iter().any(|&p| p != 0),
+        "the TYPE_GRAPHIC sprite should plot into the surface"
+    );
+}
+
+#[test]
 fn draw_side_text_component_writes_pixels() {
     let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
     if !std::path::Path::new(&cache).join("interface").is_file() {

@@ -1,8 +1,9 @@
 // Port of `~/experiments/Server/webclient/src/config/IfType.ts` (decode only).
 // The interface `data` member lives in the `interface` jag, not `config`, so
-// `unpack` of a config jag returns empty. Sprite loads (`invBackground`,
-// `graphic`/`graphic2`) need the `media` jag and `Pix32` and land with
-// Task 14; `font` keeps the font-array index for the same task.
+// `unpack` of a config jag returns empty. Sprite loads (`graphic`/`graphic2`
+// names are kept and depacked from the `media` jag by `draw_interface`;
+// `invBackground` still lands with Task 14); `font` keeps the font-array
+// index for the same task.
 use crate::io::{JagFile, Packet};
 
 /// `ComponentType` const enum from client-ts.
@@ -85,6 +86,8 @@ pub struct IfType {
     pub model_zoom: i32,
     pub model_xan: i32,
     pub model_yan: i32,
+    pub graphic_name: String,
+    pub graphic2_name: String,
     pub target_verb: String,
     pub target_base: String,
     pub target_mask: i32,
@@ -146,6 +149,8 @@ impl Default for IfType {
             model_zoom: 0,
             model_xan: 0,
             model_yan: 0,
+            graphic_name: String::new(),
+            graphic2_name: String::new(),
             target_verb: String::new(),
             target_base: String::new(),
             target_mask: -1,
@@ -294,9 +299,10 @@ impl IfType {
             }
 
             if com.r#type == ComponentType::TYPE_GRAPHIC {
-                // sprite names are loaded via `media` + Pix32 (Task 14)
-                let _ = dat.gjstr();
-                let _ = dat.gjstr();
+                // "name,index" as IfType.ts 251-262; the sprites themselves
+                // depack from the `media` jag on demand (draw_interface).
+                com.graphic_name = dat.gjstr();
+                com.graphic2_name = dat.gjstr();
             }
 
             if com.r#type == ComponentType::TYPE_MODEL {
