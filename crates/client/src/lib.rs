@@ -1,6 +1,7 @@
 pub mod client;
 pub mod config;
 pub mod datastruct;
+pub mod graphics;
 pub mod io;
 pub mod login_rsa;
 pub mod util;
