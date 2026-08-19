@@ -1,5 +1,7 @@
 pub mod client_prot;
 pub use client_prot::ClientProt;
+pub mod client_stream;
+pub use client_stream::ClientStream;
 pub mod isaac;
 pub use isaac::Isaac;
 pub mod packet;
