@@ -379,6 +379,46 @@ pub struct Client {
     /// `draw_interface`; a failed depack caches as `None` so a missing
     /// sprite does not re-read the jag every draw.
     pub graphic_sprites: HashMap<(String, i32), Option<Pix32>>,
+    /// Minimap state (`Client.ts` `minimapDraw` 11279): the composed map
+    /// buffer, the compass/mapedge/mapdot/mapmarker sprites, `mapback` (the
+    /// ring mask plotted into `area_map`), and the per-row scanline masks
+    /// built from `mapback.data` (TS 1180-1216). `minimap` is allocated as
+    /// TS maininit (868) does; `minimapBuildBuffer` (5280) is not ported
+    /// while `mapl`/`render2DGround` are not, so the buffer stays black and
+    /// the map functions stay empty. `minimap_state`/`minimap_level`/
+    /// `macro_minimap_*` default as TS (506, 243-247); `minimap_loop` (2742)
+    /// is Task 7.
+    pub minimap: Option<Pix32>,
+    pub compass: Option<Pix32>,
+    pub mapedge: Option<Pix32>,
+    pub mapmarker1: Option<Pix32>,
+    pub mapmarker2: Option<Pix32>,
+    pub mapdots1: Option<Pix32>,
+    pub mapdots2: Option<Pix32>,
+    pub mapdots3: Option<Pix32>,
+    pub mapdots4: Option<Pix32>,
+    pub mapback: Option<Pix8>,
+    pub compass_mask_line_offsets: Vec<i32>,
+    pub compass_mask_line_lengths: Vec<i32>,
+    pub minimap_mask_line_offsets: Vec<i32>,
+    pub minimap_mask_line_lengths: Vec<i32>,
+    pub minimap_state: i32,
+    pub minimap_level: i32,
+    pub macro_minimap_angle: i32,
+    pub macro_minimap_zoom: i32,
+    /// `activeMapFunctions`/`minimapFlag` from client-ts (508-513): filled
+    /// by `minimapBuildBuffer`/`minimapLoop`; defaults keep the draw loops
+    /// empty. The hint fields (TS 161-165) gate the `minimapDrawArrow`
+    /// branch (`hintType` 0 → skipped).
+    pub active_map_function_count: i32,
+    pub active_map_function_x: Vec<i32>,
+    pub active_map_function_z: Vec<i32>,
+    pub active_map_functions: Vec<Option<Pix32>>,
+    pub hint_type: i32,
+    pub hint_npc: i32,
+    pub hint_player: i32,
+    pub hint_tile_x: i32,
+    pub hint_tile_z: i32,
     pub chat_public_mode: i32,
     pub chat_private_mode: i32,
     pub chat_trade_mode: i32,
@@ -622,6 +662,33 @@ impl Client {
             redraw_chat: false,
             redraw_chat_mode: false,
             graphic_sprites: HashMap::new(),
+            minimap: Some(Pix32::new(512, 512)),
+            compass: None,
+            mapedge: None,
+            mapmarker1: None,
+            mapmarker2: None,
+            mapdots1: None,
+            mapdots2: None,
+            mapdots3: None,
+            mapdots4: None,
+            mapback: None,
+            compass_mask_line_offsets: Vec::new(),
+            compass_mask_line_lengths: Vec::new(),
+            minimap_mask_line_offsets: Vec::new(),
+            minimap_mask_line_lengths: Vec::new(),
+            minimap_state: 0,
+            minimap_level: -1,
+            macro_minimap_angle: 0,
+            macro_minimap_zoom: 0,
+            active_map_function_count: 0,
+            active_map_function_x: Vec::new(),
+            active_map_function_z: Vec::new(),
+            active_map_functions: Vec::new(),
+            hint_type: 0,
+            hint_npc: 0,
+            hint_player: 0,
+            hint_tile_x: 0,
+            hint_tile_z: 0,
             chat_public_mode: 0,
             chat_private_mode: 0,
             chat_trade_mode: 0,

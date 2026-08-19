@@ -4,12 +4,15 @@
 //! `drawSide`/`drawChat` helpers (3890–4170, 2001, 11098, 11125), and the
 //! `gameDrawMain` 3D pass (4172–4251): `addPlayers`/`addNpcs`, the orbit
 //! camera (`camFollow`), `World.resetVisCalc` + `render_all` into
-//! `area_game`, and the (4, 4) blit. Draws always into `Client::draw_area`
+//! `area_game`, and the (4, 4) blit. `minimapDraw` (11279) rotates the
+//! composed minimap buffer and the compass into `area_map` (blitted at
+//! (550, 4) under the chrome; the `area_backvmid1` strip is re-blitted on
+//! top as a z-order guard). Draws always into `Client::draw_area`
 //! (765×503 `PixMap`); present (feature `window`) only blits.
 //!
-//! The minimap (`minimapDraw`, Task 6) is not ported; `drawInterface` draws
-//! the side-tab interfaces (`TYPE_LAYER`/`TYPE_RECT`/`TYPE_TEXT`/
-//! `TYPE_GRAPHIC`).
+//! The minimap `mapback` ring and mask build (1180–1216) land in
+//! `prepare_game`; `drawInterface` draws the side-tab interfaces
+//! (`TYPE_LAYER`/`TYPE_RECT`/`TYPE_TEXT`/`TYPE_GRAPHIC`).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -386,8 +389,8 @@ impl Client {
 
     /// `gameDraw` from client-ts (3890): the in-game frame. `gameDrawMain`
     /// (4172, the 3D pass) renders the world into `area_game` when
-    /// `scene_state` is 2. The minimap is out of scope, so its redraw
-    /// triggers are dropped with it; the chrome strips, side, chat,
+    /// `scene_state` is 2, and `minimapDraw` (11279) fills `area_map`
+    /// before its (550, 4) blit. The chrome strips, side, chat,
     /// icon-strip backgrounds, and chat-mode panels draw 1:1.
     pub fn game_draw(&mut self) {
         self.prepare_game();
@@ -435,6 +438,13 @@ impl Client {
                 if let Some(m) = &self.area_map {
                     m.blit_into(&mut self.draw_area, 550, 4);
                 }
+                // Map under chrome: `area_backvmid1` (34×156 at (516, 4))
+                // borders the 172×156 rect. In the 274 layout the strips do
+                // not overlap it, so this re-blit is a no-op guard that
+                // keeps an opaque `area_map` from covering the chrome.
+                if let Some(b) = &self.area_backvmid1 {
+                    b.blit_into(&mut self.draw_area, 516, 4);
+                }
             }
         }
 
@@ -459,8 +469,18 @@ impl Client {
             self.redraw_chat = false;
         }
 
-        // `minimapDraw` (11279): compass/minimap helpers not ported; the map
-        // area stays black until then.
+        // `minimapDraw` (11279) into `area_map`, then the (550, 4) blit
+        // (TS 3999-4001), then the chrome re-blit guard (see the
+        // `redraw_frame` path above).
+        if self.scene_state == 2 {
+            self.minimap_draw();
+            if let Some(m) = &self.area_map {
+                m.blit_into(&mut self.draw_area, 550, 4);
+            }
+            if let Some(b) = &self.area_backvmid1 {
+                b.blit_into(&mut self.draw_area, 516, 4);
+            }
+        }
 
         // `tutFlashIcon !== -1` redrawIcons trigger: not ported.
 
@@ -818,11 +838,14 @@ impl Client {
     /// `game_draw` (TS calls it after a successful login; this crate has no
     /// game-loading flow yet). Sized as TS: `area_game` 512×334 and the
     /// constructor-sized areas as `prepareGame`, the `areaBack*` strips at
-    /// their sprites with `quickPlotSprite` (0, 0) as 1098. A missing
-    /// `media` pack skips the sprite loads — `game_draw` still draws the
-    /// panels that are present. Out of scope: `mapback` (minimap not ported).
-    /// The title sprites are kept (deviation from TS `unloadTitle`: a logout
-    /// back to the title screen still draws).
+    /// their sprites with `quickPlotSprite` (0, 0) as 1098. `area_map`
+    /// gets the `mapback` ring plotted at (0, 0) as TS 2022-2023, and the
+    /// minimap/compass scanline masks are built from `mapback.data` as TS
+    /// 1180-1216 (TS builds them in maininit; the depacks live here in this
+    /// port). A missing `media` pack skips the sprite loads — `game_draw`
+    /// still draws the panels that are present. The title sprites are kept
+    /// (deviation from TS `unloadTitle`: a logout back to the title screen
+    /// still draws).
     fn prepare_game(&mut self) {
         if self.area_chat.is_some() {
             return;
@@ -897,6 +920,35 @@ impl Client {
             self.area_backvmid2 = Self::chrome_area(&jag, "backvmid2");
             self.area_backvmid3 = Self::chrome_area(&jag, "backvmid3");
             self.area_backhmid2 = Self::chrome_area(&jag, "backhmid2");
+
+            // Minimap sprites (TS maininit 1006-1063): the `mapback` ring
+            // (the scanline mask), the composed-map/compass/edge sprites and
+            // the map dots/markers. `minimap` itself was allocated in
+            // `Client::new` as TS maininit 868.
+            self.mapback = Pix8::depack(&jag, "mapback", 0).ok();
+            self.compass = Pix32::depack(&jag, "compass", 0).ok();
+            self.mapedge = Pix32::depack(&jag, "mapedge", 0).ok();
+            if let Some(edge) = self.mapedge.as_mut() {
+                edge.trim();
+            }
+            self.mapmarker1 = Pix32::depack(&jag, "mapmarker", 0).ok();
+            self.mapmarker2 = Pix32::depack(&jag, "mapmarker", 1).ok();
+            self.mapdots1 = Pix32::depack(&jag, "mapdots", 0).ok();
+            self.mapdots2 = Pix32::depack(&jag, "mapdots", 1).ok();
+            self.mapdots3 = Pix32::depack(&jag, "mapdots", 2).ok();
+            self.mapdots4 = Pix32::depack(&jag, "mapdots", 3).ok();
+
+            // TS prepareGame 2022-2023: `area_map` starts as the `mapback`
+            // ring (a fresh `PixMap` is already zeroed, so the `cls()` is a
+            // no-op here). `minimapDraw` rotates the map inside the ring.
+            if let Some(map) = self.area_map.as_mut() {
+                let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+                if let Some(mapback) = &self.mapback {
+                    mapback.plot_sprite(&mut surface, 0, 0);
+                }
+            }
+
+            self.build_minimap_masks();
         }
 
         self.redraw_frame = true;
@@ -910,6 +962,56 @@ impl Client {
         let mut surface = Pix2D::with_pixels(&mut area.pixels, area.width, area.height);
         sprite.quick_plot_sprite(&mut surface, 0, 0);
         Some(area)
+    }
+
+    /// TS 1180-1216: the per-row scanline masks from `mapback.data` that
+    /// `scanlineRotatePlotSprite` plots through — the compass rows 0..32
+    /// over columns 0..33, and the minimap rows 5..155 over columns 25..171
+    /// (the `x > 34 || y > 34` gate keeps the compass ring out of the
+    /// minimap mask). The masks are offsets/lengths of the transparent runs,
+    /// so the plot never paints over the `mapback` ring. A row without a
+    /// transparent run keeps `left = 999` (`right - left` negative → the
+    /// plot loop is empty).
+    fn build_minimap_masks(&mut self) {
+        let Some(mapback) = &self.mapback else {
+            return;
+        };
+        self.compass_mask_line_offsets = vec![0; 33];
+        self.compass_mask_line_lengths = vec![0; 33];
+        self.minimap_mask_line_offsets = vec![0; 151];
+        self.minimap_mask_line_lengths = vec![0; 151];
+        for y in 0..33 {
+            let mut left = 999;
+            let mut right = 0;
+            for x in 0..34 {
+                if mapback.data[(x + y * mapback.wi) as usize] == 0 {
+                    if left == 999 {
+                        left = x;
+                    }
+                } else if left != 999 {
+                    right = x;
+                    break;
+                }
+            }
+            self.compass_mask_line_offsets[y as usize] = left;
+            self.compass_mask_line_lengths[y as usize] = right - left;
+        }
+        for y in 5..156 {
+            let mut left = 999;
+            let mut right = 0;
+            for x in 25..172 {
+                if mapback.data[(x + y * mapback.wi) as usize] == 0 && (x > 34 || y > 34) {
+                    if left == 999 {
+                        left = x;
+                    }
+                } else if left != 999 {
+                    right = x;
+                    break;
+                }
+            }
+            self.minimap_mask_line_offsets[(y - 5) as usize] = left - 25;
+            self.minimap_mask_line_lengths[(y - 5) as usize] = right - left;
+        }
     }
 
     /// `drawSide` from client-ts (11098): plot `invback` into `area_side`,
@@ -1681,5 +1783,302 @@ impl Client {
         if let Some(area) = &self.area_backbase2 {
             area.blit_into(&mut self.draw_area, 496, 466);
         }
+    }
+
+    /// `minimapDraw` from client-ts (11279): rotate-plot the composed
+    /// minimap buffer (146×151 window) and the compass (33×33) into
+    /// `area_map` through the `mapback` scanline masks, then the map
+    /// functions, ground-object/npc/player dots, hint arrows, the flag
+    /// marker, and the white local-player square. `minimap_state == 2`
+    /// blackens the masked-out region and draws only the compass (TS
+    /// 11286-11299). Deviations: the friend split always draws `mapdots3`
+    /// (no friend list is ported), and the `areaGame.setPixels()` target
+    /// switches are no-ops (the `Pix2D` surface is bound here).
+    fn minimap_draw(&mut self) {
+        let Some(player) = self.local_player.as_ref() else {
+            return;
+        };
+        let player_x = player.x;
+        let player_z = player.z;
+        let Some(map) = self.area_map.as_mut() else {
+            return;
+        };
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+
+        if self.minimap_state == 2 {
+            if let Some(mapback) = &self.mapback {
+                let mask = &mapback.data;
+                let pixels = &mut surface.pixels;
+                for i in 0..mask.len() {
+                    if mask[i] == 0 {
+                        pixels[i] = 0;
+                    }
+                }
+            }
+            if let Some(compass) = &self.compass {
+                compass.scanline_rotate_plot_sprite(
+                    &mut surface,
+                    0,
+                    0,
+                    33,
+                    33,
+                    25,
+                    25,
+                    self.orbit_camera_yaw as f64,
+                    256,
+                    &self.compass_mask_line_offsets,
+                    &self.compass_mask_line_lengths,
+                );
+            }
+            return;
+        }
+
+        let angle = (self.orbit_camera_yaw + self.macro_minimap_angle) & 0x7ff;
+        let anchor_x = (player_x / 32) + 48;
+        let anchor_y = 464 - (player_z / 32);
+
+        if let Some(minimap) = &self.minimap {
+            minimap.scanline_rotate_plot_sprite(
+                &mut surface,
+                25,
+                5,
+                146,
+                151,
+                anchor_x,
+                anchor_y,
+                angle as f64,
+                self.macro_minimap_zoom + 256,
+                &self.minimap_mask_line_offsets,
+                &self.minimap_mask_line_lengths,
+            );
+        }
+        if let Some(compass) = &self.compass {
+            compass.scanline_rotate_plot_sprite(
+                &mut surface,
+                0,
+                0,
+                33,
+                33,
+                25,
+                25,
+                self.orbit_camera_yaw as f64,
+                256,
+                &self.compass_mask_line_offsets,
+                &self.compass_mask_line_lengths,
+            );
+        }
+
+        let dot_angle = angle;
+        let dot_zoom = self.macro_minimap_zoom + 256;
+        let mapback = self.mapback.as_ref();
+        let mapdots1 = self.mapdots1.as_ref();
+        let mapdots2 = self.mapdots2.as_ref();
+        let mapdots3 = self.mapdots3.as_ref();
+
+        // TS 11310-11316: map functions (empty while `minimapBuildBuffer`
+        // is not ported, so the loop is a no-op with the defaults).
+        for i in 0..self.active_map_function_count as usize {
+            let dot_x = self.active_map_function_x[i] * 4 + 2 - (player_x / 32);
+            let dot_y = self.active_map_function_z[i] * 4 + 2 - (player_z / 32);
+            minimap_draw_dot(
+                &mut surface,
+                dot_y,
+                self.active_map_functions[i].as_ref(),
+                dot_x,
+                mapback,
+                dot_angle,
+                dot_zoom,
+            );
+        }
+
+        // TS 11317-11325: ground objects, one dot per occupied tile.
+        for ltx in 0..BuildArea::SIZE {
+            for ltz in 0..BuildArea::SIZE {
+                if self.world.ground_object_at(self.minusedlevel, ltx, ltz).is_some() {
+                    let dot_x = ltx * 4 + 2 - (player_x / 32);
+                    let dot_y = ltz * 4 + 2 - (player_z / 32);
+                    minimap_draw_dot(&mut surface, dot_y, mapdots1, dot_x, mapback, dot_angle, dot_zoom);
+                }
+            }
+        }
+
+        // TS 11327-11335: NPCs with a minimap flag.
+        for i in 0..self.npc_count as usize {
+            let npc_id = self.npc_ids[i];
+            let Some(npc) = self.npc.get(npc_id as usize).and_then(|n| n.as_ref()) else {
+                continue;
+            };
+            let Some(npc_type_id) = npc.r#type else {
+                continue;
+            };
+            if npc.is_ready() && self.cache.npc(npc_type_id).minimap {
+                let dot_x = (npc.x / 32) - (player_x / 32);
+                let dot_y = (npc.z / 32) - (player_z / 32);
+                minimap_draw_dot(&mut surface, dot_y, mapdots2, dot_x, mapback, dot_angle, dot_zoom);
+            }
+        }
+
+        // TS 11337-11357: players (friends split onto dots4; no friend list
+        // is ported, so everyone draws dots3).
+        for i in 0..self.player_count as usize {
+            let player_id = self.player_ids[i];
+            let Some(p) = self.players.get(player_id as usize).and_then(|p| p.as_ref()) else {
+                continue;
+            };
+            if p.is_ready() && p.name.is_some() {
+                let dot_x = (p.x / 32) - (player_x / 32);
+                let dot_y = (p.z / 32) - (player_z / 32);
+                minimap_draw_dot(&mut surface, dot_y, mapdots3, dot_x, mapback, dot_angle, dot_zoom);
+            }
+        }
+
+        // TS 11359-11382: the hint arrow (the branch is dead while
+        // `hint_type` stays 0).
+        if self.hint_type != 0 && self.loop_cycle % 20 < 10 {
+            if self.hint_type == 1
+                && self.hint_npc >= 0
+                && (self.hint_npc as usize) < self.npc.len()
+            {
+                if let Some(npc) = self.npc[self.hint_npc as usize].as_ref() {
+                    let arrow_x = (npc.x / 32) - (player_x / 32);
+                    let arrow_y = (npc.z / 32) - (player_z / 32);
+                    minimap_draw_arrow(
+                        &mut surface,
+                        arrow_x,
+                        arrow_y,
+                        self.mapmarker2.as_ref(),
+                        mapback,
+                        self.mapedge.as_ref(),
+                        dot_angle,
+                        dot_zoom,
+                    );
+                }
+            } else if self.hint_type == 2 {
+                let arrow_x = (self.hint_tile_x - self.map_build_base_x) * 4 + 2 - (player_x / 32);
+                let arrow_y = (self.hint_tile_z - self.map_build_base_z) * 4 + 2 - (player_z / 32);
+                minimap_draw_arrow(
+                    &mut surface,
+                    arrow_x,
+                    arrow_y,
+                    self.mapmarker2.as_ref(),
+                    mapback,
+                    self.mapedge.as_ref(),
+                    dot_angle,
+                    dot_zoom,
+                );
+            } else if self.hint_type == 10
+                && self.hint_player >= 0
+                && (self.hint_player as usize) < self.players.len()
+            {
+                if let Some(player) = self.players[self.hint_player as usize].as_ref() {
+                    let arrow_x = (player.x / 32) - (player_x / 32);
+                    let arrow_y = (player.z / 32) - (player_z / 32);
+                    minimap_draw_arrow(
+                        &mut surface,
+                        arrow_x,
+                        arrow_y,
+                        self.mapmarker2.as_ref(),
+                        mapback,
+                        self.mapedge.as_ref(),
+                        dot_angle,
+                        dot_zoom,
+                    );
+                }
+            }
+        }
+
+        // TS 11383-11388: the walk-flag marker.
+        if self.minimap_flag_x != 0 {
+            let dot_x = self.minimap_flag_x * 4 + 2 - (player_x / 32);
+            let dot_y = self.minimap_flag_z * 4 + 2 - (player_z / 32);
+            minimap_draw_dot(
+                &mut surface,
+                dot_y,
+                self.mapmarker1.as_ref(),
+                dot_x,
+                mapback,
+                dot_angle,
+                dot_zoom,
+            );
+        }
+
+        // TS 11389-11390: the white square local player position in the
+        // center of the minimap.
+        surface.fill_rect(97, 78, 3, 3, Colour::WHITE);
+    }
+}
+
+/// `minimapDrawDot` from client-ts (11425): rotate a dot sprite onto the
+/// minimap; past 2500 it is masked by `mapback` so it never paints over the
+/// ring.
+fn minimap_draw_dot(
+    surface: &mut Pix2D,
+    dy: i32,
+    image: Option<&Pix32>,
+    dx: i32,
+    mapback: Option<&Pix8>,
+    angle: i32,
+    zoom: i32,
+) {
+    let Some(image) = image else {
+        return;
+    };
+    let distance = dx * dx + dy * dy;
+    if distance > 6400 {
+        return;
+    }
+    let mut sin_angle = Pix3D::sin_table()[angle as usize];
+    let mut cos_angle = Pix3D::cos_table()[angle as usize];
+    sin_angle = (sin_angle * 256) / zoom;
+    cos_angle = (cos_angle * 256) / zoom;
+    let x = (dy * sin_angle + dx * cos_angle) >> 16;
+    let y = (dy * cos_angle - dx * sin_angle) >> 16;
+    if distance > 2500 {
+        if let Some(mapback) = mapback {
+            image.scanline_plot_sprite(
+                surface,
+                mapback,
+                x + 94 - (image.owi / 2) + 4,
+                83 - y - (image.ohi / 2) - 4,
+            );
+            return;
+        }
+    }
+    image.plot_sprite(surface, x + 94 - (image.owi / 2) + 4, 83 - y - (image.ohi / 2) - 4);
+}
+
+/// `minimapDrawArrow` from client-ts (11396): a `mapedge` arrow rotated at
+/// the hint target, falling back to a dot when it is near or far. The TS
+/// `Math.atan2(x, y)` swapped-argument quirk is kept 1:1.
+#[allow(clippy::too_many_arguments)]
+fn minimap_draw_arrow(
+    surface: &mut Pix2D,
+    dx: i32,
+    dy: i32,
+    image: Option<&Pix32>,
+    mapback: Option<&Pix8>,
+    mapedge: Option<&Pix32>,
+    angle: i32,
+    zoom: i32,
+) {
+    let Some(image) = image else {
+        return;
+    };
+    let distance = dx * dx + dy * dy;
+    if distance <= 4225 || distance >= 90000 {
+        minimap_draw_dot(surface, dy, Some(image), dx, mapback, angle, zoom);
+        return;
+    }
+    let mut sin_angle = Pix3D::sin_table()[angle as usize];
+    let mut cos_angle = Pix3D::cos_table()[angle as usize];
+    sin_angle = (sin_angle * 256) / zoom;
+    cos_angle = (cos_angle * 256) / zoom;
+    let x = (dy * sin_angle + dx * cos_angle) >> 16;
+    let y = (dy * cos_angle - dx * sin_angle) >> 16;
+    let var13 = f64::atan2(x as f64, y as f64);
+    let var15 = (f64::sin(var13) * 63.0) as i32;
+    let var16 = (f64::cos(var13) * 57.0) as i32;
+    if let Some(mapedge) = mapedge {
+        mapedge.rotate_plot_sprite(surface, var15 + 94 + 4 - 10, 83 - var16 - 20, 20, 20, 15, 15, var13, 256);
     }
 }

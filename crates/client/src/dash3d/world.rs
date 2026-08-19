@@ -793,6 +793,12 @@ impl World {
             .map_or(0, |decor| decor.typecode)
     }
 
+    /// `Client.groundObj[level][x][z]` presence for the minimap dots (TS
+    /// minimapDraw 11317-11325). Bounds-checked like `tile_at`.
+    pub fn ground_object_at(&self, level: i32, x: i32, z: i32) -> Option<&GroundObject> {
+        tile_at(&self.squares, level, x, z).and_then(|tile| tile.ground_object.as_ref())
+    }
+
     pub fn scene_type(&self, level: i32, x: i32, z: i32) -> i32 {
         let Some(tile) = self.squares[level as usize][x as usize][z as usize].as_ref() else {
             return 0;
