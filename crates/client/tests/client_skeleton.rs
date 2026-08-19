@@ -40,6 +40,9 @@ fn run_drives_mainloop_and_hook_until_stopped() {
         members: true,
         lowmem: false,
     });
+    // This test drives the run-loop mechanics, not the loading screen:
+    // skip `maininit` so it stays hermetic (no web fetch into /tmp).
+    c.already_started = true;
     let mut calls = 0;
     c.run(|c| {
         calls += 1;

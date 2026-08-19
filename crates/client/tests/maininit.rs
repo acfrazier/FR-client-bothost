@@ -1,6 +1,8 @@
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use client::client::{Client, ClientConfig};
 use client::io::Packet;
@@ -42,33 +44,102 @@ fn draw_progress_headed_paints_red_bar() {
     assert_eq!(c.draw_area.pixels[idx], 0x8c1111);
 }
 
+/// Read the full HTTP request (headers) before responding: closing with
+/// unread data in the receive buffer sends RST (not FIN) on macOS,
+/// discarding the response the client is waiting for. Returns the raw
+/// request text (for path logging).
+fn drain_request(s: &mut std::net::TcpStream) -> String {
+    let mut req = Vec::new();
+    let mut buf = [0u8; 1024];
+    while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+        match s.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => req.extend_from_slice(&buf[..n]),
+        }
+    }
+    String::from_utf8_lossy(&req).to_string()
+}
+
+fn respond(s: &mut std::net::TcpStream, body: &[u8]) {
+    let resp = [
+        b"HTTP/1.0 200 OK\r\nContent-Length: ".as_slice(),
+        body.len().to_string().as_bytes(),
+        b"\r\n\r\n",
+        body,
+    ]
+    .concat();
+    let _ = s.write_all(&resp);
+}
+
 /// One-shot HTTP/1.0 server: replies to a single connection and closes.
 fn serve_once(body: Vec<u8>) -> (u16, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let h = thread::spawn(move || {
         let (mut s, _) = listener.accept().unwrap();
-        // Read the whole request before responding: closing with unread data
-        // in the receive buffer sends RST (not FIN) on macOS, discarding the
-        // response the client is waiting for.
-        let mut req = Vec::new();
-        let mut buf = [0u8; 1024];
-        while !req.windows(4).any(|w| w == b"\r\n\r\n") {
-            match s.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => req.extend_from_slice(&buf[..n]),
-            }
-        }
-        let resp = [
-            b"HTTP/1.0 200 OK\r\nContent-Length: ".as_slice(),
-            body.len().to_string().as_bytes(),
-            b"\r\n\r\n",
-            body.as_slice(),
-        ]
-        .concat();
-        let _ = s.write_all(&resp);
+        drain_request(&mut s);
+        respond(&mut s, &body);
     });
     (port, h)
+}
+
+/// Accept one connection, bailing after `ms` so a client that makes fewer
+/// requests than expected cannot hang the server thread.
+fn accept_timeout(
+    listener: &TcpListener,
+    ms: u64,
+) -> Option<(std::net::TcpStream, std::net::SocketAddr)> {
+    listener.set_nonblocking(true).ok()?;
+    let deadline = Instant::now() + Duration::from_millis(ms);
+    loop {
+        match listener.accept() {
+            Ok(c) => return Some(c),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return None;
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
+/// Multi-shot HTTP/1.0 server: serves one request per connection, in
+/// `bodies` order (used for `/crc` then the jag GETs). Returns the port,
+/// the thread, and the request paths seen.
+fn serve_in_order(bodies: Vec<Vec<u8>>) -> (u16, thread::JoinHandle<()>, Arc<Mutex<Vec<String>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let t_seen = seen.clone();
+    let h = thread::spawn(move || {
+        for body in bodies {
+            let Some((mut s, _)) = accept_timeout(&listener, 8000) else {
+                break;
+            };
+            let req = drain_request(&mut s);
+            if let Some(path) = req.split_whitespace().nth(1) {
+                t_seen.lock().unwrap().push(path.to_string());
+            }
+            respond(&mut s, &body);
+        }
+    });
+    (port, h, seen)
+}
+
+/// The 9×g4 + hash body `get_jag_checksums` expects from `/crc`.
+fn crc_body(checksums: &[i32; 9]) -> Vec<u8> {
+    let mut body = client::io::Packet::alloc(0);
+    for &c in checksums {
+        body.p4(c);
+    }
+    let mut h = 1234i32;
+    for &c in checksums {
+        h = h.wrapping_shl(1).wrapping_add(c);
+    }
+    body.p4(h);
+    body.data()[..body.pos].to_vec()
 }
 
 #[test]
@@ -91,17 +162,7 @@ fn maininit_is_oneshot_and_sets_progress_100_on_crc_hit() {
         std::fs::write(dir.join(name), &bytes).unwrap();
         checksums[i + 1] = Packet::getcrc(&bytes, 0, bytes.len());
     }
-    // serve /crc : 9×g4 + hash
-    let mut body = client::io::Packet::alloc(0);
-    for c in checksums {
-        body.p4(c);
-    }
-    let mut h = 1234i32;
-    for c in checksums {
-        h = h.wrapping_shl(1).wrapping_add(c);
-    }
-    body.p4(h);
-    let (port, th) = serve_once(body.data()[..body.pos].to_vec());
+    let (port, th) = serve_once(crc_body(&checksums));
 
     let mut c = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
@@ -123,6 +184,124 @@ fn maininit_is_oneshot_and_sets_progress_100_on_crc_hit() {
     }
     c.maininit(); // oneshot
     assert_eq!(c.last_progress_percent, 100);
+}
+
+#[test]
+fn maininit_retries_jag_get_after_crc_mismatch() {
+    let dir = std::env::temp_dir().join("274-maininit-retry");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // title's on-disk bytes are stale, so its served checksum (for `fresh`)
+    // forces an HTTP fetch; every other jag is a CRC hit.
+    let fresh = b"fresh-title".to_vec();
+    let mut checksums = [0i32; 9];
+    let names = [
+        "title",
+        "config",
+        "interface",
+        "media",
+        "versionlist",
+        "textures",
+        "wordenc",
+        "sounds",
+    ];
+    for (i, name) in names.iter().enumerate() {
+        let bytes = if *name == "title" {
+            b"stale-title".to_vec()
+        } else {
+            format!("{name}-seed").into_bytes()
+        };
+        std::fs::write(dir.join(name), &bytes).unwrap();
+        checksums[i + 1] = if *name == "title" {
+            Packet::getcrc(&fresh, 0, fresh.len())
+        } else {
+            Packet::getcrc(&bytes, 0, bytes.len())
+        };
+    }
+    // /crc, then two title GETs: a wrong-CRC body first (the client must
+    // discard the bytes and retry), then the correct ones.
+    let (port, th, seen) = serve_in_order(vec![
+        crc_body(&checksums),
+        b"wrong-crc-bytes".to_vec(),
+        fresh.clone(),
+    ]);
+
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: dir.to_str().unwrap().into(),
+        members: true,
+        lowmem: false,
+    });
+    c.http_port = port;
+    c.fetch_retry_wait = Duration::from_millis(1);
+    c.maininit();
+    th.join().ok();
+    let title_gets = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|p| p.starts_with("/title"))
+        .count();
+    assert_eq!(title_gets, 2, "CRC mismatch must discard and retry the fetch");
+    assert!(c.already_started);
+    assert_eq!(c.last_progress_percent, 100);
+    // the retried fetch persisted the fresh title
+    assert_eq!(std::fs::read(dir.join("title")).unwrap(), fresh);
+}
+
+#[test]
+fn maininit_clears_error_loading_from_new_unpack() {
+    let dir = std::env::temp_dir().join("274-maininit-recover");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // A jag container with zero files parses as a valid (empty) config.
+    let valid_config = vec![0u8, 0, 6, 0, 0, 6, 0, 0];
+    let mut checksums = [0i32; 9];
+    let names = [
+        "title",
+        "config",
+        "interface",
+        "media",
+        "versionlist",
+        "textures",
+        "wordenc",
+        "sounds",
+    ];
+    for (i, name) in names.iter().enumerate() {
+        let bytes = if *name == "config" {
+            b"garbage-config".to_vec()
+        } else {
+            format!("{name}-seed").into_bytes()
+        };
+        std::fs::write(dir.join(name), &bytes).unwrap();
+        checksums[i + 1] = if *name == "config" {
+            Packet::getcrc(&valid_config, 0, valid_config.len())
+        } else {
+            Packet::getcrc(&bytes, 0, bytes.len())
+        };
+    }
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: dir.to_str().unwrap().into(),
+        members: true,
+        lowmem: false,
+    });
+    assert!(c.error_loading, "invalid config on disk sets errorLoading in new");
+    // /crc, then /config{crc}: the only HTTP fetch, all other jags are hits.
+    let (port, th, _seen) = serve_in_order(vec![crc_body(&checksums), valid_config.clone()]);
+    c.http_port = port;
+    c.fetch_retry_wait = Duration::from_millis(1);
+    c.maininit();
+    th.join().ok();
+    assert!(
+        !c.error_loading,
+        "maininit repairing config must clear errorLoading"
+    );
+    assert!(c.already_started);
+    assert_eq!(c.last_progress_percent, 100);
+    assert_eq!(std::fs::read(dir.join("config")).unwrap(), valid_config);
 }
 
 #[test]

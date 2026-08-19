@@ -17,6 +17,9 @@ fn new_client() -> Client {
 #[test]
 fn run_stops_when_state_negative() {
     let mut c = new_client();
+    // This test drives the run-loop stop contract, not the loading screen:
+    // skip `maininit` so it stays hermetic (no web fetch into /tmp).
+    c.already_started = true;
     let mut on_loop_calls = 0;
     c.run(|client| {
         on_loop_calls += 1;

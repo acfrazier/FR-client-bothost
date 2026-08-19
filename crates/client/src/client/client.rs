@@ -276,6 +276,10 @@ pub struct Client {
     /// `alreadyStarted` from client-ts: set at the start of `maininit`;
     /// a second `maininit` call is a no-op.
     pub already_started: bool,
+    /// Base wait between `maininit` HTTP retries (TS `getJagChecksums`/
+    /// `getJagFile` start at 5 s and double to a 60 s cap). Tests that
+    /// stub HTTP set it small so retry paths do not sleep.
+    pub fetch_retry_wait: Duration,
 
     /// Title screen state (`Client.ts` `prepareTitle`/`titleScreenDraw`):
     /// the 765×503 CPU framebuffer every frame draws into (`drawArea`), the
@@ -611,6 +615,7 @@ impl Client {
             last_progress_message: String::new(),
             http_port: 80,
             already_started: false,
+            fetch_retry_wait: Duration::from_secs(5),
             draw_area: PixMap::new(APPLET_W, APPLET_H),
             pix3d: Pix3DDraw::default(),
             title: None,
@@ -875,13 +880,18 @@ impl Client {
     /// config/interface, start OnDemand from the versionlist, and prefetch
     /// anims/models. `already_started` is set first, so a second call is a
     /// no-op (TS `alreadyStarted`). A failed or invalid jag sets
-    /// `error_loading` but does not abort the fetch loop or reset the flag;
-    /// progress always ends at 100.
+    /// `error_loading` but does not abort the fetch loop; progress always
+    /// ends at 100.
     pub fn maininit(&mut self) {
         if self.already_started {
             return;
         }
         self.already_started = true;
+        // TS produces `errorLoading` only inside `maininit`; `Client::new`'s
+        // pre-maininit unpack may have set it (and framerate 1) for a cache
+        // that `maininit` can repair, so reset both before fetching.
+        self.error_loading = false;
+        self.shell.set_framerate(50);
 
         self.draw_progress("Loading...", 0);
 
@@ -914,16 +924,9 @@ impl Client {
             ("update list", "versionlist", 5, 60),
         ];
         for (display, filename, index, progress) in JAG_FETCH {
-            self.draw_progress(&format!("Requesting {display}"), progress);
-            if Self::get_jag_file(
-                &self.config.cache_dir,
-                &self.config.host,
-                self.http_port,
-                filename,
-                index,
-                &checksums,
-            )
-            .is_none()
+            if self
+                .fetch_jag_file(display, progress, filename, index, &checksums)
+                .is_none()
             {
                 self.error_loading = true;
             }
@@ -995,12 +998,13 @@ impl Client {
     }
 
     /// TS `getJagChecksums` retry policy (694-748): attempt `/crc`, then
-    /// wait 5 s doubling to 60 s before the next attempt, forever. Capped
-    /// here at 10 retries (TS switches to its "Game updated" message at
-    /// `retries >= 10`); `None` lets `maininit` fail with `errorLoading`
-    /// instead of hanging. The per-second countdown messages are not ported.
+    /// wait `fetch_retry_wait` (doubling to the 60 s cap) before the next
+    /// attempt, forever. Capped at 10 retries (TS switches to its "Game
+    /// updated" message at `retries >= 10`); `None` lets `maininit` fail
+    /// with `errorLoading` instead of hanging. The per-second countdown
+    /// messages are not ported.
     fn fetch_jag_checksums(&mut self) -> Option<[i32; 9]> {
-        let mut wait: u64 = 5;
+        let mut wait = self.fetch_retry_wait;
         let mut retries = 0;
         loop {
             self.draw_progress("Connecting to web server", 10);
@@ -1011,8 +1015,47 @@ impl Client {
             if retries >= 10 {
                 return None;
             }
-            thread::sleep(Duration::from_secs(wait));
-            wait = (wait * 2).min(60);
+            thread::sleep(wait);
+            wait = (wait * 2).min(Duration::from_secs(60));
+        }
+    }
+
+    /// TS `getJagFile` retry loop (749-817): GET `/{filename}{crc}` with the
+    /// same doubling wait as the checksum fetch. A CRC mismatch is handled
+    /// inside `get_jag_file` (bytes discarded, `None` returned) and retried
+    /// here, so a transient failure or corrupted download recovers instead
+    /// of erroring the client. Capped at 10 retries like the checksum fetch
+    /// so a dead server cannot hang the caller; tests plant a listener or
+    /// set `fetch_retry_wait` small. The per-second countdown messages are
+    /// not ported.
+    fn fetch_jag_file(
+        &mut self,
+        display: &str,
+        progress: i32,
+        filename: &str,
+        index: usize,
+        checksums: &[i32; 9],
+    ) -> Option<Vec<u8>> {
+        let mut wait = self.fetch_retry_wait;
+        let mut retries = 0;
+        loop {
+            self.draw_progress(&format!("Requesting {display}"), progress);
+            if let Some(bytes) = Self::get_jag_file(
+                &self.config.cache_dir,
+                &self.config.host,
+                self.http_port,
+                filename,
+                index,
+                checksums,
+            ) {
+                return Some(bytes);
+            }
+            retries += 1;
+            if retries >= 10 {
+                return None;
+            }
+            thread::sleep(wait);
+            wait = (wait * 2).min(Duration::from_secs(60));
         }
     }
 
