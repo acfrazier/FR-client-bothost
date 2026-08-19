@@ -155,6 +155,11 @@ pub struct Client {
     /// here and copied into `world` (Task 16's `ClientBuild` owns the write
     /// side and will reconcile the sharing).
     pub groundh: LevelHeightmaps,
+    /// Map-land flags `mapl[level][x][z]` (`MapFlag` bits), sized
+    /// `[BuildArea.LEVELS][BuildArea.SIZE][BuildArea.SIZE]`; written by
+    /// `ClientBuild::load_ground`, read by `get_av_h` (`LinkBelow` lands in
+    /// Task 10) and the minimap (Task 7).
+    pub mapl: Vec<Vec<Vec<u8>>>,
     pub world: World,
     /// One collision grid per level, `CollisionMap` for the 4 build levels.
     pub collision: [CollisionMap; 4],
@@ -515,6 +520,10 @@ impl Client {
             player_appearance_buffer: (0..MAX_PLAYER_COUNT).map(|_| None).collect(),
 
             groundh: groundh.clone(),
+            mapl: vec![
+                vec![vec![0u8; BuildArea::SIZE as usize]; BuildArea::SIZE as usize];
+                BuildArea::LEVELS as usize
+            ],
             world: World::new(groundh, BuildArea::SIZE, BuildArea::LEVELS, BuildArea::SIZE),
             collision: [
                 CollisionMap::new(),

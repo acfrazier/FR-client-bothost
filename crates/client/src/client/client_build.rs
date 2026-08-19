@@ -5,17 +5,15 @@
 //! lands with the map-completion flow (needs OnDemand map data and the render
 //! pass); only the ground decode is ported here.
 //!
-//! `loadGround` writes the client's `groundh` directly (the TS passes its
-//! `Client.groundh` reference into the constructor); the per-build `mapl` /
-//! floor arrays live on this struct as in TS.
+//! `loadGround` writes the client's `groundh` and `mapl` directly (the TS
+//! passes its `Client.groundh`/`Client.mapl` references into the
+//! constructor); the per-build floor arrays live on this struct as in TS.
 use crate::dash3d::world::LevelHeightmaps;
 use crate::dash3d::BuildArea;
 use crate::graphics::Pix3D;
 use crate::io::Packet;
 
 pub struct ClientBuild {
-    /// Map-land flags `mapl[level][x][z]` (`MapFlag` bits, level 0..4).
-    mapl: Vec<Vec<Vec<u8>>>,
     /// `floort1[level][x][z]` / `floort2[level][x][z]` floor type ids.
     floort1: Vec<Vec<Vec<u8>>>,
     floort2: Vec<Vec<Vec<u8>>>,
@@ -41,7 +39,6 @@ impl ClientBuild {
             ]
         };
         ClientBuild {
-            mapl: grid(),
             floort1: grid(),
             floort2: grid(),
             floors: grid(),
@@ -50,12 +47,14 @@ impl ClientBuild {
     }
 
     /// `loadGround(src, originX, originZ, xOffset, zOffset)` from client-ts:
-    /// decode one 64x64x4 map square into `groundh`. `origin` is the build
-    /// base (`(centreZone - 6) * 8`); `xOffset`/`zOffset` are the square's
-    /// local tiles. Out-of-area tiles still consume the packet bytes.
+    /// decode one 64x64x4 map square into `groundh` and `mapl`. `origin` is
+    /// the build base (`(centreZone - 6) * 8`); `xOffset`/`zOffset` are the
+    /// square's local tiles. Out-of-area tiles still consume the packet
+    /// bytes.
     pub fn load_ground(
         &mut self,
         groundh: &mut LevelHeightmaps,
+        mapl: &mut Vec<Vec<Vec<u8>>>,
         src: &[u8],
         origin_x: i32,
         origin_z: i32,
@@ -71,7 +70,7 @@ impl ClientBuild {
                     let stz = z + z_offset;
 
                     if (0..BuildArea::SIZE).contains(&stx) && (0..BuildArea::SIZE).contains(&stz) {
-                        self.mapl[level as usize][stx as usize][stz as usize] = 0;
+                        mapl[level as usize][stx as usize][stz as usize] = 0;
 
                         loop {
                             let opcode = buf.g1();
@@ -112,7 +111,7 @@ impl ClientBuild {
                                 self.floorr[level as usize][stx as usize][stz as usize] =
                                     (((opcode - 2) & 0x3) << 24 >> 24) as u8;
                             } else if opcode <= 81 {
-                                self.mapl[level as usize][stx as usize][stz as usize] =
+                                mapl[level as usize][stx as usize][stz as usize] =
                                     (((opcode - 49) << 24) >> 24) as u8;
                             } else {
                                 self.floort1[level as usize][stx as usize][stz as usize] =

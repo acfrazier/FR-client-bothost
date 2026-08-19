@@ -35,9 +35,15 @@ fn plot_title_bg(map: &mut Option<PixMap>, background: &Pix32, x: i32, y: i32) {
 }
 
 /// `Client.getAvH` from client-ts (5052): the bilinear ground height at a
-/// scene position. The `mapl` `LinkBelow` level lift is not ported (Client
-/// has no `mapl` grid yet), so the height reads from `level` itself.
-fn get_av_h(groundh: &LevelHeightmaps, scene_x: i32, scene_z: i32, level: i32) -> i32 {
+/// scene position. The `mapl` `LinkBelow` level lift is Task 10; the height
+/// currently reads from `level` itself.
+fn get_av_h(
+    groundh: &LevelHeightmaps,
+    _mapl: &[Vec<Vec<u8>>],
+    scene_x: i32,
+    scene_z: i32,
+    level: i32,
+) -> i32 {
     let tile_x = scene_x >> 7;
     let tile_z = scene_z >> 7;
     if tile_x < 0 || tile_z < 0 || tile_x > 103 || tile_z > 103 {
@@ -678,7 +684,7 @@ impl Client {
         let yaw = (self.orbit_camera_yaw + self.macro_camera_angle) & 0x7ff;
 
         if let Some(player) = &self.local_player {
-            let target_y = get_av_h(&self.groundh, player.x, player.z, self.minusedlevel) - 50;
+            let target_y = get_av_h(&self.groundh, &self.mapl, player.x, player.z, self.minusedlevel) - 50;
             self.cam_follow(
                 pitch,
                 yaw,
@@ -789,7 +795,7 @@ impl Client {
                 continue;
             }
 
-            let y = get_av_h(&self.groundh, player.x, player.z, self.minusedlevel);
+            let y = get_av_h(&self.groundh, &self.mapl, player.x, player.z, self.minusedlevel);
             let model = Some(SceneModel::Player(player.clone()));
 
             if player.loc_model.is_none()
@@ -866,7 +872,7 @@ impl Client {
                 self.tile_last_occupied_cycle[tile] = self.scene_cycle;
             }
 
-            let y = get_av_h(&self.groundh, npc.x, npc.z, self.minusedlevel);
+            let y = get_av_h(&self.groundh, &self.mapl, npc.x, npc.z, self.minusedlevel);
             self.world.add_dynamic(
                 self.minusedlevel,
                 npc.x,
@@ -984,7 +990,7 @@ impl Client {
 
         let orbit_tile_x = self.orbit_camera_x >> 7;
         let orbit_tile_z = self.orbit_camera_z >> 7;
-        let orbit_y = get_av_h(&self.groundh, self.orbit_camera_x, self.orbit_camera_z, self.minusedlevel);
+        let orbit_y = get_av_h(&self.groundh, &self.mapl, self.orbit_camera_x, self.orbit_camera_z, self.minusedlevel);
         let mut max_y = 0;
         if orbit_tile_x > 3 && orbit_tile_z > 3 && orbit_tile_x < 100 && orbit_tile_z < 100 {
             for x in (orbit_tile_x - 4)..=(orbit_tile_x + 4) {

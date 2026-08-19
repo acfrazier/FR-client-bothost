@@ -69,7 +69,7 @@ fn load_ground_opcode_zero_uses_perlin_terrain() {
     }
     let mut build = ClientBuild::new();
     // origin = zone-50 build base, square offset 0,0 (centre square)
-    build.load_ground(&mut c.groundh, map.data(), 352, 352, 0, 0);
+    build.load_ground(&mut c.groundh, &mut c.mapl, map.data(), 352, 352, 0, 0);
     for (stx, stz, height) in [(10, 20, -264), (30, 40, -280), (0, 0, -352), (63, 63, -264)] {
         assert_eq!(c.groundh[0][stx][stz], height, "level 0 tile {stx},{stz}");
         assert_eq!(c.groundh[1][stx][stz], height - 240);
@@ -97,11 +97,36 @@ fn load_ground_opcode_one_sets_explicit_height() {
         }
     }
     let mut build = ClientBuild::new();
-    build.load_ground(&mut c.groundh, map.data(), 352, 352, 0, 0);
+    build.load_ground(&mut c.groundh, &mut c.mapl, map.data(), 352, 352, 0, 0);
     assert_eq!(c.groundh[0][10][20], -7 * 8);
     assert_eq!(c.groundh[1][10][20], c.groundh[0][10][20] - 7 * 8);
     assert_eq!(c.groundh[2][10][20], c.groundh[1][10][20] - 7 * 8);
     assert_eq!(c.groundh[3][10][20], c.groundh[2][10][20] - 7 * 8);
+}
+
+/// `load_ground` zeroes in-area `mapl` tiles before decoding, so a 64×64×4
+/// stream of opcode 0 leaves `mapl[0][x][z] == 0`; opcode 50-81 (map-land
+/// flags, value `opcode - 49`) write the flag bit.
+#[test]
+fn load_ground_writes_client_mapl_flags() {
+    let mut c = client();
+    // opcode 49+1 = 50 → mapl bit (opcode-49) on tile (0,0) level 0 after
+    // offsets; a 64×64×4 stream of opcode 0 still leaves mapl[0][x][z]==0
+    // for in-area tiles.
+    let mut src = Vec::new();
+    for _ in 0..(4 * 64 * 64) {
+        src.push(0u8);
+    }
+    ClientBuild::new().load_ground(&mut c.groundh, &mut c.mapl, &src, 0, 0, 0, 0);
+    assert_eq!(c.mapl[0][0][0], 0);
+
+    // opcode 50 on tile (0,0) level 0 → mapl flag 1. The flag tile consumes
+    // an extra opcode byte (50 then 0), shifting the tail by one, so pad
+    // the stream with a trailing 0 to keep the last tile in bounds.
+    src.push(0);
+    src[0] = 50;
+    ClientBuild::new().load_ground(&mut c.groundh, &mut c.mapl, &src, 0, 0, 0, 0);
+    assert_eq!(c.mapl[0][0][0], 1);
 }
 
 /// Loopback `tcp_in`: Isaac-encode `REBUILD_NORMAL` on a listener, login,
