@@ -120,7 +120,10 @@ fn main() -> ExitCode {
             client::client::APPLET_H as u32,
             "RuneScape",
         ) {
-            Ok(present) => client.present = Some(present),
+            Ok(present) => {
+                client.present = Some(present);
+                client.draw = true;
+            }
             Err(e) => {
                 eprintln!("window: {e}");
                 return ExitCode::FAILURE;

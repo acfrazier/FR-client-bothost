@@ -128,6 +128,10 @@ pub struct Client {
     pub cache: Cache,
 
     pub ingame: bool,
+    /// `draw`: CPU-save switch — when false, `mainredraw` skips the frame
+    /// render. Independent of the window: `client-play` sets it true after
+    /// `Present::open`; headless bots keep it false.
+    pub draw: bool,
     pub scene_state: i32,
     pub local_player: Option<ClientPlayer>,
     pub players: Vec<Option<ClientPlayer>>,
@@ -398,6 +402,7 @@ impl Client {
             cache,
 
             ingame: false,
+            draw: false,
             scene_state: 0,
             local_player: None,
             players: vec![None; MAX_PLAYER_COUNT],
@@ -3622,12 +3627,23 @@ impl Client {
 
     /// `mainredraw` from Java — the frame render pass: title screen or
     /// in-game draw into `draw_area` (which the `window` feature presents).
+    /// `draw` is the CPU-save switch: false skips the render entirely, so a
+    /// headless bot burns no pixels while the network machine keeps running.
     pub fn mainredraw(&mut self) {
+        if !self.draw {
+            return;
+        }
         if self.ingame {
             self.game_draw();
         } else {
             self.title_screen_draw();
         }
+    }
+
+    /// Set the `draw` CPU-save switch (`mainredraw` skips the frame render
+    /// when false).
+    pub fn set_draw(&mut self, draw: bool) {
+        self.draw = draw;
     }
 
     /// Drive the 20 ms GameShell machine on the calling thread (spec §3):
