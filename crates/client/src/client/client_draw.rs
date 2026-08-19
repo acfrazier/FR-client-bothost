@@ -629,15 +629,16 @@ impl Client {
 
     /// `redrawIcons` from client-ts (4005), 1:1: plot `backhmid1` into
     /// `area_backhmid1` and, when `side_modal_id == -1`, the redstone
-    /// highlight under `active_icon` plus the side icons whose tab is bound
-    /// (`side_icon[i] != -1`); blit at (516, 160). Then `backbase2` into
-    /// `area_backbase2` with the tabs 7-13 icons and blit at (496, 466).
-    /// Offsets verbatim from 4018-4112. Deviations: the `tutFlashIcon` blink
-    /// conditions are dropped with the tutorial feature (TS `tutFlashIcon`
-    /// stays -1, so they were always true), and the bottom-row guard index
-    /// quirk of 4090-4111 (checks `side_icon[8]` while plotting
-    /// `sideicons[7]`, and so on) is kept 1:1. The trailing
-    /// `areaGame.setPixels()` is a no-op here (no global Pix2D target).
+    /// highlight under `active_icon` (tabs 0-6) plus the side icons whose
+    /// tab is bound (`side_icon[i] != -1`); blit at (516, 160). Then
+    /// `backbase2` into `area_backbase2` with the tabs 7-13 redstone and
+    /// icons, and blit at (496, 466). Offsets verbatim from 4018-4112.
+    /// Deviations: the `tutFlashIcon` blink conditions are dropped with the
+    /// tutorial feature (TS `tutFlashIcon` stays -1, so they were always
+    /// true), and the bottom-row guard index quirk of 4090-4111 (checks
+    /// `side_icon[8]` while plotting `sideicons[7]`, and so on) is kept 1:1.
+    /// The trailing `areaGame.setPixels()` is a no-op here (no global Pix2D
+    /// target).
     fn draw_icons(&mut self) {
         if let Some(area) = self.area_backhmid1.as_mut() {
             if let Some(backhmid1) = &self.backhmid1 {
@@ -649,6 +650,8 @@ impl Client {
                     // TS reads `sideIcon[activeIcon]` as undefined (true) out
                     // of bounds; `get().copied() != Some(-1)` matches.
                     if self.side_icon.get(self.active_icon as usize).copied() != Some(-1) {
+                        // redstone for the top row, tabs 0-6 (4018-4034);
+                        // tabs 7-13 plot on `area_backbase2` below.
                         let (redstone, x, y) = match self.active_icon {
                             0 => (&self.redstone1, 22, 10),
                             1 => (&self.redstone2, 54, 8),
@@ -657,13 +660,6 @@ impl Client {
                             4 => (&self.redstone2h, 153, 8),
                             5 => (&self.redstone2h, 181, 8),
                             6 => (&self.redstone1h, 209, 9),
-                            7 => (&self.redstone1v, 42, 0),
-                            8 => (&self.redstone2v, 74, 0),
-                            9 => (&self.redstone2v, 102, 0),
-                            10 => (&self.redstone3v, 130, 1),
-                            11 => (&self.redstone2hv, 173, 0),
-                            12 => (&self.redstone2hv, 201, 0),
-                            13 => (&self.redstone1hv, 229, 0),
                             _ => (&None, 0, 0),
                         };
                         if let Some(s) = redstone {
@@ -699,6 +695,22 @@ impl Client {
                 let mut surface = Pix2D::with_pixels(&mut area.pixels, w, h);
                 backbase2.plot_sprite(&mut surface, 0, 0);
                 if self.side_modal_id == -1 {
+                    // redstone for the bottom row, tabs 7-13 (4072-4088).
+                    if self.side_icon.get(self.active_icon as usize).copied() != Some(-1) {
+                        let (redstone, x, y) = match self.active_icon {
+                            7 => (&self.redstone1v, 42, 0),
+                            8 => (&self.redstone2v, 74, 0),
+                            9 => (&self.redstone2v, 102, 0),
+                            10 => (&self.redstone3v, 130, 1),
+                            11 => (&self.redstone2hv, 173, 0),
+                            12 => (&self.redstone2hv, 201, 0),
+                            13 => (&self.redstone1hv, 229, 0),
+                            _ => (&None, 0, 0),
+                        };
+                        if let Some(s) = redstone {
+                            s.plot_sprite(&mut surface, x, y);
+                        }
+                    }
                     // 1:1 with 4090-4111: the guard index trails the sprite
                     // index (tab 7's sprite gated on `side_icon[8]`, ...).
                     for (guard, sprite, x, y) in [
