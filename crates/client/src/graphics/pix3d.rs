@@ -169,9 +169,65 @@ fn build_colour_table(brightness: f64) -> [i32; 65536] {
     table
 }
 
+/// The TS `Model` render statics (`vertexScreenX/Y/Z`, `vertexViewSpaceX/
+/// Y/Z`, `faceNearClipped`/`faceClippedX`, the depth/priority buckets and
+/// the near-clip output): the shared per-frame scratch `Model.worldRender`/
+/// `objRender` project into. Per-client like the rest of `Pix3DDraw` (the TS
+/// statics are process-wide; N clients need N copies). Sizes match the TS
+/// typed arrays; out-of-range access (a model past the 4096-vertex arrays,
+/// or a depth bucket past 1500) is a guarded no-op exactly like a TS
+/// typed-array write.
+pub struct ModelScratch {
+    pub vertex_screen_x: Vec<i32>,
+    pub vertex_screen_y: Vec<i32>,
+    pub vertex_screen_z: Vec<i32>,
+    pub vertex_view_space_x: Vec<i32>,
+    pub vertex_view_space_y: Vec<i32>,
+    pub vertex_view_space_z: Vec<i32>,
+    pub face_near_clipped: Vec<bool>,
+    pub face_clipped_x: Vec<bool>,
+    pub tmp_depth_face_count: Vec<i32>,
+    pub tmp_depth_faces: Vec<i32>,
+    pub tmp_priority_face_count: Vec<i32>,
+    pub tmp_priority_faces: Vec<i32>,
+    pub tmp_priority10_face_depth: Vec<i32>,
+    pub tmp_priority11_face_depth: Vec<i32>,
+    pub tmp_priority_depth_sum: Vec<i32>,
+    pub clipped_x: Vec<i32>,
+    pub clipped_y: Vec<i32>,
+    pub clipped_colour: Vec<i32>,
+}
+
+impl Default for ModelScratch {
+    fn default() -> Self {
+        ModelScratch {
+            vertex_screen_x: vec![0; 4096],
+            vertex_screen_y: vec![0; 4096],
+            vertex_screen_z: vec![0; 4096],
+            vertex_view_space_x: vec![0; 4096],
+            vertex_view_space_y: vec![0; 4096],
+            vertex_view_space_z: vec![0; 4096],
+            face_near_clipped: vec![false; 4096],
+            face_clipped_x: vec![false; 4096],
+            tmp_depth_face_count: vec![0; 1500],
+            tmp_depth_faces: vec![0; 1500 * 512],
+            tmp_priority_face_count: vec![0; 12],
+            tmp_priority_faces: vec![0; 12 * 2000],
+            tmp_priority10_face_depth: vec![0; 2000],
+            tmp_priority11_face_depth: vec![0; 2000],
+            tmp_priority_depth_sum: vec![0; 12],
+            clipped_x: vec![0; 10],
+            clipped_y: vec![0; 10],
+            clipped_colour: vec![0; 10],
+        }
+    }
+}
+
 /// Per-client raster state, the mutable half of the TS Pix3D statics
 /// (`scanline`, `originX/Y`, `trans`, `cycle`, `hclip`, `lowMem`/
-/// `lowDetail`, and the texture pool). One instance per `Client`; a raster
+/// `lowDetail`, and the texture pool) plus the TS `Model` render statics
+/// (the `ModelScratch` projection buffers and the `mouseCheck` pick state),
+/// which the 3D pass reads and fills. One instance per `Client`; a raster
 /// pass binds a target surface (`Pix2D`) and calls `set_clipping` (or
 /// `set_render_clipping`) before drawing into it, exactly as TS binds
 /// `Pix2D.setPixels` then `setClipping`/`setRenderClipping`.
@@ -217,6 +273,18 @@ pub struct Pix3DDraw {
     /// `opaque` from TS (private): whether the current texture raster writes
     /// every pixel (vs. skipping transparent ones).
     opaque: bool,
+    /// TS `Model.mouseCheck`/`mouseX`/`mouseY`/`pickedCount`/
+    /// `pickedEntityTypecode`: the mouse-picking state `world_render` reads
+    /// and fills. `gameDrawMain` sets `mouse_check=true`, zeroes
+    /// `picked_count` and stores the viewport mouse before `render_all`.
+    pub mouse_check: bool,
+    pub mouse_x: i32,
+    pub mouse_y: i32,
+    pub picked_count: i32,
+    pub picked_entity_typecode: Vec<i32>,
+    /// TS `Model` render statics: the per-frame projection/depth scratch
+    /// shared by `Model.worldRender`/`objRender`.
+    pub model_scratch: ModelScratch,
 }
 
 impl Default for Pix3DDraw {
@@ -240,6 +308,12 @@ impl Default for Pix3DDraw {
             texel_pool: None,
             pool_size: 0,
             opaque: false,
+            mouse_check: false,
+            mouse_x: 0,
+            mouse_y: 0,
+            picked_count: 0,
+            picked_entity_typecode: vec![0; 1000],
+            model_scratch: ModelScratch::default(),
         }
     }
 }

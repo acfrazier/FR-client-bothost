@@ -1,8 +1,11 @@
 // Port of `~/experiments/Server/webclient/src/dash3d/Model.ts` — the model
 // decode, transforms, lighting and animation machinery needed to build scene
-// models (`REBUILD_NORMAL` loc placement, entities). The rasterisation half
-// (`objRender`, `worldRender`, `render2`/`render3`, picking) is part of the
-// deferred render pass and is not ported here.
+// models (`REBUILD_NORMAL` loc placement, entities), plus the render half
+// (`objRender`, `worldRender`, `render2`/`render3`, mouse picking). The
+// render statics that TS keeps process-wide (`vertexScreenX/Y/Z`, the depth
+// and priority buckets, `mouseCheck`/`pickedCount`) live on the per-client
+// `Pix3DDraw.model_scratch` and pick fields; the TS `Pix2D` statics become
+// the bound `Pix2D` surface.
 //
 // TS statics (`meta`, `provider`, `tempModel`, the scratch buffers, the
 // oX/oY/oZ anim origin) live on a process-wide store. The TS `tempModel`
@@ -13,6 +16,7 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::dash3d::{AnimFrame, PointNormal};
 use crate::datastruct::linkable::{LinkableTrait, Links};
+use crate::graphics::{Pix2D, Pix3D, Pix3DDraw};
 use crate::io::Packet;
 
 /// OnDemand hook the loader calls when a model id has no unpacked metadata.
@@ -1673,6 +1677,1198 @@ impl Model {
                 scalar = 126;
             }
             (hsl & 0xff80) + scalar
+        }
+    }
+
+    /// TS `Model.pickedEntityTypecode[Model.pickedCount++] = typecode`, the
+    /// single pick-append site (the worldRender AABB and the render2
+    /// triangle test both funnel here). The 1000-slot array guards the write
+    /// like a TS typed array; the counter always advances.
+    fn pick(pix: &mut Pix3DDraw, typecode: i32) {
+        if let Some(slot) = pix.picked_entity_typecode.get_mut(pix.picked_count as usize) {
+            *slot = typecode;
+        }
+        pix.picked_count += 1;
+    }
+
+    /// TS typed-array reads of `Model.vertexScreenX/Y/Z[v]`; an out-of-range
+    /// vertex (a model bigger than the 4096-slot arrays) reads 0 like a TS
+    /// `Int32Array` miss.
+    fn vertex_screen(pix: &Pix3DDraw, v: usize) -> (i32, i32, i32) {
+        (
+            pix.model_scratch.vertex_screen_x.get(v).copied().unwrap_or(0),
+            pix.model_scratch.vertex_screen_y.get(v).copied().unwrap_or(0),
+            pix.model_scratch.vertex_screen_z.get(v).copied().unwrap_or(0),
+        )
+    }
+
+    /// TS typed-array reads of `Model.vertexViewSpaceX/Y/Z[v]` (same OOB
+    /// semantics as `vertex_screen`).
+    fn vertex_view_space(pix: &Pix3DDraw, v: usize) -> (i32, i32, i32) {
+        (
+            pix.model_scratch.vertex_view_space_x.get(v).copied().unwrap_or(0),
+            pix.model_scratch.vertex_view_space_y.get(v).copied().unwrap_or(0),
+            pix.model_scratch.vertex_view_space_z.get(v).copied().unwrap_or(0),
+        )
+    }
+
+    /// `Model.objRender(pitch, yaw, roll, eyePitch, eyeX, eyeY, eyeZ)` from
+    /// client-ts: draws the model from eye-space offsets (mapview sprite
+    /// overlays, entity decorations). Projection statics live on `pix`; the
+    /// near plane is not guarded — TS relies on `render2`'s winding test
+    /// dropping the garbage triangles.
+    #[allow(clippy::too_many_arguments)]
+    pub fn obj_render(
+        &self,
+        pix: &mut Pix3DDraw,
+        surface: &mut Pix2D,
+        pitch: i32,
+        yaw: i32,
+        roll: i32,
+        eye_pitch: i32,
+        eye_x: i32,
+        eye_y: i32,
+        eye_z: i32,
+    ) {
+        let sin_table = Pix3D::sin_table();
+        let cos_table = Pix3D::cos_table();
+        let sin_pitch = sin_table.get(pitch as usize).copied().unwrap_or(0);
+        let cos_pitch = cos_table.get(pitch as usize).copied().unwrap_or(0);
+        let sin_yaw = sin_table.get(yaw as usize).copied().unwrap_or(0);
+        let cos_yaw = cos_table.get(yaw as usize).copied().unwrap_or(0);
+        let sin_roll = sin_table.get(roll as usize).copied().unwrap_or(0);
+        let cos_roll = cos_table.get(roll as usize).copied().unwrap_or(0);
+        let sin_eye_pitch = sin_table.get(eye_pitch as usize).copied().unwrap_or(0);
+        let cos_eye_pitch = cos_table.get(eye_pitch as usize).copied().unwrap_or(0);
+
+        let mid_z =
+            (eye_y.wrapping_mul(sin_eye_pitch).wrapping_add(eye_z.wrapping_mul(cos_eye_pitch))) >> 16;
+
+        let (Some(point_x), Some(point_y), Some(point_z)) =
+            (&self.point_x, &self.point_y, &self.point_z)
+        else {
+            return;
+        };
+
+        for v in 0..self.num_points as usize {
+            let (Some(&x0), Some(&y0), Some(&z0)) =
+                (point_x.get(v), point_y.get(v), point_z.get(v))
+            else {
+                continue;
+            };
+            let (mut x, mut y, mut z) = (x0, y0, z0);
+
+            if roll != 0 {
+                let tmp = (y.wrapping_mul(sin_roll).wrapping_add(x.wrapping_mul(cos_roll))) >> 16;
+                y = (y.wrapping_mul(cos_roll).wrapping_sub(x.wrapping_mul(sin_roll))) >> 16;
+                x = tmp;
+            }
+
+            if pitch != 0 {
+                let tmp = (y.wrapping_mul(cos_pitch).wrapping_sub(z.wrapping_mul(sin_pitch))) >> 16;
+                z = (y.wrapping_mul(sin_pitch).wrapping_add(z.wrapping_mul(cos_pitch))) >> 16;
+                y = tmp;
+            }
+
+            if yaw != 0 {
+                let tmp = (z.wrapping_mul(sin_yaw).wrapping_add(x.wrapping_mul(cos_yaw))) >> 16;
+                z = (z.wrapping_mul(cos_yaw).wrapping_sub(x.wrapping_mul(sin_yaw))) >> 16;
+                x = tmp;
+            }
+
+            x = x.wrapping_add(eye_x);
+            y = y.wrapping_add(eye_y);
+            z = z.wrapping_add(eye_z);
+
+            let tmp = (y.wrapping_mul(cos_eye_pitch).wrapping_sub(z.wrapping_mul(sin_eye_pitch))) >> 16;
+            z = (y.wrapping_mul(sin_eye_pitch).wrapping_add(z.wrapping_mul(cos_eye_pitch))) >> 16;
+            y = tmp;
+
+            if let Some(slot) = pix.model_scratch.vertex_screen_z.get_mut(v) {
+                *slot = z.wrapping_sub(mid_z);
+            }
+            if let Some(slot) = pix.model_scratch.vertex_screen_x.get_mut(v) {
+                *slot = pix.origin_x + x.wrapping_shl(9).wrapping_div(z);
+            }
+            if let Some(slot) = pix.model_scratch.vertex_screen_y.get_mut(v) {
+                *slot = pix.origin_y + y.wrapping_shl(9).wrapping_div(z);
+            }
+
+            if self.num_t > 0 {
+                if let Some(slot) = pix.model_scratch.vertex_view_space_x.get_mut(v) {
+                    *slot = x;
+                }
+                if let Some(slot) = pix.model_scratch.vertex_view_space_y.get_mut(v) {
+                    *slot = y;
+                }
+                if let Some(slot) = pix.model_scratch.vertex_view_space_z.get_mut(v) {
+                    *slot = z;
+                }
+            }
+        }
+
+        self.render2(pix, surface, false, false, 0);
+    }
+
+    /// `Model.worldRender(yaw, sinEyePitch, cosEyePitch, sinEyeYaw,
+    /// cosEyeYaw, relativeX, relativeY, relativeZ, typecode)` from client-ts,
+    /// 1:1 including the `typecode > 0 && mouseCheck` pick append. The TS
+    /// `Pix3D`/`Model` statics (origin, `hclip`, `trans`, the projection
+    /// scratch, the mouse pick state) live on `pix`; the TS `Pix2D` statics
+    /// (`maxX`/`maxY`/`sizeX`) become the bound `surface`. The viewport
+    /// frustum tests use TS wrap semantics (relative coordinates and the trig
+    /// values overflow i32 in the products).
+    #[allow(clippy::too_many_arguments)]
+    pub fn world_render(
+        &self,
+        pix: &mut Pix3DDraw,
+        surface: &mut Pix2D,
+        yaw: i32,
+        sin_eye_pitch: i32,
+        cos_eye_pitch: i32,
+        sin_eye_yaw: i32,
+        cos_eye_yaw: i32,
+        relative_x: i32,
+        relative_y: i32,
+        relative_z: i32,
+        typecode: i32,
+    ) {
+        let z_prime =
+            (relative_z.wrapping_mul(cos_eye_yaw).wrapping_sub(relative_x.wrapping_mul(sin_eye_yaw))) >> 16;
+        let mid_z = relative_y
+            .wrapping_mul(sin_eye_pitch)
+            .wrapping_add(z_prime.wrapping_mul(cos_eye_pitch))
+            >> 16;
+        let radius_cos_eye_pitch = (self.radius.wrapping_mul(cos_eye_pitch)) >> 16;
+
+        let max_z = mid_z + radius_cos_eye_pitch;
+        if max_z <= 50 || mid_z >= 3500 {
+            return;
+        }
+
+        let mid_x =
+            (relative_z.wrapping_mul(sin_eye_yaw).wrapping_add(relative_x.wrapping_mul(cos_eye_yaw))) >> 16;
+        let mut left_x = (mid_x - self.radius) << 9;
+        if left_x.wrapping_div(max_z) >= surface.max_x {
+            return;
+        }
+
+        let mut right_x = (mid_x + self.radius) << 9;
+        if right_x.wrapping_div(max_z) <= -surface.max_x {
+            return;
+        }
+
+        let mid_y = relative_y
+            .wrapping_mul(cos_eye_pitch)
+            .wrapping_sub(z_prime.wrapping_mul(sin_eye_pitch))
+            >> 16;
+        let radius_sin_eye_pitch = (self.radius.wrapping_mul(sin_eye_pitch)) >> 16;
+
+        let mut bottom_y = (mid_y + radius_sin_eye_pitch) << 9;
+        if bottom_y.wrapping_div(max_z) <= -surface.max_y {
+            return;
+        }
+
+        let y_prime = radius_sin_eye_pitch + ((self.min_y.wrapping_mul(cos_eye_pitch)) >> 16);
+        let mut top_y = (mid_y - y_prime) << 9;
+        if top_y.wrapping_div(max_z) >= surface.max_y {
+            return;
+        }
+
+        let radius_z = radius_cos_eye_pitch + ((self.min_y.wrapping_mul(sin_eye_pitch)) >> 16);
+
+        let mut clipped = mid_z - radius_z <= 50;
+        let mut picking = false;
+
+        if typecode > 0 && pix.mouse_check {
+            let mut z = mid_z - radius_cos_eye_pitch;
+            if z <= 50 {
+                z = 50;
+            }
+
+            if mid_x > 0 {
+                left_x = left_x.wrapping_div(max_z);
+                right_x = right_x.wrapping_div(z);
+            } else {
+                right_x = right_x.wrapping_div(max_z);
+                left_x = left_x.wrapping_div(z);
+            }
+
+            if mid_y > 0 {
+                top_y = top_y.wrapping_div(max_z);
+                bottom_y = bottom_y.wrapping_div(z);
+            } else {
+                bottom_y = bottom_y.wrapping_div(max_z);
+                top_y = top_y.wrapping_div(z);
+            }
+
+            let mouse_x = pix.mouse_x - pix.origin_x;
+            let mouse_y = pix.mouse_y - pix.origin_y;
+            if mouse_x > left_x && mouse_x < right_x && mouse_y > top_y && mouse_y < bottom_y {
+                if self.use_aabb_mouse_check {
+                    Self::pick(pix, typecode);
+                } else {
+                    picking = true;
+                }
+            }
+        }
+
+        let center_x = pix.origin_x;
+        let center_y = pix.origin_y;
+
+        let mut sin_yaw = 0;
+        let mut cos_yaw = 0;
+        if yaw != 0 {
+            sin_yaw = Pix3D::sin_table().get(yaw as usize).copied().unwrap_or(0);
+            cos_yaw = Pix3D::cos_table().get(yaw as usize).copied().unwrap_or(0);
+        }
+
+        let (Some(point_x), Some(point_y), Some(point_z)) =
+            (&self.point_x, &self.point_y, &self.point_z)
+        else {
+            return;
+        };
+
+        for v in 0..self.num_points as usize {
+            let (Some(&x0), Some(&y0), Some(&z0)) =
+                (point_x.get(v), point_y.get(v), point_z.get(v))
+            else {
+                continue;
+            };
+            let (mut x, mut y, mut z) = (x0, y0, z0);
+
+            if yaw != 0 {
+                let temp = (z.wrapping_mul(sin_yaw).wrapping_add(x.wrapping_mul(cos_yaw))) >> 16;
+                z = (z.wrapping_mul(cos_yaw).wrapping_sub(x.wrapping_mul(sin_yaw))) >> 16;
+                x = temp;
+            }
+
+            x = x.wrapping_add(relative_x);
+            y = y.wrapping_add(relative_y);
+            z = z.wrapping_add(relative_z);
+
+            let temp = (z.wrapping_mul(sin_eye_yaw).wrapping_add(x.wrapping_mul(cos_eye_yaw))) >> 16;
+            z = (z.wrapping_mul(cos_eye_yaw).wrapping_sub(x.wrapping_mul(sin_eye_yaw))) >> 16;
+            x = temp;
+
+            let temp = (y.wrapping_mul(cos_eye_pitch).wrapping_sub(z.wrapping_mul(sin_eye_pitch))) >> 16;
+            z = (y.wrapping_mul(sin_eye_pitch).wrapping_add(z.wrapping_mul(cos_eye_pitch))) >> 16;
+            y = temp;
+
+            if let Some(slot) = pix.model_scratch.vertex_screen_z.get_mut(v) {
+                *slot = z.wrapping_sub(mid_z);
+            }
+
+            if z >= 50 {
+                if let Some(slot) = pix.model_scratch.vertex_screen_x.get_mut(v) {
+                    *slot = center_x + x.wrapping_shl(9).wrapping_div(z);
+                }
+                if let Some(slot) = pix.model_scratch.vertex_screen_y.get_mut(v) {
+                    *slot = center_y + y.wrapping_shl(9).wrapping_div(z);
+                }
+            } else {
+                if let Some(slot) = pix.model_scratch.vertex_screen_x.get_mut(v) {
+                    *slot = -5000;
+                }
+                clipped = true;
+            }
+
+            if clipped || self.num_t > 0 {
+                if let Some(slot) = pix.model_scratch.vertex_view_space_x.get_mut(v) {
+                    *slot = x;
+                }
+                if let Some(slot) = pix.model_scratch.vertex_view_space_y.get_mut(v) {
+                    *slot = y;
+                }
+                if let Some(slot) = pix.model_scratch.vertex_view_space_z.get_mut(v) {
+                    *slot = z;
+                }
+            }
+        }
+
+        self.render2(pix, surface, clipped, picking, typecode);
+    }
+
+    /// `Model.render2(clipped, picking, typecode)` from client-ts: bucket the
+    /// faces by depth and draw them back-to-front (priority-ordered when the
+    /// model has per-face priorities). The depth/priority scratch lives on
+    /// `pix`; out-of-range buckets are guarded no-ops like TS typed arrays.
+    fn render2(
+        &self,
+        pix: &mut Pix3DDraw,
+        surface: &mut Pix2D,
+        clipped: bool,
+        mut picking: bool,
+        typecode: i32,
+    ) {
+        for depth in 0..self.max_depth as usize {
+            if let Some(count) = pix.model_scratch.tmp_depth_face_count.get_mut(depth) {
+                *count = 0;
+            }
+        }
+
+        let (Some(face_vertex_a), Some(face_vertex_b), Some(face_vertex_c)) =
+            (&self.face_vertex_a, &self.face_vertex_b, &self.face_vertex_c)
+        else {
+            return;
+        };
+
+        for f in 0..self.num_faces as usize {
+            if let Some(render_type) = &self.face_render_type {
+                if render_type.get(f).copied().unwrap_or(0) == -1 {
+                    continue;
+                }
+            }
+
+            let (Some(&a), Some(&b), Some(&c)) = (
+                face_vertex_a.get(f),
+                face_vertex_b.get(f),
+                face_vertex_c.get(f),
+            ) else {
+                continue;
+            };
+            let (a, b, c) = (a as usize, b as usize, c as usize);
+
+            let (x_a, y_a, z_a) = Self::vertex_screen(pix, a);
+            let (x_b, y_b, z_b) = Self::vertex_screen(pix, b);
+            let (x_c, y_c, z_c) = Self::vertex_screen(pix, c);
+
+            if clipped && (x_a == -5000 || x_b == -5000 || x_c == -5000) {
+                if let Some(slot) = pix.model_scratch.face_near_clipped.get_mut(f) {
+                    *slot = true;
+                }
+
+                let depth_average =
+                    ((z_a as i64 + z_b as i64 + z_c as i64) / 3) as i32 + self.min_depth;
+                if let Some(count) =
+                    pix.model_scratch.tmp_depth_face_count.get_mut(depth_average as usize)
+                {
+                    let index = *count as usize;
+                    *count += 1;
+                    if let Some(slot) = pix
+                        .model_scratch
+                        .tmp_depth_faces
+                        .get_mut(depth_average as usize * 512 + index)
+                    {
+                        *slot = f as i32;
+                    }
+                }
+            } else {
+                if picking
+                    && self.is_mouse_roughly_inside_triangle(
+                        pix.mouse_x, pix.mouse_y, y_a, y_b, y_c, x_a, x_b, x_c,
+                    )
+                {
+                    Self::pick(pix, typecode);
+                    picking = false;
+                }
+
+                let dx_ab = x_a - x_b;
+                let dy_ab = y_a - y_b;
+                let dx_cb = x_c - x_b;
+                let dy_cb = y_c - y_b;
+
+                if dx_ab * dy_cb - dy_ab * dx_cb <= 0 {
+                    continue;
+                }
+
+                if let Some(slot) = pix.model_scratch.face_near_clipped.get_mut(f) {
+                    *slot = false;
+                }
+                let face_clipped_x = x_a < 0
+                    || x_b < 0
+                    || x_c < 0
+                    || x_a > surface.size_x
+                    || x_b > surface.size_x
+                    || x_c > surface.size_x;
+                if let Some(slot) = pix.model_scratch.face_clipped_x.get_mut(f) {
+                    *slot = face_clipped_x;
+                }
+
+                let depth_average =
+                    ((z_a as i64 + z_b as i64 + z_c as i64) / 3) as i32 + self.min_depth;
+                if let Some(count) =
+                    pix.model_scratch.tmp_depth_face_count.get_mut(depth_average as usize)
+                {
+                    let index = *count as usize;
+                    *count += 1;
+                    if let Some(slot) = pix
+                        .model_scratch
+                        .tmp_depth_faces
+                        .get_mut(depth_average as usize * 512 + index)
+                    {
+                        *slot = f as i32;
+                    }
+                }
+            }
+        }
+
+        if self.face_priority.is_none() {
+            for depth in (0..self.max_depth as usize).rev() {
+                let count = pix
+                    .model_scratch
+                    .tmp_depth_face_count
+                    .get(depth)
+                    .copied()
+                    .unwrap_or(0);
+                if count <= 0 {
+                    continue;
+                }
+
+                let base = depth * 512;
+                for i in 0..count as usize {
+                    let face = pix
+                        .model_scratch
+                        .tmp_depth_faces
+                        .get(base + i)
+                        .copied()
+                        .unwrap_or(0) as usize;
+                    self.render3(pix, surface, face);
+                }
+            }
+
+            return;
+        }
+
+        for priority in 0..12 {
+            if let Some(slot) = pix.model_scratch.tmp_priority_face_count.get_mut(priority) {
+                *slot = 0;
+            }
+            if let Some(slot) = pix.model_scratch.tmp_priority_depth_sum.get_mut(priority) {
+                *slot = 0;
+            }
+        }
+
+        let face_priority = self.face_priority.as_deref().unwrap_or(&[]);
+
+        for depth in (0..self.max_depth as usize).rev() {
+            let face_count = pix
+                .model_scratch
+                .tmp_depth_face_count
+                .get(depth)
+                .copied()
+                .unwrap_or(0);
+            if face_count > 0 {
+                let base = depth * 512;
+                for i in 0..face_count as usize {
+                    let priority_depth = pix
+                        .model_scratch
+                        .tmp_depth_faces
+                        .get(base + i)
+                        .copied()
+                        .unwrap_or(0) as usize;
+                    let priority_face = face_priority.get(priority_depth).copied().unwrap_or(0);
+
+                    if let Some(count) = pix
+                        .model_scratch
+                        .tmp_priority_face_count
+                        .get_mut(priority_face as usize)
+                    {
+                        let index = *count as usize;
+                        *count += 1;
+                        if let Some(slot) = pix
+                            .model_scratch
+                            .tmp_priority_faces
+                            .get_mut(priority_face as usize * 2000 + index)
+                        {
+                            *slot = priority_depth as i32;
+                        }
+
+                        if priority_face < 10 {
+                            if let Some(sum) = pix
+                                .model_scratch
+                                .tmp_priority_depth_sum
+                                .get_mut(priority_face as usize)
+                            {
+                                *sum += depth as i32;
+                            }
+                        } else if priority_face == 10 {
+                            if let Some(slot) = pix
+                                .model_scratch
+                                .tmp_priority10_face_depth
+                                .get_mut(index)
+                            {
+                                *slot = depth as i32;
+                            }
+                        } else if let Some(slot) = pix
+                            .model_scratch
+                            .tmp_priority11_face_depth
+                            .get_mut(index)
+                        {
+                            *slot = depth as i32;
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut average_priority_depth_sum1_2 = 0;
+        let count1 = pix.model_scratch.tmp_priority_face_count.get(1).copied().unwrap_or(0);
+        let count2 = pix.model_scratch.tmp_priority_face_count.get(2).copied().unwrap_or(0);
+        if count1 > 0 || count2 > 0 {
+            let sum1 = pix.model_scratch.tmp_priority_depth_sum.get(1).copied().unwrap_or(0);
+            let sum2 = pix.model_scratch.tmp_priority_depth_sum.get(2).copied().unwrap_or(0);
+            average_priority_depth_sum1_2 =
+                ((sum1 + sum2) as i64 / (count1 + count2) as i64) as i32;
+        }
+
+        let mut average_priority_depth_sum3_4 = 0;
+        let count3 = pix.model_scratch.tmp_priority_face_count.get(3).copied().unwrap_or(0);
+        let count4 = pix.model_scratch.tmp_priority_face_count.get(4).copied().unwrap_or(0);
+        if count3 > 0 || count4 > 0 {
+            let sum3 = pix.model_scratch.tmp_priority_depth_sum.get(3).copied().unwrap_or(0);
+            let sum4 = pix.model_scratch.tmp_priority_depth_sum.get(4).copied().unwrap_or(0);
+            average_priority_depth_sum3_4 =
+                ((sum3 + sum4) as i64 / (count3 + count4) as i64) as i32;
+        }
+
+        let mut average_priority_depth_sum6_8 = 0;
+        let count6 = pix.model_scratch.tmp_priority_face_count.get(6).copied().unwrap_or(0);
+        let count8 = pix.model_scratch.tmp_priority_face_count.get(8).copied().unwrap_or(0);
+        if count6 > 0 || count8 > 0 {
+            let sum6 = pix.model_scratch.tmp_priority_depth_sum.get(6).copied().unwrap_or(0);
+            let sum8 = pix.model_scratch.tmp_priority_depth_sum.get(8).copied().unwrap_or(0);
+            average_priority_depth_sum6_8 =
+                ((sum6 + sum8) as i64 / (count6 + count8) as i64) as i32;
+        }
+
+        let mut priority_face = 0usize;
+        let mut priority_face_count = pix
+            .model_scratch
+            .tmp_priority_face_count
+            .get(10)
+            .copied()
+            .unwrap_or(0);
+        let mut on_11 = false;
+        let mut priority_depth;
+        (priority_face, priority_face_count, on_11, priority_depth) =
+            Self::advance_priority(pix, priority_face, priority_face_count, on_11);
+
+        for priority in 0..10 {
+            while priority == 0 && priority_depth > average_priority_depth_sum1_2 {
+                self.render_priority_face(
+                    pix,
+                    surface,
+                    &mut priority_face,
+                    &mut priority_face_count,
+                    &mut on_11,
+                    &mut priority_depth,
+                );
+            }
+
+            while priority == 3 && priority_depth > average_priority_depth_sum3_4 {
+                self.render_priority_face(
+                    pix,
+                    surface,
+                    &mut priority_face,
+                    &mut priority_face_count,
+                    &mut on_11,
+                    &mut priority_depth,
+                );
+            }
+
+            while priority == 5 && priority_depth > average_priority_depth_sum6_8 {
+                self.render_priority_face(
+                    pix,
+                    surface,
+                    &mut priority_face,
+                    &mut priority_face_count,
+                    &mut on_11,
+                    &mut priority_depth,
+                );
+            }
+
+            let count = pix
+                .model_scratch
+                .tmp_priority_face_count
+                .get(priority as usize)
+                .copied()
+                .unwrap_or(0);
+            if count > 0 {
+                let base = priority as usize * 2000;
+                for i in 0..count as usize {
+                    let face = pix
+                        .model_scratch
+                        .tmp_priority_faces
+                        .get(base + i)
+                        .copied()
+                        .unwrap_or(0) as usize;
+                    self.render3(pix, surface, face);
+                }
+            }
+        }
+
+        while priority_depth != -1000 {
+            self.render_priority_face(
+                pix,
+                surface,
+                &mut priority_face,
+                &mut priority_face_count,
+                &mut on_11,
+                &mut priority_depth,
+            );
+        }
+    }
+
+    /// One `render3` step of the render2 priority merge: draw
+    /// `tmpPriorityFaces[10|11][priorityFace++]`, roll bucket 10 over to 11
+    /// when exhausted, and re-read `priorityDepth` (the TS inline block
+    /// repeated in every merge loop). The cursor state is threaded back
+    /// through the `&mut` arguments so the caller's merge loop sees the
+    /// bucket-11 rollover.
+    #[allow(clippy::too_many_arguments)]
+    fn render_priority_face(
+        &self,
+        pix: &mut Pix3DDraw,
+        surface: &mut Pix2D,
+        priority_face: &mut usize,
+        priority_face_count: &mut i32,
+        on_11: &mut bool,
+        priority_depth: &mut i32,
+    ) {
+        let face = pix
+            .model_scratch
+            .tmp_priority_faces
+            .get((if *on_11 { 11 } else { 10 }) * 2000 + *priority_face)
+            .copied()
+            .unwrap_or(0) as usize;
+        *priority_face += 1;
+        self.render3(pix, surface, face);
+
+        let (new_face, new_count, new_on_11, new_depth) = Self::advance_priority(
+            pix,
+            *priority_face,
+            *priority_face_count,
+            *on_11,
+        );
+        *priority_face = new_face;
+        *priority_face_count = new_count;
+        *on_11 = new_on_11;
+        *priority_depth = new_depth;
+    }
+
+    /// TS `Model.tmpPriorityFaceCount[10|11]` rollover + the
+    /// `priorityFaceDepths[priorityFace]` re-read that follows every merge
+    /// step in render2 (returns the new face/depth cursor state).
+    #[allow(clippy::type_complexity)]
+    fn advance_priority(
+        pix: &Pix3DDraw,
+        priority_face: usize,
+        priority_face_count: i32,
+        on_11: bool,
+    ) -> (usize, i32, bool, i32) {
+        let (priority_face, priority_face_count, on_11) =
+            if (priority_face as i32) == priority_face_count && !on_11 {
+                (
+                    0,
+                    pix.model_scratch
+                        .tmp_priority_face_count
+                        .get(11)
+                        .copied()
+                        .unwrap_or(0),
+                    true,
+                )
+            } else {
+                (priority_face, priority_face_count, on_11)
+            };
+
+        let priority_depth = if (priority_face as i32) < priority_face_count {
+            if on_11 {
+                pix.model_scratch
+                    .tmp_priority11_face_depth
+                    .get(priority_face)
+                    .copied()
+                    .unwrap_or(0)
+            } else {
+                pix.model_scratch
+                    .tmp_priority10_face_depth
+                    .get(priority_face)
+                    .copied()
+                    .unwrap_or(0)
+            }
+        } else {
+            -1000
+        };
+
+        (priority_face, priority_face_count, on_11, priority_depth)
+    }
+
+    /// `Model.render3(face)` from client-ts: draw one bucketed face, setting
+    /// `hclip`/`trans` from the per-face flags and alpha, then dispatch on
+    /// `faceRenderType & 0x3` to gouraud/flat/texture. Missing colour or
+    /// texture arrays skip the face (the TS `!` asserts would throw and be
+    /// swallowed by `render2`'s try/catch).
+    fn render3(&self, pix: &mut Pix3DDraw, surface: &mut Pix2D, face: usize) {
+        if pix.model_scratch.face_near_clipped.get(face).copied().unwrap_or(false) {
+            self.render3_z_clip(pix, surface, face);
+            return;
+        }
+
+        let (Some(face_vertex_a), Some(face_vertex_b), Some(face_vertex_c)) =
+            (&self.face_vertex_a, &self.face_vertex_b, &self.face_vertex_c)
+        else {
+            return;
+        };
+        let (Some(&a), Some(&b), Some(&c)) = (
+            face_vertex_a.get(face),
+            face_vertex_b.get(face),
+            face_vertex_c.get(face),
+        ) else {
+            return;
+        };
+        let (a, b, c) = (a as usize, b as usize, c as usize);
+
+        pix.hclip = pix
+            .model_scratch
+            .face_clipped_x
+            .get(face)
+            .copied()
+            .unwrap_or(false);
+
+        pix.trans = match &self.face_alpha {
+            Some(alpha) => alpha.get(face).copied().unwrap_or(0),
+            None => 0,
+        };
+
+        let render_type = self
+            .face_render_type
+            .as_ref()
+            .and_then(|rt| rt.get(face))
+            .copied()
+            .unwrap_or(0);
+        let r#type = render_type & 0x3;
+
+        let (x_a, y_a, _) = Self::vertex_screen(pix, a);
+        let (x_b, y_b, _) = Self::vertex_screen(pix, b);
+        let (x_c, y_c, _) = Self::vertex_screen(pix, c);
+
+        if r#type == 0 {
+            let (Some(face_colour_a), Some(face_colour_b), Some(face_colour_c)) =
+                (&self.face_colour_a, &self.face_colour_b, &self.face_colour_c)
+            else {
+                return;
+            };
+            let (Some(&shade_a), Some(&shade_b), Some(&shade_c)) = (
+                face_colour_a.get(face),
+                face_colour_b.get(face),
+                face_colour_c.get(face),
+            ) else {
+                return;
+            };
+            self.render_triangle(
+                pix,
+                surface,
+                r#type,
+                render_type,
+                face,
+                x_a,
+                x_b,
+                x_c,
+                y_a,
+                y_b,
+                y_c,
+                shade_a,
+                shade_b,
+                shade_c,
+            );
+        } else if r#type == 1 {
+            self.render_triangle(
+                pix, surface, r#type, render_type, face, x_a, x_b, x_c, y_a, y_b, y_c, 0, 0, 0,
+            );
+        } else {
+            let (Some(face_colour_a), Some(face_colour_b), Some(face_colour_c)) =
+                (&self.face_colour_a, &self.face_colour_b, &self.face_colour_c)
+            else {
+                return;
+            };
+            let (Some(&shade_a), Some(&shade_b), Some(&shade_c)) = (
+                face_colour_a.get(face),
+                face_colour_b.get(face),
+                face_colour_c.get(face),
+            ) else {
+                return;
+            };
+            self.render_triangle(
+                pix,
+                surface,
+                r#type,
+                render_type,
+                face,
+                x_a,
+                x_b,
+                x_c,
+                y_a,
+                y_b,
+                y_c,
+                shade_a,
+                shade_b,
+                shade_c,
+            );
+        }
+    }
+
+    /// Shared face raster used by `render3` and `render3ZClip`: dispatch on
+    /// `faceRenderType & 0x3` to gouraud/flat/texture. Type 0 and 2 use the
+    /// given per-vertex shades; type 1 and 3 re-read `faceColourA[face]`
+    /// exactly as TS does in both call sites.
+    #[allow(clippy::too_many_arguments)]
+    fn render_triangle(
+        &self,
+        pix: &mut Pix3DDraw,
+        surface: &mut Pix2D,
+        r#type: i32,
+        render_type: i32,
+        face: usize,
+        x_a: i32,
+        x_b: i32,
+        x_c: i32,
+        y_a: i32,
+        y_b: i32,
+        y_c: i32,
+        shade_a: i32,
+        shade_b: i32,
+        shade_c: i32,
+    ) {
+        if r#type == 0 {
+            pix.gouraud_triangle(surface, x_a, x_b, x_c, y_a, y_b, y_c, shade_a, shade_b, shade_c);
+        } else if r#type == 1 {
+            let Some(face_colour_a) = &self.face_colour_a else { return };
+            let Some(&shade) = face_colour_a.get(face) else { return };
+            let colour = Pix3D::colour_table().get(shade as usize).copied().unwrap_or(0);
+            pix.flat_triangle(surface, x_a, x_b, x_c, y_a, y_b, y_c, colour);
+        } else {
+            let textured_face = (render_type >> 2) as usize;
+            let (Some(texture_p), Some(texture_m), Some(texture_n)) =
+                (&self.face_texture_p, &self.face_texture_m, &self.face_texture_n)
+            else {
+                return;
+            };
+            let (Some(&t_a), Some(&t_b), Some(&t_c)) = (
+                texture_p.get(textured_face),
+                texture_m.get(textured_face),
+                texture_n.get(textured_face),
+            ) else {
+                return;
+            };
+            let Some(face_colour) = &self.face_colour else { return };
+            let Some(&texture) = face_colour.get(face) else { return };
+
+            let (origin_x, origin_y, origin_z) = Self::vertex_view_space(pix, t_a as usize);
+            let (tx_b, ty_b, tz_b) = Self::vertex_view_space(pix, t_b as usize);
+            let (tx_c, ty_c, tz_c) = Self::vertex_view_space(pix, t_c as usize);
+
+            let (shade_a, shade_b, shade_c) = if r#type == 3 {
+                let Some(face_colour_a) = &self.face_colour_a else { return };
+                let Some(&shade) = face_colour_a.get(face) else { return };
+                (shade, shade, shade)
+            } else {
+                (shade_a, shade_b, shade_c)
+            };
+
+            pix.texture_triangle(
+                surface,
+                x_a, x_b, x_c,
+                y_a, y_b, y_c,
+                shade_a, shade_b, shade_c,
+                origin_x, origin_y, origin_z,
+                tx_b, tx_c,
+                ty_b, ty_c,
+                tz_b, tz_c,
+                texture,
+            );
+        }
+    }
+
+    /// `Model.render3ZClip(face)` from client-ts: near-plane clip of a face
+    /// with an off-screen (`-5000`) vertex into a 3- or 4-vertex polygon,
+    /// then the same type dispatch as `render3`. The view-space scratch is
+    /// written by `worldRender` whenever the frame `clipped` (or the model
+    /// is textured).
+    fn render3_z_clip(&self, pix: &mut Pix3DDraw, surface: &mut Pix2D, face: usize) {
+        let mut elements = 0usize;
+
+        let center_x = pix.origin_x;
+        let center_y = pix.origin_y;
+
+        let (Some(face_vertex_a), Some(face_vertex_b), Some(face_vertex_c)) =
+            (&self.face_vertex_a, &self.face_vertex_b, &self.face_vertex_c)
+        else {
+            return;
+        };
+        let (Some(&a), Some(&b), Some(&c)) = (
+            face_vertex_a.get(face),
+            face_vertex_b.get(face),
+            face_vertex_c.get(face),
+        ) else {
+            return;
+        };
+        let (a, b, c) = (a as usize, b as usize, c as usize);
+
+        let (_, _, z_a) = Self::vertex_view_space(pix, a);
+        let (_, _, z_b) = Self::vertex_view_space(pix, b);
+        let (_, _, z_c) = Self::vertex_view_space(pix, c);
+
+        let Some(face_colour_a) = &self.face_colour_a else { return };
+        let Some(face_colour_b) = &self.face_colour_b else { return };
+        let Some(face_colour_c) = &self.face_colour_c else { return };
+
+        if z_a >= 50 {
+            let (x, y, _) = Self::vertex_screen(pix, a);
+            Self::clipped_push(
+                pix,
+                &mut elements,
+                x,
+                y,
+                face_colour_a.get(face).copied().unwrap_or(0),
+            );
+        } else {
+            let (x_a, y_a, _) = Self::vertex_view_space(pix, a);
+            let colour_a = face_colour_a.get(face).copied().unwrap_or(0);
+
+            if z_c >= 50 {
+                let scalar = (50 - z_a).wrapping_mul(
+                    Pix3D::div_table2()
+                        .get((z_c - z_a) as usize)
+                        .copied()
+                        .unwrap_or(0),
+                );
+                let (x_c, y_c, _) = Self::vertex_view_space(pix, c);
+                let colour_c = face_colour_c.get(face).copied().unwrap_or(0);
+                Self::clipped_push(
+                    pix,
+                    &mut elements,
+                    center_x + x_a.wrapping_add((x_c - x_a).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
+                    center_y + y_a.wrapping_add((y_c - y_a).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
+                    colour_a.wrapping_add((colour_c - colour_a).wrapping_mul(scalar) >> 16),
+                );
+            }
+
+            if z_b >= 50 {
+                let scalar = (50 - z_a).wrapping_mul(
+                    Pix3D::div_table2()
+                        .get((z_b - z_a) as usize)
+                        .copied()
+                        .unwrap_or(0),
+                );
+                let (x_b, y_b, _) = Self::vertex_view_space(pix, b);
+                let colour_b = face_colour_b.get(face).copied().unwrap_or(0);
+                Self::clipped_push(
+                    pix,
+                    &mut elements,
+                    center_x + x_a.wrapping_add((x_b - x_a).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
+                    center_y + y_a.wrapping_add((y_b - y_a).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
+                    colour_a.wrapping_add((colour_b - colour_a).wrapping_mul(scalar) >> 16),
+                );
+            }
+        }
+
+        if z_b >= 50 {
+            let (x, y, _) = Self::vertex_screen(pix, b);
+            Self::clipped_push(
+                pix,
+                &mut elements,
+                x,
+                y,
+                face_colour_b.get(face).copied().unwrap_or(0),
+            );
+        } else {
+            let (x_b, y_b, _) = Self::vertex_view_space(pix, b);
+            let colour_b = face_colour_b.get(face).copied().unwrap_or(0);
+
+            if z_a >= 50 {
+                let scalar = (50 - z_b).wrapping_mul(
+                    Pix3D::div_table2()
+                        .get((z_a - z_b) as usize)
+                        .copied()
+                        .unwrap_or(0),
+                );
+                let (x_a, y_a, _) = Self::vertex_view_space(pix, a);
+                let colour_a = face_colour_a.get(face).copied().unwrap_or(0);
+                Self::clipped_push(
+                    pix,
+                    &mut elements,
+                    center_x + x_b.wrapping_add((x_a - x_b).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
+                    center_y + y_b.wrapping_add((y_a - y_b).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
+                    colour_b.wrapping_add((colour_a - colour_b).wrapping_mul(scalar) >> 16),
+                );
+            }
+
+            if z_c >= 50 {
+                let scalar = (50 - z_b).wrapping_mul(
+                    Pix3D::div_table2()
+                        .get((z_c - z_b) as usize)
+                        .copied()
+                        .unwrap_or(0),
+                );
+                let (x_c, y_c, _) = Self::vertex_view_space(pix, c);
+                let colour_c = face_colour_c.get(face).copied().unwrap_or(0);
+                Self::clipped_push(
+                    pix,
+                    &mut elements,
+                    center_x + x_b.wrapping_add((x_c - x_b).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
+                    center_y + y_b.wrapping_add((y_c - y_b).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
+                    colour_b.wrapping_add((colour_c - colour_b).wrapping_mul(scalar) >> 16),
+                );
+            }
+        }
+
+        if z_c >= 50 {
+            let (x, y, _) = Self::vertex_screen(pix, c);
+            Self::clipped_push(
+                pix,
+                &mut elements,
+                x,
+                y,
+                face_colour_c.get(face).copied().unwrap_or(0),
+            );
+        } else {
+            let (x_c, y_c, _) = Self::vertex_view_space(pix, c);
+            let colour_c = face_colour_c.get(face).copied().unwrap_or(0);
+
+            if z_b >= 50 {
+                let scalar = (50 - z_c).wrapping_mul(
+                    Pix3D::div_table2()
+                        .get((z_b - z_c) as usize)
+                        .copied()
+                        .unwrap_or(0),
+                );
+                let (x_b, y_b, _) = Self::vertex_view_space(pix, b);
+                let colour_b = face_colour_b.get(face).copied().unwrap_or(0);
+                Self::clipped_push(
+                    pix,
+                    &mut elements,
+                    center_x + x_c.wrapping_add((x_b - x_c).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
+                    center_y + y_c.wrapping_add((y_b - y_c).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
+                    colour_c.wrapping_add((colour_b - colour_c).wrapping_mul(scalar) >> 16),
+                );
+            }
+
+            if z_a >= 50 {
+                let scalar = (50 - z_c).wrapping_mul(
+                    Pix3D::div_table2()
+                        .get((z_a - z_c) as usize)
+                        .copied()
+                        .unwrap_or(0),
+                );
+                let (x_a, y_a, _) = Self::vertex_view_space(pix, a);
+                let colour_a = face_colour_a.get(face).copied().unwrap_or(0);
+                Self::clipped_push(
+                    pix,
+                    &mut elements,
+                    center_x + x_c.wrapping_add((x_a - x_c).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
+                    center_y + y_c.wrapping_add((y_a - y_c).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
+                    colour_c.wrapping_add((colour_a - colour_c).wrapping_mul(scalar) >> 16),
+                );
+            }
+        }
+
+        let x0 = pix.model_scratch.clipped_x.first().copied().unwrap_or(0);
+        let x1 = pix.model_scratch.clipped_x.get(1).copied().unwrap_or(0);
+        let x2 = pix.model_scratch.clipped_x.get(2).copied().unwrap_or(0);
+        let y0 = pix.model_scratch.clipped_y.first().copied().unwrap_or(0);
+        let y1 = pix.model_scratch.clipped_y.get(1).copied().unwrap_or(0);
+        let y2 = pix.model_scratch.clipped_y.get(2).copied().unwrap_or(0);
+
+        if (x0 - x1) * (y2 - y1) - (y0 - y1) * (x2 - x1) <= 0 {
+            return;
+        }
+
+        pix.hclip = false;
+
+        let render_type = self
+            .face_render_type
+            .as_ref()
+            .and_then(|rt| rt.get(face))
+            .copied()
+            .unwrap_or(0);
+        let r#type = render_type & 0x3;
+
+        if elements == 3 {
+            if x0 < 0
+                || x1 < 0
+                || x2 < 0
+                || x0 > surface.size_x
+                || x1 > surface.size_x
+                || x2 > surface.size_x
+            {
+                pix.hclip = true;
+            }
+
+            let c0 = pix.model_scratch.clipped_colour.first().copied().unwrap_or(0);
+            let c1 = pix.model_scratch.clipped_colour.get(1).copied().unwrap_or(0);
+            let c2 = pix.model_scratch.clipped_colour.get(2).copied().unwrap_or(0);
+            self.render_triangle(
+                pix, surface, r#type, render_type, face, x0, x1, x2, y0, y1, y2, c0, c1, c2,
+            );
+        } else if elements == 4 {
+            if x0 < 0
+                || x1 < 0
+                || x2 < 0
+                || x0 > surface.size_x
+                || x1 > surface.size_x
+                || x2 > surface.size_x
+                || pix.model_scratch.clipped_x.get(3).copied().unwrap_or(0) < 0
+                || pix.model_scratch.clipped_x.get(3).copied().unwrap_or(0) > surface.size_x
+            {
+                pix.hclip = true;
+            }
+
+            let x3 = pix.model_scratch.clipped_x.get(3).copied().unwrap_or(0);
+            let y3 = pix.model_scratch.clipped_y.get(3).copied().unwrap_or(0);
+            let c0 = pix.model_scratch.clipped_colour.first().copied().unwrap_or(0);
+            let c1 = pix.model_scratch.clipped_colour.get(1).copied().unwrap_or(0);
+            let c2 = pix.model_scratch.clipped_colour.get(2).copied().unwrap_or(0);
+            let c3 = pix.model_scratch.clipped_colour.get(3).copied().unwrap_or(0);
+            self.render_triangle(
+                pix, surface, r#type, render_type, face, x0, x1, x2, y0, y1, y2, c0, c1, c2,
+            );
+            self.render_triangle(
+                pix, surface, r#type, render_type, face, x0, x2, x3, y0, y2, y3, c0, c2, c3,
+            );
+        }
+    }
+
+    /// TS `Model.clippedX[elements] = x` etc. appends (10-slot typed arrays;
+    /// the near clip never produces more than 4 vertices).
+    fn clipped_push(pix: &mut Pix3DDraw, elements: &mut usize, x: i32, y: i32, colour: i32) {
+        if let Some(slot) = pix.model_scratch.clipped_x.get_mut(*elements) {
+            *slot = x;
+        }
+        if let Some(slot) = pix.model_scratch.clipped_y.get_mut(*elements) {
+            *slot = y;
+        }
+        if let Some(slot) = pix.model_scratch.clipped_colour.get_mut(*elements) {
+            *slot = colour;
+        }
+        *elements += 1;
+    }
+
+    /// `Model.isMouseRoughlyInsideTriangle(...)` from client-ts: the mouse in
+    /// the projected triangle's axis-aligned bounding box (the cheap
+    /// pre-test `render2` runs per picking face). The four-branch boolean
+    /// chain is kept 1:1 with the TS.
+    #[allow(clippy::needless_bool)]
+    fn is_mouse_roughly_inside_triangle(
+        &self,
+        x: i32,
+        y: i32,
+        y_a: i32,
+        y_b: i32,
+        y_c: i32,
+        x_a: i32,
+        x_b: i32,
+        x_c: i32,
+    ) -> bool {
+        if y < y_a && y < y_b && y < y_c {
+            false
+        } else if y > y_a && y > y_b && y > y_c {
+            false
+        } else if x < x_a && x < x_b && x < x_c {
+            false
+        } else if x > x_a && x > x_b && x > x_c {
+            false
+        } else {
+            true
         }
     }
 }
