@@ -68,6 +68,10 @@ impl Packet {
         &self.data
     }
 
+    pub fn data_mut(&mut self) -> &mut [u8] {
+        &mut self.data
+    }
+
     pub fn length(&self) -> usize {
         self.data.len()
     }
