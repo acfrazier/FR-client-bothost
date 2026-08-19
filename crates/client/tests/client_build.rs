@@ -274,3 +274,31 @@ fn load_locations_skips_out_of_area_tiles() {
     // negative neighbour; interior tiles stay untouched
     assert_eq!(c.collision[0].flags[1][2] & CollisionFlag::W_W, 0);
 }
+
+#[test]
+fn load_locations_places_at_offset_tiles() {
+    let mut c = client();
+    c.cache.locs.push(LocType {
+        blockwalk: true,
+        ..LocType::default()
+    });
+    let mut build = ClientBuild::new();
+    // deltaId 1 (loc 0); deltaPos 131 -> locPos 130 (raw x=2, z=2); info
+    // 0x00 -> shape 0 (WALL_STRAIGHT), rotation 0 (WEST)
+    let src = [0x01, 0x80, 0x83, 0x00, 0x00, 0x00];
+    // stx = x + 8 = 10: addLoc must receive the offset tile coords, not the
+    // raw packet x/z (TS `this.addLoc(level, stx, stz, ...)` at 758)
+    build.load_locations(
+        &c.cache,
+        &mut c.world,
+        &mut c.collision,
+        &c.groundh,
+        &c.mapl,
+        &src,
+        8,
+        0,
+        0,
+    );
+    assert_ne!(c.collision[0].flags[10][2] & CollisionFlag::W_W, 0);
+    assert_eq!(c.collision[0].flags[2][2] & CollisionFlag::W_W, 0);
+}

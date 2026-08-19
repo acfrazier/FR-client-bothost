@@ -319,7 +319,7 @@ impl ClientBuild {
                     };
 
                     self.add_loc(
-                        cache, world, collision, groundh, mapl, level, x, z, loc_id, shape,
+                        cache, world, collision, groundh, mapl, level, stx, stz, loc_id, shape,
                         rotation, loop_cycle,
                     );
                 }
