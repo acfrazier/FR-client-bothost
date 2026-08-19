@@ -488,6 +488,22 @@ impl Pix3DDraw {
         }
     }
 
+    /// TS typed-array pixel read: an out-of-bounds offset (including a
+    /// negative `off`) is `undefined` → 0, a silent no-op.
+    #[inline]
+    fn pixel(surface: &Pix2D, off: i32) -> i32 {
+        surface.pixels.get(off as usize).copied().unwrap_or(0)
+    }
+
+    /// TS typed-array pixel write: an out-of-bounds offset (including a
+    /// negative `off`) is silently ignored, exactly like `dst[off] = rgb`.
+    #[inline]
+    fn put_pixel(surface: &mut Pix2D, off: i32, rgb: i32) {
+        if let Some(p) = surface.pixels.get_mut(off as usize) {
+            *p = rgb;
+        }
+    }
+
     /// TS `gouraudTriangle`: shaded triangle into `surface`, clipping against
     /// `surface.clip_max_y` and (with `hclip`) `surface.size_x`. Colours are
     /// 16-bit shade indices into the colour table.
@@ -1184,11 +1200,9 @@ impl Pix3DDraw {
     /// `colour >> 8`). The TS `len` parameter is dropped: it is always 0 and
     /// recomputed here.
     ///
-    /// The writes below index `surface.pixels` directly (TS out-of-bounds
-    /// typed-array writes are silently ignored; a Rust index would panic).
-    /// The caller must set `hclip` whenever a span can leave the viewport —
-    /// Model/World do that exactly when projected vertices exit `sizeX` —
-    /// so spans are clamped to `[0, size_x]` before any write.
+    /// Writes go through `put_pixel`, so an out-of-bounds offset (negative
+    /// `off`, or past the buffer) is a silent no-op like a TS typed-array
+    /// write; `hclip` still clamps spans to `[0, size_x]` when set.
     fn gouraud_raster(
         &self,
         surface: &mut Pix2D,
@@ -1230,7 +1244,7 @@ impl Pix3DDraw {
                                     .copied()
                                     .unwrap_or(0);
                                 loop {
-                                    surface.pixels[off as usize] = rgb;
+                                    Self::put_pixel(surface, off, rgb);
                                     off += 1;
                                     len -= 1;
                                     if len <= 0 {
@@ -1245,13 +1259,13 @@ impl Pix3DDraw {
                             .copied()
                             .unwrap_or(0);
                         colour_a = colour_a.wrapping_add(colour_step);
-                        surface.pixels[off as usize] = rgb;
+                        Self::put_pixel(surface, off, rgb);
                         off += 1;
-                        surface.pixels[off as usize] = rgb;
+                        Self::put_pixel(surface, off, rgb);
                         off += 1;
-                        surface.pixels[off as usize] = rgb;
+                        Self::put_pixel(surface, off, rgb);
                         off += 1;
-                        surface.pixels[off as usize] = rgb;
+                        Self::put_pixel(surface, off, rgb);
                         off += 1;
                     }
                 } else {
@@ -1270,10 +1284,10 @@ impl Pix3DDraw {
                                     & 0xff00ff)
                                     + ((((rgb & 0xff00).wrapping_mul(inv_alpha)) >> 8) & 0xff00);
                                 loop {
-                                    let d = surface.pixels[off as usize];
-                                    surface.pixels[off as usize] = src
+                                    let d = Self::pixel(surface, off);
+                                    Self::put_pixel(surface, off, src
                                         + ((((d & 0xff00ff).wrapping_mul(alpha)) >> 8) & 0xff00ff)
-                                        + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00);
+                                        + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00));
                                     off += 1;
                                     len -= 1;
                                     if len <= 0 {
@@ -1290,25 +1304,25 @@ impl Pix3DDraw {
                         colour_a = colour_a.wrapping_add(colour_step);
                         let src = ((((rgb & 0xff00ff).wrapping_mul(inv_alpha)) >> 8) & 0xff00ff)
                             + ((((rgb & 0xff00).wrapping_mul(inv_alpha)) >> 8) & 0xff00);
-                        let d = surface.pixels[off as usize];
-                        surface.pixels[off as usize] = src
+                        let d = Self::pixel(surface, off);
+                        Self::put_pixel(surface, off, src
                             + ((((d & 0xff00ff).wrapping_mul(alpha)) >> 8) & 0xff00ff)
-                            + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00);
+                            + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00));
                         off += 1;
-                        let d = surface.pixels[off as usize];
-                        surface.pixels[off as usize] = src
+                        let d = Self::pixel(surface, off);
+                        Self::put_pixel(surface, off, src
                             + ((((d & 0xff00ff).wrapping_mul(alpha)) >> 8) & 0xff00ff)
-                            + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00);
+                            + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00));
                         off += 1;
-                        let d = surface.pixels[off as usize];
-                        surface.pixels[off as usize] = src
+                        let d = Self::pixel(surface, off);
+                        Self::put_pixel(surface, off, src
                             + ((((d & 0xff00ff).wrapping_mul(alpha)) >> 8) & 0xff00ff)
-                            + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00);
+                            + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00));
                         off += 1;
-                        let d = surface.pixels[off as usize];
-                        surface.pixels[off as usize] = src
+                        let d = Self::pixel(surface, off);
+                        Self::put_pixel(surface, off, src
                             + ((((d & 0xff00ff).wrapping_mul(alpha)) >> 8) & 0xff00ff)
-                            + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00);
+                            + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00));
                         off += 1;
                     }
                 }
@@ -1334,7 +1348,7 @@ impl Pix3DDraw {
                                     .copied()
                                     .unwrap_or(0);
                                 loop {
-                                    surface.pixels[off as usize] = rgb;
+                                    Self::put_pixel(surface, off, rgb);
                                     off += 1;
                                     len -= 1;
                                     if len <= 0 {
@@ -1349,13 +1363,13 @@ impl Pix3DDraw {
                             .copied()
                             .unwrap_or(0);
                         colour_a = colour_a.wrapping_add(colour_step);
-                        surface.pixels[off as usize] = rgb;
+                        Self::put_pixel(surface, off, rgb);
                         off += 1;
-                        surface.pixels[off as usize] = rgb;
+                        Self::put_pixel(surface, off, rgb);
                         off += 1;
-                        surface.pixels[off as usize] = rgb;
+                        Self::put_pixel(surface, off, rgb);
                         off += 1;
-                        surface.pixels[off as usize] = rgb;
+                        Self::put_pixel(surface, off, rgb);
                         off += 1;
                     }
                 } else {
@@ -1374,10 +1388,10 @@ impl Pix3DDraw {
                                     & 0xff00ff)
                                     + ((((rgb & 0xff00).wrapping_mul(inv_alpha)) >> 8) & 0xff00);
                                 loop {
-                                    let d = surface.pixels[off as usize];
-                                    surface.pixels[off as usize] = src
+                                    let d = Self::pixel(surface, off);
+                                    Self::put_pixel(surface, off, src
                                         + ((((d & 0xff00ff).wrapping_mul(alpha)) >> 8) & 0xff00ff)
-                                        + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00);
+                                        + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00));
                                     off += 1;
                                     len -= 1;
                                     if len <= 0 {
@@ -1394,25 +1408,25 @@ impl Pix3DDraw {
                         colour_a = colour_a.wrapping_add(colour_step);
                         let src = ((((rgb & 0xff00ff).wrapping_mul(inv_alpha)) >> 8) & 0xff00ff)
                             + ((((rgb & 0xff00).wrapping_mul(inv_alpha)) >> 8) & 0xff00);
-                        let d = surface.pixels[off as usize];
-                        surface.pixels[off as usize] = src
+                        let d = Self::pixel(surface, off);
+                        Self::put_pixel(surface, off, src
                             + ((((d & 0xff00ff).wrapping_mul(alpha)) >> 8) & 0xff00ff)
-                            + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00);
+                            + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00));
                         off += 1;
-                        let d = surface.pixels[off as usize];
-                        surface.pixels[off as usize] = src
+                        let d = Self::pixel(surface, off);
+                        Self::put_pixel(surface, off, src
                             + ((((d & 0xff00ff).wrapping_mul(alpha)) >> 8) & 0xff00ff)
-                            + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00);
+                            + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00));
                         off += 1;
-                        let d = surface.pixels[off as usize];
-                        surface.pixels[off as usize] = src
+                        let d = Self::pixel(surface, off);
+                        Self::put_pixel(surface, off, src
                             + ((((d & 0xff00ff).wrapping_mul(alpha)) >> 8) & 0xff00ff)
-                            + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00);
+                            + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00));
                         off += 1;
-                        let d = surface.pixels[off as usize];
-                        surface.pixels[off as usize] = src
+                        let d = Self::pixel(surface, off);
+                        Self::put_pixel(surface, off, src
                             + ((((d & 0xff00ff).wrapping_mul(alpha)) >> 8) & 0xff00ff)
-                            + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00);
+                            + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00));
                         off += 1;
                     }
                 }
@@ -1437,10 +1451,10 @@ impl Pix3DDraw {
             let mut len = x_b - x_a;
             if self.trans == 0 {
                 loop {
-                    surface.pixels[off as usize] = Pix3D::colour_table()
+                    Self::put_pixel(surface, off, Pix3D::colour_table()
                         .get((colour_a >> 8) as usize)
                         .copied()
-                        .unwrap_or(0);
+                        .unwrap_or(0));
                     off += 1;
                     colour_a = colour_a.wrapping_add(colour_step);
                     len -= 1;
@@ -1459,10 +1473,10 @@ impl Pix3DDraw {
                     colour_a = colour_a.wrapping_add(colour_step);
                     let src = ((((rgb & 0xff00ff).wrapping_mul(inv_alpha)) >> 8) & 0xff00ff)
                         + ((((rgb & 0xff00).wrapping_mul(inv_alpha)) >> 8) & 0xff00);
-                    let d = surface.pixels[off as usize];
-                    surface.pixels[off as usize] = src
+                    let d = Self::pixel(surface, off);
+                    Self::put_pixel(surface, off, src
                         + ((((d & 0xff00ff).wrapping_mul(alpha)) >> 8) & 0xff00ff)
-                        + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00);
+                        + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00));
                     off += 1;
                     len -= 1;
                     if len <= 0 {
@@ -1897,9 +1911,9 @@ impl Pix3DDraw {
 
     /// TS `flatRaster`: a flat span of `surface.pixels` starting at `off`.
     ///
-    /// Writes index `surface.pixels` directly (TS out-of-bounds writes are
-    /// ignored; a Rust index would panic): `hclip` must be set whenever a
-    /// span can leave the viewport so spans are clamped to `[0, size_x]`.
+    /// Writes go through `put_pixel`, so an out-of-bounds offset (negative
+    /// `off`, or past the buffer) is a silent no-op like a TS typed-array
+    /// write; `hclip` still clamps spans to `[0, size_x]` when set.
     fn flat_raster(
         &self,
         surface: &mut Pix2D,
@@ -1931,17 +1945,17 @@ impl Pix3DDraw {
                         if len < 0 {
                             return;
                         }
-                        surface.pixels[off as usize] = colour;
+                        Self::put_pixel(surface, off, colour);
                         off += 1;
                     }
                 }
-                surface.pixels[off as usize] = colour;
+                Self::put_pixel(surface, off, colour);
                 off += 1;
-                surface.pixels[off as usize] = colour;
+                Self::put_pixel(surface, off, colour);
                 off += 1;
-                surface.pixels[off as usize] = colour;
+                Self::put_pixel(surface, off, colour);
                 off += 1;
-                surface.pixels[off as usize] = colour;
+                Self::put_pixel(surface, off, colour);
                 off += 1;
             }
         } else {
@@ -1958,32 +1972,32 @@ impl Pix3DDraw {
                         if len < 0 {
                             return;
                         }
-                        let d = surface.pixels[off as usize];
-                        surface.pixels[off as usize] = colour
+                        let d = Self::pixel(surface, off);
+                        Self::put_pixel(surface, off, colour
                             + ((((d & 0xff00ff).wrapping_mul(alpha)) >> 8) & 0xff00ff)
-                            + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00);
+                            + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00));
                         off += 1;
                     }
                 }
-                let d = surface.pixels[off as usize];
-                surface.pixels[off as usize] = colour
+                let d = Self::pixel(surface, off);
+                Self::put_pixel(surface, off, colour
                     + ((((d & 0xff00ff).wrapping_mul(alpha)) >> 8) & 0xff00ff)
-                    + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00);
+                    + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00));
                 off += 1;
-                let d = surface.pixels[off as usize];
-                surface.pixels[off as usize] = colour
+                let d = Self::pixel(surface, off);
+                Self::put_pixel(surface, off, colour
                     + ((((d & 0xff00ff).wrapping_mul(alpha)) >> 8) & 0xff00ff)
-                    + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00);
+                    + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00));
                 off += 1;
-                let d = surface.pixels[off as usize];
-                surface.pixels[off as usize] = colour
+                let d = Self::pixel(surface, off);
+                Self::put_pixel(surface, off, colour
                     + ((((d & 0xff00ff).wrapping_mul(alpha)) >> 8) & 0xff00ff)
-                    + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00);
+                    + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00));
                 off += 1;
-                let d = surface.pixels[off as usize];
-                surface.pixels[off as usize] = colour
+                let d = Self::pixel(surface, off);
+                Self::put_pixel(surface, off, colour
                     + ((((d & 0xff00ff).wrapping_mul(alpha)) >> 8) & 0xff00ff)
-                    + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00);
+                    + ((((d & 0xff00).wrapping_mul(alpha)) >> 8) & 0xff00));
                 off += 1;
             }
         }
@@ -3006,9 +3020,9 @@ impl Pix3DDraw {
     /// `surface.pixels` starting at `off`. The TS `curU`/`curV` parameters
     /// are dropped: they are always 0 and immediately recomputed here.
     ///
-    /// Writes index `surface.pixels` directly (TS out-of-bounds writes are
-    /// ignored; a Rust index would panic): `hclip` must be set whenever a
-    /// span can leave the viewport so spans are clamped to `[0, size_x]`.
+    /// Writes go through `put_pixel`, so an out-of-bounds offset (negative
+    /// `off`, or past the buffer) is a silent no-op like a TS typed-array
+    /// write; `hclip` still clamps spans to `[0, size_x]` when set.
     #[allow(clippy::too_many_arguments)]
     fn texture_raster(
         &self,
@@ -3112,8 +3126,7 @@ impl Pix3DDraw {
                 while strides > 0 {
                     let mut i = 0;
                     while i < 8 {
-                        surface.pixels[off as usize] =
-                            Self::texel_low_mem(texels, cur_u, cur_v, shade_shift);
+                        Self::put_pixel(surface, off, Self::texel_low_mem(texels, cur_u, cur_v, shade_shift));
                         off += 1;
                         i += 1;
                         if i < 8 {
@@ -3148,8 +3161,7 @@ impl Pix3DDraw {
 
                 strides = (x_b - x_a) & 0x7;
                 while strides > 0 {
-                    surface.pixels[off as usize] =
-                        Self::texel_low_mem(texels, cur_u, cur_v, shade_shift);
+                    Self::put_pixel(surface, off, Self::texel_low_mem(texels, cur_u, cur_v, shade_shift));
                     off += 1;
                     cur_u = cur_u.wrapping_add(step_u);
                     cur_v = cur_v.wrapping_add(step_v);
@@ -3161,7 +3173,7 @@ impl Pix3DDraw {
                     while i < 8 {
                         let rgb = Self::texel_low_mem(texels, cur_u, cur_v, shade_shift);
                         if rgb != 0 {
-                            surface.pixels[off as usize] = rgb;
+                            Self::put_pixel(surface, off, rgb);
                         }
                         off += 1;
                         i += 1;
@@ -3199,7 +3211,7 @@ impl Pix3DDraw {
                 while strides > 0 {
                     let rgb = Self::texel_low_mem(texels, cur_u, cur_v, shade_shift);
                     if rgb != 0 {
-                        surface.pixels[off as usize] = rgb;
+                        Self::put_pixel(surface, off, rgb);
                     }
                     off += 1;
                     cur_u = cur_u.wrapping_add(step_u);
@@ -3256,8 +3268,7 @@ impl Pix3DDraw {
                 while strides > 0 {
                     let mut i = 0;
                     while i < 8 {
-                        surface.pixels[off as usize] =
-                            Self::texel_high_mem(texels, cur_u, cur_v, shade_shift);
+                        Self::put_pixel(surface, off, Self::texel_high_mem(texels, cur_u, cur_v, shade_shift));
                         off += 1;
                         i += 1;
                         if i < 8 {
@@ -3292,8 +3303,7 @@ impl Pix3DDraw {
 
                 strides = (x_b - x_a) & 0x7;
                 while strides > 0 {
-                    surface.pixels[off as usize] =
-                        Self::texel_high_mem(texels, cur_u, cur_v, shade_shift);
+                    Self::put_pixel(surface, off, Self::texel_high_mem(texels, cur_u, cur_v, shade_shift));
                     off += 1;
                     cur_u = cur_u.wrapping_add(step_u);
                     cur_v = cur_v.wrapping_add(step_v);
@@ -3305,7 +3315,7 @@ impl Pix3DDraw {
                     while i < 8 {
                         let rgb = Self::texel_high_mem(texels, cur_u, cur_v, shade_shift);
                         if rgb != 0 {
-                            surface.pixels[off as usize] = rgb;
+                            Self::put_pixel(surface, off, rgb);
                         }
                         off += 1;
                         i += 1;
@@ -3343,7 +3353,7 @@ impl Pix3DDraw {
                 while strides > 0 {
                     let rgb = Self::texel_high_mem(texels, cur_u, cur_v, shade_shift);
                     if rgb != 0 {
-                        surface.pixels[off as usize] = rgb;
+                        Self::put_pixel(surface, off, rgb);
                     }
                     off += 1;
                     cur_u = cur_u.wrapping_add(step_u);

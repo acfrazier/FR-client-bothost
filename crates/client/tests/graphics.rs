@@ -666,6 +666,35 @@ fn pix3d_gouraud_triangle_constant_shade() {
     assert_eq!(map.pixels[24], 0);
 }
 
+#[test]
+fn pix3d_flat_triangle_off_screen_writes_are_noops() {
+    let mut d = Pix3DDraw::default();
+    let mut map = PixMap::new(5, 5);
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        d.set_render_clipping(&surface);
+        // hclip=false and every vertex past an edge: the spans get negative
+        // `off` (left) or past-the-buffer `off` (right). TS typed-array
+        // writes are ignored there; the guarded write must not panic.
+        d.flat_triangle(&mut surface, -40, -36, -40, 0, 0, 4, 0xff0000);
+        d.flat_triangle(&mut surface, 30, 34, 30, 0, 0, 4, 0x00ff00);
+    }
+    assert!(map.pixels.iter().all(|&p| p == 0));
+}
+
+#[test]
+fn pix3d_gouraud_triangle_off_screen_writes_are_noops() {
+    Pix3D::init_colour_table(0.6);
+    let mut d = Pix3DDraw::default();
+    let mut map = PixMap::new(5, 5);
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        d.set_render_clipping(&surface);
+        d.gouraud_triangle(&mut surface, -40, -36, -40, 0, 0, 4, 256, 256, 256);
+    }
+    assert!(map.pixels.iter().all(|&p| p == 0));
+}
+
 fn pix8_texture_archive() -> Vec<u8> {
     let mut index = Vec::new();
     g2(&mut index, 1); // owi
