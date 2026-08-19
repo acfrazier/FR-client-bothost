@@ -658,17 +658,14 @@ impl Client {
             match child.r#type {
                 ComponentType::TYPE_LAYER => {
                     // TS 9930-9938: clamp the child's scroll position before
-                    // recursing with it.
-                    let scroll_pos = {
-                        let max = child.scroll_height - child.height;
-                        if child.scroll_pos > max {
-                            max
-                        } else if child.scroll_pos < 0 {
-                            0
-                        } else {
-                            child.scroll_pos
-                        }
-                    };
+                    // recursing with it (max first, then min, sequentially).
+                    let mut scroll_pos = child.scroll_pos;
+                    if scroll_pos > child.scroll_height - child.height {
+                        scroll_pos = child.scroll_height - child.height;
+                    }
+                    if scroll_pos < 0 {
+                        scroll_pos = 0;
+                    }
                     if scroll_pos != child.scroll_pos {
                         if let Some(c) = self.cache.ifaces.get_mut(child_id).and_then(|o| o.as_mut()) {
                             c.scroll_pos = scroll_pos;
