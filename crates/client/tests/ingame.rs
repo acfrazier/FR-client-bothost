@@ -25,4 +25,11 @@ fn game_draw_headless_does_not_panic() {
     c.game_draw();
     // with the media jag present the chrome panels plot non-zero pixels
     assert!(c.draw_area.pixels.iter().any(|&p| p != 0));
+    // the icon-strip backgrounds (backhmid1 at (516, 160), backbase2 at
+    // (496, 466)) blit non-zero pixels
+    let region_nonzero = |x0: i32, y0: i32, x1: i32, y1: i32| {
+        (y0..y1).any(|y| (x0..x1).any(|x| c.draw_area.pixels[(y * 789 + x) as usize] != 0))
+    };
+    assert!(region_nonzero(516, 160, 765, 205), "backhmid1 strip");
+    assert!(region_nonzero(496, 466, 765, 503), "backbase2 strip");
 }

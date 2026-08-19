@@ -12,8 +12,8 @@
 //! implemented), so `area_game` is a black hole blitted at (4, 4). The
 //! `drawInterface` panels, the minimap/compass, and the side-icon strip
 //! (`sideicons`/`redstone*`) are not ported; the chrome strips, side, chat,
-//! and chat-mode panels draw 1:1. Both still leave the titlebox/fonts/logo
-//! writing non-zero pixels.
+//! icon-strip backgrounds, and chat-mode panels draw 1:1. Both still leave
+//! the titlebox/fonts/logo writing non-zero pixels.
 //! The TS source's dead `y += 30` / `y += 15` stores (values never read
 //! again) are dropped.
 
@@ -280,9 +280,9 @@ impl Client {
     /// `gameDraw` from client-ts (3890): the in-game frame. `gameDrawMain`
     /// (4172, the 3D pass) is not ported, so when `scene_state` is 2 the
     /// viewport is a black hole: `area_game` filled black and blitted at
-    /// (4, 4). `drawInterface`, the minimap, and the side-icon strip are out
-    /// of scope, so their redraw triggers are dropped with them; the chrome
-    /// strips, side, chat, and chat-mode panels draw 1:1.
+    /// (4, 4). `drawInterface` and the minimap are out of scope, so their
+    /// redraw triggers are dropped with them; the chrome strips, side, chat,
+    /// icon-strip backgrounds, and chat-mode panels draw 1:1.
     pub fn game_draw(&mut self) {
         self.prepare_game();
 
@@ -317,6 +317,7 @@ impl Client {
                 b.blit_into(&mut self.draw_area, 0, 338);
             }
 
+            self.redraw_icons = true;
             self.redraw_side = true;
             self.redraw_chat = true;
             self.redraw_chat_mode = true;
@@ -363,8 +364,12 @@ impl Client {
         // `minimapDraw` (11279): compass/minimap helpers not ported; the map
         // area stays black until then.
 
-        // `redrawIcons` strip (4005): the sideicons/redstone sprite families
-        // are not loaded, so the side-icon row is skipped with them.
+        // `tutFlashIcon !== -1` redrawIcons trigger: not ported.
+
+        if self.redraw_icons {
+            self.draw_icons();
+            self.redraw_icons = false;
+        }
 
         if self.redraw_chat_mode {
             self.redraw_chat_mode = false;
@@ -417,9 +422,9 @@ impl Client {
     /// their sprites with `quickPlotSprite` (0, 0) as 1098. A missing
     /// `media` pack skips the sprite loads — `game_draw` still draws the
     /// panels that are present. Out of scope: `mapback` (minimap not ported)
-    /// and the sideicons/redstone families (icon strip not ported). The
-    /// title sprites are kept (deviation from TS `unloadTitle`: a logout
-    /// back to the title screen still draws).
+    /// and the sideicons/redstone families (icon strip backgrounds blit,
+    /// the icons themselves not). The title sprites are kept (deviation from
+    /// TS `unloadTitle`: a logout back to the title screen still draws).
     fn prepare_game(&mut self) {
         if self.area_chat.is_some() {
             return;
@@ -503,6 +508,38 @@ impl Client {
 
         if let Some(chat) = &self.area_chat {
             chat.blit_into(&mut self.draw_area, 17, 357);
+        }
+    }
+
+    /// `redrawIcons` from client-ts (4005), backgrounds only: plot
+    /// `backhmid1` into `area_backhmid1` and blit at (516, 160), then
+    /// `backbase2` into `area_backbase2` and blit at (496, 466). The
+    /// sideicons/redstone sprite families are not loaded, so the icons
+    /// themselves are skipped with them. The trailing `areaGame.setPixels()`
+    /// is a no-op here (no global Pix2D target).
+    fn draw_icons(&mut self) {
+        if let Some(area) = self.area_backhmid1.as_mut() {
+            if let Some(backhmid1) = &self.backhmid1 {
+                let w = area.width;
+                let h = area.height;
+                let mut surface = Pix2D::with_pixels(&mut area.pixels, w, h);
+                backhmid1.plot_sprite(&mut surface, 0, 0);
+            }
+        }
+        if let Some(area) = &self.area_backhmid1 {
+            area.blit_into(&mut self.draw_area, 516, 160);
+        }
+
+        if let Some(area) = self.area_backbase2.as_mut() {
+            if let Some(backbase2) = &self.backbase2 {
+                let w = area.width;
+                let h = area.height;
+                let mut surface = Pix2D::with_pixels(&mut area.pixels, w, h);
+                backbase2.plot_sprite(&mut surface, 0, 0);
+            }
+        }
+        if let Some(area) = &self.area_backbase2 {
+            area.blit_into(&mut self.draw_area, 496, 466);
         }
     }
 }
