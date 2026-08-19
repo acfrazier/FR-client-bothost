@@ -947,9 +947,11 @@ impl Client {
                     mapback.plot_sprite(&mut surface, 0, 0);
                 }
             }
-
-            self.build_minimap_masks();
         }
+
+        // Run unconditionally so a missing `media` pack still leaves the
+        // masks sized (zeroed) for `minimap_draw`'s rotate-plots.
+        self.build_minimap_masks();
 
         self.redraw_frame = true;
     }
@@ -971,15 +973,17 @@ impl Client {
     /// minimap mask). The masks are offsets/lengths of the transparent runs,
     /// so the plot never paints over the `mapback` ring. A row without a
     /// transparent run keeps `left = 999` (`right - left` negative → the
-    /// plot loop is empty).
+    /// plot loop is empty). Without `mapback` the masks stay all-zero sized
+    /// (33/151), so the rotate-plots are no-ops instead of indexing an empty
+    /// slice — a missing `media` pack must not panic `minimap_draw`.
     fn build_minimap_masks(&mut self) {
-        let Some(mapback) = &self.mapback else {
-            return;
-        };
         self.compass_mask_line_offsets = vec![0; 33];
         self.compass_mask_line_lengths = vec![0; 33];
         self.minimap_mask_line_offsets = vec![0; 151];
         self.minimap_mask_line_lengths = vec![0; 151];
+        let Some(mapback) = &self.mapback else {
+            return;
+        };
         for y in 0..33 {
             let mut left = 999;
             let mut right = 0;
@@ -1809,7 +1813,9 @@ impl Client {
             if let Some(mapback) = &self.mapback {
                 let mask = &mapback.data;
                 let pixels = &mut surface.pixels;
-                for i in 0..mask.len() {
+                // `min` keeps a mismatched mask from writing past the map
+                // (TS typed arrays silently ignore out-of-bounds writes).
+                for i in 0..mask.len().min(pixels.len()) {
                     if mask[i] == 0 {
                         pixels[i] = 0;
                     }

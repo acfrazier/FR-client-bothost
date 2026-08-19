@@ -136,3 +136,42 @@ fn minimap_is_under_chrome_not_a_black_square_on_top() {
     let ring = (104 * c.draw_area.width + 560) as usize;
     assert_ne!(c.draw_area.pixels[ring], 0, "mapback ring must be blitted at (550, 4)");
 }
+
+/// `minimapDraw` must not panic when the `media` pack (and so `mapback`) is
+/// missing: `build_minimap_masks` leaves the masks sized-zero, the
+/// rotate-plots no-op, and `area_map` stays black — the module doc's
+/// missing-media fallback.
+#[test]
+fn minimap_draw_without_media_does_not_panic() {
+    let dir = std::env::temp_dir().join(format!("274-nomedia-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut c = client(dir.to_string_lossy().into_owned());
+    c.set_draw(true);
+    c.ingame = true;
+    let mut player = ClientPlayer::default();
+    player.ready = true;
+    player.name = Some("tester".into());
+    player.entity = ClientEntity::at(48, 48);
+    player.entity.teleport(&c.cache, true, 48, 48);
+    c.local_player = Some(player);
+    c.scene_state = 2;
+    c.redraw_frame = true;
+    c.game_draw();
+    let map = c.area_map.as_ref().unwrap();
+    assert_eq!((map.width, map.height), (172, 156));
+    // Without mapback/compass/dots the only content minimapDraw paints is
+    // the white local-player square at (97..99, 78..80).
+    for y in 0..map.height {
+        for x in 0..map.width {
+            let in_square = (78..81).contains(&y) && (97..100).contains(&x);
+            let pixel = map.pixels[(y * map.width + x) as usize];
+            if in_square {
+                assert_eq!(pixel, Colour::WHITE, "white square at ({x}, {y})");
+            } else {
+                assert_eq!(pixel, 0, "no media → minimap black outside the player square");
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
