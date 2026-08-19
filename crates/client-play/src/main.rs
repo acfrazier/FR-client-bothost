@@ -126,12 +126,16 @@ fn main() -> ExitCode {
 
     // On `--window` (or `--audio`) open the speaker: rustysynth render
     // scaled by the shared fade, mixed with the JagFX wave queue. A device
-    // failure logs and keeps the picture.
+    // failure logs and keeps the picture. The open `AudioOut` must stay
+    // alive until after `run`: dropping the cpal `Stream` stops the
+    // callback (output.rs), so it is held (unread) to the end of `main`.
+    #[cfg(feature = "audio")]
+    let mut _audio_out: Option<AudioOut> = None;
     #[cfg(feature = "audio")]
     if args.window || args.audio {
         match AudioOut::try_open(client.midi.clone(), client.waves.clone(), client.fade.clone())
         {
-            Ok(_out) => println!("audio: speaker open"),
+            Ok(out) => _audio_out = Some(out),
             Err(e) => eprintln!("audio: {e}; continuing without sound"),
         }
     }
