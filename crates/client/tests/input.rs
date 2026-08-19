@@ -148,6 +148,13 @@ fn key_codes_arrows_enter_backspace_space() {
 }
 
 #[test]
+fn enter_lookup_from_cr_and_named() {
+    assert_eq!(client::client::lookup("Enter").unwrap().ch, 10);
+    assert_eq!(client::client::lookup("\r").unwrap().ch, 10);
+    assert_eq!(client::client::lookup("\n").unwrap().ch, 10);
+}
+
+#[test]
 fn key_codes_letters_and_digits() {
     assert_eq!(
         key_codes::lookup("a"),

@@ -234,6 +234,9 @@ mod window {
                     NamedKey::ArrowRight => "ArrowRight",
                     NamedKey::ArrowUp => "ArrowUp",
                     NamedKey::ArrowDown => "ArrowDown",
+                    // winit 0.30 has no NamedKey::NumpadEnter (keyboard-types
+                    // 0.7 moved numpad keys to KeyCode); NamedKey::Enter also
+                    // covers the Mac numpad Return key per the winit docs.
                     NamedKey::Enter => "Enter",
                     NamedKey::Backspace => "Backspace",
                     NamedKey::Space => " ",

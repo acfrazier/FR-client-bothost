@@ -261,6 +261,17 @@ fn message_game_duelreq_is_type_8() {
 }
 
 #[test]
+fn chat_enter_clears_input_and_echoes_without_player_name() {
+    let mut c = client();
+    c.ingame = true;
+    c.chat_input = "hello".into();
+    c.shell.apply_key(true, 10, 10);
+    c.handle_chat_input();
+    assert!(c.chat_input.is_empty());
+    assert_eq!(c.chat_text[0], "hello");
+}
+
+#[test]
 fn chat_input_appends_prints_and_backspaces() {
     let mut c = client();
     c.ingame = true;

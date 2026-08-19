@@ -17,7 +17,7 @@ pub fn lookup(name: &str) -> Option<JavaKeyCode> {
         "ArrowRight" => (39, 2),
         "ArrowUp" => (38, 3),
         "ArrowDown" => (40, 4),
-        "Enter" => (10, 10),
+        "Enter" | "\r" | "\n" => (10, 10),
         "Backspace" => (8, 8),
         " " => (32, 32),
         _ => {

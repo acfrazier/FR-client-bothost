@@ -3360,20 +3360,25 @@ impl Client {
 
                     // Echo the own message as TS 3169-3179 (the
                     // toSentenceCase/WordFilter steps are not ported).
-                    if let Some(name) = self
+                    // Name falls back to the login user, then "player", so
+                    // the echo is never dropped pre-spawn.
+                    let name = self
                         .local_player
                         .as_ref()
                         .and_then(|p| p.name.clone())
-                    {
-                        let sender = if self.staffmodlevel == 2 {
-                            format!("@cr2@{name}")
-                        } else if self.staffmodlevel == 1 {
-                            format!("@cr1@{name}")
-                        } else {
-                            name
-                        };
-                        self.add_chat(2, &text, &sender);
-                    }
+                        .or_else(|| {
+                            let user = self.login_user.clone();
+                            (!user.is_empty()).then_some(user)
+                        })
+                        .unwrap_or_else(|| "player".to_string());
+                    let sender = if self.staffmodlevel == 2 {
+                        format!("@cr2@{name}")
+                    } else if self.staffmodlevel == 1 {
+                        format!("@cr1@{name}")
+                    } else {
+                        name
+                    };
+                    self.add_chat(2, &text, &sender);
                 }
                 self.chat_input.clear();
                 self.redraw_chat = true;
