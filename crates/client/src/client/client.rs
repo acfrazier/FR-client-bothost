@@ -28,6 +28,7 @@ use crate::dash3d::{AnimFrame, BuildArea, CollisionFlag, CollisionMap, Direction
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
 use crate::io::{ClientProt, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt, SERVER_PROT_SIZES};
 use crate::login_rsa::{LOGIN_RSAE, LOGIN_RSAN};
+use crate::sound::{JagFX, Midi};
 use crate::util::JString;
 
 const MAX_PLAYER_COUNT: usize = 2048;
@@ -84,6 +85,20 @@ const JAG_FILES: [&str; 8] = [
     "sounds",
 ];
 
+/// The `Midi` backend for a fresh client: rustysynth behind `audio`, headless
+/// `NullMidi` otherwise.
+fn midi_backend(cache_dir: &str) -> Box<dyn Midi> {
+    #[cfg(feature = "audio")]
+    {
+        Box::new(crate::sound::RustyMidi::new(cache_dir))
+    }
+    #[cfg(not(feature = "audio"))]
+    {
+        let _ = cache_dir;
+        Box::new(crate::sound::NullMidi)
+    }
+}
+
 pub struct Client {
     pub shell: GameShell,
     pub config: ClientConfig,
@@ -130,13 +145,25 @@ pub struct Client {
     pub var_serv: Vec<i32>,
     pub runenergy: i32,
 
-    /// Music control plane (`Client.ts` `midiActive`/`midiSong`/...). The
-    /// `Midi` backend and the on-demand archive-2 request land with Task 19.
+    /// Music control plane (`Client.ts` `midiActive`/`midiSong`/...; Java
+    /// `midivol` ladder 0 / -400 / -800 / -1200). `midi` is the backend
+    /// (`NullMidi` headless, `RustyMidi` behind `audio`).
     pub midi_active: bool,
     pub midi_song: i32,
     pub next_midi_song: i32,
     pub next_music_delay: i32,
     pub midi_fading: bool,
+    pub midi_volume: i32,
+    pub midi: Box<dyn Midi>,
+
+    /// `SYNTH_SOUND` queue (`Client.ts` `waveEnabled`/`waveIds`/...).
+    pub wave_enabled: bool,
+    pub wave_count: i32,
+    pub wave_ids: Vec<i32>,
+    pub wave_loops: Vec<i32>,
+    pub wave_delay: Vec<i32>,
+    /// The `JagFX` table (`sounds.dat` init lands with the loading task).
+    pub jagfx: JagFX,
 
     pub menu_num_entries: i32,
     pub menu_option: Vec<String>,
@@ -203,6 +230,7 @@ impl Client {
     pub fn new(config: ClientConfig) -> Self {
         let jag_checksum = Self::read_jag_checksums(&config.cache_dir);
         let on_demand = Self::load_on_demand(&config);
+        let midi = midi_backend(&config.cache_dir);
         let groundh: LevelHeightmaps =
             vec![
                 vec![vec![0i32; (BUILD_AREA_SIZE + 1) as usize]; (BUILD_AREA_SIZE + 1) as usize];
@@ -253,6 +281,15 @@ impl Client {
             next_midi_song: -1,
             next_music_delay: 0,
             midi_fading: true,
+            midi_volume: 0,
+            midi,
+
+            wave_enabled: true,
+            wave_count: 0,
+            wave_ids: vec![0; 50],
+            wave_loops: vec![0; 50],
+            wave_delay: vec![0; 50],
+            jagfx: JagFX::default(),
 
             menu_num_entries: 0,
             menu_option: Vec::new(),
@@ -1532,8 +1569,10 @@ impl Client {
                 grow_write(&mut self.var_serv, varp_id, value);
                 if self.var.get(varp_id as usize).copied() != Some(value) {
                     grow_write(&mut self.var, varp_id, value);
-                    // TS also calls clientVar(varpId) (varbit/stat mapping,
-                    // midi clientcode 3) — lands with the varp/music tasks.
+                    // TS also calls clientVar(varpId) here (varbit/stat
+                    // mapping still lands with the varp task; the midi
+                    // clientcode 3 branch is live).
+                    self.client_var(varp_id);
                     self.redraw_side = true;
                 }
                 self.ptype = -1;
@@ -1546,8 +1585,7 @@ impl Client {
                 grow_write(&mut self.var_serv, varp_id, value);
                 if self.var.get(varp_id as usize).copied() != Some(value) {
                     grow_write(&mut self.var, varp_id, value);
-                    // TS also calls clientVar(varpId) (varbit/stat mapping,
-                    // midi clientcode 3) — lands with the varp/music tasks.
+                    self.client_var(varp_id);
                     self.redraw_side = true;
                 }
                 self.ptype = -1;
@@ -1564,7 +1602,7 @@ impl Client {
                             // stores undefined; i32 cannot, so leave 0.
                             self.var[i] = 0;
                         }
-                        // TS also calls clientVar(i) (varp task).
+                        self.client_var(i as i32);
                         self.redraw_side = true;
                     }
                 }
@@ -1572,11 +1610,17 @@ impl Client {
             }
 
             ServerProt::SYNTH_SOUND => {
-                // g2 soundId + g1 loops + g2 delay feed the waveEnabled/waveIds
-                // queue, which lands with the JagFX/sound task.
-                let _sound_id = payload.g2();
-                let _loops = payload.g1();
-                let _delay = payload.g2();
+                let sound_id = payload.g2();
+                let loops = payload.g1();
+                let delay = payload.g2();
+
+                if self.wave_enabled && !self.config.lowmem && self.wave_count < 50 {
+                    let delay = delay + self.jagfx.delays.get(sound_id as usize).copied().unwrap_or(0);
+                    self.wave_ids[self.wave_count as usize] = sound_id;
+                    self.wave_loops[self.wave_count as usize] = loops;
+                    self.wave_delay[self.wave_count as usize] = delay;
+                    self.wave_count += 1;
+                }
                 self.ptype = -1;
             }
 
@@ -2484,8 +2528,7 @@ impl Client {
     }
 
     /// `logout()` from client-ts: close the stream and return to the login
-    /// screen. The midi stops, `loginscreen` and the model-cache clears land
-    /// with the music/login-screen tasks.
+    /// screen. Java also stops the midi and clears the music state.
     pub fn logout(&mut self) {
         if let Some(mut stream) = self.stream.take() {
             stream.close();
@@ -2496,6 +2539,113 @@ impl Client {
         self.world.reset_map();
         for collision in &mut self.collision {
             collision.reset();
+        }
+        self.stop_midi();
+        self.next_midi_song = -1;
+        self.midi_song = -1;
+        self.next_music_delay = 0;
+    }
+
+    /// `saveMidi(fading, data)` from Java (`Client.java` 6266): hand the
+    /// on-demand archive-2 bytes to the backend (signlink midisave).
+    pub fn save_midi(&mut self, data: &[u8], fading: bool) {
+        self.midi.play(data, self.midi_volume, fading);
+    }
+
+    /// `stopMidi()` from Java (`Client.java` 6272): clear the fade flag and
+    /// stop the backend (signlink `midi = "stop"`).
+    pub fn stop_midi(&mut self) {
+        self.midi_fading = false;
+        self.midi.stop();
+    }
+
+    /// `setMidiVolume(active, volume)` from Java (`Client.java` 7712): store
+    /// the 274 `midivol` and poke the backend when the music plane is live
+    /// (signlink `midi = "voladjust"`).
+    pub fn set_midi_volume(&mut self, active: bool, volume: i32) {
+        self.midi_volume = volume;
+        if active {
+            self.midi.set_volume(volume);
+        }
+    }
+
+    /// `clientVar(id)` from client-ts (`Client.ts` 10601): look up the varp's
+    /// clientcode and apply it. Only the music clientcode 3 is ported here;
+    /// the varbit/stat mapping and the colour-table (1) / wave (4) codes land
+    /// with the varp/wave tasks. No-op when the varp table is not loaded.
+    pub fn client_var(&mut self, id: i32) {
+        let Some(varp) = self.cache.varps.get(id as usize) else { return };
+        let value = self.var.get(id as usize).copied().unwrap_or(0);
+        self.apply_clientcode(varp.clientcode, value);
+    }
+
+    /// The clientcode switch from `clientVar` (Java `Client.java` 3032).
+    /// clientcode 3 is the midi volume ladder: 0 → +0 dB, 1 → -400, 2 → -800,
+    /// 3 → -1200, 4 → mute. Mutating the active state re-requests the next
+    /// song (unmute) or stops the midi (mute), guarded by `lowmem` as Java.
+    pub fn apply_clientcode(&mut self, clientcode: i32, value: i32) {
+        if clientcode != 3 {
+            return;
+        }
+        let last_midi_active = self.midi_active;
+        match value {
+            0 => {
+                self.set_midi_volume(self.midi_active, 0);
+                self.midi_active = true;
+            }
+            1 => {
+                self.set_midi_volume(self.midi_active, -400);
+                self.midi_active = true;
+            }
+            2 => {
+                self.set_midi_volume(self.midi_active, -800);
+                self.midi_active = true;
+            }
+            3 => {
+                self.set_midi_volume(self.midi_active, -1200);
+                self.midi_active = true;
+            }
+            4 => {
+                self.midi_active = false;
+            }
+            _ => {}
+        }
+        if self.midi_active != last_midi_active && !self.config.lowmem {
+            if self.midi_active {
+                self.midi_song = self.next_midi_song;
+                self.midi_fading = true;
+                if let Some(od) = &mut self.on_demand {
+                    od.request(2, self.midi_song);
+                }
+            } else {
+                self.stop_midi();
+            }
+            self.next_music_delay = 0;
+        }
+    }
+
+    /// `soundsDoQueue()` from client-ts (`Client.ts` 3413): drain the wave
+    /// queue, generating each WAV through `JagFX`. There is no wave output
+    /// device in this crate yet, so the generated bytes are dropped; the
+    /// `lastWaveId`/timing de-dup is playback scheduling and lands with the
+    /// audio-output task.
+    pub fn sounds_do_queue(&mut self) {
+        let mut wave = 0usize;
+        while wave < self.wave_count as usize {
+            if self.wave_delay[wave] <= 0 {
+                let id = self.wave_ids[wave];
+                let loops = self.wave_loops[wave];
+                let _wav = self.jagfx.generate(id, loops);
+                self.wave_count -= 1;
+                for i in wave..self.wave_count as usize {
+                    self.wave_ids[i] = self.wave_ids[i + 1];
+                    self.wave_loops[i] = self.wave_loops[i + 1];
+                    self.wave_delay[i] = self.wave_delay[i + 1];
+                }
+            } else {
+                self.wave_delay[wave] -= 1;
+                wave += 1;
+            }
         }
     }
 
@@ -2527,8 +2677,7 @@ impl Client {
                 1 => AnimFrame::unpack(&data),
                 2 => {
                     if self.midi_song == req.file {
-                        // TODO(task 19): saveMidi(data, self.midi_fading) —
-                        // the Midi backend lands with the music task.
+                        self.save_midi(&data, self.midi_fading);
                     }
                 }
                 3 => self.fill_map_build_square(req.file, data),

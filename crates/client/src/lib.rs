@@ -5,5 +5,6 @@ pub mod datastruct;
 pub mod graphics;
 pub mod io;
 pub mod login_rsa;
+pub mod sound;
 pub mod util;
 pub use login_rsa::{LOGIN_RSAE, LOGIN_RSAN};
