@@ -170,11 +170,14 @@ mod device {
             let stream = device
                 .build_output_stream::<i16, _, _>(
                     config,
-                    move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
-                        let mut fade = fade.lock().unwrap();
-                        let mut midi = midi.lock().unwrap();
-                        let mut waves = waves.lock().unwrap();
-                        render_block(data, &mut *midi, &mut waves, &mut fade);
+                    {
+                        // Scratch lives on the stream callback so the
+                        // steady-state path never allocates (it only grows
+                        // if the device changes its buffer size).
+                        let mut scratch: Vec<f32> = Vec::new();
+                        move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
+                            fill_buffer(data, &mut scratch, &midi, &waves, &fade);
+                        }
                     },
                     |err| eprintln!("audio: output stream error: {err}"),
                     None,
@@ -204,20 +207,46 @@ mod device {
         }
     }
 
-    /// One callback block: step the fade clock, render the synth through the
-    /// fade gain, and mix the JagFX wave queue (mono i16) into both channels.
-    fn render_block(data: &mut [i16], midi: &mut dyn Midi, waves: &mut Vec<i16>, fade: &mut Fade) {
+    /// Fill one output buffer from the shared client state, locking each
+    /// piece only for the work that needs it: the fade clock (step + gain),
+    /// the synth render (the one potentially slow call), and the wave-queue
+    /// drain/mix. `scratch` is preallocated on the caller so the steady-state
+    /// callback never allocates; it only grows when the device changes its
+    /// buffer size.
+    fn fill_buffer(
+        data: &mut [i16],
+        scratch: &mut Vec<f32>,
+        midi: &Mutex<dyn Midi>,
+        waves: &Mutex<Vec<i16>>,
+        fade: &Mutex<Fade>,
+    ) {
+        if scratch.len() < data.len() {
+            scratch.resize(data.len(), 0.0);
+        }
         let frames = data.len() / 2;
-        fade.step_ms((frames as u64 * 1000) / SAMPLE_RATE as u64);
-        let gain = fade.gain();
-        let mut left = vec![0f32; frames];
-        let mut right = vec![0f32; frames];
-        midi.render(&mut left, &mut right);
-        let mut wave = waves.drain(..waves.len().min(frames));
-        for (frame, out) in data.chunks_exact_mut(2).enumerate() {
-            let w = wave.next().unwrap_or(0) as f32;
-            out[0] = (left[frame] * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
-            out[1] = (right[frame] * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
+        // Fade clock + gain, then drop the lock.
+        let gain = {
+            let mut fade = fade.lock().unwrap();
+            fade.step_ms((frames as u64 * 1000) / SAMPLE_RATE as u64);
+            fade.gain()
+        };
+        // The synth render holds only the midi lock, and only for itself.
+        let (left, right) = scratch.split_at_mut(frames);
+        {
+            let mut midi = midi.lock().unwrap();
+            midi.render(left, right);
+        }
+        // The wave-queue lock is held just for the drain and mix of this
+        // buffer.
+        {
+            let mut waves = waves.lock().unwrap();
+            let n = waves.len().min(frames);
+            let mut wave = waves.drain(..n);
+            for (frame, out) in data.chunks_exact_mut(2).enumerate() {
+                let w = wave.next().unwrap_or(0) as f32;
+                out[0] = (left[frame] * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
+                out[1] = (right[frame] * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
+            }
         }
     }
 
@@ -243,36 +272,39 @@ mod device {
 
         #[test]
         fn mix_scales_render_by_fade_gain() {
-            let mut fade = Fade::new();
-            fade.begin_song(false, 0); // gain 1.0
-            let mut midi = Tone { level: 0.5 };
-            let mut waves = Vec::new();
+            let fade = Mutex::new(Fade::new());
+            fade.lock().unwrap().begin_song(false, 0); // gain 1.0
+            let midi = Mutex::new(Tone { level: 0.5 });
+            let waves = Mutex::new(Vec::new());
             let mut data = vec![0i16; 4];
-            render_block(&mut data, &mut midi, &mut waves, &mut fade);
+            let mut scratch = Vec::new();
+            fill_buffer(&mut data, &mut scratch, &midi, &waves, &fade);
             assert_eq!(data, vec![16383, 16383, 16383, 16383]);
         }
 
         #[test]
         fn mix_adds_waves_and_clips() {
-            let mut fade = Fade::new();
-            fade.begin_song(false, 0);
-            let mut midi = Tone { level: 1.0 };
-            let mut waves = vec![500i16, -32768i16];
+            let fade = Mutex::new(Fade::new());
+            fade.lock().unwrap().begin_song(false, 0);
+            let midi = Mutex::new(Tone { level: 1.0 });
+            let waves = Mutex::new(vec![500i16, -32768i16]);
             let mut data = vec![0i16; 4];
-            render_block(&mut data, &mut midi, &mut waves, &mut fade);
+            let mut scratch = Vec::new();
+            fill_buffer(&mut data, &mut scratch, &midi, &waves, &fade);
             // 32767 + 500 clips to 32767; 32767 + (-32768) = -1
             assert_eq!(data, vec![32767, 32767, -1, -1]);
         }
 
         #[test]
         fn stop_hard_zeroes_midi_output() {
-            let mut fade = Fade::new();
-            fade.begin_song(false, 0);
-            fade.stop_hard();
-            let mut midi = Tone { level: 1.0 };
-            let mut waves = vec![1000i16; 2];
+            let fade = Mutex::new(Fade::new());
+            fade.lock().unwrap().begin_song(false, 0);
+            fade.lock().unwrap().stop_hard();
+            let midi = Mutex::new(Tone { level: 1.0 });
+            let waves = Mutex::new(vec![1000i16; 2]);
             let mut data = vec![0i16; 4];
-            render_block(&mut data, &mut midi, &mut waves, &mut fade);
+            let mut scratch = Vec::new();
+            fill_buffer(&mut data, &mut scratch, &midi, &waves, &fade);
             // waves still mix; the synth path is muted
             assert_eq!(data, vec![1000, 1000, 1000, 1000]);
         }

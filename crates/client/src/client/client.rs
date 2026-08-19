@@ -2932,17 +2932,24 @@ impl Client {
                 if let Some(wav) = self.jagfx.generate(id, loops) {
                     let data = wav.data();
                     let end = wav.pos as usize;
+                    // Convert off the lock: a looped generate can be up to
+                    // 20 s of samples, and the audio callback needs the
+                    // queue lock every buffer.
+                    let mut samples = Vec::with_capacity(end - 44);
+                    for &b in &data[44..end] {
+                        // 8-bit WAV PCM (128 = silence) → full-range i16
+                        samples.push(((b as i16) - 128) << 8);
+                    }
                     let mut queue = self.waves.lock().unwrap();
-                    // 20 s at 22050 Hz, the TS `JagFX.waveBytes` scratch: any
-                    // one sound fits, and it bounds the queue when no output
-                    // device is draining it.
+                    // 20 s at 22050 Hz, the TS `JagFX.waveBytes` scratch:
+                    // any one sound fits, and it bounds the queue when no
+                    // output device is draining it.
                     const WAVE_QUEUE_SAMPLES: usize = 22050 * 20;
                     let room = WAVE_QUEUE_SAMPLES.saturating_sub(queue.len());
-                    let take = (end - 44).min(room);
-                    for &b in &data[44..44 + take] {
-                        // 8-bit WAV PCM (128 = silence) → full-range i16
-                        queue.push(((b as i16) - 128) << 8);
+                    if samples.len() > room {
+                        samples.truncate(room);
                     }
+                    queue.extend(samples);
                 }
                 self.wave_count -= 1;
                 for i in wave..self.wave_count as usize {
