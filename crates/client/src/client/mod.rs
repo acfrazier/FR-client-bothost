@@ -1,2 +1,10 @@
+pub mod client;
+pub use client::Client;
+pub mod config;
+pub use config::ClientConfig;
 pub mod game_shell;
 pub use game_shell::GameShell;
+pub mod login_error;
+pub use login_error::LoginError;
+pub mod skill;
+pub use skill::Skill;
