@@ -6,6 +6,7 @@
 // 127.0.0.1 is refused instantly).
 use client::client::{Client, ClientConfig, ClientPlayer};
 use client::config::if_type::{ButtonType, ComponentType, IfType};
+use client::config::VarpType;
 use client::graphics::{Colour, Pix2D, PixMap};
 use client::io::{ClientProt, Packet};
 
@@ -622,13 +623,15 @@ fn side_click_ok_button_writes_if_button() {
 }
 
 #[test]
-fn side_click_close_button_writes_if_button() {
+fn side_click_close_button_sends_close_modal() {
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
     let button = side_button(2, ButtonType::BUTTON_CLOSE, 0, 0, 190, 20);
     bind_side(&mut c, 1, vec![root, button]);
     click_side(&mut c, 560, 210);
-    assert_eq!(out_bytes(&c), &[9, 0, 2]);
+    // CLOSE_MODAL (opcode 51, length 0): the opcode only, no p2 payload
+    assert_eq!(out_bytes(&c), &[51]);
+    assert_eq!(c.side_modal_id, -1);
 }
 
 #[test]
@@ -663,6 +666,32 @@ fn side_click_toggle_without_script_keeps_var() {
     assert_eq!(out_bytes(&c), &[9, 0, 2]);
     assert_eq!(c.var, vec![1]);
     assert!(!c.redraw_side);
+}
+
+#[test]
+fn side_click_toggle_applies_varp_clientcode() {
+    let mut c = client();
+    // varp 0 carries the music clientcode (3): flipping the toggle must
+    // change the volume through clientVar, not just var/redraw_side
+    c.cache.varps = vec![VarpType { clientcode: 3 }];
+    c.var = vec![1];
+    c.midi_volume = -800;
+    let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
+    let toggle = IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_RECT,
+        button_type: ButtonType::BUTTON_TOGGLE,
+        width: 190,
+        height: 20,
+        scripts: Some(vec![vec![5, 0, 0]]), // varp 0
+        ..IfType::default()
+    };
+    bind_side(&mut c, 1, vec![root, toggle]);
+    click_side(&mut c, 560, 210);
+    assert_eq!(out_bytes(&c), &[9, 0, 2]);
+    assert_eq!(c.var[0], 0);
+    assert_eq!(c.midi_volume, 0); // clientcode 3 value 0 → +0 dB
+    assert!(c.midi_active);
 }
 
 #[test]
@@ -745,8 +774,14 @@ fn side_click_uses_side_modal_when_open() {
         vec![tab_root, tab_button, modal_root, modal_button],
     );
     c.side_modal_id = 4;
+    c.chat_modal_id = 9;
     click_side(&mut c, 560, 210);
-    assert_eq!(out_bytes(&c), &[9, 0, 5]);
+    // the modal tree's CLOSE child fires closeModal: CLOSE_MODAL only, and
+    // both modals clear (hitting the tab tree's OK child would send IF_BUTTON)
+    assert_eq!(out_bytes(&c), &[51]);
+    assert_eq!(c.side_modal_id, -1);
+    assert_eq!(c.chat_modal_id, -1);
+    assert!(c.redraw_side && c.redraw_icons && c.redraw_chat);
 }
 
 #[test]
@@ -819,8 +854,10 @@ fn side_click_real_logout_text_sends_if_button() {
         {
             for i in 0..children.len() {
                 if children[i] == logout_id {
-                    click_x = child_x[i] + layer.x;
-                    click_y = child_y[i] + layer.y;
+                    // same formula as the handler's child rect: parent
+                    // offset + child offset + the child's own x/y
+                    click_x = child_x[i] + layer.x + logout.x;
+                    click_y = child_y[i] + layer.y + logout.y;
                     placed = true;
                     break;
                 }

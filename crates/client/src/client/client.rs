@@ -1543,13 +1543,12 @@ impl Client {
     /// `buildMinimenu` side branch (Client.ts 2540-2547) with the minimenu
     /// collapsed: a left click inside the side panel (553..743 × 205..466)
     /// walks the open interface tree (`side_modal_id`, else the active tab's
-    /// `side_icon`) like `draw_interface` and sends `IF_BUTTON` for the first
-    /// hit child whose `button_type` is BUTTON_OK/CLOSE/TOGGLE/SELECT. The
-    /// period client has no minimenu to choose from, so the single menu entry
-    /// executes immediately. TOGGLE/SELECT also flip/set the local `var`
-    /// (TS execute 9163-9179) when `scripts[0][0] == 5`; `clientButton`,
-    /// `clientVar` and `closeModal` are not ported, and a BUTTON_CLOSE still
-    /// sends IF_BUTTON (the engine closes the interface).
+    /// `side_icon`) like `draw_interface` and fires the first hit child's
+    /// button. BUTTON_OK/TOGGLE/SELECT send `IF_BUTTON` + the child id;
+    /// BUTTON_CLOSE sends `CLOSE_MODAL` and clears the modals like TS
+    /// `closeModal` (execute 9194-9196). TOGGLE/SELECT also flip/set the
+    /// local `var` and apply its clientcode via `clientVar` (execute
+    /// 9163-9179) when `scripts[0][0] == 5`; `clientButton` is not ported.
     pub fn handle_side_if_clicks(&mut self) {
         if self.shell.mouse_click_button != 1 {
             return;
@@ -1582,6 +1581,10 @@ impl Client {
             return;
         };
         let button_type = hit.button_type;
+        if button_type == ButtonType::BUTTON_CLOSE {
+            self.close_modal();
+            return;
+        }
         self.out.p1_enc(ClientProt::IF_BUTTON.id);
         self.out.p2(hit_id);
         if button_type != ButtonType::BUTTON_TOGGLE && button_type != ButtonType::BUTTON_SELECT {
@@ -1596,17 +1599,38 @@ impl Client {
         let Some(&varp) = script.get(1) else {
             return;
         };
+        // TS execute 9163-9179: flip/set the local var, apply its
+        // clientcode (clientVar), then redraw.
+        let operand = hit.script_operand.as_ref().and_then(|o| o.first()).copied();
         if button_type == ButtonType::BUTTON_TOGGLE {
             let current = self.var.get(varp as usize).copied().unwrap_or(0);
             grow_write(&mut self.var, varp, 1 - current);
+            self.client_var(varp);
             self.redraw_side = true;
-        } else if let Some(operand) = &hit.script_operand {
-            if let Some(&value) = operand.first() {
-                if self.var.get(varp as usize).copied() != Some(value) {
-                    grow_write(&mut self.var, varp, value);
-                    self.redraw_side = true;
-                }
+        } else if let Some(value) = operand {
+            if self.var.get(varp as usize).copied() != Some(value) {
+                grow_write(&mut self.var, varp, value);
+                self.client_var(varp);
+                self.redraw_side = true;
             }
+        }
+    }
+
+    /// `closeModal` from client-ts (10941-10958): send CLOSE_MODAL and
+    /// close the side and chat modals locally. `main_modal_id` and
+    /// `resumed_pause_button` are not ported; the per-modal redraw flags
+    /// mirror TS `redrawSide`/`redrawIcons`/`redrawChat`. Not to be
+    /// confused with the incoming-server `apply_if_close`.
+    fn close_modal(&mut self) {
+        self.out.p1_enc(ClientProt::CLOSE_MODAL.id);
+        if self.side_modal_id != -1 {
+            self.side_modal_id = -1;
+            self.redraw_side = true;
+            self.redraw_icons = true;
+        }
+        if self.chat_modal_id != -1 {
+            self.chat_modal_id = -1;
+            self.redraw_chat = true;
         }
     }
 
