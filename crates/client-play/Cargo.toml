@@ -4,7 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = []
+# Playable by default: a plain `cargo build -p client-play` (or a later
+# workspace build) still has `--window`. Headless is the same binary with
+# the flag omitted. `--no-default-features` keeps the old headless-only
+# compile. RSA is still baked via `tools/redeploy.sh`.
+default = ["window", "audio"]
 audio = ["client/audio"]
 window = ["client/window"]
 

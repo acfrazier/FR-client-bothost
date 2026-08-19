@@ -95,4 +95,4 @@ cd "$PROJECT_ROOT"
 
 LOGIN_RSAE="$LOGIN_RSAE" \
 LOGIN_RSAN="$LOGIN_RSAN" \
-cargo build -p client-play --features window,audio
+cargo build -p client-play
