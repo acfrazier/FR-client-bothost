@@ -6,10 +6,11 @@
 //! 16 cold / 18 reconnect) over Java-style TCP `ClientStream`.
 //! There is no snapshot/query API.
 
+use std::io;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use num_bigint::BigUint;
 
@@ -22,7 +23,7 @@ use crate::config::Cache;
 use crate::dash3d::world::LevelHeightmaps;
 use crate::dash3d::{BuildArea, CollisionFlag, CollisionMap, DirectionFlag, LocShape, World};
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
-use crate::io::{ClientProt, ClientStream, Isaac, Packet};
+use crate::io::{ClientProt, ClientStream, Isaac, Packet, SERVER_PROT_SIZES, ServerProt};
 use crate::login_rsa::{LOGIN_RSAE, LOGIN_RSAN};
 use crate::util::JString;
 
@@ -86,6 +87,18 @@ pub struct Client {
     pub minimap_flag_z: i32,
     pub map_build_base_x: i32,
     pub map_build_base_z: i32,
+    pub map_build_centre_zone_x: i32,
+    pub map_build_centre_zone_z: i32,
+    pub map_build_prev_base_x: i32,
+    pub map_build_prev_base_z: i32,
+    pub within_tutorial_island: bool,
+    pub awaiting_player_info: bool,
+    pub scene_load_start_time: Instant,
+    pub map_build_index: Vec<i32>,
+    pub map_build_ground_file: Vec<i32>,
+    pub map_build_location_file: Vec<i32>,
+    pub map_build_ground_data: Vec<Option<Vec<u8>>>,
+    pub map_build_location_data: Vec<Option<Vec<u8>>>,
 
     pub use_mode: i32,
     pub target_mode: i32,
@@ -170,6 +183,18 @@ impl Client {
             minimap_flag_z: 0,
             map_build_base_x: 0,
             map_build_base_z: 0,
+            map_build_centre_zone_x: 0,
+            map_build_centre_zone_z: 0,
+            map_build_prev_base_x: 0,
+            map_build_prev_base_z: 0,
+            within_tutorial_island: false,
+            awaiting_player_info: false,
+            scene_load_start_time: Instant::now(),
+            map_build_index: Vec::new(),
+            map_build_ground_file: Vec::new(),
+            map_build_location_file: Vec::new(),
+            map_build_ground_data: Vec::new(),
+            map_build_location_data: Vec::new(),
 
             use_mode: 0,
             target_mode: 0,
@@ -789,6 +814,217 @@ impl Client {
         }
 
         r#type != 1
+    }
+
+    /// In-game inbound read, 1:1 of `Client.ts` `tcpIn` (5871-7150) on the
+    /// Java-style blocking stream: Isaac-decoded `ptype`, `psize` from
+    /// `SERVER_PROT_SIZES` (-1/-2 variable-length forms), full-payload read,
+    /// then the `ptype` switch. Returns false when no complete frame is
+    /// available yet; `gameLoop` drives it up to 5 times per frame.
+    pub fn tcp_in(&mut self) -> bool {
+        match self.read_packet() {
+            Ok(true) => {
+                // `handle_packet` takes the payload out of `self` (it is
+                // callable with an external packet in tests), so swap the
+                // `in` buffer out for the dispatch and put it back.
+                let ptype = self.ptype;
+                let mut packet = std::mem::replace(&mut self.r#in, Packet::alloc(1));
+                self.handle_packet(ptype, &mut packet);
+                self.r#in = packet;
+                true
+            }
+            Ok(false) => false,
+            Err(_) => {
+                // Java `catch (Exception)`: report and log out. The
+                // `lostCon` reconnect path (IO errors) lands with the
+                // connection-loss task.
+                eprintln!("T2 - {},{},{}", self.ptype, self.ptype1, self.ptype2);
+                self.logout();
+                true
+            }
+        }
+    }
+
+    /// Read one frame's header and payload into `in`; `Ok(true)` when a full
+    /// packet is ready to dispatch.
+    fn read_packet(&mut self) -> io::Result<bool> {
+        let stream = match self.stream.as_mut() {
+            Some(s) => s,
+            None => return Ok(false),
+        };
+
+        let mut available = stream.available()?;
+        if available == 0 {
+            return Ok(false);
+        }
+
+        if self.ptype == -1 {
+            stream.read_bytes(self.r#in.data_mut(), 0, 1)?;
+            self.ptype = self.r#in.data()[0] as i32 & 0xff;
+            if let Some(random) = self.random_in.as_mut() {
+                self.ptype = self.ptype.wrapping_sub(random.next_int()) & 0xff;
+            }
+            self.psize = SERVER_PROT_SIZES[self.ptype as usize];
+            available -= 1;
+        }
+
+        if self.psize == -1 {
+            if available <= 0 {
+                return Ok(false);
+            }
+            stream.read_bytes(self.r#in.data_mut(), 0, 1)?;
+            self.psize = self.r#in.data()[0] as i32 & 0xff;
+            available -= 1;
+        }
+
+        if self.psize == -2 {
+            if available <= 1 {
+                return Ok(false);
+            }
+            stream.read_bytes(self.r#in.data_mut(), 0, 2)?;
+            self.r#in.pos = 0;
+            self.psize = self.r#in.g2();
+            available -= 2;
+        }
+
+        if available < self.psize {
+            return Ok(false);
+        }
+
+        // a length over the `in` buffer is the same AIOOBE the Java client
+        // catches as a logic error
+        if self.psize as usize > self.r#in.length() {
+            return Err(io::Error::other("packet exceeds in buffer"));
+        }
+
+        self.r#in.pos = 0;
+        stream.read_bytes(self.r#in.data_mut(), 0, self.psize as usize)?;
+        self.ptype2 = self.ptype1;
+        self.ptype1 = self.ptype0;
+        self.ptype0 = self.ptype;
+        Ok(true)
+    }
+
+    /// Inner `ptype` switch, 1:1 of the `Client.ts` `tcpIn` dispatch. Every
+    /// handled packet resets `ptype` to -1 as the TS does; unhandled opcodes
+    /// report `T1` and log out (the remaining handlers land with Task 17).
+    /// Callable from tests without a socket.
+    pub fn handle_packet(&mut self, ptype: i32, payload: &mut Packet) {
+        if ptype == ServerProt::REBUILD_NORMAL {
+            let zone_x = payload.g2();
+            let zone_z = payload.g2();
+
+            if self.map_build_centre_zone_x == zone_x
+                && self.map_build_centre_zone_z == zone_z
+                && self.scene_state == 2
+            {
+                self.ptype = -1;
+                return;
+            }
+
+            self.map_build_centre_zone_x = zone_x;
+            self.map_build_centre_zone_z = zone_z;
+            self.map_build_base_x = (self.map_build_centre_zone_x - 6) * 8;
+            self.map_build_base_z = (self.map_build_centre_zone_z - 6) * 8;
+
+            self.within_tutorial_island = ((self.map_build_centre_zone_x / 8 == 48
+                || self.map_build_centre_zone_x / 8 == 49)
+                && self.map_build_centre_zone_z / 8 == 48)
+                || (self.map_build_centre_zone_x / 8 == 48
+                    && self.map_build_centre_zone_z / 8 == 148);
+
+            self.scene_state = 1;
+            self.scene_load_start_time = Instant::now();
+
+            // the "Loading - please wait." splash draws are render-only
+
+            let start_x = (self.map_build_centre_zone_x - 6) / 8;
+            let end_x = (self.map_build_centre_zone_x + 6) / 8;
+            let start_z = (self.map_build_centre_zone_z - 6) / 8;
+            let end_z = (self.map_build_centre_zone_z + 6) / 8;
+            let regions = ((end_x - start_x + 1) * (end_z - start_z + 1)) as usize;
+
+            self.map_build_ground_data = vec![None; regions];
+            self.map_build_location_data = vec![None; regions];
+            self.map_build_index = vec![0; regions];
+            self.map_build_ground_file = vec![0; regions];
+            self.map_build_location_file = vec![0; regions];
+
+            let mut map_count = 0;
+            for x in start_x..=end_x {
+                for z in start_z..=end_z {
+                    self.map_build_index[map_count] = (x << 8) + z;
+
+                    if self.within_tutorial_island
+                        && (z == 49 || z == 149 || z == 147 || x == 50 || (x == 49 && z == 47))
+                    {
+                        self.map_build_ground_file[map_count] = -1;
+                        self.map_build_location_file[map_count] = -1;
+                        map_count += 1;
+                    }
+                    // TODO(task 18): the OnDemand branch (getMapFile/request
+                    // per square) fills ground/location files and bumps
+                    // map_count; without it the arrays stay empty and the
+                    // scene waits, as TS with `onDemand === null`.
+                }
+            }
+
+            let dx = self.map_build_base_x - self.map_build_prev_base_x;
+            let dz = self.map_build_base_z - self.map_build_prev_base_z;
+            self.map_build_prev_base_x = self.map_build_base_x;
+            self.map_build_prev_base_z = self.map_build_base_z;
+
+            for npc in self.npc.iter_mut().flatten() {
+                for j in 0..10 {
+                    npc.route_x[j] -= dx;
+                    npc.route_z[j] -= dz;
+                }
+                npc.x -= dx * 128;
+                npc.z -= dz * 128;
+            }
+
+            for player in self.players.iter_mut().flatten() {
+                for j in 0..10 {
+                    player.route_x[j] -= dx;
+                    player.route_z[j] -= dz;
+                }
+                player.x -= dx * 128;
+                player.z -= dz * 128;
+            }
+
+            self.awaiting_player_info = true;
+
+            // TODO(task 17): groundObj/locChanges tile shifts carry stacked
+            // objects and loc changes across a build-area move (those fields
+            // land with the zone-packet task).
+            if self.minimap_flag_x != 0 {
+                self.minimap_flag_x -= dx;
+                self.minimap_flag_z -= dz;
+            }
+
+            self.ptype = -1;
+            return;
+        }
+
+        // Java/TS report unknown opcodes to the world and log out
+        eprintln!("T1 - {ptype},{} - {},{}", self.psize, self.ptype1, self.ptype2);
+        self.logout();
+    }
+
+    /// `logout()` from client-ts: close the stream and return to the login
+    /// screen. The midi stops, `loginscreen` and the model-cache clears land
+    /// with the music/login-screen tasks.
+    pub fn logout(&mut self) {
+        if let Some(mut stream) = self.stream.take() {
+            stream.close();
+        }
+        self.ingame = false;
+        self.login_user.clear();
+        self.login_pass.clear();
+        self.world.reset_map();
+        for collision in &mut self.collision {
+            collision.reset();
+        }
     }
 }
 

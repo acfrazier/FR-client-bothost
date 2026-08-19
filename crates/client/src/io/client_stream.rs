@@ -12,6 +12,9 @@ use std::time::Duration;
 
 const BUF_SIZE: usize = 5000;
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
+/// `available()` peek buffer; larger than any 274 `psize` (variable-size
+/// packets read their length via `g2` and never exceed a few KiB).
+const AVAILABLE_BUF: usize = 8192;
 
 struct WriterState {
     buf: Box<[u8; BUF_SIZE]>,
@@ -90,16 +93,20 @@ impl ClientStream {
         Ok(())
     }
 
-    /// Bytes available without blocking: 0 or 1 (Java clients only test > 0).
+    /// Bytes readable without blocking — the kernel receive-buffer count,
+    /// capped at `AVAILABLE_BUF` (Java `SocketInputStream.available`
+    /// estimate). `Client::tcp_in` (Task 16) relies on the exact count for its
+    /// `available < psize` back-pressure check, so this is a full peek, not a
+    /// 0/1 probe.
     pub fn available(&mut self) -> io::Result<i32> {
         if self.shared.lock().unwrap().dummy {
             return Ok(0);
         }
         self.reader.set_nonblocking(true)?;
-        let mut b = [0u8; 1];
+        let mut b = [0u8; AVAILABLE_BUF];
         let n = match self.reader.peek(&mut b) {
             Ok(0) => 0,
-            Ok(_) => 1,
+            Ok(n) => n as i32,
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => 0,
             Err(e) => {
                 self.reader.set_nonblocking(false)?;

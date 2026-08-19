@@ -1,5 +1,7 @@
 pub mod client;
 pub use client::{Client, ClientNpc, ClientPlayer};
+pub mod client_build;
+pub use client_build::ClientBuild;
 pub mod config;
 pub use config::ClientConfig;
 pub mod game_shell;
