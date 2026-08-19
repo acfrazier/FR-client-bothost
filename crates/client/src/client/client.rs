@@ -23,7 +23,7 @@ use crate::client::game_shell::GameShell;
 use crate::client::login_error::LoginError;
 use crate::client::mini_menu_action::MiniMenuAction;
 use crate::client::skill::Skill;
-use crate::config::if_type::{ComponentType, IfType};
+use crate::config::if_type::{ButtonType, ComponentType, IfType};
 use crate::config::seq_type::{RESTART_RESET, RESTART_RESETLOOP};
 use crate::config::Cache;
 use crate::dash3d::world::LevelHeightmaps;
@@ -1538,6 +1538,156 @@ impl Client {
             self.redraw_side = true;
             self.redraw_icons = true;
         }
+    }
+
+    /// `buildMinimenu` side branch (Client.ts 2540-2547) with the minimenu
+    /// collapsed: a left click inside the side panel (553..743 × 205..466)
+    /// walks the open interface tree (`side_modal_id`, else the active tab's
+    /// `side_icon`) like `draw_interface` and sends `IF_BUTTON` for the first
+    /// hit child whose `button_type` is BUTTON_OK/CLOSE/TOGGLE/SELECT. The
+    /// period client has no minimenu to choose from, so the single menu entry
+    /// executes immediately. TOGGLE/SELECT also flip/set the local `var`
+    /// (TS execute 9163-9179) when `scripts[0][0] == 5`; `clientButton`,
+    /// `clientVar` and `closeModal` are not ported, and a BUTTON_CLOSE still
+    /// sends IF_BUTTON (the engine closes the interface).
+    pub fn handle_side_if_clicks(&mut self) {
+        if self.shell.mouse_click_button != 1 {
+            return;
+        }
+        let (x, y) = (self.shell.mouse_click_x, self.shell.mouse_click_y);
+        if !(553..743).contains(&x) || !(205..466).contains(&y) {
+            return;
+        }
+        let root_id = if self.side_modal_id != -1 {
+            self.side_modal_id
+        } else {
+            self.side_icon
+                .get(self.active_icon as usize)
+                .copied()
+                .unwrap_or(-1)
+        };
+        if root_id == -1 {
+            return;
+        }
+        // panel-local coords like the draw_side draw_interface call
+        let Some(hit_id) = self.side_hit_test(root_id, x - 553, y - 205, 0, 0, 0) else {
+            return;
+        };
+        let Some(hit) = self
+            .cache
+            .ifaces
+            .get(hit_id as usize)
+            .and_then(|o| o.as_ref())
+        else {
+            return;
+        };
+        let button_type = hit.button_type;
+        self.out.p1_enc(ClientProt::IF_BUTTON.id);
+        self.out.p2(hit_id);
+        if button_type != ButtonType::BUTTON_TOGGLE && button_type != ButtonType::BUTTON_SELECT {
+            return;
+        }
+        let Some(script) = hit.scripts.as_ref().and_then(|s| s.first()) else {
+            return;
+        };
+        if script.first() != Some(&5) {
+            return;
+        }
+        let Some(&varp) = script.get(1) else {
+            return;
+        };
+        if button_type == ButtonType::BUTTON_TOGGLE {
+            let current = self.var.get(varp as usize).copied().unwrap_or(0);
+            grow_write(&mut self.var, varp, 1 - current);
+            self.redraw_side = true;
+        } else if let Some(operand) = &hit.script_operand {
+            if let Some(&value) = operand.first() {
+                if self.var.get(varp as usize).copied() != Some(value) {
+                    grow_write(&mut self.var, varp, value);
+                    self.redraw_side = true;
+                }
+            }
+        }
+    }
+
+    /// Walk `com_id`'s children like TS `addComponentOptions` (9628-9841)
+    /// and return the first hit child with a BUTTON_OK/CLOSE/TOGGLE/SELECT
+    /// `button_type`. Layers recurse with the same scroll clamp as
+    /// `draw_interface`; TYPE_INV children are skipped (their menu options
+    /// land with the inventory task). The layer must be visible and its rect
+    /// must contain the point (TS 9629).
+    fn side_hit_test(
+        &self,
+        com_id: i32,
+        mouse_x: i32,
+        mouse_y: i32,
+        x: i32,
+        y: i32,
+        scroll: i32,
+    ) -> Option<i32> {
+        let com = self
+            .cache
+            .ifaces
+            .get(com_id as usize)
+            .and_then(|o| o.as_ref())?;
+        if com.r#type != ComponentType::TYPE_LAYER || com.hide {
+            return None;
+        }
+        if mouse_x < x || mouse_y < y || mouse_x > x + com.width || mouse_y > y + com.height {
+            return None;
+        }
+        let children = com.children.as_ref()?;
+        let child_x = com.child_x.as_ref()?;
+        let child_y = com.child_y.as_ref()?;
+        for i in 0..children.len() {
+            let child_id = children[i] as usize;
+            let Some(child) = self.cache.ifaces.get(child_id).and_then(|o| o.as_ref()) else {
+                continue;
+            };
+            let child_x = child_x[i] + x + child.x;
+            let child_y = child_y[i] + y - scroll + child.y;
+            match child.r#type {
+                ComponentType::TYPE_LAYER => {
+                    // TS 9930-9938: clamp the child's scroll position before
+                    // recursing with it (max first, then min, sequentially).
+                    let mut scroll_pos = child.scroll_pos;
+                    if scroll_pos > child.scroll_height - child.height {
+                        scroll_pos = child.scroll_height - child.height;
+                    }
+                    if scroll_pos < 0 {
+                        scroll_pos = 0;
+                    }
+                    if let Some(hit) = self.side_hit_test(
+                        children[i],
+                        mouse_x,
+                        mouse_y,
+                        child_x,
+                        child_y,
+                        scroll_pos,
+                    ) {
+                        return Some(hit);
+                    }
+                }
+                ComponentType::TYPE_INV => {}
+                _ => {
+                    if mouse_x >= child_x
+                        && mouse_y >= child_y
+                        && mouse_x < child_x + child.width
+                        && mouse_y < child_y + child.height
+                        && matches!(
+                            child.button_type,
+                            ButtonType::BUTTON_OK
+                                | ButtonType::BUTTON_CLOSE
+                                | ButtonType::BUTTON_TOGGLE
+                                | ButtonType::BUTTON_SELECT
+                        )
+                    {
+                        return Some(children[i]);
+                    }
+                }
+            }
+        }
+        None
     }
 
     fn dispatch_packet(&mut self, ptype: i32, payload: &mut Packet) {
@@ -3396,7 +3546,9 @@ impl Client {
 
     /// `gameLoop` from Java (`Client.java` 9341): count down a pending
     /// logout request, read up to five TCP packets, the side-tab click
-    /// pass (TS `iconLoop`), the chat key pass (TS `handleInputKey`), the
+    /// pass (TS `iconLoop`), the side-interface button pass
+    /// (`buildMinimenu` side branch), the chat key pass (TS
+    /// `handleInputKey`), the
     /// in-game silence watchdog (`timeoutTimer > 750` → `lostCon`), then
     /// idle `NO_TIMEOUT` and flush `out` through `ClientStream::write`.
     /// Write errors are `lostCon` (Java `catch (IOException)`).
@@ -3413,6 +3565,7 @@ impl Client {
             return;
         }
         self.handle_tab_clicks();
+        self.handle_side_if_clicks();
         self.handle_chat_input();
         self.timeout_timer += 1;
         if self.timeout_timer > 750 {

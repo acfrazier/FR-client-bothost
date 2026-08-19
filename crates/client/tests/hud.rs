@@ -5,7 +5,7 @@
 // to `Cache::default()` and never touches the network (the /crc fetch on
 // 127.0.0.1 is refused instantly).
 use client::client::{Client, ClientConfig, ClientPlayer};
-use client::config::if_type::{ComponentType, IfType};
+use client::config::if_type::{ButtonType, ComponentType, IfType};
 use client::graphics::{Colour, Pix2D, PixMap};
 use client::io::{ClientProt, Packet};
 
@@ -545,4 +545,300 @@ fn draw_interface_substitutes_percent1() {
         draw_text(&mut c, &text_com("*", None)).pixels,
         "a %1 of 999_999_999 must render as '*'"
     );
+}
+
+// ---- sidebar left-click IF_BUTTON (Task 4) ----
+
+/// Bind `components` into the cache and `root` onto the active side tab (3).
+fn bind_side(c: &mut Client, root: i32, components: Vec<IfType>) {
+    c.ingame = true;
+    c.side_icon[3] = root;
+    c.active_icon = 3;
+    let max = components.iter().map(|com| com.id).max().unwrap_or(0) as usize;
+    c.cache.ifaces.resize(max + 1, None);
+    for com in components {
+        let id = com.id as usize;
+        c.cache.ifaces[id] = Some(com);
+    }
+}
+
+/// Latch a left click at applet coords and run the side click handler.
+fn click_side(c: &mut Client, x: i32, y: i32) {
+    c.shell.apply_mouse_down(1, x, y);
+    c.shell.latch_click();
+    c.handle_side_if_clicks();
+}
+
+/// The bytes written by the outgoing packet buffer.
+fn out_bytes(c: &Client) -> &[u8] {
+    &c.out.data()[..c.out.pos]
+}
+
+/// A TYPE_LAYER with one child list (child offsets and layer size).
+fn side_layer(
+    id: i32,
+    children: Vec<i32>,
+    child_x: Vec<i32>,
+    child_y: Vec<i32>,
+    width: i32,
+    height: i32,
+) -> IfType {
+    IfType {
+        id,
+        r#type: ComponentType::TYPE_LAYER,
+        width,
+        height,
+        children: Some(children),
+        child_x: Some(child_x),
+        child_y: Some(child_y),
+        ..IfType::default()
+    }
+}
+
+/// A non-layer child with the given button type and rect.
+fn side_button(id: i32, button_type: i32, x: i32, y: i32, width: i32, height: i32) -> IfType {
+    IfType {
+        id,
+        r#type: ComponentType::TYPE_RECT,
+        button_type,
+        x,
+        y,
+        width,
+        height,
+        ..IfType::default()
+    }
+}
+
+#[test]
+fn side_click_ok_button_writes_if_button() {
+    let mut c = client();
+    // the panel is blitted at (553, 205); a click at (560, 210) is local (7, 5)
+    let root = side_layer(1, vec![2], vec![0], vec![0], 190, 20);
+    let button = side_button(2, ButtonType::BUTTON_OK, 0, 0, 190, 20);
+    bind_side(&mut c, 1, vec![root, button]);
+    click_side(&mut c, 560, 210);
+    // random is None at Client::new, so p1_enc writes the plain opcode
+    assert_eq!(out_bytes(&c), &[9, 0, 2]); // IF_BUTTON (id 9) + child 2 big-endian
+}
+
+#[test]
+fn side_click_close_button_writes_if_button() {
+    let mut c = client();
+    let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
+    let button = side_button(2, ButtonType::BUTTON_CLOSE, 0, 0, 190, 20);
+    bind_side(&mut c, 1, vec![root, button]);
+    click_side(&mut c, 560, 210);
+    assert_eq!(out_bytes(&c), &[9, 0, 2]);
+}
+
+#[test]
+fn side_click_toggle_flips_var_and_redraws() {
+    let mut c = client();
+    let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
+    let toggle = IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_RECT,
+        button_type: ButtonType::BUTTON_TOGGLE,
+        width: 190,
+        height: 20,
+        scripts: Some(vec![vec![5, 7, 0]]), // scripts[0][0] == 5: varp 7
+        ..IfType::default()
+    };
+    c.var = vec![0, 0, 0, 0, 0, 0, 0, 1];
+    bind_side(&mut c, 1, vec![root, toggle]);
+    click_side(&mut c, 560, 210);
+    assert_eq!(out_bytes(&c), &[9, 0, 2]);
+    assert_eq!(c.var[7], 0);
+    assert!(c.redraw_side);
+}
+
+#[test]
+fn side_click_toggle_without_script_keeps_var() {
+    let mut c = client();
+    let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
+    let toggle = side_button(2, ButtonType::BUTTON_TOGGLE, 0, 0, 190, 20);
+    c.var = vec![1];
+    bind_side(&mut c, 1, vec![root, toggle]);
+    click_side(&mut c, 560, 210);
+    assert_eq!(out_bytes(&c), &[9, 0, 2]);
+    assert_eq!(c.var, vec![1]);
+    assert!(!c.redraw_side);
+}
+
+#[test]
+fn side_click_select_sets_var_when_different() {
+    let mut c = client();
+    let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
+    let select = IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_RECT,
+        button_type: ButtonType::BUTTON_SELECT,
+        width: 190,
+        height: 20,
+        scripts: Some(vec![vec![5, 7, 0]]),
+        script_operand: Some(vec![42]),
+        ..IfType::default()
+    };
+    c.var = vec![0, 0, 0, 0, 0, 0, 0, 1];
+    bind_side(&mut c, 1, vec![root, select]);
+    c.redraw_side = false;
+    click_side(&mut c, 560, 210);
+    assert_eq!(out_bytes(&c), &[9, 0, 2]);
+    assert_eq!(c.var[7], 42);
+    assert!(c.redraw_side);
+
+    // a matching var still sends the packet but neither writes nor redraws
+    c.out.pos = 0;
+    c.redraw_side = false;
+    click_side(&mut c, 560, 210);
+    assert_eq!(out_bytes(&c), &[9, 0, 2]);
+    assert_eq!(c.var[7], 42);
+    assert!(!c.redraw_side);
+}
+
+#[test]
+fn side_click_requires_left_button_in_panel() {
+    let mut c = client();
+    let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
+    let button = side_button(2, ButtonType::BUTTON_OK, 0, 0, 190, 20);
+    bind_side(&mut c, 1, vec![root, button]);
+    // a right click is not a button press
+    c.shell.apply_mouse_down(2, 560, 210);
+    c.shell.latch_click();
+    c.handle_side_if_clicks();
+    assert_eq!(out_bytes(&c), &[]);
+    // below the panel (466 is the bottom edge) the click is ignored
+    click_side(&mut c, 560, 470);
+    assert_eq!(out_bytes(&c), &[]);
+    // in the panel the button fires
+    click_side(&mut c, 560, 210);
+    assert_eq!(out_bytes(&c), &[9, 0, 2]);
+}
+
+#[test]
+fn side_click_skips_non_button_first_child() {
+    let mut c = client();
+    let root = side_layer(1, vec![2, 3], vec![0, 0], vec![0, 0], 190, 261);
+    let text = IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_TEXT,
+        width: 190,
+        height: 40,
+        ..IfType::default()
+    };
+    let button = side_button(3, ButtonType::BUTTON_OK, 0, 0, 190, 20);
+    bind_side(&mut c, 1, vec![root, text, button]);
+    click_side(&mut c, 560, 210);
+    assert_eq!(out_bytes(&c), &[9, 0, 3]);
+}
+
+#[test]
+fn side_click_uses_side_modal_when_open() {
+    let mut c = client();
+    let tab_root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
+    let tab_button = side_button(2, ButtonType::BUTTON_OK, 0, 0, 190, 20);
+    let modal_root = side_layer(4, vec![5], vec![0], vec![0], 190, 261);
+    let modal_button = side_button(5, ButtonType::BUTTON_CLOSE, 0, 0, 190, 20);
+    bind_side(
+        &mut c,
+        1,
+        vec![tab_root, tab_button, modal_root, modal_button],
+    );
+    c.side_modal_id = 4;
+    click_side(&mut c, 560, 210);
+    assert_eq!(out_bytes(&c), &[9, 0, 5]);
+}
+
+#[test]
+fn side_click_layer_recurse_with_clamped_scroll() {
+    let mut c = client();
+    let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
+    // scroll_pos 999 clamps to scroll_height - height = 20, so the button
+    // at local y 30 covers 10..30: a click at local y 12 hits, y 35 misses
+    let scroller = IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_LAYER,
+        width: 190,
+        height: 100,
+        scroll_height: 120,
+        scroll_pos: 999,
+        children: Some(vec![3]),
+        child_x: Some(vec![0]),
+        child_y: Some(vec![30]),
+        ..IfType::default()
+    };
+    let button = side_button(3, ButtonType::BUTTON_OK, 0, 0, 190, 20);
+    bind_side(&mut c, 1, vec![root, scroller, button]);
+    click_side(&mut c, 558, 217); // local (5, 12)
+    assert_eq!(out_bytes(&c), &[9, 0, 3]);
+    c.out.pos = 0;
+    click_side(&mut c, 558, 240); // local (5, 35): below the scrolled rect
+    assert_eq!(out_bytes(&c), &[]);
+}
+
+#[test]
+fn side_click_real_logout_text_sends_if_button() {
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("interface").is_file() {
+        return;
+    }
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache,
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    c.game_draw();
+
+    // the "Click here to logout" control: a BUTTON_OK text child of the
+    // logout interface's root layer (id/offset come from the real pack)
+    let Some(logout) = c
+        .cache
+        .ifaces
+        .iter()
+        .flatten()
+        .find(|com| com.text == "Click here to logout")
+    else {
+        return; // pack layout changed; the hand-built tests still cover this
+    };
+    assert_eq!(logout.button_type, ButtonType::BUTTON_OK);
+    let logout_id = logout.id;
+    let layer_id = logout.layer_id;
+    let (mut click_x, mut click_y) = (0, 0);
+    let mut placed = false;
+    if let Some(layer) = c
+        .cache
+        .ifaces
+        .get(layer_id as usize)
+        .and_then(|o| o.as_ref())
+    {
+        if let (Some(children), Some(child_x), Some(child_y)) =
+            (&layer.children, &layer.child_x, &layer.child_y)
+        {
+            for i in 0..children.len() {
+                if children[i] == logout_id {
+                    click_x = child_x[i] + layer.x;
+                    click_y = child_y[i] + layer.y;
+                    placed = true;
+                    break;
+                }
+            }
+        }
+    }
+    assert!(placed, "the logout text must sit under a layer");
+
+    c.side_icon[13] = layer_id;
+    c.active_icon = 13;
+    c.shell.apply_mouse_down(1, 553 + click_x, 205 + click_y);
+    c.shell.latch_click();
+    c.handle_side_if_clicks();
+    // random is None at Client::new, so p1_enc writes the plain opcode
+    let expected = [
+        ClientProt::IF_BUTTON.id as u8,
+        (logout_id >> 8) as u8,
+        (logout_id & 0xff) as u8,
+    ];
+    assert_eq!(&c.out.data()[..c.out.pos], &expected);
 }
