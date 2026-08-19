@@ -52,6 +52,7 @@ impl VarBitType {
                     self.endbit = dat.g1();
                 }
                 10 => self.debugname = dat.gjstr(),
+                // TS's else branch also consumes only the code byte
                 _ => eprintln!("Error unrecognised varbit config code: {code}"),
             }
         }

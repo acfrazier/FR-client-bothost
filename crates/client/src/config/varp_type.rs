@@ -34,12 +34,15 @@ impl VarpType {
             }
             match code {
                 1 | 2 => dat.pos += 1,
-                // 3, 4, 6, 8, 11 are server-side fields
+                // TS branches for these are empty: server-side fields carry no
+                // client payload, only the code byte is consumed
+                3 | 4 | 6 | 8 | 11 => {}
                 5 => self.clientcode = dat.g2(),
                 7 => dat.pos += 4,
                 10 => {
                     let _ = dat.gjstr();
                 }
+                // TS's else also consumes only the code byte
                 _ => eprintln!("Error unrecognised varp config code: {code}"),
             }
         }

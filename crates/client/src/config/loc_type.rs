@@ -207,7 +207,7 @@ impl LocType {
             let straight = self
                 .shape
                 .as_ref()
-                .map(|s| s[0] == CENTREPIECE_STRAIGHT)
+                .map(|s| s.first() == Some(&CENTREPIECE_STRAIGHT))
                 .unwrap_or(false);
             if self.model.is_some() && (!self.shape.is_some() || straight) {
                 self.active = true;
