@@ -56,3 +56,34 @@ fn if_showicon_sets_active_icon() {
     assert_eq!(c.active_icon, 7);
     assert!(c.redraw_side && c.redraw_icons);
 }
+
+#[test]
+fn sideicons_load_from_media() {
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("media").is_file() {
+        return;
+    }
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache,
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    c.game_draw();
+    assert!(c.sideicons.iter().any(|s| s.is_some()));
+    assert!(c.redstone1.is_some() && c.redstone2.is_some() && c.redstone3.is_some());
+    assert!(c.redstone1h.is_some() && c.redstone2hv.is_some());
+}
+
+#[test]
+fn click_combat_tab_sets_active_icon_0() {
+    let mut c = client();
+    c.ingame = true;
+    c.side_icon[0] = 1; // tab present
+    c.shell.apply_mouse_down(1, 550, 180);
+    c.shell.latch_click();
+    c.handle_tab_clicks();
+    assert_eq!(c.active_icon, 0);
+}

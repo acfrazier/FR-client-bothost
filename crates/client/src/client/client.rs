@@ -316,6 +316,21 @@ pub struct Client {
     pub backbase1: Option<Pix8>,
     pub backbase2: Option<Pix8>,
     pub backhmid1: Option<Pix8>,
+    /// `sideicons`/`redstone1..2hv` from client-ts (1013, 1068-1093): the
+    /// side-tab sprites and the redstone highlight for `active_icon`. The
+    /// `*h`/`*v`/`*hv` copies are the same sprites hflip/vflip'd. Missing
+    /// sprites are `None` (a cache without the `media` pack).
+    pub sideicons: [Option<Pix8>; 13],
+    pub redstone1: Option<Pix8>,
+    pub redstone2: Option<Pix8>,
+    pub redstone3: Option<Pix8>,
+    pub redstone1h: Option<Pix8>,
+    pub redstone2h: Option<Pix8>,
+    pub redstone1v: Option<Pix8>,
+    pub redstone2v: Option<Pix8>,
+    pub redstone3v: Option<Pix8>,
+    pub redstone1hv: Option<Pix8>,
+    pub redstone2hv: Option<Pix8>,
     pub redraw_icons: bool,
     pub redraw_chat: bool,
     pub redraw_chat_mode: bool,
@@ -522,6 +537,17 @@ impl Client {
             backbase1: None,
             backbase2: None,
             backhmid1: None,
+            sideicons: [const { None }; 13],
+            redstone1: None,
+            redstone2: None,
+            redstone3: None,
+            redstone1h: None,
+            redstone2h: None,
+            redstone1v: None,
+            redstone2v: None,
+            redstone3v: None,
+            redstone1hv: None,
+            redstone2hv: None,
             redraw_icons: false,
             redraw_chat: false,
             redraw_chat_mode: false,
@@ -1361,6 +1387,75 @@ impl Client {
         self.active_icon = icon;
         self.redraw_side = true;
         self.redraw_icons = true;
+    }
+
+    /// `iconLoop` from client-ts (2787): the side-tab hit boxes, one per
+    /// tab with a bound interface (`side_icon[i] != -1`). On a latched
+    /// click inside a box, select that tab and redraw both the side panel
+    /// and the icon strips. Hit boxes verbatim from 2792-2844.
+    pub fn handle_tab_clicks(&mut self) {
+        if self.shell.mouse_click_button == 0 {
+            return;
+        }
+        let (x, y) = (self.shell.mouse_click_x, self.shell.mouse_click_y);
+
+        if (539..=573).contains(&x) && (169..205).contains(&y) && self.side_icon[0] != -1 {
+            self.active_icon = 0;
+            self.redraw_side = true;
+            self.redraw_icons = true;
+        } else if (569..=599).contains(&x) && (168..205).contains(&y) && self.side_icon[1] != -1 {
+            self.active_icon = 1;
+            self.redraw_side = true;
+            self.redraw_icons = true;
+        } else if (597..=627).contains(&x) && (168..205).contains(&y) && self.side_icon[2] != -1 {
+            self.active_icon = 2;
+            self.redraw_side = true;
+            self.redraw_icons = true;
+        } else if (625..=669).contains(&x) && (168..203).contains(&y) && self.side_icon[3] != -1 {
+            self.active_icon = 3;
+            self.redraw_side = true;
+            self.redraw_icons = true;
+        } else if (666..=696).contains(&x) && (168..205).contains(&y) && self.side_icon[4] != -1 {
+            self.active_icon = 4;
+            self.redraw_side = true;
+            self.redraw_icons = true;
+        } else if (694..=724).contains(&x) && (168..205).contains(&y) && self.side_icon[5] != -1 {
+            self.active_icon = 5;
+            self.redraw_side = true;
+            self.redraw_icons = true;
+        } else if (722..=756).contains(&x) && (169..205).contains(&y) && self.side_icon[6] != -1 {
+            self.active_icon = 6;
+            self.redraw_side = true;
+            self.redraw_icons = true;
+        } else if (540..=574).contains(&x) && (466..502).contains(&y) && self.side_icon[7] != -1 {
+            self.active_icon = 7;
+            self.redraw_side = true;
+            self.redraw_icons = true;
+        } else if (572..=602).contains(&x) && (466..503).contains(&y) && self.side_icon[8] != -1 {
+            self.active_icon = 8;
+            self.redraw_side = true;
+            self.redraw_icons = true;
+        } else if (599..=629).contains(&x) && (466..503).contains(&y) && self.side_icon[9] != -1 {
+            self.active_icon = 9;
+            self.redraw_side = true;
+            self.redraw_icons = true;
+        } else if (627..=671).contains(&x) && (467..502).contains(&y) && self.side_icon[10] != -1 {
+            self.active_icon = 10;
+            self.redraw_side = true;
+            self.redraw_icons = true;
+        } else if (669..=699).contains(&x) && (466..503).contains(&y) && self.side_icon[11] != -1 {
+            self.active_icon = 11;
+            self.redraw_side = true;
+            self.redraw_icons = true;
+        } else if (696..=726).contains(&x) && (466..503).contains(&y) && self.side_icon[12] != -1 {
+            self.active_icon = 12;
+            self.redraw_side = true;
+            self.redraw_icons = true;
+        } else if (724..=758).contains(&x) && (466..502).contains(&y) && self.side_icon[13] != -1 {
+            self.active_icon = 13;
+            self.redraw_side = true;
+            self.redraw_icons = true;
+        }
     }
 
     fn dispatch_packet(&mut self, ptype: i32, payload: &mut Packet) {
@@ -3074,9 +3169,10 @@ impl Client {
     }
 
     /// `gameLoop` from Java (`Client.java` 9341): count down a pending
-    /// logout request, read up to five TCP packets, the in-game silence
-    /// watchdog (`timeoutTimer > 750` → `lostCon`), then idle `NO_TIMEOUT`
-    /// and flush `out` through `ClientStream::write`. Write errors are
+    /// logout request, read up to five TCP packets, the side-tab click
+    /// pass (TS `iconLoop`), the in-game silence watchdog
+    /// (`timeoutTimer > 750` → `lostCon`), then idle `NO_TIMEOUT` and
+    /// flush `out` through `ClientStream::write`. Write errors are
     /// `lostCon` (Java `catch (IOException)`).
     pub fn game_loop(&mut self) {
         if self.logout_timer > 0 {
@@ -3090,6 +3186,7 @@ impl Client {
         if !self.ingame {
             return;
         }
+        self.handle_tab_clicks();
         self.timeout_timer += 1;
         if self.timeout_timer > 750 {
             self.lost_con();

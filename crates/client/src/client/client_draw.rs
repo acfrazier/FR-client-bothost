@@ -6,8 +6,8 @@
 //! `window`) only blits.
 //!
 //! The in-game `gameDrawMain` 3D pass (`World::render_all` not implemented)
-//! leaves `area_game` a black hole at (4, 4). `drawInterface`, minimap, and
-//! the side-icon strip (`sideicons`/`redstone*`) are not ported.
+//! leaves `area_game` a black hole at (4, 4). `drawInterface` and the
+//! minimap are not ported.
 
 use std::path::Path;
 
@@ -496,10 +496,9 @@ impl Client {
     /// constructor-sized areas as `prepareGame`, the `areaBack*` strips at
     /// their sprites with `quickPlotSprite` (0, 0) as 1098. A missing
     /// `media` pack skips the sprite loads — `game_draw` still draws the
-    /// panels that are present. Out of scope: `mapback` (minimap not ported)
-    /// and the sideicons/redstone families (icon strip backgrounds blit,
-    /// the icons themselves not). The title sprites are kept (deviation from
-    /// TS `unloadTitle`: a logout back to the title screen still draws).
+    /// panels that are present. Out of scope: `mapback` (minimap not ported).
+    /// The title sprites are kept (deviation from TS `unloadTitle`: a logout
+    /// back to the title screen still draws).
     fn prepare_game(&mut self) {
         if self.area_chat.is_some() {
             return;
@@ -523,6 +522,48 @@ impl Client {
             self.backbase1 = Pix8::depack(&jag, "backbase1", 0).ok();
             self.backbase2 = Pix8::depack(&jag, "backbase2", 0).ok();
             self.backhmid1 = Pix8::depack(&jag, "backhmid1", 0).ok();
+            for i in 0..13 {
+                self.sideicons[i] = Pix8::depack(&jag, "sideicons", i as i32).ok();
+            }
+            // redstone1..2hv as Client.ts 1068-1093: the flipped copies are
+            // fresh depacks of the base sprite, hflip/vflip'd in place.
+            self.redstone1 = Pix8::depack(&jag, "redstone1", 0).ok();
+            self.redstone2 = Pix8::depack(&jag, "redstone2", 0).ok();
+            self.redstone3 = Pix8::depack(&jag, "redstone3", 0).ok();
+            self.redstone1h = self.redstone1.clone();
+            if let Some(s) = self.redstone1h.as_mut() {
+                s.hflip();
+            }
+            self.redstone2h = self.redstone2.clone();
+            if let Some(s) = self.redstone2h.as_mut() {
+                s.hflip();
+            }
+            self.redstone1v = self.redstone1.clone();
+            if let Some(s) = self.redstone1v.as_mut() {
+                s.vflip();
+            }
+            self.redstone2v = self.redstone2.clone();
+            if let Some(s) = self.redstone2v.as_mut() {
+                s.vflip();
+            }
+            self.redstone3v = self.redstone3.clone();
+            if let Some(s) = self.redstone3v.as_mut() {
+                s.vflip();
+            }
+            self.redstone1hv = self.redstone1.clone();
+            if let Some(s) = self.redstone1hv.as_mut() {
+                s.hflip();
+            }
+            if let Some(s) = self.redstone1hv.as_mut() {
+                s.vflip();
+            }
+            self.redstone2hv = self.redstone2.clone();
+            if let Some(s) = self.redstone2hv.as_mut() {
+                s.hflip();
+            }
+            if let Some(s) = self.redstone2hv.as_mut() {
+                s.vflip();
+            }
             self.area_backleft1 = Self::chrome_area(&jag, "backleft1");
             self.area_backleft2 = Self::chrome_area(&jag, "backleft2");
             self.area_backright1 = Self::chrome_area(&jag, "backright1");
@@ -586,12 +627,17 @@ impl Client {
         }
     }
 
-    /// `redrawIcons` from client-ts (4005), backgrounds only: plot
-    /// `backhmid1` into `area_backhmid1` and blit at (516, 160), then
-    /// `backbase2` into `area_backbase2` and blit at (496, 466). The
-    /// sideicons/redstone sprite families are not loaded, so the icons
-    /// themselves are skipped with them. The trailing `areaGame.setPixels()`
-    /// is a no-op here (no global Pix2D target).
+    /// `redrawIcons` from client-ts (4005), 1:1: plot `backhmid1` into
+    /// `area_backhmid1` and, when `side_modal_id == -1`, the redstone
+    /// highlight under `active_icon` plus the side icons whose tab is bound
+    /// (`side_icon[i] != -1`); blit at (516, 160). Then `backbase2` into
+    /// `area_backbase2` with the tabs 7-13 icons and blit at (496, 466).
+    /// Offsets verbatim from 4018-4112. Deviations: the `tutFlashIcon` blink
+    /// conditions are dropped with the tutorial feature (TS `tutFlashIcon`
+    /// stays -1, so they were always true), and the bottom-row guard index
+    /// quirk of 4090-4111 (checks `side_icon[8]` while plotting
+    /// `sideicons[7]`, and so on) is kept 1:1. The trailing
+    /// `areaGame.setPixels()` is a no-op here (no global Pix2D target).
     fn draw_icons(&mut self) {
         if let Some(area) = self.area_backhmid1.as_mut() {
             if let Some(backhmid1) = &self.backhmid1 {
@@ -599,6 +645,47 @@ impl Client {
                 let h = area.height;
                 let mut surface = Pix2D::with_pixels(&mut area.pixels, w, h);
                 backhmid1.plot_sprite(&mut surface, 0, 0);
+                if self.side_modal_id == -1 {
+                    // TS reads `sideIcon[activeIcon]` as undefined (true) out
+                    // of bounds; `get().copied() != Some(-1)` matches.
+                    if self.side_icon.get(self.active_icon as usize).copied() != Some(-1) {
+                        let (redstone, x, y) = match self.active_icon {
+                            0 => (&self.redstone1, 22, 10),
+                            1 => (&self.redstone2, 54, 8),
+                            2 => (&self.redstone2, 82, 8),
+                            3 => (&self.redstone3, 110, 8),
+                            4 => (&self.redstone2h, 153, 8),
+                            5 => (&self.redstone2h, 181, 8),
+                            6 => (&self.redstone1h, 209, 9),
+                            7 => (&self.redstone1v, 42, 0),
+                            8 => (&self.redstone2v, 74, 0),
+                            9 => (&self.redstone2v, 102, 0),
+                            10 => (&self.redstone3v, 130, 1),
+                            11 => (&self.redstone2hv, 173, 0),
+                            12 => (&self.redstone2hv, 201, 0),
+                            13 => (&self.redstone1hv, 229, 0),
+                            _ => (&None, 0, 0),
+                        };
+                        if let Some(s) = redstone {
+                            s.plot_sprite(&mut surface, x, y);
+                        }
+                    }
+                    for (icon, x, y) in [
+                        (0, 29, 13),
+                        (1, 53, 11),
+                        (2, 82, 11),
+                        (3, 115, 12),
+                        (4, 153, 13),
+                        (5, 180, 11),
+                        (6, 208, 13),
+                    ] {
+                        if self.side_icon[icon] != -1 {
+                            if let Some(s) = &self.sideicons[icon] {
+                                s.plot_sprite(&mut surface, x, y);
+                            }
+                        }
+                    }
+                }
             }
         }
         if let Some(area) = &self.area_backhmid1 {
@@ -611,6 +698,24 @@ impl Client {
                 let h = area.height;
                 let mut surface = Pix2D::with_pixels(&mut area.pixels, w, h);
                 backbase2.plot_sprite(&mut surface, 0, 0);
+                if self.side_modal_id == -1 {
+                    // 1:1 with 4090-4111: the guard index trails the sprite
+                    // index (tab 7's sprite gated on `side_icon[8]`, ...).
+                    for (guard, sprite, x, y) in [
+                        (8, 7, 74, 2),
+                        (9, 8, 102, 3),
+                        (10, 9, 137, 4),
+                        (11, 10, 174, 2),
+                        (12, 11, 201, 2),
+                        (13, 12, 226, 2),
+                    ] {
+                        if self.side_icon[guard] != -1 {
+                            if let Some(s) = &self.sideicons[sprite] {
+                                s.plot_sprite(&mut surface, x, y);
+                            }
+                        }
+                    }
+                }
             }
         }
         if let Some(area) = &self.area_backbase2 {
