@@ -354,7 +354,7 @@ impl Pix8 {
                     // `== 0` and writes `bpal[0]` (= 0) into the destination.
                     None => {
                         if let Some(p) = surface.pixels.get_mut(dst_off as usize) {
-                            *p = self.bpal.get(0).copied().unwrap_or(0);
+                            *p = self.bpal.first().copied().unwrap_or(0);
                         }
                         dst_off += 1;
                     }

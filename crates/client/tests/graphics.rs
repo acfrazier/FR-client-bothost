@@ -474,7 +474,7 @@ fn font_archive() -> Vec<u8> {
         g2(&mut index, 1); // charMaskHeight
         index.push(0); // pixel order
     }
-    dat.extend(std::iter::repeat(0u8).take(256)); // one mask byte per char
+    dat.extend([0u8; 256]); // one mask byte per char
     jag(&[("index.dat", &index), ("p11_full.dat", &dat)])
 }
 
