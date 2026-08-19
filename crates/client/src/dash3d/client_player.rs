@@ -82,6 +82,8 @@ pub struct ClientPlayer {
     pub max_tile_z: i32,
     pub transmog: Option<usize>,
     pub skill_level: i32,
+    /// TS `ModelSource.minY` (default 1000, updated by `worldRender`).
+    pub min_y: i32,
 }
 
 impl std::ops::Deref for ClientPlayer {
@@ -124,6 +126,7 @@ impl Default for ClientPlayer {
             max_tile_z: 0,
             transmog: None,
             skill_level: 0,
+            min_y: 1000,
         }
     }
 }

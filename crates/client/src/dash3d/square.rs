@@ -22,6 +22,15 @@ pub struct Square {
     pub sprite_count: i32,
     pub sprite_spans: i32,
     pub draw_level: i32,
+    /// Render-pass flags, read and written by `World::render_all`/`fill`
+    /// (the TS fields with the same names on `Square`).
+    pub draw_front: bool,
+    pub draw_back: bool,
+    pub draw_sprites: bool,
+    pub corner_sides: i32,
+    pub sides_before_corner: i32,
+    pub sides_after_corner: i32,
+    pub back_wall_types: i32,
 }
 
 impl Square {
@@ -43,6 +52,13 @@ impl Square {
             sprite_count: 0,
             sprite_spans: 0,
             draw_level: 0,
+            draw_front: false,
+            draw_back: false,
+            draw_sprites: false,
+            corner_sides: 0,
+            sides_before_corner: 0,
+            sides_after_corner: 0,
+            back_wall_types: 0,
         }
     }
 }

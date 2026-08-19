@@ -15,6 +15,8 @@ pub struct ClientLocAnim {
     pub anim: Option<usize>,
     pub anim_frame: i32,
     pub anim_cycle: i32,
+    /// TS `ModelSource.minY` (default 1000, updated by `worldRender`).
+    pub min_y: i32,
 }
 
 impl ClientLocAnim {
@@ -51,6 +53,7 @@ impl ClientLocAnim {
             anim: Some(seq),
             anim_frame,
             anim_cycle,
+            min_y: 1000,
         }
     }
 

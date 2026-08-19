@@ -1,5 +1,11 @@
 // Port of `~/experiments/Server/webclient/src/dash3d/Ground.ts`. The render
-// draw buffers are static in the TS and only used by the render pass.
+// draw buffers are static in the TS and only used by the render pass (the
+// `World` instance carries them in this port).
+//
+// `Clone` is for the render pass: `World::fill` hands the tile's ground to
+// `render_ground` by value because the scene borrow would otherwise
+// outlive the `&mut self` raster call (the TS passes the shared object).
+// A tile's ground is at most 6 vertices / 6 faces, so the copy is trivial.
 const FULL_SQUARE: i32 = 128;
 const HALF_SQUARE: i32 = FULL_SQUARE / 2;
 const CORNER_SMALL: i32 = FULL_SQUARE / 4;
@@ -39,6 +45,7 @@ const DEF_SHAPE_F: [&[i8]; 13] = [
     &[1, 0, 5, 4, 1, 0, 1, 5, 0, 0, 4, 3, 0, 4, 5, 3, 0, 5, 2, 3, 0, 1, 2, 5],
 ];
 
+#[derive(Clone)]
 pub struct Ground {
     pub vertex_x: Vec<i32>,
     pub vertex_y: Vec<i32>,

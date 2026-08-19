@@ -1,4 +1,7 @@
 // Port of `~/experiments/Server/webclient/src/dash3d/QuickGround.ts`.
+// `Copy` is for the render pass: `World::fill` passes the tile's quick
+// ground by value to `render_quick_ground` (the TS passes the object).
+#[derive(Clone, Copy)]
 pub struct QuickGround {
     pub colour_sw: i32,
     pub colour_se: i32,

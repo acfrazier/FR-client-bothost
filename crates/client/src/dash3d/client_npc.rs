@@ -3,12 +3,20 @@ use crate::config::Cache;
 use crate::dash3d::client_entity::ClientEntity;
 use crate::dash3d::{AnimFrame, Model};
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ClientNpc {
     pub entity: ClientEntity,
     /// Index of the `NpcType` in the client `Cache` (the TS holds the type
     /// object directly).
     pub r#type: Option<usize>,
+    /// TS `ModelSource.minY` (default 1000, updated by `worldRender`).
+    pub min_y: i32,
+}
+
+impl Default for ClientNpc {
+    fn default() -> Self {
+        ClientNpc { entity: ClientEntity::default(), r#type: None, min_y: 1000 }
+    }
 }
 
 impl std::ops::Deref for ClientNpc {

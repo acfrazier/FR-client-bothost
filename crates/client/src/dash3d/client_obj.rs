@@ -5,11 +5,13 @@ use crate::dash3d::Model;
 pub struct ClientObj {
     pub id: i32,
     pub count: i32,
+    /// TS `ModelSource.minY` (default 1000, updated by `worldRender`).
+    pub min_y: i32,
 }
 
 impl ClientObj {
     pub fn new(id: i32, count: i32) -> Self {
-        ClientObj { id, count }
+        ClientObj { id, count, min_y: 1000 }
     }
 
     /// `getTempModel()` from client-ts.

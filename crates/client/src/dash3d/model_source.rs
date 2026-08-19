@@ -6,6 +6,7 @@
 use crate::config::Cache;
 use crate::dash3d::{ClientLocAnim, ClientNpc, ClientObj, ClientPlayer, Model};
 use crate::datastruct::linkable::{LinkableTrait, Links};
+use crate::graphics::{Pix2D, Pix3DDraw};
 
 /// Any model that can be placed in the `World` scene graph. The `Model`
 /// variant carries the full geometry, so variants differ widely in size (the
@@ -29,6 +30,80 @@ impl SceneModel {
             SceneModel::LocAnim(anim) => anim.get_temp_model(cache, loop_cycle),
             SceneModel::Player(player) => player.get_temp_model(cache, loop_cycle),
             SceneModel::Npc(npc) => npc.get_temp_model(cache, loop_cycle),
+        }
+    }
+
+    /// `ModelSource.minY`: the last temp model's `min_y` (1000 until the
+    /// first render). `World::fill` reads it for the occlusion tests.
+    pub fn min_y(&self) -> i32 {
+        match self {
+            SceneModel::Model(model) => model.min_y,
+            SceneModel::Obj(obj) => obj.min_y,
+            SceneModel::LocAnim(anim) => anim.min_y,
+            SceneModel::Player(player) => player.min_y,
+            SceneModel::Npc(npc) => npc.min_y,
+        }
+    }
+
+    /// `ModelSource.worldRender(...)` from client-ts: fetch the temp model,
+    /// record its `minY`, then render. The `Model` variant renders its
+    /// geometry directly (TS `Model` overrides `worldRender`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn world_render(
+        &mut self,
+        cache: &Cache,
+        loop_cycle: i32,
+        pix: &mut Pix3DDraw,
+        surface: &mut Pix2D,
+        yaw: i32,
+        sin_eye_pitch: i32,
+        cos_eye_pitch: i32,
+        sin_eye_yaw: i32,
+        cos_eye_yaw: i32,
+        relative_x: i32,
+        relative_y: i32,
+        relative_z: i32,
+        typecode: i32,
+    ) {
+        match self {
+            SceneModel::Model(model) => model.world_render(
+                pix,
+                surface,
+                yaw,
+                sin_eye_pitch,
+                cos_eye_pitch,
+                sin_eye_yaw,
+                cos_eye_yaw,
+                relative_x,
+                relative_y,
+                relative_z,
+                typecode,
+            ),
+            _ => {
+                if let Some(model) = self.get_temp_model(cache, loop_cycle) {
+                    let min_y = model.min_y;
+                    match self {
+                        SceneModel::Obj(obj) => obj.min_y = min_y,
+                        SceneModel::LocAnim(anim) => anim.min_y = min_y,
+                        SceneModel::Player(player) => player.min_y = min_y,
+                        SceneModel::Npc(npc) => npc.min_y = min_y,
+                        SceneModel::Model(_) => unreachable!(),
+                    }
+                    model.world_render(
+                        pix,
+                        surface,
+                        yaw,
+                        sin_eye_pitch,
+                        cos_eye_pitch,
+                        sin_eye_yaw,
+                        cos_eye_yaw,
+                        relative_x,
+                        relative_y,
+                        relative_z,
+                        typecode,
+                    );
+                }
+            }
         }
     }
 }
