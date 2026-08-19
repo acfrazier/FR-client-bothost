@@ -18,6 +18,7 @@ use crate::client::game_shell::GameShell;
 use crate::client::login_error::LoginError;
 use crate::client::mini_menu_action::MiniMenuAction;
 use crate::client::skill::Skill;
+use crate::config::Cache;
 use crate::io::{ClientProt, ClientStream, Isaac, Packet};
 use crate::login_rsa::{LOGIN_RSAE, LOGIN_RSAN};
 use crate::util::JString;
@@ -69,6 +70,9 @@ pub struct ClientNpc;
 pub struct Client {
     pub shell: GameShell,
     pub config: ClientConfig,
+    /// Config type tables (`obj`, `npc`, `loc`, ...), unpacked from the
+    /// `config` jag by `Cache::unpack`; empty until loaded.
+    pub cache: Cache,
 
     pub ingame: bool,
     pub scene_state: i32,
@@ -133,6 +137,7 @@ impl Client {
         Client {
             shell: GameShell::new(),
             config,
+            cache: Cache::default(),
 
             ingame: false,
             scene_state: 0,
