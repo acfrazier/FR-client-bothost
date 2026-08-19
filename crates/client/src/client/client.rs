@@ -470,7 +470,7 @@ impl Client {
         // Local pack/client is missing `wordenc`, so file CRCs fail the
         // engine's CrcBuffer32 check (login code 6). Prefer /crc; fall back
         // to files for tests without a web server.
-        let jag_checksum = Self::fetch_jag_checksums(&config.host)
+        let jag_checksum = Self::get_jag_checksums(&config.host, 80)
             .unwrap_or_else(|| Self::read_jag_checksums(&config.cache_dir));
         let on_demand = Self::load_on_demand(&config);
         let midi = midi_backend(&config.cache_dir);
@@ -758,19 +758,26 @@ impl Client {
         Ok(cache)
     }
 
-    /// TS `getJagChecksums`: GET `/crc` (9×g4 + hash). Hash check matches
-    /// client-ts (`1234`, `hash = (hash << 1) + crc[i]`).
-    fn fetch_jag_checksums(host: &str) -> Option<[i32; 9]> {
+    /// HTTP/1.0 `GET {path}` returning the response body, headers split on
+    /// `\r\n\r\n` (client-ts `getJagChecksums`/`getJagFile` fetch the same
+    /// way). `None` on connect/read failure or a bodyless response.
+    fn http_get(host: &str, port: u16, path: &str) -> Option<Vec<u8>> {
         use std::io::{Read, Write};
-        let mut stream = std::net::TcpStream::connect((host, 80u16)).ok()?;
+        let mut stream = std::net::TcpStream::connect((host, port)).ok()?;
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
             .ok()?;
-        write!(stream, "GET /crc HTTP/1.0\r\nHost: {host}\r\n\r\n").ok()?;
+        write!(stream, "GET {path} HTTP/1.0\r\nHost: {host}\r\n\r\n").ok()?;
         let mut buf = Vec::new();
         stream.read_to_end(&mut buf).ok()?;
         let split = buf.windows(4).position(|w| w == b"\r\n\r\n")?;
-        let body = &buf[split + 4..];
+        Some(buf[split + 4..].to_vec())
+    }
+
+    /// TS `getJagChecksums`: GET `/crc` (9×g4 + hash). Hash check matches
+    /// client-ts (`1234`, `hash = (hash << 1) + crc[i]`).
+    fn get_jag_checksums(host: &str, port: u16) -> Option<[i32; 9]> {
+        let body = Self::http_get(host, port, "/crc")?;
         if body.len() < 40 {
             return None;
         }
@@ -788,6 +795,34 @@ impl Client {
             return None;
         }
         Some(checksum)
+    }
+
+    /// TS `getJagFile`: serve `{filename}` from the cache when its CRC
+    /// matches `checksums[index]`; otherwise GET `/{filename}{crc}`, verify
+    /// the CRC, persist to `cache_dir`, and return the bytes. A CRC mismatch
+    /// is `None` (the caller retries the fetch). JAG archives sit at checksum
+    /// slots 1-8 (`JAG_FILES`); title is slot 1.
+    pub fn get_jag_file(
+        cache_dir: &str,
+        host: &str,
+        port: u16,
+        filename: &str,
+        index: usize,
+        checksums: &[i32; 9],
+    ) -> Option<Vec<u8>> {
+        let crc = checksums[index];
+        let cached = std::fs::read(format!("{cache_dir}/{filename}")).ok();
+        if let Some(bytes) = cached {
+            if Packet::getcrc(&bytes, 0, bytes.len()) == crc {
+                return Some(bytes);
+            }
+        }
+        let bytes = Self::http_get(host, port, &format!("/{filename}{crc}"))?;
+        if Packet::getcrc(&bytes, 0, bytes.len()) != crc {
+            return None;
+        }
+        let _ = std::fs::write(format!("{cache_dir}/{filename}"), &bytes);
+        Some(bytes)
     }
 
     /// CRC of each JAG pack file under `cache_dir`, in the 9-slot layout the
