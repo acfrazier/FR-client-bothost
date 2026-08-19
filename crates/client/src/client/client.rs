@@ -223,6 +223,14 @@ pub struct Client {
     pub use_mode: i32,
     pub target_mode: i32,
     pub redraw_side: bool,
+    /// Side-tab state (`Client.ts` `sideIcon`/`activeIcon`): `side_icon[icon]`
+    /// is the interface id drawn on tab `icon` (-1 hidden), `active_icon` the
+    /// selected tab. The modal ids are the open side/chat interfaces (-1 none);
+    /// `IF_OPENSIDE`/`IF_CLOSE` populate them in the HUD task.
+    pub active_icon: i32,
+    pub side_icon: [i32; 14],
+    pub side_modal_id: i32,
+    pub chat_modal_id: i32,
     pub target_com_id: i32,
     pub obj_com_id: i32,
     pub obj_selected_slot: i32,
@@ -442,6 +450,10 @@ impl Client {
             use_mode: 0,
             target_mode: 0,
             redraw_side: false,
+            active_icon: 3,
+            side_icon: [-1; 14],
+            side_modal_id: -1,
+            chat_modal_id: -1,
             target_com_id: 0,
             obj_com_id: 0,
             obj_selected_slot: 0,
@@ -1327,6 +1339,30 @@ impl Client {
         }
     }
 
+    /// `IF_SETICON` handler (Client.ts 5992): bind interface `com_id` to side
+    /// tab `icon`; 65535 clears the slot to -1. A tab index outside 0..14 is
+    /// ignored (the TS writes it into a growing array; the fixed-size Rust
+    /// array bounds-checks instead). Both side surfaces redraw.
+    pub fn apply_if_seticon(&mut self, payload: &mut Packet) {
+        let mut com_id = payload.g2();
+        let icon = payload.g1();
+        if com_id == 65535 {
+            com_id = -1;
+        }
+        if (0..14).contains(&icon) {
+            self.side_icon[icon as usize] = com_id;
+        }
+        self.redraw_side = true;
+        self.redraw_icons = true;
+    }
+
+    /// `IF_SHOWICON` handler (Client.ts 6058): select side tab `icon`.
+    pub fn apply_if_showicon(&mut self, icon: i32) {
+        self.active_icon = icon;
+        self.redraw_side = true;
+        self.redraw_icons = true;
+    }
+
     fn dispatch_packet(&mut self, ptype: i32, payload: &mut Packet) {
         match ptype {
             ServerProt::REBUILD_NORMAL => {
@@ -1435,13 +1471,27 @@ impl Client {
             // interface draw/modal state (mainModalId, sideIcon, activeIcon,
             // chatModalId, tutComId) is not ported yet; these reset ptype
             // like their TS handlers.
+            ServerProt::IF_SETICON => {
+                self.apply_if_seticon(payload);
+                self.ptype = -1;
+            }
+
+            ServerProt::IF_SHOWICON => {
+                self.apply_if_showicon(payload.g1());
+                self.ptype = -1;
+            }
+
+            // IF_OPENSIDE carries a 2-byte com_id the skip-arm must not eat
+            // unread; modal behavior lands with the HUD task.
+            ServerProt::IF_OPENSIDE => {
+                let _ = payload.g2();
+                self.ptype = -1;
+            }
+
             ServerProt::IF_OPENCHAT
             | ServerProt::IF_OPENMAIN_SIDE
             | ServerProt::IF_CLOSE
-            | ServerProt::IF_SETICON
-            | ServerProt::IF_SHOWICON
             | ServerProt::IF_OPENMAIN
-            | ServerProt::IF_OPENSIDE
             | ServerProt::IF_OPENOVERLAY
             | ServerProt::TUT_FLASH
             | ServerProt::TUT_OPEN => {
