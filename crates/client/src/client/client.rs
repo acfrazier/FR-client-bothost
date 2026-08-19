@@ -8,8 +8,8 @@
 
 use std::io;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -24,9 +24,9 @@ use crate::config::if_type::ComponentType;
 use crate::config::seq_type::{RESTART_RESET, RESTART_RESETLOOP};
 use crate::config::Cache;
 use crate::dash3d::world::LevelHeightmaps;
-use crate::dash3d::{BuildArea, CollisionFlag, CollisionMap, DirectionFlag, LocShape, World};
+use crate::dash3d::{AnimFrame, BuildArea, CollisionFlag, CollisionMap, DirectionFlag, LocShape, Model, World};
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
-use crate::io::{ClientProt, ClientStream, Isaac, Packet, ServerProt, SERVER_PROT_SIZES};
+use crate::io::{ClientProt, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt, SERVER_PROT_SIZES};
 use crate::login_rsa::{LOGIN_RSAE, LOGIN_RSAN};
 use crate::util::JString;
 
@@ -184,6 +184,9 @@ pub struct Client {
     pub psize: i32,
 
     pub stream: Option<ClientStream>,
+    /// OnDemand worker (TS `onDemand`); `None` without a `versionlist` pack
+    /// in the cache dir, which behaves like TS `onDemand === null`.
+    pub on_demand: Option<OnDemand>,
     pub staffmodlevel: i32,
     pub mouse_tracked: bool,
     pub random_in: Option<Isaac>,
@@ -199,6 +202,7 @@ pub struct Client {
 impl Client {
     pub fn new(config: ClientConfig) -> Self {
         let jag_checksum = Self::read_jag_checksums(&config.cache_dir);
+        let on_demand = Self::load_on_demand(&config);
         let groundh: LevelHeightmaps =
             vec![
                 vec![vec![0i32; (BUILD_AREA_SIZE + 1) as usize]; (BUILD_AREA_SIZE + 1) as usize];
@@ -296,6 +300,7 @@ impl Client {
             psize: 0,
 
             stream: None,
+            on_demand,
             staffmodlevel: 0,
             mouse_tracked: false,
             random_in: None,
@@ -320,6 +325,21 @@ impl Client {
             }
         }
         checksum
+    }
+
+    /// Start the OnDemand worker when the cache dir has a `versionlist` pack
+    /// (the TS update-server fetch is a cache read here; the engine packs the
+    /// same file). Missing cache → `None`, matching TS `onDemand === null`.
+    fn load_on_demand(config: &ClientConfig) -> Option<OnDemand> {
+        let bytes = std::fs::read(format!("{}/versionlist", config.cache_dir)).ok()?;
+        let versionlist = JagFile::new(bytes);
+        OnDemand::new(
+            &versionlist,
+            &config.host,
+            config.port,
+            &config.cache_dir,
+            Arc::new(AtomicBool::new(false)),
+        )
     }
 
     /// Login handshake, 1:1 of `Client.ts` `login` (1719-1867) / Java
@@ -1060,11 +1080,19 @@ impl Client {
                             self.map_build_ground_file[map_count] = -1;
                             self.map_build_location_file[map_count] = -1;
                             map_count += 1;
+                        } else if let Some(od) = &mut self.on_demand {
+                            let land_file = od.get_map_file(x, z, 0);
+                            self.map_build_ground_file[map_count] = land_file;
+                            if land_file != -1 {
+                                od.request(3, land_file);
+                            }
+                            let loc_file = od.get_map_file(x, z, 1);
+                            self.map_build_location_file[map_count] = loc_file;
+                            if loc_file != -1 {
+                                od.request(3, loc_file);
+                            }
+                            map_count += 1;
                         }
-                        // TODO(task 18): the OnDemand branch (getMapFile/request
-                        // per square) fills ground/location files and bumps
-                        // map_count; without it the arrays stay empty and the
-                        // scene waits, as TS with `onDemand === null`.
                     }
                 }
 
@@ -1565,7 +1593,9 @@ impl Client {
                 {
                     self.midi_song = song_id;
                     self.midi_fading = true;
-                    // TS requests archive 2 via onDemand (Task 18).
+                    if let Some(od) = &mut self.on_demand {
+                        od.request(2, self.midi_song);
+                    }
                 }
 
                 self.next_midi_song = song_id;
@@ -1579,8 +1609,10 @@ impl Client {
                 if self.midi_active && !self.config.lowmem {
                     self.midi_song = jingle_id;
                     self.midi_fading = false;
+                    if let Some(od) = &mut self.on_demand {
+                        od.request(2, self.midi_song);
+                    }
                     self.next_music_delay = delay;
-                    // TS requests archive 2 via onDemand (Task 18).
                 }
                 self.ptype = -1;
             }
@@ -2464,6 +2496,69 @@ impl Client {
         self.world.reset_map();
         for collision in &mut self.collision {
             collision.reset();
+        }
+    }
+
+    /// `onDemandLoop()` from client-ts: run the ondemand heartbeat, then
+    /// dispatch every completed file by the TS archive cases — models (0),
+    /// anim frames (1), midi (2), map squares (3) — and the archive-93 map
+    /// prefetch completions. Null data skips the dispatch as TS does.
+    pub fn on_demand_loop(&mut self) {
+        let mut done = Vec::new();
+        if let Some(od) = &mut self.on_demand {
+            od.run(self.ingame);
+            while let Some(req) = od.loop_request() {
+                done.push(req);
+            }
+        }
+        for req in done {
+            let Some(data) = req.data else { continue };
+            match req.archive {
+                0 => {
+                    Model::unpack(req.file, Some(data.as_slice()));
+                    if self
+                        .on_demand
+                        .as_ref()
+                        .is_some_and(|od| od.get_model_use(req.file) & 0x62 != 0)
+                    {
+                        self.redraw_side = true;
+                    }
+                }
+                1 => AnimFrame::unpack(&data),
+                2 => {
+                    if self.midi_song == req.file {
+                        // TODO(task 19): saveMidi(data, self.midi_fading) —
+                        // the Midi backend lands with the music task.
+                    }
+                }
+                3 => self.fill_map_build_square(req.file, data),
+                93 => {
+                    // archive 93 carries finished map-location prefetches;
+                    // the ClientBuild.prefetchLocations decode lands with the
+                    // map-completion flow (loadLocations/finishBuild).
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The TS archive-3 case of `onDemandLoop`: park a finished map square
+    /// into the ground or location slot that requested its file.
+    fn fill_map_build_square(&mut self, file: i32, data: Vec<u8>) {
+        if self.scene_state != 1
+            || self.map_build_ground_data.len() != self.map_build_location_data.len()
+        {
+            return;
+        }
+        for i in 0..self.map_build_ground_data.len() {
+            if self.map_build_ground_file[i] == file {
+                self.map_build_ground_data[i] = Some(data);
+                return;
+            }
+            if self.map_build_location_file[i] == file {
+                self.map_build_location_data[i] = Some(data);
+                return;
+            }
         }
     }
 }

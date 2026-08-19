@@ -8,6 +8,8 @@ pub mod isaac;
 pub use isaac::Isaac;
 pub mod jagfile;
 pub use jagfile::JagFile;
+pub mod ondemand;
+pub use ondemand::{OnDemand, OnDemandProvider, OnDemandRequest};
 pub mod packet;
 pub use packet::Packet;
 pub mod server_prot;

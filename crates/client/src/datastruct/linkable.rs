@@ -152,7 +152,7 @@ impl<T: LinkableTrait> Arena<T> {
     }
 
     /// Extract the node and free its slot.
-    pub(crate) fn take(&mut self, id: usize) -> T {
+    pub fn take(&mut self, id: usize) -> T {
         let node = self.nodes[id].take().expect("arena slot is occupied");
         self.free.push(id);
         node

@@ -1,0 +1,147 @@
+//! Task 18: OnDemand request worker.
+//!
+//! `new_unconnected` builds an OnDemand with no versionlist and no worker
+//! thread; `request` queues into the client-side request list and
+//! `remaining` counts it, exactly as Java/TS track `requests`. The socket
+//! test drives the full worker pump against a mock engine ondemand socket.
+use std::io::Write;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
+
+use client::io::{JagFile, OnDemand};
+
+#[test]
+fn request_increments_remaining() {
+    let mut od = OnDemand::new_unconnected();
+    assert_eq!(od.remaining(), 0);
+    od.request(2, 0);
+    assert_eq!(od.remaining(), 1);
+}
+
+#[test]
+fn duplicate_request_is_deduplicated() {
+    let mut od = OnDemand::new_unconnected();
+    od.request(2, 0);
+    od.request(2, 0);
+    assert_eq!(od.remaining(), 1);
+}
+
+#[test]
+fn different_files_both_queue() {
+    let mut od = OnDemand::new_unconnected();
+    od.request(2, 0);
+    od.request(3, 100);
+    assert_eq!(od.remaining(), 2);
+}
+
+/// End-to-end worker pump against a mock engine ondemand socket: byte-15
+/// handshake, 4-byte request (archive 2 / file 0 / urgent), and one chunk of
+/// gzip + 2-byte version trailer, which the client gunzips on `loop_request`.
+#[test]
+fn worker_downloads_and_gunzips_from_ondemand_socket() {
+    use std::io::Read;
+    use std::net::TcpListener;
+
+    let files: Vec<(&str, Vec<u8>)> = vec![
+        ("model_version", vec![0, 1]),
+        ("anim_version", vec![0, 1]),
+        ("midi_version", vec![0, 1]),
+        ("map_version", vec![0, 1]),
+        ("model_crc", vec![0, 0, 0, 0]),
+        ("anim_crc", vec![0, 0, 0, 0]),
+        ("midi_crc", vec![0, 0, 0, 0]),
+        ("map_crc", vec![0, 0, 0, 0]),
+    ];
+    let entries: Vec<(&str, &[u8])> = files.iter().map(|(n, d)| (*n, d.as_slice())).collect();
+    let versionlist = JagFile::new(jag(&entries));
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let payload: &'static [u8] = b"midi bytes";
+    let server = thread::spawn(move || {
+        let (mut sock, _) = listener.accept().unwrap();
+        let mut b = [0u8; 1];
+        sock.read_exact(&mut b).unwrap();
+        assert_eq!(b[0], 15, "ondemand handshake byte");
+        sock.write_all(&[0; 8]).unwrap();
+        let mut req = [0u8; 4];
+        sock.read_exact(&mut req).unwrap();
+        assert_eq!(req[0], 2, "archive");
+        assert_eq!(u16::from_be_bytes([req[1], req[2]]), 0, "file");
+        assert_eq!(req[3], 2, "urgent priority");
+        // gzip(payload) + 2-byte version trailer, served as one part
+        let mut body = gz(payload);
+        body.extend_from_slice(&[0, 1]);
+        let len = body.len() as u16;
+        let mut chunk = vec![2, 0, 0, (len >> 8) as u8, len as u8, 0];
+        chunk.extend_from_slice(&body);
+        sock.write_all(&chunk).unwrap();
+    });
+
+    let mut od = OnDemand::new(
+        &versionlist,
+        "127.0.0.1",
+        port,
+        "/tmp",
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    od.request(2, 0);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let got = loop {
+        od.run(false);
+        if let Some(req) = od.loop_request() {
+            break req.data;
+        }
+        if Instant::now() > deadline {
+            panic!("ondemand worker did not complete the request");
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    server.join().unwrap();
+    assert_eq!(got.as_deref(), Some(payload));
+}
+
+/// Versionlist jag in the engine pack layout (bzip2 per file, like the
+/// `jag` helper in tests/graphics.rs).
+fn jag(files: &[(&str, &[u8])]) -> Vec<u8> {
+    let packed: Vec<Vec<u8>> = files.iter().map(|(_, d)| bz2(d)).collect();
+    let data_len: usize = packed.iter().map(|d| d.len()).sum();
+    let total = (8 + 10 * files.len() + data_len) as i32;
+    let mut out = Vec::new();
+    g3(&mut out, total);
+    g3(&mut out, total);
+    out.push((files.len() >> 8) as u8);
+    out.push(files.len() as u8);
+    for ((name, data), packed_data) in files.iter().zip(packed.iter()) {
+        out.extend_from_slice(&JagFile::gen_hash(name).to_be_bytes());
+        g3(&mut out, data.len() as i32);
+        g3(&mut out, packed_data.len() as i32);
+    }
+    for d in &packed {
+        out.extend_from_slice(d);
+    }
+    out
+}
+
+fn bz2(data: &[u8]) -> Vec<u8> {
+    let mut enc = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
+    enc.write_all(data).unwrap();
+    let out = enc.finish().unwrap();
+    assert!(out.starts_with(b"BZh"));
+    out[4..].to_vec()
+}
+
+fn g3(out: &mut Vec<u8>, value: i32) {
+    out.push((value >> 16) as u8);
+    out.push((value >> 8) as u8);
+    out.push(value as u8);
+}
+
+fn gz(data: &[u8]) -> Vec<u8> {
+    let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    enc.write_all(data).unwrap();
+    enc.finish().unwrap()
+}
