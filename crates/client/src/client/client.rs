@@ -406,6 +406,8 @@ impl Client {
             // The original guards on the NPC entity (and walks to its tile
             // first); the scene NPCs land with Task 15, so the encode runs
             // from the menu arrays alone here.
+            // TODO(task 15): re-add the `npc[a] && localPlayer` guard and the
+            // tryMove-to-NPC walk when scene NPCs land, or the guard is lost.
             let opcode = match action {
                 MiniMenuAction::OP_NPC1 => ClientProt::OPNPC1.id,
                 MiniMenuAction::OP_NPC2 => ClientProt::OPNPC2.id,
@@ -434,6 +436,9 @@ impl Client {
         if action == MiniMenuAction::WALK {
             // Headless: no World mouse picking — menuParamB/C are the local
             // destination tiles, walked to straight from the local player.
+            // TODO(task 16): the original only picks the tile here and the
+            // frame loop writes MOVE_GAMECLICK; drop this inline write when
+            // the frame loop is ported or the walk packet double-emits.
             if let Some((px, pz)) =
                 self.local_player.as_ref().map(|p| (p.route_x[0], p.route_z[0]))
             {
