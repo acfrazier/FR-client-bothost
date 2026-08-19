@@ -18,6 +18,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use num_bigint::BigUint;
 
+use crate::client::client_build::ClientBuild;
 use crate::client::config::ClientConfig;
 use crate::client::game_shell::GameShell;
 use crate::client::login_error::LoginError;
@@ -4368,8 +4369,13 @@ impl Client {
                 3 => self.fill_map_build_square(req.file, data),
                 93 => {
                     // archive 93 carries finished map-location prefetches;
-                    // the ClientBuild.prefetchLocations decode lands with the
-                    // map-completion flow (loadLocations/finishBuild).
+                    // decode the loc stream and prefetch each loc's models
+                    // (TS `onDemandLoop` 1370-1373).
+                    if let Some(od) = self.on_demand.as_mut() {
+                        if od.has_map_loc_file(req.file) {
+                            ClientBuild::prefetch_locations(&self.cache, &mut Packet::new(data), od);
+                        }
+                    }
                 }
                 _ => {}
             }

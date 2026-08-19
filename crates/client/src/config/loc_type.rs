@@ -9,7 +9,7 @@ use crate::dash3d::loc_angle::LocAngle;
 use crate::dash3d::LocShape;
 use crate::dash3d::{AnimFrame, Model};
 use crate::datastruct::LruCache;
-use crate::io::{JagFile, Packet};
+use crate::io::{JagFile, OnDemand, Packet};
 
 // Process-wide by design: LRUs of decoded, immutable loc models shared by
 // every client (the TS `mc1`/`mc2` statics). Cache bookkeeping, not
@@ -246,6 +246,34 @@ impl LocType {
 
         if self.raiseobject == -1 {
             self.raiseobject = if self.blockwalk { 1 } else { 0 };
+        }
+    }
+
+    /// `checkModelAll()` from client-ts (LocType.ts 296-309): every model id
+    /// must already be downloaded. Deliberately not short-circuiting — the
+    /// TS keeps calling `requestDownload` for the remaining ids.
+    pub fn check_model_all(&self) -> bool {
+        let Some(models) = &self.model else {
+            return true;
+        };
+        let mut ready = true;
+        for &model in models {
+            if !Model::request_download(model & 0xffff) {
+                ready = false;
+            }
+        }
+        ready
+    }
+
+    /// `prefetchModelAll(od)` from client-ts (LocType.ts 312-323).
+    pub fn prefetch_model_all(&self, od: &mut OnDemand) {
+        let Some(models) = &self.model else {
+            return;
+        };
+        for &model in models {
+            if model != -1 {
+                od.prefetch(0, model & 0xffff);
+            }
         }
     }
 

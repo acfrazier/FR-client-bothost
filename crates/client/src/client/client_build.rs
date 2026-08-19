@@ -8,12 +8,18 @@
 //! `loadGround` writes the client's `groundh` and `mapl` directly (the TS
 //! passes its `Client.groundh`/`Client.mapl` references into the
 //! constructor); the per-build floor arrays live on this struct as in TS.
+use crate::config::Cache;
 use crate::dash3d::world::LevelHeightmaps;
 use crate::dash3d::BuildArea;
 use crate::graphics::Pix3D;
-use crate::io::Packet;
+use crate::io::{OnDemand, Packet};
 
 pub struct ClientBuild {
+    /// `ClientBuild.lowMem` from client-ts (static default true); the
+    /// map-build flow sets it from the world/config low-mem setting.
+    pub low_mem: bool,
+    /// `ClientBuild.minusedlevel` from client-ts; consumed by `addLoc`.
+    pub minusedlevel: i32,
     /// `floort1[level][x][z]` / `floort2[level][x][z]` floor type ids.
     floort1: Vec<Vec<Vec<u8>>>,
     floort2: Vec<Vec<Vec<u8>>>,
@@ -39,6 +45,8 @@ impl ClientBuild {
             ]
         };
         ClientBuild {
+            low_mem: true,
+            minusedlevel: 0,
             floort1: grid(),
             floort2: grid(),
             floors: grid(),
@@ -136,6 +144,82 @@ impl ClientBuild {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// `checkLocations(src, xOffset, zOffset)` from client-ts: decode the
+    /// gsmart loc-id/pos delta stream and report whether every in-area loc's
+    /// models are downloaded. Out-of-area tiles still consume the packet
+    /// bytes, and `skip` state tracks per-loc model-check progress.
+    pub fn check_locations(&self, cache: &Cache, src: &[u8], x_offset: i32, z_offset: i32) -> bool {
+        let mut buf = Packet::new(src.to_vec());
+        let mut ready = true;
+        let mut loc_id = -1;
+
+        loop {
+            let delta_id = buf.gsmart();
+            if delta_id == 0 {
+                break;
+            }
+            loc_id += delta_id;
+
+            let mut loc_pos = 0;
+            let mut skip = false;
+
+            loop {
+                let delta_pos = buf.gsmart();
+                if delta_pos == 0 {
+                    break;
+                }
+
+                if skip {
+                    buf.g1();
+                } else {
+                    loc_pos += delta_pos - 1;
+                    let z = loc_pos & 0x3f;
+                    let x = (loc_pos >> 6) & 0x3f;
+                    let shape = buf.g1() >> 2;
+                    let stx = x_offset + x;
+                    let stz = z_offset + z;
+
+                    if stx > 0 && stz > 0 && stx < 103 && stz < 103 {
+                        let loc = cache.loc(loc_id as usize);
+                        if shape != 22 || !self.low_mem || loc.active || loc.forcedecor {
+                            if !loc.check_model_all() {
+                                ready = false;
+                            }
+                            skip = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        ready
+    }
+
+    /// `prefetchLocations(buf, od)` from client-ts: walk the same gsmart loc
+    /// stream and prefetch every referenced loc's models.
+    pub fn prefetch_locations(cache: &Cache, buf: &mut Packet, od: &mut OnDemand) {
+        let mut loc_id = -1;
+
+        loop {
+            let delta_id = buf.gsmart();
+            if delta_id == 0 {
+                return;
+            }
+            loc_id += delta_id;
+
+            let loc = cache.loc(loc_id as usize);
+            loc.prefetch_model_all(od);
+
+            loop {
+                let delta_pos = buf.gsmart();
+                if delta_pos == 0 {
+                    break;
+                }
+                buf.g1();
             }
         }
     }
