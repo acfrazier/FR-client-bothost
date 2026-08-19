@@ -11,6 +11,9 @@ pub struct GameShell {
     pub deltime: i32,
     pub mindel: i32,
     pub fps: i32,
+    /// Key-down flags, Java `GameShell.keyHeld` (`int[128]`); `tryMove` reads
+    /// index 5 for the run flag in the walk packet.
+    pub key_held: [i32; 128],
     otim: [u64; 10],
     opos: usize,
     ratio: i32,
@@ -25,6 +28,7 @@ impl GameShell {
             deltime: 20,
             mindel: 1,
             fps: 0,
+            key_held: [0; 128],
             otim: [Self::now_millis(); 10],
             opos: 0,
             ratio: 256,

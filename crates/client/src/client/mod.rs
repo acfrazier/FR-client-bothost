@@ -1,10 +1,12 @@
 pub mod client;
-pub use client::Client;
+pub use client::{Client, ClientPlayer};
 pub mod config;
 pub use config::ClientConfig;
 pub mod game_shell;
 pub use game_shell::GameShell;
 pub mod login_error;
 pub use login_error::LoginError;
+pub mod mini_menu_action;
+pub use mini_menu_action::MiniMenuAction;
 pub mod skill;
 pub use skill::Skill;

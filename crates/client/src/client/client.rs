@@ -16,8 +16,9 @@ use num_bigint::BigUint;
 use crate::client::config::ClientConfig;
 use crate::client::game_shell::GameShell;
 use crate::client::login_error::LoginError;
+use crate::client::mini_menu_action::MiniMenuAction;
 use crate::client::skill::Skill;
-use crate::io::{ClientStream, Isaac, Packet};
+use crate::io::{ClientProt, ClientStream, Isaac, Packet};
 use crate::login_rsa::{LOGIN_RSAE, LOGIN_RSAN};
 use crate::util::JString;
 
@@ -27,6 +28,17 @@ const MENU_CAPACITY: usize = 500;
 const CLIENT_VERSION: i32 = 274;
 const LOGIN_UID: i32 = 1337;
 
+/// Side of the build area, `BuildArea.SIZE` (13 << 3) in client-ts.
+const BUILD_AREA_SIZE: i32 = 104;
+const BUILD_AREA_TILES: usize = (BUILD_AREA_SIZE * BUILD_AREA_SIZE) as usize;
+const ROUTE_BUFFER: usize = 4000;
+
+// `dash3d/DirectionFlag.ts`; moves to dash3d with Task 15.
+const DIR_NORTH: i32 = 0x1;
+const DIR_EAST: i32 = 0x2;
+const DIR_SOUTH: i32 = 0x4;
+const DIR_WEST: i32 = 0x8;
+
 /// JAG archives whose CRC values go out in the login wrapper; slot 0 of the
 /// 9-slot `getJagChecksums` layout has no pack file and stays 0.
 const JAG_FILES: [&str; 8] = [
@@ -34,8 +46,21 @@ const JAG_FILES: [&str; 8] = [
 ];
 
 /// Placeholder for the dash3d entity; replaced when `ClientPlayer` is ported.
+/// Carries the walk route arrays (`routeX`/`routeZ` in client-ts) so
+/// `tryMove`/`doAction` can run headless; only index 0 (the current tile) is
+/// read by this task.
 #[derive(Clone)]
-pub struct ClientPlayer;
+pub struct ClientPlayer {
+    pub route_x: Vec<i32>,
+    pub route_z: Vec<i32>,
+}
+
+impl ClientPlayer {
+    /// Dummy local player standing on the given tile, for headless tests.
+    pub fn at(x: i32, z: i32) -> Self {
+        ClientPlayer { route_x: vec![x], route_z: vec![z] }
+    }
+}
 
 /// Placeholder for the dash3d entity; replaced when `ClientNpc` is ported.
 #[derive(Clone)]
@@ -62,6 +87,24 @@ pub struct Client {
     pub menu_param_a: Vec<i32>,
     pub menu_param_b: Vec<i32>,
     pub menu_param_c: Vec<i32>,
+
+    pub dir_map: Vec<i32>,
+    pub dist_map: Vec<i32>,
+    pub route_x: Vec<i32>,
+    pub route_z: Vec<i32>,
+    pub try_move_nearest: i32,
+    pub minimap_flag_x: i32,
+    pub minimap_flag_z: i32,
+    pub map_build_base_x: i32,
+    pub map_build_base_z: i32,
+
+    pub use_mode: i32,
+    pub target_mode: i32,
+    pub redraw_side: bool,
+    pub target_com_id: i32,
+    pub obj_com_id: i32,
+    pub obj_selected_slot: i32,
+    pub obj_selected_com_id: i32,
 
     pub out: Packet,
     pub r#in: Packet,
@@ -108,6 +151,24 @@ impl Client {
             menu_param_a: vec![0; MENU_CAPACITY],
             menu_param_b: vec![0; MENU_CAPACITY],
             menu_param_c: vec![0; MENU_CAPACITY],
+
+            dir_map: vec![0; BUILD_AREA_TILES],
+            dist_map: vec![0; BUILD_AREA_TILES],
+            route_x: vec![0; ROUTE_BUFFER],
+            route_z: vec![0; ROUTE_BUFFER],
+            try_move_nearest: 0,
+            minimap_flag_x: 0,
+            minimap_flag_z: 0,
+            map_build_base_x: 0,
+            map_build_base_z: 0,
+
+            use_mode: 0,
+            target_mode: 0,
+            redraw_side: false,
+            target_com_id: 0,
+            obj_com_id: 0,
+            obj_selected_slot: 0,
+            obj_selected_com_id: 0,
 
             out: Packet::alloc(1),
             r#in: Packet::alloc(1),
@@ -310,6 +371,344 @@ impl Client {
         self.login_mes2 = mes2.clone();
         self.stream = Some(stream);
         Err(LoginError { code: response, mes1, mes2 })
+    }
+
+    /// Linear build-area index, `CollisionMap.index(x, z) = x * SIZE + z`.
+    fn collision_index(x: i32, z: i32) -> usize {
+        (x * BUILD_AREA_SIZE + z) as usize
+    }
+
+    /// Menu dispatch, port of client-ts `Client.ts` `doAction` (8548-9273).
+    /// Headless encode paths only: the branches that need config types, chat,
+    /// or the scene (`OP_OBJ*`, `OP_LOC*`, `OP_PLAYER*`, `OP_HELD*`,
+    /// `INV_BUTTON*`, buttons, examine, friend/ignore) land with Tasks 13/15.
+    #[allow(non_snake_case)] // Java name kept for the RawClient mapping
+    pub fn doAction(&mut self, option_id: i32) {
+        if option_id < 0 {
+            return;
+        }
+
+        let mut action = self.menu_action[option_id as usize];
+        let a = self.menu_param_a[option_id as usize];
+        let b = self.menu_param_b[option_id as usize];
+        let c = self.menu_param_c[option_id as usize];
+
+        if action >= MiniMenuAction::_PRIORITY {
+            action -= MiniMenuAction::_PRIORITY;
+        }
+
+        if action == MiniMenuAction::OP_NPC1
+            || action == MiniMenuAction::OP_NPC2
+            || action == MiniMenuAction::OP_NPC3
+            || action == MiniMenuAction::OP_NPC4
+            || action == MiniMenuAction::OP_NPC5
+        {
+            // The original guards on the NPC entity (and walks to its tile
+            // first); the scene NPCs land with Task 15, so the encode runs
+            // from the menu arrays alone here.
+            let opcode = match action {
+                MiniMenuAction::OP_NPC1 => ClientProt::OPNPC1.id,
+                MiniMenuAction::OP_NPC2 => ClientProt::OPNPC2.id,
+                MiniMenuAction::OP_NPC3 => ClientProt::OPNPC3.id,
+                MiniMenuAction::OP_NPC4 => ClientProt::OPNPC4.id,
+                _ => ClientProt::OPNPC5.id,
+            };
+            self.out.p1_enc(opcode);
+            self.out.p2(a);
+        }
+
+        if action == MiniMenuAction::TGT_NPC {
+            self.out.p1_enc(ClientProt::OPNPCT.id);
+            self.out.p2(a);
+            self.out.p2(self.target_com_id);
+        }
+
+        if action == MiniMenuAction::USEHELD_ONNPC {
+            self.out.p1_enc(ClientProt::OPNPCU.id);
+            self.out.p2(a);
+            self.out.p2(self.obj_com_id);
+            self.out.p2(self.obj_selected_slot);
+            self.out.p2(self.obj_selected_com_id);
+        }
+
+        if action == MiniMenuAction::WALK {
+            // Headless: no World mouse picking — menuParamB/C are the local
+            // destination tiles, walked to straight from the local player.
+            if let Some((px, pz)) =
+                self.local_player.as_ref().map(|p| (p.route_x[0], p.route_z[0]))
+            {
+                self.tryMove(px, pz, b, c, true, 0, 0, 0, 0, 0, 0);
+            }
+        }
+
+        self.use_mode = 0;
+        self.target_mode = 0;
+        self.redraw_side = true;
+    }
+
+    /// Walk-path encode, port of client-ts `Client.ts` `tryMove` (5608-5869).
+    /// Headless until Task 15: the collision grid is all-open (an empty
+    /// world), so the BFS walks any in-bounds destination and writes the
+    /// MOVE_GAMECLICK / MOVE_MINIMAPCLICK / MOVE_OPCLICK packet as the
+    /// original. `r#type` matches the TS `type` parameter (0 walk, 1 minimap,
+    /// 2 op).
+    #[allow(non_snake_case)] // Java name kept for the RawClient mapping
+    #[allow(clippy::too_many_arguments)] // Java/TS tryMove signature is fixed
+    pub fn tryMove(
+        &mut self,
+        src_x: i32,
+        src_z: i32,
+        dx: i32,
+        dz: i32,
+        try_nearest: bool,
+        _loc_width: i32,
+        _loc_length: i32,
+        _loc_angle: i32,
+        _loc_shape: i32,
+        _forceapproach: i32,
+        r#type: i32,
+    ) -> bool {
+        let scene_width = BUILD_AREA_SIZE;
+        let scene_length = BUILD_AREA_SIZE;
+
+        for x in 0..scene_width {
+            for z in 0..scene_length {
+                let index = Self::collision_index(x, z);
+                self.dir_map[index] = 0;
+                self.dist_map[index] = 99999999;
+            }
+        }
+
+        let mut x = src_x;
+        let mut z = src_z;
+
+        self.dir_map[Self::collision_index(src_x, src_z)] = 99;
+        self.dist_map[Self::collision_index(src_x, src_z)] = 0;
+
+        let mut steps: usize = 0;
+        let mut length: usize = 0;
+        self.route_x[steps] = src_x;
+        self.route_z[steps] = src_z;
+        steps += 1;
+
+        let mut arrived = false;
+        let buffer_size = self.route_x.len();
+
+        while length != steps {
+            x = self.route_x[length];
+            z = self.route_z[length];
+            length = (length + 1) % buffer_size;
+
+            if x == dx && z == dz {
+                arrived = true;
+                break;
+            }
+
+            // The loc-shape / loc-width arrival shortcuts use the collision
+            // map (testWall/testWDecor/testLoc) and land with Task 15; the
+            // empty grid has no walls or scenery to arrive at early.
+            let next_cost = self.dist_map[Self::collision_index(x, z)] + 1;
+
+            // flags are all-open in the empty grid (Task 15 reads them from
+            // the CollisionMap): PL_WALK_* checks are always satisfied.
+            if x > 0 {
+                let index = Self::collision_index(x - 1, z);
+                if self.dir_map[index] == 0 {
+                    self.route_x[steps] = x - 1;
+                    self.route_z[steps] = z;
+                    steps = (steps + 1) % buffer_size;
+                    self.dir_map[index] = 2;
+                    self.dist_map[index] = next_cost;
+                }
+            }
+
+            if x < scene_width - 1 {
+                let index = Self::collision_index(x + 1, z);
+                if self.dir_map[index] == 0 {
+                    self.route_x[steps] = x + 1;
+                    self.route_z[steps] = z;
+                    steps = (steps + 1) % buffer_size;
+                    self.dir_map[index] = 8;
+                    self.dist_map[index] = next_cost;
+                }
+            }
+
+            if z > 0 {
+                let index = Self::collision_index(x, z - 1);
+                if self.dir_map[index] == 0 {
+                    self.route_x[steps] = x;
+                    self.route_z[steps] = z - 1;
+                    steps = (steps + 1) % buffer_size;
+                    self.dir_map[index] = 1;
+                    self.dist_map[index] = next_cost;
+                }
+            }
+
+            if z < scene_length - 1 {
+                let index = Self::collision_index(x, z + 1);
+                if self.dir_map[index] == 0 {
+                    self.route_x[steps] = x;
+                    self.route_z[steps] = z + 1;
+                    steps = (steps + 1) % buffer_size;
+                    self.dir_map[index] = 4;
+                    self.dist_map[index] = next_cost;
+                }
+            }
+
+            if x > 0 && z > 0 {
+                let index = Self::collision_index(x - 1, z - 1);
+                if self.dir_map[index] == 0 {
+                    self.route_x[steps] = x - 1;
+                    self.route_z[steps] = z - 1;
+                    steps = (steps + 1) % buffer_size;
+                    self.dir_map[index] = 3;
+                    self.dist_map[index] = next_cost;
+                }
+            }
+
+            if x < scene_width - 1 && z > 0 {
+                let index = Self::collision_index(x + 1, z - 1);
+                if self.dir_map[index] == 0 {
+                    self.route_x[steps] = x + 1;
+                    self.route_z[steps] = z - 1;
+                    steps = (steps + 1) % buffer_size;
+                    self.dir_map[index] = 9;
+                    self.dist_map[index] = next_cost;
+                }
+            }
+
+            if x > 0 && z < scene_length - 1 {
+                let index = Self::collision_index(x - 1, z + 1);
+                if self.dir_map[index] == 0 {
+                    self.route_x[steps] = x - 1;
+                    self.route_z[steps] = z + 1;
+                    steps = (steps + 1) % buffer_size;
+                    self.dir_map[index] = 6;
+                    self.dist_map[index] = next_cost;
+                }
+            }
+
+            if x < scene_width - 1 && z < scene_length - 1 {
+                let index = Self::collision_index(x + 1, z + 1);
+                if self.dir_map[index] == 0 {
+                    self.route_x[steps] = x + 1;
+                    self.route_z[steps] = z + 1;
+                    steps = (steps + 1) % buffer_size;
+                    self.dir_map[index] = 12;
+                    self.dist_map[index] = next_cost;
+                }
+            }
+        }
+
+        self.try_move_nearest = 0;
+
+        if !arrived {
+            if try_nearest {
+                let mut min = 100;
+                for padding in 1..2 {
+                    for px in (dx - padding)..=(dx + padding) {
+                        for pz in (dz - padding)..=(dz + padding) {
+                            if px >= 0 && pz >= 0 && px < scene_width && pz < scene_length {
+                                let index = Self::collision_index(px, pz);
+                                if self.dist_map[index] < min {
+                                    min = self.dist_map[index];
+                                    x = px;
+                                    z = pz;
+                                    self.try_move_nearest = 1;
+                                    arrived = true;
+                                }
+                            }
+                        }
+                    }
+                    if arrived {
+                        break;
+                    }
+                }
+            }
+
+            if !arrived {
+                return false;
+            }
+        }
+
+        length = 0;
+        self.route_x[length] = x;
+        self.route_z[length] = z;
+        length += 1;
+
+        let mut dir = self.dir_map[Self::collision_index(x, z)];
+        let mut next = dir;
+        while x != src_x || z != src_z {
+            if next != dir {
+                dir = next;
+                self.route_x[length] = x;
+                self.route_z[length] = z;
+                length += 1;
+            }
+
+            if next & DIR_EAST != 0 {
+                x += 1;
+            } else if next & DIR_WEST != 0 {
+                x -= 1;
+            }
+
+            if next & DIR_NORTH != 0 {
+                z += 1;
+            } else if next & DIR_SOUTH != 0 {
+                z -= 1;
+            }
+
+            next = self.dir_map[Self::collision_index(x, z)];
+        }
+
+        if length > 0 {
+            // max number of turns in a single pf request
+            let buffer_size = length.min(25);
+            length -= 1;
+
+            let start_x = self.route_x[length];
+            let start_z = self.route_z[length];
+
+            match r#type {
+                0 => {
+                    self.out.p1_enc(ClientProt::MOVE_GAMECLICK.id);
+                    self.out.p1((buffer_size + buffer_size + 3) as i32);
+                }
+                1 => {
+                    self.out.p1_enc(ClientProt::MOVE_MINIMAPCLICK.id);
+                    self.out.p1((buffer_size + buffer_size + 3 + 14) as i32);
+                }
+                2 => {
+                    self.out.p1_enc(ClientProt::MOVE_OPCLICK.id);
+                    self.out.p1((buffer_size + buffer_size + 3) as i32);
+                }
+                _ => {}
+            }
+
+            if self.shell.key_held[5] == 1 {
+                self.out.p1(1);
+            } else {
+                self.out.p1(0);
+            }
+
+            self.out.p2(start_x + self.map_build_base_x);
+            self.out.p2(start_z + self.map_build_base_z);
+
+            self.minimap_flag_x = self.route_x[0];
+            self.minimap_flag_z = self.route_z[0];
+
+            let mut i = 1;
+            while i < buffer_size {
+                length -= 1;
+                self.out.p1(self.route_x[length] - start_x);
+                self.out.p1(self.route_z[length] - start_z);
+                i += 1;
+            }
+
+            return true;
+        }
+
+        r#type != 1
     }
 }
 
