@@ -9,6 +9,9 @@ use crate::dash3d::{AnimFrame, Model};
 use crate::datastruct::LruCache;
 use crate::io::{JagFile, Packet};
 
+// Process-wide by design: an LRU of decoded, immutable models shared by
+// every client (the TS `modelCache` static). Cache bookkeeping, not
+// per-client draw state; eviction is LRU so clients only contend on the lock.
 fn model_cache() -> &'static Mutex<LruCache<Model>> {
     static CACHE: OnceLock<Mutex<LruCache<Model>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(LruCache::new(30)))
