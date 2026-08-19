@@ -525,15 +525,6 @@ impl Client {
         if client.error_loading {
             client.shell.set_framerate(1);
         }
-        // Client.ts maininit (!lowMem): scape_main (midiSong = 0) with fade,
-        // requested from on-demand archive 2 so the title screen has music.
-        if !client.config.lowmem {
-            if let Some(od) = &mut client.on_demand {
-                client.midi_song = 0;
-                client.midi_fading = true;
-                od.request(2, 0);
-            }
-        }
         client
     }
 

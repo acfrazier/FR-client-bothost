@@ -228,8 +228,25 @@ impl Client {
             self.load_title_images(&jag);
             self.title = Some(jag);
         }
+        self.request_scape_main();
 
         self.redraw_frame = true;
+    }
+
+    /// Client.ts maininit (!lowMem): scape_main (midiSong = 0) with fade,
+    /// requested from on-demand archive 2 — but only after the title assets
+    /// above have loaded, so the music starts once the title is prepared
+    /// instead of at `Client::new`. The `midi_song < 0` guard makes it a
+    /// one-shot (the first prepare arms it; later prepares keep song 0).
+    fn request_scape_main(&mut self) {
+        if self.config.lowmem || self.midi_song >= 0 {
+            return;
+        }
+        if let Some(od) = &mut self.on_demand {
+            self.midi_song = 0;
+            self.midi_fading = true;
+            od.request(2, 0);
+        }
     }
 
     /// Fonts from the `title` jag, loaded once (TS `maininit` 848 loads the

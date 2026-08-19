@@ -34,13 +34,28 @@ fn title_draw_writes_pixels() {
     assert!(c.draw_area.pixels.iter().any(|&p| p != 0));
 }
 
-/// Client.ts maininit (!lowMem): midiSong = 0 (scape_main), onDemand.request(2, 0).
+/// `Client::new` must not start scape_main: the midi request is deferred
+/// until the title screen is prepared (Client.ts maininit loads title/jags
+/// first, then midiSong = 0 + onDemand.request(2, 0)).
 #[test]
 fn title_requests_scape_main() {
     let Some(cache) = cache_dir() else {
         return;
     };
     let c = client(cache);
+    assert_eq!(c.midi_song, -1);
+}
+
+/// Once `prepare_title` has loaded the title fonts/sprites, scape_main
+/// (song 0) is requested from on-demand archive 2 with a fade.
+#[test]
+fn scape_main_requested_after_title_prepare() {
+    let Some(cache) = cache_dir() else {
+        return;
+    };
+    let mut c = client(cache);
+    assert_eq!(c.midi_song, -1);
+    c.title_screen_draw();
     assert_eq!(c.midi_song, 0);
     assert!(c.midi_fading);
 }
