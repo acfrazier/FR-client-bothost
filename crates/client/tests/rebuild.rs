@@ -103,3 +103,58 @@ fn load_ground_opcode_one_sets_explicit_height() {
     assert_eq!(c.groundh[2][10][20], c.groundh[1][10][20] - 7 * 8);
     assert_eq!(c.groundh[3][10][20], c.groundh[2][10][20] - 7 * 8);
 }
+
+/// Loopback `tcp_in`: Isaac-encode `REBUILD_NORMAL` on a listener, login,
+/// then read the framed packet off the socket and assert bases.
+#[test]
+fn tcp_in_rebuild_normal_over_socket() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+    let server = thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        let mut hdr = [0u8; 2];
+        s.read_exact(&mut hdr).unwrap();
+        for _ in 0..8 {
+            let _ = s.write_all(&[0]);
+        }
+        s.write_all(&[0]).unwrap();
+        s.write_all(&[0u8; 8]).unwrap();
+        let mut buf = [0u8; 512];
+        let n = s.read(&mut buf).unwrap();
+        assert!(n > 0);
+        s.write_all(&[2, 0, 0]).unwrap();
+        let frame = rx.recv().unwrap();
+        s.write_all(&frame).unwrap();
+        // hold the socket until the client has read
+        thread::sleep(Duration::from_millis(200));
+    });
+
+    let mut c = client();
+    c.config.host = addr.ip().to_string();
+    c.config.port = addr.port();
+    c.login("bob", "pw", false).unwrap();
+    let mut isaac = c.random_in.clone().expect("inbound Isaac after login");
+    let opcode = (ServerProt::REBUILD_NORMAL.wrapping_add(isaac.next_int()) & 0xff) as u8;
+    let frame = vec![opcode, 0, 50, 0, 50];
+    tx.send(frame).unwrap();
+
+    let mut got = false;
+    for _ in 0..100 {
+        if c.tcp_in() {
+            got = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(got, "tcp_in did not consume the framed REBUILD_NORMAL");
+    assert_eq!(c.map_build_base_x, (50 - 6) * 8);
+    assert_eq!(c.map_build_base_z, (50 - 6) * 8);
+    server.join().unwrap();
+}

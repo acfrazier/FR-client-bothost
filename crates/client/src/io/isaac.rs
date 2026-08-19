@@ -1,6 +1,7 @@
 // Port of `~/experiments/Server/webclient/src/io/Isaac.ts` with i32 wrapping:
 // JS `+`/`<<` become `wrapping_add`/`wrapping_shl`, `>>>` becomes a logical
 // shift on the bit pattern (`(x as u32) >> n) as i32`).
+#[derive(Clone)]
 pub struct Isaac {
     count: i32,
     rsl: [i32; 256],

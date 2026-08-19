@@ -7,6 +7,8 @@
 //! There is no snapshot/query API.
 
 use std::io;
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::path::Path;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -20,13 +22,17 @@ use crate::client::game_shell::GameShell;
 use crate::client::login_error::LoginError;
 use crate::client::mini_menu_action::MiniMenuAction;
 use crate::client::skill::Skill;
-use crate::config::if_type::ComponentType;
+use crate::config::if_type::{ComponentType, IfType};
 use crate::config::seq_type::{RESTART_RESET, RESTART_RESETLOOP};
 use crate::config::Cache;
 use crate::dash3d::world::LevelHeightmaps;
-use crate::dash3d::{AnimFrame, BuildArea, CollisionFlag, CollisionMap, DirectionFlag, LocShape, Model, World};
+use crate::dash3d::{
+    AnimFrame, BuildArea, CollisionFlag, CollisionMap, DirectionFlag, LocShape, Model, World,
+};
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
-use crate::io::{ClientProt, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt, SERVER_PROT_SIZES};
+use crate::io::{
+    ClientProt, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt, SERVER_PROT_SIZES,
+};
 use crate::login_rsa::{LOGIN_RSAE, LOGIN_RSAN};
 use crate::sound::{JagFX, Midi};
 use crate::util::JString;
@@ -234,6 +240,12 @@ pub struct Client {
     /// `timeoutTimer` from Java: frames since the last full in-game packet;
     /// `gameLoop` calls `lostCon` past 750 (~15 s at 20 ms).
     pub timeout_timer: i32,
+    /// `noTimeoutTimer` from Java: frames since the last outbound flush;
+    /// `gameLoop` writes `NO_TIMEOUT` past 50 (~1 s at 20 ms).
+    pub no_timeout_timer: i32,
+    /// `errorLoading` from Java/TS: missing required cache jag or a failed
+    /// map request. `mainloop` returns immediately; framerate is 1.
+    pub error_loading: bool,
 }
 
 impl Client {
@@ -241,15 +253,19 @@ impl Client {
         let jag_checksum = Self::read_jag_checksums(&config.cache_dir);
         let on_demand = Self::load_on_demand(&config);
         let midi = midi_backend(&config.cache_dir);
+        let (cache, error_loading) = match Self::load_cache(&config.cache_dir) {
+            Ok(cache) => (cache, false),
+            Err(()) => (Cache::default(), true),
+        };
         let groundh: LevelHeightmaps =
             vec![
                 vec![vec![0i32; (BUILD_AREA_SIZE + 1) as usize]; (BUILD_AREA_SIZE + 1) as usize];
                 BuildArea::LEVELS as usize
             ];
-        Client {
+        let mut client = Client {
             shell: GameShell::new(),
             config,
-            cache: Cache::default(),
+            cache,
 
             ingame: false,
             scene_state: 0,
@@ -361,7 +377,32 @@ impl Client {
             last_login_reconnect: None,
             logout_timer: 0,
             timeout_timer: 0,
+            no_timeout_timer: 0,
+            error_loading,
+        };
+        if client.error_loading {
+            client.shell.set_framerate(1);
         }
+        client
+    }
+
+    /// Unpack `config` (and `interface` when present) from `cache_dir`. An
+    /// empty dir (tests, no pack) yields `Cache::default()`. A real cache
+    /// missing the required `config` jag is `Err`, which becomes
+    /// `errorLoading`.
+    fn load_cache(cache_dir: &str) -> Result<Cache, ()> {
+        let cache_present = JAG_FILES
+            .iter()
+            .any(|name| Path::new(&format!("{cache_dir}/{name}")).is_file());
+        if !cache_present {
+            return Ok(Cache::default());
+        }
+        let bytes = std::fs::read(format!("{cache_dir}/config")).map_err(|_| ())?;
+        let mut cache = Cache::unpack(&JagFile::new(bytes));
+        if let Ok(iface_bytes) = std::fs::read(format!("{cache_dir}/interface")) {
+            cache.ifaces = IfType::unpack(&JagFile::new(iface_bytes));
+        }
+        Ok(cache)
     }
 
     /// CRC of each JAG pack file under `cache_dir`, in the 9-slot layout the
@@ -402,6 +443,10 @@ impl Client {
         password: &str,
         reconnect: bool,
     ) -> Result<(), LoginError> {
+        // Headless has no title UI; persist here so `lostCon` reconnects
+        // with the same credentials (TS writes these from the title fields).
+        self.login_user = username.to_string();
+        self.login_pass = password.to_string();
         self.last_login_reconnect = Some(reconnect);
         if !reconnect {
             self.login_mes1.clear();
@@ -500,6 +545,11 @@ impl Client {
             self.menu_num_entries = 0;
             self.timeout_timer = 0;
             self.logout_timer = 0;
+            self.no_timeout_timer = 0;
+            // Client.ts:1853 — localPlayer = players[LOCAL_PLAYER_INDEX] = new
+            let player = ClientPlayer::default();
+            self.players[LOCAL_PLAYER_INDEX as usize] = Some(player.clone());
+            self.local_player = Some(player);
             self.stream = Some(stream);
             return Ok(());
         }
@@ -1088,7 +1138,22 @@ impl Client {
     /// id has a branch here or an explicit no-op matching the TS handler's
     /// effect on the ported state. Unknown opcodes report `T1` and log out
     /// exactly like the TS default. Callable from tests without a socket.
+    ///
+    /// Packet OOB (and any other logic panic) is Java `catch (Exception)`:
+    /// T2 + logout, so one short frame cannot take down the OS thread.
     pub fn handle_packet(&mut self, ptype: i32, payload: &mut Packet) {
+        let ptype1 = self.ptype1;
+        let ptype2 = self.ptype2;
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            self.dispatch_packet(ptype, payload);
+        }));
+        if result.is_err() {
+            eprintln!("T2 - {ptype},{ptype1},{ptype2}");
+            self.logout();
+        }
+    }
+
+    fn dispatch_packet(&mut self, ptype: i32, payload: &mut Packet) {
         match ptype {
             ServerProt::REBUILD_NORMAL => {
                 let zone_x = payload.g2();
@@ -1426,6 +1491,13 @@ impl Client {
                 let com_id = payload.g2();
                 let size = payload.g1();
 
+                // Always consume the frame (TS still reads when the iface is
+                // missing; skipping here would desync once ifaces load).
+                let mut slots = Vec::with_capacity(size as usize);
+                for _ in 0..size {
+                    slots.push(Self::read_inv_count(payload));
+                }
+
                 if let Some(inv) = self
                     .cache
                     .ifaces
@@ -1435,17 +1507,10 @@ impl Client {
                     if let (Some(link_types), Some(link_numbers)) =
                         (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut())
                     {
-                        // TS writes past the end for a short component, growing
-                        // the arrays; here the component fixes its own size.
                         let n = size.min(link_types.len() as i32) as usize;
                         for i in 0..n {
-                            link_types[i] = payload.g2();
-
-                            let mut count = payload.g1();
-                            if count == 255 {
-                                count = payload.g4();
-                            }
-                            link_numbers[i] = count;
+                            link_types[i] = slots[i].0;
+                            link_numbers[i] = slots[i].1;
                         }
                         for i in n..link_types.len() {
                             link_types[i] = 0;
@@ -1460,27 +1525,22 @@ impl Client {
                 self.redraw_side = true;
 
                 let com_id = payload.g2();
+                let end = self.inbound_end(payload);
 
-                if let Some(inv) = self
-                    .cache
-                    .ifaces
-                    .get_mut(com_id as usize)
-                    .and_then(|o| o.as_mut())
-                {
-                    if let (Some(link_types), Some(link_numbers)) =
-                        (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut())
+                // Consume every slot even if the component is missing.
+                while payload.pos < end {
+                    let slot = payload.g1();
+                    let (id, count) = Self::read_inv_count(payload);
+
+                    if let Some(inv) = self
+                        .cache
+                        .ifaces
+                        .get_mut(com_id as usize)
+                        .and_then(|o| o.as_mut())
                     {
-                        // TS loop bound is `in.pos < psize`; the payload is
-                        // the whole frame here, so length is the same bound.
-                        while payload.pos < payload.length() {
-                            let slot = payload.g1();
-                            let id = payload.g2();
-
-                            let mut count = payload.g1();
-                            if count == 255 {
-                                count = payload.g4();
-                            }
-
+                        if let (Some(link_types), Some(link_numbers)) =
+                            (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut())
+                        {
                             if slot >= 0 && (slot as usize) < link_types.len() {
                                 link_types[slot as usize] = id;
                                 link_numbers[slot as usize] = count;
@@ -1639,7 +1699,13 @@ impl Client {
                 let delay = payload.g2();
 
                 if self.wave_enabled && !self.config.lowmem && self.wave_count < 50 {
-                    let delay = delay + self.jagfx.delays.get(sound_id as usize).copied().unwrap_or(0);
+                    let delay = delay
+                        + self
+                            .jagfx
+                            .delays
+                            .get(sound_id as usize)
+                            .copied()
+                            .unwrap_or(0);
                     self.wave_ids[self.wave_count as usize] = sound_id;
                     self.wave_loops[self.wave_count as usize] = loops;
                     self.wave_delay[self.wave_count as usize] = delay;
@@ -1703,9 +1769,10 @@ impl Client {
                 self.zone_update_x = payload.g1();
                 self.zone_update_z = payload.g1();
 
-                // TS loop bound is `in.pos < psize`; the payload is the whole
-                // frame here, so length is the same bound.
-                while payload.pos < payload.length() {
+                // TS loop bound is `in.pos < psize`. Over the socket `in` is
+                // the 5000-byte alloc, so use psize when it is the frame size.
+                let end = self.inbound_end(payload);
+                while payload.pos < end {
                     let opcode = payload.g1();
                     self.zone_packet(payload, opcode);
                 }
@@ -2506,10 +2573,9 @@ impl Client {
     }
 
     /// `zonePacket(buf, opcode)` from client-ts: reads the 8-tile zone
-    /// position byte and dispatches by opcode. The zone scene state
-    /// (groundObj/locChanges/spotanims/projectiles, world edits) lands with
-    /// the zone task; each opcode is an explicit no-op for now, keeping the
-    /// TS read structure.
+    /// position byte and the TS field widths for each opcode. Scene apply
+    /// (groundObj/locChanges/spotanims/projectiles) stays deferred; the
+    /// reads must still happen so enclosed frames do not desync.
     fn zone_packet(&mut self, buf: &mut Packet, opcode: i32) {
         let pos = buf.g1();
         let _x = self.zone_update_x + ((pos >> 4) & 0x7);
@@ -2517,35 +2583,60 @@ impl Client {
 
         match opcode {
             ServerProt::LOC_ADD_CHANGE => {
-                // g1 info (shape = info >> 2, rotate = info & 3) + g2 id →
-                // locChangeCreate(level, x, z, layer, id, shape, rotate, 0, -1)
+                let _info = buf.g1();
+                let _id = buf.g2();
             }
             ServerProt::LOC_DEL => {
-                // g1 info → locChangeCreate(level, x, z, layer, -1, shape, rotate, 0, -1)
+                let _info = buf.g1();
             }
             ServerProt::LOC_ANIM => {
-                // g1 info + g2 seq → ClientLocAnim on the wall/decor/scene/gd
+                let _info = buf.g1();
+                let _seq = buf.g2();
             }
             ServerProt::OBJ_ADD => {
-                // g2 type + g2 count → groundObj push + showObject
+                let _obj_type = buf.g2();
+                let _count = buf.g2();
             }
             ServerProt::OBJ_DEL => {
-                // g2 type → groundObj unlink + showObject
+                let _obj_type = buf.g2();
             }
             ServerProt::MAP_PROJANIM => {
-                // g1b/g1b/g2b/g2/g1*2/g2*2/g1/g1 → projectiles push
-            }
-            ServerProt::MAP_ANIM => {
-                // g2 spotanim + g1 height + g2 time → spotanims push
+                let _x2 = buf.g1b();
+                let _z2 = buf.g1b();
+                let _target = buf.g2b();
+                let _spotanim = buf.g2();
+                let _h1 = buf.g1();
+                let _h2 = buf.g1();
+                let _t1 = buf.g2();
+                let _t2 = buf.g2();
+                let _angle = buf.g1();
+                let _startpos = buf.g1();
             }
             ServerProt::OBJ_REVEAL => {
-                // g2 id + g2 count + g2 pid → groundObj push unless pid === selfSlot
+                let _id = buf.g2();
+                let _count = buf.g2();
+                let _pid = buf.g2();
+            }
+            ServerProt::MAP_ANIM => {
+                let _spotanim = buf.g2();
+                let _height = buf.g1();
+                let _time = buf.g2();
             }
             ServerProt::P_LOCMERGE => {
-                // g1 info + g2 id + g2 t1 + g2 t2 + g2 pid + g1b*4 → loc merge
+                let _info = buf.g1();
+                let _id = buf.g2();
+                let _t1 = buf.g2();
+                let _t2 = buf.g2();
+                let _pid = buf.g2();
+                let _east = buf.g1b();
+                let _south = buf.g1b();
+                let _west = buf.g1b();
+                let _north = buf.g1b();
             }
             ServerProt::OBJ_COUNT => {
-                // g2 type + g2 ocount + g2 count → groundObj count update
+                let _obj_type = buf.g2();
+                let _ocount = buf.g2();
+                let _count = buf.g2();
             }
             _ => {}
         }
@@ -2592,24 +2683,26 @@ impl Client {
         }
     }
 
-    /// `mainloop` from Java (`Client.java` 1823): one 20 ms pass. Headless
-    /// has no error-screen flags, so this is `loopCycle++` plus the in-game
-    /// read pass; the title-screen loop is a no-op (client-play adds no
-    /// title-screen retry loop). `loopCycle` increments once per `mainloop`.
+    /// `mainloop` from Java (`Client.java` 1823): one 20 ms pass. An
+    /// `errorLoading` flag (missing required jag / failed map) returns
+    /// immediately like TS. In-game runs `gameLoop`; always drain OnDemand
+    /// completions via `onDemandLoop` (not the bare worker heartbeat).
     pub fn mainloop(&mut self) {
+        if self.error_loading {
+            return;
+        }
         self.loop_cycle = self.loop_cycle.wrapping_add(1);
         if self.ingame {
             self.game_loop();
         }
-        if let Some(on_demand) = self.on_demand.as_mut() {
-            on_demand.run(self.ingame);
-        }
+        self.on_demand_loop();
     }
 
     /// `gameLoop` from Java (`Client.java` 9341): count down a pending
-    /// logout request, read up to five TCP packets, then the in-game
-    /// connection-silence watchdog (`timeoutTimer > 750` → `lostCon`, ~15 s
-    /// at 20 ms). The mouse/queue/flush sections are not ported (headless).
+    /// logout request, read up to five TCP packets, the in-game silence
+    /// watchdog (`timeoutTimer > 750` → `lostCon`), then idle `NO_TIMEOUT`
+    /// and flush `out` through `ClientStream::write`. Write errors are
+    /// `lostCon` (Java `catch (IOException)`).
     pub fn game_loop(&mut self) {
         if self.logout_timer > 0 {
             self.logout_timer -= 1;
@@ -2625,6 +2718,29 @@ impl Client {
         self.timeout_timer += 1;
         if self.timeout_timer > 750 {
             self.lost_con();
+        }
+
+        self.no_timeout_timer += 1;
+        if self.no_timeout_timer > 50 {
+            self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
+        }
+
+        let write_result = if let Some(stream) = self.stream.as_mut() {
+            if self.out.pos > 0 {
+                Some(stream.write(self.out.data(), self.out.pos))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        match write_result {
+            Some(Ok(())) => {
+                self.out.pos = 0;
+                self.no_timeout_timer = 0;
+            }
+            Some(Err(_)) => self.lost_con(),
+            None => {}
         }
     }
 
@@ -2696,7 +2812,9 @@ impl Client {
     /// the varbit/stat mapping and the colour-table (1) / wave (4) codes land
     /// with the varp/wave tasks. No-op when the varp table is not loaded.
     pub fn client_var(&mut self, id: i32) {
-        let Some(varp) = self.cache.varps.get(id as usize) else { return };
+        let Some(varp) = self.cache.varps.get(id as usize) else {
+            return;
+        };
         let value = self.var.get(id as usize).copied().unwrap_or(0);
         self.apply_clientcode(varp.clientcode, value);
     }
@@ -2784,7 +2902,13 @@ impl Client {
             }
         }
         for req in done {
-            let Some(data) = req.data else { continue };
+            let Some(data) = req.data else {
+                if req.archive == 3 {
+                    self.error_loading = true;
+                    self.shell.set_framerate(1);
+                }
+                continue;
+            };
             match req.archive {
                 0 => {
                     Model::unpack(req.file, Some(data.as_slice()));
@@ -2831,6 +2955,29 @@ impl Client {
                 return;
             }
         }
+    }
+
+    /// Bound for `in.pos < psize` loops. Over the socket `in` is the 5000-byte
+    /// alloc so `psize` is the frame; tests that skip the socket use the
+    /// payload length when `psize` is unset.
+    fn inbound_end(&self, payload: &Packet) -> usize {
+        let psize = self.psize as usize;
+        if psize > 0 && psize <= payload.length() {
+            psize
+        } else {
+            payload.length()
+        }
+    }
+
+    /// One `UPDATE_INV_*` slot: `g2` id + `g1` count, with `255` promoting
+    /// to `g4` (TS `UPDATE_INV_FULL` / `UPDATE_INV_PARTIAL`).
+    fn read_inv_count(payload: &mut Packet) -> (i32, i32) {
+        let id = payload.g2();
+        let mut count = payload.g1();
+        if count == 255 {
+            count = payload.g4();
+        }
+        (id, count)
     }
 }
 

@@ -202,3 +202,42 @@ fn npc_info_empty_list_is_ok() {
     assert_eq!(c.npc_count, 0);
     assert!(c.ingame);
 }
+
+/// Enclosed `LOC_ADD_CHANGE` (g1 pos + g1 info + g2 id) then `LOC_DEL`
+/// (g1 pos + g1 info). Must not panic and must leave `pos` at the end —
+/// if the extra 3 bytes of ADD_CHANGE are left unread, the next opcode
+/// is garbage and a short leftover `g1` panics.
+#[test]
+fn enclosed_loc_add_change_does_not_panic() {
+    let mut c = client();
+    let mut p = Packet::new(vec![
+        3,
+        4,
+        ServerProt::LOC_ADD_CHANGE as u8,
+        0x12,
+        0x08,
+        0x00,
+        99,
+        ServerProt::LOC_DEL as u8,
+        0x34,
+        0x00,
+    ]);
+    c.psize = p.length() as i32;
+    c.handle_packet(ServerProt::UPDATE_ZONE_PARTIAL_ENCLOSED, &mut p);
+    assert!(c.ingame);
+    assert_eq!(p.pos, p.length());
+    assert_eq!(c.zone_update_x, 3);
+    assert_eq!(c.zone_update_z, 4);
+}
+
+/// A 1-byte `PLAYER_INFO` that starts a teleport (op 3) overruns the
+/// buffer. Java `catch (Exception)` → T2 + logout; must not panic.
+#[test]
+fn truncated_player_info_is_t2_not_panic() {
+    let mut c = client();
+    c.local_player = Some(ClientPlayer::at(1, 1));
+    c.psize = 1;
+    let mut p = Packet::new(vec![0xe0]);
+    c.handle_packet(ServerProt::PLAYER_INFO, &mut p);
+    assert!(!c.ingame);
+}

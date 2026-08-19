@@ -13,7 +13,10 @@ fn to_userhash_matches_client_ts() {
     assert_eq!(JString::to_userhash("runescape"), 65254502242866);
     assert_eq!(JString::to_userhash("RuneScape"), 65254502242866);
     assert_eq!(JString::to_userhash("  bob  "), 3295);
-    assert_eq!(JString::to_userhash("aaaaaaaaaaaaaaaaaaaa"), 182859777940000980);
+    assert_eq!(
+        JString::to_userhash("aaaaaaaaaaaaaaaaaaaa"),
+        182859777940000980
+    );
     assert_eq!(((JString::to_userhash("bob") >> 16) & 0x1f), 0); // loginServer byte
 }
 
@@ -31,7 +34,7 @@ fn cold_login_opcode_16_success() {
         }
         s.write_all(&[0]).unwrap(); // response 0 → send seed
         s.write_all(&[0, 0, 0, 0, 0, 0, 0, 1]).unwrap(); // g8 seed
-        // read client loginout (variable); then grant
+                                                         // read client loginout (variable); then grant
         let mut buf = [0u8; 512];
         let n = s.read(&mut buf).unwrap();
         assert!(n > 0);
@@ -59,6 +62,10 @@ fn cold_login_opcode_16_success() {
     });
     c.login("bob", "pw", false).unwrap();
     assert!(c.ingame);
+    assert!(c.local_player.is_some());
+    assert!(c.players[2047].is_some());
+    assert_eq!(c.login_user, "bob");
+    assert_eq!(c.login_pass, "pw");
     server.join().unwrap();
 }
 

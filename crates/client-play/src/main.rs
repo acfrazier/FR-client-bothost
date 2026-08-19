@@ -106,6 +106,8 @@ fn main() -> ExitCode {
         lowmem: false,
     };
     let mut client = Client::new(config);
+    client.login_user = args.user.clone();
+    client.login_pass = args.pass.clone();
 
     match client.login(&args.user, &args.pass, false) {
         Ok(()) => {
