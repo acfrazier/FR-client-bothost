@@ -220,10 +220,31 @@ impl Client {
     }
 
     /// `loadTitleImages` from client-ts (1697): the `titlebox` and
-    /// `titlebutton` sprites. The rune flames (`TitleFlames`) are out of
-    /// scope.
+    /// `titlebutton` sprites plus the 12 `runes` sprites (`fl_icon` param
+    /// default 0 → sprites 0..11).
     fn load_title_images(&mut self, jag: &JagFile) {
         self.image_titlebox = Pix8::depack(jag, "titlebox", 0).ok();
         self.image_titlebutton = Pix8::depack(jag, "titlebutton", 0).ok();
+
+        // TS: `flameIcon = this.getIntParam('fl_icon')` — no param plumbing,
+        // the fallback 0 means sprites 0..11.
+        self.image_runes.clear();
+        for i in 0..12 {
+            if let Ok(rune) = Pix8::depack(jag, "runes", i) {
+                self.image_runes.push(rune);
+            }
+        }
+        // TS then builds `TitleFlames` over `imageRunes` and
+        // `imageTitle0/1` — no such type in this crate, so the flames stay
+        // unstarted (and `imageTitle0/1` empty).
+    }
+
+    /// `unloadTitle` from client-ts (1992): drop the title sprites. The
+    /// `TitleFlames` close is a no-op (no such type in this crate). TS calls
+    /// this from `prepareGame`/`mainquit`, neither ported yet.
+    pub fn unload_title(&mut self) {
+        self.image_titlebox = None;
+        self.image_titlebutton = None;
+        self.image_runes.clear();
     }
 }

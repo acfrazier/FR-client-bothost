@@ -261,6 +261,9 @@ pub struct Client {
     pub image_title8: Option<PixMap>,
     pub image_titlebox: Option<Pix8>,
     pub image_titlebutton: Option<Pix8>,
+    /// `imageRunes` from client-ts: the 12 rune sprites the title flames
+    /// animate (loaded with `fl_icon` default 0 → sprites 0..11).
+    pub image_runes: Vec<Pix8>,
     pub loginscreen: i32,
     pub login_select: i32,
     pub redraw_frame: bool,
@@ -432,6 +435,7 @@ impl Client {
             image_title8: None,
             image_titlebox: None,
             image_titlebutton: None,
+            image_runes: Vec::new(),
             loginscreen: 0,
             login_select: 0,
             redraw_frame: true,
