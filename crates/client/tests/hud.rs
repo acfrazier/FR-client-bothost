@@ -433,3 +433,116 @@ fn draw_chat_renders_type0_line_and_input() {
     assert!(chat.pixels.contains(&Colour::BLACK));
     assert!(chat.pixels.contains(&Colour::BLUE));
 }
+
+/// draw a single TYPE_TEXT child under a fixed layer; returns the pixmap.
+fn draw_text(c: &mut Client, text: &IfType) -> PixMap {
+    let layer = IfType {
+        id: 1,
+        r#type: ComponentType::TYPE_LAYER,
+        width: 100,
+        height: 50,
+        children: Some(vec![2]),
+        child_x: Some(vec![0]),
+        child_y: Some(vec![0]),
+        ..IfType::default()
+    };
+    c.cache.ifaces.resize(3, None);
+    c.cache.ifaces[1] = Some(layer);
+    c.cache.ifaces[2] = Some(text.clone());
+    let mut map = PixMap::new(100, 50);
+    let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+    c.draw_interface(1, 0, 0, 0, &mut surface);
+    map
+}
+
+fn text_com(text: &str, scripts: Option<Vec<Vec<i32>>>) -> IfType {
+    IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_TEXT,
+        text: text.into(),
+        scripts,
+        colour: 0xffffff,
+        font: 0, // p11
+        ..IfType::default()
+    }
+}
+
+#[test]
+fn get_if_var_stat_effective() {
+    let mut c = client();
+    c.stat_effective_level[0] = 12;
+    let com = IfType {
+        scripts: Some(vec![vec![1, 0, 0]]), // opcode 1 stat_effective, skill 0, halt
+        ..IfType::default()
+    };
+    assert_eq!(c.get_if_var(&com, 0), Some(12));
+}
+
+#[test]
+fn get_if_var_pushvar() {
+    let mut c = client();
+    c.var = vec![0, 0, 0, 42];
+    let com = IfType {
+        scripts: Some(vec![vec![5, 3, 0]]), // opcode 5 pushvar 3, halt
+        ..IfType::default()
+    };
+    assert_eq!(c.get_if_var(&com, 0), Some(42));
+}
+
+#[test]
+fn get_if_var_missing_scripts_is_none() {
+    let c = client();
+    let com = IfType {
+        scripts: None,
+        ..IfType::default()
+    };
+    assert_eq!(c.get_if_var(&com, 0), None);
+}
+
+#[test]
+fn get_if_var_out_of_range_script_id_is_none() {
+    let c = client();
+    let com = IfType {
+        scripts: Some(vec![vec![0]]),
+        ..IfType::default()
+    };
+    assert_eq!(c.get_if_var(&com, 1), None);
+}
+
+#[test]
+fn draw_interface_substitutes_percent1() {
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("title").is_file() {
+        return;
+    }
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache,
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    c.game_draw(); // loads the p11/p12/b12/q8 fonts from the title jag
+    c.stat_effective_level[0] = 12;
+
+    let literal = draw_text(&mut c, &text_com("%1", None));
+    let substituted = draw_text(&mut c, &text_com("%1", Some(vec![vec![1, 0, 0]])));
+    assert_ne!(
+        substituted.pixels, literal.pixels,
+        "a %1 script must substitute, not draw the literal text"
+    );
+    assert_eq!(
+        substituted.pixels,
+        draw_text(&mut c, &text_com("12", None)).pixels,
+        "substituted %1 must render exactly like the literal value"
+    );
+
+    // inf: values >= 999_999_999 render as '*'
+    let star = draw_text(&mut c, &text_com("%1", Some(vec![vec![20, 999_999_999, 0]])));
+    assert_eq!(
+        star.pixels,
+        draw_text(&mut c, &text_com("*", None)).pixels,
+        "a %1 of 999_999_999 must render as '*'"
+    );
+}

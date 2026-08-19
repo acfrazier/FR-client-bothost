@@ -13,7 +13,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::client::client::Client;
+use crate::client::client::{level_experience, Client};
+use crate::client::skill::Skill;
 use crate::client::title_flames::TitleFlames;
 use crate::config::if_type::{ComponentType, IfType};
 use crate::graphics::{Colour, Pix2D, Pix32, Pix8, PixFont, PixMap};
@@ -617,11 +618,11 @@ impl Client {
 
     /// `drawInterface` from client-ts (9900) for the 2D component types:
     /// recurse `TYPE_LAYER` children, draw `TYPE_RECT` fill/outline,
-    /// `TYPE_TEXT` with the font at `com.font` index 0-3 (p11/p12/b12/q8),
-    /// and `TYPE_GRAPHIC` from its `media` sprite. `TYPE_INV` item sprites
-    /// and `TYPE_MODEL` (3D) are skipped; the `clientComponent` scripts and
-    /// `drawScrollbar` sprites load with Task 14, and the `%1`-`%5`
-    /// `getIfVar` substitution is skipped with the script VM.
+    /// `TYPE_TEXT` with the font at `com.font` index 0-3 (p11/p12/b12/q8)
+    /// and the `%1`-`%5` `getIfVar` substitution, and `TYPE_GRAPHIC` from
+    /// its `media` sprite. `TYPE_INV` item sprites and `TYPE_MODEL` (3D) are
+    /// skipped; the `clientComponent` scripts and `drawScrollbar` sprites
+    /// load with Task 14.
     pub fn draw_interface(&mut self, com_id: i32, x: i32, y: i32, scroll_y: i32, surface: &mut Pix2D) {
         let Some(com) = self.cache.ifaces.get(com_id as usize).and_then(|o| o.as_ref()) else {
             return;
@@ -712,15 +713,6 @@ impl Client {
                 }
                 ComponentType::TYPE_TEXT => {
                     let active = self.get_if_active(child);
-                    let font = match child.font {
-                        1 => self.p12.as_mut(),
-                        2 => self.b12.as_mut(),
-                        3 => self.q8.as_mut(),
-                        _ => self.p11.as_mut(),
-                    };
-                    let Some(font) = font else {
-                        continue;
-                    };
                     let mut text = child.text.clone();
                     // hovered is false: the `over*ComId` state is not ported.
                     let mut colour = if active { child.colour2 } else { child.colour };
@@ -735,8 +727,32 @@ impl Client {
                         }
                     }
 
-                    // `%1`-`%5` getIfVar substitution is skipped with the
-                    // script VM.
+                    // TS 10120-10167: substitute `%1`-`%5` with
+                    // `inf(getIfVar(child, n))` before the `\n` split.
+                    if text.contains('%') {
+                        for n in 0..5 {
+                            let token = format!("%{}", n + 1);
+                            while let Some(index) = text.find(token.as_str()) {
+                                let value = self.get_if_var(child, n).unwrap_or(-2);
+                                text = format!(
+                                    "{}{}{}",
+                                    &text[..index],
+                                    inf(value),
+                                    &text[index + 2..]
+                                );
+                            }
+                        }
+                    }
+
+                    let font = match child.font {
+                        1 => self.p12.as_mut(),
+                        2 => self.b12.as_mut(),
+                        3 => self.q8.as_mut(),
+                        _ => self.p11.as_mut(),
+                    };
+                    let Some(font) = font else {
+                        continue;
+                    };
                     let mut line_y = child_y + font.height;
                     while !text.is_empty() {
                         let (split, rest) = match text.find("\\n") {
@@ -806,9 +822,8 @@ impl Client {
     }
 
     /// `getIfActive` from client-ts (10361): comparator scripts pick the
-    /// active colour for a component. The IfType script VM is not ported, so
-    /// no `var` value is computable (`get_if_var` is `None`): every
-    /// comparator reads inactive, and `com.colour`/`com.text` draw.
+    /// active colour for a component. Every comparator's script runs
+    /// through `get_if_var`; a component without scripts reads inactive.
     fn get_if_active(&self, com: &IfType) -> bool {
         let Some(comparator) = &com.script_comparator else {
             return false;
@@ -846,13 +861,247 @@ impl Client {
         true
     }
 
-    /// `getIfVar` from client-ts (10394): the script VM is not ported, so no
-    /// value is computable; `None` makes `get_if_active` treat the component
-    /// as inactive.
-    fn get_if_var(&self, _com: &IfType, _script_id: i32) -> Option<i32> {
-        None
-    }
+    /// `getIfVar` from client-ts (10394): run the IfType script VM (opcodes
+    /// 0-20) for the comparator and `%1`-`%5` scripts. `None` stands in for
+    /// TS `-2` (no scripts / script id out of range), which keeps
+    /// `get_if_active` treating such components as inactive; malformed
+    /// scripts map to TS `-1` (the catch).
+    pub fn get_if_var(&self, com: &IfType, script_id: i32) -> Option<i32> {
+        let scripts = com.scripts.as_ref()?;
+        if script_id < 0 || script_id as usize >= scripts.len() {
+            return None;
+        }
+        let script = &scripts[script_id as usize];
+        let mut acc: i32 = 0;
+        let mut pc: usize = 0;
+        let mut arithmetic: i32 = 0;
+        loop {
+            let opcode = match script.get(pc) {
+                Some(&op) => op,
+                None => return Some(-1),
+            };
+            pc += 1;
+            let mut register: i32 = 0;
+            let mut next_arithmetic: i32 = 0;
+            match opcode {
+                0 => return Some(acc),
+                1 => {
+                    // stat_level {skill}
+                    let Some(skill) = next_operand(script, &mut pc) else {
+                        return Some(-1);
+                    };
+                    register = self.stat_effective_level.get(skill as usize).copied().unwrap_or(0);
+                }
+                2 => {
+                    // stat_base_level {skill}
+                    let Some(skill) = next_operand(script, &mut pc) else {
+                        return Some(-1);
+                    };
+                    register = self.stat_base_level.get(skill as usize).copied().unwrap_or(0);
+                }
+                3 => {
+                    // stat_xp {skill}
+                    let Some(skill) = next_operand(script, &mut pc) else {
+                        return Some(-1);
+                    };
+                    register = self.stat_xp.get(skill as usize).copied().unwrap_or(0);
+                }
+                4 => {
+                    // inv_count {interface id} {obj id}
+                    let Some(com_id) = next_operand(script, &mut pc) else {
+                        return Some(-1);
+                    };
+                    let Some(obj) = next_operand(script, &mut pc) else {
+                        return Some(-1);
+                    };
+                    let obj = obj + 1;
+                    // TS `IfType.list[id]` on an out-of-range id throws,
+                    // which the catch maps to -1.
+                    let Some(com) = self.cache.ifaces.get(com_id as usize).and_then(|o| o.as_ref())
+                    else {
+                        return Some(-1);
+                    };
+                    if let (Some(link_obj_type), Some(link_obj_number)) =
+                        (&com.link_obj_type, &com.link_obj_number)
+                    {
+                        if obj >= 0
+                            && (obj as usize) < self.cache.objs.len()
+                            && (!self.cache.objs[obj as usize].members || self.config.members)
+                        {
+                            for (link_type, link_number) in
+                                link_obj_type.iter().zip(link_obj_number)
+                            {
+                                if *link_type == obj {
+                                    register += *link_number;
+                                }
+                            }
+                        }
+                    }
+                }
+                5 => {
+                    // pushvar {id}
+                    let Some(id) = next_operand(script, &mut pc) else {
+                        return Some(-1);
+                    };
+                    register = self.var.get(id as usize).copied().unwrap_or(0);
+                }
+                6 => {
+                    // stat_xp_remaining {skill}
+                    let Some(skill) = next_operand(script, &mut pc) else {
+                        return Some(-1);
+                    };
+                    let base = self.stat_base_level.get(skill as usize).copied().unwrap_or(0);
+                    register = level_experience().get((base - 1) as usize).copied().unwrap_or(0);
+                }
+                7 => {
+                    let Some(id) = next_operand(script, &mut pc) else {
+                        return Some(-1);
+                    };
+                    let value = self.var.get(id as usize).copied().unwrap_or(0);
+                    // TS `((var * 100) / 46875) | 0`
+                    register = ((value as i64 * 100) / 46875) as i32;
+                }
+                8 => {
+                    // combat level: `this.localPlayer?.combatLevel || 0`
+                    register = self.local_player.as_ref().map(|p| p.combat_level).unwrap_or(0);
+                }
+                9 => {
+                    // total level
+                    for i in 0..Skill::count {
+                        if Skill::used[i] {
+                            register += self.stat_base_level.get(i).copied().unwrap_or(0);
+                        }
+                    }
+                }
+                10 => {
+                    // inv_contains {interface id} {obj id}
+                    let Some(com_id) = next_operand(script, &mut pc) else {
+                        return Some(-1);
+                    };
+                    let Some(obj) = next_operand(script, &mut pc) else {
+                        return Some(-1);
+                    };
+                    let obj = obj + 1;
+                    let Some(com) = self.cache.ifaces.get(com_id as usize).and_then(|o| o.as_ref())
+                    else {
+                        return Some(-1);
+                    };
+                    if let Some(link_obj_type) = &com.link_obj_type {
+                        if obj >= 0
+                            && (obj as usize) < self.cache.objs.len()
+                            && (!self.cache.objs[obj as usize].members || self.config.members)
+                            && link_obj_type.contains(&obj)
+                        {
+                            register = 999_999_999;
+                        }
+                    }
+                }
+                11 => {
+                    // runenergy
+                    register = self.runenergy;
+                }
+                12 => {
+                    // runweight is not ported yet (client.rs)
+                    register = 0;
+                }
+                13 => {
+                    // testbit {varp} {bit: 0..31}
+                    let Some(varp) = next_operand(script, &mut pc) else {
+                        return Some(-1);
+                    };
+                    let Some(lsb) = next_operand(script, &mut pc) else {
+                        return Some(-1);
+                    };
+                    let varp = self.var.get(varp as usize).copied().unwrap_or(0);
+                    // TS `0x1 << lsb` masks the shift to 5 bits
+                    let lsb = (lsb & 31) as u32;
+                    register = if varp & (1i32 << lsb) == 0 { 0 } else { 1 };
+                }
+                14 => {
+                    // push_varbit {varbit}
+                    let Some(id) = next_operand(script, &mut pc) else {
+                        return Some(-1);
+                    };
+                    // TS `VarBitType.list[id]` on an out-of-range id throws,
+                    // which the catch maps to -1.
+                    let Some(varbit) = self.cache.varbits.get(id as usize) else {
+                        return Some(-1);
+                    };
+                    let value = self.var.get(varbit.basevar as usize).copied().unwrap_or(0);
+                    // TS `>> startbit` masks the shift to 5 bits
+                    let startbit = (varbit.startbit & 31) as u32;
+                    // `Client.readbit[endbit - startbit]` from client-ts 120:
+                    // readbit[31] = 2^32-1 wraps to -1 in the Int32Array,
+                    // and a wider span is undefined in TS.
+                    let mask = match varbit.endbit - varbit.startbit {
+                        0..=30 => (1 << (varbit.endbit - varbit.startbit + 1)) - 1,
+                        _ => -1,
+                    };
+                    register = (value >> startbit) & mask;
+                }
+                15 => next_arithmetic = 1, // subtract
+                16 => next_arithmetic = 2, // divide
+                17 => next_arithmetic = 3, // multiply
+                18 => {
+                    // coordx
+                    if let Some(player) = &self.local_player {
+                        register = (player.x >> 7) + self.map_build_base_x;
+                    }
+                }
+                19 => {
+                    // coordz
+                    if let Some(player) = &self.local_player {
+                        register = (player.z >> 7) + self.map_build_base_z;
+                    }
+                }
+                20 => {
+                    // push_constant
+                    let Some(constant) = next_operand(script, &mut pc) else {
+                        return Some(-1);
+                    };
+                    register = constant;
+                }
+                _ => {}
+            }
 
+            if next_arithmetic == 0 {
+                match arithmetic {
+                    0 => acc = acc.wrapping_add(register),
+                    1 => acc = acc.wrapping_sub(register),
+                    2 => {
+                        if register != 0 {
+                            acc = acc.wrapping_div(register);
+                        }
+                    }
+                    3 => acc = acc.wrapping_mul(register),
+                    _ => {}
+                }
+                arithmetic = 0;
+            } else {
+                arithmetic = next_arithmetic;
+            }
+        }
+    }
+}
+
+/// Read the next script operand at `*pc` (TS `script[pc++]`); `None` when
+/// the script runs past its end, which the VM maps to TS `-1`.
+fn next_operand(script: &[i32], pc: &mut usize) -> Option<i32> {
+    let value = script.get(*pc).copied()?;
+    *pc += 1;
+    Some(value)
+}
+
+/// `inf` from client-ts (10357): huge values render as `*`.
+fn inf(value: i32) -> String {
+    if value >= 999_999_999 {
+        "*".into()
+    } else {
+        value.to_string()
+    }
+}
+
+impl Client {
     /// `drawChat` from client-ts (11125): plot `chatback` into `area_chat`,
     /// then the plain chat branch (TS 11149-11267): clip (0,0,463,77), the
     /// 100 chat lines as TS 11152-11244, the `username:` + `chat_input + '*'`

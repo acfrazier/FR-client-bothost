@@ -3763,7 +3763,7 @@ fn title_button_clicked(button: i32, x: i32, y: i32, centre_x: i32, centre_y: i3
 
 /// `Client.levelExperience` from client-ts: cumulative XP thresholds for
 /// levels 1..99, computed in the TS static initializer.
-fn level_experience() -> &'static [i32; 99] {
+pub(crate) fn level_experience() -> &'static [i32; 99] {
     static TABLE: OnceLock<[i32; 99]> = OnceLock::new();
     TABLE.get_or_init(|| {
         let mut table = [0i32; 99];
