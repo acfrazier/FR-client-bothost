@@ -108,13 +108,14 @@ impl GameShell {
         self.mouse_y = y;
     }
 
-    /// Key down/up: set `key_held[java_code]` for codes in 0..127; on key-down
-    /// enqueue `ch` into the `key_queue` ring.
-    pub fn apply_key(&mut self, down: bool, java_code: i32, ch: i32) {
-        if (0..127).contains(&java_code) {
-            self.key_held[java_code as usize] = if down { 1 } else { 0 };
+    /// Key down/up: set `key_held[ch]` = 1/0 for `ch` in 0..128, and on
+    /// key-down enqueue `ch` into the `key_queue` ring when `ch > 4` (arrows
+    /// are held-only), matching Java `GameShell.keyPressed`/`keyReleased`.
+    pub fn apply_key(&mut self, down: bool, _java_code: i32, ch: i32) {
+        if ch > 0 && ch < 128 {
+            self.key_held[ch as usize] = if down { 1 } else { 0 };
         }
-        if down {
+        if down && ch > 4 {
             self.key_queue[self.key_queue_write] = ch;
             self.key_queue_write = (self.key_queue_write + 1) & 0x7f;
         }

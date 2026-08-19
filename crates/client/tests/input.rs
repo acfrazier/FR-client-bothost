@@ -74,43 +74,45 @@ fn defaults_match_java_fields() {
 #[test]
 fn key_down_sets_held_and_queues() {
     let mut sh = GameShell::new();
-    sh.apply_key(true, 37, 1);
-    assert_eq!(sh.key_held[37], 1);
+    sh.apply_key(true, 37, 1); // ArrowLeft: ch 1, held-only (not queued)
+    assert_eq!(sh.key_held[1], 1);
+    assert_eq!(sh.key_held[37], 0); // the raw keycode is not an index
+    assert_eq!(sh.key_queue_write, 0); // ch <= 4 is not queued
+    sh.apply_key(true, 65, 97); // 'a'
+    assert_eq!(sh.key_held[97], 1);
     assert_eq!(sh.key_queue_write, 1);
-    assert_eq!(sh.key_queue[0], 1);
+    assert_eq!(sh.key_queue[0], 97);
 }
 
 #[test]
 fn key_up_clears_held_without_queueing() {
     let mut sh = GameShell::new();
-    sh.apply_key(true, 37, 1);
-    sh.apply_key(false, 37, 1);
-    assert_eq!(sh.key_held[37], 0);
+    sh.apply_key(true, 65, 97);
+    sh.apply_key(false, 65, 97);
+    assert_eq!(sh.key_held[97], 0);
     assert_eq!(sh.key_queue_write, 1);
 }
 
 #[test]
-fn key_held_ignores_out_of_range_codes() {
+fn key_held_guards_ch_range() {
     let mut sh = GameShell::new();
-    sh.apply_key(true, 127, 1); // 127 is outside 0..127
-    sh.apply_key(true, 200, 1);
+    sh.apply_key(true, 65, 0); // ch 0 is outside 0 < ch < 128
+    sh.apply_key(true, 65, 128);
+    assert_eq!(sh.key_held[0], 0);
     assert_eq!(sh.key_held[127], 0);
-    assert_eq!(sh.key_held[126], 0);
-    // the char is still queued on key-down
-    assert_eq!(sh.key_queue_write, 2);
-    sh.apply_key(true, 126, 2);
-    assert_eq!(sh.key_held[126], 1);
+    sh.apply_key(true, 65, 127);
+    assert_eq!(sh.key_held[127], 1);
 }
 
 #[test]
 fn key_queue_wraps_at_128() {
     let mut sh = GameShell::new();
     for i in 0..128 {
-        sh.apply_key(true, 65, i);
+        sh.apply_key(true, 65, 100 + i);
     }
     assert_eq!(sh.key_queue_write, 0);
-    assert_eq!(sh.key_queue[127], 127);
-    assert_eq!(sh.key_queue[0], 0);
+    assert_eq!(sh.key_queue[127], 227);
+    assert_eq!(sh.key_queue[0], 100);
 }
 
 #[test]

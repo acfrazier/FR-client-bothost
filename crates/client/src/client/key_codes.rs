@@ -1,6 +1,7 @@
 //! DOM key name to Java keycode map, ported from client-ts
-//! `src/client/KeyCodes.ts`. `code` indexes `GameShell::key_held` and
-//! `GameShell::key_queue`; `ch` is the char queued for text entry.
+//! `src/client/KeyCodes.ts`. `code` is the DOM/Java keycode; `ch` is the
+//! remapped value `GameShell::apply_key` uses to index `key_held` and
+//! enqueue into `key_queue`.
 
 /// One KeyCodes.ts entry: the Java keycode and the char to queue.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
