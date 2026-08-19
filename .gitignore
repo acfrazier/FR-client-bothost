@@ -1,6 +1,6 @@
 /target
 **/*.rs.bk
 .DS_Store
-docs/superpowers/plans/
+docs/
 
 .worktrees/
