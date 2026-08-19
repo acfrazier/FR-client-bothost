@@ -14,6 +14,23 @@ pub struct GameShell {
     /// Key-down flags, Java `GameShell.keyHeld` (`int[128]`); `tryMove` reads
     /// index 5 for the run flag in the walk packet.
     pub key_held: [i32; 128],
+    /// Java `GameShell.mouseX`/`mouseY`; -1 while the pointer is off-canvas.
+    pub mouse_x: i32,
+    pub mouse_y: i32,
+    /// Java `GameShell.mouseButton`: 0 none, 1 left, 2 right.
+    pub mouse_button: i32,
+    /// Click latched each mainloop pass from `next_mouse_click_*`
+    /// (GameShell.ts 186-190).
+    pub mouse_click_button: i32,
+    pub mouse_click_x: i32,
+    pub mouse_click_y: i32,
+    next_mouse_click_button: i32,
+    next_mouse_click_x: i32,
+    next_mouse_click_y: i32,
+    /// Text/key ring, Java `GameShell.keyQueue` (`number[]`); the write index
+    /// wraps with mask `0x7f`.
+    pub key_queue: [i32; 128],
+    pub key_queue_write: usize,
     otim: [u64; 10],
     opos: usize,
     /// `pub(crate)` so `Client::run` can drive the catch-up loop itself.
@@ -30,6 +47,17 @@ impl GameShell {
             mindel: 1,
             fps: 0,
             key_held: [0; 128],
+            mouse_x: -1,
+            mouse_y: -1,
+            mouse_button: 0,
+            mouse_click_button: 0,
+            mouse_click_x: -1,
+            mouse_click_y: -1,
+            next_mouse_click_button: 0,
+            next_mouse_click_x: -1,
+            next_mouse_click_y: -1,
+            key_queue: [0; 128],
+            key_queue_write: 0,
             otim: [Self::now_millis(); 10],
             opos: 0,
             ratio: 256,
@@ -46,6 +74,50 @@ impl GameShell {
 
     pub fn set_framerate(&mut self, rate: i32) {
         self.deltime = 1000i32.checked_div(rate).unwrap_or(0);
+    }
+
+    /// Copy pending `next_mouse_click_*` onto `mouse_click_*` and clear the
+    /// button, as `GameShell.run` does at the top of each mainloop pass
+    /// (GameShell.ts 186-190).
+    pub fn latch_click(&mut self) {
+        self.mouse_click_button = self.next_mouse_click_button;
+        self.mouse_click_x = self.next_mouse_click_x;
+        self.mouse_click_y = self.next_mouse_click_y;
+        self.next_mouse_click_button = 0;
+    }
+
+    /// Java `mouseDown`: set position/button and latch a click. Java buttons:
+    /// 1 left, 2 right.
+    pub fn apply_mouse_down(&mut self, button: i32, x: i32, y: i32) {
+        self.mouse_x = x;
+        self.mouse_y = y;
+        self.mouse_button = button;
+        self.next_mouse_click_button = button;
+        self.next_mouse_click_x = x;
+        self.next_mouse_click_y = y;
+    }
+
+    /// Java `mouseUp`: release the button.
+    pub fn apply_mouse_up(&mut self) {
+        self.mouse_button = 0;
+    }
+
+    /// Java `mouseMove`/`pointerEnter`: update the position only.
+    pub fn apply_mouse_move(&mut self, x: i32, y: i32) {
+        self.mouse_x = x;
+        self.mouse_y = y;
+    }
+
+    /// Key down/up: set `key_held[java_code]` for codes in 0..127; on key-down
+    /// enqueue `ch` into the `key_queue` ring.
+    pub fn apply_key(&mut self, down: bool, java_code: i32, ch: i32) {
+        if (0..127).contains(&java_code) {
+            self.key_held[java_code as usize] = if down { 1 } else { 0 };
+        }
+        if down {
+            self.key_queue[self.key_queue_write] = ch;
+            self.key_queue_write = (self.key_queue_write + 1) & 0x7f;
+        }
     }
 
     /// Overridable mainloop hook; `Client` supplies the real body via `run`.
