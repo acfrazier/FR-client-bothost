@@ -4067,20 +4067,21 @@ impl Client {
     }
 
     /// `checkMinimap` from client-ts (5076): a low-memory level change
-    /// re-enters the loading state (splash, `scene_state = 1`), then
-    /// `check_scene` drives the map build once the data is in. `minimap_level`
+    /// re-enters the loading state (`scene_state = 1`), and while loading
+    /// the splash is redrawn each frame ahead of `check_scene`. `minimap_level`
     /// tracks the level the minimap buffer was built for.
     fn check_minimap(&mut self) {
         if self.config.lowmem
             && self.scene_state == 2
             && self.build_minusedlevel != self.minusedlevel
         {
-            self.scene_loading_splash();
             self.scene_state = 1;
             self.scene_load_start_time = Instant::now();
         }
 
         if self.scene_state == 1 {
+            // splash is redrawn every frame the scene is loading
+            self.scene_loading_splash();
             // TS logs a "glcfb" hang line when checkScene stalls past
             // 360 s; the console write is not ported.
             let _status = self.check_scene();
@@ -4156,6 +4157,7 @@ impl Client {
 
         let mut build = ClientBuild::new();
         build.low_mem = self.config.lowmem;
+        build.minusedlevel = self.minusedlevel;
 
         // underground pass check (TS 5163-5171): the Lumbridge caves square
         // forces high detail.

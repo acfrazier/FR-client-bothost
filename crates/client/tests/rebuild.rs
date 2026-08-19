@@ -187,8 +187,8 @@ fn tcp_in_rebuild_normal_over_socket() {
 
 /// Task 8: REBUILD_NORMAL paints the loading splash into `area_game` (and
 /// `draw_area` when `draw`) before the map data streams in. Fonts may be
-/// missing without a title jag, in which case the splash still cls's
-/// `area_game` black and only the text pixels are absent.
+/// missing without a title jag, in which case the splash still cls's the
+/// pre-filled `area_game` black and only the text pixels are absent.
 #[test]
 fn rebuild_normal_paints_loading_splash_when_draw() {
     let mut c = client();
@@ -197,6 +197,8 @@ fn rebuild_normal_paints_loading_splash_when_draw() {
     if c.area_game.is_none() {
         c.area_game = Some(PixMap::new(512, 334));
     }
+    // pre-fill so the cls (and only the cls) can be observed
+    c.area_game.as_mut().unwrap().fill(0x123456);
     let mut payload = Packet::alloc(0);
     payload.p2(50);
     payload.p2(50);
@@ -204,7 +206,13 @@ fn rebuild_normal_paints_loading_splash_when_draw() {
     c.handle_packet(ServerProt::REBUILD_NORMAL, &mut payload);
     assert_eq!(c.scene_state, 1);
     let ag = c.area_game.as_ref().expect("area_game");
-    assert!(ag.pixels.iter().any(|&p| p != 0) || c.p12.is_none());
+    if c.p12.is_none() {
+        // no font: the splash is the black cls of the pre-filled surface
+        assert!(ag.pixels.iter().all(|&p| p == 0), "area_game not cls'd");
+    } else {
+        // font present: the text pixels overwrite the black cls
+        assert!(ag.pixels.iter().any(|&p| p != 0), "no splash pixels");
+    }
 }
 
 /// `check_scene` with every map square present (the tutorial-skip pattern:
