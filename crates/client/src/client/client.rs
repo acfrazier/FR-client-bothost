@@ -1389,6 +1389,29 @@ impl Client {
         self.redraw_icons = true;
     }
 
+    /// `IF_OPENSIDE` handler (Client.ts 6034): open `com_id` as the side
+    /// modal, closing any open chat modal alongside (TS 6038-6046). The
+    /// `ifAnimReset` and `mainModalId`/`resumedPauseButton` resets are
+    /// dropped with the features they belong to.
+    pub fn apply_if_openside(&mut self, payload: &mut Packet) {
+        let com_id = payload.g2();
+        self.side_modal_id = com_id;
+        self.chat_modal_id = -1;
+        self.redraw_side = true;
+        self.redraw_icons = true;
+        self.redraw_chat = true;
+    }
+
+    /// `IF_CLOSE` handler (Client.ts 5968): close the side and chat modals.
+    /// The packet has no payload (TS only reads `ptype`).
+    pub fn apply_if_close(&mut self) {
+        self.side_modal_id = -1;
+        self.chat_modal_id = -1;
+        self.redraw_side = true;
+        self.redraw_icons = true;
+        self.redraw_chat = true;
+    }
+
     /// `iconLoop` from client-ts (2787): the side-tab hit boxes, one per
     /// tab with a bound interface (`side_icon[i] != -1`). On a latched
     /// click inside a box, select that tab and redraw both the side panel
@@ -1577,15 +1600,19 @@ impl Client {
             }
 
             // IF_OPENSIDE carries a 2-byte com_id the skip-arm must not eat
-            // unread; modal behavior lands with the HUD task.
+            // unread.
             ServerProt::IF_OPENSIDE => {
-                let _ = payload.g2();
+                self.apply_if_openside(payload);
+                self.ptype = -1;
+            }
+
+            ServerProt::IF_CLOSE => {
+                self.apply_if_close();
                 self.ptype = -1;
             }
 
             ServerProt::IF_OPENCHAT
             | ServerProt::IF_OPENMAIN_SIDE
-            | ServerProt::IF_CLOSE
             | ServerProt::IF_OPENMAIN
             | ServerProt::IF_OPENOVERLAY
             | ServerProt::TUT_FLASH

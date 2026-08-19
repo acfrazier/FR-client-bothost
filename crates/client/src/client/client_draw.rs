@@ -6,13 +6,15 @@
 //! `window`) only blits.
 //!
 //! The in-game `gameDrawMain` 3D pass (`World::render_all` not implemented)
-//! leaves `area_game` a black hole at (4, 4). `drawInterface` and the
-//! minimap are not ported.
+//! leaves `area_game` a black hole at (4, 4). `drawInterface` draws the
+//! side-tab interfaces (`TYPE_LAYER`/`TYPE_RECT`/`TYPE_TEXT`); the minimap is
+//! not ported.
 
 use std::path::Path;
 
 use crate::client::client::Client;
 use crate::client::title_flames::TitleFlames;
+use crate::config::if_type::{ComponentType, IfType};
 use crate::graphics::{Colour, Pix2D, Pix32, Pix8, PixFont, PixMap};
 use crate::io::JagFile;
 use crate::util::JString;
@@ -355,9 +357,9 @@ impl Client {
     /// `gameDraw` from client-ts (3890): the in-game frame. `gameDrawMain`
     /// (4172, the 3D pass) is not ported, so when `scene_state` is 2 the
     /// viewport is a black hole: `area_game` filled black and blitted at
-    /// (4, 4). `drawInterface` and the minimap are out of scope, so their
-    /// redraw triggers are dropped with them; the chrome strips, side, chat,
-    /// icon-strip backgrounds, and chat-mode panels draw 1:1.
+    /// (4, 4). The minimap is out of scope, so its redraw triggers are
+    /// dropped with it; the chrome strips, side, chat, icon-strip
+    /// backgrounds, and chat-mode panels draw 1:1.
     pub fn game_draw(&mut self) {
         self.prepare_game();
 
@@ -588,23 +590,226 @@ impl Client {
         Some(area)
     }
 
-    /// `drawSide` from client-ts (11098): plot `invback` into `area_side`
-    /// and blit it at (553, 205). The `drawInterface` (side modal / active
-    /// icon) and minimenu branches are not ported. The trailing
-    /// `areaGame.setPixels()` is a no-op here (no global Pix2D target).
+    /// `drawSide` from client-ts (11098): plot `invback` into `area_side`,
+    /// draw the open side interface (`side_modal_id`, else the active tab's
+    /// `side_icon`) via `drawInterface` (TS 11106-11110), and blit at
+    /// (553, 205). The minimenu branch and the trailing `areaGame.setPixels()`
+    /// (no global Pix2D target) are not ported.
     fn draw_side(&mut self) {
-        if let Some(side) = self.area_side.as_mut() {
+        let mut side = self.area_side.take();
+        if let Some(side) = side.as_mut() {
+            let mut surface = Pix2D::with_pixels(&mut side.pixels, side.width, side.height);
             if let Some(invback) = &self.invback {
-                let w = side.width;
-                let h = side.height;
-                let mut surface = Pix2D::with_pixels(&mut side.pixels, w, h);
                 invback.plot_sprite(&mut surface, 0, 0);
+            }
+            if self.side_modal_id != -1 {
+                self.draw_interface(self.side_modal_id, 0, 0, 0, &mut surface);
+            } else if self.side_icon.get(self.active_icon as usize).copied() != Some(-1) {
+                self.draw_interface(self.side_icon[self.active_icon as usize], 0, 0, 0, &mut surface);
+            }
+        }
+        if let Some(side) = &side {
+            side.blit_into(&mut self.draw_area, 553, 205);
+        }
+        self.area_side = side;
+    }
+
+    /// `drawInterface` from client-ts (9900) for the 2D component types:
+    /// recurse `TYPE_LAYER` children, draw `TYPE_RECT` fill/outline and
+    /// `TYPE_TEXT` with the font at `com.font` index 0-3 (p11/p12/b12/q8).
+    /// `TYPE_INV` item sprites, `TYPE_GRAPHIC`, and `TYPE_MODEL` (3D) are
+    /// skipped; the `clientComponent` scripts and `drawScrollbar` sprites
+    /// load with Task 14, and the `%1`-`%5` `getIfVar` substitution is
+    /// skipped with the script VM.
+    pub fn draw_interface(&mut self, com_id: i32, x: i32, y: i32, scroll_y: i32, surface: &mut Pix2D) {
+        let Some(com) = self.cache.ifaces.get(com_id as usize).and_then(|o| o.as_ref()) else {
+            return;
+        };
+        // TS 9901: only TYPE_LAYER draws; a hidden layer skips unless hovered
+        // (the `over*ComId` hover state is not ported, so hide is absolute).
+        if com.r#type != ComponentType::TYPE_LAYER || com.hide {
+            return;
+        }
+        let children = match &com.children {
+            Some(c) => c.clone(),
+            None => return,
+        };
+        let child_x = com.child_x.clone().unwrap_or_default();
+        let child_y = com.child_y.clone().unwrap_or_default();
+        let width = com.width;
+        let height = com.height;
+
+        let left = surface.clip_min_x;
+        let top = surface.clip_min_y;
+        let right = surface.clip_max_x;
+        let bottom = surface.clip_max_y;
+        surface.set_clipping(x, y, x + width, y + height);
+
+        for i in 0..children.len() {
+            let child_id = children[i] as usize;
+            let Some(child) = self.cache.ifaces.get(child_id).and_then(|o| o.as_ref()) else {
+                continue;
+            };
+            let child_x = child_x[i] + x + child.x;
+            let child_y = child_y[i] + y - scroll_y + child.y;
+
+            // `clientComponent(child)` (TS 9926): scripts not ported.
+
+            match child.r#type {
+                ComponentType::TYPE_LAYER => {
+                    // TS 9930-9938: clamp the child's scroll position before
+                    // recursing with it.
+                    let scroll_pos = {
+                        let max = child.scroll_height - child.height;
+                        if child.scroll_pos > max {
+                            max
+                        } else if child.scroll_pos < 0 {
+                            0
+                        } else {
+                            child.scroll_pos
+                        }
+                    };
+                    if scroll_pos != child.scroll_pos {
+                        if let Some(c) = self.cache.ifaces.get_mut(child_id).and_then(|o| o.as_mut()) {
+                            c.scroll_pos = scroll_pos;
+                        }
+                    }
+                    self.draw_interface(children[i], child_x, child_y, scroll_pos, surface);
+                    // drawScrollbar (TS 9941): scrollbar sprites load with
+                    // Task 14.
+                }
+                ComponentType::TYPE_RECT => {
+                    // hovered is false: the `over*ComId` state is not ported.
+                    let colour = if self.get_if_active(child) {
+                        child.colour2
+                    } else {
+                        child.colour
+                    };
+                    if child.trans == 0 {
+                        if child.fill {
+                            surface.fill_rect(child_x, child_y, child.width, child.height, colour);
+                        } else {
+                            surface.draw_rect(child_x, child_y, child.width, child.height, colour);
+                        }
+                    } else if child.fill {
+                        surface.fill_rect_trans(
+                            child_x,
+                            child_y,
+                            child.width,
+                            child.height,
+                            colour,
+                            256 - (child.trans & 0xff),
+                        );
+                    } else {
+                        surface.draw_rect(child_x, child_y, child.width, child.height, colour);
+                        surface.draw_rect_trans(
+                            child_x,
+                            child_y,
+                            child.width,
+                            child.height,
+                            colour,
+                            256 - (child.trans & 0xff),
+                        );
+                    }
+                }
+                ComponentType::TYPE_TEXT => {
+                    let active = self.get_if_active(child);
+                    let font = match child.font {
+                        1 => self.p12.as_mut(),
+                        2 => self.b12.as_mut(),
+                        3 => self.q8.as_mut(),
+                        _ => self.p11.as_mut(),
+                    };
+                    let Some(font) = font else {
+                        continue;
+                    };
+                    let mut text = child.text.clone();
+                    // hovered is false: the `over*ComId` state is not ported.
+                    let mut colour = if active { child.colour2 } else { child.colour };
+
+                    // TS 10107-10116: the chat-area colour remap.
+                    if surface.width == 479 {
+                        if colour == 0xffff00 {
+                            colour = 0x0000ff;
+                        }
+                        if colour == 0x00c000 {
+                            colour = 0xffffff;
+                        }
+                    }
+
+                    // `%1`-`%5` getIfVar substitution is skipped with the
+                    // script VM.
+                    let mut line_y = child_y + font.height;
+                    while !text.is_empty() {
+                        let (split, rest) = match text.find("\\n") {
+                            Some(nl) => (text[..nl].to_string(), text[nl + 2..].to_string()),
+                            None => (text.clone(), String::new()),
+                        };
+                        if child.centre {
+                            font.centre_string_tag(surface, &split, child_x + child.width / 2, line_y, colour, child.shadow);
+                        } else {
+                            font.draw_string_tag(surface, &split, child_x, line_y, colour, child.shadow);
+                        }
+                        line_y += font.height;
+                        text = rest;
+                    }
+                }
+                _ => {
+                    // TYPE_INV item sprites, TYPE_GRAPHIC, TYPE_MODEL (3D),
+                    // and TYPE_INV_TEXT are skipped this task.
+                }
             }
         }
 
-        if let Some(side) = &self.area_side {
-            side.blit_into(&mut self.draw_area, 553, 205);
+        surface.set_clipping(left, top, right, bottom);
+    }
+
+    /// `getIfActive` from client-ts (10361): comparator scripts pick the
+    /// active colour for a component. The IfType script VM is not ported, so
+    /// no `var` value is computable (`get_if_var` is `None`): every
+    /// comparator reads inactive, and `com.colour`/`com.text` draw.
+    fn get_if_active(&self, com: &IfType) -> bool {
+        let Some(comparator) = &com.script_comparator else {
+            return false;
+        };
+        let Some(operand) = &com.script_operand else {
+            return false;
+        };
+        for i in 0..comparator.len() {
+            let Some(value) = self.get_if_var(com, i as i32) else {
+                return false;
+            };
+            match comparator[i] {
+                2 => {
+                    if value >= operand[i] {
+                        return false;
+                    }
+                }
+                3 => {
+                    if value <= operand[i] {
+                        return false;
+                    }
+                }
+                4 => {
+                    if value == operand[i] {
+                        return false;
+                    }
+                }
+                _ => {
+                    if value != operand[i] {
+                        return false;
+                    }
+                }
+            }
         }
+        true
+    }
+
+    /// `getIfVar` from client-ts (10394): the script VM is not ported, so no
+    /// value is computable; `None` makes `get_if_active` treat the component
+    /// as inactive.
+    fn get_if_var(&self, _com: &IfType, _script_id: i32) -> Option<i32> {
+        None
     }
 
     /// `drawChat` from client-ts (11125): plot `chatback` into `area_chat`
