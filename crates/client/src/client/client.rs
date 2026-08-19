@@ -31,7 +31,7 @@ use crate::dash3d::{
     AnimFrame, BuildArea, CollisionFlag, CollisionMap, DirectionFlag, LocShape, Model, World,
 };
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
-use crate::graphics::{Pix32, Pix8, PixFont, PixMap};
+use crate::graphics::{Pix32, Pix3DDraw, Pix8, PixFont, PixMap};
 use crate::io::{
     ClientProt, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt, SERVER_PROT_SIZES,
 };
@@ -270,6 +270,11 @@ pub struct Client {
     /// (0/1 are the flame frames — empty here, `TitleFlames` is out of
     /// scope), and the login UI fields.
     pub draw_area: PixMap,
+    /// Per-client Pix3D raster state (TS `Pix3D` mutable statics: the
+    /// `scanline`, `originX/Y`, `trans`, `cycle`, and the texture pool).
+    /// `Pix3D::init_colour_table` stays process-wide; the 3D pass binds
+    /// `area_game` to it via `set_clipping` before `World::render_all`.
+    pub pix3d: Pix3DDraw,
     pub title: Option<JagFile>,
     pub p11: Option<PixFont>,
     pub p12: Option<PixFont>,
@@ -516,6 +521,7 @@ impl Client {
             login_mes2: String::new(),
             loop_cycle: 0,
             draw_area: PixMap::new(APPLET_W, APPLET_H),
+            pix3d: Pix3DDraw::default(),
             title: None,
             p11: None,
             p12: None,

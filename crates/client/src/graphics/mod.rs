@@ -9,7 +9,7 @@ pub mod pixmap;
 pub use colour::Colour;
 pub use pix2d::Pix2D;
 pub use pix32::Pix32;
-pub use pix3d::Pix3D;
+pub use pix3d::{Pix3D, Pix3DDraw};
 pub use pix8::Pix8;
 pub use pixfont::PixFont;
 pub use pixmap::PixMap;

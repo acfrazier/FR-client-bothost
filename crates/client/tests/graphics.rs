@@ -1,4 +1,4 @@
-use client::graphics::{Colour, Pix2D, Pix3D, Pix8, Pix32, PixFont, PixMap};
+use client::graphics::{Colour, Pix2D, Pix32, Pix3D, Pix3DDraw, Pix8, PixFont, PixMap};
 use client::io::JagFile;
 use client::util::JavaRandom;
 use std::io::Write;
@@ -599,4 +599,109 @@ fn pixfont_centre_and_right_string() {
         // x - stringWid = 0
     }
     assert_eq!(map2.pixels[0], 0xff0000);
+}
+
+#[test]
+fn pix3d_draw_default_state() {
+    let d = Pix3DDraw::default();
+    assert!(d.scanline.is_empty());
+    assert_eq!(d.origin_x, 0);
+    assert_eq!(d.origin_y, 0);
+    assert_eq!(d.trans, 0);
+    assert_eq!(d.cycle, 0);
+    assert!(!d.hclip);
+    assert!(d.low_detail);
+    assert!(!d.low_mem);
+    assert_eq!(d.num_textures, 0);
+    assert!(d.texel_pool.is_none());
+}
+
+#[test]
+fn pix3d_set_clipping_sets_origin_and_scanline_len() {
+    let mut d = Pix3DDraw::default();
+    d.set_clipping(512, 334);
+    assert_eq!(d.origin_x, 256);
+    assert_eq!(d.origin_y, 167);
+    assert_eq!(d.scanline.len(), 334);
+    assert_eq!(d.scanline[1], 512);
+}
+
+#[test]
+fn pix3d_flat_triangle_fills_pixmap() {
+    let mut d = Pix3DDraw::default();
+    let mut map = PixMap::new(5, 5);
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        d.set_render_clipping(&surface);
+        d.flat_triangle(&mut surface, 0, 4, 0, 0, 0, 4, 0xff0000);
+    }
+    let expected = [
+        0xff0000, 0xff0000, 0xff0000, 0xff0000, 0, //
+        0xff0000, 0xff0000, 0xff0000, 0, 0, //
+        0xff0000, 0xff0000, 0, 0, 0, //
+        0xff0000, 0, 0, 0, 0, //
+        0, 0, 0, 0, 0,
+    ];
+    assert_eq!(map.pixels, expected);
+}
+
+#[test]
+fn pix3d_gouraud_triangle_constant_shade() {
+    Pix3D::init_colour_table(0.6);
+    let mut d = Pix3DDraw::default();
+    let mut map = PixMap::new(5, 5);
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        d.set_render_clipping(&surface);
+        d.gouraud_triangle(&mut surface, 0, 4, 0, 0, 0, 4, 256, 256, 256);
+    }
+    let rgb = Pix3D::colour_table()[256];
+    // (0,0)-(4,0)-(0,4) upper-left triangle, constant shade → table[256]
+    assert_eq!(map.pixels[0], rgb);
+    assert_eq!(map.pixels[3], rgb);
+    assert_eq!(map.pixels[7], rgb);
+    assert_eq!(map.pixels[10], rgb);
+    assert_eq!(map.pixels[15], rgb);
+    assert_eq!(map.pixels[4], 0); // outside the triangle
+    assert_eq!(map.pixels[24], 0);
+}
+
+fn pix8_texture_archive() -> Vec<u8> {
+    let mut index = Vec::new();
+    g2(&mut index, 1); // owi
+    g2(&mut index, 1); // ohi
+    index.push(2); // bpalCount
+    g3(&mut index, 0x408040);
+    index.push(0); // xof
+    index.push(0); // yof
+    g2(&mut index, 1); // wi
+    g2(&mut index, 1); // hi
+    index.push(0); // encoding 0: row-major
+    let mut dat = Vec::new();
+    g2(&mut dat, 0); // sprite 0 header starts at index.dat offset 0
+    dat.push(1); // palette index 1
+    jag(&[("index.dat", &index), ("0.dat", &dat)])
+}
+
+#[test]
+fn pix3d_texture_pool_unpack_and_average() {
+    let mut d = Pix3DDraw::default();
+    d.init_pool(2);
+    assert_eq!(d.pool_size, 2);
+    assert_eq!(d.texel_pool.as_ref().unwrap().len(), 2);
+    assert_eq!(d.texel_pool.as_ref().unwrap()[0].len(), 65536);
+
+    d.unpack_textures(&JagFile::new(pix8_texture_archive()));
+    assert_eq!(d.num_textures, 1);
+    assert!(d.textures[0].is_some());
+
+    d.init_texture_palettes(0.6);
+    let pal = d.tex_pal[0].as_ref().unwrap();
+    assert_eq!(pal.len(), 2);
+    assert_eq!(pal[0], 0); // palette 0 is transparent
+    assert_eq!(pal[1], 0x6fa86f); // gamma-corrected 0x408040 @ 0.6
+
+    assert_eq!(d.get_texture_average(0), 0x1d351d);
+    assert_eq!(d.get_texture_average(0), 0x1d351d); // cached
+    assert_eq!(d.get_texture_average(1), 0); // missing texture
 }
