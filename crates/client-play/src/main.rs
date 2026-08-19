@@ -1,3 +1,137 @@
-fn main() {
-    println!("274 client-play");
+//! `client-play`: log into a local 274 engine over TCP and run the client
+//! machine on the calling thread (`Client::new` + `login` + `run`).
+//!
+//! The RSA public half is baked at compile time (`LOGIN_RSAN`/`LOGIN_RSAE`).
+//! `tools/redeploy.sh` extracts the engine's `private.pem` and rebuilds this
+//! binary with the right key — run the artifact it produced, not a later
+//! `cargo run`: a rebuild without those env vars bakes the Java default
+//! (wrong) key again.
+
+use std::env;
+use std::process::ExitCode;
+
+use client::client::{Client, ClientConfig};
+
+const DEFAULT_PORT: u16 = 43594;
+
+struct Args {
+    host: String,
+    port: u16,
+    user: String,
+    pass: String,
+    cache: String,
+    window: bool,
+    audio: bool,
+}
+
+fn default_cache_dir() -> String {
+    match env::var("HOME") {
+        Ok(home) => format!("{home}/experiments/Server/engine/data/pack/client"),
+        Err(_) => "experiments/Server/engine/data/pack/client".into(),
+    }
+}
+
+/// clap-free argv parse: `--key value` pairs plus the `--window`/`--audio`
+/// flags. A missing value, an unknown key, or a missing user/pass prints the
+/// usage and exits.
+fn parse_args() -> Args {
+    let mut args = Args {
+        host: "127.0.0.1".into(),
+        port: DEFAULT_PORT,
+        user: String::new(),
+        pass: String::new(),
+        cache: default_cache_dir(),
+        window: false,
+        audio: false,
+    };
+    let mut it = env::args().skip(1);
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--host" => args.host = value(&mut it),
+            "--port" => args.port = value(&mut it).parse().unwrap_or_else(|_| usage()),
+            "--user" => args.user = value(&mut it),
+            "--pass" => args.pass = value(&mut it),
+            "--cache" => args.cache = value(&mut it),
+            "--window" => args.window = true,
+            "--audio" => args.audio = true,
+            "--help" | "-h" => usage(),
+            _ => usage(),
+        }
+    }
+    if args.user.is_empty() || args.pass.is_empty() {
+        usage();
+    }
+    args
+}
+
+fn usage() -> ! {
+    eprintln!(
+        "usage: client-play --user USER --pass PASS \
+         [--host HOST] [--port PORT] [--cache DIR] [--window] [--audio]"
+    );
+    std::process::exit(2);
+}
+
+/// Next positional value or usage-exit (`|| usage()` so the never type
+/// coerces where a bare `fn() -> !` item does not).
+fn value(it: &mut std::iter::Skip<env::Args>) -> String {
+    it.next().unwrap_or_else(|| usage())
+}
+
+fn main() -> ExitCode {
+    let args = parse_args();
+
+    // Feature backends: `window` has no present backend in this spec and
+    // `audio` needs the `audio` feature (rustysynth). Without them — or on
+    // device failure — log and continue headless, per the spec.
+    if args.window {
+        eprintln!("window: no present backend in this spec; continuing headless");
+    }
+    #[cfg(feature = "audio")]
+    if args.audio {
+        eprintln!("audio: rustysynth backend active (missing SF2 stays silent)");
+    }
+    #[cfg(not(feature = "audio"))]
+    if args.audio {
+        eprintln!(
+            "audio: feature not compiled in (build with --features audio); continuing headless"
+        );
+    }
+
+    let config = ClientConfig {
+        host: args.host,
+        port: args.port,
+        cache_dir: args.cache,
+        members: true,
+        lowmem: false,
+    };
+    let mut client = Client::new(config);
+
+    match client.login(&args.user, &args.pass, false) {
+        Ok(()) => {
+            println!("ingame");
+            // Live proof: print the local-player tile every 50 loop_cycle
+            // once player info arrives (after REBUILD_NORMAL).
+            client.run(|c| {
+                if c.loop_cycle % 50 == 0 {
+                    if let Some(p) = &c.local_player {
+                        println!(
+                            "tile: {} {} (cycle {})",
+                            c.map_build_base_x + p.route_x[0],
+                            c.map_build_base_z + p.route_z[0],
+                            c.loop_cycle
+                        );
+                    }
+                }
+            });
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("login {} {} {}", e.code, e.mes1, e.mes2);
+            if e.code == 6 {
+                eprintln!("wrong RSA key for this engine - run tools/redeploy.sh and rebuild");
+            }
+            ExitCode::FAILURE
+        }
+    }
 }

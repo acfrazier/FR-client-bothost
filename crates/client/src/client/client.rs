@@ -224,6 +224,16 @@ pub struct Client {
     pub login_mes1: String,
     pub login_mes2: String,
     pub loop_cycle: i32,
+
+    /// Reconnect flag of the most recent `login` call (`None` until the
+    /// first login). `lostCon` reestablishes with `reconnect = true`
+    /// (wrapper opcode 18); the flag is how the reconnect path is observed.
+    pub last_login_reconnect: Option<bool>,
+    /// `logoutTimer` from Java: frames remaining until a requested logout.
+    pub logout_timer: i32,
+    /// `timeoutTimer` from Java: frames since the last full in-game packet;
+    /// `gameLoop` calls `lostCon` past 750 (~15 s at 20 ms).
+    pub timeout_timer: i32,
 }
 
 impl Client {
@@ -348,6 +358,9 @@ impl Client {
             login_mes1: String::new(),
             login_mes2: String::new(),
             loop_cycle: 0,
+            last_login_reconnect: None,
+            logout_timer: 0,
+            timeout_timer: 0,
         }
     }
 
@@ -389,6 +402,7 @@ impl Client {
         password: &str,
         reconnect: bool,
     ) -> Result<(), LoginError> {
+        self.last_login_reconnect = Some(reconnect);
         if !reconnect {
             self.login_mes1.clear();
             self.login_mes2 = "Connecting to server...".into();
@@ -484,6 +498,8 @@ impl Client {
             self.psize = 0;
             self.scene_state = 0;
             self.menu_num_entries = 0;
+            self.timeout_timer = 0;
+            self.logout_timer = 0;
             self.stream = Some(stream);
             return Ok(());
         }
@@ -988,12 +1004,18 @@ impl Client {
                 true
             }
             Ok(false) => false,
-            Err(_) => {
-                // Java `catch (Exception)`: report and log out. The
-                // `lostCon` reconnect path (IO errors) lands with the
-                // connection-loss task.
-                eprintln!("T2 - {},{},{}", self.ptype, self.ptype1, self.ptype2);
-                self.logout();
+            Err(e) => {
+                if e.kind() == io::ErrorKind::Other {
+                    // Java `catch (Exception)`: report and log out. The only
+                    // `Other` error `read_packet` produces is the oversized
+                    // psize that the Java client's AIOOBE hits.
+                    eprintln!("T2 - {},{},{}", self.ptype, self.ptype1, self.ptype2);
+                    self.logout();
+                } else {
+                    // Java `catch (IOException)`: drop to the lostCon
+                    // reestablish path (login opcode 18).
+                    self.lost_con();
+                }
                 true
             }
         }
@@ -1053,6 +1075,8 @@ impl Client {
 
         self.r#in.pos = 0;
         stream.read_bytes(self.r#in.data_mut(), 0, self.psize as usize)?;
+        // a full packet resets the in-game silence watchdog (Java tcpIn)
+        self.timeout_timer = 0;
         self.ptype2 = self.ptype1;
         self.ptype1 = self.ptype0;
         self.ptype0 = self.ptype;
@@ -2544,6 +2568,104 @@ impl Client {
         self.next_midi_song = -1;
         self.midi_song = -1;
         self.next_music_delay = 0;
+    }
+
+    /// `lostCon` from Java (`Client.java` 6147): in-game connection loss. A
+    /// pending logout request (`logoutTimer > 0`) logs out immediately;
+    /// otherwise drop to the title state and re-establish with
+    /// `login(loginUser, loginPass, true)` (wrapper opcode 18). A failed
+    /// reestablish logs out, as Java. The old stream is replaced by `login`
+    /// on success or closed by `logout` on failure, matching Java's
+    /// save-and-close of the old `ClientStream`. The "Connection lost"
+    /// viewport text is not drawn (headless).
+    pub fn lost_con(&mut self) {
+        if self.logout_timer > 0 {
+            self.logout();
+            return;
+        }
+        self.ingame = false;
+        let user = self.login_user.clone();
+        let pass = self.login_pass.clone();
+        let _ = self.login(&user, &pass, true);
+        if !self.ingame {
+            self.logout();
+        }
+    }
+
+    /// `mainloop` from Java (`Client.java` 1823): one 20 ms pass. Headless
+    /// has no error-screen flags, so this is `loopCycle++` plus the in-game
+    /// read pass; the title-screen loop is a no-op (client-play adds no
+    /// title-screen retry loop). `loopCycle` increments once per `mainloop`.
+    pub fn mainloop(&mut self) {
+        self.loop_cycle = self.loop_cycle.wrapping_add(1);
+        if self.ingame {
+            self.game_loop();
+        }
+        if let Some(on_demand) = self.on_demand.as_mut() {
+            on_demand.run(self.ingame);
+        }
+    }
+
+    /// `gameLoop` from Java (`Client.java` 9341): count down a pending
+    /// logout request, read up to five TCP packets, then the in-game
+    /// connection-silence watchdog (`timeoutTimer > 750` → `lostCon`, ~15 s
+    /// at 20 ms). The mouse/queue/flush sections are not ported (headless).
+    pub fn game_loop(&mut self) {
+        if self.logout_timer > 0 {
+            self.logout_timer -= 1;
+        }
+        for _ in 0..5 {
+            if !self.tcp_in() {
+                break;
+            }
+        }
+        if !self.ingame {
+            return;
+        }
+        self.timeout_timer += 1;
+        if self.timeout_timer > 750 {
+            self.lost_con();
+        }
+    }
+
+    /// `mainredraw` from Java — the frame render pass. Headless default:
+    /// no-op; the `window` feature will present the CPU PixMap here.
+    pub fn mainredraw(&mut self) {}
+
+    /// Drive the 20 ms GameShell machine on the calling thread (spec §3):
+    /// one `mainloop` then `mainredraw` per frame with the Java
+    /// ratio/count catch-up. `on_loop` runs after each `mainloop` pass so a
+    /// driver (client-play) can read Java-public state — e.g. print the
+    /// local-player tile for live proof — without a snapshot API.
+    pub fn run<F: FnMut(&mut Self)>(&mut self, mut on_loop: F) {
+        while self.shell.state >= 0 {
+            if self.shell.state > 0 {
+                self.shell.state -= 1;
+                if self.shell.state == 0 {
+                    self.shell.stop();
+                    return;
+                }
+            }
+
+            let delta = self.shell.begin_frame();
+            if delta > 0 {
+                thread::sleep(Duration::from_millis(delta as u64));
+            }
+
+            while self.shell.count < 256 {
+                self.mainloop();
+                on_loop(self);
+                self.shell.count += self.shell.ratio;
+            }
+            self.shell.count &= 0xff;
+            self.shell.end_frame();
+
+            self.mainredraw();
+        }
+
+        if self.shell.state == -1 {
+            self.shell.stop();
+        }
     }
 
     /// `saveMidi(fading, data)` from Java (`Client.java` 6266): hand the

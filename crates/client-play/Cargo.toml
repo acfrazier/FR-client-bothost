@@ -3,5 +3,10 @@ name = "client-play"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+audio = ["client/audio"]
+window = []
+
 [dependencies]
 client = { path = "../client" }

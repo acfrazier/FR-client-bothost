@@ -30,3 +30,25 @@ fn new_client_starts_logged_out() {
     assert!(!c.ingame);
     assert_eq!(c.loop_cycle, 0);
 }
+
+#[test]
+fn run_drives_mainloop_and_hook_until_stopped() {
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    let mut calls = 0;
+    c.run(|c| {
+        calls += 1;
+        if calls >= 3 {
+            c.shell.state = -1;
+        }
+    });
+    // one mainloop pass per frame; a negative state stops the machine
+    assert_eq!(calls, 3);
+    assert_eq!(c.shell.state, -2);
+    assert_eq!(c.loop_cycle, 3);
+}

@@ -16,9 +16,10 @@ pub struct GameShell {
     pub key_held: [i32; 128],
     otim: [u64; 10],
     opos: usize,
-    ratio: i32,
+    /// `pub(crate)` so `Client::run` can drive the catch-up loop itself.
+    pub(crate) ratio: i32,
     delta: i32,
-    count: i32,
+    pub(crate) count: i32,
 }
 
 impl GameShell {
@@ -83,8 +84,7 @@ impl GameShell {
                 }
             }
 
-            self.frame_bookkeeping();
-            let delta = self.delta;
+            let delta = self.begin_frame();
             if delta > 0 {
                 thread::sleep(Duration::from_millis(delta as u64));
             }
@@ -94,10 +94,7 @@ impl GameShell {
                 self.count += self.ratio;
             }
             self.count &= 0xff;
-
-            if self.deltime > 0 {
-                self.fps = (self.ratio * 1000) / (self.deltime * 256);
-            }
+            self.end_frame();
 
             mainredraw(self);
         }
@@ -105,6 +102,26 @@ impl GameShell {
         if self.state == -1 {
             self.shutdown();
         }
+    }
+
+    /// Frame bookkeeping plus the sleep delta for the current frame. Drivers
+    /// that run the machine themselves (`Client::run`) call this once per
+    /// frame before sleeping; `run` uses it internally.
+    pub fn begin_frame(&mut self) -> i32 {
+        self.frame_bookkeeping();
+        self.delta
+    }
+
+    /// FPS bookkeeping from `GameShell.run` (after the mainloop pass).
+    pub fn end_frame(&mut self) {
+        if self.deltime > 0 {
+            self.fps = (self.ratio * 1000) / (self.deltime * 256);
+        }
+    }
+
+    /// Java `shutdown()`: mark the machine stopped (`state = -2`).
+    pub fn stop(&mut self) {
+        self.shutdown();
     }
 
     /// Ratio/delta/otim bookkeeping from `GameShell.run` (143-178).
