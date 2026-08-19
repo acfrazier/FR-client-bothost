@@ -809,19 +809,152 @@ impl Client {
         None
     }
 
-    /// `drawChat` from client-ts (11125): plot `chatback` into `area_chat`
-    /// and blit it at (17, 357). The social/dialog/tutorial/modal branches,
-    /// the chat text loop (no chat text fields yet), the scrollbar, and the
-    /// minimenu are not ported. The trailing `areaGame.setPixels()` is a
-    /// no-op here (no global Pix2D target).
+    /// `drawChat` from client-ts (11125): plot `chatback` into `area_chat`,
+    /// then the plain chat branch (TS 11149-11267): clip (0,0,463,77), the
+    /// 100 chat lines as TS 11152-11244, the `username:` + `chat_input + '*'`
+    /// input line at y=90, and the `hline` at 77; blit at (17, 357).
+    /// Deviations: the social/dialog/tutorial/modal branches are not ported
+    /// (`chat_modal_id` is only ever -1 this slice), `is_friend` is always
+    /// false (no friend list), the `modIcons`/`drawScrollbar` sprites load
+    /// with Task 14, and the trailing `areaGame.setPixels()` is a no-op here
+    /// (no global Pix2D target).
     fn draw_chat(&mut self) {
         if let Some(chat) = self.area_chat.as_mut() {
+            let w = chat.width;
+            let h = chat.height;
+            let mut surface = Pix2D::with_pixels(&mut chat.pixels, w, h);
             if let Some(chatback) = &self.chatback {
-                let w = chat.width;
-                let h = chat.height;
-                let mut surface = Pix2D::with_pixels(&mut chat.pixels, w, h);
                 chatback.plot_sprite(&mut surface, 0, 0);
             }
+
+            let font = self.p12.as_ref();
+            let mut line = 0;
+            surface.set_clipping(0, 0, 463, 77);
+
+            for i in 0..100 {
+                let message = self.chat_text[i].clone();
+                if message.is_empty() {
+                    continue;
+                }
+                let r#type = self.chat_type[i];
+                let y = self.chat_scroll_pos + 70 - line * 14;
+
+                let mut sender = self.chat_username[i].clone();
+                let mut modlevel = 0;
+                if sender.starts_with("@cr1@") {
+                    sender = sender[5..].to_string();
+                    modlevel = 1;
+                } else if sender.starts_with("@cr2@") {
+                    sender = sender[5..].to_string();
+                    modlevel = 2;
+                }
+
+                if r#type == 0 {
+                    if y > 0 && y < 110 {
+                        if let Some(font) = font {
+                            font.draw_string(&mut surface, Some(&message), 4, y, Colour::BLACK);
+                        }
+                    }
+                    line += 1;
+                } else if (r#type == 1 || r#type == 2)
+                    && (r#type == 1
+                        || self.chat_public_mode == 0
+                        || (self.chat_public_mode == 1 && false))
+                {
+                    if y > 0 && y < 110 {
+                        let mut x = 4;
+                        // TS plots modIcons[0]/[1] here for modlevel 1/2;
+                        // the sprites are not ported, so the 14px advance is
+                        // kept without an icon.
+                        if modlevel == 1 || modlevel == 2 {
+                            x += 14;
+                        }
+                        if let Some(font) = font {
+                            font.draw_string(&mut surface, Some(&format!("{sender}:")), x, y, Colour::BLACK);
+                            x += font.string_wid(Some(&sender)) + 8;
+                            font.draw_string(&mut surface, Some(&message), x, y, Colour::BLUE);
+                        }
+                    }
+                    line += 1;
+                } else if (r#type == 3 || r#type == 7)
+                    && (r#type == 7
+                        || self.chat_private_mode == 0
+                        || (self.chat_private_mode == 1 && false))
+                {
+                    if y > 0 && y < 110 {
+                        let mut x = 4;
+                        if let Some(font) = font {
+                            font.draw_string(&mut surface, Some("From"), x, y, Colour::BLACK);
+                            x += font.string_wid(Some("From "));
+                        }
+                        if modlevel == 1 || modlevel == 2 {
+                            x += 14;
+                        }
+                        if let Some(font) = font {
+                            font.draw_string(&mut surface, Some(&format!("{sender}:")), x, y, Colour::BLACK);
+                            x += font.string_wid(Some(&sender)) + 8;
+                            font.draw_string(&mut surface, Some(&message), x, y, Colour::DARKRED);
+                        }
+                    }
+                    line += 1;
+                } else if r#type == 4 && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && false)) {
+                    if y > 0 && y < 110 {
+                        if let Some(font) = font {
+                            font.draw_string(&mut surface, Some(&format!("{sender} {message}")), 4, y, 0x800080);
+                        }
+                    }
+                    line += 1;
+                } else if r#type == 5 && self.chat_private_mode < 2 {
+                    if y > 0 && y < 110 {
+                        if let Some(font) = font {
+                            font.draw_string(&mut surface, Some(&message), 4, y, Colour::DARKRED);
+                        }
+                    }
+                    line += 1;
+                } else if r#type == 6 && self.chat_private_mode < 2 {
+                    if y > 0 && y < 110 {
+                        if let Some(font) = font {
+                            font.draw_string(&mut surface, Some(&format!("To {sender}:")), 4, y, Colour::BLACK);
+                            font.draw_string(
+                                &mut surface,
+                                Some(&message),
+                                font.string_wid(Some(&format!("To {sender}"))) + 12,
+                                y,
+                                Colour::DARKRED,
+                            );
+                        }
+                    }
+                    line += 1;
+                } else if r#type == 8 && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && false)) {
+                    if y > 0 && y < 110 {
+                        if let Some(font) = font {
+                            font.draw_string(&mut surface, Some(&format!("{sender} {message}")), 4, y, 0x7e3200);
+                        }
+                    }
+                    line += 1;
+                }
+            }
+
+            surface.reset_clipping();
+
+            self.chat_scroll_height = line * 14 + 7;
+            if self.chat_scroll_height < 78 {
+                self.chat_scroll_height = 78;
+            }
+            // drawScrollbar (TS 11252) is not ported (no scrollbar sprites).
+
+            let username = match self.local_player.as_ref().and_then(|p| p.name.as_ref()) {
+                Some(name) => name.clone(),
+                None => JString::to_screen_name(&self.login_user),
+            };
+
+            if let Some(font) = font {
+                font.draw_string(&mut surface, Some(&format!("{username}:")), 4, 90, Colour::BLACK);
+                let input_x = font.string_wid(Some(&format!("{username}: "))) + 6;
+                font.draw_string(&mut surface, Some(&format!("{}*", self.chat_input)), input_x, 90, Colour::BLUE);
+            }
+
+            surface.hline(0, 77, 479, Colour::BLACK);
         }
 
         if let Some(chat) = &self.area_chat {

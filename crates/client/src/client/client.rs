@@ -337,6 +337,15 @@ pub struct Client {
     pub chat_public_mode: i32,
     pub chat_private_mode: i32,
     pub chat_trade_mode: i32,
+    /// Chat history (`Client.ts` `chatType`/`chatUsername`/`chatText`, 100
+    /// slots) and the input line. `chat_scroll_height` defaults to 78 and is
+    /// recomputed by `draw_chat` as TS does.
+    pub chat_type: [i32; 100],
+    pub chat_username: [String; 100],
+    pub chat_text: [String; 100],
+    pub chat_input: String,
+    pub chat_scroll_pos: i32,
+    pub chat_scroll_height: i32,
 
     /// Reconnect flag of the most recent `login` call (`None` until the
     /// first login). `lostCon` reestablishes with `reconnect = true`
@@ -554,6 +563,12 @@ impl Client {
             chat_public_mode: 0,
             chat_private_mode: 0,
             chat_trade_mode: 0,
+            chat_type: [0; 100],
+            chat_username: [const { String::new() }; 100],
+            chat_text: [const { String::new() }; 100],
+            chat_input: String::new(),
+            chat_scroll_pos: 0,
+            chat_scroll_height: 78,
             last_login_reconnect: None,
             logout_timer: 0,
             timeout_timer: 0,
@@ -1412,6 +1427,42 @@ impl Client {
         self.redraw_chat = true;
     }
 
+    /// `addChat` from client-ts (11453): shift the 100 chat slots down one
+    /// (99→1), write the new line at slot 0, and redraw. The `tutComId`
+    /// branch (TS 11454-11458) is dropped with the tutorial feature.
+    pub fn add_chat(&mut self, r#type: i32, text: &str, sender: &str) {
+        if self.chat_modal_id == -1 {
+            self.redraw_chat = true;
+        }
+        for i in (1..100).rev() {
+            self.chat_type[i] = self.chat_type[i - 1];
+            self.chat_username[i] = std::mem::take(&mut self.chat_username[i - 1]);
+            self.chat_text[i] = std::mem::take(&mut self.chat_text[i - 1]);
+        }
+        self.chat_type[0] = r#type;
+        self.chat_username[0] = sender.to_string();
+        self.chat_text[0] = text.to_string();
+    }
+
+    /// `MESSAGE_GAME` handler (Client.ts 6413): read the jstr message and
+    /// route it — a `:tradereq:`/`:duelreq:` suffix adds the trade/duel line
+    /// with the requester's name (TS 6420-6446; the ignore list is not
+    /// ported, so `ignored` stays false and `chatDisabled` stays 0), and
+    /// anything else is public chat type 0 with no sender.
+    pub fn apply_message_game(&mut self, payload: &mut Packet) {
+        let message = payload.gjstr();
+
+        if message.ends_with(":tradereq:") {
+            let player = message[..message.find(':').unwrap_or(0)].to_string();
+            self.add_chat(4, "wishes to trade with you.", &player);
+        } else if message.ends_with(":duelreq:") {
+            let player = message[..message.find(':').unwrap_or(0)].to_string();
+            self.add_chat(8, "wishes to duel with you.", &player);
+        } else {
+            self.add_chat(0, &message, "");
+        }
+    }
+
     /// `iconLoop` from client-ts (2787): the side-tab hit boxes, one per
     /// tab with a bound interface (`side_icon[i] != -1`). On a latched
     /// click inside a box, select that tab and redraw both the side panel
@@ -1916,9 +1967,13 @@ impl Client {
                 self.ptype = -1;
             }
 
-            // chat, friends and ignore-list state is not ported yet
-            ServerProt::MESSAGE_GAME
-            | ServerProt::UPDATE_IGNORELIST
+            ServerProt::MESSAGE_GAME => {
+                self.apply_message_game(payload);
+                self.ptype = -1;
+            }
+
+            // friends and ignore-list state is not ported yet
+            ServerProt::UPDATE_IGNORELIST
             | ServerProt::CHAT_FILTER_SETTINGS
             | ServerProt::MESSAGE_PRIVATE
             | ServerProt::FRIENDLIST_LOADED
@@ -3195,12 +3250,143 @@ impl Client {
         }
     }
 
+    /// `handleInputKey` from client-ts (2937), chat branch: poll queued
+    /// keys while no chat modal is open. Printable 32..=122 (up to 126
+    /// once the input starts with `::`) appends below 80 chars, 8
+    /// backspaces, 10/13 sends. A `::` command goes out as `CLIENT_CHEAT`
+    /// (TS 3093-3095); anything else packs `MESSAGE_PUBLIC` (TS 3158-3165)
+    /// with the colour/effect prefixes parsed as TS 3097-3155. `WordPack`
+    /// is not ported, so the pack is the plain jstr via `pjstr`, and the
+    /// `toSentenceCase`/`WordFilter` steps are skipped; the own message
+    /// still echoes locally as `add_chat(2, ...)` as TS 3169-3179.
+    pub fn handle_chat_input(&mut self) {
+        loop {
+            let key = self.shell.poll_key();
+            if key == -1 {
+                break;
+            }
+            if self.chat_modal_id != -1 {
+                continue;
+            }
+
+            if key >= 32
+                && (key <= 122 || (self.chat_input.starts_with("::") && key <= 126))
+                && self.chat_input.len() < 80
+            {
+                self.chat_input.push(char::from_u32(key as u32).unwrap());
+                self.redraw_chat = true;
+            }
+
+            if key == 8 && !self.chat_input.is_empty() {
+                self.chat_input.pop();
+                self.redraw_chat = true;
+            }
+
+            if (key == 13 || key == 10) && !self.chat_input.is_empty() {
+                if self.chat_input.starts_with("::") {
+                    self.out.p1_enc(ClientProt::CLIENT_CHEAT.id);
+                    self.out.p1((self.chat_input.len() - 2 + 1) as i32);
+                    self.out.pjstr(&self.chat_input[2..]);
+                } else {
+                    let mut text = self.chat_input.clone();
+                    let mut colour = 0;
+                    // TS 3097-3145 colour prefixes (sequential ifs, as TS).
+                    if text.starts_with("yellow:") {
+                        text = text[7..].to_string();
+                    }
+                    if text.starts_with("red:") {
+                        colour = 1;
+                        text = text[4..].to_string();
+                    }
+                    if text.starts_with("green:") {
+                        colour = 2;
+                        text = text[6..].to_string();
+                    }
+                    if text.starts_with("cyan:") {
+                        colour = 3;
+                        text = text[5..].to_string();
+                    }
+                    if text.starts_with("purple:") {
+                        colour = 4;
+                        text = text[7..].to_string();
+                    }
+                    if text.starts_with("white:") {
+                        colour = 5;
+                        text = text[6..].to_string();
+                    }
+                    if text.starts_with("flash1:") {
+                        colour = 6;
+                        text = text[7..].to_string();
+                    }
+                    if text.starts_with("flash2:") {
+                        colour = 7;
+                        text = text[7..].to_string();
+                    }
+                    if text.starts_with("flash3:") {
+                        colour = 8;
+                        text = text[7..].to_string();
+                    }
+                    if text.starts_with("glow1:") {
+                        colour = 9;
+                        text = text[6..].to_string();
+                    }
+                    if text.starts_with("glow2:") {
+                        colour = 10;
+                        text = text[6..].to_string();
+                    }
+                    if text.starts_with("glow3:") {
+                        colour = 11;
+                        text = text[6..].to_string();
+                    }
+                    // TS 3147-3155 effect prefixes.
+                    let mut effect = 0;
+                    if text.starts_with("wave:") {
+                        effect = 1;
+                        text = text[5..].to_string();
+                    }
+                    if text.starts_with("scroll:") {
+                        effect = 2;
+                        text = text[7..].to_string();
+                    }
+
+                    self.out.p1_enc(ClientProt::MESSAGE_PUBLIC.id);
+                    self.out.p1(0);
+                    let start = self.out.pos;
+                    self.out.p1(colour);
+                    self.out.p1(effect);
+                    // WordPack is not ported: pack the plain jstr.
+                    self.out.pjstr(&text);
+                    self.out.psize1((self.out.pos - start) as i32);
+
+                    // Echo the own message as TS 3169-3179 (the
+                    // toSentenceCase/WordFilter steps are not ported).
+                    if let Some(name) = self
+                        .local_player
+                        .as_ref()
+                        .and_then(|p| p.name.clone())
+                    {
+                        let sender = if self.staffmodlevel == 2 {
+                            format!("@cr2@{name}")
+                        } else if self.staffmodlevel == 1 {
+                            format!("@cr1@{name}")
+                        } else {
+                            name
+                        };
+                        self.add_chat(2, &text, &sender);
+                    }
+                }
+                self.chat_input.clear();
+                self.redraw_chat = true;
+            }
+        }
+    }
+
     /// `gameLoop` from Java (`Client.java` 9341): count down a pending
     /// logout request, read up to five TCP packets, the side-tab click
-    /// pass (TS `iconLoop`), the in-game silence watchdog
-    /// (`timeoutTimer > 750` → `lostCon`), then idle `NO_TIMEOUT` and
-    /// flush `out` through `ClientStream::write`. Write errors are
-    /// `lostCon` (Java `catch (IOException)`).
+    /// pass (TS `iconLoop`), the chat key pass (TS `handleInputKey`), the
+    /// in-game silence watchdog (`timeoutTimer > 750` → `lostCon`), then
+    /// idle `NO_TIMEOUT` and flush `out` through `ClientStream::write`.
+    /// Write errors are `lostCon` (Java `catch (IOException)`).
     pub fn game_loop(&mut self) {
         if self.logout_timer > 0 {
             self.logout_timer -= 1;
@@ -3214,6 +3400,7 @@ impl Client {
             return;
         }
         self.handle_tab_clicks();
+        self.handle_chat_input();
         self.timeout_timer += 1;
         if self.timeout_timer > 750 {
             self.lost_con();
