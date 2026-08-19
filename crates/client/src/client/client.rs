@@ -32,7 +32,7 @@ use crate::dash3d::{
     AnimFrame, BuildArea, CollisionFlag, CollisionMap, DirectionFlag, LocShape, Model, World,
 };
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
-use crate::graphics::{Pix3D, Pix32, Pix3DDraw, Pix8, PixFont, PixMap};
+use crate::graphics::{Colour, Pix2D, Pix3D, Pix32, Pix3DDraw, Pix8, PixFont, PixMap};
 use crate::io::{
     ClientProt, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt, SERVER_PROT_SIZES,
 };
@@ -135,6 +135,10 @@ pub struct Client {
     /// `Present::open`; headless bots keep it false.
     pub draw: bool,
     pub scene_state: i32,
+    /// `ClientBuild.minusedlevel` from client-ts (a TS static): the
+    /// `minusedlevel` the current scene was built for. `check_minimap`'s
+    /// low-memory rebuild compares it against `self.minusedlevel`.
+    pub build_minusedlevel: i32,
     pub local_player: Option<ClientPlayer>,
     pub players: Vec<Option<ClientPlayer>>,
     pub npc: Vec<Option<ClientNpc>>,
@@ -506,6 +510,7 @@ impl Client {
             ingame: false,
             draw: false,
             scene_state: 0,
+            build_minusedlevel: 0,
             local_player: None,
             players: vec![None; MAX_PLAYER_COUNT],
             npc: vec![None; MAX_NPC_COUNT],
@@ -2138,7 +2143,7 @@ impl Client {
                 self.scene_state = 1;
                 self.scene_load_start_time = Instant::now();
 
-                // the "Loading - please wait." splash draws are render-only
+                self.scene_loading_splash();
 
                 let start_x = (self.map_build_centre_zone_x - 6) / 8;
                 let end_x = (self.map_build_centre_zone_x + 6) / 8;
@@ -4038,6 +4043,277 @@ impl Client {
         }
     }
 
+    /// `sceneLoadingSplash` draws from client-ts (6832-6835, 5078-5081):
+    /// the "Loading - please wait." text centred at (256, 150) on
+    /// `area_game` (black at (257, 151) behind the white), then the (4, 4)
+    /// blit into `draw_area`. `area_game` is cls'd black first — with
+    /// fonts missing (`p12` is `None` without a title jag) the splash is
+    /// just the black surface; the blit is gated on the `draw` CPU-save
+    /// switch like the rest of the render.
+    fn scene_loading_splash(&mut self) {
+        if let Some(ag) = self.area_game.as_mut() {
+            ag.fill(Colour::BLACK);
+            let mut surface = Pix2D::with_pixels(&mut ag.pixels, ag.width, ag.height);
+            if let Some(p12) = self.p12.as_ref() {
+                p12.centre_string(&mut surface, Some("Loading - please wait."), 257, 151, Colour::BLACK);
+                p12.centre_string(&mut surface, Some("Loading - please wait."), 256, 150, Colour::WHITE);
+            }
+        }
+        if self.draw {
+            if let Some(ag) = &self.area_game {
+                ag.blit_into(&mut self.draw_area, 4, 4);
+            }
+        }
+    }
+
+    /// `checkMinimap` from client-ts (5076): a low-memory level change
+    /// re-enters the loading state (splash, `scene_state = 1`), then
+    /// `check_scene` drives the map build once the data is in. `minimap_level`
+    /// tracks the level the minimap buffer was built for.
+    fn check_minimap(&mut self) {
+        if self.config.lowmem
+            && self.scene_state == 2
+            && self.build_minusedlevel != self.minusedlevel
+        {
+            self.scene_loading_splash();
+            self.scene_state = 1;
+            self.scene_load_start_time = Instant::now();
+        }
+
+        if self.scene_state == 1 {
+            // TS logs a "glcfb" hang line when checkScene stalls past
+            // 360 s; the console write is not ported.
+            let _status = self.check_scene();
+        }
+
+        if self.scene_state == 2 && self.minusedlevel != self.minimap_level {
+            self.minimap_level = self.minusedlevel;
+            self.minimap_build_buffer(self.minusedlevel);
+        }
+    }
+
+    /// `checkScene` from client-ts (5101): waits on the requested map
+    /// squares, then builds the scene. Returns -1/-2 while ground/location
+    /// data is still loading, -3 when a loc's models are not all
+    /// available, -4 while player info is pending; on success sets
+    /// `scene_state = 2`, runs `map_build` and emits MAP_BUILD_COMPLETE.
+    pub fn check_scene(&mut self) -> i32 {
+        if self.map_build_index.is_empty()
+            || self.map_build_ground_data.is_empty()
+            || self.map_build_location_data.is_empty()
+        {
+            return -1000; // custom
+        }
+
+        for i in 0..self.map_build_ground_data.len() {
+            if self.map_build_ground_data[i].is_none() && self.map_build_ground_file[i] != -1 {
+                return -1;
+            }
+
+            if self.map_build_location_data[i].is_none() && self.map_build_location_file[i] != -1 {
+                return -2;
+            }
+        }
+
+        let mut ready = true;
+        let mut build = ClientBuild::new();
+        build.low_mem = self.config.lowmem;
+        for i in 0..self.map_build_ground_data.len() {
+            if let Some(data) = &self.map_build_location_data[i] {
+                let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
+                let z = (self.map_build_index[i] & 0xff) * 64 - self.map_build_base_z;
+                if !build.check_locations(&self.cache, data, x, z) {
+                    ready = false;
+                }
+            }
+        }
+
+        if !ready {
+            return -3;
+        } else if self.awaiting_player_info {
+            return -4;
+        }
+
+        self.scene_state = 2;
+        self.map_build();
+        self.out.p1_enc(ClientProt::MAP_BUILD_COMPLETE.id);
+        0
+    }
+
+    /// `mapBuild` from client-ts (5141): reset the scene grids, decode the
+    /// requested map squares (`load_ground`/`fade_adjacent`/`load_locations`),
+    /// run `finish_build`, then re-init the texture pool and prefetch the
+    /// edge map files. The `showObject`/`locChangePostBuildCorrect` passes
+    /// are slice-2 stubs; the TS entity/clear-cache lines around them are
+    /// not ported.
+    fn map_build(&mut self) {
+        self.minimap_level = -1;
+        self.world.reset_map();
+
+        for level in 0..BuildArea::LEVELS {
+            self.collision[level as usize].reset();
+        }
+
+        let mut build = ClientBuild::new();
+        build.low_mem = self.config.lowmem;
+
+        // underground pass check (TS 5163-5171): the Lumbridge caves square
+        // forces high detail.
+        for &index in &self.map_build_index {
+            let x = index >> 8;
+            let z = index & 0xff;
+            if x == 33 && (71..=73).contains(&z) {
+                build.low_mem = false;
+                break;
+            }
+        }
+
+        if build.low_mem {
+            self.world.fill_base_level(self.minusedlevel);
+        } else {
+            self.world.fill_base_level(0);
+        }
+
+        if !self.map_build_ground_data.is_empty() {
+            self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
+
+            for i in 0..self.map_build_ground_data.len() {
+                let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
+                let z = (self.map_build_index[i] & 0xff) * 64 - self.map_build_base_z;
+                if let Some(data) = &self.map_build_ground_data[i] {
+                    build.load_ground(
+                        &mut self.groundh,
+                        &mut self.mapl,
+                        data,
+                        (self.map_build_centre_zone_x - 6) * 8,
+                        (self.map_build_centre_zone_z - 6) * 8,
+                        x,
+                        z,
+                    );
+                }
+            }
+
+            // missing land squares fade into the neighbouring heights, but
+            // only outside the deep underground (TS 5187-5193).
+            for i in 0..self.map_build_ground_data.len() {
+                let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
+                let z = (self.map_build_index[i] & 0xff) * 64 - self.map_build_base_z;
+                if self.map_build_ground_data[i].is_none() && self.map_build_centre_zone_z < 800 {
+                    build.fade_adjacent(&mut self.groundh, z, x, 64, 64);
+                }
+            }
+        }
+
+        if !self.map_build_location_data.is_empty() {
+            self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
+
+            for i in 0..self.map_build_location_data.len() {
+                if let Some(data) = &self.map_build_location_data[i] {
+                    let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
+                    let z = (self.map_build_index[i] & 0xff) * 64 - self.map_build_base_z;
+                    build.load_locations(
+                        &self.cache,
+                        &mut self.world,
+                        &mut self.collision,
+                        &self.groundh,
+                        &self.mapl,
+                        data,
+                        x,
+                        z,
+                        self.loop_cycle,
+                    );
+                }
+            }
+        }
+
+        self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
+
+        build.finish_build(
+            &self.cache,
+            &mut self.pix3d,
+            &mut self.world,
+            &mut self.collision,
+            &self.groundh,
+            &self.mapl,
+        );
+
+        self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
+
+        for x in 0..BuildArea::SIZE {
+            for z in 0..BuildArea::SIZE {
+                self.show_object(x, z);
+            }
+        }
+
+        self.loc_change_post_build();
+        self.build_minusedlevel = self.minusedlevel;
+
+        // TS 5254-5261: low-memory model unload for models the render
+        // never uses (flags 0x79 = all render uses).
+        if self.config.lowmem && self.on_demand.is_some() {
+            let model_count = self.on_demand.as_ref().map(|od| od.get_file_count(0)).unwrap_or(0);
+            for i in 0..model_count {
+                let flags = self.on_demand.as_ref().map(|od| od.get_model_use(i)).unwrap_or(0);
+                if flags & 0x79 == 0 {
+                    Model::unload(i);
+                }
+            }
+        }
+
+        self.pix3d.init_pool(20);
+        if let Some(od) = self.on_demand.as_mut() {
+            od.clear_prefetches();
+        }
+
+        // TS 5264-5290: prefetch the map files one zone beyond the build
+        // area's edge (the tutorial island pins a fixed 2x2 window). The
+        // TS `| 0` truncations are identity on i32 here.
+        let mut left = ((self.map_build_centre_zone_x - 6) / 8) - 1;
+        let mut right = ((self.map_build_centre_zone_x + 6) / 8) + 1;
+        let mut bottom = ((self.map_build_centre_zone_z - 6) / 8) - 1;
+        let mut top = ((self.map_build_centre_zone_z + 6) / 8) + 1;
+
+        if self.within_tutorial_island {
+            left = 49;
+            right = 50;
+            bottom = 49;
+            top = 50;
+        }
+
+        if let Some(od) = self.on_demand.as_mut() {
+            for x in left..=right {
+                for z in bottom..=top {
+                    if left == x || right == x || bottom == z || top == z {
+                        let land = od.get_map_file(x, z, 0);
+                        if land != -1 {
+                            od.prefetch(3, land);
+                        }
+                        let loc = od.get_map_file(x, z, 1);
+                        if loc != -1 {
+                            od.prefetch(3, loc);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// `minimapBuildBuffer(level)` from client-ts (5280): compose the
+    /// minimap buffer from `mapl` and the ground colours. Slice 2 (Task 9).
+    fn minimap_build_buffer(&mut self, _level: i32) {}
+
+    /// `showObject(x, z)` from client-ts (7569): rebuild one tile's stacked
+    /// objects/animations after the scene build. Slice 2.
+    fn show_object(&mut self, _x: i32, _z: i32) {}
+
+    /// `locChangePostBuildCorrect()` from client-ts (7422): reconcile the
+    /// pending loc-change queue with the fresh scene. Slice 2.
+    fn loc_change_post_build(&mut self) {}
+
+    /// `locChangeDoQueue()` from client-ts (7465): step the loc-change
+    /// queue. Slice 2.
+    fn loc_change_do_queue(&mut self) {}
+
     /// `gameLoop` from Java (`Client.java` 9341): count down a pending
     /// logout request, read up to five TCP packets, the side-tab click
     /// pass (TS `iconLoop`), the side-interface button pass
@@ -4058,6 +4334,10 @@ impl Client {
         if !self.ingame {
             return;
         }
+        // TS 2191-2192: scene/minimap pass after the inbound reads, before
+        // the silence watchdog.
+        self.check_minimap();
+        self.loc_change_do_queue();
         self.handle_tab_clicks();
         self.handle_side_if_clicks();
         self.handle_chat_input();

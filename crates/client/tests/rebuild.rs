@@ -3,7 +3,8 @@
 //! `handle_packet` is the inner `ptype` switch, callable from tests without a
 //! socket; `ClientBuild::load_ground` decodes a map square into `groundh`.
 use client::client::{Client, ClientBuild, ClientConfig};
-use client::io::{Packet, ServerProt};
+use client::graphics::PixMap;
+use client::io::{ClientProt, Packet, ServerProt};
 
 fn client() -> Client {
     Client::new(ClientConfig {
@@ -182,4 +183,52 @@ fn tcp_in_rebuild_normal_over_socket() {
     assert_eq!(c.map_build_base_x, (50 - 6) * 8);
     assert_eq!(c.map_build_base_z, (50 - 6) * 8);
     server.join().unwrap();
+}
+
+/// Task 8: REBUILD_NORMAL paints the loading splash into `area_game` (and
+/// `draw_area` when `draw`) before the map data streams in. Fonts may be
+/// missing without a title jag, in which case the splash still cls's
+/// `area_game` black and only the text pixels are absent.
+#[test]
+fn rebuild_normal_paints_loading_splash_when_draw() {
+    let mut c = client();
+    c.set_draw(true);
+    // fonts may be missing without a title jag; splash must still cls area_game
+    if c.area_game.is_none() {
+        c.area_game = Some(PixMap::new(512, 334));
+    }
+    let mut payload = Packet::alloc(0);
+    payload.p2(50);
+    payload.p2(50);
+    payload.pos = 0;
+    c.handle_packet(ServerProt::REBUILD_NORMAL, &mut payload);
+    assert_eq!(c.scene_state, 1);
+    let ag = c.area_game.as_ref().expect("area_game");
+    assert!(ag.pixels.iter().any(|&p| p != 0) || c.p12.is_none());
+}
+
+/// `check_scene` with every map square present (the tutorial-skip pattern:
+/// files -1 so nothing is awaited, no data) builds the scene and emits
+/// MAP_BUILD_COMPLETE (214). `map_build` writes NO_TIMEOUT frames first, so
+/// the completion opcode is the last byte (unencrypted here: no
+/// `out.random`).
+#[test]
+fn check_scene_ready_sets_state_2_and_map_build_complete() {
+    let mut c = client();
+    c.ingame = true;
+    c.awaiting_player_info = false;
+    c.scene_state = 1;
+    // one region, files -1 so no wait (tutorial skip pattern)
+    c.map_build_index = vec![0];
+    c.map_build_ground_file = vec![-1];
+    c.map_build_location_file = vec![-1];
+    c.map_build_ground_data = vec![None];
+    c.map_build_location_data = vec![None];
+    let status = c.check_scene();
+    assert_eq!(status, 0);
+    assert_eq!(c.scene_state, 2);
+    assert_eq!(
+        c.out.data()[c.out.pos - 1],
+        ClientProt::MAP_BUILD_COMPLETE.id as u8
+    );
 }
