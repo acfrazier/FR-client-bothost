@@ -979,9 +979,14 @@ impl World {
     }
 
     /// `renderAll(eyeX, eyeY, eyeZ, maxLevel, eyeYaw, eyePitch)` from
-    /// client-ts, plus the config `Cache` and `loopCycle` the sprite model
-    /// sources need for `getTempModel()`. `pix.hclip` is set per face as TS
-    /// does (the Task 2 raster contract).
+    /// client-ts. The `cache` and `loop_cycle` parameters are required, not
+    /// optional: the TS `sprite.model?.worldRender(...)` chain calls
+    /// `ModelSource.worldRender` -> `getTempModel()`, which rebuilds
+    /// player/npc/loc-anim models from the config `Cache` and
+    /// `Client.loopCycle` during the pass (the brief's signature predates
+    /// the scene-graph `SceneModel` enum). Task 5's `game_draw_main` passes
+    /// `client.cache` and `client.loop_cycle`. `pix.hclip` is set per face
+    /// as TS does (the Task 2 raster contract).
     #[allow(clippy::too_many_arguments)]
     pub fn render_all(
         &mut self,
@@ -2243,17 +2248,31 @@ impl World {
 
             if ground.texture != -1 {
                 if !pix.low_mem {
-                    pix.texture_triangle(
-                        surface,
-                        py1, px3, pz0,
-                        pz1, py3, px1,
-                        ground.colour_ne, ground.colour_nw, ground.colour_se,
-                        x0, y0, z0,
-                        x1, x3,
-                        y1, y3,
-                        z1, z3,
-                        ground.texture,
-                    );
+                    if ground.flat {
+                        pix.texture_triangle(
+                            surface,
+                            py1, px3, pz0,
+                            pz1, py3, px1,
+                            ground.colour_ne, ground.colour_nw, ground.colour_se,
+                            x0, y0, z0,
+                            x1, x3,
+                            y1, y3,
+                            z1, z3,
+                            ground.texture,
+                        );
+                    } else {
+                        pix.texture_triangle(
+                            surface,
+                            py1, px3, pz0,
+                            pz1, py3, px1,
+                            ground.colour_ne, ground.colour_nw, ground.colour_se,
+                            x2, y2, z2,
+                            x3, x1,
+                            y3, y1,
+                            z3, z1,
+                            ground.texture,
+                        );
+                    }
                 } else {
                     let texture_average = TEXTURE_AVERAGE.get(ground.texture as usize).copied().unwrap_or(41);
                     pix.gouraud_triangle(
