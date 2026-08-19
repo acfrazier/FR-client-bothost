@@ -7,12 +7,25 @@
 // container `Send` (no `Rc<RefCell>`).
 
 /// Link state carried by every arena node (TS `Linkable` + `Linkable2`).
+#[derive(Clone)]
 pub struct Links {
     pub key: i64,
     pub(crate) next: Option<usize>,
     pub(crate) prev: Option<usize>,
     pub(crate) next2: Option<usize>,
     pub(crate) prev2: Option<usize>,
+}
+
+impl Links {
+    pub fn new(key: i64) -> Self {
+        Links {
+            key,
+            next: None,
+            prev: None,
+            next2: None,
+            prev2: None,
+        }
+    }
 }
 
 /// Node payloads usable by the datastruct containers.

@@ -133,4 +133,29 @@ impl SeqType {
             };
         }
     }
+
+    /// `getDelay(frame)` from client-ts. The TS memoises the resolved frame
+    /// delay into `this.delay[frame]`; this port recomputes (same result),
+    /// so it takes `&self`.
+    pub fn get_delay(&self, frame: i32) -> i32 {
+        let Some(delay) = self.delay.as_ref() else { return 0 };
+        let Some(frames) = self.frames.as_ref() else { return 0 };
+
+        let delay_value = if frame >= 0 && (frame as usize) < delay.len() {
+            delay[frame as usize]
+        } else {
+            1
+        };
+
+        if delay_value == 0 {
+            if let Some(&transform_id) = frames.get(frame.max(0) as usize) {
+                if let Some(transform) = crate::dash3d::AnimFrame::get(transform_id) {
+                    return transform.delay;
+                }
+            }
+            return 1;
+        }
+
+        delay_value
+    }
 }

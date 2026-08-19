@@ -1,7 +1,16 @@
-//! Port of `~/experiments/Server/webclient/src/datastruct/JString.ts`
-//! `toUserhash` (the only method the login handshake needs).
+//! Port of `~/experiments/Server/webclient/src/datastruct/JString.ts`:
+//! `toUserhash` (login handshake) plus the name decode used by
+//! `ClientPlayer.setAppearance`.
 
 pub struct JString;
+
+// prettier-ignore
+const USERHASH_CHAR: [char; 37] = [
+    '_',
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r',
+    's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+];
 
 impl JString {
     /// `JString.toUserhash`: hash a name into base-37, trimming and taking at
@@ -30,5 +39,53 @@ impl JString {
         }
 
         hash
+    }
+
+    /// `JString.toRawUsername(value)`: decode a base-37 user hash.
+    pub fn to_raw_username(value: i64) -> String {
+        // >= 37 to the 12th power
+        if value < 0 || value as u64 >= 6582952005840035281 {
+            return "invalid_name".into();
+        }
+
+        if value % 37 == 0 {
+            return "invalid_name".into();
+        }
+
+        let mut value = value as u64;
+        let mut len = 0usize;
+        let mut chars = ['_'; 12];
+        while value != 0 {
+            let l1 = value;
+            value /= 37;
+            let index = (l1 - value * 37) as usize;
+            chars[11 - len] = USERHASH_CHAR[index];
+            len += 1;
+        }
+
+        chars[12 - len..].iter().collect()
+    }
+
+    /// `JString.toScreenName(str)`: sentence-case a raw username.
+    pub fn to_screen_name(input: &str) -> String {
+        if input.is_empty() {
+            return input.to_string();
+        }
+
+        let mut chars: Vec<char> = input.chars().collect();
+        for i in 0..chars.len() {
+            if chars[i] == '_' {
+                chars[i] = ' ';
+                if i + 1 < chars.len() && chars[i + 1].is_ascii_lowercase() {
+                    chars[i + 1] = chars[i + 1].to_ascii_uppercase();
+                }
+            }
+        }
+
+        if chars[0].is_ascii_lowercase() {
+            chars[0] = chars[0].to_ascii_uppercase();
+        }
+
+        chars.into_iter().collect()
     }
 }

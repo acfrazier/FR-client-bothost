@@ -1,7 +1,17 @@
 // Port of `~/experiments/Server/webclient/src/config/ObjType.ts` (decode,
-// reset and `genCert` only; model/sprite methods need `dash3d`/`graphics` and
-// land with Tasks 14/15).
+// reset and `genCert`, plus the wear/head model methods; the sprite methods
+// need `graphics` and land with the render task).
+use std::sync::{Mutex, OnceLock};
+
+use crate::config::Cache;
+use crate::dash3d::Model;
+use crate::datastruct::LruCache;
 use crate::io::{JagFile, Packet};
+
+fn model_cache() -> &'static Mutex<LruCache<Model>> {
+    static CACHE: OnceLock<Mutex<LruCache<Model>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(LruCache::new(50)))
+}
 
 #[derive(Clone)]
 pub struct ObjType {
@@ -234,5 +244,179 @@ impl ObjType {
         self.desc = format!("Swap this note at any bank for {article} {}.", link.name);
 
         self.stackable = true;
+    }
+
+    /// `getModelLit(count)` from client-ts.
+    pub fn get_model_lit(&self, cache: &Cache, count: i32) -> Option<Model> {
+        if let (Some(countobj), Some(countco)) = (&self.countobj, &self.countco) {
+            if count > 1 {
+                let mut id = -1;
+                for i in 0..10 {
+                    if count >= countco[i] as i32 && countco[i] != 0 {
+                        id = countobj[i] as i32;
+                    }
+                }
+                if id != -1 {
+                    return cache.obj(id as usize).get_model_lit(cache, 1);
+                }
+            }
+        }
+
+        {
+            let mut cache = model_cache().lock().unwrap();
+            if let Some(model) = cache.find(self.id as i64) {
+                return Some(model.clone());
+            }
+        }
+
+        let mut model = Model::load(self.model)?;
+
+        if self.resizex != 128 || self.resizey != 128 || self.resizez != 128 {
+            model.resize(self.resizex, self.resizey, self.resizez);
+        }
+
+        if let (Some(rs), Some(rd)) = (&self.recol_s, &self.recol_d) {
+            for i in 0..rs.len() {
+                model.recolour(rs[i] as i32, rd[i] as i32);
+            }
+        }
+
+        model.calculate_normals(self.ambient + 64, self.contrast + 768, -50, -10, -50, true);
+        model.use_aabb_mouse_check = true;
+
+        model_cache().lock().unwrap().put(model.clone(), self.id as i64);
+        Some(model)
+    }
+
+    /// `checkWearModel(gender)` from client-ts.
+    pub fn check_wear_model(&self, gender: i32) -> bool {
+        let mut wear = self.manwear;
+        let mut wear2 = self.manwear2;
+        let mut wear3 = self.manwear3;
+        if gender == 1 {
+            wear = self.womanwear;
+            wear2 = self.womanwear2;
+            wear3 = self.womanwear3;
+        }
+
+        if wear == -1 {
+            return true;
+        }
+
+        let mut ready = true;
+        if !Model::request_download(wear) {
+            ready = false;
+        }
+        if wear2 != -1 && !Model::request_download(wear2) {
+            ready = false;
+        }
+        if wear3 != -1 && !Model::request_download(wear3) {
+            ready = false;
+        }
+        ready
+    }
+
+    /// `getWearModelNoCheck(gender)` from client-ts.
+    pub fn get_wear_model_no_check(&self, gender: i32) -> Option<Model> {
+        let mut id1 = self.manwear;
+        if gender == 1 {
+            id1 = self.womanwear;
+        }
+
+        if id1 == -1 {
+            return None;
+        }
+
+        let mut id2 = self.manwear2;
+        let mut id3 = self.manwear3;
+        if gender == 1 {
+            id2 = self.womanwear2;
+            id3 = self.womanwear3;
+        }
+
+        let mut model = Model::load(id1)?;
+
+        if id2 != -1 {
+            let model2 = Model::load(id2)?;
+
+            if id3 == -1 {
+                let models = [Some(model), Some(model2)];
+                model = Model::combine_for_anim(&models, 2);
+            } else {
+                let model3 = Model::load(id3)?;
+                let models = [Some(model), Some(model2), Some(model3)];
+                model = Model::combine_for_anim(&models, 3);
+            }
+        }
+
+        if gender == 0 && self.manwear_offset != 0 {
+            model.translate(self.manwear_offset, 0, 0);
+        } else if gender == 1 && self.womanwear_offset != 0 {
+            model.translate(self.womanwear_offset, 0, 0);
+        }
+
+        if let (Some(rs), Some(rd)) = (&self.recol_s, &self.recol_d) {
+            for i in 0..rs.len() {
+                model.recolour(rs[i] as i32, rd[i] as i32);
+            }
+        }
+
+        Some(model)
+    }
+
+    /// `checkHeadModel(gender)` from client-ts.
+    pub fn check_head_model(&self, gender: i32) -> bool {
+        let mut head = self.manhead;
+        let mut head2 = self.manhead2;
+        if gender == 1 {
+            head = self.womanhead;
+            head2 = self.womanhead2;
+        }
+
+        if head == -1 {
+            return true;
+        }
+
+        let mut ready = true;
+        if !Model::request_download(head) {
+            ready = false;
+        }
+        if head2 != -1 && !Model::request_download(head2) {
+            ready = false;
+        }
+        ready
+    }
+
+    /// `getHeadModelNoCheck(gender)` from client-ts.
+    pub fn get_head_model_no_check(&self, gender: i32) -> Option<Model> {
+        let mut head1 = self.manhead;
+        if gender == 1 {
+            head1 = self.womanhead;
+        }
+
+        if head1 == -1 {
+            return None;
+        }
+
+        let mut head2 = self.manhead2;
+        if gender == 1 {
+            head2 = self.womanhead2;
+        }
+
+        let mut model = Model::load(head1)?;
+
+        if head2 != -1 {
+            let model2 = Model::load(head2)?;
+            let models = [Some(model), Some(model2)];
+            model = Model::combine_for_anim(&models, 2);
+        }
+
+        if let (Some(rs), Some(rd)) = (&self.recol_s, &self.recol_d) {
+            for i in 0..rs.len() {
+                model.recolour(rs[i] as i32, rd[i] as i32);
+            }
+        }
+
+        Some(model)
     }
 }

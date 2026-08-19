@@ -1,6 +1,6 @@
 // doAction/tryMove encode: menu arrays → MOVE_GAMECLICK / OPNPC2 through
 // Packet::p1_enc with the client's outbound Isaac.
-use client::client::{Client, ClientConfig, ClientPlayer, MiniMenuAction};
+use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer, MiniMenuAction};
 use client::io::{ClientProt, Isaac};
 
 fn client() -> Client {
@@ -43,11 +43,22 @@ fn op_npc2_writes_opnpc2() {
     c.out.random = Some(Isaac::new(&[1, 2, 3, 4]));
     c.menu_action[0] = MiniMenuAction::OP_NPC2;
     c.menu_param_a[0] = 42; // npc index
+    // the OP_NPC branches guard on the scene entity and walk to it first:
+    // both stand on (5,5), so the walk is a zero-step MOVE_OPCLICK
+    c.local_player = Some(ClientPlayer::at(5, 5));
+    c.npc[42] = Some(ClientNpc::at(5, 5));
     c.doAction(0);
-    let enc = (ClientProt::OPNPC2.id.wrapping_add(-621246914)) as u8;
-    assert_eq!(enc, 39);
-    assert_eq!(c.out.data()[..3], [enc, 0, 42]);
-    assert_eq!(c.out.pos, 3);
+    // MOVE_OPCLICK id 138: (138 + -621246914) & 0xff
+    let walk_enc = (ClientProt::MOVE_OPCLICK.id.wrapping_add(-621246914)) as u8;
+    assert_eq!(walk_enc, 200);
+    // size 5 (2*1+3), ctrl 0, single absolute tile (5,5), no steps
+    assert_eq!(&c.out.data()[..7], &[walk_enc, 5, 0, 0, 5, 0, 5]);
+    // then the action itself: OPNPC2 id 233 encoded with the *second* Isaac
+    // value (the walk consumed the first): (233 + 1957022519) & 0xff
+    let enc = (ClientProt::OPNPC2.id.wrapping_add(1957022519)) as u8;
+    assert_eq!(enc, 32);
+    assert_eq!(&c.out.data()[7..10], [enc, 0, 42]);
+    assert_eq!(c.out.pos, 10);
 }
 
 #[test]

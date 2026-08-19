@@ -1,4 +1,6 @@
-// Port of `~/experiments/Server/webclient/src/config/IdkType.ts`.
+// Port of `~/experiments/Server/webclient/src/config/IdkType.ts` plus the
+// model methods (Task 15; they consume the `dash3d` `Model` loader).
+use crate::dash3d::Model;
 use crate::io::{JagFile, Packet};
 
 pub struct IdkType {
@@ -62,5 +64,71 @@ impl IdkType {
                 _ => eprintln!("Error unrecognised idk config code: {code}"),
             }
         }
+    }
+
+    /// `checkModel()` from client-ts.
+    pub fn check_model(&self) -> bool {
+        let Some(model) = &self.model else { return true };
+
+        let mut ready = true;
+        for &m in model {
+            if !Model::request_download(m) {
+                ready = false;
+            }
+        }
+        ready
+    }
+
+    /// `getModelNoCheck()` from client-ts.
+    pub fn get_model_no_check(&self) -> Option<Model> {
+        let models = self.model.as_ref()?;
+
+        let mut loaded: Vec<Option<Model>> = Vec::with_capacity(models.len());
+        for &m in models {
+            loaded.push(Model::load(m));
+        }
+
+        let model = if models.len() == 1 {
+            loaded.into_iter().next().flatten()
+        } else {
+            Some(Model::combine_for_anim(&loaded, loaded.len()))
+        };
+
+        let mut model = model?;
+        for i in 0..6 {
+            if self.recol_s[i] != 0 {
+                model.recolour(self.recol_s[i], self.recol_d[i]);
+            }
+        }
+        Some(model)
+    }
+
+    /// `checkHead()` from client-ts.
+    pub fn check_head(&self) -> bool {
+        let mut ready = true;
+        for &h in &self.head {
+            if h != -1 && !Model::request_download(h) {
+                ready = false;
+            }
+        }
+        ready
+    }
+
+    /// `getHeadNoCheck()` from client-ts.
+    pub fn get_head_no_check(&self) -> Option<Model> {
+        let mut models: Vec<Option<Model>> = Vec::new();
+        for &h in &self.head {
+            if h != -1 {
+                models.push(Model::load(h));
+            }
+        }
+
+        let mut model = Model::combine_for_anim(&models, models.len());
+        for i in 0..6 {
+            if self.recol_s[i] != 0 {
+                model.recolour(self.recol_s[i], self.recol_d[i]);
+            }
+        }
+        Some(model)
     }
 }

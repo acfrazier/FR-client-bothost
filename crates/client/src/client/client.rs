@@ -19,6 +19,9 @@ use crate::client::login_error::LoginError;
 use crate::client::mini_menu_action::MiniMenuAction;
 use crate::client::skill::Skill;
 use crate::config::Cache;
+use crate::dash3d::world::LevelHeightmaps;
+use crate::dash3d::{BuildArea, CollisionFlag, CollisionMap, DirectionFlag, LocShape, World};
+pub use crate::dash3d::{ClientNpc, ClientPlayer};
 use crate::io::{ClientProt, ClientStream, Isaac, Packet};
 use crate::login_rsa::{LOGIN_RSAE, LOGIN_RSAN};
 use crate::util::JString;
@@ -34,38 +37,11 @@ const BUILD_AREA_SIZE: i32 = 104;
 const BUILD_AREA_TILES: usize = (BUILD_AREA_SIZE * BUILD_AREA_SIZE) as usize;
 const ROUTE_BUFFER: usize = 4000;
 
-// `dash3d/DirectionFlag.ts`; moves to dash3d with Task 15.
-const DIR_NORTH: i32 = 0x1;
-const DIR_EAST: i32 = 0x2;
-const DIR_SOUTH: i32 = 0x4;
-const DIR_WEST: i32 = 0x8;
-
 /// JAG archives whose CRC values go out in the login wrapper; slot 0 of the
 /// 9-slot `getJagChecksums` layout has no pack file and stays 0.
 const JAG_FILES: [&str; 8] = [
     "title", "config", "interface", "media", "versionlist", "textures", "wordenc", "sounds",
 ];
-
-/// Placeholder for the dash3d entity; replaced when `ClientPlayer` is ported.
-/// Carries the walk route arrays (`routeX`/`routeZ` in client-ts) so
-/// `tryMove`/`doAction` can run headless; only index 0 (the current tile) is
-/// read by this task.
-#[derive(Clone)]
-pub struct ClientPlayer {
-    pub route_x: Vec<i32>,
-    pub route_z: Vec<i32>,
-}
-
-impl ClientPlayer {
-    /// Dummy local player standing on the given tile, for headless tests.
-    pub fn at(x: i32, z: i32) -> Self {
-        ClientPlayer { route_x: vec![x], route_z: vec![z] }
-    }
-}
-
-/// Placeholder for the dash3d entity; replaced when `ClientNpc` is ported.
-#[derive(Clone)]
-pub struct ClientNpc;
 
 pub struct Client {
     pub shell: GameShell,
@@ -79,6 +55,15 @@ pub struct Client {
     pub local_player: Option<ClientPlayer>,
     pub players: Vec<Option<ClientPlayer>>,
     pub npc: Vec<Option<ClientNpc>>,
+
+    /// Scene height map, `groundh[level][x][z]` sized `[4][105][105]`; owned
+    /// here and copied into `world` (Task 16's `ClientBuild` owns the write
+    /// side and will reconcile the sharing).
+    pub groundh: LevelHeightmaps,
+    pub world: World,
+    /// One collision grid per level, `CollisionMap` for the 4 build levels.
+    pub collision: [CollisionMap; 4],
+    pub minusedlevel: i32,
 
     pub stat_base_level: Vec<i32>,
     pub stat_effective_level: Vec<i32>,
@@ -134,6 +119,10 @@ pub struct Client {
 impl Client {
     pub fn new(config: ClientConfig) -> Self {
         let jag_checksum = Self::read_jag_checksums(&config.cache_dir);
+        let groundh: LevelHeightmaps = vec![
+            vec![vec![0i32; (BUILD_AREA_SIZE + 1) as usize]; (BUILD_AREA_SIZE + 1) as usize];
+            BuildArea::LEVELS as usize
+        ];
         Client {
             shell: GameShell::new(),
             config,
@@ -144,6 +133,21 @@ impl Client {
             local_player: None,
             players: vec![None; MAX_PLAYER_COUNT],
             npc: vec![None; MAX_NPC_COUNT],
+
+            groundh: groundh.clone(),
+            world: World::new(
+                groundh,
+                BuildArea::SIZE,
+                BuildArea::LEVELS,
+                BuildArea::SIZE,
+            ),
+            collision: [
+                CollisionMap::new(),
+                CollisionMap::new(),
+                CollisionMap::new(),
+                CollisionMap::new(),
+            ],
+            minusedlevel: 0,
 
             stat_base_level: vec![0; Skill::count],
             stat_effective_level: vec![0; Skill::count],
@@ -408,20 +412,27 @@ impl Client {
             || action == MiniMenuAction::OP_NPC4
             || action == MiniMenuAction::OP_NPC5
         {
-            // The original guards on the NPC entity (and walks to its tile
-            // first); the scene NPCs land with Task 15, so the encode runs
-            // from the menu arrays alone here.
-            // TODO(task 15): re-add the `npc[a] && localPlayer` guard and the
-            // tryMove-to-NPC walk when scene NPCs land, or the guard is lost.
-            let opcode = match action {
-                MiniMenuAction::OP_NPC1 => ClientProt::OPNPC1.id,
-                MiniMenuAction::OP_NPC2 => ClientProt::OPNPC2.id,
-                MiniMenuAction::OP_NPC3 => ClientProt::OPNPC3.id,
-                MiniMenuAction::OP_NPC4 => ClientProt::OPNPC4.id,
-                _ => ClientProt::OPNPC5.id,
-            };
-            self.out.p1_enc(opcode);
-            self.out.p2(a);
+            // The original guards on the NPC entity and walks to its tile
+            // first (MOVE_OPCLICK), then encodes the action opcode.
+            let npc_route =
+                self.npc.get(a as usize).and_then(|n| n.as_ref()).map(|n| (n.route_x[0], n.route_z[0]));
+            let local_route = self
+                .local_player
+                .as_ref()
+                .map(|p| (p.route_x[0], p.route_z[0]));
+            if let (Some((npc_x, npc_z)), Some((px, pz))) = (npc_route, local_route) {
+                self.tryMove(px, pz, npc_x, npc_z, false, 1, 1, 0, 0, 0, 2);
+
+                let opcode = match action {
+                    MiniMenuAction::OP_NPC1 => ClientProt::OPNPC1.id,
+                    MiniMenuAction::OP_NPC2 => ClientProt::OPNPC2.id,
+                    MiniMenuAction::OP_NPC3 => ClientProt::OPNPC3.id,
+                    MiniMenuAction::OP_NPC4 => ClientProt::OPNPC4.id,
+                    _ => ClientProt::OPNPC5.id,
+                };
+                self.out.p1_enc(opcode);
+                self.out.p2(a);
+            }
         }
 
         if action == MiniMenuAction::TGT_NPC {
@@ -456,9 +467,10 @@ impl Client {
         self.redraw_side = true;
     }
 
-    /// Walk-path encode, port of client-ts `Client.ts` `tryMove` (5608-5869).
-    /// Headless until Task 15: the collision grid is all-open (an empty
-    /// world), so the BFS walks any in-bounds destination and writes the
+    /// Walk-path encode, port of client-ts `Client.ts` `tryMove` (5608-5869)
+    /// against `collision[minusedlevel]`: the BFS honours the `CollisionMap`
+    /// flags and the loc-shape / loc-width arrival shortcuts
+    /// (`testWall`/`testWDecor`/`testLoc`), then writes the
     /// MOVE_GAMECLICK / MOVE_MINIMAPCLICK / MOVE_OPCLICK packet as the
     /// original. `r#type` matches the TS `type` parameter (0 walk, 1 minimap,
     /// 2 op).
@@ -471,15 +483,16 @@ impl Client {
         dx: i32,
         dz: i32,
         try_nearest: bool,
-        _loc_width: i32,
-        _loc_length: i32,
-        _loc_angle: i32,
-        _loc_shape: i32,
-        _forceapproach: i32,
+        loc_width: i32,
+        loc_length: i32,
+        loc_angle: i32,
+        loc_shape: i32,
+        forceapproach: i32,
         r#type: i32,
     ) -> bool {
-        let scene_width = BUILD_AREA_SIZE;
-        let scene_length = BUILD_AREA_SIZE;
+        let collision_map = &self.collision[self.minusedlevel as usize];
+        let scene_width = BuildArea::SIZE;
+        let scene_length = BuildArea::SIZE;
 
         for x in 0..scene_width {
             for z in 0..scene_length {
@@ -503,6 +516,7 @@ impl Client {
 
         let mut arrived = false;
         let buffer_size = self.route_x.len();
+        let flags = &collision_map.flags;
 
         while length != steps {
             x = self.route_x[length];
@@ -514,16 +528,39 @@ impl Client {
                 break;
             }
 
-            // The loc-shape / loc-width arrival shortcuts use the collision
-            // map (testWall/testWDecor/testLoc) and land with Task 15; the
-            // empty grid has no walls or scenery to arrive at early.
+            if loc_shape != LocShape::WALL_STRAIGHT {
+                if (loc_shape < LocShape::WALLDECOR_STRAIGHT_OFFSET
+                    || loc_shape == LocShape::CENTREPIECE_STRAIGHT)
+                    && collision_map.test_wall(x, z, dx, dz, loc_shape - 1, loc_angle)
+                {
+                    arrived = true;
+                    break;
+                }
+
+                if loc_shape < LocShape::CENTREPIECE_STRAIGHT
+                    && collision_map.test_w_decor(x, z, dx, dz, loc_shape - 1, loc_angle)
+                {
+                    arrived = true;
+                    break;
+                }
+            }
+
+            if loc_width != 0
+                && loc_length != 0
+                && collision_map.test_loc(x, z, dx, dz, loc_width, loc_length, forceapproach)
+            {
+                arrived = true;
+                break;
+            }
+
             let next_cost = self.dist_map[Self::collision_index(x, z)] + 1;
 
-            // flags are all-open in the empty grid (Task 15 reads them from
-            // the CollisionMap): PL_WALK_* checks are always satisfied.
             if x > 0 {
                 let index = Self::collision_index(x - 1, z);
-                if self.dir_map[index] == 0 {
+                if self.dir_map[index] == 0
+                    && (flags[x as usize - 1][z as usize] & CollisionFlag::PL_WALK_E)
+                        == CollisionFlag::_OPEN
+                {
                     self.route_x[steps] = x - 1;
                     self.route_z[steps] = z;
                     steps = (steps + 1) % buffer_size;
@@ -534,7 +571,10 @@ impl Client {
 
             if x < scene_width - 1 {
                 let index = Self::collision_index(x + 1, z);
-                if self.dir_map[index] == 0 {
+                if self.dir_map[index] == 0
+                    && (flags[x as usize + 1][z as usize] & CollisionFlag::PL_WALK_W)
+                        == CollisionFlag::_OPEN
+                {
                     self.route_x[steps] = x + 1;
                     self.route_z[steps] = z;
                     steps = (steps + 1) % buffer_size;
@@ -545,7 +585,10 @@ impl Client {
 
             if z > 0 {
                 let index = Self::collision_index(x, z - 1);
-                if self.dir_map[index] == 0 {
+                if self.dir_map[index] == 0
+                    && (flags[x as usize][z as usize - 1] & CollisionFlag::PL_WALK_N)
+                        == CollisionFlag::_OPEN
+                {
                     self.route_x[steps] = x;
                     self.route_z[steps] = z - 1;
                     steps = (steps + 1) % buffer_size;
@@ -556,7 +599,10 @@ impl Client {
 
             if z < scene_length - 1 {
                 let index = Self::collision_index(x, z + 1);
-                if self.dir_map[index] == 0 {
+                if self.dir_map[index] == 0
+                    && (flags[x as usize][z as usize + 1] & CollisionFlag::PL_WALK_S)
+                        == CollisionFlag::_OPEN
+                {
                     self.route_x[steps] = x;
                     self.route_z[steps] = z + 1;
                     steps = (steps + 1) % buffer_size;
@@ -567,7 +613,13 @@ impl Client {
 
             if x > 0 && z > 0 {
                 let index = Self::collision_index(x - 1, z - 1);
-                if self.dir_map[index] == 0 {
+                if self.dir_map[index] == 0
+                    && (flags[x as usize - 1][z as usize - 1] & CollisionFlag::PL_WALK_NE) == 0
+                    && (flags[x as usize - 1][z as usize] & CollisionFlag::PL_WALK_E)
+                        == CollisionFlag::_OPEN
+                    && (flags[x as usize][z as usize - 1] & CollisionFlag::PL_WALK_N)
+                        == CollisionFlag::_OPEN
+                {
                     self.route_x[steps] = x - 1;
                     self.route_z[steps] = z - 1;
                     steps = (steps + 1) % buffer_size;
@@ -578,7 +630,13 @@ impl Client {
 
             if x < scene_width - 1 && z > 0 {
                 let index = Self::collision_index(x + 1, z - 1);
-                if self.dir_map[index] == 0 {
+                if self.dir_map[index] == 0
+                    && (flags[x as usize + 1][z as usize - 1] & CollisionFlag::PL_WALK_NW) == 0
+                    && (flags[x as usize + 1][z as usize] & CollisionFlag::PL_WALK_W)
+                        == CollisionFlag::_OPEN
+                    && (flags[x as usize][z as usize - 1] & CollisionFlag::PL_WALK_N)
+                        == CollisionFlag::_OPEN
+                {
                     self.route_x[steps] = x + 1;
                     self.route_z[steps] = z - 1;
                     steps = (steps + 1) % buffer_size;
@@ -589,7 +647,13 @@ impl Client {
 
             if x > 0 && z < scene_length - 1 {
                 let index = Self::collision_index(x - 1, z + 1);
-                if self.dir_map[index] == 0 {
+                if self.dir_map[index] == 0
+                    && (flags[x as usize - 1][z as usize + 1] & CollisionFlag::PL_WALK_SE) == 0
+                    && (flags[x as usize - 1][z as usize] & CollisionFlag::PL_WALK_E)
+                        == CollisionFlag::_OPEN
+                    && (flags[x as usize][z as usize + 1] & CollisionFlag::PL_WALK_S)
+                        == CollisionFlag::_OPEN
+                {
                     self.route_x[steps] = x - 1;
                     self.route_z[steps] = z + 1;
                     steps = (steps + 1) % buffer_size;
@@ -600,7 +664,13 @@ impl Client {
 
             if x < scene_width - 1 && z < scene_length - 1 {
                 let index = Self::collision_index(x + 1, z + 1);
-                if self.dir_map[index] == 0 {
+                if self.dir_map[index] == 0
+                    && (flags[x as usize + 1][z as usize + 1] & CollisionFlag::PL_WALK_SW) == 0
+                    && (flags[x as usize + 1][z as usize] & CollisionFlag::PL_WALK_W)
+                        == CollisionFlag::_OPEN
+                    && (flags[x as usize][z as usize + 1] & CollisionFlag::PL_WALK_S)
+                        == CollisionFlag::_OPEN
+                {
                     self.route_x[steps] = x + 1;
                     self.route_z[steps] = z + 1;
                     steps = (steps + 1) % buffer_size;
@@ -656,15 +726,15 @@ impl Client {
                 length += 1;
             }
 
-            if next & DIR_EAST != 0 {
+            if next & DirectionFlag::EAST != 0 {
                 x += 1;
-            } else if next & DIR_WEST != 0 {
+            } else if next & DirectionFlag::WEST != 0 {
                 x -= 1;
             }
 
-            if next & DIR_NORTH != 0 {
+            if next & DirectionFlag::NORTH != 0 {
                 z += 1;
-            } else if next & DIR_SOUTH != 0 {
+            } else if next & DirectionFlag::SOUTH != 0 {
                 z -= 1;
             }
 

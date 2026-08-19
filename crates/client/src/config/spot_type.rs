@@ -1,7 +1,16 @@
 // Port of `~/experiments/Server/webclient/src/config/SpotType.ts`. `seq` is
 // resolved by `Cache::unpack` once the seq table is loaded (TS links it in
 // `init` when `SeqType.list` exists).
+use std::sync::{Mutex, OnceLock};
+
+use crate::dash3d::Model;
+use crate::datastruct::LruCache;
 use crate::io::{JagFile, Packet};
+
+fn model_cache() -> &'static Mutex<LruCache<Model>> {
+    static CACHE: OnceLock<Mutex<LruCache<Model>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(LruCache::new(30)))
+}
 
 pub struct SpotType {
     pub id: i32,
@@ -70,5 +79,26 @@ impl SpotType {
                 _ => eprintln!("Error unrecognised spotanim config code: {code}"),
             }
         }
+    }
+
+    /// `getTempModel2()` from client-ts.
+    pub fn get_temp_model2(&self, _cache: &crate::config::Cache) -> Option<Model> {
+        {
+            let mut cache = model_cache().lock().unwrap();
+            if let Some(model) = cache.find(self.id as i64) {
+                return Some(model.clone());
+            }
+        }
+
+        let mut model = Model::load(self.model)?;
+
+        for i in 0..6 {
+            if self.recol_s[0] != 0 {
+                model.recolour(self.recol_s[i] as i32, self.recol_d[i] as i32);
+            }
+        }
+
+        model_cache().lock().unwrap().put(model.clone(), self.id as i64);
+        Some(model)
     }
 }

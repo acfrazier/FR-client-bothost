@@ -2,7 +2,17 @@
 // `unpack` replaces the lazy `init` + `list(id)` ring buffer: `npc.idx`
 // offsets the entries concatenated in `npc.dat` (both files lead with a g2
 // count, so entry `id` starts at `2 + sum(idx[0..id])`).
+use std::sync::{Mutex, OnceLock};
+
+use crate::config::Cache;
+use crate::dash3d::{AnimFrame, Model};
+use crate::datastruct::LruCache;
 use crate::io::{JagFile, Packet};
+
+fn model_cache() -> &'static Mutex<LruCache<Model>> {
+    static CACHE: OnceLock<Mutex<LruCache<Model>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(LruCache::new(30)))
+}
 
 pub struct NpcType {
     pub id: i32,
@@ -156,5 +166,89 @@ impl NpcType {
                 _ => eprintln!("Error unrecognised npc config code: {code}"),
             }
         }
+    }
+
+    /// `getTempModel(primaryTransformId, secondaryTransformId, seqMask)`
+    /// from client-ts.
+    pub fn get_temp_model(
+        &self,
+        _cache: &Cache,
+        primary_transform_id: i32,
+        secondary_transform_id: i32,
+        seq_mask: Option<&[i32]>,
+    ) -> Option<Model> {
+        let base = {
+            let mut model_cache = model_cache().lock().unwrap();
+            model_cache.find(self.id as i64).map(|m| m.clone())
+        };
+
+        let base = match base {
+            Some(model) => Some(model),
+            None => {
+                let models = self.model.as_ref()?;
+                let mut ready = false;
+                for &m in models {
+                    if !Model::request_download(m) {
+                        ready = true;
+                    }
+                }
+                if ready {
+                    return None;
+                }
+
+                let mut loaded: Vec<Option<Model>> = Vec::with_capacity(models.len());
+                for &m in models {
+                    loaded.push(Model::load(m));
+                }
+
+                let mut model = if models.len() == 1 {
+                    loaded.into_iter().next().flatten()
+                } else {
+                    Some(Model::combine_for_anim(&loaded, loaded.len()))
+                };
+
+                if let Some(model) = model.as_mut() {
+                    if let (Some(rs), Some(rd)) = (&self.recol_s, &self.recol_d) {
+                        for i in 0..rs.len() {
+                            model.recolour(rs[i] as i32, rd[i] as i32);
+                        }
+                    }
+
+                    model.prepare_anim();
+                    model.calculate_normals(64, 850, -30, -50, -30, true);
+                    model_cache().lock().unwrap().put(model.clone(), self.id as i64);
+                }
+                model
+            }
+        };
+
+        let base = base?;
+
+        let mut tmp = Model::temp_model();
+        tmp.set(
+            &base,
+            AnimFrame::animate_transparencies(primary_transform_id)
+                && AnimFrame::animate_transparencies(secondary_transform_id),
+        );
+
+        if primary_transform_id != -1 && secondary_transform_id != -1 {
+            tmp.mask_animate(primary_transform_id, secondary_transform_id, seq_mask);
+        } else if primary_transform_id != -1 {
+            tmp.animate(primary_transform_id);
+        }
+
+        if self.resizeh != 128 || self.resizev != 128 {
+            tmp.resize(self.resizeh, self.resizev, self.resizeh);
+        }
+
+        tmp.calc_bounding_cylinder();
+        tmp.label_faces = None;
+        tmp.label_vertices = None;
+
+        if self.size == 1 {
+            tmp.use_aabb_mouse_check = true;
+        }
+
+        Some(tmp)
     }
 }
