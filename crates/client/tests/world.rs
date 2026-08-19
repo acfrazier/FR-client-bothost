@@ -148,6 +148,43 @@ fn render_all_renders_scenery_sprites() {
     assert!(map.pixels.iter().any(|&p| p != 0));
 }
 
+/// The `Client.ts` loadGame 1225-1233 camera distance table (`resetVisCalc`'s
+/// `pitchDistance` argument).
+fn game_distance_table() -> [i32; 9] {
+    let mut distance = [0i32; 9];
+    for (x, slot) in distance.iter_mut().enumerate() {
+        let angle = x as i32 * 32 + 128 + 15;
+        let offset = angle * 3 + 600;
+        let sin = Pix3D::sin_table()[angle as usize];
+        *slot = (offset * sin) >> 16;
+    }
+    distance
+}
+
+/// `resetVisCalc` populates `visBacking`; without it every tile in the 51×51
+/// camera window fails the visibility test (Task 4's report). The orbit
+/// camera at pitch 128 (looking up 22.5°) sits below the ground plane, so
+/// `ground_h - eyeY = 50` never fires the `>= 2000` gate — tile (1,2)
+/// renders only because `resetVisCalc` marked it visible.
+#[test]
+fn reset_vis_calc_marks_near_tiles_visible() {
+    Pix3D::init_colour_table(0.6);
+    let mut world = flat_world();
+    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+
+    let mut pix = Pix3DDraw::default();
+    let mut map = PixMap::new(512, 334);
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        viewport(&mut pix, &mut surface);
+        world.render_all(&mut pix, &mut surface, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
+    }
+    assert!(
+        map.pixels.iter().any(|&p| p != 0),
+        "resetVisCalc must mark near tiles visible so render_all draws them"
+    );
+}
+
 /// A 64×64 checkerboard texture (palette indices 1/2 in 32×32 blocks) so
 /// the textured quick-ground path samples visibly different texels for the
 /// TS flat vs non-flat texture-corner branches.

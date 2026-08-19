@@ -1,14 +1,15 @@
 //! Frame draw (Tasks 4/5: title, then in-game). 1:1 port of `Client.ts`
 //! `prepareTitle`, `loadTitleBackground`, `loadTitleImages`, `TitleFlames`,
-//! `titleScreenDraw` (1489–1694), and `gameDraw` with its `prepareGame`/
-//! `drawSide`/`drawChat` helpers (3890–4170, 2001, 11098, 11125). Draws
-//! always into `Client::draw_area` (765×503 `PixMap`); present (feature
-//! `window`) only blits.
+//! `titleScreenDraw` (1489–1694), `gameDraw` with its `prepareGame`/
+//! `drawSide`/`drawChat` helpers (3890–4170, 2001, 11098, 11125), and the
+//! `gameDrawMain` 3D pass (4172–4251): `addPlayers`/`addNpcs`, the orbit
+//! camera (`camFollow`), `World.resetVisCalc` + `render_all` into
+//! `area_game`, and the (4, 4) blit. Draws always into `Client::draw_area`
+//! (765×503 `PixMap`); present (feature `window`) only blits.
 //!
-//! The in-game `gameDrawMain` 3D pass (`World::render_all` not implemented)
-//! leaves `area_game` a black hole at (4, 4). `drawInterface` draws the
-//! side-tab interfaces (`TYPE_LAYER`/`TYPE_RECT`/`TYPE_TEXT`/`TYPE_GRAPHIC`);
-//! the minimap is not ported.
+//! The minimap (`minimapDraw`, Task 6) is not ported; `drawInterface` draws
+//! the side-tab interfaces (`TYPE_LAYER`/`TYPE_RECT`/`TYPE_TEXT`/
+//! `TYPE_GRAPHIC`).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -17,7 +18,9 @@ use crate::client::client::{level_experience, Client};
 use crate::client::skill::Skill;
 use crate::client::title_flames::TitleFlames;
 use crate::config::if_type::{ComponentType, IfType};
-use crate::graphics::{Colour, Pix2D, Pix32, Pix8, PixFont, PixMap};
+use crate::dash3d::world::LevelHeightmaps;
+use crate::dash3d::{BuildArea, SceneModel};
+use crate::graphics::{Colour, Pix2D, Pix3D, Pix32, Pix8, PixFont, PixMap};
 use crate::io::JagFile;
 use crate::util::JString;
 
@@ -26,6 +29,31 @@ fn plot_title_bg(map: &mut Option<PixMap>, background: &Pix32, x: i32, y: i32) {
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
         background.quick_plot_sprite(&mut surface, x, y);
     }
+}
+
+/// `Client.getAvH` from client-ts (5052): the bilinear ground height at a
+/// scene position. The `mapl` `LinkBelow` level lift is not ported (Client
+/// has no `mapl` grid yet), so the height reads from `level` itself.
+fn get_av_h(groundh: &LevelHeightmaps, scene_x: i32, scene_z: i32, level: i32) -> i32 {
+    let tile_x = scene_x >> 7;
+    let tile_z = scene_z >> 7;
+    if tile_x < 0 || tile_z < 0 || tile_x > 103 || tile_z > 103 {
+        return 0;
+    }
+
+    let real_level = level;
+    let tile_local_x = scene_x & 0x7f;
+    let tile_local_z = scene_z & 0x7f;
+    let y00 = (groundh[real_level as usize][tile_x as usize][tile_z as usize]
+        * (128 - tile_local_x)
+        + groundh[real_level as usize][(tile_x + 1) as usize][tile_z as usize] * tile_local_x)
+        >> 7;
+    let y11 = (groundh[real_level as usize][tile_x as usize][(tile_z + 1) as usize]
+        * (128 - tile_local_x)
+        + groundh[real_level as usize][(tile_x + 1) as usize][(tile_z + 1) as usize]
+            * tile_local_x)
+        >> 7;
+    (y00 * (128 - tile_local_z) + y11 * tile_local_z) >> 7
 }
 
 impl Client {
@@ -357,11 +385,10 @@ impl Client {
     }
 
     /// `gameDraw` from client-ts (3890): the in-game frame. `gameDrawMain`
-    /// (4172, the 3D pass) is not ported, so when `scene_state` is 2 the
-    /// viewport is a black hole: `area_game` filled black and blitted at
-    /// (4, 4). The minimap is out of scope, so its redraw triggers are
-    /// dropped with it; the chrome strips, side, chat, icon-strip
-    /// backgrounds, and chat-mode panels draw 1:1.
+    /// (4172, the 3D pass) renders the world into `area_game` when
+    /// `scene_state` is 2. The minimap is out of scope, so its redraw
+    /// triggers are dropped with it; the chrome strips, side, chat,
+    /// icon-strip backgrounds, and chat-mode panels draw 1:1.
     pub fn game_draw(&mut self) {
         self.prepare_game();
 
@@ -412,15 +439,7 @@ impl Client {
         }
 
         if self.scene_state == 2 {
-            // `gameDrawMain` (4172): the 3D pass. `World::render_all` is not
-            // implemented, so keep the viewport a black hole instead of
-            // stale pixels.
-            if let Some(g) = self.area_game.as_mut() {
-                g.fill(0);
-            }
-            if let Some(g) = &self.area_game {
-                g.blit_into(&mut self.draw_area, 4, 4);
-            }
+            self.game_draw_main();
         }
 
         // `isMenuOpen`/`sideModalId`/`animateInterface`/`selectedArea`/
@@ -492,6 +511,307 @@ impl Client {
             }
         }
     }
+
+    /// `gameDrawMain` from client-ts (4172): the 3D pass. Adds the players
+    /// and NPCs as dynamic sprites, follows the orbit camera, renders the
+    /// world into `area_game` (`Pix2D.cls()` + `render_all` +
+    /// `removeSprites`, the TS 4238-4245 sequence) and blits it at (4, 4).
+    /// `World.resetVisCalc` runs once on the first pass (TS runs it from
+    /// the game-loading flow) so `render_all`'s visibility backing is
+    /// populated. `addProjectiles`/`addMapAnim` and the overlay passes are
+    /// no-ops while their lists/sprites are not ported; `cinemaCam`,
+    /// `camShake`, and `otherOverlays` (minimenu/main-overlay/fps) are not
+    /// ported either.
+    fn game_draw_main(&mut self) {
+        self.scene_cycle += 1;
+
+        self.add_players(true);
+        self.add_npcs(true);
+        self.add_players(false);
+        self.add_npcs(false);
+        self.add_projectiles();
+        self.add_map_anim();
+
+        // Camera (TS 4183-4195): cinemaCam is not ported, so the orbit
+        // camera always follows the local player.
+        let mut pitch = self.orbit_camera_pitch;
+        if self.camera_pitch_clamp / 256 > pitch {
+            pitch = self.camera_pitch_clamp / 256;
+        }
+        // camShake[4] pitch kick not ported.
+        let yaw = (self.orbit_camera_yaw + self.macro_camera_angle) & 0x7ff;
+
+        if let Some(player) = &self.local_player {
+            let target_y = get_av_h(&self.groundh, player.x, player.z, self.minusedlevel) - 50;
+            self.cam_follow(
+                pitch,
+                yaw,
+                self.orbit_camera_x,
+                target_y,
+                self.orbit_camera_z,
+                pitch * 3 + 600,
+            );
+        }
+
+        let level = self.roof_check();
+
+        let cam_x = self.cam_x;
+        let cam_y = self.cam_y;
+        let cam_z = self.cam_z;
+        let cam_pitch = self.cam_pitch;
+        let cam_yaw = self.cam_yaw;
+
+        // camShake jitter axes not ported (all inactive).
+
+        // `World.resetVisCalc` (Client.ts loadGame 1222-1235): once per
+        // game, so `vis_backing` is populated before `render_all` binds its
+        // pitch/yaw row.
+        if !self.vis_calc_done {
+            self.vis_calc_done = true;
+            let mut distance = [0i32; 9];
+            for (x, slot) in distance.iter_mut().enumerate() {
+                let angle = x as i32 * 32 + 128 + 15;
+                let offset = angle * 3 + 600;
+                let sin = Pix3D::sin_table().get(angle as usize).copied().unwrap_or(0);
+                *slot = (offset * sin) >> 16;
+            }
+            self.world.reset_vis_calc(&distance, 500, 800, 512, 334);
+        }
+
+        // TS 4238-4242: the model picking state for this frame.
+        let cycle = self.pix3d.cycle;
+        self.pix3d.mouse_check = true;
+        self.pix3d.picked_count = 0;
+        self.pix3d.mouse_x = self.shell.mouse_x - 4;
+        self.pix3d.mouse_y = self.shell.mouse_y - 4;
+
+        // `Pix2D.cls()` on area_game, `Pix3D.setClipping(512, 334)`, then
+        // the world pass (TS 4238-4245).
+        let cache = &self.cache;
+        let loop_cycle = self.loop_cycle;
+        let (pix3d, world) = (&mut self.pix3d, &mut self.world);
+        if let Some(game) = self.area_game.as_mut() {
+            let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
+            surface.cls();
+            pix3d.set_clipping(game.width, game.height);
+            world.render_all(
+                pix3d, &mut surface, cache, loop_cycle, cam_x, cam_y, cam_z, level, cam_yaw,
+                cam_pitch,
+            );
+        }
+        world.remove_sprites();
+
+        self.entity_overlays();
+        self.coord_arrow();
+        self.texture_run_anims(cycle);
+
+        if let Some(game) = &self.area_game {
+            game.blit_into(&mut self.draw_area, 4, 4);
+        }
+    }
+
+    /// `addPlayers` from client-ts (4260): add the local player (or every
+    /// player) as a dynamic sprite at its ground height. The minimap-flag
+    /// reset and its `ANTICHEAT_CYCLELOGIC6` send are minimap scope (Task
+    /// 6/7); the tile-occupancy stamp is kept so a second entity on a tile
+    /// defers to the first this cycle.
+    fn add_players(&mut self, add_self: bool) {
+        if self.local_player.is_none() {
+            return;
+        }
+
+        let count = if add_self { 1 } else { self.player_count };
+        for i in 0..count as usize {
+            let (player, id) = if add_self {
+                let Some(player) = self.local_player.as_mut() else {
+                    continue;
+                };
+                (player, crate::client::client::LOCAL_PLAYER_INDEX << 14)
+            } else {
+                let player_id = self.player_ids[i];
+                let Some(player) = self.players.get_mut(player_id as usize).and_then(|p| p.as_mut())
+                else {
+                    continue;
+                };
+                (player, player_id << 14)
+            };
+
+            if !player.is_ready() {
+                continue;
+            }
+            player.low_memory = false;
+            if ((self.config.lowmem && self.player_count > 50) || self.player_count > 200)
+                && !add_self
+                && player.secondary_anim == player.readyanim
+            {
+                player.low_memory = true;
+            }
+
+            let stx = player.x >> 7;
+            let stz = player.z >> 7;
+            if stx < 0 || stx >= BuildArea::SIZE || stz < 0 || stz >= BuildArea::SIZE {
+                continue;
+            }
+
+            let y = get_av_h(&self.groundh, player.x, player.z, self.minusedlevel);
+            let model = Some(SceneModel::Player(player.clone()));
+
+            if player.loc_model.is_none()
+                || self.loop_cycle < player.loc_start_cycle
+                || self.loop_cycle >= player.loc_stop_cycle
+            {
+                if (player.x & 0x7f) == 64 && (player.z & 0x7f) == 64 {
+                    let tile = (stx * BuildArea::SIZE + stz) as usize;
+                    if self.tile_last_occupied_cycle[tile] == self.scene_cycle {
+                        continue;
+                    }
+                    self.tile_last_occupied_cycle[tile] = self.scene_cycle;
+                }
+
+                player.y = y;
+                self.world.add_dynamic(
+                    self.minusedlevel,
+                    player.x,
+                    player.y,
+                    player.z,
+                    model,
+                    id,
+                    player.yaw,
+                    60,
+                    player.needs_forward_draw_padding,
+                );
+            } else {
+                player.low_memory = false;
+                player.y = y;
+                self.world.add_dynamic2(
+                    self.minusedlevel,
+                    player.x,
+                    player.y,
+                    player.z,
+                    player.min_tile_x,
+                    player.min_tile_z,
+                    player.max_tile_x,
+                    player.max_tile_z,
+                    model,
+                    id,
+                    player.yaw,
+                );
+            }
+        }
+    }
+
+    /// `addNpcs` from client-ts (4328): add every NPC as a dynamic sprite,
+    /// split by the `alwaysontop` flag.
+    fn add_npcs(&mut self, alwaysontop: bool) {
+        for i in 0..self.npc_count as usize {
+            let npc_id = self.npc_ids[i];
+            let typecode = (npc_id << 14) + 0x2000_0000;
+            let Some(npc) = self.npc.get_mut(npc_id as usize).and_then(|n| n.as_mut()) else {
+                continue;
+            };
+            let Some(npc_type_id) = npc.r#type else {
+                continue;
+            };
+            if self.cache.npc(npc_type_id).alwaysontop != alwaysontop {
+                continue;
+            }
+
+            let stx = npc.x >> 7;
+            let stz = npc.z >> 7;
+            if stx < 0 || stx >= BuildArea::SIZE || stz < 0 || stz >= BuildArea::SIZE {
+                continue;
+            }
+
+            if npc.size == 1 && (npc.x & 0x7f) == 64 && (npc.z & 0x7f) == 64 {
+                let tile = (stx * BuildArea::SIZE + stz) as usize;
+                if self.tile_last_occupied_cycle[tile] == self.scene_cycle {
+                    continue;
+                }
+                self.tile_last_occupied_cycle[tile] = self.scene_cycle;
+            }
+
+            let y = get_av_h(&self.groundh, npc.x, npc.z, self.minusedlevel);
+            self.world.add_dynamic(
+                self.minusedlevel,
+                npc.x,
+                y,
+                npc.z,
+                Some(SceneModel::Npc(npc.clone())),
+                typecode,
+                npc.yaw,
+                (npc.size - 1) * 64 + 60,
+                npc.needs_forward_draw_padding,
+            );
+        }
+    }
+
+    /// `addProjectiles` from client-ts (4356): a no-op while `projectiles`
+    /// is not ported.
+    fn add_projectiles(&mut self) {}
+
+    /// `addMapAnim` from client-ts (4416): a no-op while `spotanims` is not
+    /// ported.
+    fn add_map_anim(&mut self) {}
+
+    /// `camFollow` from client-ts (4432): position the eye at `distance`
+    /// along the inverse pitch/yaw from the target.
+    fn cam_follow(
+        &mut self,
+        pitch: i32,
+        yaw: i32,
+        target_x: i32,
+        target_y: i32,
+        target_z: i32,
+        distance: i32,
+    ) {
+        let inv_pitch = (2048 - pitch) & 0x7ff;
+        let inv_yaw = (2048 - yaw) & 0x7ff;
+
+        let mut x = 0i32;
+        let mut y = 0i32;
+        let mut z = distance;
+
+        if inv_pitch != 0 {
+            let sin = Pix3D::sin_table()[inv_pitch as usize];
+            let cos = Pix3D::cos_table()[inv_pitch as usize];
+            let tmp = (y * cos - distance * sin) >> 16;
+            z = (y * sin + distance * cos) >> 16;
+            y = tmp;
+        }
+
+        if inv_yaw != 0 {
+            let sin = Pix3D::sin_table()[inv_yaw as usize];
+            let cos = Pix3D::cos_table()[inv_yaw as usize];
+            let tmp = (z * sin + x * cos) >> 16;
+            z = (z * cos - x * sin) >> 16;
+            x = tmp;
+        }
+
+        self.cam_x = target_x - x;
+        self.cam_y = target_y - y;
+        self.cam_z = target_z - z;
+        self.cam_pitch = pitch;
+        self.cam_yaw = yaw;
+    }
+
+    /// `roofCheck` from client-ts (4476): the highest level drawn this
+    /// frame. Every `mapl` `RemoveRoof` guard is skipped — Client has no
+    /// `mapl` grid yet, and like TS without `mapl` the answer is 3.
+    fn roof_check(&self) -> i32 {
+        3
+    }
+
+    /// `entityOverlays` from client-ts (4573): headicons/chat overlays are
+    /// a no-op while the overlay sprites are not ported.
+    fn entity_overlays(&mut self) {}
+
+    /// `coordArrow` from client-ts (4781): a no-op while `hintType`/
+    /// `headicons` are not ported.
+    fn coord_arrow(&mut self) {}
+
+    /// `textureRunAnims` from client-ts (4794): a no-op while the animated
+    /// texture buffers are not ported.
+    fn texture_run_anims(&mut self, _cycle: i32) {}
 
     /// `prepareGame` from client-ts (2001): allocate the in-game `PixMap`
     /// areas and load the `media` jag sprites, lazily on the first

@@ -45,8 +45,9 @@ const MENU_CAPACITY: usize = 500;
 const CLIENT_VERSION: i32 = 274;
 const LOGIN_UID: i32 = 1337;
 
-/// Index of the local player in `players` (`Client.ts` `LOCAL_PLAYER_INDEX`).
-const LOCAL_PLAYER_INDEX: i32 = 2047;
+/// Index of the local player in `players` (`Client.ts` `LOCAL_PLAYER_INDEX`);
+/// `game_draw_main`'s `addPlayers` uses it for the local-player typecode.
+pub(crate) const LOCAL_PLAYER_INDEX: i32 = 2047;
 
 /// `PlayerUpdate` mask enum from client-ts `dash3d/ClientPlayer.ts`.
 mod player_update {
@@ -300,6 +301,34 @@ pub struct Client {
     pub login_select: i32,
     pub redraw_frame: bool,
 
+    /// Camera state (`Client.ts` `gameDrawMain`/`camFollow`, 4172-4465):
+    /// the orbit camera the 3D pass follows and the per-frame eye it
+    /// produces. `orbit_camera_pitch/yaw/x/z`, `camera_pitch_clamp`, and
+    /// `macro_camera_angle` default as the TS field initializers; `cam_*`
+    /// holds the `camFollow` result.
+    pub cam_x: i32,
+    pub cam_y: i32,
+    pub cam_z: i32,
+    pub cam_pitch: i32,
+    pub cam_yaw: i32,
+    pub orbit_camera_pitch: i32,
+    pub orbit_camera_yaw: i32,
+    pub orbit_camera_x: i32,
+    pub orbit_camera_z: i32,
+    pub camera_pitch_clamp: i32,
+    pub macro_camera_angle: i32,
+    /// `sceneCycle` from client-ts: bumped every `gameDrawMain`; the
+    /// tile-occupancy stamps in `add_players`/`add_npcs` compare against it.
+    pub scene_cycle: i32,
+    /// Last `scene_cycle` that claimed each tile (`tileLastOccupiedCycle`,
+    /// flat `SIZE * SIZE`), so a second entity on a tile defers to the first
+    /// this cycle.
+    pub tile_last_occupied_cycle: Vec<i32>,
+    /// `World.resetVisCalc` has populated `vis_backing` for this client
+    /// (TS loadGame calls it once per game load; `game_draw_main` runs it
+    /// lazily on the first 3D frame).
+    pub vis_calc_done: bool,
+
     /// In-game draw state (`Client.ts` `prepareGame`/`gameDraw`): the
     /// viewport/side/chat/chrome `PixMap` areas and the `media` jag sprites
     /// that plot into them, plus the chat-mode redraw flag and the three
@@ -543,6 +572,20 @@ impl Client {
             loginscreen: 0,
             login_select: 0,
             redraw_frame: true,
+            cam_x: 0,
+            cam_y: 0,
+            cam_z: 0,
+            cam_pitch: 0,
+            cam_yaw: 0,
+            orbit_camera_pitch: 128,
+            orbit_camera_yaw: 0,
+            orbit_camera_x: 0,
+            orbit_camera_z: 0,
+            camera_pitch_clamp: 0,
+            macro_camera_angle: 0,
+            scene_cycle: 0,
+            tile_last_occupied_cycle: vec![0; BUILD_AREA_TILES],
+            vis_calc_done: false,
             area_game: None,
             area_map: None,
             area_side: None,

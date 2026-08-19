@@ -129,6 +129,14 @@ pub struct World {
     /// Flat row offset (into `vis_backing`) of the current pitch/yaw, or
     /// `None` for the TS `null` (every visibility test reads false).
     vis_backing_dirty: Option<usize>,
+    /// TS `World.xClip/yClip/xClip2/yClip2/xOrig/yOrig`: the viewport
+    /// `resetVisCalc`'s `testPoint` projects against.
+    x_clip: i32,
+    y_clip: i32,
+    x_clip2: i32,
+    y_clip2: i32,
+    x_orig: i32,
+    y_orig: i32,
     num_active_occluders: i32,
     /// TS `World.activeOccluders`, as indices into `occluders` (arena
     /// indices instead of object references).
@@ -195,6 +203,12 @@ impl World {
             cz: 0,
             vis_backing: vec![false; 8 * 32 * VIS_ROW_SIZE],
             vis_backing_dirty: None,
+            x_clip: 0,
+            y_clip: 0,
+            x_clip2: 0,
+            y_clip2: 0,
+            x_orig: 0,
+            y_orig: 0,
             num_active_occluders: 0,
             active_occluders: vec![None; MAX_ACTIVE_OCCLUDERS],
             sprite_buffer: vec![None; MAX_SPRITE_BUFFER],
@@ -967,6 +981,124 @@ impl World {
     // Render pass (Task 4): `updateMousePicking`, `renderAll` and every
     // helper it calls, 1:1 from `World.ts` 947-2484.
     // ---------------------------------------------------------------------
+
+    /// `resetVisCalc(pitchDistance, frustumStart, frustumEnd, viewportWidth,
+    /// viewportHeight)` from client-ts (World.ts 858): precompute
+    /// `vis_backing` for every pitch/yaw pair by projecting a ±26-tile grid
+    /// into the viewport and eroding with the 3×3 pitch/yaw-neighbourhood
+    /// merge pass. TS calls it once per game load (`Client.ts` loadGame);
+    /// `render_all` binds the current pitch/yaw row via `vis_backing_dirty`.
+    /// The `pitch_distance[pitchLevel]` argument is the camera distance for
+    /// that pitch level (the TS `distance` table at Client.ts 1225).
+    pub fn reset_vis_calc(
+        &mut self,
+        pitch_distance: &[i32],
+        frustum_start: i32,
+        frustum_end: i32,
+        viewport_width: i32,
+        viewport_height: i32,
+    ) {
+        self.x_clip = 0;
+        self.y_clip = 0;
+        self.x_clip2 = viewport_width;
+        self.y_clip2 = viewport_height;
+        self.x_orig = viewport_width / 2;
+        self.y_orig = viewport_height / 2;
+
+        // scratch[9][32][53][53]: the ±26-tile sample grid with a 1-tile
+        // margin so the merge pass can read its 3×3 neighbourhood.
+        let mut scratch = vec![false; 9 * 32 * 53 * 53];
+        for pitch in (128..=384).step_by(32) {
+            self.camera_sin_x = Pix3D::sin_table()[pitch as usize];
+            self.camera_cos_x = Pix3D::cos_table()[pitch as usize];
+            for yaw in (0..2048).step_by(64) {
+                self.camera_sin_y = Pix3D::sin_table()[yaw as usize];
+                self.camera_cos_y = Pix3D::cos_table()[yaw as usize];
+
+                let pitch_level = ((pitch - 128) / 32) as usize;
+                let yaw_level = (yaw / 64) as usize;
+                let distance = pitch_distance[pitch_level];
+                for dx in -26..=26 {
+                    for dz in -26..=26 {
+                        let x = dx * 128;
+                        let z = dz * 128;
+                        let mut visible = false;
+                        let mut y = -frustum_start;
+                        while y <= frustum_end {
+                            if self.test_point(x, z, distance + y) {
+                                visible = true;
+                                break;
+                            }
+                            y += 128;
+                        }
+                        scratch[(pitch_level * 32 + yaw_level) * 53 * 53 + (dx + 26) as usize * 53
+                            + (dz + 26) as usize] = visible;
+                    }
+                }
+            }
+        }
+
+        // TS 894-929: a backing cell is visible if any sampled cell in its
+        // 3×3 neighbourhood is visible from this or the adjacent pitch/yaw
+        // (`(yawLevel + 1) % 31` — the modulo is 31 in the TS, kept as-is).
+        for pitch_level in 0..8 {
+            for yaw_level in 0..32 {
+                for x in -25..25 {
+                    for z in -25..25 {
+                        let mut visible = false;
+                        'check: for dx in -1..=1 {
+                            for dz in -1..=1 {
+                                let xi = (x + dx + 26) as usize;
+                                let zi = (z + dz + 26) as usize;
+                                for (pl, yl) in [
+                                    (pitch_level, yaw_level),
+                                    (pitch_level, (yaw_level + 1) % 31),
+                                    (pitch_level + 1, yaw_level),
+                                    (pitch_level + 1, (yaw_level + 1) % 31),
+                                ] {
+                                    if scratch[(pl * 32 + yl) * 53 * 53 + xi * 53 + zi] {
+                                        visible = true;
+                                        break 'check;
+                                    }
+                                }
+                            }
+                        }
+                        let idx = (pitch_level * 32 + yaw_level) * VIS_ROW_SIZE
+                            + (x + 25) as usize * 51
+                            + (z + 25) as usize;
+                        self.vis_backing[idx] = visible;
+                    }
+                }
+            }
+        }
+    }
+
+    /// `World.testPoint` from client-ts (931): project a scene point into
+    /// the `resetVisCalc` viewport and answer whether it lands inside it.
+    fn test_point(&self, x: i32, z: i32, y: i32) -> bool {
+        let px = (z * self.camera_sin_y + x * self.camera_cos_y) >> 16;
+        let tmp = (z * self.camera_cos_y - x * self.camera_sin_y) >> 16;
+        let pz = (y * self.camera_sin_x + tmp * self.camera_cos_x) >> 16;
+        let py = (y * self.camera_cos_x - tmp * self.camera_sin_x) >> 16;
+
+        if pz < 50 || pz > 3500 {
+            return false;
+        }
+
+        let viewport_x = self.x_orig + ((px << 9) / pz);
+        let viewport_y = self.y_orig + ((py << 9) / pz);
+        viewport_x >= self.x_clip
+            && viewport_x <= self.x_clip2
+            && viewport_y >= self.y_clip
+            && viewport_y <= self.y_clip2
+    }
+
+    /// Frames rendered: `cycle_no` increments once per `render_all` (the TS
+    /// `World.cycleNo` static). The draw tests use it to prove the 3D pass
+    /// ran.
+    pub fn render_count(&self) -> i32 {
+        self.cycle_no
+    }
 
     /// `updateMousePicking(mouseX, mouseY)` from client-ts: arm the pick and
     /// reset the ground answer.
