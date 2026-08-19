@@ -31,7 +31,7 @@ use crate::dash3d::{
     AnimFrame, BuildArea, CollisionFlag, CollisionMap, DirectionFlag, LocShape, Model, World,
 };
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
-use crate::graphics::{Pix32, Pix3DDraw, Pix8, PixFont, PixMap};
+use crate::graphics::{Pix3D, Pix32, Pix3DDraw, Pix8, PixFont, PixMap};
 use crate::io::{
     ClientProt, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt, SERVER_PROT_SIZES,
 };
@@ -529,7 +529,7 @@ impl Client {
             jagfx: JagFX::default(),
 
             menu_num_entries: 0,
-            menu_option: Vec::new(),
+            menu_option: vec![String::new(); MENU_CAPACITY],
             menu_action: vec![0; MENU_CAPACITY],
             menu_param_a: vec![0; MENU_CAPACITY],
             menu_param_b: vec![0; MENU_CAPACITY],
@@ -1049,18 +1049,13 @@ impl Client {
         }
 
         if action == MiniMenuAction::WALK {
-            // Headless: no World mouse picking — menuParamB/C are the local
-            // destination tiles, walked to straight from the local player.
-            // TODO(task 16): the original only picks the tile here and the
-            // frame loop writes MOVE_GAMECLICK; drop this inline write when
-            // the frame loop is ported or the walk packet double-emits.
-            if let Some((px, pz)) = self
-                .local_player
-                .as_ref()
-                .map(|p| (p.route_x[0], p.route_z[0]))
-            {
-                self.tryMove(px, pz, b, c, true, 0, 0, 0, 0, 0, 0);
-            }
+            // `World.updateMousePicking` from Client.ts doAction (9217-9222):
+            // menuParamB/C are the applet click coords (the viewport Walk
+            // here entry), stored as mouseX/Y and converted to scene-local
+            // pixels here; the ground answer is consumed into MOVE_GAMECLICK
+            // by `game_loop` after the next render. The menu is never open
+            // (no minimenu chrome), so the `isMenuOpen` branch is not ported.
+            self.world.update_mouse_picking(b - 4, c - 4);
         }
 
         self.use_mode = 0;
@@ -3689,6 +3684,80 @@ impl Client {
         }
     }
 
+    /// The 3D-viewport arm of `mouseLoop` (Client.ts 8256) with the minimenu
+    /// collapsed: a left click inside the viewport builds the `buildMinimenu`
+    /// world branch (Cancel + Walk here, `addWorldOptions` 9275-2282 — no
+    /// loc/npc/player ops in this port) and auto-fires the top entry
+    /// (`doAction(menuNumEntries - 1)`), which arms `World` mouse picking.
+    /// HUD clicks lose: `handle_tab_clicks`/`handle_side_if_clicks` run
+    /// first and `mouse_loop` only walks inside 4..516 × 4..338.
+    pub fn mouse_loop(&mut self) {
+        if self.shell.mouse_click_button != 1 {
+            return;
+        }
+        let (x, y) = (self.shell.mouse_click_x, self.shell.mouse_click_y);
+        if !(4..516).contains(&x) || !(4..338).contains(&y) {
+            return;
+        }
+        self.menu_num_entries = 2;
+        self.menu_option[0] = "Cancel".into();
+        self.menu_action[0] = MiniMenuAction::CANCEL;
+        self.menu_option[1] = "Walk here".into();
+        self.menu_action[1] = MiniMenuAction::WALK;
+        self.menu_param_b[1] = x;
+        self.menu_param_c[1] = y;
+        self.doAction(self.menu_num_entries - 1);
+    }
+
+    /// `minimapLoop` from Client.ts (2742): a left click inside the
+    /// 146×151 map ring is converted through the orbit yaw and minimap
+    /// angle/zoom into a destination tile, then `tryMove(..., 1)` writes
+    /// MOVE_MINIMAPCLICK and the 14 trailing bytes.
+    pub fn minimap_loop(&mut self) {
+        if self.minimap_state != 0 || self.shell.mouse_click_button != 1 {
+            return;
+        }
+        let (px, pz, src_x, src_z) = match &self.local_player {
+            Some(p) => (p.x, p.z, p.route_x[0], p.route_z[0]),
+            None => return,
+        };
+
+        let x = self.shell.mouse_click_x - 25 - 550;
+        let y = self.shell.mouse_click_y - 4 - 4;
+        if x < 0 || y < 0 || x >= 146 || y >= 151 {
+            return;
+        }
+        let x = x - 73;
+        let y = y - 75;
+
+        let yaw = (self.orbit_camera_yaw + self.macro_minimap_angle) & 0x7ff;
+        let mut sin_yaw = Pix3D::sin_table().get(yaw as usize).copied().unwrap_or(0);
+        let mut cos_yaw = Pix3D::cos_table().get(yaw as usize).copied().unwrap_or(0);
+        sin_yaw = (sin_yaw * (self.macro_minimap_zoom + 256)) >> 8;
+        cos_yaw = (cos_yaw * (self.macro_minimap_zoom + 256)) >> 8;
+
+        let rel_x = (y * sin_yaw + x * cos_yaw) >> 11;
+        let rel_y = (y * cos_yaw - x * sin_yaw) >> 11;
+
+        let tile_x = (px + rel_x) >> 7;
+        let tile_z = (pz - rel_y) >> 7;
+
+        if self.tryMove(src_x, src_z, tile_x, tile_z, true, 0, 0, 0, 0, 0, 1) {
+            // the 14 bytes trailing MOVE_MINIMAPCLICK, as TS 2773-2781
+            self.out.p1(x);
+            self.out.p1(y);
+            self.out.p2(self.orbit_camera_yaw);
+            self.out.p1(57);
+            self.out.p1(self.macro_minimap_angle);
+            self.out.p1(self.macro_minimap_zoom);
+            self.out.p1(89);
+            self.out.p2(px);
+            self.out.p2(pz);
+            self.out.p1(self.try_move_nearest);
+            self.out.p1(63);
+        }
+    }
+
     /// `gameLoop` from Java (`Client.java` 9341): count down a pending
     /// logout request, read up to five TCP packets, the side-tab click
     /// pass (TS `iconLoop`), the side-interface button pass
@@ -3712,6 +3781,22 @@ impl Client {
         self.handle_tab_clicks();
         self.handle_side_if_clicks();
         self.handle_chat_input();
+        // consume the previous frame's `World` ground pick (TS 2310-2323)
+        // into a MOVE_GAMECLICK walk, then the click passes
+        if self.world.ground_x != -1 {
+            let src = self
+                .local_player
+                .as_ref()
+                .map(|p| (p.route_x[0], p.route_z[0]));
+            let ground_x = self.world.ground_x;
+            let ground_z = self.world.ground_z;
+            self.world.ground_x = -1;
+            if let Some((src_x, src_z)) = src {
+                self.tryMove(src_x, src_z, ground_x, ground_z, true, 0, 0, 0, 0, 0, 0);
+            }
+        }
+        self.mouse_loop();
+        self.minimap_loop();
         self.timeout_timer += 1;
         if self.timeout_timer > 750 {
             self.lost_con();

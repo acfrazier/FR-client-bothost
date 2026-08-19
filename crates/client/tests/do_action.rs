@@ -13,27 +13,24 @@ fn client() -> Client {
     })
 }
 
-// Isaac seed [1,2,3,4] yields first next_int = -621246914 (pinned in tests/isaac.rs),
-// so p1_enc(207) = (207 + -621246914) & 0xff = 13 and p1_enc(233) = 39.
+// doAction(WALK) arms World mouse picking with the applet click converted to
+// scene-local (b-4, c-4); the walk packet is written by game_loop's ground
+// consume after the next render (Task 7).
 #[test]
-fn walk_menu_writes_move_gameclick() {
+fn walk_menu_arms_mouse_picking() {
     let mut c = client();
     c.ingame = true;
     c.out.random = Some(Isaac::new(&[1, 2, 3, 4]));
     c.menu_action[0] = MiniMenuAction::WALK;
     c.menu_param_a[0] = 0;
-    c.menu_param_b[0] = 10; // local x
-    c.menu_param_c[0] = 10; // local z
+    c.menu_param_b[0] = 104; // applet mouse x
+    c.menu_param_c[0] = 84; // applet mouse y
     c.local_player = Some(ClientPlayer::at(5, 5));
     c.doAction(0);
-    // first outbound opcode byte is p1_enc(MOVE_GAMECLICK)
-    let enc = (ClientProt::MOVE_GAMECLICK.id.wrapping_add(-621246914)) as u8;
-    assert_eq!(enc, 13);
-    assert_eq!(c.out.data()[0], enc);
-    // full packet for (5,5) -> (10,10) on an all-open grid: straight diagonal,
-    // so size 5 (2*1+3), ctrl 0, single absolute tile (10,10), no steps
-    assert_eq!(&c.out.data()[..c.out.pos], &[13, 5, 0, 0, 10, 0, 10]);
-    assert_eq!(c.out.pos, 7);
+    assert!(c.world.click);
+    assert_eq!(c.world.click_x, 100);
+    assert_eq!(c.world.click_y, 80);
+    assert_eq!(c.out.pos, 0);
 }
 
 #[test]
