@@ -1,6 +1,6 @@
 use client::client::{Client, ClientConfig};
 use client::client::{APPLET_H, APPLET_W};
-use client::dash3d::{ClientEntity, ClientPlayer};
+use client::dash3d::{ClientEntity, ClientPlayer, TerrainOverlayShape, World};
 use client::graphics::{Colour, PixMap};
 
 fn cache_dir() -> Option<String> {
@@ -174,4 +174,166 @@ fn minimap_draw_without_media_does_not_panic() {
         }
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Shade whose colour-table entry is non-zero (same constant as the
+/// tests/world.rs synthetic scenes: index y=200/x=100).
+const SHADE: i32 = 200 * 128 + 100;
+
+/// 3×3 flat world at height 2000 with a plain-coloured tile on every cell
+/// (mirrors `flat_world` in tests/world.rs).
+fn flat_world() -> World {
+    let max_level: i32 = 1;
+    let max_tile_x: i32 = 3;
+    let max_tile_z: i32 = 3;
+    let groundh = vec![
+        vec![vec![2000i32; max_tile_z as usize + 1]; max_tile_x as usize + 1];
+        max_level as usize
+    ];
+    let mut world = World::new(groundh, max_tile_z, max_level, max_tile_x);
+    world.fill_base_level(0);
+    for x in 0..max_tile_x {
+        for z in 0..max_tile_z {
+            world.set_ground(
+                0,
+                x,
+                z,
+                TerrainOverlayShape::PLAIN,
+                0,
+                -1,
+                0,
+                0,
+                0,
+                0,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                0,
+                0,
+            );
+        }
+    }
+    world
+}
+
+/// Regression for the production Pix3D wiring: a scene-backed draw straight
+/// out of `Client::new` + `prepare_game`/`game_draw` with no test touching
+/// `Pix3D::init_colour_table` (the exact gap that let Critical 1 through —
+/// without the `Client::new` init this panics on the first gouraud
+/// triangle). The synthetic flat world's plain tiles rasterise via
+/// `gouraudTriangle`, which needs the colour table, and the viewport must
+/// end up non-black.
+#[test]
+fn game_draw_renders_scene_without_manual_pix3d_init() {
+    let mut c = client("/tmp".into());
+    c.set_draw(true);
+    c.ingame = true;
+    c.scene_state = 2;
+    c.world = flat_world();
+    // Camera as tests/world.rs: tile (1,1), pitch 512 horizontal at the
+    // height-2000 ground.
+    c.cam_x = 192;
+    c.cam_y = 0;
+    c.cam_z = 192;
+    c.cam_pitch = 512;
+    c.cam_yaw = 0;
+    c.game_draw(); // must not panic: colour table inited by Client::new
+    let g = c.area_game.as_ref().unwrap();
+    assert!(
+        g.pixels.iter().any(|&p| p != 0),
+        "synthetic flat world must rasterise through game_draw"
+    );
+}
+
+/// `game_loop` runs `followCamera` when `scene_state == 2` (TS 2346): the
+/// orbit camera snaps to the local player (more than 500 away) and eases
+/// toward it, so the 3D eye is above the local player instead of the world
+/// origin (plan Task 5).
+#[test]
+fn follow_camera_moves_eye_above_local_player() {
+    let mut c = client("/tmp".into());
+    c.ingame = true;
+    c.scene_state = 2;
+    let mut player = ClientPlayer::default();
+    player.ready = true;
+    player.name = Some("tester".into());
+    player.entity = ClientEntity::at(5, 7);
+    player.entity.teleport(&c.cache, true, 5, 7);
+    c.local_player = Some(player);
+    c.game_loop();
+    let player_x = c.local_player.as_ref().unwrap().x;
+    let player_z = c.local_player.as_ref().unwrap().z;
+    assert_eq!(c.orbit_camera_x, player_x, "orbit x snaps to the local player");
+    assert_eq!(c.orbit_camera_z, player_z, "orbit z snaps to the local player");
+    c.game_draw();
+    assert!(
+        c.cam_x != 0 || c.cam_z != 0,
+        "the 3D eye must follow the player, not sit at the world origin"
+    );
+}
+
+/// `Pix3D.lowMem` from the config (TS `Client.setLowMem`/`setHighMem`):
+/// `Client::new` must carry `config.lowmem` into `pix3d.low_mem`, which
+/// `World.render_all` reads for the textured-ground branch.
+#[test]
+fn pix3d_low_mem_follows_config() {
+    let c = client("/tmp".into());
+    assert!(!c.pix3d.low_mem, "default config lowmem=false");
+    let mut low = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: true,
+    });
+    assert!(low.pix3d.low_mem, "lowmem config must reach Pix3DDraw.low_mem");
+    low.ingame = true;
+    low.scene_state = 2;
+    low.world = flat_world();
+    low.cam_x = 192;
+    low.cam_y = 0;
+    low.cam_z = 192;
+    low.cam_pitch = 512;
+    low.cam_yaw = 0;
+    low.set_draw(true);
+    low.game_draw(); // lowMem gouraud path must not panic either
+}
+
+/// The texture half of the production wiring (TS maininit 1152-1154), with
+/// a real pack: `prepare_game` must depack `{cache_dir}/textures` into the
+/// texel pool and gamma-correct the palettes, all without a test manually
+/// calling `init_colour_table`. Skipped without the pack.
+#[test]
+fn production_init_wires_textures_and_pool() {
+    let Some(cache) = cache_dir() else {
+        return;
+    };
+    if !std::path::Path::new(&cache).join("textures").is_file() {
+        return;
+    }
+    let mut c = client(cache);
+    c.set_draw(true);
+    c.ingame = true;
+    c.scene_state = 2;
+    c.game_draw(); // must not panic; prepare_game wires Pix3D
+    assert!(
+        c.pix3d.num_textures > 0,
+        "prepare_game must depack the textures jag"
+    );
+    assert!(
+        c.pix3d.texel_pool.is_some(),
+        "prepare_game must init the texel pool (initPool(20))"
+    );
+    assert!(
+        c.pix3d
+            .tex_pal
+            .iter()
+            .any(|pal| pal.as_ref().is_some_and(|p| !p.is_empty())),
+        "prepare_game must gamma-correct the texture palettes"
+    );
 }

@@ -301,11 +301,13 @@ pub struct Client {
     pub login_select: i32,
     pub redraw_frame: bool,
 
-    /// Camera state (`Client.ts` `gameDrawMain`/`camFollow`, 4172-4465):
-    /// the orbit camera the 3D pass follows and the per-frame eye it
-    /// produces. `orbit_camera_pitch/yaw/x/z`, `camera_pitch_clamp`, and
-    /// `macro_camera_angle` default as the TS field initializers; `cam_*`
-    /// holds the `camFollow` result.
+    /// Camera state (`Client.ts` `gameDrawMain`/`camFollow`/`followCamera`,
+    /// 3222-4465): the orbit camera the 3D pass follows and the per-frame
+    /// eye it produces. `orbit_camera_pitch/yaw/x/z`, the two velocity
+    /// fields, `camera_pitch_clamp`, and `macro_camera_angle` default as
+    /// the TS field initializers; `macro_camera_x/z` exist for
+    /// `followCamera` but stay 0 (the TS random-drift block is not ported);
+    /// `cam_*` holds the `camFollow` result.
     pub cam_x: i32,
     pub cam_y: i32,
     pub cam_z: i32,
@@ -313,8 +315,12 @@ pub struct Client {
     pub cam_yaw: i32,
     pub orbit_camera_pitch: i32,
     pub orbit_camera_yaw: i32,
+    pub orbit_camera_yaw_velocity: i32,
+    pub orbit_camera_pitch_velocity: i32,
     pub orbit_camera_x: i32,
     pub orbit_camera_z: i32,
+    pub macro_camera_x: i32,
+    pub macro_camera_z: i32,
     pub camera_pitch_clamp: i32,
     pub macro_camera_angle: i32,
     /// `sceneCycle` from client-ts: bumped every `gameDrawMain`; the
@@ -619,8 +625,12 @@ impl Client {
             cam_yaw: 0,
             orbit_camera_pitch: 128,
             orbit_camera_yaw: 0,
+            orbit_camera_yaw_velocity: 0,
+            orbit_camera_pitch_velocity: 0,
             orbit_camera_x: 0,
             orbit_camera_z: 0,
+            macro_camera_x: 0,
+            macro_camera_z: 0,
             camera_pitch_clamp: 0,
             macro_camera_angle: 0,
             scene_cycle: 0,
@@ -707,6 +717,13 @@ impl Client {
         if client.error_loading {
             client.shell.set_framerate(1);
         }
+        // TS maininit 1153 `Pix3D.initColourTable(0.8)`: process-wide, so
+        // the first shaded/gouraud triangle of any 3D pass has a table.
+        // `Pix3D.lowMem` comes from the same config the TS constructor
+        // takes (`Client.setLowMem`/`setHighMem`); `World.lowMem` reads
+        // this through the `pix` handle in `render_all`.
+        Pix3D::init_colour_table(0.8);
+        client.pix3d.low_mem = client.config.lowmem;
         client
     }
 
@@ -3797,6 +3814,11 @@ impl Client {
         }
         self.mouse_loop();
         self.minimap_loop();
+        // TS 2346: `followCamera` in the 3D scene — the orbit camera tracks
+        // the local player and the arrow keys rotate yaw/pitch.
+        if self.scene_state == 2 {
+            self.follow_camera();
+        }
         self.timeout_timer += 1;
         if self.timeout_timer > 750 {
             self.lost_con();

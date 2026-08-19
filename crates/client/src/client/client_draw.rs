@@ -814,6 +814,83 @@ impl Client {
         self.cam_yaw = yaw;
     }
 
+    /// `followCamera` from client-ts (3222), run from `game_loop` (2346)
+    /// while `scene_state == 2`: the orbit camera chases the local player
+    /// (snapped when more than 500 away, then a `/16` ease), the arrow keys
+    /// (`key_held[1..4]`) steer yaw/pitch through the TS velocity fields,
+    /// and `camera_pitch_clamp` eases toward the surrounding-terrain clamp.
+    /// The `mapl` `VisBelow` level lift is not ported (Client has no `mapl`
+    /// grid yet), so the sample reads `minusedlevel` like the rest of the
+    /// port; `macro_camera_x/z` stay 0, their TS initial values (the macro
+    /// random-drift block is a separate gameLoop chunk not ported).
+    pub fn follow_camera(&mut self) {
+        let Some(player) = &self.local_player else {
+            return;
+        };
+        let orbit_x = player.x + self.macro_camera_x;
+        let orbit_z = player.z + self.macro_camera_z;
+
+        if self.orbit_camera_x - orbit_x < -500
+            || self.orbit_camera_x - orbit_x > 500
+            || self.orbit_camera_z - orbit_z < -500
+            || self.orbit_camera_z - orbit_z > 500
+        {
+            self.orbit_camera_x = orbit_x;
+            self.orbit_camera_z = orbit_z;
+        }
+
+        if self.orbit_camera_x != orbit_x {
+            self.orbit_camera_x += (orbit_x - self.orbit_camera_x) / 16;
+        }
+        if self.orbit_camera_z != orbit_z {
+            self.orbit_camera_z += (orbit_z - self.orbit_camera_z) / 16;
+        }
+
+        if self.shell.key_held[1] == 1 {
+            self.orbit_camera_yaw_velocity += (-self.orbit_camera_yaw_velocity - 24) / 2;
+        } else if self.shell.key_held[2] == 1 {
+            self.orbit_camera_yaw_velocity += (24 - self.orbit_camera_yaw_velocity) / 2;
+        } else {
+            self.orbit_camera_yaw_velocity /= 2;
+        }
+
+        if self.shell.key_held[3] == 1 {
+            self.orbit_camera_pitch_velocity += (12 - self.orbit_camera_pitch_velocity) / 2;
+        } else if self.shell.key_held[4] == 1 {
+            self.orbit_camera_pitch_velocity += (-self.orbit_camera_pitch_velocity - 12) / 2;
+        } else {
+            self.orbit_camera_pitch_velocity /= 2;
+        }
+
+        self.orbit_camera_yaw = (self.orbit_camera_yaw + self.orbit_camera_yaw_velocity / 2) & 0x7ff;
+        self.orbit_camera_pitch =
+            (self.orbit_camera_pitch + self.orbit_camera_pitch_velocity / 2).clamp(128, 383);
+
+        let orbit_tile_x = self.orbit_camera_x >> 7;
+        let orbit_tile_z = self.orbit_camera_z >> 7;
+        let orbit_y = get_av_h(&self.groundh, self.orbit_camera_x, self.orbit_camera_z, self.minusedlevel);
+        let mut max_y = 0;
+        if orbit_tile_x > 3 && orbit_tile_z > 3 && orbit_tile_x < 100 && orbit_tile_z < 100 {
+            for x in (orbit_tile_x - 4)..=(orbit_tile_x + 4) {
+                for z in (orbit_tile_z - 4)..=(orbit_tile_z + 4) {
+                    let y = orbit_y
+                        - self.groundh[self.minusedlevel as usize][x as usize][z as usize];
+                    if y > max_y {
+                        max_y = y;
+                    }
+                }
+            }
+        }
+
+        let clamp = (max_y * 192).clamp(32768, 98048);
+
+        if clamp > self.camera_pitch_clamp {
+            self.camera_pitch_clamp += (clamp - self.camera_pitch_clamp) / 24;
+        } else if clamp < self.camera_pitch_clamp {
+            self.camera_pitch_clamp += (clamp - self.camera_pitch_clamp) / 80;
+        }
+    }
+
     /// `roofCheck` from client-ts (4476): the highest level drawn this
     /// frame. Every `mapl` `RemoveRoof` guard is skipped — Client has no
     /// `mapl` grid yet, and like TS without `mapl` the answer is 3.
@@ -952,6 +1029,21 @@ impl Client {
         // Run unconditionally so a missing `media` pack still leaves the
         // masks sized (zeroed) for `minimap_draw`'s rotate-plots.
         self.build_minimap_masks();
+
+        // TS maininit 1152-1154 `unpackTextures` / `initColourTable` /
+        // `initPool`: depack the 50 textures from the `textures` jag, then
+        // initialise the texel pool and the gamma-corrected per-texture
+        // palettes (the palette half of `initColourTable`; the global
+        // colour table was built in `Client::new`). A missing `textures`
+        // jag skips the depacks — textured ground then falls back to the
+        // average-colour gouraud branch instead of drawing nothing.
+        let textures_path = format!("{}/textures", self.config.cache_dir);
+        if let Ok(bytes) = std::fs::read(&textures_path) {
+            let jag = JagFile::new(bytes);
+            self.pix3d.unpack_textures(&jag);
+        }
+        self.pix3d.init_pool(20);
+        self.pix3d.init_texture_palettes(0.8);
 
         self.redraw_frame = true;
     }
