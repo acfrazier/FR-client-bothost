@@ -250,7 +250,12 @@ pub struct Client {
 
 impl Client {
     pub fn new(config: ClientConfig) -> Self {
-        let jag_checksum = Self::read_jag_checksums(&config.cache_dir);
+        // TS `getJagChecksums` downloads `/crc` from the web origin (port 80).
+        // Local pack/client is missing `wordenc`, so file CRCs fail the
+        // engine's CrcBuffer32 check (login code 6). Prefer /crc; fall back
+        // to files for tests without a web server.
+        let jag_checksum = Self::fetch_jag_checksums(&config.host)
+            .unwrap_or_else(|| Self::read_jag_checksums(&config.cache_dir));
         let on_demand = Self::load_on_demand(&config);
         let midi = midi_backend(&config.cache_dir);
         let (cache, error_loading) = match Self::load_cache(&config.cache_dir) {
@@ -403,6 +408,38 @@ impl Client {
             cache.ifaces = IfType::unpack(&JagFile::new(iface_bytes));
         }
         Ok(cache)
+    }
+
+    /// TS `getJagChecksums`: GET `/crc` (9×g4 + hash). Hash check matches
+    /// client-ts (`1234`, `hash = (hash << 1) + crc[i]`).
+    fn fetch_jag_checksums(host: &str) -> Option<[i32; 9]> {
+        use std::io::{Read, Write};
+        let mut stream = std::net::TcpStream::connect((host, 80u16)).ok()?;
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .ok()?;
+        write!(stream, "GET /crc HTTP/1.0\r\nHost: {host}\r\n\r\n").ok()?;
+        let mut buf = Vec::new();
+        stream.read_to_end(&mut buf).ok()?;
+        let split = buf.windows(4).position(|w| w == b"\r\n\r\n")?;
+        let body = &buf[split + 4..];
+        if body.len() < 40 {
+            return None;
+        }
+        let mut p = Packet::new(body[..40].to_vec());
+        let mut checksum = [0i32; 9];
+        for slot in &mut checksum {
+            *slot = p.g4();
+        }
+        let expected = p.g4();
+        let mut calculated: i32 = 1234;
+        for c in checksum {
+            calculated = calculated.wrapping_shl(1).wrapping_add(c);
+        }
+        if expected != calculated {
+            return None;
+        }
+        Some(checksum)
     }
 
     /// CRC of each JAG pack file under `cache_dir`, in the 9-slot layout the
