@@ -88,4 +88,10 @@ impl JString {
 
         chars.into_iter().collect()
     }
+
+    /// `JString.getRepeatedCharacter(str)`: one `*` per character (the
+    /// password field mask).
+    pub fn get_repeated_character(str: &str) -> String {
+        "*".repeat(str.chars().count())
+    }
 }

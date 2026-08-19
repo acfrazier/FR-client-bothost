@@ -30,6 +30,7 @@ use crate::dash3d::{
     AnimFrame, BuildArea, CollisionFlag, CollisionMap, DirectionFlag, LocShape, Model, World,
 };
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
+use crate::graphics::{Pix8, PixFont, PixMap};
 use crate::io::{
     ClientProt, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt, SERVER_PROT_SIZES,
 };
@@ -238,6 +239,32 @@ pub struct Client {
     pub login_mes2: String,
     pub loop_cycle: i32,
 
+    /// Title screen state (`Client.ts` `prepareTitle`/`titleScreenDraw`):
+    /// the 789×532 CPU framebuffer every frame draws into (`drawArea`), the
+    /// `title` jag with the fonts and sprites, the 9 title `PixMap` regions
+    /// (0/1 are the flame frames — empty here, `TitleFlames` is out of
+    /// scope), and the login UI fields.
+    pub draw_area: PixMap,
+    pub title: Option<JagFile>,
+    pub p11: Option<PixFont>,
+    pub p12: Option<PixFont>,
+    pub b12: Option<PixFont>,
+    pub q8: Option<PixFont>,
+    pub image_title0: Option<PixMap>,
+    pub image_title1: Option<PixMap>,
+    pub image_title2: Option<PixMap>,
+    pub image_title3: Option<PixMap>,
+    pub image_title4: Option<PixMap>,
+    pub image_title5: Option<PixMap>,
+    pub image_title6: Option<PixMap>,
+    pub image_title7: Option<PixMap>,
+    pub image_title8: Option<PixMap>,
+    pub image_titlebox: Option<Pix8>,
+    pub image_titlebutton: Option<Pix8>,
+    pub loginscreen: i32,
+    pub login_select: i32,
+    pub redraw_frame: bool,
+
     /// Reconnect flag of the most recent `login` call (`None` until the
     /// first login). `lostCon` reestablishes with `reconnect = true`
     /// (wrapper opcode 18); the flag is how the reconnect path is observed.
@@ -388,6 +415,26 @@ impl Client {
             login_mes1: String::new(),
             login_mes2: String::new(),
             loop_cycle: 0,
+            draw_area: PixMap::new(789, 532),
+            title: None,
+            p11: None,
+            p12: None,
+            b12: None,
+            q8: None,
+            image_title0: None,
+            image_title1: None,
+            image_title2: None,
+            image_title3: None,
+            image_title4: None,
+            image_title5: None,
+            image_title6: None,
+            image_title7: None,
+            image_title8: None,
+            image_titlebox: None,
+            image_titlebutton: None,
+            loginscreen: 0,
+            login_select: 0,
+            redraw_frame: true,
             last_login_reconnect: None,
             logout_timer: 0,
             timeout_timer: 0,
@@ -2790,9 +2837,14 @@ impl Client {
         }
     }
 
-    /// `mainredraw` from Java — the frame render pass. Headless default:
-    /// no-op; the `window` feature will present the CPU PixMap here.
-    pub fn mainredraw(&mut self) {}
+    /// `mainredraw` from Java — the frame render pass. When not in-game the
+    /// title screen draws into `draw_area` (which the `window` feature
+    /// presents); in-game draw lands with Task 5.
+    pub fn mainredraw(&mut self) {
+        if !self.ingame {
+            self.title_screen_draw();
+        }
+    }
 
     /// Drive the 20 ms GameShell machine on the calling thread (spec §3):
     /// one `mainloop` then `mainredraw` per frame with the Java
