@@ -22,7 +22,7 @@ mod window {
     use std::time::Duration;
 
     use winit::application::ApplicationHandler;
-    use winit::dpi::LogicalSize;
+    use winit::dpi::PhysicalSize;
     use winit::error::EventLoopError;
     use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
     use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -62,15 +62,18 @@ mod window {
     }
 
     impl Present {
-        /// Create the fixed-size window (789×532 applet). No resize-to-fit,
-        /// no upscale: the surface is exactly `width`×`height`.
+        /// Create the fixed-size window (789×532 applet). The window is sized
+        /// in physical pixels and non-resizable so present, surface, and the
+        /// `apply_mouse_*` coordinates share the 1:1 applet pixel space: no
+        /// resize-to-fit, no upscale.
         pub fn open(width: u32, height: u32, title: &str) -> Result<Self, PresentError> {
             let event_loop = EventLoop::new()?;
             #[allow(deprecated)] // pump-based driver creates the window outside run_app
             let window = Arc::new(event_loop.create_window(
                 Window::default_attributes()
                     .with_title(title)
-                    .with_inner_size(LogicalSize::new(width, height)),
+                    .with_inner_size(PhysicalSize::new(width, height))
+                    .with_resizable(false),
             )?);
             let context = softbuffer::Context::new(window.clone())?;
             let mut surface = softbuffer::Surface::new(&context, window)?;
