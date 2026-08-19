@@ -4,11 +4,15 @@
 
 pub mod jagfx;
 pub mod midi;
+pub mod output;
 pub mod tone;
 
 pub use jagfx::JagFX;
 pub use midi::{Midi, NullMidi};
+pub use output::Fade;
 pub use tone::Tone;
 
 #[cfg(feature = "audio")]
 pub use midi::RustyMidi;
+#[cfg(feature = "audio")]
+pub use output::{AudioError, AudioOut};

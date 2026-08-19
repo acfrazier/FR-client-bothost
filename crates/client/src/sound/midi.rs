@@ -9,6 +9,10 @@ pub trait Midi: Send {
     fn stop(&mut self);
     /// `setMidiVolume(active, volume)`: the "voladjust" poke.
     fn set_volume(&mut self, volume: i32);
+    /// Render one stereo f32 block at 22050 Hz into the output buffers; the
+    /// mixer multiplies it by the shared fade gain. Headless backends have
+    /// no output, so the default renders silence.
+    fn render(&mut self, _left: &mut [f32], _right: &mut [f32]) {}
 }
 
 /// Default backend (feature `audio` off): requests still complete, but there
@@ -76,22 +80,18 @@ mod rusty {
         }
 
         /// 274 `midivol` (1/100 dB) → linear gain, as the client-ts
-        /// tinymidipcm `decibelsToGain`: 0 → 1.0, -400 → -4 dB, ...
-        fn gain(volume: i32) -> f32 {
+        /// tinymidipcm `decibelsToGain`: 0 → 1.0, -400 → -4 dB, ... The
+        /// mixer's `Fade` maps the same ladder.
+        pub fn gain(volume: i32) -> f32 {
             10f32.powf(volume as f32 / 2000.0)
         }
 
-        /// Render one block of stereo f32, applying the current volume as a
-        /// post-gain. There is no audio device in this crate; whoever drives
-        /// output (a later `window`/audio task) calls this.
+        /// Render one block of stereo f32. The output is raw here: the 274
+        /// `midivol` gain lives on the mixer's `Fade`, which the cpal
+        /// callback applies after rendering.
         pub fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
             if let Some(sequencer) = &mut self.sequencer {
                 sequencer.render(left, right);
-                let gain = Self::gain(self.volume);
-                for (l, r) in left.iter_mut().zip(right.iter_mut()) {
-                    *l *= gain;
-                    *r *= gain;
-                }
             }
         }
     }
@@ -118,6 +118,10 @@ mod rusty {
 
         fn set_volume(&mut self, volume: i32) {
             self.volume = volume;
+        }
+
+        fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
+            RustyMidi::render(self, left, right);
         }
     }
 }

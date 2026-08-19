@@ -97,6 +97,23 @@ fn synth_sound_queue_drains_through_jagfx() {
 }
 
 #[test]
+fn synth_sound_queue_pushes_pcm_not_drops() {
+    let mut c = client();
+    let mut p = client::io::Packet::new(JAGFX_FIXTURE.to_vec());
+    c.jagfx.init(&mut p);
+    c.wave_ids[0] = 882;
+    c.wave_loops[0] = 1;
+    c.wave_delay[0] = 0;
+    c.wave_count = 1;
+    c.sounds_do_queue();
+    assert_eq!(c.wave_count, 0);
+    let queue = c.waves.lock().unwrap();
+    // generate() leaves pos at 44 (header) + 771 PCM bytes
+    assert_eq!(queue.len(), 771);
+    assert!(queue.iter().any(|&s| s != 0), "fixture sound must be audible");
+}
+
+#[test]
 fn jagfx_init_and_generate_from_engine_sounds() {
     let path = std::env::var("ENGINE_DIR")
         .unwrap_or_else(|_| format!("{}/experiments/Server/engine", std::env::var("HOME").unwrap()));
