@@ -194,3 +194,70 @@ fn change_loc_unchecked_wall_straight_with_anim_sets_wall() {
         Some(SceneModel::LocAnim(_))
     ));
 }
+
+fn seed_anim_loc(c: &mut Client, id: usize) {
+    while c.cache.locs.len() <= id {
+        c.cache.locs.push(LocType::default());
+    }
+    c.cache.locs[id].anim = 0;
+    if c.cache.seqs.is_empty() {
+        c.cache.seqs.push(client::config::SeqType::default());
+    }
+}
+
+fn loc_add_payload(pos: u8, info: u8, id: u16) -> Packet {
+    let mut p = Packet::alloc(0);
+    p.p1(pos as i32);
+    p.p1(info as i32);
+    p.p2(id as i32);
+    p.pos = 0;
+    p
+}
+
+#[test]
+fn loc_add_change_applies_on_do_queue() {
+    let mut c = client();
+    seed_anim_loc(&mut c, 0);
+    c.scene_state = 2;
+    c.ingame = true;
+    c.zone_update_x = 0;
+    c.zone_update_z = 0;
+    let mut p = loc_add_payload(0x11, 0x00, 0); // tile (1,1), shape 0 wall
+    c.handle_packet(ServerProt::LOC_ADD_CHANGE, &mut p);
+    c.game_loop();
+    assert!(c.world.get_wall(0, 1, 1).is_some());
+}
+
+#[test]
+fn loc_add_change_waits_when_model_not_ready() {
+    let mut c = client();
+    while c.cache.locs.len() <= 0 {
+        c.cache.locs.push(LocType::default());
+    }
+    c.cache.locs[0].model = Some(vec![60000]);
+    c.scene_state = 2;
+    c.ingame = true;
+    let mut p = loc_add_payload(0x11, 0x00, 0);
+    c.handle_packet(ServerProt::LOC_ADD_CHANGE, &mut p);
+    c.game_loop();
+    assert!(c.world.get_wall(0, 1, 1).is_none());
+    assert!(c.loc_changes.head().is_some());
+}
+
+#[test]
+fn loc_del_removes_wall() {
+    let mut c = client();
+    seed_anim_loc(&mut c, 0);
+    c.scene_state = 2;
+    c.ingame = true;
+    let mut p = loc_add_payload(0x11, 0x00, 0);
+    c.handle_packet(ServerProt::LOC_ADD_CHANGE, &mut p);
+    c.game_loop();
+    let mut p = Packet::alloc(0);
+    p.p1(0x11);
+    p.p1(0x00);
+    p.pos = 0;
+    c.handle_packet(ServerProt::LOC_DEL, &mut p);
+    c.game_loop();
+    assert!(c.world.get_wall(0, 1, 1).is_none());
+}

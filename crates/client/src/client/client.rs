@@ -31,7 +31,7 @@ use crate::config::Cache;
 use crate::dash3d::world::LevelHeightmaps;
 use crate::dash3d::{
     AnimFrame, BuildArea, ClientObj, ClientProj, CollisionFlag, CollisionMap, DirectionFlag,
-    LocChange, LocShape, MapFlag, MapSpotAnim, Model, World,
+    LocChange, LocLayer, LocShape, MapFlag, MapSpotAnim, Model, World, LOC_SHAPE_TO_LAYER,
 };
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
 use crate::datastruct::LinkList;
@@ -3627,21 +3627,38 @@ impl Client {
     }
 
     /// `zonePacket(buf, opcode)` from client-ts: reads the 8-tile zone
-    /// position byte and the TS field widths for each opcode. Scene apply
-    /// (groundObj/locChanges/spotanims/projectiles) stays deferred; the
-    /// reads must still happen so enclosed frames do not desync.
+    /// position byte and the TS field widths for each opcode.
+    /// `LOC_ADD_CHANGE` / `LOC_DEL` also enqueue the loc change; the
+    /// remaining opcodes only consume their bytes (scene apply stays
+    /// deferred) so enclosed frames do not desync.
     fn zone_packet(&mut self, buf: &mut Packet, opcode: i32) {
         let pos = buf.g1();
-        let _x = self.zone_update_x + ((pos >> 4) & 0x7);
-        let _z = self.zone_update_z + (pos & 0x7);
+        let x = self.zone_update_x + ((pos >> 4) & 0x7);
+        let z = self.zone_update_z + (pos & 0x7);
 
         match opcode {
             ServerProt::LOC_ADD_CHANGE => {
-                let _info = buf.g1();
-                let _id = buf.g2();
+                let info = buf.g1();
+                let id = buf.g2();
+
+                let shape = info >> 2;
+                let rotate = info & 0x3;
+                let layer = LOC_SHAPE_TO_LAYER[shape as usize];
+
+                if x >= 0 && z >= 0 && x < BuildArea::SIZE && z < BuildArea::SIZE {
+                    self.loc_change_create(self.minusedlevel, x, z, layer, id, shape, rotate, 0, -1);
+                }
             }
             ServerProt::LOC_DEL => {
-                let _info = buf.g1();
+                let info = buf.g1();
+
+                let shape = info >> 2;
+                let rotate = info & 0x3;
+                let layer = LOC_SHAPE_TO_LAYER[shape as usize];
+
+                if x >= 0 && z >= 0 && x < BuildArea::SIZE && z < BuildArea::SIZE {
+                    self.loc_change_create(self.minusedlevel, x, z, layer, -1, shape, rotate, 0, -1);
+                }
             }
             ServerProt::LOC_ANIM => {
                 let _info = buf.g1();
@@ -4571,9 +4588,250 @@ impl Client {
     /// pending loc-change queue with the fresh scene. Slice 2.
     fn loc_change_post_build(&mut self) {}
 
+    /// `locChangeSetOld(loc)` from client-ts (7433): snapshot the tile's
+    /// current appearance onto a loc-change node. `&self` so the caller can
+    /// pass a node that is not yet owned by `loc_changes` without a second
+    /// `&mut self` borrow.
+    fn loc_change_set_old(&self, loc: &mut LocChange) {
+        let mut typecode = 0;
+        let mut other_id = -1;
+        let mut other_shape = 0;
+        let mut other_angle = 0;
+
+        if loc.layer == LocLayer::WALL {
+            typecode = self.world.wall_type(loc.level, loc.x, loc.z);
+        } else if loc.layer == LocLayer::WALL_DECOR {
+            typecode = self.world.decor_type(loc.level, loc.z, loc.x);
+        } else if loc.layer == LocLayer::GROUND {
+            typecode = self.world.scene_type(loc.level, loc.x, loc.z);
+        } else if loc.layer == LocLayer::GROUND_DECOR {
+            typecode = self.world.gd_type(loc.level, loc.x, loc.z);
+        }
+
+        if typecode != 0 {
+            let other_info = self.world.type_code2(loc.level, loc.x, loc.z, typecode);
+            other_id = (typecode >> 14) & 0x7fff;
+            other_shape = other_info & 0x1f;
+            other_angle = other_info >> 6;
+        }
+
+        loc.old_type = other_id;
+        loc.old_shape = other_shape;
+        loc.old_angle = other_angle;
+    }
+
+    /// `locChangeCreate(level, x, z, layer, type, shape, angle, startTime,
+    /// endTime)` from client-ts (7396): reuse the tile's queued node when
+    /// one exists, otherwise snapshot the old appearance and push a new one.
+    #[allow(clippy::field_reassign_with_default, clippy::too_many_arguments)]
+    fn loc_change_create(
+        &mut self,
+        level: i32,
+        x: i32,
+        z: i32,
+        layer: i32,
+        r#type: i32,
+        shape: i32,
+        angle: i32,
+        start_time: i32,
+        end_time: i32,
+    ) {
+        let mut next = self.loc_changes.head();
+        while let Some(loc) = next {
+            if loc.level == self.minusedlevel && loc.x == x && loc.z == z && loc.layer == layer {
+                loc.new_type = r#type;
+                loc.new_shape = shape;
+                loc.new_angle = angle;
+                loc.start_time = start_time;
+                loc.end_time = end_time;
+                return;
+            }
+            next = self.loc_changes.next();
+        }
+
+        let mut loc = LocChange::default();
+        loc.level = level;
+        loc.layer = layer;
+        loc.x = x;
+        loc.z = z;
+        self.loc_change_set_old(&mut loc);
+        loc.new_type = r#type;
+        loc.new_shape = shape;
+        loc.new_angle = angle;
+        loc.start_time = start_time;
+        loc.end_time = end_time;
+        self.loc_changes.push(loc);
+    }
+
+    /// `locChangeUnchecked(level, layer, x, z, id, shape, angle)` from
+    /// client-ts (7497): delete whatever occupies the tile on that layer
+    /// (plus its collision), then place `id` when non-negative. The GROUND
+    /// overflow check returns after the world delete, before any collision
+    /// or placement work.
+    #[allow(clippy::too_many_arguments)]
+    fn loc_change_unchecked(
+        &mut self,
+        level: i32,
+        layer: i32,
+        x: i32,
+        z: i32,
+        id: i32,
+        shape: i32,
+        angle: i32,
+    ) {
+        if x < 1 || z < 1 || x > 102 || z > 102 {
+            return;
+        }
+
+        if self.config.lowmem && level != self.minusedlevel {
+            return;
+        }
+
+        let mut typecode = 0;
+        if layer == LocLayer::WALL {
+            typecode = self.world.wall_type(level, x, z);
+        } else if layer == LocLayer::WALL_DECOR {
+            typecode = self.world.decor_type(level, z, x);
+        } else if layer == LocLayer::GROUND {
+            typecode = self.world.scene_type(level, x, z);
+        } else if layer == LocLayer::GROUND_DECOR {
+            typecode = self.world.gd_type(level, x, z);
+        }
+
+        if typecode != 0 {
+            let other_info = self.world.type_code2(level, x, z, typecode);
+            let other_id = (typecode >> 14) & 0x7fff;
+            let other_shape = other_info & 0x1f;
+            let other_angle = other_info >> 6;
+
+            if layer == LocLayer::WALL {
+                self.world.del_wall(level, x, z);
+
+                let r#type = self.cache.loc(other_id as usize);
+                if r#type.blockwalk {
+                    self.collision[level as usize]
+                        .del_wall(x, z, other_shape, other_angle, r#type.blockrange);
+                }
+            } else if layer == LocLayer::WALL_DECOR {
+                self.world.del_decor(level, x, z);
+            } else if layer == LocLayer::GROUND {
+                self.world.del_loc(level, x, z);
+
+                let r#type = self.cache.loc(other_id as usize);
+                if x + r#type.width > BuildArea::SIZE - 1
+                    || z + r#type.width > BuildArea::SIZE - 1
+                    || x + r#type.length > BuildArea::SIZE - 1
+                    || z + r#type.length > BuildArea::SIZE - 1
+                {
+                    return;
+                }
+
+                if r#type.blockwalk {
+                    self.collision[level as usize].del_loc(
+                        x,
+                        z,
+                        r#type.width,
+                        r#type.length,
+                        other_angle,
+                        r#type.blockrange,
+                    );
+                }
+            } else if layer == LocLayer::GROUND_DECOR {
+                self.world.del_ground_decor(level, x, z);
+
+                let r#type = self.cache.loc(other_id as usize);
+                if r#type.blockwalk && r#type.active {
+                    self.collision[level as usize].unblock_ground(x, z);
+                }
+            }
+        }
+
+        if id >= 0 {
+            let mut tile_level = level;
+            if level < 3
+                && (self.mapl[1][x as usize][z as usize] as i32 & MapFlag::LINK_BELOW) != 0
+            {
+                tile_level = level + 1;
+            }
+
+            ClientBuild::change_loc_unchecked(
+                &self.cache,
+                &mut self.world,
+                Some(&mut self.collision[level as usize]),
+                &self.groundh,
+                level,
+                x,
+                z,
+                id,
+                shape,
+                angle,
+                tile_level,
+                self.loop_cycle,
+            );
+        }
+    }
+
     /// `locChangeDoQueue()` from client-ts (7465): step the loc-change
-    /// queue. Slice 2.
-    fn loc_change_do_queue(&mut self) {}
+    /// queue. Once the scene is ready (`scene_state == 2`), apply the new
+    /// appearance when its model is available, or restore the old one.
+    fn loc_change_do_queue(&mut self) {
+        if self.scene_state != 2 {
+            return;
+        }
+
+        let mut node = self.loc_changes.head();
+        while let Some(loc) = node {
+            if loc.end_time > 0 {
+                loc.end_time -= 1;
+            }
+
+            if loc.end_time != 0 {
+                if loc.start_time > 0 {
+                    loc.start_time -= 1;
+                }
+
+                if loc.start_time == 0
+                    && loc.x >= 1
+                    && loc.z >= 1
+                    && loc.x <= 102
+                    && loc.z <= 102
+                    && (loc.new_type < 0
+                        || ClientBuild::change_loc_available(&self.cache, loc.new_type, loc.new_shape))
+                {
+                    let level = loc.level;
+                    let layer = loc.layer;
+                    let x = loc.x;
+                    let z = loc.z;
+                    let new_type = loc.new_type;
+                    let new_shape = loc.new_shape;
+                    let new_angle = loc.new_angle;
+                    let unlink = (loc.old_type == loc.new_type && loc.old_type == -1)
+                        || (loc.old_type == loc.new_type
+                            && loc.old_angle == loc.new_angle
+                            && loc.old_shape == loc.new_shape);
+                    loc.start_time = -1;
+                    self.loc_change_unchecked(level, layer, x, z, new_type, new_shape, new_angle);
+                    if unlink {
+                        self.loc_changes.unlink_last();
+                    }
+                }
+            } else if loc.old_type < 0
+                || ClientBuild::change_loc_available(&self.cache, loc.old_type, loc.old_shape)
+            {
+                let level = loc.level;
+                let layer = loc.layer;
+                let x = loc.x;
+                let z = loc.z;
+                let old_type = loc.old_type;
+                let old_shape = loc.old_shape;
+                let old_angle = loc.old_angle;
+                self.loc_change_unchecked(level, layer, x, z, old_type, old_shape, old_angle);
+                self.loc_changes.unlink_last();
+            }
+
+            node = self.loc_changes.next();
+        }
+    }
 
     /// `gameLoop` from Java (`Client.java` 9341): count down a pending
     /// logout request, read up to five TCP packets, the side-tab click
