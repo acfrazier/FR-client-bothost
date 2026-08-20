@@ -3,16 +3,68 @@
 // `loadLocations`/`addLoc` (TS 718-1137). Model ids in these tests are chosen
 // far outside anything a real pack could load, so `Model::requestDownload`
 // can never see them as ready; planted locs have `model: None` so `getModel`
-// yields nothing and only the collision side-effects are observable.
+// yields nothing and only the collision side-effects are observable. The
+// provider test wires a recording `ModelProvider` (as `maininit` does) to
+// prove the not-ready path queues archive-0 requests.
 //
 // The finishBuild tests (TS 75-541) drive real ground data: the src packets
 // carry opcode-0 tiles (perlin fallback heights) plus one planted floor
 // tile, so the blend pass has something to lay down.
+use std::sync::{Arc, Mutex};
+
 use client::client::{Client, ClientBuild, ClientConfig};
 use client::config::{Cache, FloType, LocType};
-use client::dash3d::{BuildArea, CollisionFlag, LocAngle, MapFlag, TerrainOverlayShape};
+use client::dash3d::model::ModelProvider;
+use client::dash3d::{BuildArea, CollisionFlag, LocAngle, MapFlag, Model, TerrainOverlayShape};
 use client::graphics::Colour;
 use client::io::{OnDemand, Packet};
+
+/// Records the model ids `Model.requestDownload` routes to it, standing in
+/// for the `OnDemand` handle `maininit` wires via `Model.init`.
+struct RecordingProvider {
+    requested: Arc<Mutex<Vec<i32>>>,
+}
+
+impl ModelProvider for RecordingProvider {
+    fn request_model(&mut self, id: i32) {
+        self.requested.lock().unwrap().push(id);
+    }
+}
+
+#[test]
+fn check_model_all_requests_through_wired_provider() {
+    // Tests in this binary share the process-wide `Model` store and may run
+    // in parallel, so the assertions tolerate extra 60000 requests from the
+    // sibling not-ready tests instead of pinning the exact request vector.
+    let requested = Arc::new(Mutex::new(Vec::<i32>::new()));
+    Model::init(70000, Box::new(RecordingProvider { requested: requested.clone() }));
+
+    // missing models are not ready and each id is queued to the provider
+    let loc = LocType {
+        model: Some(vec![60000, 60001]),
+        ..LocType::default()
+    };
+    assert!(!loc.check_model_all());
+    {
+        let got = requested.lock().unwrap();
+        assert!(got.contains(&60000) && got.contains(&60001));
+    }
+
+    // unpacked models report ready and are not re-requested (id 5: no
+    // other test in this binary unpacks it, so a request for it would
+    // prove the ready path really skipped the provider)
+    Model::unpack(5, None);
+    let loc = LocType {
+        model: Some(vec![5]),
+        ..LocType::default()
+    };
+    assert!(loc.check_model_all());
+    assert!(!requested.lock().unwrap().contains(&5));
+
+    // request_download routes unknown ids through the provider as well
+    assert!(!Model::request_download(60002));
+    assert!(requested.lock().unwrap().contains(&60002));
+}
 
 #[test]
 fn check_model_all_none_models_is_ready() {

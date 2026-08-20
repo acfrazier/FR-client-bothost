@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 use flate2::read::GzDecoder;
 
+use crate::dash3d::model::ModelProvider;
 use crate::datastruct::{Arena, LinkList, LinkList2, LinkableTrait, Links};
 use crate::io::client_stream::ClientStream;
 use crate::io::jagfile::JagFile;
@@ -61,6 +62,23 @@ impl LinkableTrait for OnDemandRequest {
 /// TS `OnDemandProvider` (`requestModel`).
 pub trait OnDemandProvider {
     fn request_model(&mut self, id: i32);
+}
+
+/// `'static` bridge from the process-wide `Model` store to this OnDemand's
+/// worker (`Model.init`'s provider hook). It owns a clone of the command
+/// sender, so it can outlive the `Client` that created it; the worker is
+/// shared state, not owned here. Archive-0 requests mirror
+/// `OnDemand::request(0, id)` (without the request-list dedupe — the
+/// engine tolerates repeats, and `request_download` retries until the
+/// model unpacks).
+pub(crate) struct ModelProviderHandle {
+    tx: mpsc::Sender<WorkerCommand>,
+}
+
+impl ModelProvider for ModelProviderHandle {
+    fn request_model(&mut self, id: i32) {
+        let _ = self.tx.send(WorkerCommand::Request { archive: 0, file: id });
+    }
 }
 
 /// Client → worker commands (TS `postMessage` inbound messages).
@@ -340,6 +358,14 @@ impl OnDemand {
     /// `getFileCount(archive)`.
     pub fn get_file_count(&self, archive: i32) -> i32 {
         self.versions[archive as usize].len() as i32
+    }
+
+    /// A `'static` handle for `Model.init`'s provider hook (`None` for
+    /// `new_unconnected`, which has no worker to send to).
+    pub fn model_provider(&self) -> Option<Box<dyn ModelProvider + Send>> {
+        self.tx.as_ref().map(|tx| {
+            Box::new(ModelProviderHandle { tx: tx.clone() }) as Box<dyn ModelProvider + Send>
+        })
     }
 
     /// `getAnimFrameCount()`.

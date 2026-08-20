@@ -950,10 +950,10 @@ impl Client {
     /// (snapped when more than 500 away, then a `/16` ease), the arrow keys
     /// (`key_held[1..4]`) steer yaw/pitch through the TS velocity fields,
     /// and `camera_pitch_clamp` eases toward the surrounding-terrain clamp.
-    /// The `mapl` `VisBelow` level lift is not ported (Client has no `mapl`
-    /// grid yet), so the sample reads `minusedlevel` like the rest of the
-    /// port; `macro_camera_x/z` stay 0, their TS initial values (the macro
-    /// random-drift block is a separate gameLoop chunk not ported).
+    /// The `mapl` `VisBelow` level lift is not ported, so the height sample
+    /// reads `minusedlevel` like the rest of the port; `macro_camera_x/z`
+    /// stay 0, their TS initial values (the macro random-drift block is a
+    /// separate gameLoop chunk not ported).
     pub fn follow_camera(&mut self) {
         let Some(player) = &self.local_player else {
             return;
@@ -1023,8 +1023,8 @@ impl Client {
     }
 
     /// `roofCheck` from client-ts (4476): the highest level drawn this
-    /// frame. Every `mapl` `RemoveRoof` guard is skipped — Client has no
-    /// `mapl` grid yet, and like TS without `mapl` the answer is 3.
+    /// frame. The `mapl` `RemoveRoof` guards are not ported (roof removal
+    /// is a later slice), so the answer is the TS no-removal fallback 3.
     fn roof_check(&self) -> i32 {
         3
     }
@@ -2113,8 +2113,8 @@ impl Client {
         let mapdots2 = self.mapdots2.as_ref();
         let mapdots3 = self.mapdots3.as_ref();
 
-        // TS 11310-11316: map functions (empty while `minimapBuildBuffer`
-        // is not ported, so the loop is a no-op with the defaults).
+        // TS 11310-11316: map functions (filled by `minimap_build_buffer`;
+        // a `mapfunction` entry that is `None` skips the dot).
         for i in 0..self.active_map_function_count as usize {
             let dot_x = self.active_map_function_x[i] * 4 + 2 - (player_x / 32);
             let dot_y = self.active_map_function_z[i] * 4 + 2 - (player_z / 32);

@@ -208,6 +208,19 @@ impl ClientBuild {
     /// models are downloaded. Out-of-area tiles still consume the packet
     /// bytes, and `skip` state tracks per-loc model-check progress.
     pub fn check_locations(&self, cache: &Cache, src: &[u8], x_offset: i32, z_offset: i32) -> bool {
+        Self::check_locations_low_mem(self.low_mem, cache, src, x_offset, z_offset)
+    }
+
+    /// `checkLocations` without a `ClientBuild` instance: only `lowMem` is
+    /// read, so `checkScene`'s per-frame wait loop calls this instead of
+    /// allocating a full build-area of scratch grids every frame.
+    pub fn check_locations_low_mem(
+        low_mem: bool,
+        cache: &Cache,
+        src: &[u8],
+        x_offset: i32,
+        z_offset: i32,
+    ) -> bool {
         let mut buf = Packet::new(src.to_vec());
         let mut ready = true;
         let mut loc_id = -1;
@@ -240,7 +253,7 @@ impl ClientBuild {
 
                     if stx > 0 && stz > 0 && stx < 103 && stz < 103 {
                         let loc = cache.loc(loc_id as usize);
-                        if shape != 22 || !self.low_mem || loc.active || loc.forcedecor {
+                        if shape != 22 || !low_mem || loc.active || loc.forcedecor {
                             if !loc.check_model_all() {
                                 ready = false;
                             }

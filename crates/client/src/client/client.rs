@@ -137,9 +137,9 @@ pub struct Client {
     /// `Present::open`; headless bots keep it false.
     pub draw: bool,
     pub scene_state: i32,
-    /// `ClientBuild.minusedlevel` from client-ts (a TS static): the
-    /// `minusedlevel` the current scene was built for. `check_minimap`'s
-    /// low-memory rebuild compares it against `self.minusedlevel`.
+    /// `Client.buildMinusedlevel` from client-ts: the `minusedlevel` the
+    /// current scene was built for. `check_minimap`'s low-memory rebuild
+    /// compares it against `self.minusedlevel`.
     pub build_minusedlevel: i32,
     pub local_player: Option<ClientPlayer>,
     pub players: Vec<Option<ClientPlayer>>,
@@ -417,11 +417,9 @@ pub struct Client {
     /// buffer, the compass/mapedge/mapdot/mapmarker sprites, `mapback` (the
     /// ring mask plotted into `area_map`), and the per-row scanline masks
     /// built from `mapback.data` (TS 1180-1216). `minimap` is allocated as
-    /// TS maininit (868) does; `minimapBuildBuffer` (5280) is not ported
-    /// while `mapl`/`render2DGround` are not, so the buffer stays black and
-    /// the map functions stay empty. `minimap_state`/`minimap_level`/
-    /// `macro_minimap_*` default as TS (506, 243-247); `minimap_loop` (2742)
-    /// is Task 7.
+    /// TS maininit (868) does and composed by `minimap_build_buffer`
+    /// (5280). `minimap_state`/`minimap_level`/`macro_minimap_*` default as
+    /// TS (506, 243-247); `minimap_loop` (2742) is Task 7.
     pub minimap: Option<Pix32>,
     pub compass: Option<Pix32>,
     pub mapedge: Option<Pix32>,
@@ -854,7 +852,9 @@ impl Client {
         index: usize,
         checksums: &[i32; 9],
     ) -> Option<Vec<u8>> {
-        let crc = checksums[index];
+        let Some(&crc) = checksums.get(index) else {
+            return None;
+        };
         let cached = std::fs::read(format!("{cache_dir}/{filename}")).ok();
         if let Some(bytes) = cached {
             if Packet::getcrc(&bytes, 0, bytes.len()) == crc {
@@ -909,8 +909,10 @@ impl Client {
     /// config/interface, start OnDemand from the versionlist, and prefetch
     /// anims/models. `already_started` is set first, so a second call is a
     /// no-op (TS `alreadyStarted`). A failed or invalid jag sets
-    /// `error_loading` but does not abort the fetch loop; progress always
-    /// ends at 100.
+    /// `error_loading` but does not abort the fetch loop; progress reaches
+    /// 100 only when the `/crc` fetch succeeds — the checksum-fail path
+    /// returns early with `error_loading` and `last_progress_percent` left
+    /// at 10.
     pub fn maininit(&mut self) {
         if self.already_started {
             return;
@@ -976,8 +978,13 @@ impl Client {
 
         // TS maininit 886-888: `AnimFrame.init`/`Model.init` size the
         // process-wide stores from the versionlist before any prefetch.
+        // `Model.init` also wires the provider that routes `requestDownload`
+        // archive-0 requests back to this OnDemand's worker.
         if let Some(od) = self.on_demand.as_ref() {
             AnimFrame::init(od.get_anim_frame_count());
+            if let Some(provider) = od.model_provider() {
+                Model::init(od.get_file_count(0), provider);
+            }
         }
 
         // TS anim/model prefetch (893-960): request every anim, then the
@@ -4130,14 +4137,15 @@ impl Client {
             }
         }
 
+        // Only `lowMem` is consulted while waiting, so use the associated
+        // `checkLocations` variant instead of a full `ClientBuild` (four
+        // 4×104×104 grids plus the shadow/mapo scratch) every frame.
         let mut ready = true;
-        let mut build = ClientBuild::new();
-        build.low_mem = self.config.lowmem;
         for i in 0..self.map_build_ground_data.len() {
             if let Some(data) = &self.map_build_location_data[i] {
                 let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
                 let z = (self.map_build_index[i] & 0xff) * 64 - self.map_build_base_z;
-                if !build.check_locations(&self.cache, data, x, z) {
+                if !ClientBuild::check_locations_low_mem(self.config.lowmem, &self.cache, data, x, z) {
                     ready = false;
                 }
             }

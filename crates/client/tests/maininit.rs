@@ -187,6 +187,76 @@ fn maininit_is_oneshot_and_sets_progress_100_on_crc_hit() {
 }
 
 #[test]
+fn maininit_empty_cache_fetches_all_eight_jags_over_http() {
+    let dir = std::env::temp_dir().join("274-maininit-empty");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // maininit's GET order (JAG_FETCH), with the checksum slot per pack.
+    let fetch = [
+        ("title", 1usize),
+        ("config", 2),
+        ("interface", 3),
+        ("media", 4),
+        ("textures", 6),
+        ("wordenc", 7),
+        ("sounds", 8),
+        ("versionlist", 5),
+    ];
+    let mut checksums = [0i32; 9];
+    let mut bodies = Vec::new();
+    for (name, slot) in fetch {
+        // config must be a valid (empty) jag so `load_cache` succeeds and
+        // `errorLoading` stays clear; the rest are dummy bytes that the
+        // catch_unwind'd unpack paths tolerate.
+        let bytes: Vec<u8> = if name == "config" {
+            vec![0u8, 0, 6, 0, 0, 6, 0, 0]
+        } else {
+            format!("{name}-fetched").into_bytes()
+        };
+        checksums[slot] = Packet::getcrc(&bytes, 0, bytes.len());
+        bodies.push(bytes);
+    }
+    // /crc, then one GET per jag: an empty cache misses everything.
+    let mut responses = vec![crc_body(&checksums)];
+    responses.extend(bodies.clone());
+    let (port, th, seen) = serve_in_order(responses);
+
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: dir.to_str().unwrap().into(),
+        members: true,
+        lowmem: false,
+    });
+    c.http_port = port;
+    c.fetch_retry_wait = Duration::from_millis(1);
+    c.maininit();
+    th.join().ok();
+    assert!(c.already_started);
+    assert!(!c.error_loading);
+    assert_eq!(c.last_progress_percent, 100);
+    // every jag landed on disk with the served bytes
+    for (name, slot) in fetch {
+        let bytes = std::fs::read(dir.join(name)).unwrap();
+        assert_eq!(
+            Packet::getcrc(&bytes, 0, bytes.len()),
+            checksums[slot],
+            "{name} was persisted with the fetched bytes"
+        );
+    }
+    // /crc plus exactly one GET per jag, all over HTTP
+    let paths = seen.lock().unwrap().clone();
+    assert_eq!(paths.len(), 9);
+    assert_eq!(paths[0], "/crc");
+    for (name, _) in fetch {
+        assert!(
+            paths.iter().any(|p| p.starts_with(&format!("/{name}"))),
+            "missing HTTP GET for {name}"
+        );
+    }
+}
+
+#[test]
 fn maininit_retries_jag_get_after_crc_mismatch() {
     let dir = std::env::temp_dir().join("274-maininit-retry");
     let _ = std::fs::remove_dir_all(&dir);
