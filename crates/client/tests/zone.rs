@@ -20,7 +20,7 @@ fn client_obj_roundtrips_in_link_list() {
 }
 
 use client::dash3d::world::LevelHeightmaps;
-use client::dash3d::{BuildArea, ClientEntity, ClientPlayer, ClientProj, CollisionMap, LocShape, MapSpotAnim, Model, SceneModel, World};
+use client::dash3d::{AnimFrame, BuildArea, ClientEntity, ClientPlayer, ClientProj, CollisionMap, LocShape, MapSpotAnim, Model, SceneModel, World};
 use client::graphics::Pix3D;
 
 #[test]
@@ -84,6 +84,70 @@ fn client_proj_move_by_uses_bound_seq_delays() {
     q.move_by(1);
     assert_eq!(q.anim_frame, 0);
     assert_eq!(q.anim_cycle, 20);
+}
+
+#[test]
+fn client_proj_bind_seq_resolves_zero_delays_via_animframe_fallback() {
+    // One AnimFrame in the process-wide store: id 0, delay 2. A seq frame
+    // with raw delay 0 falls back to its transform's delay; a transform id
+    // that is not in the store falls back to 1 (`SeqType::getDelay`).
+    AnimFrame::unpack(&[
+        0, 1, // head: total frames = 1
+        0, 0, // head: frame id = 0
+        0, // head: group count = 0
+        2, // del: frame delay = 2
+        0, // base: size 0
+        0, 3, // headLength = 3
+        0, 0, // tran1Length = 0
+        0, 0, // tran2Length = 0
+        0, 1, // delLength = 1
+    ]);
+
+    let cache = Cache {
+        seqs: vec![
+            SeqType {
+                num_frames: 2,
+                frames: Some(vec![0, 1]),
+                iframes: Some(vec![0, 1]),
+                delay: Some(vec![0, 0]),
+                ..SeqType::default()
+            },
+            SeqType {
+                num_frames: 2,
+                frames: Some(vec![999, 999]),
+                iframes: Some(vec![0, 0]),
+                delay: Some(vec![0, 0]),
+                ..SeqType::default()
+            },
+        ],
+        spots: vec![
+            SpotType::default(),
+            SpotType { id: 1, seq: Some(0), ..SpotType::default() },
+            SpotType { id: 2, seq: Some(1), ..SpotType::default() },
+        ],
+        ..Cache::default()
+    };
+
+    // Seq 0: raw delays [0, 0] resolve to [2, 1] (frame 0 → AnimFrame 0's
+    // delay 2, frame 1 → missing transform → 1).
+    let mut p = ClientProj::new(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    p.bind_seq(&cache);
+    p.anim_cycle = 0;
+    p.move_by(1);
+    // anim_cycle 1: raw [0, 0] would advance to frame 1 (cycle 0); the
+    // resolved delays hold the frame.
+    assert_eq!(p.anim_frame, 0);
+    assert_eq!(p.anim_cycle, 1);
+
+    // Seq 1: raw delays [0, 0], both transforms missing → resolved [1, 1].
+    let mut q = ClientProj::new(2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    q.bind_seq(&cache);
+    q.anim_cycle = 1;
+    q.move_by(1);
+    // anim_cycle 2: raw [0, 0] would wrap back to frame 0 (cycle 0); the
+    // resolved [1, 1] advances one frame.
+    assert_eq!(q.anim_frame, 1);
+    assert_eq!(q.anim_cycle, 0);
 }
 
 fn empty_world() -> World {

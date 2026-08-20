@@ -88,20 +88,21 @@ impl ClientProj {
         }
     }
 
-    /// `bindSeq`-equivalent: copy the spot's seq `num_frames` and `delay`
-    /// table onto the struct so `move_by` can run the anim loop without a
-    /// `Cache`. A missing spot or seq leaves the defaults (loop skipped).
+    /// `bindSeq`-equivalent: resolve the spot's seq `num_frames` and
+    /// per-frame delays (`SeqType::getDelay`, applied once) onto the struct
+    /// so `move_by` can run the anim loop without a `Cache`. A missing spot
+    /// or seq leaves the defaults (loop skipped).
     pub fn bind_seq(&mut self, cache: &Cache) {
         let Some(spot) = cache.spots.get(self.spotanim as usize) else { return };
         let Some(seq) = spot.seq else { return };
         let seq_type = cache.seq(seq);
         self.seq_id = Some(seq);
         self.seq_num_frames = seq_type.num_frames;
-        self.seq_delays = seq_type.delay.clone();
+        self.seq_delays = Some((0..seq_type.num_frames).map(|f| seq_type.get_delay(f)).collect());
     }
 
-    /// `SeqType.getDelay(frame)` equivalent over the bound table; missing
-    /// delays or an out-of-range frame read as 0.
+    /// Reads a delay pre-resolved by `bind_seq`; out-of-range frames read
+    /// as 0.
     fn seq_get_delay(&self, frame: i32) -> i32 {
         self.seq_delays
             .as_ref()

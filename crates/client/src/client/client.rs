@@ -3713,10 +3713,11 @@ impl Client {
     }
 
     /// `zonePacket(buf, opcode)` from client-ts: reads the 8-tile zone
-    /// position byte and the TS field widths for each opcode.
-    /// `LOC_ADD_CHANGE` / `LOC_DEL` also enqueue the loc change; the
-    /// remaining opcodes only consume their bytes (scene apply stays
-    /// deferred) so enclosed frames do not desync.
+    /// position byte and the TS field widths for each opcode, then applies
+    /// the change — loc adds/dels/animations, ground-object adds/dels/
+    /// reveals, projectiles, map spot anims, and loc merges — with the
+    /// same bounds gates as the TS (tile ops inside `0..SIZE`; loc ops
+    /// also gated by the `LOC_SHAPE_TO_LAYER` table length).
     fn zone_packet(&mut self, buf: &mut Packet, opcode: i32) {
         let pos = buf.g1();
         let x = self.zone_update_x + ((pos >> 4) & 0x7);
