@@ -149,3 +149,39 @@ fn lru_cache_clear_resets_capacity() {
     assert_eq!(cache.find(4).unwrap().key, 4);
     assert!(cache.find(3).is_none());
 }
+
+#[test]
+fn link_list_unlink_last_during_iterate() {
+    let mut list = LinkList::new();
+    list.push(Linkable::new(10));
+    list.push(Linkable::new(20));
+    list.push(Linkable::new(30));
+    let first = list.head().unwrap();
+    assert_eq!(first.key, 10);
+    let second = list.next().unwrap();
+    assert_eq!(second.key, 20);
+    list.unlink_last();
+    let mut keys = Vec::new();
+    keys.push(list.head().unwrap().key);
+    while let Some(n) = list.next() {
+        keys.push(n.key);
+    }
+    assert_eq!(keys, [10, 30]);
+}
+
+#[test]
+fn link_list_move_last_to_front() {
+    let mut list = LinkList::new();
+    list.push(Linkable::new(10));
+    list.push(Linkable::new(20));
+    list.push(Linkable::new(30));
+    let _ = list.head();
+    let _ = list.next(); // last = 20
+    list.move_last_to_front();
+    let mut keys = Vec::new();
+    keys.push(list.head().unwrap().key);
+    while let Some(n) = list.next() {
+        keys.push(n.key);
+    }
+    assert_eq!(keys, [20, 10, 30]);
+}
