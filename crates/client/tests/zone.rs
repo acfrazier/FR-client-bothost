@@ -758,3 +758,73 @@ fn map_projanim_negative_target_retargets_to_local_player() {
         proj.z
     );
 }
+
+// --- MAP_ANIM + addMapAnim ---
+
+/// MAP_ANIM pushes a `MapSpotAnim`; the real `add_map_anim` path (inside
+/// `gameDrawMain`) advances it and places a dynamic sprite. `removeSprites`
+/// clears the frame's dynamic sprites at the end of the 3D pass, so after
+/// `game_draw` the loop's effect shows as the advanced anim (`update` ran
+/// with delta `world_update_num`) and render_all having run.
+#[test]
+fn map_anim_pushes_and_add_map_anim_places_dynamic() {
+    let mut c = client();
+    seed_spot(&mut c, 0);
+    // A seq whose delays keep the anim in-frame for this delta lets
+    // `update` advance `anim_cycle` without completing the anim.
+    c.cache.spots[0].seq = Some(1);
+    while c.cache.seqs.len() <= 1 {
+        c.cache.seqs.push(SeqType::default());
+    }
+    c.cache.seqs[1].num_frames = 2;
+    c.cache.seqs[1].frames = Some(vec![0, 1]);
+    c.cache.seqs[1].iframes = Some(vec![0, 1]);
+    c.cache.seqs[1].delay = Some(vec![10, 5]);
+    c.loop_cycle = 5;
+    let mut p = Packet::alloc(0);
+    p.p1(0x11);
+    p.p2(0);
+    p.p1(0);
+    p.p2(0); // time 0 → start_cycle = loop_cycle
+    p.pos = 0;
+    c.handle_packet(ServerProt::MAP_ANIM, &mut p);
+    assert!(c.spotanims.head().is_some());
+    c.set_draw(true);
+    c.ingame = true;
+    c.scene_state = 2;
+    c.world_update_num = 1;
+    c.game_draw();
+    let spot = c.spotanims.head().expect("spot stays linked");
+    assert_eq!(spot.anim_cycle, 1, "add_map_anim must update the spot");
+    assert!(c.world.render_count() > 0, "gameDrawMain must run render_all");
+}
+
+// --- P_LOCMERGE ---
+
+/// P_LOCMERGE with a loc whose model is not built (no pack bytes seeded)
+/// must consume its bytes and no-op: no locChange, no player loc_* writes.
+/// The Some-model branch (locChange + loc offsets) is covered by live proof.
+#[test]
+fn p_locmerge_consumes_and_noops_without_model() {
+    let mut c = client();
+    seed_anim_loc(&mut c, 0); // get_model is still None without pack bytes
+    c.self_slot = 3;
+    c.local_player = Some(ClientPlayer::at(1, 1));
+    c.loop_cycle = 10;
+    c.ingame = true;
+    let mut p = Packet::new(vec![
+        0x11, // pos → tile (1,1)
+        0x00, // info → shape 0, rotate 0
+        0x00, 0x00, // id
+        0x00, 0x02, // t1
+        0x00, 0x05, // t2
+        0x00, 0x03, // pid
+        0x00, 0x00, 0x00, 0x00, // east, south, west, north
+    ]);
+    c.handle_packet(ServerProt::P_LOCMERGE, &mut p);
+    assert_eq!(p.pos, p.length());
+    assert!(c.ingame);
+    // TS writes loc_model / locChange only inside `if (model)`. No pack → None.
+    assert!(c.local_player.as_ref().unwrap().loc_model.is_none());
+    assert!(c.loc_changes.head().is_none());
+}

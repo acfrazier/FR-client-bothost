@@ -5,6 +5,7 @@ use crate::config::Cache;
 use crate::dash3d::{AnimFrame, Model};
 use crate::datastruct::linkable::{LinkableTrait, Links};
 
+#[derive(Clone)]
 pub struct MapSpotAnim {
     pub links: Links,
     pub spotanim: i32,

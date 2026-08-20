@@ -673,9 +673,9 @@ impl Client {
     /// `removeSprites`, the TS 4238-4245 sequence) and blits it at (4, 4).
     /// `World.resetVisCalc` runs once on the first pass (TS runs it from
     /// the game-loading flow) so `render_all`'s visibility backing is
-    /// populated. `addMapAnim` and the overlay passes are no-ops while
-    /// their lists/sprites are not ported; `cinemaCam`, `camShake`, and
-    /// `otherOverlays` (minimenu/main-overlay/fps) are not ported either.
+    /// populated. The overlay passes are no-ops while their lists/sprites
+    /// are not ported; `cinemaCam`, `camShake`, and `otherOverlays`
+    /// (minimenu/main-overlay/fps) are not ported either.
     fn game_draw_main(&mut self) {
         self.scene_cycle += 1;
 
@@ -990,9 +990,37 @@ impl Client {
         }
     }
 
-    /// `addMapAnim` from client-ts (4416): a no-op while `spotanims` is not
-    /// ported.
-    fn add_map_anim(&mut self) {}
+    /// `addMapAnim` from client-ts (4416): unlink spots on the wrong level
+    /// or already complete; otherwise advance (`update` with
+    /// `world_update_num`), unlink when that completes the anim, else place
+    /// the spot as a dynamic sprite (typecode -1, yaw 0, padding 60).
+    fn add_map_anim(&mut self) {
+        let mut node = self.spotanims.head();
+        while let Some(spot) = node {
+            if spot.level != self.minusedlevel || spot.anim_complete {
+                self.spotanims.unlink_last();
+            } else if self.loop_cycle >= spot.start_cycle {
+                spot.update(&self.cache, self.world_update_num);
+                if spot.anim_complete {
+                    self.spotanims.unlink_last();
+                } else {
+                    let (level, x, y, z) = (spot.level, spot.x, spot.y, spot.z);
+                    self.world.add_dynamic(
+                        level,
+                        x,
+                        y,
+                        z,
+                        Some(SceneModel::SpotAnim(spot.clone())),
+                        -1,
+                        0,
+                        60,
+                        false,
+                    );
+                }
+            }
+            node = self.spotanims.next();
+        }
+    }
 
     /// `camFollow` from client-ts (4432): position the eye at `distance`
     /// along the inverse pitch/yaw from the target.

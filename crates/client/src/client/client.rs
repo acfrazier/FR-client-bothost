@@ -31,8 +31,8 @@ use crate::config::Cache;
 use crate::dash3d::world::LevelHeightmaps;
 use crate::dash3d::{
     AnimFrame, BuildArea, ClientLocAnim, ClientObj, ClientProj, CollisionFlag, CollisionMap,
-    DirectionFlag, LocChange, LocLayer, LocShape, MapFlag, MapSpotAnim, Model, SceneModel, World,
-    LOC_SHAPE_TO_LAYER,
+    DirectionFlag, LocAngle, LocChange, LocLayer, LocShape, MapFlag, MapSpotAnim, Model,
+    SceneModel, World, LOC_SHAPE_TO_LAYER,
 };
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
 use crate::datastruct::LinkList;
@@ -3881,20 +3881,124 @@ impl Client {
                 }
             }
             ServerProt::MAP_ANIM => {
-                let _spotanim = buf.g2();
-                let _height = buf.g1();
-                let _time = buf.g2();
+                let spotanim = buf.g2();
+                // TS 7284: packet `height` is a plain `g1()`, not ×4 like
+                // the MAP_PROJANIM heights.
+                let height = buf.g1();
+                let time = buf.g2();
+
+                if x >= 0 && z >= 0 && x < BuildArea::SIZE && z < BuildArea::SIZE {
+                    let x = x * 128 + 64;
+                    let z = z * 128 + 64;
+                    self.spotanims.push(MapSpotAnim::new(
+                        spotanim,
+                        self.minusedlevel,
+                        x,
+                        z,
+                        get_av_h(&self.groundh, &self.mapl, x, z, self.minusedlevel) - height,
+                        self.loop_cycle,
+                        time,
+                    ));
+                }
             }
             ServerProt::P_LOCMERGE => {
-                let _info = buf.g1();
-                let _id = buf.g2();
-                let _t1 = buf.g2();
-                let _t2 = buf.g2();
-                let _pid = buf.g2();
-                let _east = buf.g1b();
-                let _south = buf.g1b();
-                let _west = buf.g1b();
-                let _north = buf.g1b();
+                let info = buf.g1();
+                let shape = info >> 2;
+                let rotate = info & 0x3;
+
+                let id = buf.g2();
+                let t1 = buf.g2();
+                let t2 = buf.g2();
+                let pid = buf.g2();
+                let mut east = buf.g1b();
+                let mut south = buf.g1b();
+                let mut west = buf.g1b();
+                let mut north = buf.g1b();
+
+                // TS yields `undefined` for shape >= table length; skip the
+                // apply instead of panicking on the index. The +1 height
+                // reads need x+1/z+1 inside groundh (sized SIZE+1), so the
+                // same 0..SIZE bounds guard covers them.
+                if shape < LOC_SHAPE_TO_LAYER.len() as i32
+                    && x >= 0
+                    && z >= 0
+                    && x < BuildArea::SIZE
+                    && z < BuildArea::SIZE
+                {
+                    let layer = LOC_SHAPE_TO_LAYER[shape as usize];
+                    let level = self.minusedlevel as usize;
+                    let height_sw = self.groundh[level][x as usize][z as usize];
+                    let height_se = self.groundh[level][x as usize + 1][z as usize];
+                    let height_ne = self.groundh[level][x as usize + 1][z as usize + 1];
+                    let height_nw = self.groundh[level][x as usize][z as usize + 1];
+
+                    // TS 7333-7336: `loc.getModel(..., -1)`; when the model
+                    // is not ready (None) the whole apply stops — no
+                    // locChange and no player loc_* writes.
+                    if let Some(model) = self.cache.loc(id as usize).get_model(
+                        &self.cache,
+                        shape,
+                        rotate,
+                        height_sw,
+                        height_se,
+                        height_ne,
+                        height_nw,
+                        -1,
+                    ) {
+                        self.loc_change_create(
+                            self.minusedlevel,
+                            x,
+                            z,
+                            layer,
+                            -1,
+                            0,
+                            0,
+                            t1 + 1,
+                            t2 + 1,
+                        );
+
+                        let loc = self.cache.loc(id as usize);
+                        let mut width = loc.width;
+                        let mut length = loc.length;
+                        if rotate == LocAngle::NORTH || rotate == LocAngle::SOUTH {
+                            width = loc.length;
+                            length = loc.width;
+                        }
+
+                        let player = if pid == self.self_slot {
+                            self.local_player.as_mut()
+                        } else {
+                            self.players.get_mut(pid as usize).and_then(|p| p.as_mut())
+                        };
+                        if let Some(player) = player {
+                            player.loc_start_cycle = t1 + self.loop_cycle;
+                            player.loc_stop_cycle = t2 + self.loop_cycle;
+                            player.loc_model = Some(model);
+
+                            player.loc_offset_x = x * 128 + width * 64;
+                            player.loc_offset_z = z * 128 + length * 64;
+                            player.loc_offset_y = get_av_h(
+                                &self.groundh,
+                                &self.mapl,
+                                player.loc_offset_x,
+                                player.loc_offset_z,
+                                self.minusedlevel,
+                            );
+
+                            if east > west {
+                                std::mem::swap(&mut east, &mut west);
+                            }
+                            if south > north {
+                                std::mem::swap(&mut south, &mut north);
+                            }
+
+                            player.min_tile_x = x + east;
+                            player.max_tile_x = x + west;
+                            player.min_tile_z = z + south;
+                            player.max_tile_z = z + north;
+                        }
+                    }
+                }
             }
             ServerProt::OBJ_COUNT => {
                 let obj_type = buf.g2();
