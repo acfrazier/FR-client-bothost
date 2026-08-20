@@ -535,3 +535,100 @@ fn loc_anim_missing_wall_is_noop() {
     assert!(c.ingame);
     assert!(c.world.get_wall(0, 1, 1).is_none());
 }
+
+// --- OBJ_ADD / OBJ_DEL / OBJ_COUNT / OBJ_REVEAL + showObject ---
+
+fn seed_obj(c: &mut Client, id: usize, cost: i32) {
+    while c.cache.objs.len() <= id {
+        c.cache.objs.push(client::config::ObjType::default());
+    }
+    c.cache.objs[id].id = id as i32;
+    c.cache.objs[id].cost = cost;
+}
+
+fn obj_add(c: &mut Client, pos: i32, id: i32, count: i32) {
+    let mut p = Packet::alloc(0);
+    p.p1(pos);
+    p.p2(id);
+    p.p2(count);
+    p.pos = 0;
+    c.handle_packet(ServerProt::OBJ_ADD, &mut p);
+}
+
+#[test]
+fn obj_add_sets_ground_object() {
+    let mut c = client();
+    seed_obj(&mut c, 3, 10);
+    obj_add(&mut c, 0x11, 3, 1);
+    let list = c.ground_obj[0][1][1].as_mut().expect("list");
+    assert_eq!(list.head().unwrap().id, 3);
+    assert!(c.world.ground_object_at(0, 1, 1).is_some());
+}
+
+#[test]
+fn obj_del_clears_empty_cell() {
+    let mut c = client();
+    seed_obj(&mut c, 3, 10);
+    obj_add(&mut c, 0x11, 3, 1);
+    let mut p = Packet::alloc(0);
+    p.p1(0x11);
+    p.p2(3);
+    p.pos = 0;
+    c.handle_packet(ServerProt::OBJ_DEL, &mut p);
+    assert!(c.ground_obj[0][1][1].is_none());
+    assert!(c.world.ground_object_at(0, 1, 1).is_none());
+}
+
+#[test]
+fn obj_count_rewrites_matching_stack() {
+    let mut c = client();
+    seed_obj(&mut c, 3, 10);
+    obj_add(&mut c, 0x11, 3, 2);
+    let mut p = Packet::alloc(0);
+    p.p1(0x11);
+    p.p2(3);
+    p.p2(2);
+    p.p2(9);
+    p.pos = 0;
+    c.handle_packet(ServerProt::OBJ_COUNT, &mut p);
+    assert_eq!(c.ground_obj[0][1][1].as_mut().unwrap().head().unwrap().count, 9);
+}
+
+#[test]
+fn obj_reveal_skips_self_slot() {
+    let mut c = client();
+    seed_obj(&mut c, 3, 10);
+    c.self_slot = 5;
+    let mut p = Packet::alloc(0);
+    p.p1(0x11);
+    p.p2(3);
+    p.p2(1);
+    p.p2(5);
+    p.pos = 0;
+    c.handle_packet(ServerProt::OBJ_REVEAL, &mut p);
+    assert!(c.ground_obj[0][1][1].is_none());
+}
+
+#[test]
+fn obj_reveal_adds_for_other_pid() {
+    let mut c = client();
+    seed_obj(&mut c, 3, 10);
+    c.self_slot = 5;
+    let mut p = Packet::alloc(0);
+    p.p1(0x11);
+    p.p2(3);
+    p.p2(1);
+    p.p2(6);
+    p.pos = 0;
+    c.handle_packet(ServerProt::OBJ_REVEAL, &mut p);
+    assert!(c.ground_obj[0][1][1].is_some());
+}
+
+#[test]
+fn obj_add_headless_still_sets_world() {
+    let mut c = client();
+    assert!(!c.draw);
+    seed_obj(&mut c, 3, 10);
+    obj_add(&mut c, 0x11, 3, 1);
+    assert!(c.world.ground_object_at(0, 1, 1).is_some());
+}

@@ -19,7 +19,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use num_bigint::BigUint;
 
 use crate::client::client_build::ClientBuild;
-use crate::client::client_draw::draw_detail;
+use crate::client::client_draw::{draw_detail, get_av_h};
 use crate::client::config::ClientConfig;
 use crate::client::game_shell::GameShell;
 use crate::client::login_error::LoginError;
@@ -3762,11 +3762,49 @@ impl Client {
                 }
             }
             ServerProt::OBJ_ADD => {
-                let _obj_type = buf.g2();
-                let _count = buf.g2();
+                let obj_type = buf.g2();
+                let count = buf.g2();
+
+                if x >= 0 && z >= 0 && x < BuildArea::SIZE && z < BuildArea::SIZE {
+                    let level = self.minusedlevel as usize;
+                    {
+                        let objs = self.ground_obj[level][x as usize][z as usize]
+                            .get_or_insert_with(LinkList::new);
+                        objs.push(ClientObj::new(obj_type, count));
+                    }
+                    self.show_object(x, z);
+                }
             }
             ServerProt::OBJ_DEL => {
-                let _obj_type = buf.g2();
+                let obj_type = buf.g2();
+
+                if x >= 0 && z >= 0 && x < BuildArea::SIZE && z < BuildArea::SIZE {
+                    let level = self.minusedlevel as usize;
+                    // `None` means the cell held no list; TS keeps
+                    // `showObject` inside the `if (objs)` block.
+                    let emptied = {
+                        let objs = self.ground_obj[level][x as usize][z as usize].as_mut();
+                        if let Some(objs) = objs {
+                            let mut node = objs.head();
+                            while let Some(o) = node {
+                                if o.id == (obj_type & 0x7fff) {
+                                    objs.unlink_last();
+                                    break;
+                                }
+                                node = objs.next();
+                            }
+                            Some(objs.head().is_none())
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(emptied) = emptied {
+                        if emptied {
+                            self.ground_obj[level][x as usize][z as usize] = None;
+                        }
+                        self.show_object(x, z);
+                    }
+                }
             }
             ServerProt::MAP_PROJANIM => {
                 let _x2 = buf.g1b();
@@ -3781,9 +3819,24 @@ impl Client {
                 let _startpos = buf.g1();
             }
             ServerProt::OBJ_REVEAL => {
-                let _id = buf.g2();
-                let _count = buf.g2();
-                let _pid = buf.g2();
+                let id = buf.g2();
+                let count = buf.g2();
+                let pid = buf.g2();
+
+                if x >= 0
+                    && z >= 0
+                    && x < BuildArea::SIZE
+                    && z < BuildArea::SIZE
+                    && pid != self.self_slot
+                {
+                    let level = self.minusedlevel as usize;
+                    {
+                        let objs = self.ground_obj[level][x as usize][z as usize]
+                            .get_or_insert_with(LinkList::new);
+                        objs.push(ClientObj::new(id, count));
+                    }
+                    self.show_object(x, z);
+                }
             }
             ServerProt::MAP_ANIM => {
                 let _spotanim = buf.g2();
@@ -3802,9 +3855,32 @@ impl Client {
                 let _north = buf.g1b();
             }
             ServerProt::OBJ_COUNT => {
-                let _obj_type = buf.g2();
-                let _ocount = buf.g2();
-                let _count = buf.g2();
+                let obj_type = buf.g2();
+                let ocount = buf.g2();
+                let count = buf.g2();
+
+                if x >= 0 && z >= 0 && x < BuildArea::SIZE && z < BuildArea::SIZE {
+                    let level = self.minusedlevel as usize;
+                    let had_list = {
+                        let objs = self.ground_obj[level][x as usize][z as usize].as_mut();
+                        if let Some(objs) = objs {
+                            let mut node = objs.head();
+                            while let Some(o) = node {
+                                if o.id == (obj_type & 0x7fff) && o.count == ocount {
+                                    o.count = count;
+                                    break;
+                                }
+                                node = objs.next();
+                            }
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if had_list {
+                        self.show_object(x, z);
+                    }
+                }
             }
             _ => {}
         }
@@ -4678,8 +4754,100 @@ impl Client {
     }
 
     /// `showObject(x, z)` from client-ts (7569): rebuild one tile's stacked
-    /// objects/animations after the scene build. Slice 2.
-    fn show_object(&mut self, _x: i32, _z: i32) {}
+    /// objects after the scene build. An empty cell clears the World object;
+    /// otherwise the top-cost object becomes the list head and the
+    /// top/middle/bottom of the stack are cloned into the scene. The walks
+    /// stay inside a block so the `ground_obj` borrow ends before the World
+    /// writes.
+    fn show_object(&mut self, x: i32, z: i32) {
+        let level = self.minusedlevel as usize;
+        if self.ground_obj[level][x as usize][z as usize].is_none() {
+            self.world.del_obj(self.minusedlevel, x, z);
+            return;
+        }
+
+        let (top, middle, bottom) = {
+            let objs = self.ground_obj[level][x as usize][z as usize]
+                .as_mut()
+                .expect("cell checked above");
+
+            // First walk: the highest-cost object is the stack top; stackable
+            // costs scale with the stack size (`count + 1`).
+            let mut top_cost = -99_999_999;
+            let mut top_id = 0;
+            let mut top_count = 0;
+            let mut has_top = false;
+            let mut node = objs.head();
+            while let Some(o) = node {
+                let id = o.id;
+                let count = o.count;
+                let typ = self.cache.obj(id as usize);
+                let mut cost = typ.cost;
+                if typ.stackable {
+                    cost *= count + 1;
+                }
+                if cost > top_cost {
+                    top_cost = cost;
+                    top_id = id;
+                    top_count = count;
+                    has_top = true;
+                }
+                node = objs.next();
+            }
+            if !has_top {
+                return; // custom: TS 7591
+            }
+
+            // Second walk: re-insert the top node as the head (TS
+            // `objs.pushFront(topObj)` of the in-list node — never a
+            // duplicate).
+            let mut node = objs.head();
+            while let Some(o) = node {
+                if o.id == top_id && o.count == top_count {
+                    objs.move_last_to_front();
+                    break;
+                }
+                node = objs.next();
+            }
+
+            // Third walk from the head: the first other id is the bottom of
+            // the stack, the first third id the middle.
+            let top = ClientObj::new(top_id, top_count);
+            let mut bottom: Option<ClientObj> = None;
+            let mut middle: Option<ClientObj> = None;
+            let mut node = objs.head();
+            while let Some(o) = node {
+                if o.id != top.id && bottom.is_none() {
+                    bottom = Some(o.clone());
+                }
+                if o.id != top.id && middle.is_none() && matches!(&bottom, Some(b) if o.id != b.id)
+                {
+                    middle = Some(o.clone());
+                }
+                node = objs.next();
+            }
+            (top, middle, bottom)
+        };
+
+        let typecode = x.wrapping_add(z << 7).wrapping_add(0x6000_0000);
+        let h = get_av_h(
+            &self.groundh,
+            &self.mapl,
+            x * 128 + 64,
+            z * 128 + 64,
+            self.minusedlevel,
+        );
+        self.world.set_obj(
+            x,
+            z,
+            h,
+            self.minusedlevel,
+            typecode,
+            Some(SceneModel::Obj(top)),
+            middle.map(SceneModel::Obj),
+            bottom.map(SceneModel::Obj),
+        );
+    }
 
     /// `locChangePostBuildCorrect()` from client-ts (7422): reconcile the
     /// pending loc-change queue with the fresh scene. Slice 2.
