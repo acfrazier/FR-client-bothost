@@ -853,3 +853,68 @@ fn p_locmerge_no_player_stops_before_apply() {
     assert!(c.ingame);
     assert!(c.loc_changes.head().is_none());
 }
+
+// --- UPDATE_ZONE_FULL_FOLLOWS + REBUILD_NORMAL shift ---
+
+/// FULL_FOLLOWS nulls the 8×8 ground-obj cells on `minusedlevel` and
+/// expires every loc change inside that zone (`end_time = 0`).
+#[test]
+fn full_follows_clears_8x8_ground_obj_and_expires_locs() {
+    let mut c = client();
+    seed_obj(&mut c, 1, 1);
+    c.minusedlevel = 0;
+    c.ground_obj[0][3][4] = Some({
+        let mut l = LinkList::new();
+        l.push(ClientObj::new(1, 1));
+        l
+    });
+    c.loc_changes.push(LocChange {
+        level: 0,
+        x: 3,
+        z: 4,
+        end_time: -1,
+        ..LocChange::default()
+    });
+    let mut p = Packet::alloc(0);
+    p.p1(0); // zone x
+    p.p1(0); // zone z
+    p.pos = 0;
+    c.handle_packet(ServerProt::UPDATE_ZONE_FULL_FOLLOWS, &mut p);
+    assert!(c.ground_obj[0][3][4].is_none());
+    assert_eq!(c.loc_changes.head().unwrap().end_time, 0);
+}
+
+/// REBUILD_NORMAL shifts ground_obj and loc changes by the base delta.
+/// Centre (10,10) → base 32, prev base 32; the packet's zone (11,10) →
+/// base 40, so dx = 8 and `last_x = x + dx` moves tile 20 to 12.
+#[test]
+fn rebuild_normal_shifts_ground_obj_by_base_delta() {
+    let mut c = client();
+    seed_obj(&mut c, 1, 1);
+    c.map_build_centre_zone_x = 10;
+    c.map_build_centre_zone_z = 10;
+    c.map_build_base_x = 32;
+    c.map_build_base_z = 32;
+    c.map_build_prev_base_x = 32;
+    c.map_build_prev_base_z = 32;
+    c.scene_state = 2;
+    c.ground_obj[0][20][20] = Some({
+        let mut l = LinkList::new();
+        l.push(ClientObj::new(1, 1));
+        l
+    });
+    c.loc_changes.push(LocChange {
+        x: 20,
+        z: 20,
+        ..LocChange::default()
+    });
+    let mut p = Packet::alloc(0);
+    p.p2(11);
+    p.p2(10);
+    p.pos = 0;
+    c.handle_packet(ServerProt::REBUILD_NORMAL, &mut p);
+    // dx = (11-6)*8 - 32 = 40-32 = 8; last_x = x+8 so tile 12 gets old 20
+    assert!(c.ground_obj[0][12][20].is_some());
+    assert!(c.ground_obj[0][20][20].is_none());
+    assert_eq!(c.loc_changes.head().unwrap().x, 12);
+}

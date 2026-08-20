@@ -2273,9 +2273,62 @@ impl Client {
 
                 self.awaiting_player_info = true;
 
-                // TODO(zone task): groundObj/locChanges tile shifts carry
-                // stacked objects and loc changes across a build-area move
-                // (those fields land with the zone-packet task).
+                // TS 6907-6948: carry groundObj and locChanges across the
+                // build-area move. The scan runs in the signed direction of
+                // dx/dz so a positive delta copies tiles that are still
+                // needed; a naive `0..SIZE` sweep would overwrite them.
+                let mut start_tile_x = 0;
+                let mut end_tile_x = BuildArea::SIZE;
+                let mut dir_x = 1;
+                if dx < 0 {
+                    start_tile_x = BuildArea::SIZE - 1;
+                    end_tile_x = -1;
+                    dir_x = -1;
+                }
+
+                let mut start_tile_z = 0;
+                let mut end_tile_z = BuildArea::SIZE;
+                let mut dir_z = 1;
+                if dz < 0 {
+                    start_tile_z = BuildArea::SIZE - 1;
+                    end_tile_z = -1;
+                    dir_z = -1;
+                }
+
+                let mut x = start_tile_x;
+                while x != end_tile_x {
+                    let mut z = start_tile_z;
+                    while z != end_tile_z {
+                        let last_x = x + dx;
+                        let last_z = z + dz;
+                        for level in 0..BuildArea::LEVELS {
+                            let cell = if last_x >= 0
+                                && last_z >= 0
+                                && last_x < BuildArea::SIZE
+                                && last_z < BuildArea::SIZE
+                            {
+                                self.ground_obj[level as usize][last_x as usize][last_z as usize]
+                                    .take()
+                            } else {
+                                None
+                            };
+                            self.ground_obj[level as usize][x as usize][z as usize] = cell;
+                        }
+                        z += dir_z;
+                    }
+                    x += dir_x;
+                }
+
+                let mut node = self.loc_changes.head();
+                while let Some(loc) = node {
+                    loc.x -= dx;
+                    loc.z -= dz;
+                    if loc.x < 0 || loc.z < 0 || loc.x >= BuildArea::SIZE || loc.z >= BuildArea::SIZE {
+                        self.loc_changes.unlink_last();
+                    }
+                    node = self.loc_changes.next();
+                }
+
                 if self.minimap_flag_x != 0 {
                     self.minimap_flag_x -= dx;
                     self.minimap_flag_z -= dz;
@@ -2815,8 +2868,36 @@ impl Client {
             ServerProt::UPDATE_ZONE_FULL_FOLLOWS => {
                 self.zone_update_x = payload.g1();
                 self.zone_update_z = payload.g1();
-                // TS clears groundObj and expires locChanges in the 8x8 zone;
-                // that scene state lands with the zone task.
+
+                // TS 7075-7096: null every groundObj cell in the 8x8 zone on
+                // minusedlevel and expire loc changes inside it. The zone
+                // origin comes from the packet, so cells outside 0..SIZE are
+                // skipped (the TS array would grow; the Rust one bounds-checks).
+                for x in self.zone_update_x..self.zone_update_x + 8 {
+                    for z in self.zone_update_z..self.zone_update_z + 8 {
+                        if (0..BuildArea::SIZE).contains(&x)
+                            && (0..BuildArea::SIZE).contains(&z)
+                            && self.ground_obj[self.minusedlevel as usize][x as usize][z as usize]
+                                .take()
+                                .is_some()
+                        {
+                            self.show_object(x, z);
+                        }
+                    }
+                }
+
+                let mut node = self.loc_changes.head();
+                while let Some(loc) = node {
+                    if loc.x >= self.zone_update_x
+                        && loc.x < self.zone_update_x + 8
+                        && loc.z >= self.zone_update_z
+                        && loc.z < self.zone_update_z + 8
+                        && loc.level == self.minusedlevel
+                    {
+                        loc.end_time = 0;
+                    }
+                    node = self.loc_changes.next();
+                }
                 self.ptype = -1;
             }
 
@@ -5016,33 +5097,46 @@ impl Client {
     }
 
     /// `locChangePostBuildCorrect()` from client-ts (7422): reconcile the
-    /// pending loc-change queue with the fresh scene. Slice 2.
-    fn loc_change_post_build(&mut self) {}
+    /// pending loc-change queue with the fresh scene. Permanent changes
+    /// (`end_time == -1`) re-snapshot the old appearance and become due
+    /// next tick; timed ones are dropped.
+    fn loc_change_post_build(&mut self) {
+        let mut node = self.loc_changes.head();
+        while let Some(loc) = node {
+            if loc.end_time == -1 {
+                loc.start_time = 0;
+                Self::loc_change_set_old(&self.world, loc);
+            } else {
+                self.loc_changes.unlink_last();
+            }
+            node = self.loc_changes.next();
+        }
+    }
 
     /// `locChangeSetOld(loc)` from client-ts (7433): snapshot the tile's
-    /// current appearance onto a loc-change node. `&self` so the caller can
-    /// pass a node that is not yet owned by `loc_changes` without a second
-    /// `&mut self` borrow.
-    fn loc_change_set_old(&self, loc: &mut LocChange) {
+    /// current appearance onto a loc-change node. Takes `&World` so the
+    /// caller can pass a node already owned by `loc_changes` (the
+    /// field-disjoint borrow) or a local not yet pushed.
+    fn loc_change_set_old(world: &World, loc: &mut LocChange) {
         let mut typecode = 0;
         let mut other_id = -1;
         let mut other_shape = 0;
         let mut other_angle = 0;
 
         if loc.layer == LocLayer::WALL {
-            typecode = self.world.wall_type(loc.level, loc.x, loc.z);
+            typecode = world.wall_type(loc.level, loc.x, loc.z);
         } else if loc.layer == LocLayer::WALL_DECOR {
             // TS `decorType(level, z, x)` swaps its parameter names but
             // indexes `squares[level][x][z]`; call with tile x, z.
-            typecode = self.world.decor_type(loc.level, loc.x, loc.z);
+            typecode = world.decor_type(loc.level, loc.x, loc.z);
         } else if loc.layer == LocLayer::GROUND {
-            typecode = self.world.scene_type(loc.level, loc.x, loc.z);
+            typecode = world.scene_type(loc.level, loc.x, loc.z);
         } else if loc.layer == LocLayer::GROUND_DECOR {
-            typecode = self.world.gd_type(loc.level, loc.x, loc.z);
+            typecode = world.gd_type(loc.level, loc.x, loc.z);
         }
 
         if typecode != 0 {
-            let other_info = self.world.type_code2(loc.level, loc.x, loc.z, typecode);
+            let other_info = world.type_code2(loc.level, loc.x, loc.z, typecode);
             other_id = (typecode >> 14) & 0x7fff;
             other_shape = other_info & 0x1f;
             other_angle = other_info >> 6;
@@ -5087,7 +5181,7 @@ impl Client {
         loc.layer = layer;
         loc.x = x;
         loc.z = z;
-        self.loc_change_set_old(&mut loc);
+        Self::loc_change_set_old(&self.world, &mut loc);
         loc.new_type = r#type;
         loc.new_shape = shape;
         loc.new_angle = angle;
@@ -5742,4 +5836,42 @@ fn random_float() -> f64 {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     ((nanos >> 20) % 1_000_000) as f64 / 1_000_000.0
+}
+
+#[cfg(test)]
+mod zone_post_build {
+    use super::*;
+
+    #[test]
+    fn loc_change_post_build_keeps_permanent_and_drops_timed() {
+        let mut c = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        c.loc_changes.push(LocChange {
+            end_time: -1,
+            x: 2,
+            z: 2,
+            ..LocChange::default()
+        });
+        c.loc_changes.push(LocChange {
+            end_time: 5,
+            x: 3,
+            z: 3,
+            ..LocChange::default()
+        });
+        c.loc_change_post_build();
+        let mut n = 0;
+        if c.loc_changes.head().is_some() {
+            n += 1;
+        }
+        while c.loc_changes.next().is_some() {
+            n += 1;
+        }
+        assert_eq!(n, 1);
+        assert_eq!(c.loc_changes.head().unwrap().start_time, 0);
+    }
 }
