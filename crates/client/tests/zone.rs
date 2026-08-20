@@ -20,7 +20,7 @@ fn client_obj_roundtrips_in_link_list() {
 }
 
 use client::dash3d::world::LevelHeightmaps;
-use client::dash3d::{BuildArea, ClientProj, CollisionMap, LocShape, MapSpotAnim, Model, SceneModel, World};
+use client::dash3d::{BuildArea, ClientEntity, ClientPlayer, ClientProj, CollisionMap, LocShape, MapSpotAnim, Model, SceneModel, World};
 use client::graphics::Pix3D;
 
 #[test]
@@ -655,7 +655,7 @@ fn map_projanim_pushes_and_add_projectiles_places_dynamic() {
     c.loop_cycle = 5;
     let mut p = Packet::alloc(0);
     p.p1(0x11); // tile 1,1
-    p.p1(0);    // x2 offset 0 → dest tile 1
+    p.p1(4);    // x2 offset 4 → dest tile 5,1 (nonzero flight, no NaN)
     p.p1(0);    // z2
     p.p2(0);    // target 0
     p.p2(0);    // spotanim
@@ -680,24 +680,81 @@ fn map_projanim_pushes_and_add_projectiles_places_dynamic() {
     assert_eq!(c.world.render_count(), 1, "gameDrawMain must run render_all");
 }
 
+/// src tile (101,101) is in `0..104` but the dest `x2 = 101 + 10 = 111`
+/// is not: the MAP_PROJANIM arm must consume the bytes without pushing.
 #[test]
 fn map_projanim_out_of_range_dest_is_dropped() {
     let mut c = client();
     c.zone_update_x = 100;
     c.zone_update_z = 100;
     let mut p = Packet::alloc(0);
-    p.p1(0x77); // tile 107,107 — out of 0..104
-    p.p1(0);
-    p.p1(0);
-    p.p2(0);
-    p.p2(0);
-    p.p1(0);
-    p.p1(0);
-    p.p2(0);
-    p.p2(0);
+    p.p1(0x11); // src tile 101,101 — in range
+    p.p1(10);   // x2 offset +10 → dest tile 111 — out of 0..104
+    p.p1(0);    // z2 offset 0 → dest z 101 — in range
+    p.p2(0);    // target 0
+    p.p2(0);    // spotanim
+    p.p1(0);    // h1 (×4 in apply)
+    p.p1(0);    // h2
+    p.p2(0);    // t1
+    p.p2(0);    // t2
     p.p1(0);
     p.p1(0);
     p.pos = 0;
     c.handle_packet(ServerProt::MAP_PROJANIM, &mut p);
     assert!(c.projectiles.head().is_none());
+}
+
+/// A negative `target` retargets the proj onto a player:
+/// `index = -target - 1`, and `index == self_slot` resolves to the local
+/// player. The packet aims at dest tile (5,1) (scene 576,192); the local
+/// player stands at scene (704,704), so after `add_projectiles` both x and
+/// z must have stepped toward the player — a proj that only tracked the
+/// packet dest would leave z at 192.
+#[test]
+fn map_projanim_negative_target_retargets_to_local_player() {
+    let mut c = client();
+    seed_spot(&mut c, 0);
+    c.self_slot = 5;
+    let mut player = ClientPlayer::default();
+    player.ready = true;
+    player.entity = ClientEntity::at(5, 5);
+    player.entity.teleport(&c.cache, true, 5, 5); // scene x/z 704
+    c.local_player = Some(player);
+
+    c.loop_cycle = 5;
+    let mut p = Packet::alloc(0);
+    p.p1(0x11); // tile 1,1 → scene 192,192
+    p.p1(4);    // x2 offset 4 → dest tile 5,1 (in range)
+    p.p1(0);    // z2 offset 0 → dest z 192
+    p.p2(-6);   // target -(self_slot + 1) → local player index 5
+    p.p2(0);    // spotanim
+    p.p1(1);    // h1 (×4 in apply)
+    p.p1(1);    // h2
+    p.p2(0);    // t1
+    p.p2(10);   // t2
+    p.p1(0);
+    p.p1(0);
+    p.pos = 0;
+    c.handle_packet(ServerProt::MAP_PROJANIM, &mut p);
+    let proj = c.projectiles.head().expect("proj pushed");
+    assert_eq!(proj.target, -6);
+
+    c.set_draw(true);
+    c.ingame = true;
+    c.scene_state = 2;
+    c.world_update_num = 1;
+    c.game_draw();
+    let proj = c.projectiles.head().unwrap();
+    assert!(proj.mobile, "addProjectiles must move the projectile");
+    // startpos 0 leaves the src; the retarget must aim at (704,704).
+    assert!(
+        proj.x > 192.0 && proj.x < 704.0,
+        "proj must track the local player on x, got {}",
+        proj.x
+    );
+    assert!(
+        proj.z > 192.0 && proj.z < 704.0,
+        "proj must track the local player on z, got {}",
+        proj.z
+    );
 }

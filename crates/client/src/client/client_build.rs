@@ -31,7 +31,7 @@ const DECORZOF: [i32; 4] = [0, -1, 0, 1];
 /// Stand-in for JS `Math.random()` (returns `[0, 1)`), seeded from the
 /// clock like the other client random stand-ins; `finishBuild`'s
 /// hue/lighting jitter is not reproducible in TS either.
-fn random_float() -> f64 {
+pub(crate) fn random_float() -> f64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)

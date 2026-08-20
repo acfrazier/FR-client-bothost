@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::client::client::{level_experience, Client};
+use crate::client::client_build::random_float;
 use crate::client::skill::Skill;
 use crate::client::title_flames::TitleFlames;
 use crate::config::if_type::{ComponentType, IfType};
@@ -33,18 +34,6 @@ fn plot_title_bg(map: &mut Option<PixMap>, background: &Pix32, x: i32, y: i32) {
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
         background.quick_plot_sprite(&mut surface, x, y);
     }
-}
-
-/// Stand-in for JS `Math.random()` (returns `[0, 1)`), time-seeded like
-/// `client_build`'s; the `cyclelogic1` anticheat blob is random in the TS
-/// too.
-fn random_float() -> f64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    ((nanos >> 20) % 1_000_000) as f64 / 1_000_000.0
 }
 
 /// `Client.getAvH` from client-ts (5052): the bilinear ground height at a
