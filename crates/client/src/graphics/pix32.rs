@@ -10,6 +10,7 @@ use super::pix2d::Pix2D;
 use super::pix8::Pix8;
 use crate::io::{JagFile, Packet};
 
+#[derive(Clone)]
 pub struct Pix32 {
     pub data: Vec<i32>,
     pub wi: i32, // width

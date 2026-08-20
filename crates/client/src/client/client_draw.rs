@@ -21,8 +21,9 @@ use crate::client::client::{level_experience, Client};
 use crate::client::skill::Skill;
 use crate::client::title_flames::TitleFlames;
 use crate::config::if_type::{ComponentType, IfType};
+use crate::config::Cache;
 use crate::dash3d::world::LevelHeightmaps;
-use crate::dash3d::{BuildArea, SceneModel};
+use crate::dash3d::{BuildArea, LocAngle, LocShape, SceneModel, World};
 use crate::graphics::{Colour, Pix2D, Pix3D, Pix32, Pix8, PixFont, PixMap};
 use crate::io::JagFile;
 use crate::util::JString;
@@ -1136,6 +1137,15 @@ impl Client {
             self.mapdots2 = Pix32::depack(&jag, "mapdots", 1).ok();
             self.mapdots3 = Pix32::depack(&jag, "mapdots", 2).ok();
             self.mapdots4 = Pix32::depack(&jag, "mapdots", 3).ok();
+
+            // TS maininit 1020-1035: the minimap wall/scene icons; a sprite
+            // the jag lacks stays `None` and `draw_detail` skips its plot.
+            for i in 0..50 {
+                self.mapscene[i] = Pix8::depack(&jag, "mapscene", i as i32).ok();
+            }
+            for i in 0..50 {
+                self.mapfunction[i] = Pix32::depack(&jag, "mapfunction", i as i32).ok();
+            }
 
             // TS prepareGame 2022-2023: `area_map` starts as the `mapback`
             // ring (a fresh `PixMap` is already zeroed, so the `cls()` is a
@@ -2300,5 +2310,173 @@ fn minimap_draw_arrow(
     let var16 = (f64::cos(var13) * 57.0) as i32;
     if let Some(mapedge) = mapedge {
         mapedge.rotate_plot_sprite(surface, var15 + 94 + 4 - 10, 83 - var16 - 20, 20, 20, 15, 15, var13, 256);
+    }
+}
+
+/// `drawDetail(level, tileX, tileZ, inactiveRgb, activeRgb)` from client-ts
+/// (5389-5533): the minimap wall/scene lines and ground-decor icons plotted
+/// by `minimapBuildBuffer`. Wall/scene shapes write `dst` lines at the
+/// per-tile 4×4 offset; locs with a `mapscene` plot their sprite instead
+/// (`mapscene` entries that are `None` skip the plot). `surface` is bound
+/// to the minimap buffer.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_detail(
+    world: &World,
+    cache: &Cache,
+    mapscene: &[Option<Pix8>],
+    surface: &mut Pix2D,
+    level: i32,
+    tile_x: i32,
+    tile_z: i32,
+    inactive_rgb: i32,
+    active_rgb: i32,
+) {
+    let wall_type = world.wall_type(level, tile_x, tile_z);
+    if wall_type != 0 {
+        let info = world.type_code2(level, tile_x, tile_z, wall_type);
+        let angle = (info >> 6) & 0x3;
+        let shape = info & 0x1f;
+        let mut rgb = inactive_rgb;
+        if wall_type > 0 {
+            rgb = active_rgb;
+        }
+
+        let dst = &mut surface.pixels;
+        let offset = tile_x * 4 + (103 - tile_z) * 512 * 4 + 24624;
+        let loc_id = (wall_type >> 14) & 0x7fff;
+
+        let loc = cache.loc(loc_id as usize);
+        if loc.mapscene != -1 {
+            if let Some(scene) = mapscene.get(loc.mapscene as usize).and_then(|s| s.as_ref()) {
+                let offset_x = (loc.width * 4 - scene.wi) / 2;
+                let offset_y = (loc.length * 4 - scene.hi) / 2;
+                scene.plot_sprite(
+                    surface,
+                    tile_x * 4 + 48 + offset_x,
+                    (BuildArea::SIZE - tile_z - loc.length) * 4 + offset_y + 48,
+                );
+            }
+        } else {
+            if shape == LocShape::WALL_STRAIGHT || shape == LocShape::WALL_L {
+                if angle == LocAngle::WEST {
+                    dst[offset as usize] = rgb;
+                    dst[offset as usize + 512] = rgb;
+                    dst[offset as usize + 1024] = rgb;
+                    dst[offset as usize + 1536] = rgb;
+                } else if angle == LocAngle::NORTH {
+                    dst[offset as usize] = rgb;
+                    dst[offset as usize + 1] = rgb;
+                    dst[offset as usize + 2] = rgb;
+                    dst[offset as usize + 3] = rgb;
+                } else if angle == LocAngle::EAST {
+                    dst[offset as usize + 3] = rgb;
+                    dst[offset as usize + 3 + 512] = rgb;
+                    dst[offset as usize + 3 + 1024] = rgb;
+                    dst[offset as usize + 3 + 1536] = rgb;
+                } else if angle == LocAngle::SOUTH {
+                    dst[offset as usize + 1536] = rgb;
+                    dst[offset as usize + 1536 + 1] = rgb;
+                    dst[offset as usize + 1536 + 2] = rgb;
+                    dst[offset as usize + 1536 + 3] = rgb;
+                }
+            }
+
+            if shape == LocShape::WALL_SQUARE_CORNER {
+                if angle == LocAngle::WEST {
+                    dst[offset as usize] = rgb;
+                } else if angle == LocAngle::NORTH {
+                    dst[offset as usize + 3] = rgb;
+                } else if angle == LocAngle::EAST {
+                    dst[offset as usize + 3 + 1536] = rgb;
+                } else if angle == LocAngle::SOUTH {
+                    dst[offset as usize + 1536] = rgb;
+                }
+            }
+
+            if shape == LocShape::WALL_L {
+                if angle == LocAngle::SOUTH {
+                    dst[offset as usize] = rgb;
+                    dst[offset as usize + 512] = rgb;
+                    dst[offset as usize + 1024] = rgb;
+                    dst[offset as usize + 1536] = rgb;
+                } else if angle == LocAngle::WEST {
+                    dst[offset as usize] = rgb;
+                    dst[offset as usize + 1] = rgb;
+                    dst[offset as usize + 2] = rgb;
+                    dst[offset as usize + 3] = rgb;
+                } else if angle == LocAngle::NORTH {
+                    dst[offset as usize + 3] = rgb;
+                    dst[offset as usize + 3 + 512] = rgb;
+                    dst[offset as usize + 3 + 1024] = rgb;
+                    dst[offset as usize + 3 + 1536] = rgb;
+                } else if angle == LocAngle::EAST {
+                    dst[offset as usize + 1536] = rgb;
+                    dst[offset as usize + 1536 + 1] = rgb;
+                    dst[offset as usize + 1536 + 2] = rgb;
+                    dst[offset as usize + 1536 + 3] = rgb;
+                }
+            }
+        }
+    }
+
+    let scene_type = world.scene_type(level, tile_x, tile_z);
+    if scene_type != 0 {
+        let info = world.type_code2(level, tile_x, tile_z, scene_type);
+        let angle = (info >> 6) & 0x3;
+        let shape = info & 0x1f;
+        let loc_id = (scene_type >> 14) & 0x7fff;
+
+        let loc = cache.loc(loc_id as usize);
+        if loc.mapscene != -1 {
+            if let Some(scene) = mapscene.get(loc.mapscene as usize).and_then(|s| s.as_ref()) {
+                let offset_x = (loc.width * 4 - scene.wi) / 2;
+                let offset_y = (loc.length * 4 - scene.hi) / 2;
+                scene.plot_sprite(
+                    surface,
+                    tile_x * 4 + 48 + offset_x,
+                    (BuildArea::SIZE - tile_z - loc.length) * 4 + offset_y + 48,
+                );
+            }
+        } else {
+            if shape == LocShape::WALL_DIAGONAL {
+                let mut rgb = 0xeeeeee;
+                if scene_type > 0 {
+                    rgb = 0xee0000;
+                }
+
+                let dst = &mut surface.pixels;
+                let offset = tile_x * 4 + (BuildArea::SIZE - 1 - tile_z) * 512 * 4 + 24624;
+
+                if angle == LocAngle::WEST || angle == LocAngle::EAST {
+                    dst[offset as usize + 1536] = rgb;
+                    dst[offset as usize + 1024 + 1] = rgb;
+                    dst[offset as usize + 512 + 2] = rgb;
+                    dst[offset as usize + 3] = rgb;
+                } else {
+                    dst[offset as usize] = rgb;
+                    dst[offset as usize + 512 + 1] = rgb;
+                    dst[offset as usize + 1024 + 2] = rgb;
+                    dst[offset as usize + 1536 + 3] = rgb;
+                }
+            }
+        }
+    }
+
+    let gd_type = world.gd_type(level, tile_x, tile_z);
+    if gd_type != 0 {
+        let loc_id = (gd_type >> 14) & 0x7fff;
+
+        let loc = cache.loc(loc_id as usize);
+        if loc.mapscene != -1 {
+            if let Some(scene) = mapscene.get(loc.mapscene as usize).and_then(|s| s.as_ref()) {
+                let offset_x = (loc.width * 4 - scene.wi) / 2;
+                let offset_y = (loc.length * 4 - scene.hi) / 2;
+                scene.plot_sprite(
+                    surface,
+                    tile_x * 4 + 48 + offset_x,
+                    (BuildArea::SIZE - tile_z - loc.length) * 4 + offset_y + 48,
+                );
+            }
+        }
     }
 }

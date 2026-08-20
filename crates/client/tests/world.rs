@@ -277,3 +277,39 @@ fn render_all_non_flat_diagonal_quick_ground_uses_own_corners() {
         "non-flat DIAGONAL quick ground must use the non-flat texture corners"
     );
 }
+
+/// `World.render2DGround` (TS 798-856): a PLAIN tile's `QuickGround`
+/// `minimapRgb` (the `overlay` argument of `set_ground`) fills a 4×4 block
+/// in the minimap buffer at `offset` with row `step` 512.
+#[test]
+fn render_2d_ground_plain_quick_fills_4x4() {
+    let max_level: i32 = 1;
+    let max_tile_x: i32 = 3;
+    let max_tile_z: i32 = 3;
+    let groundh = vec![
+        vec![vec![2000i32; max_tile_z as usize + 1]; max_tile_x as usize + 1];
+        max_level as usize
+    ];
+    let mut world = World::new(groundh, max_tile_z, max_level, max_tile_x);
+    world.fill_base_level(0);
+    world.set_ground(
+        0, 1, 1,
+        TerrainOverlayShape::PLAIN, 0, -1,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0x00aabb, 0,
+    );
+
+    let mut dst = vec![0i32; 512 * 512];
+    world.render_2d_ground(0, 1, 1, &mut dst, 0, 512);
+    assert_ne!(dst[0], 0);
+    assert_eq!(dst[0], 0x00aabb);
+    // a full 4×4 block, one pixel outside stays untouched
+    for i in 0..4 {
+        assert_eq!(dst[i * 512], 0x00aabb);
+        assert_eq!(dst[i * 512 + 3], 0x00aabb);
+    }
+    assert_eq!(dst[4], 0);
+    assert_eq!(dst[512 * 4], 0);
+}

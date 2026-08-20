@@ -19,6 +19,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use num_bigint::BigUint;
 
 use crate::client::client_build::ClientBuild;
+use crate::client::client_draw::draw_detail;
 use crate::client::config::ClientConfig;
 use crate::client::game_shell::GameShell;
 use crate::client::login_error::LoginError;
@@ -29,7 +30,8 @@ use crate::config::seq_type::{RESTART_RESET, RESTART_RESETLOOP};
 use crate::config::Cache;
 use crate::dash3d::world::LevelHeightmaps;
 use crate::dash3d::{
-    AnimFrame, BuildArea, CollisionFlag, CollisionMap, DirectionFlag, LocShape, Model, World,
+    AnimFrame, BuildArea, CollisionFlag, CollisionMap, DirectionFlag, LocShape, MapFlag, Model,
+    World,
 };
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
 use crate::graphics::{Colour, Pix2D, Pix3D, Pix32, Pix3DDraw, Pix8, PixFont, PixMap};
@@ -430,6 +432,11 @@ pub struct Client {
     pub mapdots3: Option<Pix32>,
     pub mapdots4: Option<Pix32>,
     pub mapback: Option<Pix8>,
+    /// `mapscene`/`mapfunction` sprites from client-ts (254-255): the
+    /// minimap wall/scene icons from the `media` jag, depacked by
+    /// `prepare_game`. `None` entries skip the plot in `draw_detail`.
+    pub mapscene: Vec<Option<Pix8>>,
+    pub mapfunction: Vec<Option<Pix32>>,
     pub compass_mask_line_offsets: Vec<i32>,
     pub compass_mask_line_lengths: Vec<i32>,
     pub minimap_mask_line_offsets: Vec<i32>,
@@ -439,9 +446,9 @@ pub struct Client {
     pub macro_minimap_angle: i32,
     pub macro_minimap_zoom: i32,
     /// `activeMapFunctions`/`minimapFlag` from client-ts (508-513): filled
-    /// by `minimapBuildBuffer`/`minimapLoop`; defaults keep the draw loops
-    /// empty. The hint fields (TS 161-165) gate the `minimapDrawArrow`
-    /// branch (`hintType` 0 → skipped).
+    /// by `minimapBuildBuffer`/`minimapLoop`; sized 1000 as TS. The hint
+    /// fields (TS 161-165) gate the `minimapDrawArrow` branch (`hintType`
+    /// 0 → skipped).
     pub active_map_function_count: i32,
     pub active_map_function_x: Vec<i32>,
     pub active_map_function_z: Vec<i32>,
@@ -470,6 +477,10 @@ pub struct Client {
     pub last_login_reconnect: Option<bool>,
     /// `logoutTimer` from Java: frames remaining until a requested logout.
     pub logout_timer: i32,
+    /// `Client.cyclelogic3` from client-ts (a TS static, instance here):
+    /// anticheat counter sent with `ANTICHEAT_CYCLELOGIC3` every 113
+    /// `minimapBuildBuffer` runs.
+    pub cyclelogic3: i32,
     /// `timeoutTimer` from Java: frames since the last full in-game packet;
     /// `gameLoop` calls `lostCon` past 750 (~15 s at 20 ms).
     pub timeout_timer: i32,
@@ -718,6 +729,8 @@ impl Client {
             mapdots3: None,
             mapdots4: None,
             mapback: None,
+            mapscene: vec![None; 50],
+            mapfunction: vec![None; 50],
             compass_mask_line_offsets: Vec::new(),
             compass_mask_line_lengths: Vec::new(),
             minimap_mask_line_offsets: Vec::new(),
@@ -727,9 +740,9 @@ impl Client {
             macro_minimap_angle: 0,
             macro_minimap_zoom: 0,
             active_map_function_count: 0,
-            active_map_function_x: Vec::new(),
-            active_map_function_z: Vec::new(),
-            active_map_functions: Vec::new(),
+            active_map_function_x: vec![0; 1000],
+            active_map_function_z: vec![0; 1000],
+            active_map_functions: vec![None; 1000],
             hint_type: 0,
             hint_npc: 0,
             hint_player: 0,
@@ -746,6 +759,7 @@ impl Client {
             chat_scroll_height: 78,
             last_login_reconnect: None,
             logout_timer: 0,
+            cyclelogic3: 0,
             timeout_timer: 0,
             no_timeout_timer: 0,
             error_loading,
@@ -4300,9 +4314,185 @@ impl Client {
         }
     }
 
-    /// `minimapBuildBuffer(level)` from client-ts (5280): compose the
-    /// minimap buffer from `mapl` and the ground colours. Slice 2 (Task 9).
-    fn minimap_build_buffer(&mut self, _level: i32) {}
+    /// `minimapBuildBuffer(level)` from client-ts (5280-5387): compose the
+    /// 512×512 minimap buffer from `mapl` (the ground pass through
+    /// `render_2d_ground`, then the loc wall/scene lines and icons through
+    /// `draw_detail`), scan the ground decors for the active map-function
+    /// dots, and send the anticheat cycle counter.
+    pub fn minimap_build_buffer(&mut self, level: i32) {
+        let Some(mm) = self.minimap.as_mut() else {
+            return;
+        };
+
+        for p in mm.data.iter_mut() {
+            *p = 0;
+        }
+
+        for z in 1..BuildArea::SIZE - 1 {
+            let mut offset = (BuildArea::SIZE - 1 - z) * 512 * 4 + 24628;
+
+            for x in 1..BuildArea::SIZE - 1 {
+                if self.mapl[level as usize][x as usize][z as usize] as i32
+                    & (MapFlag::VIS_BELOW | MapFlag::FORCE_HIGH_DETAIL)
+                    == 0
+                {
+                    self.world.render_2d_ground(level, x, z, &mut mm.data, offset, 512);
+                }
+
+                if level < 3
+                    && self.mapl[level as usize + 1][x as usize][z as usize] as i32
+                        & MapFlag::VIS_BELOW
+                        != 0
+                {
+                    self.world.render_2d_ground(level + 1, x, z, &mut mm.data, offset, 512);
+                }
+
+                offset += 4;
+            }
+        }
+
+        let inactive_rgb = ((((random_float() * 20.0) as i32) + 238 - 10) << 16)
+            + ((((random_float() * 20.0) as i32) + 238 - 10) << 8)
+            + ((random_float() * 20.0) as i32)
+            + 238
+            - 10;
+        let active_rgb = (((random_float() * 20.0) as i32) + 238 - 10) << 16;
+
+        // TS `this.minimap.setPixels()`: bind the buffer for `draw_detail`'s
+        // plots. The `areaGame.setPixels()` rebinding is a no-op here — every
+        // draw helper in this port takes its surface explicitly.
+        let mut surface = Pix2D::with_pixels(&mut mm.data, 512, 512);
+        for z in 1..BuildArea::SIZE - 1 {
+            for x in 1..BuildArea::SIZE - 1 {
+                if self.mapl[level as usize][x as usize][z as usize] as i32
+                    & (MapFlag::VIS_BELOW | MapFlag::FORCE_HIGH_DETAIL)
+                    == 0
+                {
+                    draw_detail(
+                        &self.world,
+                        &self.cache,
+                        &self.mapscene,
+                        &mut surface,
+                        level,
+                        x,
+                        z,
+                        inactive_rgb,
+                        active_rgb,
+                    );
+                }
+
+                if level < 3
+                    && self.mapl[level as usize + 1][x as usize][z as usize] as i32
+                        & MapFlag::VIS_BELOW
+                        != 0
+                {
+                    draw_detail(
+                        &self.world,
+                        &self.cache,
+                        &self.mapscene,
+                        &mut surface,
+                        level + 1,
+                        x,
+                        z,
+                        inactive_rgb,
+                        active_rgb,
+                    );
+                }
+            }
+        }
+        drop(surface);
+
+        self.active_map_function_count = 0;
+
+        for x in 0..BuildArea::SIZE {
+            for z in 0..BuildArea::SIZE {
+                let typecode = self.world.gd_type(self.minusedlevel, x, z);
+                if typecode == 0 {
+                    continue;
+                }
+
+                let loc_id = (typecode >> 14) & 0x7fff;
+                let func = self.cache.loc(loc_id as usize).mapfunction;
+                if func < 0 {
+                    continue;
+                }
+
+                let mut stx = x;
+                let mut stz = z;
+
+                if func != 22
+                    && func != 29
+                    && func != 34
+                    && func != 36
+                    && func != 46
+                    && func != 47
+                    && func != 48
+                {
+                    let max_x = BuildArea::SIZE;
+                    let max_z = BuildArea::SIZE;
+                    let flags = &self.collision[self.minusedlevel as usize].flags;
+
+                    for _ in 0..10 {
+                        let rand = (random_float() * 4.0) as i32;
+                        if rand == 0
+                            && stx > 0
+                            && stx > x - 3
+                            && (flags[(stx - 1) as usize][stz as usize] & CollisionFlag::PL_WALK_E)
+                                == CollisionFlag::_OPEN
+                        {
+                            stx -= 1;
+                        }
+
+                        if rand == 1
+                            && stx < max_x - 1
+                            && stx < x + 3
+                            && (flags[(stx + 1) as usize][stz as usize] & CollisionFlag::PL_WALK_W)
+                                == CollisionFlag::_OPEN
+                        {
+                            stx += 1;
+                        }
+
+                        if rand == 2
+                            && stz > 0
+                            && stz > z - 3
+                            && (flags[stx as usize][(stz - 1) as usize] & CollisionFlag::PL_WALK_N)
+                                == CollisionFlag::_OPEN
+                        {
+                            stz -= 1;
+                        }
+
+                        if rand == 3
+                            && stz < max_z - 1
+                            && stz < z + 3
+                            && (flags[stx as usize][(stz + 1) as usize] & CollisionFlag::PL_WALK_S)
+                                == CollisionFlag::_OPEN
+                        {
+                            stz += 1;
+                        }
+                    }
+                }
+
+                // TS writes past the 1000-slot `activeMapFunctions` arrays
+                // silently; a Rust panic here is worse, so cap the count.
+                let count = self.active_map_function_count as usize;
+                if count < self.active_map_functions.len() {
+                    self.active_map_functions[count] =
+                        self.mapfunction.get(func as usize).and_then(|s| s.clone());
+                    self.active_map_function_x[count] = stx;
+                    self.active_map_function_z[count] = stz;
+                    self.active_map_function_count += 1;
+                }
+            }
+        }
+
+        self.cyclelogic3 += 1;
+        if self.cyclelogic3 > 112 {
+            self.cyclelogic3 = 0;
+
+            self.out.p1_enc(ClientProt::ANTICHEAT_CYCLELOGIC3.id);
+            self.out.p1(50);
+        }
+    }
 
     /// `showObject(x, z)` from client-ts (7569): rebuild one tile's stacked
     /// objects/animations after the scene build. Slice 2.
@@ -4773,4 +4963,15 @@ fn login_random() -> i32 {
     x ^= x >> 27;
     let r = x.wrapping_mul(0x2545_f491_4f6c_dd1d);
     ((r >> 32) % 99_999_999) as i32
+}
+
+/// Stand-in for JS `Math.random()` (returns `[0, 1)`), time-seeded like
+/// `client_build`'s; `minimapBuildBuffer`'s colour and dot jitter is not
+/// reproducible in TS either.
+fn random_float() -> f64 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    ((nanos >> 20) % 1_000_000) as f64 / 1_000_000.0
 }

@@ -337,3 +337,31 @@ fn production_init_wires_textures_and_pool() {
         "prepare_game must gamma-correct the texture palettes"
     );
 }
+
+/// `minimapBuildBuffer` (Client.ts 5280): with one PLAIN ground tile and a
+/// zeroed `mapl`, the composed 512×512 minimap buffer must be non-black
+/// after the build. `minimap_build_buffer` is `pub` for the test; the
+/// `check_minimap` path calls it internally.
+#[test]
+fn minimap_build_buffer_writes_pixels() {
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    c.world.fill_base_level(0);
+    c.world.set_ground(
+        0, 1, 1,
+        TerrainOverlayShape::PLAIN, 0, -1,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0x00aabb, 0,
+    );
+    c.mapl = vec![vec![vec![0u8; 104]; 104]; 4];
+    c.minimap_build_buffer(0);
+    let mm = c.minimap.as_ref().unwrap();
+    assert!(mm.data.iter().any(|&p| p != 0), "minimap buffer must be non-black");
+}

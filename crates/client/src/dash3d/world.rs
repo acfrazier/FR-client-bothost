@@ -72,6 +72,35 @@ const VIS_ROW_SIZE: usize = 51 * 51;
 /// `[maxLevel][maxTileX + 1][maxTileZ + 1]` (one extra row/column of corners).
 pub type LevelHeightmaps = Vec<Vec<Vec<i32>>>;
 
+// prettier-ignore
+/// `MINIMAP_SHAPE` from World.ts 39-51: the minimap overlay masks, indexed
+/// by `Ground.overlay_shape` (TerrainOverlayShape).
+const MINIMAP_SHAPE: [[i32; 16]; 13] = [
+    [0; 16],
+    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], // PLAIN_SHAPE
+    [1, 0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1], // DIAGONAL_SHAPE
+    [1, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0], // LEFT_SEMI_DIAGONAL_SMALL_SHAPE
+    [0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1], // RIGHT_SEMI_DIAGONAL_SMALL_SHAPE
+    [0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], // LEFT_SEMI_DIAGONAL_BIG_SHAPE
+    [1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1], // RIGHT_SEMI_DIAGONAL_BIG_SHAPE
+    [1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0], // HALF_SQUARE_SHAPE
+    [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0], // CORNER_SMALL_SHAPE
+    [1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 0, 1, 1], // CORNER_BIG_SHAPE
+    [1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0], // FAN_SMALL_SHAPE
+    [0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1], // FAN_BIG_SHAPE
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1], // TRAPEZIUM_SHAPE
+];
+
+// prettier-ignore
+/// `MINIMAP_ROTATE` from World.ts 53-61: the minimap overlay rotations,
+/// indexed by `Ground.overlay_rotation`.
+const MINIMAP_ROTATE: [[usize; 16]; 4] = [
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    [12, 8, 4, 0, 13, 9, 5, 1, 14, 10, 6, 2, 15, 11, 7, 3],
+    [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
+    [3, 7, 11, 15, 2, 6, 10, 14, 1, 5, 9, 13, 0, 4, 8, 12],
+];
+
 pub struct World {
     min_level: i32,
     max_tile_level: i32,
@@ -860,6 +889,89 @@ impl World {
             }
         }
         -1
+    }
+
+    /// `render2DGround(level, x, z, dst, offset, step)` from World.ts
+    /// 798-856: plot one tile's minimap colours into `dst` (the 512×512
+    /// minimap buffer). A `QuickGround` tile fills a solid 4×4 block with
+    /// `minimap_rgb`; a `Ground` tile plots the overlay/underlay through
+    /// the `MINIMAP_SHAPE`/`MINIMAP_ROTATE` masks. `offset` is the first
+    /// pixel, `step` the row stride (512).
+    pub fn render_2d_ground(
+        &self,
+        level: i32,
+        x: i32,
+        z: i32,
+        dst: &mut [i32],
+        mut offset: i32,
+        step: i32,
+    ) {
+        let Some(tile) = self.squares[level as usize][x as usize][z as usize].as_ref() else {
+            return;
+        };
+
+        if let Some(quick_ground) = &tile.quick_ground {
+            let rgb = quick_ground.minimap_rgb;
+            if rgb != 0 {
+                for _ in 0..4 {
+                    dst[offset as usize] = rgb;
+                    dst[offset as usize + 1] = rgb;
+                    dst[offset as usize + 2] = rgb;
+                    dst[offset as usize + 3] = rgb;
+                    offset += step;
+                }
+            }
+            return;
+        }
+
+        if let Some(ground) = &tile.ground {
+            let shape = ground.overlay_shape;
+            let rotation = ground.overlay_rotation;
+            let overlay = ground.minimap_overlay;
+            let underlay = ground.minimap_underlay;
+            let minimap_shape = MINIMAP_SHAPE[shape as usize];
+            let minimap_rotation = MINIMAP_ROTATE[rotation as usize];
+
+            let mut off = 0usize;
+            if overlay != 0 {
+                for _ in 0..4 {
+                    dst[offset as usize] =
+                        if minimap_shape[minimap_rotation[off]] == 0 { overlay } else { underlay };
+                    off += 1;
+                    dst[offset as usize + 1] =
+                        if minimap_shape[minimap_rotation[off]] == 0 { overlay } else { underlay };
+                    off += 1;
+                    dst[offset as usize + 2] =
+                        if minimap_shape[minimap_rotation[off]] == 0 { overlay } else { underlay };
+                    off += 1;
+                    dst[offset as usize + 3] =
+                        if minimap_shape[minimap_rotation[off]] == 0 { overlay } else { underlay };
+                    off += 1;
+                    offset += step;
+                }
+                return;
+            }
+
+            for _ in 0..4 {
+                if minimap_shape[minimap_rotation[off]] != 0 {
+                    dst[offset as usize] = underlay;
+                }
+                off += 1;
+                if minimap_shape[minimap_rotation[off]] != 0 {
+                    dst[offset as usize + 1] = underlay;
+                }
+                off += 1;
+                if minimap_shape[minimap_rotation[off]] != 0 {
+                    dst[offset as usize + 2] = underlay;
+                }
+                off += 1;
+                if minimap_shape[minimap_rotation[off]] != 0 {
+                    dst[offset as usize + 3] = underlay;
+                }
+                off += 1;
+                offset += step;
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
