@@ -1418,6 +1418,20 @@ impl Model {
         }
     }
 
+    /// `rotateXAxis(angle)` from client-ts (1406).
+    pub fn rotate_x_axis(&mut self, angle: i32) {
+        let sin = Pix3D::sin_table()[angle as usize];
+        let cos = Pix3D::cos_table()[angle as usize];
+
+        for v in 0..self.num_points as usize {
+            let tmp =
+                (self.point_y.as_ref().unwrap()[v] * cos - self.point_z.as_ref().unwrap()[v] * sin) >> 16;
+            self.point_z.as_mut().unwrap()[v] =
+                (self.point_y.as_ref().unwrap()[v] * sin + self.point_z.as_ref().unwrap()[v] * cos) >> 16;
+            self.point_y.as_mut().unwrap()[v] = tmp;
+        }
+    }
+
     /// `translate(y, x, z)` from client-ts (y-first argument order).
     pub fn translate(&mut self, y: i32, x: i32, z: i32) {
         for v in 0..self.num_points as usize {
