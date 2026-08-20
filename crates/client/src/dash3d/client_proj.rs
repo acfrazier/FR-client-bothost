@@ -31,6 +31,11 @@ pub struct ClientProj {
     pub pitch: i32,
     pub anim_frame: i32,
     pub anim_cycle: i32,
+    /// Seq data bound by `bind_seq` so `move_by` can advance the anim
+    /// without a `Cache` (the TS reaches it through `spotanim.seq`).
+    pub seq_num_frames: i32,
+    pub seq_delays: Option<Vec<i32>>,
+    pub seq_id: Option<usize>,
     /// TS `ModelSource.minY` (default 1000, updated by `worldRender`).
     pub min_y: i32,
 }
@@ -75,8 +80,33 @@ impl ClientProj {
             pitch: 0,
             anim_frame: 0,
             anim_cycle: 0,
+            seq_num_frames: 0,
+            seq_delays: None,
+            seq_id: None,
             min_y: 1000,
         }
+    }
+
+    /// `bindSeq`-equivalent: copy the spot's seq `num_frames` and `delay`
+    /// table onto the struct so `move_by` can run the anim loop without a
+    /// `Cache`. A missing spot or seq leaves the defaults (loop skipped).
+    pub fn bind_seq(&mut self, cache: &Cache) {
+        let Some(spot) = cache.spots.get(self.spotanim as usize) else { return };
+        let Some(seq) = spot.seq else { return };
+        let seq_type = cache.seq(seq);
+        self.seq_id = Some(seq);
+        self.seq_num_frames = seq_type.num_frames;
+        self.seq_delays = seq_type.delay.clone();
+    }
+
+    /// `SeqType.getDelay(frame)` equivalent over the bound table; missing
+    /// delays or an out-of-range frame read as 0.
+    fn seq_get_delay(&self, frame: i32) -> i32 {
+        self.seq_delays
+            .as_ref()
+            .and_then(|delays| delays.get(frame as usize))
+            .copied()
+            .unwrap_or(0)
     }
 
     /// `setTarget(dstX, dstY, dstZ, cycle)` from client-ts.
@@ -101,8 +131,9 @@ impl ClientProj {
         self.acceleration_y = ((dst_y - self.y - self.velocity_y * dt) * 2.0) / (dt * dt);
     }
 
-    /// `move(delta)` from client-ts (`move` is a Rust keyword).
-    pub fn move_by(&mut self, cache: &Cache, delta: i32) {
+    /// `move(delta)` from client-ts (`move` is a Rust keyword). The anim
+    /// loop uses the seq data bound by `bind_seq`.
+    pub fn move_by(&mut self, delta: i32) {
         self.mobile = true;
         self.x += self.velocity_x * delta as f64;
         self.z += self.velocity_z * delta as f64;
@@ -113,14 +144,13 @@ impl ClientProj {
             & 0x7ff;
         self.pitch = ((f64::atan2(self.velocity_y, self.velocity) * 325.949) as i32) & 0x7ff;
 
-        if let Some(seq) = cache.spot(self.spotanim as usize).seq {
-            let seq_type = cache.seq(seq);
+        if self.seq_id.is_some() {
             self.anim_cycle += delta;
 
-            while self.anim_cycle > seq_type.get_delay(self.anim_frame) {
-                self.anim_cycle -= seq_type.get_delay(self.anim_frame) + 1;
+            while self.anim_cycle > self.seq_get_delay(self.anim_frame) {
+                self.anim_cycle -= self.seq_get_delay(self.anim_frame) + 1;
                 self.anim_frame += 1;
-                if self.anim_frame >= seq_type.num_frames {
+                if self.anim_frame >= self.seq_num_frames {
                     self.anim_frame = 0;
                 }
             }

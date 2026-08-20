@@ -7,7 +7,7 @@ use crate::datastruct::linkable::{LinkableTrait, Links};
 
 pub struct MapSpotAnim {
     pub links: Links,
-    pub r#type: i32,
+    pub spotanim: i32,
     pub level: i32,
     pub x: i32,
     pub z: i32,
@@ -24,7 +24,7 @@ impl MapSpotAnim {
     pub fn new(id: i32, level: i32, x: i32, z: i32, y: i32, cycle: i32, delay: i32) -> Self {
         MapSpotAnim {
             links: Links::new(0),
-            r#type: id,
+            spotanim: id,
             level,
             x,
             z,
@@ -39,7 +39,7 @@ impl MapSpotAnim {
 
     /// `update(delta)` from client-ts.
     pub fn update(&mut self, cache: &Cache, delta: i32) {
-        let Some(seq) = cache.spot(self.r#type as usize).seq else { return };
+        let Some(seq) = cache.spot(self.spotanim as usize).seq else { return };
         let seq_type = cache.seq(seq);
 
         self.anim_cycle += delta;
@@ -56,7 +56,7 @@ impl MapSpotAnim {
 
     /// `getTempModel()` from client-ts.
     pub fn get_temp_model(&mut self, cache: &Cache) -> Option<Model> {
-        let spot = cache.spot(self.r#type as usize);
+        let spot = cache.spot(self.spotanim as usize);
         let tmp = spot.get_temp_model2(cache)?;
 
         let mut frame = -1;
