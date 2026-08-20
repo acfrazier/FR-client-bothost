@@ -2277,61 +2277,65 @@ impl Client {
                 // build-area move. The scan runs in the signed direction of
                 // dx/dz so a positive delta copies tiles that are still
                 // needed; a naive `0..SIZE` sweep would overwrite them.
-                let mut start_tile_x = 0;
-                let mut end_tile_x = BuildArea::SIZE;
-                let mut dir_x = 1;
-                if dx < 0 {
-                    start_tile_x = BuildArea::SIZE - 1;
-                    end_tile_x = -1;
-                    dir_x = -1;
-                }
+                // A zero delta is a no-op (TS self-assigns, preserving every
+                // stacked item), so skip the whole shift.
+                if dx != 0 || dz != 0 {
+                    let mut start_tile_x = 0;
+                    let mut end_tile_x = BuildArea::SIZE;
+                    let mut dir_x = 1;
+                    if dx < 0 {
+                        start_tile_x = BuildArea::SIZE - 1;
+                        end_tile_x = -1;
+                        dir_x = -1;
+                    }
 
-                let mut start_tile_z = 0;
-                let mut end_tile_z = BuildArea::SIZE;
-                let mut dir_z = 1;
-                if dz < 0 {
-                    start_tile_z = BuildArea::SIZE - 1;
-                    end_tile_z = -1;
-                    dir_z = -1;
-                }
+                    let mut start_tile_z = 0;
+                    let mut end_tile_z = BuildArea::SIZE;
+                    let mut dir_z = 1;
+                    if dz < 0 {
+                        start_tile_z = BuildArea::SIZE - 1;
+                        end_tile_z = -1;
+                        dir_z = -1;
+                    }
 
-                let mut x = start_tile_x;
-                while x != end_tile_x {
-                    let mut z = start_tile_z;
-                    while z != end_tile_z {
-                        let last_x = x + dx;
-                        let last_z = z + dz;
-                        for level in 0..BuildArea::LEVELS {
-                            let cell = if last_x >= 0
-                                && last_z >= 0
-                                && last_x < BuildArea::SIZE
-                                && last_z < BuildArea::SIZE
-                            {
-                                self.ground_obj[level as usize][last_x as usize][last_z as usize]
-                                    .take()
-                            } else {
-                                None
-                            };
-                            self.ground_obj[level as usize][x as usize][z as usize] = cell;
+                    let mut x = start_tile_x;
+                    while x != end_tile_x {
+                        let mut z = start_tile_z;
+                        while z != end_tile_z {
+                            let last_x = x + dx;
+                            let last_z = z + dz;
+                            for level in 0..BuildArea::LEVELS {
+                                let cell = if last_x >= 0
+                                    && last_z >= 0
+                                    && last_x < BuildArea::SIZE
+                                    && last_z < BuildArea::SIZE
+                                {
+                                    self.ground_obj[level as usize][last_x as usize][last_z as usize]
+                                        .take()
+                                } else {
+                                    None
+                                };
+                                self.ground_obj[level as usize][x as usize][z as usize] = cell;
+                            }
+                            z += dir_z;
                         }
-                        z += dir_z;
+                        x += dir_x;
                     }
-                    x += dir_x;
-                }
 
-                let mut node = self.loc_changes.head();
-                while let Some(loc) = node {
-                    loc.x -= dx;
-                    loc.z -= dz;
-                    if loc.x < 0 || loc.z < 0 || loc.x >= BuildArea::SIZE || loc.z >= BuildArea::SIZE {
-                        self.loc_changes.unlink_last();
+                    let mut node = self.loc_changes.head();
+                    while let Some(loc) = node {
+                        loc.x -= dx;
+                        loc.z -= dz;
+                        if loc.x < 0 || loc.z < 0 || loc.x >= BuildArea::SIZE || loc.z >= BuildArea::SIZE {
+                            self.loc_changes.unlink_last();
+                        }
+                        node = self.loc_changes.next();
                     }
-                    node = self.loc_changes.next();
-                }
 
-                if self.minimap_flag_x != 0 {
-                    self.minimap_flag_x -= dx;
-                    self.minimap_flag_z -= dz;
+                    if self.minimap_flag_x != 0 {
+                        self.minimap_flag_x -= dx;
+                        self.minimap_flag_z -= dz;
+                    }
                 }
 
                 self.ptype = -1;

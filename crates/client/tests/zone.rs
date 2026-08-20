@@ -918,3 +918,66 @@ fn rebuild_normal_shifts_ground_obj_by_base_delta() {
     assert!(c.ground_obj[0][20][20].is_none());
     assert_eq!(c.loc_changes.head().unwrap().x, 12);
 }
+
+/// A same-zone REBUILD_NORMAL while `scene_state != 2` skips the early
+/// return, so the shift body runs with dx == 0 && dz == 0. The TS
+/// self-assign `groundObj[level][x][z] = groundObj[level][x][z]` is a no-op
+/// that preserves stacked items; a `.take()` of the same cell would null it.
+#[test]
+fn rebuild_normal_zero_delta_preserves_ground_obj() {
+    let mut c = client();
+    seed_obj(&mut c, 1, 1);
+    c.map_build_centre_zone_x = 10;
+    c.map_build_centre_zone_z = 10;
+    c.map_build_base_x = 32;
+    c.map_build_base_z = 32;
+    c.map_build_prev_base_x = 32;
+    c.map_build_prev_base_z = 32;
+    c.scene_state = 1; // != 2, so the same-zone early return is not taken
+    c.ground_obj[0][20][20] = Some({
+        let mut l = LinkList::new();
+        l.push(ClientObj::new(1, 1));
+        l
+    });
+    let mut p = Packet::alloc(0);
+    p.p2(10); // same zone → base 32 → dx = 0, dz = 0
+    p.p2(10);
+    p.pos = 0;
+    c.handle_packet(ServerProt::REBUILD_NORMAL, &mut p);
+    assert!(c.ground_obj[0][20][20].is_some(), "zero-delta shift must not clear the cell");
+}
+
+/// dx < 0 must scan descending (from tile SIZE-1) so each source tile is
+/// still unread when its value is moved. Zone 9 → base 24, dx = -8: tile 12
+/// lands at tile 20, and the loc change shifts the same way.
+#[test]
+fn rebuild_normal_negative_dx_shifts_descending() {
+    let mut c = client();
+    seed_obj(&mut c, 1, 1);
+    c.map_build_centre_zone_x = 10;
+    c.map_build_centre_zone_z = 10;
+    c.map_build_base_x = 32;
+    c.map_build_base_z = 32;
+    c.map_build_prev_base_x = 32;
+    c.map_build_prev_base_z = 32;
+    c.scene_state = 2;
+    c.ground_obj[0][12][20] = Some({
+        let mut l = LinkList::new();
+        l.push(ClientObj::new(1, 1));
+        l
+    });
+    c.loc_changes.push(LocChange {
+        x: 12,
+        z: 20,
+        ..LocChange::default()
+    });
+    let mut p = Packet::alloc(0);
+    p.p2(9); // base (9-6)*8 = 24 → dx = 24-32 = -8
+    p.p2(10);
+    p.pos = 0;
+    c.handle_packet(ServerProt::REBUILD_NORMAL, &mut p);
+    // last_x = x + dx = x - 8, so the value at tile 12 lands at tile 20.
+    assert!(c.ground_obj[0][20][20].is_some());
+    assert!(c.ground_obj[0][12][20].is_none());
+    assert_eq!(c.loc_changes.head().unwrap().x, 20);
+}
