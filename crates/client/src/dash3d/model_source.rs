@@ -4,7 +4,9 @@
 // `SceneModel` enum, which dispatches `getTempModel`. `worldRender` is part
 // of the deferred render pass.
 use crate::config::Cache;
-use crate::dash3d::{ClientLocAnim, ClientNpc, ClientObj, ClientPlayer, Model};
+use crate::dash3d::{
+    ClientLocAnim, ClientNpc, ClientObj, ClientPlayer, ClientProj, MapSpotAnim, Model,
+};
 use crate::datastruct::linkable::{LinkableTrait, Links};
 use crate::graphics::{Pix2D, Pix3DDraw};
 
@@ -18,6 +20,8 @@ pub enum SceneModel {
     LocAnim(ClientLocAnim),
     Player(ClientPlayer),
     Npc(ClientNpc),
+    Proj(ClientProj),
+    SpotAnim(MapSpotAnim),
 }
 
 impl SceneModel {
@@ -30,6 +34,8 @@ impl SceneModel {
             SceneModel::LocAnim(anim) => anim.get_temp_model(cache, loop_cycle),
             SceneModel::Player(player) => player.get_temp_model(cache, loop_cycle),
             SceneModel::Npc(npc) => npc.get_temp_model(cache, loop_cycle),
+            SceneModel::Proj(proj) => proj.get_temp_model(cache),
+            SceneModel::SpotAnim(anim) => anim.get_temp_model(cache),
         }
     }
 
@@ -42,6 +48,8 @@ impl SceneModel {
             SceneModel::LocAnim(anim) => anim.min_y,
             SceneModel::Player(player) => player.min_y,
             SceneModel::Npc(npc) => npc.min_y,
+            SceneModel::Proj(proj) => proj.min_y,
+            SceneModel::SpotAnim(anim) => anim.min_y,
         }
     }
 
@@ -87,6 +95,8 @@ impl SceneModel {
                         SceneModel::LocAnim(anim) => anim.min_y = min_y,
                         SceneModel::Player(player) => player.min_y = min_y,
                         SceneModel::Npc(npc) => npc.min_y = min_y,
+                        SceneModel::Proj(proj) => proj.min_y = min_y,
+                        SceneModel::SpotAnim(anim) => anim.min_y = min_y,
                         SceneModel::Model(_) => unreachable!(),
                     }
                     model.world_render(

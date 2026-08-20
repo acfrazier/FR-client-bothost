@@ -779,16 +779,33 @@ impl World {
         self.squares[level as usize][x as usize][z as usize].as_ref()
     }
 
+    /// Number of live dynamic sprites (`dynamic_sprites` is private).
+    pub fn dynamic_count(&self) -> i32 {
+        self.dynamic_count
+    }
+
     pub fn get_wall(&self, level: i32, x: i32, z: i32) -> Option<&Wall> {
         self.squares[level as usize][x as usize][z as usize]
             .as_ref()
             .and_then(|tile| tile.wall.as_ref())
     }
 
+    pub fn get_wall_mut(&mut self, level: i32, x: i32, z: i32) -> Option<&mut Wall> {
+        self.squares[level as usize][x as usize][z as usize]
+            .as_mut()
+            .and_then(|tile| tile.wall.as_mut())
+    }
+
     pub fn get_decor(&self, level: i32, x: i32, z: i32) -> Option<&Decor> {
         self.squares[level as usize][x as usize][z as usize]
             .as_ref()
             .and_then(|tile| tile.decor.as_ref())
+    }
+
+    pub fn get_decor_mut(&mut self, level: i32, x: i32, z: i32) -> Option<&mut Decor> {
+        self.squares[level as usize][x as usize][z as usize]
+            .as_mut()
+            .and_then(|tile| tile.decor.as_mut())
     }
 
     pub fn get_scene(&self, level: i32, x: i32, z: i32) -> Option<&Sprite> {
@@ -808,10 +825,35 @@ impl World {
         None
     }
 
+    pub fn get_scene_mut(&mut self, level: i32, x: i32, z: i32) -> Option<&mut Sprite> {
+        let tile = self.squares[level as usize][x as usize][z as usize].as_ref()?;
+        let mut found = None;
+        for l in 0..tile.sprite_count as usize {
+            if let Some(idx) = tile.sprites[l] {
+                if let Some(sprite) = &self.sprites[idx] {
+                    if (sprite.typecode >> 29) & 0x3 == 2
+                        && sprite.min_tile_x == x
+                        && sprite.min_tile_z == z
+                    {
+                        found = Some(idx);
+                        break;
+                    }
+                }
+            }
+        }
+        self.sprites[found?].as_mut()
+    }
+
     pub fn get_gd(&self, level: i32, x: i32, z: i32) -> Option<&GroundDecor> {
         self.squares[level as usize][x as usize][z as usize]
             .as_ref()
             .and_then(|tile| tile.ground_decor.as_ref())
+    }
+
+    pub fn get_gd_mut(&mut self, level: i32, x: i32, z: i32) -> Option<&mut GroundDecor> {
+        self.squares[level as usize][x as usize][z as usize]
+            .as_mut()
+            .and_then(|tile| tile.ground_decor.as_mut())
     }
 
     pub fn wall_type(&self, level: i32, x: i32, z: i32) -> i32 {

@@ -17,7 +17,8 @@ fn client_obj_roundtrips_in_link_list() {
     assert_eq!(list.head().unwrap().count, 5);
 }
 
-use client::dash3d::{ClientProj, MapSpotAnim, Model};
+use client::dash3d::world::LevelHeightmaps;
+use client::dash3d::{BuildArea, ClientProj, MapSpotAnim, Model, SceneModel, World};
 use client::graphics::Pix3D;
 
 #[test]
@@ -81,4 +82,29 @@ fn client_proj_move_by_uses_bound_seq_delays() {
     q.move_by(1);
     assert_eq!(q.anim_frame, 0);
     assert_eq!(q.anim_cycle, 20);
+}
+
+fn empty_world() -> World {
+    let groundh: LevelHeightmaps =
+        vec![vec![vec![0i32; 105]; 105]; BuildArea::LEVELS as usize];
+    World::new(groundh, BuildArea::SIZE, BuildArea::LEVELS, BuildArea::SIZE)
+}
+
+#[test]
+fn scene_model_proj_min_y_defaults_1000() {
+    let p = ClientProj::new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    let sm = SceneModel::Proj(p);
+    assert_eq!(sm.min_y(), 1000);
+}
+
+#[test]
+fn world_dynamic_count_starts_zero() {
+    let w = empty_world();
+    assert_eq!(w.dynamic_count(), 0);
+}
+
+#[test]
+fn get_wall_mut_none_on_empty_tile() {
+    let mut w = empty_world();
+    assert!(w.get_wall_mut(0, 1, 1).is_none());
 }
