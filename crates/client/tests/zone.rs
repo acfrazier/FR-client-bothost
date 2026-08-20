@@ -231,10 +231,12 @@ fn loc_add_change_applies_on_do_queue() {
 #[test]
 fn loc_add_change_waits_when_model_not_ready() {
     let mut c = client();
-    while c.cache.locs.len() <= 0 {
+    if c.cache.locs.is_empty() {
         c.cache.locs.push(LocType::default());
     }
+    // shape 0 with model 60000 not downloaded → check_model(0) is false
     c.cache.locs[0].model = Some(vec![60000]);
+    c.cache.locs[0].shape = Some(vec![0]);
     c.scene_state = 2;
     c.ingame = true;
     let mut p = loc_add_payload(0x11, 0x00, 0);
@@ -242,6 +244,43 @@ fn loc_add_change_waits_when_model_not_ready() {
     c.game_loop();
     assert!(c.world.get_wall(0, 1, 1).is_none());
     assert!(c.loc_changes.head().is_some());
+}
+
+/// WALL_DECOR deletes must look the tile up at (x, z): the TS
+/// `decorType(level, z, x)` names its parameters backwards but indexes
+/// `squares[level][x][z]`, so a swapped call would leave a decor seeded at
+/// (2, 5) in place.
+#[test]
+fn loc_del_wall_decor_uses_tile_xz_not_swapped() {
+    let mut c = client();
+    seed_anim_loc(&mut c, 0);
+    c.scene_state = 2;
+    c.ingame = true;
+    c.zone_update_x = 0;
+    c.zone_update_z = 0;
+    // Seed a wall-decor at (2, 5) directly; a swapped decor_type lookup
+    // reads (5, 2) and finds nothing, so the delete would be skipped.
+    c.world.set_decor(
+        0,
+        2,
+        5,
+        0,
+        0,
+        0,
+        0x40000000,
+        Some(SceneModel::Model(Model::default())),
+        0,
+        0,
+        0,
+    );
+    // pos 0x25 → tile (2, 5), info 0x10 → shape 4 (wall-decor), LOC_DEL.
+    let mut p = Packet::alloc(0);
+    p.p1(0x25);
+    p.p1(0x10);
+    p.pos = 0;
+    c.handle_packet(ServerProt::LOC_DEL, &mut p);
+    c.game_loop();
+    assert!(c.world.get_decor(0, 2, 5).is_none());
 }
 
 #[test]
@@ -260,4 +299,20 @@ fn loc_del_removes_wall() {
     c.handle_packet(ServerProt::LOC_DEL, &mut p);
     c.game_loop();
     assert!(c.world.get_wall(0, 1, 1).is_none());
+}
+
+/// `info` bytes whose shape (info >> 2) is past the 23-entry
+/// `LOC_SHAPE_TO_LAYER` table must skip the apply, not panic and log out.
+#[test]
+fn loc_add_change_out_of_range_shape_does_not_panic() {
+    let mut c = client();
+    seed_anim_loc(&mut c, 0);
+    c.scene_state = 2;
+    c.ingame = true;
+    let mut p = loc_add_payload(0x11, 0x5c, 0); // info 0x5c → shape 23
+    c.handle_packet(ServerProt::LOC_ADD_CHANGE, &mut p);
+    c.game_loop();
+    assert!(c.ingame);
+    assert!(c.world.get_wall(0, 1, 1).is_none());
+    assert!(c.loc_changes.head().is_none());
 }

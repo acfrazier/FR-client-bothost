@@ -3643,9 +3643,16 @@ impl Client {
 
                 let shape = info >> 2;
                 let rotate = info & 0x3;
-                let layer = LOC_SHAPE_TO_LAYER[shape as usize];
 
-                if x >= 0 && z >= 0 && x < BuildArea::SIZE && z < BuildArea::SIZE {
+                // TS yields `undefined` for shape >= table length; skip the
+                // apply instead of panicking on the index.
+                if shape < LOC_SHAPE_TO_LAYER.len() as i32
+                    && x >= 0
+                    && z >= 0
+                    && x < BuildArea::SIZE
+                    && z < BuildArea::SIZE
+                {
+                    let layer = LOC_SHAPE_TO_LAYER[shape as usize];
                     self.loc_change_create(self.minusedlevel, x, z, layer, id, shape, rotate, 0, -1);
                 }
             }
@@ -3654,9 +3661,16 @@ impl Client {
 
                 let shape = info >> 2;
                 let rotate = info & 0x3;
-                let layer = LOC_SHAPE_TO_LAYER[shape as usize];
 
-                if x >= 0 && z >= 0 && x < BuildArea::SIZE && z < BuildArea::SIZE {
+                // TS yields `undefined` for shape >= table length; skip the
+                // apply instead of panicking on the index.
+                if shape < LOC_SHAPE_TO_LAYER.len() as i32
+                    && x >= 0
+                    && z >= 0
+                    && x < BuildArea::SIZE
+                    && z < BuildArea::SIZE
+                {
+                    let layer = LOC_SHAPE_TO_LAYER[shape as usize];
                     self.loc_change_create(self.minusedlevel, x, z, layer, -1, shape, rotate, 0, -1);
                 }
             }
@@ -4601,7 +4615,9 @@ impl Client {
         if loc.layer == LocLayer::WALL {
             typecode = self.world.wall_type(loc.level, loc.x, loc.z);
         } else if loc.layer == LocLayer::WALL_DECOR {
-            typecode = self.world.decor_type(loc.level, loc.z, loc.x);
+            // TS `decorType(level, z, x)` swaps its parameter names but
+            // indexes `squares[level][x][z]`; call with tile x, z.
+            typecode = self.world.decor_type(loc.level, loc.x, loc.z);
         } else if loc.layer == LocLayer::GROUND {
             typecode = self.world.scene_type(loc.level, loc.x, loc.z);
         } else if loc.layer == LocLayer::GROUND_DECOR {
@@ -4691,7 +4707,9 @@ impl Client {
         if layer == LocLayer::WALL {
             typecode = self.world.wall_type(level, x, z);
         } else if layer == LocLayer::WALL_DECOR {
-            typecode = self.world.decor_type(level, z, x);
+            // TS `decorType(level, z, x)` swaps its parameter names but
+            // indexes `squares[level][x][z]`; call with tile x, z.
+            typecode = self.world.decor_type(level, x, z);
         } else if layer == LocLayer::GROUND {
             typecode = self.world.scene_type(level, x, z);
         } else if layer == LocLayer::GROUND_DECOR {
