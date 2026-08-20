@@ -3926,76 +3926,96 @@ impl Client {
                     && z < BuildArea::SIZE
                 {
                     let layer = LOC_SHAPE_TO_LAYER[shape as usize];
-                    let level = self.minusedlevel as usize;
-                    let height_sw = self.groundh[level][x as usize][z as usize];
-                    let height_se = self.groundh[level][x as usize + 1][z as usize];
-                    let height_ne = self.groundh[level][x as usize + 1][z as usize + 1];
-                    let height_nw = self.groundh[level][x as usize][z as usize + 1];
 
-                    // TS 7333-7336: `loc.getModel(..., -1)`; when the model
-                    // is not ready (None) the whole apply stops — no
-                    // locChange and no player loc_* writes.
-                    if let Some(model) = self.cache.loc(id as usize).get_model(
-                        &self.cache,
-                        shape,
-                        rotate,
-                        height_sw,
-                        height_se,
-                        height_ne,
-                        height_nw,
-                        -1,
-                    ) {
-                        self.loc_change_create(
-                            self.minusedlevel,
-                            x,
-                            z,
-                            layer,
+                    // TS 7328-7331: the player is resolved before any apply;
+                    // a pid that resolves to no player stops the whole arm
+                    // (bytes already consumed) — `cache.loc(id)` and
+                    // `loc_change_create` never run for missing players.
+                    let has_player = if pid == self.self_slot {
+                        self.local_player.is_some()
+                    } else {
+                        self.players
+                            .get(pid as usize)
+                            .and_then(|p| p.as_ref())
+                            .is_some()
+                    };
+                    if has_player {
+                        let level = self.minusedlevel as usize;
+                        let height_sw = self.groundh[level][x as usize][z as usize];
+                        let height_se = self.groundh[level][x as usize + 1][z as usize];
+                        let height_ne = self.groundh[level][x as usize + 1][z as usize + 1];
+                        let height_nw = self.groundh[level][x as usize][z as usize + 1];
+
+                        // TS 7333-7336: `loc.getModel(..., -1)`; when the
+                        // model is not ready (None) the apply stops — no
+                        // locChange and no player loc_* writes.
+                        if let Some(model) = self.cache.loc(id as usize).get_model(
+                            &self.cache,
+                            shape,
+                            rotate,
+                            height_sw,
+                            height_se,
+                            height_ne,
+                            height_nw,
                             -1,
-                            0,
-                            0,
-                            t1 + 1,
-                            t2 + 1,
-                        );
-
-                        let loc = self.cache.loc(id as usize);
-                        let mut width = loc.width;
-                        let mut length = loc.length;
-                        if rotate == LocAngle::NORTH || rotate == LocAngle::SOUTH {
-                            width = loc.length;
-                            length = loc.width;
-                        }
-
-                        let player = if pid == self.self_slot {
-                            self.local_player.as_mut()
-                        } else {
-                            self.players.get_mut(pid as usize).and_then(|p| p.as_mut())
-                        };
-                        if let Some(player) = player {
-                            player.loc_start_cycle = t1 + self.loop_cycle;
-                            player.loc_stop_cycle = t2 + self.loop_cycle;
-                            player.loc_model = Some(model);
-
-                            player.loc_offset_x = x * 128 + width * 64;
-                            player.loc_offset_z = z * 128 + length * 64;
-                            player.loc_offset_y = get_av_h(
-                                &self.groundh,
-                                &self.mapl,
-                                player.loc_offset_x,
-                                player.loc_offset_z,
+                        ) {
+                            self.loc_change_create(
                                 self.minusedlevel,
+                                x,
+                                z,
+                                layer,
+                                -1,
+                                0,
+                                0,
+                                t1 + 1,
+                                t2 + 1,
                             );
 
-                            if east > west {
-                                std::mem::swap(&mut east, &mut west);
-                            }
-                            if south > north {
-                                std::mem::swap(&mut south, &mut north);
+                            let loc = self.cache.loc(id as usize);
+                            let mut width = loc.width;
+                            let mut length = loc.length;
+                            if rotate == LocAngle::NORTH || rotate == LocAngle::SOUTH {
+                                width = loc.length;
+                                length = loc.width;
                             }
 
-                            player.min_tile_x = x + east;
-                            player.max_tile_x = x + west;
-                            player.min_tile_z = z + south;
-                            player.max_tile_z = z + north;
+                            // The gate above guarantees the player still
+                            // resolves here (nothing between the two moved
+                            // `local_player`/`players`).
+                            let player = if pid == self.self_slot {
+                                self.local_player.as_mut()
+                            } else {
+                                self.players
+                                    .get_mut(pid as usize)
+                                    .and_then(|p| p.as_mut())
+                            };
+                            if let Some(player) = player {
+                                player.loc_start_cycle = t1 + self.loop_cycle;
+                                player.loc_stop_cycle = t2 + self.loop_cycle;
+                                player.loc_model = Some(model);
+
+                                player.loc_offset_x = x * 128 + width * 64;
+                                player.loc_offset_z = z * 128 + length * 64;
+                                player.loc_offset_y = get_av_h(
+                                    &self.groundh,
+                                    &self.mapl,
+                                    player.loc_offset_x,
+                                    player.loc_offset_z,
+                                    self.minusedlevel,
+                                );
+
+                                if east > west {
+                                    std::mem::swap(&mut east, &mut west);
+                                }
+                                if south > north {
+                                    std::mem::swap(&mut south, &mut north);
+                                }
+
+                                player.min_tile_x = x + east;
+                                player.max_tile_x = x + west;
+                                player.min_tile_z = z + south;
+                                player.max_tile_z = z + north;
+                            }
                         }
                     }
                 }

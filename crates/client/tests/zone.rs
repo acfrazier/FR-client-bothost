@@ -828,3 +828,28 @@ fn p_locmerge_consumes_and_noops_without_model() {
     assert!(c.local_player.as_ref().unwrap().loc_model.is_none());
     assert!(c.loc_changes.head().is_none());
 }
+
+/// A pid that resolves to no player must stop the whole arm before any
+/// apply: no `cache.loc(id)` index (TS skips it for missing players), no
+/// locChange. `id` 0xffff is past every locs table, so the misplaced order
+/// (get_model + locChange before the player gate) would panic on the
+/// unguarded index.
+#[test]
+fn p_locmerge_no_player_stops_before_apply() {
+    let mut c = client();
+    c.self_slot = 5;
+    c.ingame = true;
+    let mut p = Packet::new(vec![
+        0x11, // pos → tile (1,1)
+        0x00, // info → shape 0, rotate 0
+        0xff, 0xff, // id 0xffff — beyond cache.locs
+        0x00, 0x02, // t1
+        0x00, 0x05, // t2
+        0x00, 0x09, // pid 9 — players[9] is None
+        0x00, 0x00, 0x00, 0x00, // east, south, west, north
+    ]);
+    c.handle_packet(ServerProt::P_LOCMERGE, &mut p);
+    assert_eq!(p.pos, p.length());
+    assert!(c.ingame);
+    assert!(c.loc_changes.head().is_none());
+}
