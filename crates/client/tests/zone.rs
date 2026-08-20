@@ -632,3 +632,72 @@ fn obj_add_headless_still_sets_world() {
     obj_add(&mut c, 0x11, 3, 1);
     assert!(c.world.ground_object_at(0, 1, 1).is_some());
 }
+
+// --- MAP_PROJANIM + addProjectiles ---
+
+/// Seed `cache.spots[id]` so `ClientProj.get_temp_model` during
+/// `render_all` does not panic on the spotanim index.
+fn seed_spot(c: &mut Client, id: usize) {
+    while c.cache.spots.len() <= id {
+        c.cache.spots.push(SpotType::default());
+    }
+}
+
+/// MAP_PROJANIM pushes a `ClientProj`; the real `add_projectiles` path
+/// (inside `gameDrawMain`) advances it and places a dynamic sprite.
+/// `removeSprites` clears the frame's dynamic sprites at the end of the 3D
+/// pass (TS `renderAll` then `removeSprites`), so after `game_draw` the
+/// observable is the moved projectile and the 3D pass having run.
+#[test]
+fn map_projanim_pushes_and_add_projectiles_places_dynamic() {
+    let mut c = client();
+    seed_spot(&mut c, 0);
+    c.loop_cycle = 5;
+    let mut p = Packet::alloc(0);
+    p.p1(0x11); // tile 1,1
+    p.p1(0);    // x2 offset 0 → dest tile 1
+    p.p1(0);    // z2
+    p.p2(0);    // target 0
+    p.p2(0);    // spotanim
+    p.p1(1);    // h1 (×4 in apply)
+    p.p1(1);    // h2
+    p.p2(0);    // t1
+    p.p2(10);   // t2
+    p.p1(0);
+    p.p1(0);
+    p.pos = 0;
+    c.handle_packet(ServerProt::MAP_PROJANIM, &mut p);
+    assert!(c.projectiles.head().is_some());
+    c.set_draw(true);
+    c.ingame = true;
+    c.scene_state = 2;
+    c.world_update_num = 1;
+    c.game_draw();
+    // loop_cycle 5 ∈ [t1+5, t2+5] → addProjectiles moved the proj (mobile)
+    // and addDynamic placed it; frame-end removeSprites zeroed the count.
+    let proj = c.projectiles.head().unwrap();
+    assert!(proj.mobile, "addProjectiles must move the projectile");
+    assert_eq!(c.world.render_count(), 1, "gameDrawMain must run render_all");
+}
+
+#[test]
+fn map_projanim_out_of_range_dest_is_dropped() {
+    let mut c = client();
+    c.zone_update_x = 100;
+    c.zone_update_z = 100;
+    let mut p = Packet::alloc(0);
+    p.p1(0x77); // tile 107,107 — out of 0..104
+    p.p1(0);
+    p.p1(0);
+    p.p2(0);
+    p.p2(0);
+    p.p1(0);
+    p.p1(0);
+    p.p2(0);
+    p.p2(0);
+    p.p1(0);
+    p.p1(0);
+    p.pos = 0;
+    c.handle_packet(ServerProt::MAP_PROJANIM, &mut p);
+    assert!(c.projectiles.head().is_none());
+}

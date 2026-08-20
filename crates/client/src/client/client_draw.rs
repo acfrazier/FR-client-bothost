@@ -25,7 +25,7 @@ use crate::config::Cache;
 use crate::dash3d::world::LevelHeightmaps;
 use crate::dash3d::{BuildArea, LocAngle, LocShape, MapFlag, SceneModel, World};
 use crate::graphics::{Colour, Pix2D, Pix3D, Pix32, Pix8, PixFont, PixMap};
-use crate::io::JagFile;
+use crate::io::{ClientProt, JagFile};
 use crate::util::JString;
 
 fn plot_title_bg(map: &mut Option<PixMap>, background: &Pix32, x: i32, y: i32) {
@@ -33,6 +33,18 @@ fn plot_title_bg(map: &mut Option<PixMap>, background: &Pix32, x: i32, y: i32) {
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
         background.quick_plot_sprite(&mut surface, x, y);
     }
+}
+
+/// Stand-in for JS `Math.random()` (returns `[0, 1)`), time-seeded like
+/// `client_build`'s; the `cyclelogic1` anticheat blob is random in the TS
+/// too.
+fn random_float() -> f64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    ((nanos >> 20) % 1_000_000) as f64 / 1_000_000.0
 }
 
 /// `Client.getAvH` from client-ts (5052): the bilinear ground height at a
@@ -666,16 +678,15 @@ impl Client {
         self.world_update_num = 0;
     }
 
-    /// `gameDrawMain` from client-ts (4172): the 3D pass. Adds the players
-    /// and NPCs as dynamic sprites, follows the orbit camera, renders the
-    /// world into `area_game` (`Pix2D.cls()` + `render_all` +
+    /// `gameDrawMain` from client-ts (4172): the 3D pass. Adds the players,
+    /// NPCs and projectiles as dynamic sprites, follows the orbit camera,
+    /// renders the world into `area_game` (`Pix2D.cls()` + `render_all` +
     /// `removeSprites`, the TS 4238-4245 sequence) and blits it at (4, 4).
     /// `World.resetVisCalc` runs once on the first pass (TS runs it from
     /// the game-loading flow) so `render_all`'s visibility backing is
-    /// populated. `addProjectiles`/`addMapAnim` and the overlay passes are
-    /// no-ops while their lists/sprites are not ported; `cinemaCam`,
-    /// `camShake`, and `otherOverlays` (minimenu/main-overlay/fps) are not
-    /// ported either.
+    /// populated. `addMapAnim` and the overlay passes are no-ops while
+    /// their lists/sprites are not ported; `cinemaCam`, `camShake`, and
+    /// `otherOverlays` (minimenu/main-overlay/fps) are not ported either.
     fn game_draw_main(&mut self) {
         self.scene_cycle += 1;
 
@@ -899,9 +910,96 @@ impl Client {
         }
     }
 
-    /// `addProjectiles` from client-ts (4356): a no-op while `projectiles`
-    /// is not ported.
-    fn add_projectiles(&mut self) {}
+    /// `addProjectiles` from client-ts (4356): unlink projectiles whose
+    /// level no longer matches or whose flight window passed, retarget the
+    /// rest onto their npc/player target, advance them by
+    /// `world_update_num`, and re-add them as dynamic sprites. The
+    /// `cyclelogic1` anticheat payload (TS 4387-4413) writes a length-
+    /// prefixed random blob.
+    fn add_projectiles(&mut self) {
+        let mut node = self.projectiles.head();
+        while let Some(proj) = node {
+            if proj.level != self.minusedlevel || self.loop_cycle > proj.t2 {
+                self.projectiles.unlink_last();
+            } else if self.loop_cycle >= proj.t1 {
+                if proj.target > 0 {
+                    let index = (proj.target - 1) as usize;
+                    if let Some(npc) = self.npc.get(index).and_then(|n| n.as_ref()) {
+                        let h2 = proj.h2;
+                        let level = proj.level;
+                        let y = get_av_h(&self.groundh, &self.mapl, npc.x, npc.z, level) - h2;
+                        proj.set_target(npc.x as f64, y as f64, npc.z as f64, self.loop_cycle);
+                    }
+                }
+
+                if proj.target < 0 {
+                    let index = -proj.target - 1;
+                    let player = if index == self.self_slot {
+                        self.local_player.as_ref()
+                    } else {
+                        self.players.get(index as usize).and_then(|p| p.as_ref())
+                    };
+                    if let Some(player) = player {
+                        let h2 = proj.h2;
+                        let level = proj.level;
+                        let y = get_av_h(&self.groundh, &self.mapl, player.x, player.z, level) - h2;
+                        proj.set_target(
+                            player.x as f64,
+                            y as f64,
+                            player.z as f64,
+                            self.loop_cycle,
+                        );
+                    }
+                }
+
+                proj.move_by(self.world_update_num);
+                // TS 4382-4383: `proj.x | 0` (Rust `as i32`), typecode -1,
+                // padding 60, no forward padding.
+                let (x, y, z, yaw) = (proj.x as i32, proj.y as i32, proj.z as i32, proj.yaw);
+                self.world.add_dynamic(
+                    self.minusedlevel,
+                    x,
+                    y,
+                    z,
+                    Some(SceneModel::Proj(proj.clone())),
+                    -1,
+                    yaw,
+                    60,
+                    false,
+                );
+            }
+            node = self.projectiles.next();
+        }
+
+        // TS 4387-4413: `cyclelogic1` anticheat every 1175 cycles.
+        self.cyclelogic1 += 1;
+        if self.cyclelogic1 > 1174 {
+            self.cyclelogic1 = 0;
+
+            self.out.p1_enc(ClientProt::ANTICHEAT_CYCLELOGIC1.id);
+            self.out.p1(0);
+            let start = self.out.pos;
+            if (random_float() * 2.0) as i32 == 0 {
+                self.out.p2(11499);
+            }
+            self.out.p2(10548);
+            if (random_float() * 2.0) as i32 == 0 {
+                self.out.p1(139);
+            }
+            if (random_float() * 2.0) as i32 == 0 {
+                self.out.p1(94);
+            }
+            self.out.p2(51693);
+            self.out.p1(16);
+            self.out.p2(15036);
+            if (random_float() * 2.0) as i32 == 0 {
+                self.out.p1(65);
+            }
+            self.out.p1((random_float() * 256.0) as i32);
+            self.out.p2(22990);
+            self.out.psize1((self.out.pos - start) as i32);
+        }
+    }
 
     /// `addMapAnim` from client-ts (4416): a no-op while `spotanims` is not
     /// ported.

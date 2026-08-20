@@ -3807,16 +3807,58 @@ impl Client {
                 }
             }
             ServerProt::MAP_PROJANIM => {
-                let _x2 = buf.g1b();
-                let _z2 = buf.g1b();
-                let _target = buf.g2b();
-                let _spotanim = buf.g2();
-                let _h1 = buf.g1();
-                let _h2 = buf.g1();
-                let _t1 = buf.g2();
-                let _t2 = buf.g2();
-                let _angle = buf.g1();
-                let _startpos = buf.g1();
+                let x2 = x + buf.g1b();
+                let z2 = z + buf.g1b();
+                let target = buf.g2b();
+                let spotanim = buf.g2();
+                // TS 7265-7266: `h1`/`h2` are `g1() * 4`.
+                let h1 = buf.g1() * 4;
+                let h2 = buf.g1() * 4;
+                let t1 = buf.g2();
+                let t2 = buf.g2();
+                let angle = buf.g1();
+                let startpos = buf.g1();
+
+                // TS 7271-7279: src and dest tiles must both be in
+                // `0..104`; heights are `getAvH(scene) - h` with `t1`/`t2`
+                // shifted by `loop_cycle`.
+                if x >= 0
+                    && z >= 0
+                    && x < BuildArea::SIZE
+                    && z < BuildArea::SIZE
+                    && x2 >= 0
+                    && z2 >= 0
+                    && x2 < BuildArea::SIZE
+                    && z2 < BuildArea::SIZE
+                {
+                    let x = x * 128 + 64;
+                    let z = z * 128 + 64;
+                    let x2 = x2 * 128 + 64;
+                    let z2 = z2 * 128 + 64;
+
+                    let mut proj = ClientProj::new(
+                        spotanim,
+                        self.minusedlevel,
+                        x,
+                        get_av_h(&self.groundh, &self.mapl, x, z, self.minusedlevel) - h1,
+                        z,
+                        t1 + self.loop_cycle,
+                        t2 + self.loop_cycle,
+                        angle,
+                        startpos,
+                        target,
+                        h2,
+                    );
+                    proj.set_target(
+                        x2 as f64,
+                        (get_av_h(&self.groundh, &self.mapl, x2, z2, self.minusedlevel) - h2)
+                            as f64,
+                        z2 as f64,
+                        t1 + self.loop_cycle,
+                    );
+                    proj.bind_seq(&self.cache);
+                    self.projectiles.push(proj);
+                }
             }
             ServerProt::OBJ_REVEAL => {
                 let id = buf.g2();
