@@ -1,6 +1,8 @@
+use client::client::{Client, ClientConfig};
 use client::config::{Cache, SeqType, SpotType};
 use client::dash3d::{ClientObj, LocChange};
 use client::datastruct::{LinkList, LinkableTrait};
+use client::io::{Packet, ServerProt};
 
 #[test]
 fn loc_change_defaults_end_time_minus_one() {
@@ -107,4 +109,47 @@ fn world_dynamic_count_starts_zero() {
 fn get_wall_mut_none_on_empty_tile() {
     let mut w = empty_world();
     assert!(w.get_wall_mut(0, 1, 1).is_none());
+}
+
+fn client() -> Client {
+    Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    })
+}
+
+#[test]
+fn update_pid_sets_self_slot_and_members() {
+    let mut c = client();
+    let mut p = Packet::alloc(0);
+    p.p2(7);
+    p.p1(1);
+    p.pos = 0;
+    c.handle_packet(ServerProt::UPDATE_PID, &mut p);
+    assert_eq!(c.self_slot, 7);
+    assert_eq!(c.members_account, 1);
+    assert_eq!(p.pos, 3);
+}
+
+#[test]
+fn world_update_num_increments_when_draw_then_zeros_headless() {
+    let mut c = client();
+    assert_eq!(c.world_update_num, 0);
+    c.ingame = true;
+    c.game_loop(); // draw=false → increment then zero
+    assert_eq!(c.world_update_num, 0);
+    c.set_draw(true);
+    c.game_loop(); // draw=true → increment, game_draw not called here
+    assert!(c.world_update_num >= 1);
+}
+
+#[test]
+fn logout_clears_zone_lists() {
+    let mut c = client();
+    c.projectiles.push(client::dash3d::ClientProj::new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+    c.logout();
+    assert!(c.projectiles.head().is_none());
 }

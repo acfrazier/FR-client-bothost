@@ -30,10 +30,11 @@ use crate::config::seq_type::{RESTART_RESET, RESTART_RESETLOOP};
 use crate::config::Cache;
 use crate::dash3d::world::LevelHeightmaps;
 use crate::dash3d::{
-    AnimFrame, BuildArea, CollisionFlag, CollisionMap, DirectionFlag, LocShape, MapFlag, Model,
-    World,
+    AnimFrame, BuildArea, ClientObj, ClientProj, CollisionFlag, CollisionMap, DirectionFlag,
+    LocChange, LocShape, MapFlag, MapSpotAnim, Model, World,
 };
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
+use crate::datastruct::LinkList;
 use crate::graphics::{Colour, Pix2D, Pix3D, Pix32, Pix3DDraw, Pix8, PixFont, PixMap};
 use crate::io::{
     ClientProt, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt, SERVER_PROT_SIZES,
@@ -112,6 +113,24 @@ fn midi_backend(cache_dir: &str) -> Arc<Mutex<dyn Midi>> {
     }
 }
 
+/// `groundObj` grid from client-ts (`new Array(4)` of `new Array(104)` of
+/// null rows), every cell `None`. Assembled through `Vec` because the
+/// `array::from_fn` / const-repeat forms materialize the 1.7 MB grid in a
+/// stack temporary, which overflows the 2 MB test-thread stack.
+fn empty_ground_obj() -> Box<[[[Option<LinkList<ClientObj>>; 104]; 104]; 4]> {
+    let mut levels = Vec::with_capacity(4);
+    for _ in 0..4 {
+        let mut level = Vec::with_capacity(104);
+        for _ in 0..104 {
+            level.push([const { None }; 104]);
+        }
+        let level: Box<[[Option<LinkList<ClientObj>>; 104]; 104]> =
+            level.into_boxed_slice().try_into().map_err(|_| ()).unwrap();
+        levels.push(*level);
+    }
+    levels.into_boxed_slice().try_into().map_err(|_| ()).unwrap()
+}
+
 /// Period 274 applet size (engine `bot.html` canvas and title.dat).
 /// The title JPEG / in-game chrome are 765×503; 789×532 was leftover
 /// webclient padding around that art.
@@ -173,6 +192,21 @@ pub struct Client {
     pub minusedlevel: i32,
     pub zone_update_x: i32,
     pub zone_update_z: i32,
+    /// `groundObj` from client-ts: per-level tile grid of loc-change
+    /// object lists, sized `[LEVELS][SIZE][SIZE]`, every cell initially
+    /// `None`. Populated by the zone task.
+    pub ground_obj: Box<[[[Option<LinkList<ClientObj>>; 104]; 104]; 4]>,
+    pub loc_changes: LinkList<LocChange>,
+    pub projectiles: LinkList<ClientProj>,
+    pub spotanims: LinkList<MapSpotAnim>,
+    /// `selfSlot`/`membersAccount` from `UPDATE_PID`; `worldUpdateNum`
+    /// counts `gameLoop` passes while drawing (zeroed when not drawing and
+    /// at the end of `game_draw`); `cycleLogic1` is the loc-change scene
+    /// cycle counter. Slice 2.
+    pub self_slot: i32,
+    pub members_account: i32,
+    pub world_update_num: i32,
+    pub cyclelogic1: i32,
 
     pub stat_base_level: Vec<i32>,
     pub stat_effective_level: Vec<i32>,
@@ -549,6 +583,14 @@ impl Client {
             minusedlevel: 0,
             zone_update_x: 0,
             zone_update_z: 0,
+            ground_obj: empty_ground_obj(),
+            loc_changes: LinkList::new(),
+            projectiles: LinkList::new(),
+            spotanims: LinkList::new(),
+            self_slot: -1,
+            members_account: 0,
+            world_update_num: 0,
+            cyclelogic1: 0,
 
             stat_base_level: vec![0; Skill::count],
             stat_effective_level: vec![0; Skill::count],
@@ -2635,10 +2677,17 @@ impl Client {
                 self.ptype = -1;
             }
 
-            // selfSlot/membersAccount, last-login info, dialog input and
-            // friend-slot ops are not ported yet
-            ServerProt::UPDATE_PID
-            | ServerProt::LAST_LOGIN_INFO
+            // last-login info, dialog input and friend-slot ops are not
+            // ported yet
+            ServerProt::UPDATE_PID => {
+                // TS reads selfSlot (g2) then membersAccount (g1) straight
+                // off the payload.
+                self.self_slot = payload.g2();
+                self.members_account = payload.g1();
+                self.ptype = -1;
+            }
+
+            ServerProt::LAST_LOGIN_INFO
             | ServerProt::P_COUNTDIALOG
             | ServerProt::SET_MULTIWAY
             | ServerProt::SET_PLAYER_OP
@@ -3657,6 +3706,16 @@ impl Client {
         self.login_user.clear();
         self.login_pass.clear();
         self.world.reset_map();
+        self.projectiles.clear();
+        self.spotanims.clear();
+        self.loc_changes = LinkList::new();
+        for level in 0..BuildArea::LEVELS {
+            for x in 0..BuildArea::SIZE {
+                for z in 0..BuildArea::SIZE {
+                    self.ground_obj[level as usize][x as usize][z as usize] = None;
+                }
+            }
+        }
         for collision in &mut self.collision {
             collision.reset();
         }
@@ -4171,6 +4230,8 @@ impl Client {
     /// not ported.
     fn map_build(&mut self) {
         self.minimap_level = -1;
+        self.spotanims.clear();
+        self.projectiles.clear();
         self.world.reset_map();
 
         for level in 0..BuildArea::LEVELS {
@@ -4538,6 +4599,12 @@ impl Client {
         // the silence watchdog.
         self.check_minimap();
         self.loc_change_do_queue();
+        // TS 2191-2192: the loc-change pass then the world-update counter;
+        // headless loops (no draw) keep it zeroed.
+        self.world_update_num += 1;
+        if !self.draw {
+            self.world_update_num = 0;
+        }
         self.handle_tab_clicks();
         self.handle_side_if_clicks();
         self.handle_chat_input();

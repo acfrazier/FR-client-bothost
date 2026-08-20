@@ -661,6 +661,9 @@ impl Client {
                 base.blit_into(&mut self.draw_area, 0, 453);
             }
         }
+
+        // TS 4169: `worldUpdateNum = 0` at the end of the drawn frame.
+        self.world_update_num = 0;
     }
 
     /// `gameDrawMain` from client-ts (4172): the 3D pass. Adds the players
