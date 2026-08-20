@@ -823,6 +823,342 @@ impl ClientBuild {
         }
     }
 
+    /// `changeLocAvailable(id, shape)` from client-ts (ClientBuild.ts
+    /// 1160-1168): remap the shape codes the server sends to the shape the
+    /// loc's model table keys on, then report whether that model is ready.
+    pub fn change_loc_available(cache: &Cache, id: i32, mut shape: i32) -> bool {
+        if shape == 11 {
+            shape = 10;
+        }
+        if (5..=8).contains(&shape) {
+            shape = 4;
+        }
+        cache.loc(id as usize).check_model(shape)
+    }
+
+    /// `changeLocUnchecked(...)` from client-ts (ClientBuild.ts
+    /// 1171-1392): place one loc from a change-loc packet into the world
+    /// and collision map, with no low-mem visibility gating (unlike
+    /// `addLoc`). Heights come from `true_level` while the world writes use
+    /// `level`; the height variables follow the TS names (`heightNW` is
+    /// `[x+1][z+1]`, `heightNE` is `[x][z+1]`, the reverse of `addLoc`).
+    /// `loop_cycle` stands in for the TS `Client.loopCycle`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn change_loc_unchecked(
+        cache: &Cache,
+        world: &mut World,
+        mut cmap: Option<&mut CollisionMap>,
+        groundh: &LevelHeightmaps,
+        level: i32,
+        x: i32,
+        z: i32,
+        loc_id: i32,
+        shape: i32,
+        angle: i32,
+        true_level: i32,
+        loop_cycle: i32,
+    ) {
+        let mut height_sw = groundh[true_level as usize][x as usize][z as usize];
+        let mut height_se = groundh[true_level as usize][(x + 1) as usize][z as usize];
+        let mut height_nw = groundh[true_level as usize][(x + 1) as usize][(z + 1) as usize];
+        let mut height_ne = groundh[true_level as usize][x as usize][(z + 1) as usize];
+        let y = (height_sw + height_se + height_nw + height_ne) >> 2;
+
+        let loc = cache.loc(loc_id as usize);
+
+        let mut typecode = x
+            .wrapping_add(z << 7)
+            .wrapping_add(loc_id << 14)
+            .wrapping_add(0x40000000);
+        if !loc.active {
+            typecode = typecode.wrapping_add(i32::MIN);
+        }
+
+        let typecode2 = ((angle << 6) + shape).wrapping_shl(24) >> 24;
+
+        if shape == LocShape::GROUND_DECOR {
+            let model = if loc.anim == -1 {
+                loc.get_model(cache, 22, angle, height_sw, height_se, height_ne, height_nw, -1)
+                    .map(SceneModel::Model)
+            } else {
+                Some(SceneModel::LocAnim(ClientLocAnim::new(
+                    cache, loc_id, 22, shape, height_sw, height_se, height_ne, height_nw,
+                    loc.anim as usize, true, loop_cycle,
+                )))
+            };
+
+            world.set_ground_decor(model, level, x, z, y, typecode, typecode2);
+
+            if loc.blockwalk && loc.active {
+                if let Some(cmap) = cmap.as_deref_mut() {
+                    cmap.block_ground(x, z);
+                }
+            }
+        } else if shape == LocShape::CENTREPIECE_STRAIGHT || shape == LocShape::CENTREPIECE_DIAGONAL {
+            let model = if loc.anim == -1 {
+                loc.get_model(cache, 10, angle, height_sw, height_se, height_ne, height_nw, -1)
+                    .map(SceneModel::Model)
+            } else {
+                Some(SceneModel::LocAnim(ClientLocAnim::new(
+                    cache, loc_id, 10, angle, height_sw, height_se, height_ne, height_nw,
+                    loc.anim as usize, true, loop_cycle,
+                )))
+            };
+
+            if let Some(model) = model {
+                let mut yaw = 0;
+                if shape == LocShape::CENTREPIECE_DIAGONAL {
+                    yaw += 256;
+                }
+
+                let (width, height) = if angle == LocAngle::NORTH || angle == LocAngle::SOUTH {
+                    (loc.length, loc.width)
+                } else {
+                    (loc.width, loc.length)
+                };
+
+                world.add_scenery(level, x, z, y, Some(model), typecode, typecode2, width, height, yaw);
+            }
+
+            if loc.blockwalk {
+                if let Some(cmap) = cmap.as_deref_mut() {
+                    cmap.add_loc(x, z, loc.width, loc.length, angle, loc.blockrange);
+                }
+            }
+        } else if shape >= LocShape::ROOF_STRAIGHT {
+            let model = if loc.anim == -1 {
+                loc.get_model(cache, shape, angle, height_sw, height_se, height_ne, height_nw, -1)
+                    .map(SceneModel::Model)
+            } else {
+                Some(SceneModel::LocAnim(ClientLocAnim::new(
+                    cache, loc_id, shape, angle, height_sw, height_se, height_ne, height_nw,
+                    loc.anim as usize, true, loop_cycle,
+                )))
+            };
+
+            world.add_scenery(level, x, z, y, model, typecode, typecode2, 1, 1, 0);
+
+            if loc.blockwalk {
+                if let Some(cmap) = cmap.as_deref_mut() {
+                    cmap.add_loc(x, z, loc.width, loc.length, angle, loc.blockrange);
+                }
+            }
+        } else if shape == LocShape::WALL_STRAIGHT {
+            let model = if loc.anim == -1 {
+                loc.get_model(cache, 0, angle, height_sw, height_se, height_ne, height_nw, -1)
+                    .map(SceneModel::Model)
+            } else {
+                Some(SceneModel::LocAnim(ClientLocAnim::new(
+                    cache, loc_id, 0, angle, height_sw, height_se, height_ne, height_nw,
+                    loc.anim as usize, true, loop_cycle,
+                )))
+            };
+
+            world.set_wall(level, x, z, y, WSHAPE0[angle as usize], 0, model, None, typecode, typecode2);
+
+            if loc.blockwalk {
+                if let Some(cmap) = cmap.as_deref_mut() {
+                    cmap.add_wall(x, z, shape, angle, loc.blockrange);
+                }
+            }
+        } else if shape == LocShape::WALL_DIAGONAL_CORNER {
+            let model = if loc.anim == -1 {
+                loc.get_model(cache, 1, angle, height_sw, height_se, height_ne, height_nw, -1)
+                    .map(SceneModel::Model)
+            } else {
+                Some(SceneModel::LocAnim(ClientLocAnim::new(
+                    cache, loc_id, 1, angle, height_sw, height_se, height_ne, height_nw,
+                    loc.anim as usize, true, loop_cycle,
+                )))
+            };
+
+            world.set_wall(level, x, z, y, WSHAPE1[angle as usize], 0, model, None, typecode, typecode2);
+
+            if loc.blockwalk {
+                if let Some(cmap) = cmap.as_deref_mut() {
+                    cmap.add_wall(x, z, shape, angle, loc.blockrange);
+                }
+            }
+        } else if shape == LocShape::WALL_L {
+            let offset = (angle + 1) & 0x3;
+
+            let (model1, model2) = if loc.anim == -1 {
+                (
+                    loc.get_model(cache, 2, angle + 4, height_sw, height_se, height_ne, height_nw, -1)
+                        .map(SceneModel::Model),
+                    loc.get_model(cache, 2, offset, height_sw, height_se, height_ne, height_nw, -1)
+                        .map(SceneModel::Model),
+                )
+            } else {
+                (
+                    Some(SceneModel::LocAnim(ClientLocAnim::new(
+                        cache, loc_id, 2, angle + 4, height_sw, height_se, height_ne, height_nw,
+                        loc.anim as usize, true, loop_cycle,
+                    ))),
+                    Some(SceneModel::LocAnim(ClientLocAnim::new(
+                        cache, loc_id, 2, offset, height_sw, height_se, height_ne, height_nw,
+                        loc.anim as usize, true, loop_cycle,
+                    ))),
+                )
+            };
+
+            world.set_wall(
+                level,
+                x,
+                z,
+                y,
+                WSHAPE0[angle as usize],
+                WSHAPE0[offset as usize],
+                model1,
+                model2,
+                typecode,
+                typecode2,
+            );
+
+            if loc.blockwalk {
+                if let Some(cmap) = cmap.as_deref_mut() {
+                    cmap.add_wall(x, z, shape, angle, loc.blockrange);
+                }
+            }
+        } else if shape == LocShape::WALL_SQUARE_CORNER {
+            let model = if loc.anim == -1 {
+                loc.get_model(cache, 3, angle, height_sw, height_se, height_ne, height_nw, -1)
+                    .map(SceneModel::Model)
+            } else {
+                Some(SceneModel::LocAnim(ClientLocAnim::new(
+                    cache, loc_id, 3, angle, height_sw, height_se, height_ne, height_nw,
+                    loc.anim as usize, true, loop_cycle,
+                )))
+            };
+
+            world.set_wall(level, x, z, y, WSHAPE1[angle as usize], 0, model, None, typecode, typecode2);
+
+            if loc.blockwalk {
+                if let Some(cmap) = cmap.as_deref_mut() {
+                    cmap.add_wall(x, z, shape, angle, loc.blockrange);
+                }
+            }
+        } else if shape == LocShape::WALL_DIAGONAL {
+            let model = if loc.anim == -1 {
+                loc.get_model(cache, shape, angle, height_sw, height_se, height_ne, height_nw, -1)
+                    .map(SceneModel::Model)
+            } else {
+                Some(SceneModel::LocAnim(ClientLocAnim::new(
+                    cache, loc_id, shape, angle, height_sw, height_se, height_ne, height_nw,
+                    loc.anim as usize, true, loop_cycle,
+                )))
+            };
+
+            world.add_scenery(level, x, z, y, model, typecode, typecode2, 1, 1, 0);
+
+            if loc.blockwalk {
+                // last `cmap` use: `as_mut` (as in `addLoc`) — a reborrow
+                // would otherwise be a clippy `needless_option_as_deref`
+                if let Some(cmap) = cmap.as_mut() {
+                    cmap.add_loc(x, z, loc.width, loc.length, angle, loc.blockrange);
+                }
+            }
+        } else {
+            if loc.hillskew {
+                if angle == 1 {
+                    std::mem::swap(&mut height_nw, &mut height_ne);
+                    std::mem::swap(&mut height_ne, &mut height_se);
+                    std::mem::swap(&mut height_se, &mut height_sw);
+                } else if angle == 2 {
+                    std::mem::swap(&mut height_nw, &mut height_se);
+                    std::mem::swap(&mut height_ne, &mut height_sw);
+                } else if angle == 3 {
+                    std::mem::swap(&mut height_nw, &mut height_sw);
+                    std::mem::swap(&mut height_sw, &mut height_se);
+                    std::mem::swap(&mut height_se, &mut height_ne);
+                }
+            }
+
+            if shape == LocShape::WALLDECOR_STRAIGHT_NOOFFSET {
+                let model = if loc.anim == -1 {
+                    loc.get_model(cache, 4, 0, height_sw, height_se, height_ne, height_nw, -1)
+                        .map(SceneModel::Model)
+                } else {
+                    Some(SceneModel::LocAnim(ClientLocAnim::new(
+                        cache, loc_id, 4, 0, height_sw, height_se, height_ne, height_nw,
+                        loc.anim as usize, true, loop_cycle,
+                    )))
+                };
+
+                world.set_decor(
+                    level, x, z, y, 0, 0, typecode, model, typecode2, angle * 512,
+                    WSHAPE0[angle as usize],
+                );
+            } else if shape == LocShape::WALLDECOR_STRAIGHT_OFFSET {
+                let mut wallwidth = 16;
+                let wall_typecode = world.wall_type(level, x, z);
+                if wall_typecode > 0 {
+                    wallwidth = cache.loc(((wall_typecode >> 14) & 0x7fff) as usize).wallwidth;
+                }
+
+                let model = if loc.anim == -1 {
+                    loc.get_model(cache, 4, 0, height_sw, height_se, height_ne, height_nw, -1)
+                        .map(SceneModel::Model)
+                } else {
+                    Some(SceneModel::LocAnim(ClientLocAnim::new(
+                        cache, loc_id, 4, 0, height_sw, height_se, height_ne, height_nw,
+                        loc.anim as usize, true, loop_cycle,
+                    )))
+                };
+
+                world.set_decor(
+                    level,
+                    x,
+                    z,
+                    y,
+                    DECORXOF[angle as usize] * wallwidth,
+                    DECORZOF[angle as usize] * wallwidth,
+                    typecode,
+                    model,
+                    typecode2,
+                    angle * 512,
+                    WSHAPE0[angle as usize],
+                );
+            } else if shape == LocShape::WALLDECOR_DIAGONAL_OFFSET {
+                let model = if loc.anim == -1 {
+                    loc.get_model(cache, 4, 0, height_sw, height_se, height_ne, height_nw, -1)
+                        .map(SceneModel::Model)
+                } else {
+                    Some(SceneModel::LocAnim(ClientLocAnim::new(
+                        cache, loc_id, 4, 0, height_sw, height_se, height_ne, height_nw,
+                        loc.anim as usize, true, loop_cycle,
+                    )))
+                };
+
+                world.set_decor(level, x, z, y, 0, 0, typecode, model, typecode2, angle, 256);
+            } else if shape == LocShape::WALLDECOR_DIAGONAL_NOOFFSET {
+                let model = if loc.anim == -1 {
+                    loc.get_model(cache, 4, 0, height_sw, height_se, height_ne, height_nw, -1)
+                        .map(SceneModel::Model)
+                } else {
+                    Some(SceneModel::LocAnim(ClientLocAnim::new(
+                        cache, loc_id, 4, 0, height_sw, height_se, height_ne, height_nw,
+                        loc.anim as usize, true, loop_cycle,
+                    )))
+                };
+
+                world.set_decor(level, x, z, y, 0, 0, typecode, model, typecode2, angle, 512);
+            } else if shape == LocShape::WALLDECOR_DIAGONAL_BOTH {
+                let model = if loc.anim == -1 {
+                    loc.get_model(cache, 4, 0, height_sw, height_se, height_ne, height_nw, -1)
+                        .map(SceneModel::Model)
+                } else {
+                    Some(SceneModel::LocAnim(ClientLocAnim::new(
+                        cache, loc_id, 4, 0, height_sw, height_se, height_ne, height_nw,
+                        loc.anim as usize, true, loop_cycle,
+                    )))
+                };
+
+                world.set_decor(level, x, z, y, 0, 0, typecode, model, typecode2, angle, 768);
+            }
+        }
+    }
+
     /// `finishBuild(world, collision)` from client-ts (ClientBuild.ts
     /// 75-497): the ground-colour/light pass, the layer pass, `pushDown`
     /// for `LinkBelow` tiles, and the occluder pass. `cache` supplies the

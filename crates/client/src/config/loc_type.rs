@@ -249,6 +249,38 @@ impl LocType {
         }
     }
 
+    /// `checkModel(shape)` from client-ts (LocType.ts 270-294): whether the
+    /// model for one shape is downloaded. No `shape` remap — that lives in
+    /// `ClientBuild.changeLocAvailable`. A loc with no model table is ready;
+    /// with a `shape` table, the first shape match decides (the decode keeps
+    /// the `shape` and `model` arrays parallel); a shape-10 loc with no
+    /// `shape` table needs every model, and the TS keeps calling
+    /// `requestDownload` for the remaining ids instead of short-circuiting.
+    pub fn check_model(&self, shape: i32) -> bool {
+        let Some(models) = &self.model else {
+            return true;
+        };
+
+        if let Some(shapes) = &self.shape {
+            for (i, &s) in shapes.iter().enumerate() {
+                if s == shape {
+                    return Model::request_download(models[i] & 0xffff);
+                }
+            }
+            return true;
+        } else if shape == CENTREPIECE_STRAIGHT {
+            let mut ready = true;
+            for &model in models {
+                if !Model::request_download(model & 0xffff) {
+                    ready = false;
+                }
+            }
+            return ready;
+        }
+
+        true
+    }
+
     /// `checkModelAll()` from client-ts (LocType.ts 296-309): every model id
     /// must already be downloaded. Deliberately not short-circuiting — the
     /// TS keeps calling `requestDownload` for the remaining ids.

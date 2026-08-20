@@ -1,5 +1,5 @@
-use client::client::{Client, ClientConfig};
-use client::config::{Cache, SeqType, SpotType};
+use client::client::{Client, ClientBuild, ClientConfig};
+use client::config::{Cache, LocType, SeqType, SpotType};
 use client::dash3d::{ClientObj, LocChange};
 use client::datastruct::{LinkList, LinkableTrait};
 use client::io::{Packet, ServerProt};
@@ -20,7 +20,7 @@ fn client_obj_roundtrips_in_link_list() {
 }
 
 use client::dash3d::world::LevelHeightmaps;
-use client::dash3d::{BuildArea, ClientProj, MapSpotAnim, Model, SceneModel, World};
+use client::dash3d::{BuildArea, ClientProj, CollisionMap, LocShape, MapSpotAnim, Model, SceneModel, World};
 use client::graphics::Pix3D;
 
 #[test]
@@ -152,4 +152,45 @@ fn logout_clears_zone_lists() {
     c.projectiles.push(client::dash3d::ClientProj::new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
     c.logout();
     assert!(c.projectiles.head().is_none());
+}
+
+// --- LocType.checkModel + ClientBuild.changeLocAvailable/Unchecked ---
+
+#[test]
+fn check_model_none_is_ready() {
+    assert!(LocType::default().check_model(0));
+}
+
+#[test]
+fn change_loc_available_remaps_shape_11_to_10() {
+    let mut cache = Cache::default();
+    cache.locs.push(LocType {
+        model: Some(vec![60000]),
+        shape: Some(vec![10]),
+        ..LocType::default()
+    });
+    // shape 11 remaps to 10, matches shape array → request_download(60000) false
+    assert!(!ClientBuild::change_loc_available(&cache, 0, 11));
+}
+
+#[test]
+fn change_loc_unchecked_wall_straight_with_anim_sets_wall() {
+    let mut cache = Cache::default();
+    cache.locs.push(LocType {
+        anim: 0,
+        ..LocType::default()
+    });
+    cache.seqs.push(SeqType::default());
+    let groundh: LevelHeightmaps =
+        vec![vec![vec![0i32; 105]; 105]; BuildArea::LEVELS as usize];
+    let mut world = World::new(groundh.clone(), BuildArea::SIZE, BuildArea::LEVELS, BuildArea::SIZE);
+    let mut cmap = CollisionMap::new();
+    ClientBuild::change_loc_unchecked(
+        &cache, &mut world, Some(&mut cmap), &groundh,
+        0, 2, 2, 0, LocShape::WALL_STRAIGHT, 0, 0, 0,
+    );
+    assert!(matches!(
+        world.get_wall(0, 2, 2).and_then(|w| w.model1.as_ref()),
+        Some(SceneModel::LocAnim(_))
+    ));
 }
