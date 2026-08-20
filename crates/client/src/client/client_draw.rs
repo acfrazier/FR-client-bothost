@@ -23,7 +23,7 @@ use crate::client::title_flames::TitleFlames;
 use crate::config::if_type::{ComponentType, IfType};
 use crate::config::Cache;
 use crate::dash3d::world::LevelHeightmaps;
-use crate::dash3d::{BuildArea, LocAngle, LocShape, SceneModel, World};
+use crate::dash3d::{BuildArea, LocAngle, LocShape, MapFlag, SceneModel, World};
 use crate::graphics::{Colour, Pix2D, Pix3D, Pix32, Pix8, PixFont, PixMap};
 use crate::io::JagFile;
 use crate::util::JString;
@@ -36,11 +36,12 @@ fn plot_title_bg(map: &mut Option<PixMap>, background: &Pix32, x: i32, y: i32) {
 }
 
 /// `Client.getAvH` from client-ts (5052): the bilinear ground height at a
-/// scene position. The `mapl` `LinkBelow` level lift is Task 10; the height
-/// currently reads from `level` itself.
-fn get_av_h(
+/// scene position. A `LinkBelow` flag on the level-1 map lifts the height
+/// to the level above, so sprites on a tall loc's upper floor read the
+/// upper-floor height instead of the ground's.
+pub(crate) fn get_av_h(
     groundh: &LevelHeightmaps,
-    _mapl: &[Vec<Vec<u8>>],
+    mapl: &[Vec<Vec<u8>>],
     scene_x: i32,
     scene_z: i32,
     level: i32,
@@ -51,7 +52,14 @@ fn get_av_h(
         return 0;
     }
 
-    let real_level = level;
+    // TS 5052: `level < 3 && mapl[1][tileX][tileZ] & LinkBelow != 0`.
+    let real_level = if level < 3
+        && (mapl[1][tile_x as usize][tile_z as usize] & MapFlag::LINK_BELOW as u8) != 0
+    {
+        level + 1
+    } else {
+        level
+    };
     let tile_local_x = scene_x & 0x7f;
     let tile_local_z = scene_z & 0x7f;
     let y00 = (groundh[real_level as usize][tile_x as usize][tile_z as usize]

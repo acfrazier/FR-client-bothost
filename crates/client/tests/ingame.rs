@@ -1,6 +1,6 @@
 use client::client::{Client, ClientConfig};
 use client::client::{APPLET_H, APPLET_W};
-use client::dash3d::{ClientEntity, ClientPlayer, TerrainOverlayShape, World};
+use client::dash3d::{ClientEntity, ClientPlayer, MapFlag, TerrainOverlayShape, World};
 use client::graphics::{Colour, PixMap};
 
 fn cache_dir() -> Option<String> {
@@ -274,6 +274,44 @@ fn follow_camera_moves_eye_above_local_player() {
     assert!(
         c.cam_x != 0 || c.cam_z != 0,
         "the 3D eye must follow the player, not sit at the world origin"
+    );
+}
+
+/// TS 5052 `getAvH`: a `MapFlag.LinkBelow` tile on the level-1 map lifts
+/// the height read to the level above, so the orbit eye sits on the 800
+/// upper-floor height instead of the 100 level-0 ground. Two `game_draw`
+/// passes on the same scene — flag set, then cleared — differ in `cam_y`
+/// by exactly the 700 = 800 - 100 gap (`camFollow`'s `getAvH - 50` target).
+#[test]
+fn get_av_h_link_below_reads_level_above() {
+    let mut c = client("/tmp".into());
+    c.ingame = true;
+    c.scene_state = 2;
+    let mut player = ClientPlayer::default();
+    player.ready = true;
+    player.name = Some("tester".into());
+    player.entity = ClientEntity::at(2, 2);
+    player.entity.teleport(&c.cache, true, 2, 2);
+    c.local_player = Some(player);
+    // tile (2,2): level 0 at 100, level 1 at 800 (player sits at (320, 320)).
+    for x in 2..4 {
+        for z in 2..4 {
+            c.groundh[0][x][z] = 100;
+            c.groundh[1][x][z] = 800;
+        }
+    }
+    c.mapl[1][2][2] = MapFlag::LINK_BELOW as u8;
+
+    c.game_loop(); // follow_camera eases the orbit camera to the player
+    c.game_draw(); // gameDrawMain's camFollow targets getAvH(player) - 50
+    let lifted_y = c.cam_y;
+
+    c.mapl[1][2][2] = 0;
+    c.game_draw();
+    assert_eq!(
+        c.cam_y,
+        lifted_y - 700,
+        "LinkBelow must lift the eye height from the 100 level-0 ground to the 800 upper floor"
     );
 }
 
