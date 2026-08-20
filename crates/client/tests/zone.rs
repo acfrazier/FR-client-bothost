@@ -316,3 +316,222 @@ fn loc_add_change_out_of_range_shape_does_not_panic() {
     assert!(c.world.get_wall(0, 1, 1).is_none());
     assert!(c.loc_changes.head().is_none());
 }
+
+// --- LOC_ANIM: ClientLocAnim onto wall/decor/sprite/gd (no queue) ---
+
+/// A wall that was overwritten with a plain `Obj` model must come back as a
+/// `LocAnim` after the LOC_ANIM packet. Heights read `groundh` with the
+/// addLoc names (SW=[x][z], SE=[x+1][z], NE=[x+1][z+1], NW=[x][z+1]); the
+/// distinct seeded values fail the assert if a transposed order is used.
+#[test]
+fn loc_anim_replaces_wall_model1() {
+    let mut c = client();
+    seed_anim_loc(&mut c, 0);
+    c.scene_state = 2;
+    c.ingame = true;
+    c.zone_update_x = 0;
+    c.zone_update_z = 0;
+    c.groundh[0][1][1] = 100;
+    c.groundh[0][2][1] = 200;
+    c.groundh[0][2][2] = 300;
+    c.groundh[0][1][2] = 400;
+    let mut p = loc_add_payload(0x11, 0x00, 0);
+    c.handle_packet(ServerProt::LOC_ADD_CHANGE, &mut p);
+    c.game_loop();
+    if let Some(w) = c.world.get_wall_mut(0, 1, 1) {
+        w.model1 = Some(SceneModel::Obj(ClientObj::new(0, 1)));
+    }
+    let mut p = Packet::alloc(0);
+    p.p1(0x11);
+    p.p1(0x00); // shape 0
+    p.p2(0); // seq 0
+    p.pos = 0;
+    c.handle_packet(ServerProt::LOC_ANIM, &mut p);
+    let wall = c.world.get_wall(0, 1, 1).expect("wall present");
+    let SceneModel::LocAnim(anim) = wall.model1.as_ref().expect("model1 set") else {
+        panic!("model1 should be LocAnim, got Obj");
+    };
+    assert_eq!(anim.shape, 0);
+    assert_eq!(anim.angle, 0);
+    assert_eq!(anim.height_sw, 100);
+    assert_eq!(anim.height_se, 200);
+    assert_eq!(anim.height_ne, 300);
+    assert_eq!(anim.height_nw, 400);
+}
+
+/// Shape 2 walls animate both `model1` (angle rotate+4) and `model2`
+/// (angle (rotate+1)&3).
+#[test]
+fn loc_anim_wall_door_animates_both_models() {
+    let mut c = client();
+    seed_anim_loc(&mut c, 0);
+    c.scene_state = 2;
+    c.ingame = true;
+    let mut p = loc_add_payload(0x11, 0x08, 0); // shape 2
+    c.handle_packet(ServerProt::LOC_ADD_CHANGE, &mut p);
+    c.game_loop();
+    if let Some(w) = c.world.get_wall_mut(0, 1, 1) {
+        w.model1 = Some(SceneModel::Obj(ClientObj::new(0, 1)));
+        w.model2 = Some(SceneModel::Obj(ClientObj::new(0, 1)));
+    }
+    let mut p = Packet::alloc(0);
+    p.p1(0x11);
+    p.p1(0x08); // shape 2, rotate 0
+    p.p2(0);
+    p.pos = 0;
+    c.handle_packet(ServerProt::LOC_ANIM, &mut p);
+    let wall = c.world.get_wall(0, 1, 1).expect("wall present");
+    let SceneModel::LocAnim(m1) = wall.model1.as_ref().expect("model1 set") else {
+        panic!("model1 should be LocAnim");
+    };
+    let SceneModel::LocAnim(m2) = wall.model2.as_ref().expect("model2 set") else {
+        panic!("model2 should be LocAnim");
+    };
+    assert_eq!(m1.shape, 2);
+    assert_eq!(m1.angle, 4);
+    assert_eq!(m2.shape, 2);
+    assert_eq!(m2.angle, 1);
+}
+
+/// WALL_DECOR applies to the decor at tile (x, z): the TS
+/// `decorType(level, z, x)` names its parameters backwards but indexes
+/// `squares[level][x][z]`, so a swapped call leaves the seeded decor
+/// untouched. Seed at (2, 5) so x != z and the swap would miss.
+#[test]
+fn loc_anim_wall_decor_uses_tile_xz() {
+    let mut c = client();
+    seed_anim_loc(&mut c, 0);
+    c.scene_state = 2;
+    c.ingame = true;
+    c.zone_update_x = 0;
+    c.zone_update_z = 0;
+    c.world.set_decor(
+        0,
+        2,
+        5,
+        0,
+        0,
+        0,
+        0x40000000,
+        Some(SceneModel::Model(Model::default())),
+        0,
+        0,
+        0,
+    );
+    let mut p = Packet::alloc(0);
+    p.p1(0x25); // tile (2, 5)
+    p.p1(0x10); // shape 4 → WALL_DECOR
+    p.p2(0);
+    p.pos = 0;
+    c.handle_packet(ServerProt::LOC_ANIM, &mut p);
+    let decor = c.world.get_decor(0, 2, 5).expect("decor present");
+    assert!(matches!(decor.model, SceneModel::LocAnim(_)));
+}
+
+/// GROUND scenery (layer 2): shape 11 remaps to 10 before building the
+/// ClientLocAnim on the sprite.
+#[test]
+fn loc_anim_scene_remaps_shape_11_to_10() {
+    let mut c = client();
+    seed_anim_loc(&mut c, 0);
+    c.scene_state = 2;
+    c.ingame = true;
+    // typecode bits 29-30 == 2 marks the sprite as a scene (get_scene_mut
+    // looks for that bit pattern on the tile's sprites).
+    c.world.add_scenery(
+        0,
+        1,
+        1,
+        0,
+        Some(SceneModel::Model(Model::default())),
+        0x40000000,
+        0,
+        1,
+        1,
+        0,
+    );
+    let mut p = Packet::alloc(0);
+    p.p1(0x11);
+    p.p1(0x2c); // shape 11
+    p.p2(0);
+    p.pos = 0;
+    c.handle_packet(ServerProt::LOC_ANIM, &mut p);
+    let sprite = c.world.get_scene(0, 1, 1).expect("sprite present");
+    let SceneModel::LocAnim(anim) = sprite.model.as_ref().expect("sprite model set") else {
+        panic!("sprite model should be LocAnim");
+    };
+    assert_eq!(anim.shape, 10);
+}
+
+/// GROUND_DECOR (layer 3) animates the ground decor's model with shape 22.
+#[test]
+fn loc_anim_ground_decor_model() {
+    let mut c = client();
+    seed_anim_loc(&mut c, 0);
+    c.scene_state = 2;
+    c.ingame = true;
+    c.world.set_ground_decor(
+        Some(SceneModel::Model(Model::default())),
+        0,
+        1,
+        1,
+        0,
+        0x40000000,
+        0,
+    );
+    let mut p = Packet::alloc(0);
+    p.p1(0x11);
+    p.p1(0x58); // shape 22 → GROUND_DECOR
+    p.p2(0);
+    p.pos = 0;
+    c.handle_packet(ServerProt::LOC_ANIM, &mut p);
+    let gd = c.world.get_gd(0, 1, 1).expect("ground decor present");
+    let SceneModel::LocAnim(anim) = gd.model.as_ref().expect("gd model set") else {
+        panic!("gd model should be LocAnim");
+    };
+    assert_eq!(anim.shape, 22);
+}
+
+/// The LOC_ANIM arm must apply the same `shape < LOC_SHAPE_TO_LAYER.len()`
+/// gate as LOC_ADD_CHANGE / LOC_DEL: a shape past the 23-entry table is
+/// skipped instead of panicking and logging out.
+#[test]
+fn loc_anim_out_of_range_shape_does_not_panic() {
+    let mut c = client();
+    seed_anim_loc(&mut c, 0);
+    c.scene_state = 2;
+    c.ingame = true;
+    let mut p = loc_add_payload(0x11, 0x00, 0);
+    c.handle_packet(ServerProt::LOC_ADD_CHANGE, &mut p);
+    c.game_loop();
+    if let Some(w) = c.world.get_wall_mut(0, 1, 1) {
+        w.model1 = Some(SceneModel::Obj(ClientObj::new(0, 1)));
+    }
+    let mut p = Packet::alloc(0);
+    p.p1(0x11);
+    p.p1(0x5c); // shape 23
+    p.p2(0);
+    p.pos = 0;
+    c.handle_packet(ServerProt::LOC_ANIM, &mut p);
+    assert!(c.ingame);
+    assert!(matches!(
+        c.world.get_wall(0, 1, 1).and_then(|w| w.model1.as_ref()),
+        Some(SceneModel::Obj(_))
+    ));
+}
+
+/// No wall on the tile → LOC_ANIM is a no-op (bytes consumed, no panic).
+#[test]
+fn loc_anim_missing_wall_is_noop() {
+    let mut c = client();
+    seed_anim_loc(&mut c, 0);
+    c.ingame = true;
+    let mut p = Packet::alloc(0);
+    p.p1(0x11);
+    p.p1(0x00);
+    p.p2(0);
+    p.pos = 0;
+    c.handle_packet(ServerProt::LOC_ANIM, &mut p);
+    assert!(c.ingame);
+    assert!(c.world.get_wall(0, 1, 1).is_none());
+}

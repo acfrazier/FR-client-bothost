@@ -30,8 +30,9 @@ use crate::config::seq_type::{RESTART_RESET, RESTART_RESETLOOP};
 use crate::config::Cache;
 use crate::dash3d::world::LevelHeightmaps;
 use crate::dash3d::{
-    AnimFrame, BuildArea, ClientObj, ClientProj, CollisionFlag, CollisionMap, DirectionFlag,
-    LocChange, LocLayer, LocShape, MapFlag, MapSpotAnim, Model, World, LOC_SHAPE_TO_LAYER,
+    AnimFrame, BuildArea, ClientLocAnim, ClientObj, ClientProj, CollisionFlag, CollisionMap,
+    DirectionFlag, LocChange, LocLayer, LocShape, MapFlag, MapSpotAnim, Model, SceneModel, World,
+    LOC_SHAPE_TO_LAYER,
 };
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
 use crate::datastruct::LinkList;
@@ -3675,8 +3676,90 @@ impl Client {
                 }
             }
             ServerProt::LOC_ANIM => {
-                let _info = buf.g1();
-                let _seq = buf.g2();
+                let info = buf.g1();
+                let seq = buf.g2();
+
+                let shape = info >> 2;
+                let rotate = info & 0x3;
+
+                // TS yields `undefined` for shape >= table length; skip the
+                // apply instead of panicking on the index. The +1 height
+                // reads need x+1/z+1 inside groundh (sized SIZE+1), so the
+                // same 0..SIZE bounds guard covers them.
+                if shape < LOC_SHAPE_TO_LAYER.len() as i32
+                    && x >= 0
+                    && z >= 0
+                    && x < BuildArea::SIZE
+                    && z < BuildArea::SIZE
+                {
+                    let layer = LOC_SHAPE_TO_LAYER[shape as usize];
+                    let level = self.minusedlevel as usize;
+                    let height_sw = self.groundh[level][x as usize][z as usize];
+                    let height_se = self.groundh[level][x as usize + 1][z as usize];
+                    let height_ne = self.groundh[level][x as usize + 1][z as usize + 1];
+                    let height_nw = self.groundh[level][x as usize][z as usize + 1];
+                    let loop_cycle = self.loop_cycle;
+
+                    match layer {
+                        LocLayer::WALL => {
+                            if let Some(wall) = self.world.get_wall_mut(self.minusedlevel, x, z) {
+                                let loc_id = (wall.typecode >> 14) & 0x7fff;
+                                if shape == 2 {
+                                    wall.model1 = Some(SceneModel::LocAnim(ClientLocAnim::new(
+                                        &self.cache, loc_id, 2, rotate + 4, height_sw, height_se,
+                                        height_ne, height_nw, seq as usize, false, loop_cycle,
+                                    )));
+                                    wall.model2 = Some(SceneModel::LocAnim(ClientLocAnim::new(
+                                        &self.cache, loc_id, 2, (rotate + 1) & 0x3, height_sw,
+                                        height_se, height_ne, height_nw, seq as usize, false,
+                                        loop_cycle,
+                                    )));
+                                } else {
+                                    wall.model1 = Some(SceneModel::LocAnim(ClientLocAnim::new(
+                                        &self.cache, loc_id, shape, rotate, height_sw, height_se,
+                                        height_ne, height_nw, seq as usize, false, loop_cycle,
+                                    )));
+                                }
+                            }
+                        }
+                        LocLayer::WALL_DECOR => {
+                            // `getDecor(level, z, x)` in the TS swaps its
+                            // parameter names; it indexes by tile x,z.
+                            if let Some(decor) =
+                                self.world.get_decor_mut(self.minusedlevel, x, z)
+                            {
+                                let loc_id = (decor.typecode >> 14) & 0x7fff;
+                                // [sic] TS passes heightNE in the SE slot.
+                                decor.model = SceneModel::LocAnim(ClientLocAnim::new(
+                                    &self.cache, loc_id, 4, 0, height_sw, height_ne, height_ne,
+                                    height_nw, seq as usize, false, loop_cycle,
+                                ));
+                            }
+                        }
+                        LocLayer::GROUND => {
+                            let shape = if shape == 11 { 10 } else { shape };
+                            if let Some(sprite) = self.world.get_scene_mut(self.minusedlevel, x, z)
+                            {
+                                let loc_id = (sprite.typecode >> 14) & 0x7fff;
+                                sprite.model = Some(SceneModel::LocAnim(ClientLocAnim::new(
+                                    &self.cache, loc_id, shape, rotate, height_sw, height_se,
+                                    height_ne, height_nw, seq as usize, false, loop_cycle,
+                                )));
+                            }
+                        }
+                        LocLayer::GROUND_DECOR => {
+                            if let Some(decor) = self.world.get_gd_mut(self.minusedlevel, x, z) {
+                                let loc_id = (decor.typecode >> 14) & 0x7fff;
+                                decor.model = Some(SceneModel::LocAnim(ClientLocAnim::new(
+                                    &self.cache, loc_id, LocShape::GROUND_DECOR, rotate, height_sw,
+                                    height_se, height_ne, height_nw, seq as usize, false,
+                                    loop_cycle,
+                                )));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
             }
             ServerProt::OBJ_ADD => {
                 let _obj_type = buf.g2();
