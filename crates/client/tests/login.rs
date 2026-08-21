@@ -100,6 +100,61 @@ fn reconnect_uses_opcode_18() {
 }
 
 #[test]
+fn reconnect_response_15_keeps_game_and_local_player() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        // cold login grant (response 2)
+        let (mut s, _) = listener.accept().unwrap();
+        let mut hdr = [0u8; 2];
+        s.read_exact(&mut hdr).unwrap();
+        assert_eq!(hdr[0], 14);
+        for _ in 0..8 {
+            let _ = s.write_all(&[0]);
+        }
+        s.write_all(&[0]).unwrap();
+        s.write_all(&[0u8; 8]).unwrap();
+        let mut buf = [0u8; 512];
+        let n = s.read(&mut buf).unwrap();
+        assert!(n > 0);
+        s.write_all(&[2, 0, 0]).unwrap();
+
+        // reconnect grant (response 15, Java `Client.java` 3737)
+        let (mut s2, _) = listener.accept().unwrap();
+        let mut hdr2 = [0u8; 2];
+        s2.read_exact(&mut hdr2).unwrap();
+        assert_eq!(hdr2[0], 14);
+        for _ in 0..8 {
+            let _ = s2.write_all(&[0]);
+        }
+        s2.write_all(&[0]).unwrap();
+        s2.write_all(&[0u8; 8]).unwrap();
+        let mut buf2 = [0u8; 512];
+        let n2 = s2.read(&mut buf2).unwrap();
+        assert!(n2 > 0);
+        assert_eq!(buf2[0], 18); // reconnect wrapper
+        s2.write_all(&[15]).unwrap();
+    });
+
+    let mut c = Client::new(ClientConfig {
+        host: addr.ip().to_string(),
+        port: addr.port(),
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    c.login("bob", "pw", false).unwrap();
+    assert!(c.ingame);
+    let p = c.local_player.as_mut().unwrap();
+    p.y = 77; // marker: response 15 must not replace localPlayer
+    c.login("bob", "pw", true).unwrap();
+    assert!(c.ingame);
+    assert!(c.stream.is_some());
+    assert_eq!(c.local_player.as_ref().unwrap().y, 77);
+    server.join().unwrap();
+}
+
+#[test]
 fn login_code_6_is_error() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();

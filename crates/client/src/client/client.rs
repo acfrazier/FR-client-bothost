@@ -1176,7 +1176,9 @@ impl Client {
     /// Login handshake, 1:1 of `Client.ts` `login` (1719-1867) / Java
     /// `Client.login`: probe, seed, RSA blob, opcode 16/18 wrapper. Response 1
     /// waits 2 s and retries the same attempt; response 2 enters the game;
-    /// anything else is `LoginError` with the code and title-screen messages.
+    /// response 15 re-enters the game on a reconnect (`lostCon`) without
+    /// replacing `localPlayer` (Java `Client.java` 3737); anything else is
+    /// `LoginError` with the code and title-screen messages.
     pub fn login(
         &mut self,
         username: &str,
@@ -1290,6 +1292,25 @@ impl Client {
             let player = ClientPlayer::default();
             self.players[LOCAL_PLAYER_INDEX as usize] = Some(player.clone());
             self.local_player = Some(player);
+            self.stream = Some(stream);
+            return Ok(());
+        }
+
+        if response == 15 {
+            // Java `Client.java` 3737: reconnect grant. Same buffer/state
+            // reset as response 2 minus the cold-login field init — Java
+            // keeps `localPlayer`/`players` and never touches `logoutTimer`.
+            self.ingame = true;
+            self.out.pos = 0;
+            self.r#in.pos = 0;
+            self.ptype = -1;
+            self.ptype0 = -1;
+            self.ptype1 = -1;
+            self.ptype2 = -1;
+            self.psize = 0;
+            self.timeout_timer = 0;
+            self.menu_num_entries = 0;
+            self.scene_load_start_time = Instant::now();
             self.stream = Some(stream);
             return Ok(());
         }
