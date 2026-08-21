@@ -319,10 +319,10 @@ impl Client {
         }
 
         // TS 3868-3883 / Java messageBox: title4 always; chrome 2/3/5/6/7/8
-        // on redraw_frame. Java's flame thread keeps painting titleLeft/
-        // titleRight while flameActive; we have no thread, so tick + blit
-        // 0/1 every progress frame (otherwise those strips stay black until
-        // title_screen_draw).
+        // on redraw_frame. Java's flame *thread* paints titleLeft/titleRight
+        // while loading; we must not `tick_title_flames` here (same thread
+        // as OnDemand wait → visible lag). Blit the JPEG already in 0/1
+        // from loadTitleBackground; animation starts in title_screen_draw.
         if let Some(t4) = &self.image_title4 {
             t4.blit_into(&mut self.draw_area, 202, 171);
         }
@@ -349,7 +349,6 @@ impl Client {
             }
         }
 
-        self.tick_title_flames();
         if let Some(t0) = &self.image_title0 {
             t0.blit_into(&mut self.draw_area, 0, 0);
         }

@@ -72,10 +72,9 @@ fn draw_progress_headed_paints_stage_text_once_title_jag_exists() {
     );
 }
 
-/// Java's flame thread keeps painting titleLeft/titleRight during
-/// messageBox. We skip those columns when flames are `active` and never
-/// tick them on the progress path, so the torch strips stay black until
-/// title_screen_draw. After prepareTitle the JPEG is already in 0/1.
+/// Loading-bar torch strips: blit the JPEG already in imageTitle0/1
+/// (loadTitleBackground). Do not tick TitleFlames here — that ran on
+/// Java's flame thread, not inside messageBox.
 #[test]
 fn draw_progress_headed_paints_torch_columns() {
     let cache = format!(
