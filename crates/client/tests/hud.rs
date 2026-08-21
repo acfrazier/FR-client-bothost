@@ -1043,6 +1043,69 @@ fn draw_chat_uses_chat_modal_instead_of_lines() {
 }
 
 #[test]
+fn draw_chat_modal_clears_stale_chat_lines() {
+    // TS 11125-11146: chatback plots first, then the modal iface replaces
+    // the chat lines — a modal opened after chat text must not keep the old
+    // line pixels (regression: the modal branch used to early-return).
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("media").is_file() {
+        return;
+    }
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache,
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    c.game_draw(); // chatback + fonts
+    c.add_chat(0, "hello", ""); // a black type-0 line (redraw_chat set)
+    c.game_draw();
+    let chat = c.area_chat.as_ref().unwrap();
+    let black_spots: Vec<usize> = chat
+        .pixels
+        .iter()
+        .enumerate()
+        .filter(|(_, &p)| p & 0xffffff == 0x000000)
+        .map(|(i, _)| i)
+        .collect();
+    assert!(!black_spots.is_empty(), "the type-0 line must leave black pixels");
+    // open a chat modal over the same area
+    c.chat_modal_id = 1;
+    let mut layer = IfType::default();
+    layer.r#type = ComponentType::TYPE_LAYER;
+    layer.width = 479;
+    layer.height = 96;
+    layer.children = Some(vec![2]);
+    layer.child_x = Some(vec![0]);
+    layer.child_y = Some(vec![0]);
+    let mut rect = IfType::default();
+    rect.r#type = ComponentType::TYPE_RECT;
+    rect.fill = true;
+    rect.width = 40;
+    rect.height = 10;
+    rect.colour = 0x00ff00;
+    c.cache.ifaces.resize(3, None);
+    c.cache.ifaces[1] = Some(layer);
+    c.cache.ifaces[2] = Some(rect);
+    c.redraw_chat = true;
+    c.game_draw();
+    let chat = c.area_chat.as_ref().unwrap();
+    for i in black_spots {
+        assert_ne!(
+            chat.pixels[i] & 0xffffff,
+            0x000000,
+            "chatback must clear the stale chat line at pixel {i}"
+        );
+    }
+    assert!(
+        chat.pixels.iter().any(|&p| p & 0xffffff == 0x00ff00),
+        "the chat modal must still plot on top"
+    );
+}
+
+#[test]
 fn main_modal_click_sends_if_button() {
     let mut c = client();
     c.main_modal_id = 1;
