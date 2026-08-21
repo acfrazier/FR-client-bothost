@@ -114,6 +114,107 @@ fn if_close_clears_side_and_chat_modals() {
 }
 
 #[test]
+fn if_openchat_sets_chat_and_closes_side() {
+    let mut c = client();
+    c.side_modal_id = 9;
+    c.main_modal_id = 3;
+    let mut p = Packet::new(vec![0, 40]);
+    c.apply_if_openchat(&mut p);
+    assert_eq!(c.chat_modal_id, 40);
+    assert_eq!(c.side_modal_id, -1);
+    assert_eq!(c.main_modal_id, -1);
+    assert!(c.redraw_chat && c.redraw_side && c.redraw_icons);
+    assert!(!c.resumed_pause_button);
+}
+
+#[test]
+fn if_openmain_sets_main_and_closes_side_chat() {
+    let mut c = client();
+    c.side_modal_id = 9;
+    c.chat_modal_id = 8;
+    c.dialog_input_open = true;
+    let mut p = Packet::new(vec![0, 70]);
+    c.apply_if_openmain(&mut p);
+    assert_eq!(c.main_modal_id, 70);
+    assert_eq!(c.side_modal_id, -1);
+    assert_eq!(c.chat_modal_id, -1);
+    assert!(!c.dialog_input_open);
+}
+
+#[test]
+fn if_openmain_side_sets_both() {
+    let mut c = client();
+    c.chat_modal_id = 8;
+    let mut p = Packet::new(vec![0, 10, 0, 20]);
+    c.apply_if_openmain_side(&mut p);
+    assert_eq!(c.main_modal_id, 10);
+    assert_eq!(c.side_modal_id, 20);
+    assert_eq!(c.chat_modal_id, -1);
+}
+
+#[test]
+fn if_openoverlay_g2b_negative_clears() {
+    let mut c = client();
+    c.main_overlay_id = 5;
+    let mut p = Packet::new(vec![0xff, 0xff]); // g2b -1
+    c.apply_if_openoverlay(&mut p);
+    assert_eq!(c.main_overlay_id, -1);
+}
+
+#[test]
+fn if_openoverlay_g2b_positive_sets() {
+    let mut c = client();
+    let mut p = Packet::new(vec![0, 12]);
+    c.apply_if_openoverlay(&mut p);
+    assert_eq!(c.main_overlay_id, 12);
+}
+
+#[test]
+fn tut_flash_bounces_active_icon_when_same() {
+    let mut c = client();
+    c.active_icon = 3;
+    c.apply_tut_flash(3);
+    assert_eq!(c.tut_flash_icon, 3);
+    assert_eq!(c.active_icon, 1); // TS: flash==3 → active=1
+    assert!(c.redraw_side);
+}
+
+#[test]
+fn tut_open_sets_tut_com_id() {
+    let mut c = client();
+    let mut p = Packet::new(vec![0, 99]);
+    c.apply_tut_open(&mut p);
+    assert_eq!(c.tut_com_id, 99);
+    assert!(c.redraw_chat);
+}
+
+#[test]
+fn if_openside_clears_main_modal() {
+    let mut c = client();
+    c.main_modal_id = 3;
+    c.chat_modal_id = 8;
+    let mut p = Packet::new(vec![0, 50]);
+    c.apply_if_openside(&mut p);
+    assert_eq!(c.side_modal_id, 50);
+    assert_eq!(c.main_modal_id, -1);
+    assert_eq!(c.chat_modal_id, -1);
+}
+
+#[test]
+fn if_close_also_clears_main_modal() {
+    let mut c = client();
+    c.side_modal_id = 50;
+    c.chat_modal_id = 7;
+    c.main_modal_id = 3;
+    c.dialog_input_open = true;
+    c.apply_if_close();
+    assert_eq!(c.side_modal_id, -1);
+    assert_eq!(c.chat_modal_id, -1);
+    assert_eq!(c.main_modal_id, -1);
+    assert!(!c.dialog_input_open);
+}
+
+#[test]
 fn draw_interface_text_writes_pixels() {
     let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
     if !std::path::Path::new(&cache).join("title").is_file() {

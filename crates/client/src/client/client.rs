@@ -316,6 +316,20 @@ pub struct Client {
     /// The open main modal (Java `mainModalId`), set by the report-abuse
     /// button in `chat_mode_loop` and cleared by `close_modal` (-1 none).
     pub main_modal_id: i32,
+    /// `mainOverlayId` (TS): the interface drawn above the game view,
+    /// written by `IF_OPENOVERLAY` (-1 none).
+    pub main_overlay_id: i32,
+    /// `tutComId` (TS): the tutorial chat interface, set by `TUT_OPEN`
+    /// (-1 none).
+    pub tut_com_id: i32,
+    /// `tutFlashIcon` (TS): the flashing tutorial side tab, set by
+    /// `TUT_FLASH` (-1 none).
+    pub tut_flash_icon: i32,
+    /// `dialogInputOpen` (TS): the chat-mode enter-name dialog is up.
+    pub dialog_input_open: bool,
+    /// `resumedPauseButton` (TS): the pause button latched since the last
+    /// modal transition.
+    pub resumed_pause_button: bool,
     pub target_com_id: i32,
     pub obj_com_id: i32,
     pub obj_selected_slot: i32,
@@ -688,6 +702,11 @@ impl Client {
             side_modal_id: -1,
             chat_modal_id: -1,
             main_modal_id: -1,
+            main_overlay_id: -1,
+            tut_com_id: -1,
+            tut_flash_icon: -1,
+            dialog_input_open: false,
+            resumed_pause_button: false,
             target_com_id: 0,
             obj_com_id: 0,
             obj_selected_slot: 0,
@@ -2044,32 +2063,184 @@ impl Client {
         self.redraw_icons = true;
     }
 
-    /// `IF_OPENSIDE` handler (Client.ts 6034): open `com_id` as the side
-    /// modal, closing any open chat modal alongside (TS 6038-6046). The
-    /// `ifAnimReset` and `mainModalId`/`resumedPauseButton` resets are
-    /// dropped with the features they belong to.
-    pub fn apply_if_openside(&mut self, payload: &mut Packet) {
+    /// `ifAnimReset` from client-ts (10534): walk `id`'s children, zeroing
+    /// each child's `anim_frame`/`anim_cycle` and recursing `TYPE_LAYER`
+    /// children (the layer recursion is 0, not TS `type === 1`). Missing
+    /// children or missing child ids stop the walk.
+    pub fn if_anim_reset(&mut self, id: i32) {
+        let Some(children) = self
+            .cache
+            .ifaces
+            .get(id as usize)
+            .and_then(|o| o.as_ref())
+            .and_then(|com| com.children.clone())
+        else {
+            return;
+        };
+        for child_id in children {
+            if child_id == -1 {
+                return;
+            }
+            let Some(child) = self
+                .cache
+                .ifaces
+                .get(child_id as usize)
+                .and_then(|o| o.as_ref())
+            else {
+                return;
+            };
+            if child.r#type == ComponentType::TYPE_LAYER {
+                self.if_anim_reset(child.id);
+            }
+            if let Some(com) = self
+                .cache
+                .ifaces
+                .get_mut(child_id as usize)
+                .and_then(|o| o.as_mut())
+            {
+                com.anim_frame = 0;
+                com.anim_cycle = 0;
+            }
+        }
+    }
+
+    /// `IF_OPENCHAT` handler (Client.ts 5925): open `com_id` as the chat
+    /// modal, closing any open side modal and the main modal (TS 5926-5938).
+    pub fn apply_if_openchat(&mut self, payload: &mut Packet) {
         let com_id = payload.g2();
-        self.side_modal_id = com_id;
-        self.chat_modal_id = -1;
+        self.if_anim_reset(com_id);
+
+        if self.side_modal_id != -1 {
+            self.side_modal_id = -1;
+            self.redraw_side = true;
+            self.redraw_icons = true;
+        }
+        self.chat_modal_id = com_id;
+        self.redraw_chat = true;
+        self.main_modal_id = -1;
+        self.resumed_pause_button = false;
+    }
+
+    /// `IF_OPENMAIN` handler (Client.ts 6008): open `com_id` as the main
+    /// modal, closing the side/chat modals and the enter-name dialog.
+    pub fn apply_if_openmain(&mut self, payload: &mut Packet) {
+        let com_id = payload.g2();
+        self.if_anim_reset(com_id);
+
+        if self.side_modal_id != -1 {
+            self.side_modal_id = -1;
+            self.redraw_side = true;
+            self.redraw_icons = true;
+        }
+        if self.chat_modal_id != -1 {
+            self.chat_modal_id = -1;
+            self.redraw_chat = true;
+        }
+        if self.dialog_input_open {
+            self.dialog_input_open = false;
+            self.redraw_chat = true;
+        }
+        self.main_modal_id = com_id;
+        self.resumed_pause_button = false;
+    }
+
+    /// `IF_OPENMAIN_SIDE` handler (Client.ts 5941): open the main and side
+    /// modals together, closing the chat modal and the enter-name dialog.
+    pub fn apply_if_openmain_side(&mut self, payload: &mut Packet) {
+        let main_com_id = payload.g2();
+        let side_com_id = payload.g2();
+
+        if self.chat_modal_id != -1 {
+            self.chat_modal_id = -1;
+            self.redraw_chat = true;
+        }
+        if self.dialog_input_open {
+            self.dialog_input_open = false;
+            self.redraw_chat = true;
+        }
+        self.main_modal_id = main_com_id;
+        self.side_modal_id = side_com_id;
         self.redraw_side = true;
         self.redraw_icons = true;
+        self.resumed_pause_button = false;
+    }
+
+    /// `IF_OPENOVERLAY` handler (Client.ts 6069): set `main_overlay_id`
+    /// from the signed byte (g2b); a negative id (65535) clears it and
+    /// skips the anim reset.
+    pub fn apply_if_openoverlay(&mut self, payload: &mut Packet) {
+        let com_id = payload.g2b();
+        if com_id >= 0 {
+            self.if_anim_reset(com_id);
+        }
+        self.main_overlay_id = com_id;
+    }
+
+    /// `TUT_FLASH` handler (Client.ts 6212): set `tut_flash_icon` and, when
+    /// it equals `active_icon`, bounce the active tab to the other tutorial
+    /// tab (3 <-> 1) and redraw the side.
+    pub fn apply_tut_flash(&mut self, icon: i32) {
+        self.tut_flash_icon = icon;
+        if self.tut_flash_icon == self.active_icon {
+            self.active_icon = if self.tut_flash_icon == 3 { 1 } else { 3 };
+            self.redraw_side = true;
+        }
+    }
+
+    /// `TUT_OPEN` handler (Client.ts 6231): set `tut_com_id` and redraw
+    /// the chat area.
+    pub fn apply_tut_open(&mut self, payload: &mut Packet) {
+        self.tut_com_id = payload.g2b();
         self.redraw_chat = true;
     }
 
-    /// `IF_CLOSE` handler (Client.ts 5968): close the side and chat modals.
-    /// The packet has no payload (TS only reads `ptype`).
-    pub fn apply_if_close(&mut self) {
-        self.side_modal_id = -1;
-        self.chat_modal_id = -1;
+    /// `IF_OPENSIDE` handler (Client.ts 6034): open `com_id` as the side
+    /// modal, closing any open chat modal and the enter-name dialog
+    /// alongside (TS 6036-6053), and clear the main modal.
+    pub fn apply_if_openside(&mut self, payload: &mut Packet) {
+        let com_id = payload.g2();
+        self.if_anim_reset(com_id);
+
+        if self.chat_modal_id != -1 {
+            self.chat_modal_id = -1;
+            self.redraw_chat = true;
+        }
+        if self.dialog_input_open {
+            self.dialog_input_open = false;
+            self.redraw_chat = true;
+        }
+        self.side_modal_id = com_id;
         self.redraw_side = true;
         self.redraw_icons = true;
-        self.redraw_chat = true;
+        self.main_modal_id = -1;
+        self.resumed_pause_button = false;
+    }
+
+    /// `IF_CLOSE` handler (Client.ts 5968): close the side and chat modals,
+    /// the enter-name dialog, and the main modal. The packet has no payload
+    /// (TS only reads `ptype`).
+    pub fn apply_if_close(&mut self) {
+        if self.side_modal_id != -1 {
+            self.side_modal_id = -1;
+            self.redraw_side = true;
+            self.redraw_icons = true;
+        }
+        if self.chat_modal_id != -1 {
+            self.chat_modal_id = -1;
+            self.redraw_chat = true;
+        }
+        if self.dialog_input_open {
+            self.dialog_input_open = false;
+            self.redraw_chat = true;
+        }
+        self.main_modal_id = -1;
+        self.resumed_pause_button = false;
     }
 
     /// `addChat` from client-ts (11453): shift the 100 chat slots down one
     /// (99→1), write the new line at slot 0, and redraw. The `tutComId`
-    /// branch (TS 11454-11458) is dropped with the tutorial feature.
+    /// branch (TS 11454-11458) writes `tutComMessage` and clears the mouse
+    /// click; the tutorial message feature is not ported.
     pub fn add_chat(&mut self, r#type: i32, text: &str, sender: &str) {
         if self.chat_modal_id == -1 {
             self.redraw_chat = true;
@@ -2283,7 +2454,8 @@ impl Client {
     /// `closeModal` from client-ts (10941-10958): send CLOSE_MODAL and
     /// close the side and chat modals locally; `main_modal_id` is reset
     /// like Java `closeModal` (Client.java 3353-3367).
-    /// `resumed_pause_button` is not ported; the per-modal redraw flags
+    /// `resumed_pause_button` is not touched here (the field is written
+    /// only by the server IF_* handlers); the per-modal redraw flags
     /// mirror TS `redrawSide`/`redrawIcons`/`redrawChat`. Not to be
     /// confused with the incoming-server `apply_if_close`.
     fn close_modal(&mut self) {
@@ -2556,8 +2728,7 @@ impl Client {
             }
 
             // interface draw/modal state (mainModalId, sideIcon, activeIcon,
-            // chatModalId, tutComId) is not ported yet; these reset ptype
-            // like their TS handlers.
+            // chatModalId, tutComId) handlers.
             ServerProt::IF_SETICON => {
                 self.apply_if_seticon(payload);
                 self.ptype = -1;
@@ -2580,12 +2751,33 @@ impl Client {
                 self.ptype = -1;
             }
 
-            ServerProt::IF_OPENCHAT
-            | ServerProt::IF_OPENMAIN_SIDE
-            | ServerProt::IF_OPENMAIN
-            | ServerProt::IF_OPENOVERLAY
-            | ServerProt::TUT_FLASH
-            | ServerProt::TUT_OPEN => {
+            ServerProt::IF_OPENCHAT => {
+                self.apply_if_openchat(payload);
+                self.ptype = -1;
+            }
+
+            ServerProt::IF_OPENMAIN_SIDE => {
+                self.apply_if_openmain_side(payload);
+                self.ptype = -1;
+            }
+
+            ServerProt::IF_OPENMAIN => {
+                self.apply_if_openmain(payload);
+                self.ptype = -1;
+            }
+
+            ServerProt::IF_OPENOVERLAY => {
+                self.apply_if_openoverlay(payload);
+                self.ptype = -1;
+            }
+
+            ServerProt::TUT_FLASH => {
+                self.apply_tut_flash(payload.g1());
+                self.ptype = -1;
+            }
+
+            ServerProt::TUT_OPEN => {
+                self.apply_tut_open(payload);
                 self.ptype = -1;
             }
 
@@ -2717,8 +2909,11 @@ impl Client {
                     .and_then(|o| o.as_mut())
                 {
                     com.text = text;
-                    // TS also redraws the side when
-                    // layerId === sideIcon[activeIcon] (not ported yet).
+                    // TS 6164: redraw the side when the edited text sits on
+                    // the active tab's interface.
+                    if com.layer_id == self.side_icon[self.active_icon as usize] {
+                        self.redraw_side = true;
+                    }
                 }
                 self.ptype = -1;
             }
