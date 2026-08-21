@@ -203,6 +203,28 @@ impl ClientBuild {
         }
     }
 
+    /// `finishBuild`'s ground-tile gate (Java `ClientBuild.java:972`):
+    /// interior z (`1..SIZE-1`), and in low-mem the tile must not be
+    /// ForceHighDetail and must resolve to `minusedlevel`. The x gate
+    /// (`1..SIZE-1`) is the outer loop's, kept in `finish_build`. `pub`
+    /// rather than `pub(crate)` because the `tests/client_build.rs`
+    /// integration tests call it.
+    pub fn ground_tile_visible(
+        mapl: &[Vec<Vec<u8>>],
+        level: i32,
+        x: i32,
+        z: i32,
+        low_mem: bool,
+        minusedlevel: i32,
+    ) -> bool {
+        (1..BuildArea::SIZE - 1).contains(&z)
+            && (!low_mem
+                || (mapl[level as usize][x as usize][z as usize] as i32
+                    & MapFlag::FORCE_HIGH_DETAIL
+                    == 0
+                    && Self::get_vis_below_level(mapl, level, x, z) == minusedlevel))
+    }
+
     /// `checkLocations(src, xOffset, zOffset)` from client-ts: decode the
     /// gsmart loc-id/pos delta stream and report whether every in-area loc's
     /// models are downloaded. Out-of-area tiles still consume the packet
@@ -1316,14 +1338,7 @@ impl ClientBuild {
 
                         // TS short-circuits left to right: the mapl reads
                         // below only run for interior z0 (TS 200-205).
-                        if (1..BuildArea::SIZE - 1).contains(&z0)
-                            && (!self.low_mem
-                                || (mapl[level as usize][x0 as usize][z0 as usize] as i32
-                                    & MapFlag::FORCE_HIGH_DETAIL
-                                    == 0
-                                    && Self::get_vis_below_level(mapl, level, x0, z0)
-                                        == self.minusedlevel))
-                        {
+                        if Self::ground_tile_visible(mapl, level, x0, z0, self.low_mem, self.minusedlevel) {
                             let t1 =
                                 self.floort1[level as usize][x0 as usize][z0 as usize] as i32;
                             let t2 =

@@ -542,6 +542,27 @@ fn finish_build_magenta_overlay_floor() {
     assert!(sq.quick_ground.is_some());
 }
 
+// --- ground tile gating (Java ClientBuild.java:972-975) ---
+
+#[test]
+fn ground_tile_visible_gates_force_high_detail_in_low_mem() {
+    let mut c = client();
+    // low-mem: a ForceHighDetail tile's ground is culled by the finishBuild
+    // gate; high-mem ignores the flag (Java `(mapl[...] & 0x10) == 0`).
+    c.mapl[0][2][2] = MapFlag::FORCE_HIGH_DETAIL as u8;
+    assert!(!ClientBuild::ground_tile_visible(&c.mapl, 0, 2, 2, true, 0));
+    assert!(ClientBuild::ground_tile_visible(&c.mapl, 0, 2, 2, false, 0));
+}
+
+#[test]
+fn ground_tile_visible_requires_matching_vis_below_level() {
+    let c = client();
+    // tile (2,2) on level 0 has no map flags: getVisBelowLevel is 0, so the
+    // low-mem gate only opens when minusedlevel == 0.
+    assert!(ClientBuild::ground_tile_visible(&c.mapl, 0, 2, 2, true, 0));
+    assert!(!ClientBuild::ground_tile_visible(&c.mapl, 0, 2, 2, true, 1));
+}
+
 #[test]
 fn fade_adjacent_level0_seam() {
     let mut c = client();
