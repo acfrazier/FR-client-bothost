@@ -2894,11 +2894,11 @@ impl Client {
 
     /// `closeModal` from client-ts (10941-10958): send CLOSE_MODAL and
     /// close the side and chat modals locally; `main_modal_id` is reset
-    /// like Java `closeModal` (Client.java 3353-3367).
-    /// `resumed_pause_button` is not touched here (the field is written
-    /// only by the server IF_* handlers); the per-modal redraw flags
-    /// mirror TS `redrawSide`/`redrawIcons`/`redrawChat`. Not to be
-    /// confused with the incoming-server `apply_if_close`.
+    /// like Java `closeModal` (Client.java 3353-3367). `resumed_pause_button`
+    /// is cleared like TS 10947/10954 (also written by the IF_* handlers);
+    /// the per-modal redraw flags mirror TS
+    /// `redrawSide`/`redrawIcons`/`redrawChat`. Not to be confused with the
+    /// incoming-server `apply_if_close`.
     fn close_modal(&mut self) {
         self.out.p1_enc(ClientProt::CLOSE_MODAL.id);
         if self.side_modal_id != -1 {
@@ -2911,6 +2911,7 @@ impl Client {
             self.redraw_chat = true;
         }
         self.main_modal_id = -1;
+        self.resumed_pause_button = false;
     }
 
     /// Walk `com_id`'s children like TS `addComponentOptions` (9628-9841)

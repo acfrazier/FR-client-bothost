@@ -736,6 +736,18 @@ fn side_click_close_button_sends_close_modal() {
 }
 
 #[test]
+fn close_modal_clears_resumed_pause_button() {
+    let mut c = client();
+    let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
+    let button = side_button(2, ButtonType::BUTTON_CLOSE, 0, 0, 190, 20);
+    bind_side(&mut c, 1, vec![root, button]);
+    c.resumed_pause_button = true;
+    click_side(&mut c, 560, 210);
+    assert_eq!(c.side_modal_id, -1);
+    assert!(!c.resumed_pause_button);
+}
+
+#[test]
 fn side_click_toggle_flips_var_and_redraws() {
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
