@@ -2055,6 +2055,21 @@ impl Client {
         let Some(hit_id) = self.side_hit_test(root_id, x - 553, y - 205, 0, 0, 0) else {
             return;
         };
+        // Peek the button type before cloning: BUTTON_CLOSE returns early
+        // without deep-copying the IfType (Strings + Vecs).
+        let Some(button_type) = self
+            .cache
+            .ifaces
+            .get(hit_id as usize)
+            .and_then(|o| o.as_ref())
+            .map(|o| o.button_type)
+        else {
+            return;
+        };
+        if button_type == ButtonType::BUTTON_CLOSE {
+            self.close_modal();
+            return;
+        }
         let Some(hit) = self
             .cache
             .ifaces
@@ -2064,15 +2079,11 @@ impl Client {
         else {
             return;
         };
-        let button_type = hit.button_type;
-        if button_type == ButtonType::BUTTON_CLOSE {
-            self.close_modal();
-            return;
-        }
-        // Java execute var5 == 231 (Client.java 4557-4567): clientButton
-        // runs first and arms the logout timer for CC_LOGOUT; our ported
-        // arm always returns true so the IF_BUTTON send is unconditional.
-        if hit.client_code > 0 {
+        // Java execute var5 == 231 (Client.java 4557-4567): clientButton is
+        // called only from the BUTTON_OK arm and runs first, arming the
+        // logout timer for CC_LOGOUT; the ported arm always returns true so
+        // the IF_BUTTON send stays unconditional.
+        if button_type == ButtonType::BUTTON_OK && hit.client_code > 0 {
             self.client_button(&hit);
         }
         self.out.p1_enc(ClientProt::IF_BUTTON.id);
