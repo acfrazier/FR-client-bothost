@@ -1,4 +1,6 @@
-use client::sound::Fade;
+use std::sync::{Arc, Mutex};
+
+use client::sound::{Fade, Midi};
 
 #[test]
 fn fade_out_reaches_floor_then_signals_swap() {
@@ -94,4 +96,61 @@ fn stop_midi_drops_pending() {
     c.stop_midi();
     assert!(c.midi_pending.is_none());
     assert!(!c.midi_playing);
+}
+
+/// A fake backend whose sequencer has already reached EOF (`is_playing`
+/// false) — the state of the title player once `scape_main` has finished.
+struct EndedMidi;
+
+impl Midi for EndedMidi {
+    fn play(&mut self, _data: &[u8], _volume: i32, _fading: bool) {}
+    fn stop(&mut self) {}
+    fn set_volume(&mut self, _volume: i32) {}
+    fn is_playing(&self) -> bool {
+        false
+    }
+}
+
+/// After the title song's sequencer reached EOF, a zone-song change plays
+/// immediately: Java `midisave` replaces the file now (nothing left to
+/// fade out), so the bytes must not sit pending waiting for the ramp.
+#[test]
+fn zone_song_plays_immediately_after_backend_eof() {
+    let mut c = client();
+    c.midi = Arc::new(Mutex::new(EndedMidi));
+    c.save_midi(&[1, 2, 3], true); // title scape_main: first song plays now
+    assert!(c.midi_playing);
+    c.save_midi(&[4, 5, 6], true); // zone change: backend already at EOF
+    assert!(c.midi_pending.is_none());
+    assert!(c.midi_playing);
+}
+
+/// The `nextMusicDelay` countdown from Java `soundsDoQueue` (`Client.java`
+/// 1997-2008): each pass subtracts 20; at zero the next zone song is
+/// re-requested with `midi_fading` set (the jingle → zone restore path).
+#[test]
+fn music_delay_counts_down_and_requests_next_song() {
+    let mut c = client();
+    c.next_midi_song = 42;
+    c.next_music_delay = 40;
+    c.sounds_do_queue();
+    assert_eq!(c.next_music_delay, 20);
+    assert_eq!(c.midi_song, -1); // still counting down
+    c.sounds_do_queue();
+    assert_eq!(c.next_music_delay, 0);
+    assert_eq!(c.midi_song, 42);
+    assert!(c.midi_fading);
+}
+
+/// Muted midi skips the re-request even once the countdown hits zero
+/// (Java gates on `midiActive && !lowMem`).
+#[test]
+fn music_delay_zero_does_not_requeue_when_midi_inactive() {
+    let mut c = client();
+    c.midi_active = false;
+    c.next_midi_song = 7;
+    c.next_music_delay = 20;
+    c.sounds_do_queue();
+    assert_eq!(c.next_music_delay, 0);
+    assert_eq!(c.midi_song, -1);
 }

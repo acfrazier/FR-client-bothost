@@ -9,6 +9,14 @@ pub trait Midi: Send {
     fn play(&mut self, data: &[u8], volume: i32, fading: bool);
     /// `stopMidi()`: silence the current song.
     fn stop(&mut self);
+    /// True while the backend is still rendering. Headless backends report
+    /// true (the control plane owns the fade); the audio backend reports
+    /// the sequencer state, so `saveMidi(fading=true)` can take Java's
+    /// immediate-midisave arm once the current song reached EOF
+    /// (`Client.java` 6266: midisave replaces the file now).
+    fn is_playing(&self) -> bool {
+        true
+    }
     /// `setMidiVolume(active, volume)`: the "voladjust" poke. The backend
     /// has no gain stage (volume lives on the output `Fade`), so the trait
     /// keeps this as a documented no-op.
@@ -123,7 +131,14 @@ mod rusty {
                 return;
             };
             let midi_file = Arc::new(midi_file);
-            sequencer.play(&midi_file, true);
+            // One-shot, like the native player behind Java `midisave`: a
+            // finished song reports `is_playing()` false, so the next
+            // `saveMidi(fading=true)` replaces the file immediately.
+            sequencer.play(&midi_file, false);
+        }
+
+        fn is_playing(&self) -> bool {
+            self.sequencer.as_ref().is_some_and(|s| !s.end_of_sequence())
         }
 
         fn stop(&mut self) {

@@ -5936,13 +5936,17 @@ impl Client {
 
     /// `saveMidi(fading, data)` from Java (`Client.java` 6266): hand the
     /// on-demand archive-2 bytes to the backend (signlink midisave). A
-    /// jingle (`fading=false`) or the first song plays immediately at the
-    /// `midivol` ladder value (Java first-song short-circuit); a zone-song
-    /// change (`fading=true`) holds the bytes pending and fades the current
-    /// song out, swapping in `music_tick` once the ramp hits the floor.
+    /// jingle (`fading=false`), the first song, or a zone-song change after
+    /// the current song already reached EOF plays immediately at the
+    /// `midivol` ladder value (Java first-song short-circuit; midisave
+    /// replaces the file now). A zone-song change (`fading=true`) while
+    /// something is still playing holds the bytes pending and fades the
+    /// current song out, swapping in `music_tick` once the ramp hits the
+    /// floor.
     pub fn save_midi(&mut self, data: &[u8], fading: bool) {
-        if !fading || !self.midi_playing {
-            self.midi.lock().unwrap().play(data, self.midi_volume, fading);
+        let mut midi = self.midi.lock().unwrap();
+        if !fading || !self.midi_playing || !midi.is_playing() {
+            midi.play(data, self.midi_volume, fading);
             self.fade.lock().unwrap().finish_fade(self.midi_volume);
             self.midi_playing = true;
             self.midi_pending = None;
@@ -6086,6 +6090,22 @@ impl Client {
             } else {
                 self.wave_delay[wave] -= 1;
                 wave += 1;
+            }
+        }
+        // `nextMusicDelay` countdown from Java `soundsDoQueue` (`Client.java`
+        // 1997-2008): a jingle's `MIDI_JINGLE` delay ticks down 20 ms per
+        // pass; at zero the next zone song is re-requested with a fade.
+        if self.next_music_delay > 0 {
+            self.next_music_delay -= 20;
+            if self.next_music_delay < 0 {
+                self.next_music_delay = 0;
+            }
+            if self.next_music_delay == 0 && self.midi_active && !self.config.lowmem {
+                self.midi_song = self.next_midi_song;
+                self.midi_fading = true;
+                if let Some(od) = &mut self.on_demand {
+                    od.request(2, self.midi_song);
+                }
             }
         }
     }
