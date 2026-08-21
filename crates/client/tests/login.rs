@@ -1,4 +1,5 @@
-use client::client::{Client, ClientConfig};
+use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer};
+use client::io::Packet;
 use client::util::JString;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -69,6 +70,74 @@ fn cold_login_opcode_16_success() {
     assert!(c.players[2047].is_some());
     assert_eq!(c.login_user, "bob");
     assert_eq!(c.login_pass, "pw");
+    server.join().unwrap();
+}
+
+/// Task 9: response 2 (cold login) must zero the entity counts and null
+/// every player/npc table slot like Java `Client.java` 3647-3656, so a
+/// second login does not draw leftover first-session NPCs/players. The
+/// local player is then re-seeded fresh at `players[2047]` (ready = false).
+#[test]
+fn cold_login_clears_entity_tables() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        let mut hdr = [0u8; 2];
+        s.read_exact(&mut hdr).unwrap();
+        assert_eq!(hdr[0], 14); // login server probe
+        for _ in 0..8 {
+            let _ = s.write_all(&[0]);
+        }
+        s.write_all(&[0]).unwrap(); // response 0 → send seed
+        s.write_all(&[0, 0, 0, 0, 0, 0, 0, 1]).unwrap(); // g8 seed
+        let mut buf = [0u8; 512];
+        let n = s.read(&mut buf).unwrap();
+        assert!(n > 0);
+        assert_eq!(buf[0], 16); // cold login
+        s.write_all(&[2, 0, 0]).unwrap(); // response 2, staff=0, mouseTrack=0
+    });
+
+    let mut c = Client::new(ClientConfig {
+        host: addr.ip().to_string(),
+        port: addr.port(),
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    // dirty state a previous session left behind (Java logout keeps the
+    // tables in place; response 2 is where they are cleared)
+    c.npc_count = 3;
+    c.npc[1] = Some(ClientNpc::default());
+    c.player_count = 2;
+    c.players[5] = Some(ClientPlayer::default());
+    c.player_appearance_buffer[5] = Some(Packet::new(vec![]));
+    let mut local = ClientPlayer::default();
+    local.ready = true;
+    local.name = Some("leftover".into());
+    c.local_player = Some(local);
+
+    c.login("bob", "pw", false).unwrap();
+    assert_eq!(c.npc_count, 0, "response 2 must zero npc_count");
+    assert!(c.npc[1].is_none(), "response 2 must null leftover npc slots");
+    assert_eq!(c.player_count, 0, "response 2 must zero player_count");
+    assert!(
+        c.players[5].is_none(),
+        "response 2 must null leftover player slots"
+    );
+    assert!(
+        c.player_appearance_buffer[5].is_none(),
+        "response 2 must null leftover appearance buffers"
+    );
+    assert!(
+        c.players[2047].is_some(),
+        "response 2 must re-seed players[2047]"
+    );
+    assert!(c.local_player.is_some());
+    assert!(
+        !c.local_player.as_ref().unwrap().ready,
+        "response 2 must re-seed a fresh local player"
+    );
     server.join().unwrap();
 }
 

@@ -2,7 +2,7 @@
 //!
 //! `handle_packet` is the inner `ptype` switch, callable from tests without a
 //! socket; `ClientBuild::load_ground` decodes a map square into `groundh`.
-use client::client::{Client, ClientBuild, ClientConfig};
+use client::client::{Client, ClientBuild, ClientConfig, ClientPlayer};
 use client::graphics::PixMap;
 use client::io::{ClientProt, Packet, ServerProt};
 
@@ -33,6 +33,32 @@ fn rebuild_normal_sets_base() {
     assert_eq!(c.map_build_centre_zone_x, 50);
     assert_eq!(c.map_build_centre_zone_z, 50);
     assert_eq!(c.scene_state, 1);
+}
+
+/// Java `localPlayer` IS `players[LOCAL_PLAYER_INDEX]`, so REBUILD_NORMAL's
+/// entity shift also moves the local body with the build origin; the Rust
+/// clone must be shifted the same way or NPC_INFO places first-login NPCs
+/// relative to an unshifted (0,0) local.
+#[test]
+fn rebuild_normal_shifts_local_player() {
+    let mut c = client();
+    c.ingame = true;
+    c.map_build_prev_base_x = 0;
+    c.map_build_prev_base_z = 0;
+    let mut local = ClientPlayer::at(10, 10);
+    local.entity.x = 10 * 128;
+    local.entity.z = 10 * 128;
+    c.local_player = Some(local);
+    let mut payload = Packet::alloc(0);
+    payload.p2(50); // zone → base (50-6)*8 = 352
+    payload.p2(50);
+    payload.pos = 0;
+    c.handle_packet(ServerProt::REBUILD_NORMAL, &mut payload);
+    let local = c.local_player.as_ref().unwrap();
+    assert_eq!(local.x, 10 * 128 - 352 * 128);
+    assert_eq!(local.z, 10 * 128 - 352 * 128);
+    assert_eq!(local.route_x[0], 10 - 352);
+    assert_eq!(local.route_z[0], 10 - 352);
 }
 
 #[test]

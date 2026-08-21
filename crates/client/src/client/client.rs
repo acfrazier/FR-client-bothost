@@ -1304,6 +1304,21 @@ impl Client {
             self.redraw_frame = true;
             self.redraw_side = true;
             self.redraw_icons = true;
+            // Java `Client.java` 3647-3656: a cold login zeroes the entity
+            // counts and nulls every player/npc slot (logout leaves the
+            // tables in place), so a second login does not draw leftover
+            // first-session NPCs/players.
+            self.player_count = 0;
+            self.npc_count = 0;
+            for slot in self.players.iter_mut() {
+                *slot = None;
+            }
+            for slot in self.npc.iter_mut() {
+                *slot = None;
+            }
+            for slot in self.player_appearance_buffer.iter_mut() {
+                *slot = None;
+            }
             // Client.ts:1853 — localPlayer = players[LOCAL_PLAYER_INDEX] = new
             let player = ClientPlayer::default();
             self.players[LOCAL_PLAYER_INDEX as usize] = Some(player.clone());
@@ -2379,6 +2394,19 @@ impl Client {
                     }
                     player.x -= dx * 128;
                     player.z -= dz * 128;
+                }
+
+                // Java `localPlayer` IS `players[LOCAL_PLAYER_INDEX]`, so the
+                // shift loop above also moves the local body with the build
+                // origin; the Rust clone must follow or NPC_INFO places new
+                // NPCs relative to an unshifted local.
+                if let Some(local) = self.local_player.as_mut() {
+                    for j in 0..10 {
+                        local.route_x[j] -= dx;
+                        local.route_z[j] -= dz;
+                    }
+                    local.x -= dx * 128;
+                    local.z -= dz * 128;
                 }
 
                 self.awaiting_player_info = true;
