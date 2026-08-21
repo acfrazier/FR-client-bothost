@@ -54,6 +54,11 @@ const LOGIN_UID: i32 = 1337;
 /// arms `logoutTimer` (Java `Client.java` 8746).
 const CC_LOGOUT: i32 = 205;
 
+/// Client code of the Report abuse button; `chatModeLoop` records
+/// `main_modal_id` from the first interface with this code (TS
+/// `ClientCode.CC_REPORT_INPUT`).
+const CC_REPORT_INPUT: i32 = 600;
+
 /// Index of the local player in `players` (`Client.ts` `LOCAL_PLAYER_INDEX`);
 /// `game_draw_main`'s `addPlayers` uses it for the local-player typecode.
 pub(crate) const LOCAL_PLAYER_INDEX: i32 = 2047;
@@ -4457,7 +4462,7 @@ impl Client {
         }
         self.close_modal();
         for entry in self.cache.ifaces.iter().flatten() {
-            if entry.client_code == 600 {
+            if entry.client_code == CC_REPORT_INPUT {
                 self.main_modal_id = entry.layer_id;
                 return;
             }

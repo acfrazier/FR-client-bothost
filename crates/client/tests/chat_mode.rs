@@ -32,8 +32,9 @@ fn public_chat_button_cycles_mode_and_sends_chat_setmode() {
     c.shell.latch_click();
     c.chat_mode_loop();
     assert_eq!(c.chat_public_mode, 1);
-    // out holds CHAT_SETMODE(154) + p1(1) p1(0) p1(0) when isaac is None at new
-    assert!(c.out.pos > 0);
+    // CHAT_SETMODE(154) + p1(public) p1(private) p1(trade) in Java order;
+    // isaac is None at new, so p1_enc writes the raw opcode 154.
+    assert_eq!(&c.out.data()[..c.out.pos], &[154, 1, 0, 0]);
 }
 
 #[test]
@@ -44,6 +45,9 @@ fn trade_button_cycles_trade_mode() {
     c.shell.latch_click();
     c.chat_mode_loop();
     assert_eq!(c.chat_trade_mode, 0);
+    // CHAT_SETMODE(154) + p1(public=0) p1(private=0) p1(trade=0); the
+    // cycled value lands in the third (trade) slot, Java field order.
+    assert_eq!(&c.out.data()[..c.out.pos], &[154, 0, 0, 0]);
 }
 
 #[test]
