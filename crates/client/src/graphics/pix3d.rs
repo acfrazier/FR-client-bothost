@@ -24,7 +24,7 @@ struct TrigTables {
 }
 
 static TRIG: OnceLock<TrigTables> = OnceLock::new();
-static COLOUR_TABLE: OnceLock<[i32; 65536]> = OnceLock::new();
+static COLOUR_TABLE: OnceLock<Box<[i32; 65536]>> = OnceLock::new();
 
 fn trig() -> &'static TrigTables {
     TRIG.get_or_init(|| {
@@ -70,17 +70,29 @@ impl Pix3D {
         &trig().cos_table
     }
 
-    /// Builds the 65536-entry HSL→RGB colour table once. The TS adds
-    /// `Math.random() * 0.03 - 0.015` jitter to `brightness`; this port keeps
-    /// the table deterministic (deviation documented).
+    /// Builds the 65536-entry HSL→RGB colour table once (Java `Pix3D`
+    /// allocates it with `new int[65536]`). The TS adds
+    /// `Math.random() * 0.03 - 0.015` jitter to `brightness`; this port
+    /// keeps the table deterministic (deviation documented). The table is
+    /// heap-allocated like Java's `new int[65536]`, and `build_colour_table`
+    /// fills it through a `&mut` slice: building an inline `[i32; 65536]`
+    /// passed the 256 KB table by value several times through the `OnceLock`
+    /// machinery (~1.9 MB of stack in debug), leaving `Client::new` within
+    /// ~16 KB of the 2 MB test-thread stack.
     pub fn init_colour_table(brightness: f64) {
-        let _ = COLOUR_TABLE.get_or_init(|| build_colour_table(brightness));
+        let _ = COLOUR_TABLE.get_or_init(|| {
+            let mut table: Box<[i32; 65536]> =
+                vec![0i32; 65536].into_boxed_slice().try_into().unwrap();
+            build_colour_table(&mut table[..], brightness);
+            table
+        });
     }
 
     pub fn colour_table() -> &'static [i32; 65536] {
         COLOUR_TABLE
             .get()
             .expect("Pix3D::init_colour_table must be called before colour_table()")
+            .as_ref()
     }
 
     fn gamma_correct(rgb: i32, gamma: f64) -> i32 {
@@ -99,8 +111,7 @@ impl Pix3D {
     }
 }
 
-fn build_colour_table(brightness: f64) -> [i32; 65536] {
-    let mut table = [0i32; 65536];
+fn build_colour_table(table: &mut [i32], brightness: f64) {
     let mut offset = 0;
     for y in 0..512 {
         let hue = ((y / 8) as f64) / 64.0 + 0.0078125;
@@ -166,7 +177,6 @@ fn build_colour_table(brightness: f64) -> [i32; 65536] {
             offset += 1;
         }
     }
-    table
 }
 
 /// The TS `Model` render statics (`vertexScreenX/Y/Z`, `vertexViewSpaceX/

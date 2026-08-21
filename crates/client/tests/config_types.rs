@@ -1,6 +1,7 @@
 // Config types unpacked from the engine's `config` JAG archive (1:1 of the
 // client-ts `config/` decode loops). Skipped when the engine pack is absent.
 use client::client::{Client, ClientConfig};
+use client::config::if_type::IfType;
 use client::config::{Cache, ObjType};
 use client::io::JagFile;
 
@@ -138,4 +139,30 @@ fn missing_config_jag_sets_error_loading() {
     assert!(c.error_loading);
     assert!(c.cache.objs.is_empty());
     assert_eq!(c.shell.deltime, 1000);
+}
+
+fn engine_interface_jag() -> Option<JagFile> {
+    let path = std::env::var("ENGINE_DIR").unwrap_or_else(|_| {
+        format!(
+            "{}/experiments/Server/engine",
+            std::env::var("HOME").unwrap()
+        )
+    });
+    let bytes = std::fs::read(format!("{path}/data/pack/client/interface")).ok()?;
+    Some(JagFile::new(bytes))
+}
+
+#[test]
+fn iftype_unpack_keeps_inv_background_names() {
+    let Some(jag) = engine_interface_jag() else {
+        return;
+    };
+    let ifaces = IfType::unpack(&jag);
+    assert!(
+        ifaces.iter().flatten().any(|c| c
+            .inv_background_name
+            .as_ref()
+            .is_some_and(|v| v.iter().any(|n| n.is_some()))),
+        "a TYPE_INV component should keep its inv-background sprite names"
+    );
 }

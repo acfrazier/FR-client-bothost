@@ -8,6 +8,7 @@
 
 use super::pix2d::Pix2D;
 use super::pix8::Pix8;
+use crate::datastruct::{LinkableTrait, Links};
 use crate::io::{JagFile, Packet};
 
 #[derive(Clone)]
@@ -19,6 +20,23 @@ pub struct Pix32 {
     pub yof: i32, // y offset
     pub owi: i32, // original width
     pub ohi: i32, // original height
+    /// Cache-link state for the `LruCache` the `ObjType.spriteCache`
+    /// renders into (Java `Linkable2` superclass).
+    pub links: Links,
+}
+
+impl LinkableTrait for Pix32 {
+    fn links(&self) -> &Links {
+        &self.links
+    }
+
+    fn links_mut(&mut self) -> &mut Links {
+        &mut self.links
+    }
+
+    fn sentinel() -> Self {
+        Pix32::new(0, 0)
+    }
 }
 
 impl Pix32 {
@@ -31,6 +49,7 @@ impl Pix32 {
             ohi: height,
             xof: 0,
             yof: 0,
+            links: Links::new(0),
         }
     }
 
@@ -62,6 +81,7 @@ impl Pix32 {
             ohi: hi,
             xof: 0,
             yof: 0,
+            links: Links::new(0),
         })
     }
 

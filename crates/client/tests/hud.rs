@@ -8,7 +8,7 @@ use client::client::{Client, ClientConfig, ClientPlayer};
 use client::config::if_type::{ButtonType, ComponentType, IfType};
 use client::config::VarpType;
 use client::graphics::{Colour, Pix2D, PixMap};
-use client::io::{ClientProt, Packet};
+use client::io::{ClientProt, JagFile, Packet};
 
 fn client() -> Client {
     Client::new(ClientConfig {
@@ -878,4 +878,29 @@ fn side_click_real_logout_text_sends_if_button() {
         (logout_id & 0xff) as u8,
     ];
     assert_eq!(&c.out.data()[..c.out.pos], &expected);
+}
+
+#[test]
+fn iftype_unpack_keeps_inv_background_names() {
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("interface").is_file() {
+        return;
+    }
+    let jag = JagFile::new(std::fs::read(format!("{cache}/interface")).unwrap());
+    let ifaces = IfType::unpack(&jag);
+    assert!(
+        ifaces.iter().flatten().any(|c| c
+            .inv_background_name
+            .as_ref()
+            .is_some_and(|v| v.iter().any(|n| n.is_some()))),
+        "a TYPE_INV component should keep its inv-background sprite names"
+    );
+}
+
+#[test]
+fn inv_number_formats_k_and_m() {
+    let c = client();
+    assert_eq!(c.inv_number(999), "999");
+    assert_eq!(c.inv_number(150_000), "150K");
+    assert_eq!(c.inv_number(12_000_000), "12M");
 }

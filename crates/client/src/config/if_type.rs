@@ -1,9 +1,8 @@
 // Port of `~/experiments/Server/webclient/src/config/IfType.ts` (decode only).
 // The interface `data` member lives in the `interface` jag, not `config`, so
 // `unpack` of a config jag returns empty. Sprite loads (`graphic`/`graphic2`
-// names are kept and depacked from the `media` jag by `draw_interface`;
-// `invBackground` still lands with Task 14); `font` keeps the font-array
-// index for the same task.
+// and the `invBackground` names are kept and depacked from the `media` jag by
+// `draw_interface`); `font` keeps the font-array index for the same task.
 use crate::io::{JagFile, Packet};
 
 /// `ComponentType` const enum from client-ts.
@@ -66,6 +65,11 @@ pub struct IfType {
     pub margin_y: i32,
     pub inv_background_x: Option<Vec<i32>>,
     pub inv_background_y: Option<Vec<i32>>,
+    /// The `"name,index"` gjstr of each slot-frame sprite (Java
+    /// `IfType.invBackground`, unpacked from the `media` jag at decode
+    /// time). The Rust unpack holds no media jag, so the names are stored
+    /// and depacked on demand by `draw_interface`.
+    pub inv_background_name: Option<Vec<Option<String>>>,
     pub iop: [Option<String>; 5],
     pub fill: bool,
     pub centre: bool,
@@ -129,6 +133,7 @@ impl Default for IfType {
             margin_y: 0,
             inv_background_x: None,
             inv_background_y: None,
+            inv_background_name: None,
             iop: Default::default(),
             fill: false,
             centre: false,
@@ -250,18 +255,28 @@ impl IfType {
                 com.margin_x = dat.g1();
                 com.margin_y = dat.g1();
 
-                let mut inv_background_x = Vec::with_capacity(20);
-                let mut inv_background_y = Vec::with_capacity(20);
-                for _ in 0..20 {
+                // Java allocates invBackgroundX/Y as `new int[20]`, so the
+                // x/y offsets are indexed by slot (missing slots stay 0).
+                let mut inv_background_x = vec![0; 20];
+                let mut inv_background_y = vec![0; 20];
+                let mut inv_background_name: Vec<Option<String>> = (0..20).map(|_| None).collect();
+                for slot in 0..20 {
                     if dat.g1() == 1 {
-                        inv_background_x.push(dat.g2b());
-                        inv_background_y.push(dat.g2b());
-                        // sprite name gjstr is loaded via `media` + Pix32 (Task 14)
-                        let _ = dat.gjstr();
+                        inv_background_x[slot] = dat.g2b();
+                        inv_background_y[slot] = dat.g2b();
+                        // Java depacks the sprite from the `media` jag here
+                        // (IfType.java 297-300); the Rust unpack holds only
+                        // the interface jag, so the "name,index" gjstr is
+                        // stored and depacked on demand by draw_interface.
+                        let s = dat.gjstr();
+                        if !s.is_empty() {
+                            inv_background_name[slot] = Some(s);
+                        }
                     }
                 }
                 com.inv_background_x = Some(inv_background_x);
                 com.inv_background_y = Some(inv_background_y);
+                com.inv_background_name = Some(inv_background_name);
 
                 for i in 0..5 {
                     let s = dat.gjstr();

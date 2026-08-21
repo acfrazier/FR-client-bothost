@@ -52,6 +52,17 @@ impl<T: LinkableTrait> LruCache<T> {
         self.history.push(&mut self.arena, id);
     }
 
+    /// Detach the node for `key` from the hash-table chain only (Java
+    /// `Linkable.unlink()` on a table node). The node stays in the LRU
+    /// history until evicted, exactly like Java; `ObjType.getSprite` uses
+    /// this to drop an ohi-mismatched cache hit before re-putting its key,
+    /// so the stale node does not shadow the replacement in `find`.
+    pub fn unlink_key(&mut self, key: i64) {
+        if let Some(id) = self.table.find(&self.arena, key) {
+            self.arena.unlink(id);
+        }
+    }
+
     pub fn clear(&mut self) {
         while let Some(id) = self.history.pop_front(&mut self.arena) {
             self.arena.unlink(id);

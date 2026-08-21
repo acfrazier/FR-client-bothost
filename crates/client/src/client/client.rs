@@ -125,20 +125,32 @@ fn midi_backend(cache_dir: &str) -> Arc<Mutex<dyn Midi>> {
 
 /// `groundObj` grid from client-ts (`new Array(4)` of `new Array(104)` of
 /// null rows), every cell `None`. Assembled through `Vec` because the
-/// `array::from_fn` / const-repeat forms materialize the 1.7 MB grid in a
-/// stack temporary, which overflows the 2 MB test-thread stack.
+/// `array::from_fn` / const-repeat forms materialize the 3.8 MB grid in a
+/// stack temporary, which overflows the 2 MB test-thread stack. The flat
+/// row form also avoids the `levels.push(*level)` by-value argument (a
+/// 930 KB stack copy) that kept `Client::new` within ~16 KB of the same
+/// limit.
 fn empty_ground_obj() -> Box<[[[Option<LinkList<ClientObj>>; 104]; 104]; 4]> {
-    let mut levels = Vec::with_capacity(4);
-    for _ in 0..4 {
-        let mut level = Vec::with_capacity(104);
-        for _ in 0..104 {
-            level.push([const { None }; 104]);
-        }
-        let level: Box<[[Option<LinkList<ClientObj>>; 104]; 104]> =
-            level.into_boxed_slice().try_into().map_err(|_| ()).unwrap();
-        levels.push(*level);
+    let mut rows: Vec<[Option<LinkList<ClientObj>>; 104]> = Vec::with_capacity(104 * 4);
+    for _ in 0..104 * 4 {
+        rows.push([const { None }; 104]);
     }
-    levels.into_boxed_slice().try_into().map_err(|_| ()).unwrap()
+    // Length-checked box of 416 rows, then re-grouped as 4 levels of 104
+    // rows each. `[[T; 104]; 416]` and `[[[T; 104]; 104]; 4]` have the same
+    // size and alignment, so the sole-owner allocation can be re-typed
+    // without copying.
+    let boxed: Box<[[Option<LinkList<ClientObj>>; 104]; 416]> = rows
+        .into_boxed_slice()
+        .try_into()
+        .map_err(|_| ())
+        .unwrap();
+    // SAFETY: the box holds exactly 416 row arrays, which is the same
+    // memory (size, alignment, cell layout) as 4 levels of 104 rows; the
+    // re-typed box keeps sole ownership and its drop glue walks the same
+    // cells.
+    unsafe {
+        Box::from_raw(Box::into_raw(boxed) as *mut [[[Option<LinkList<ClientObj>>; 104]; 104]; 4])
+    }
 }
 
 /// Period 274 applet size (engine `bot.html` canvas and title.dat).

@@ -1,11 +1,12 @@
 // Port of `~/experiments/Server/webclient/src/config/ObjType.ts` (decode,
-// reset and `genCert`, plus the wear/head model methods; the sprite methods
-// need `graphics` and land with the render task).
+// reset and `genCert`, plus the wear/head model methods and the 2D
+// `getSprite` render).
 use std::sync::{Mutex, OnceLock};
 
 use crate::config::Cache;
 use crate::dash3d::Model;
 use crate::datastruct::LruCache;
+use crate::graphics::{Pix2D, Pix32, Pix3D, Pix3DDraw};
 use crate::io::{JagFile, Packet};
 
 // Process-wide by design: an LRU of decoded, immutable models shared by
@@ -14,6 +15,14 @@ use crate::io::{JagFile, Packet};
 fn model_cache() -> &'static Mutex<LruCache<Model>> {
     static CACHE: OnceLock<Mutex<LruCache<Model>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(LruCache::new(50)))
+}
+
+/// `ObjType.spriteCache` from the Java oracle (ObjType.java 85): the
+/// process-wide 100-entry LRU of rendered 32x32 item sprites (same design
+/// as `model_cache`).
+fn sprite_cache() -> &'static Mutex<LruCache<Pix32>> {
+    static CACHE: OnceLock<Mutex<LruCache<Pix32>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(LruCache::new(100)))
 }
 
 #[derive(Clone)]
@@ -289,6 +298,165 @@ impl ObjType {
 
         model_cache().lock().unwrap().put(model.clone(), self.id as i64);
         Some(model)
+    }
+
+    /// `ObjType.getSprite(id, outlineRgb, count)` from the Java oracle
+    /// (ObjType.java 208-332; the arg order is `id, outlineRgb, count` — the
+    /// TS `getSprite(id, count, outline)` swaps outline and count, and Java
+    /// wins). Cache hit only when `outline_rgb == 0` and the cached `ohi`
+    /// matches the requested count; otherwise the lit model is rendered into
+    /// a fresh 32x32 `Pix32` (`get_model_lit(1)`, count-co walk for `count >
+    /// 1`, cert-template overlay) and cached when `outline_rgb == 0`. The
+    /// caller's `Pix2D` target is untouched (the 32x32 buffer is a private
+    /// temporary surface), so only the `Pix3DDraw` raster state (`origin`,
+    /// `scanline`, `low_detail`) needs save/restore.
+    pub fn get_sprite(
+        cache: &Cache,
+        pix3d: &mut Pix3DDraw,
+        id: i32,
+        outline_rgb: i32,
+        count: i32,
+    ) -> Option<Pix32> {
+        if outline_rgb == 0 {
+            let mut sprite_cache = sprite_cache().lock().unwrap();
+            if let Some(cached) = sprite_cache.find(id as i64) {
+                if cached.ohi == count || cached.ohi == -1 {
+                    return Some(cached.clone());
+                }
+                // Java `var4.unlink()` (ObjType.java 210-212): detach the
+                // stale node from the hash-table chain so the re-put below
+                // is the only table entry for this key (it stays in the LRU
+                // history until evicted, as in Java).
+                sprite_cache.unlink_key(id as i64);
+            }
+        }
+
+        let mut obj = cache.objs.get(id as usize)?;
+        let mut count = count;
+        if obj.countobj.is_none() {
+            count = -1;
+        }
+        if count > 1 {
+            let mut variant = -1;
+            if let (Some(countobj), Some(countco)) = (&obj.countobj, &obj.countco) {
+                for i in 0..10 {
+                    if count >= countco[i] as i32 && countco[i] != 0 {
+                        variant = countobj[i] as i32;
+                    }
+                }
+            }
+            if variant != -1 {
+                obj = cache.objs.get(variant as usize)?;
+            }
+        }
+
+        let model = obj.get_model_lit(cache, 1)?;
+
+        let mut var10 = Pix32::new(32, 32);
+
+        let saved_origin_x = pix3d.origin_x;
+        let saved_origin_y = pix3d.origin_y;
+        let saved_scanline = std::mem::take(&mut pix3d.scanline);
+        let saved_low_detail = pix3d.low_detail;
+        pix3d.low_detail = false;
+
+        {
+            let mut target = Pix2D::with_pixels(&mut var10.data, 32, 32);
+            target.fill_rect(0, 0, 32, 32, 0);
+            pix3d.set_render_clipping(&target);
+
+            let mut zoom = obj.zoom2d;
+            if outline_rgb == -1 {
+                zoom = (zoom as f64 * 1.5) as i32;
+            }
+            if outline_rgb > 0 {
+                zoom = (zoom as f64 * 1.04) as i32;
+            }
+            let sin_xan = Pix3D::sin_table().get(obj.xan2d as usize).copied().unwrap_or(0);
+            let cos_xan = Pix3D::cos_table().get(obj.xan2d as usize).copied().unwrap_or(0);
+            let var22 = sin_xan.wrapping_mul(zoom) >> 16;
+            let var23 = cos_xan.wrapping_mul(zoom) >> 16;
+            model.obj_render(
+                pix3d,
+                &mut target,
+                0,
+                obj.yan2d,
+                obj.zan2d,
+                obj.xan2d,
+                obj.xof2d,
+                var22 + model.min_y / 2 + obj.yof2d,
+                var23 + obj.yof2d,
+            );
+
+            // Java 270-282: the 1-value edge pass first, then either the
+            // outline-colour or the 3153952 drop-shadow fill. The Java
+            // same-body else-if chains collapse to an OR (every branch
+            // writes the same pixel value).
+            for y in (0..32).rev() {
+                for x in (0..32).rev() {
+                    let index = x + y * 32;
+                    if target.pixels[index] == 0 {
+                        let edge = (x > 0 && target.pixels[index - 1] > 1)
+                            || (y > 0 && target.pixels[index - 32] > 1)
+                            || (x < 31 && target.pixels[index + 1] > 1)
+                            || (y < 31 && target.pixels[index + 32] > 1);
+                        if edge {
+                            target.pixels[index] = 1;
+                        }
+                    }
+                }
+            }
+            if outline_rgb > 0 {
+                for y in (0..32).rev() {
+                    for x in (0..32).rev() {
+                        let index = x + y * 32;
+                        if target.pixels[index] == 0 {
+                            let edge = (x > 0 && target.pixels[index - 1] == 1)
+                                || (y > 0 && target.pixels[index - 32] == 1)
+                                || (x < 31 && target.pixels[index + 1] == 1)
+                                || (y < 31 && target.pixels[index + 32] == 1);
+                            if edge {
+                                target.pixels[index] = outline_rgb;
+                            }
+                        }
+                    }
+                }
+            } else if outline_rgb == 0 {
+                for y in (0..32).rev() {
+                    for x in (0..32).rev() {
+                        let index = x + y * 32;
+                        if target.pixels[index] == 0
+                            && x > 0
+                            && y > 0
+                            && target.pixels[index - 33] > 0
+                        {
+                            target.pixels[index] = 3153952;
+                        }
+                    }
+                }
+            }
+
+            if obj.certtemplate != -1 {
+                let cert = Self::get_sprite(cache, pix3d, obj.certlink, -1, 10)?;
+                cert.plot_sprite(&mut target, 0, 0);
+            }
+        }
+
+        if outline_rgb == 0 {
+            let mut cached = var10.clone();
+            cached.owi = if obj.stackable { 33 } else { 32 };
+            cached.ohi = count;
+            sprite_cache().lock().unwrap().put(cached, id as i64);
+        }
+
+        pix3d.origin_x = saved_origin_x;
+        pix3d.origin_y = saved_origin_y;
+        pix3d.scanline = saved_scanline;
+        pix3d.low_detail = saved_low_detail;
+
+        var10.owi = if obj.stackable { 33 } else { 32 };
+        var10.ohi = count;
+        Some(var10)
     }
 
     /// `checkWearModel(gender)` from client-ts.

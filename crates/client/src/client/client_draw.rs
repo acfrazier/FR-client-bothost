@@ -22,7 +22,7 @@ use crate::client::client_build::random_float;
 use crate::client::skill::Skill;
 use crate::client::title_flames::TitleFlames;
 use crate::config::if_type::{ComponentType, IfType};
-use crate::config::Cache;
+use crate::config::{Cache, ObjType};
 use crate::dash3d::world::LevelHeightmaps;
 use crate::dash3d::{BuildArea, LocAngle, LocShape, MapFlag, SceneModel, World};
 use crate::graphics::{Colour, Pix2D, Pix3D, Pix32, Pix8, PixFont, PixMap};
@@ -1392,11 +1392,25 @@ impl Client {
         self.area_side = side;
     }
 
+    /// `Client.invNumber` from the Java oracle (Client.java 1394-1401):
+    /// stack counts under 100k as-is, then `K` per 1000, else `M` per
+    /// 1000000 (integer division, so 1500 -> "1K").
+    pub fn inv_number(&self, amount: i32) -> String {
+        if amount < 100000 {
+            amount.to_string()
+        } else if amount < 10000000 {
+            format!("{}K", amount / 1000)
+        } else {
+            format!("{}M", amount / 1000000)
+        }
+    }
+
     /// `drawInterface` from client-ts (9900) for the 2D component types:
     /// recurse `TYPE_LAYER` children, draw `TYPE_RECT` fill/outline,
     /// `TYPE_TEXT` with the font at `com.font` index 0-3 (p11/p12/b12/q8)
-    /// and the `%1`-`%5` `getIfVar` substitution, and `TYPE_GRAPHIC` from
-    /// its `media` sprite. `TYPE_INV` item sprites and `TYPE_MODEL` (3D) are
+    /// and the `%1`-`%5` `getIfVar` substitution, `TYPE_GRAPHIC` from its
+    /// `media` sprite, and `TYPE_INV` item icons + stack counts (Java
+    /// Client.java 9746-9820). `TYPE_MODEL` (3D) and `TYPE_INV_TEXT` are
     /// skipped; the `clientComponent` scripts and `drawScrollbar` sprites
     /// load with Task 14.
     pub fn draw_interface(&mut self, com_id: i32, x: i32, y: i32, scroll_y: i32, surface: &mut Pix2D) {
@@ -1567,9 +1581,94 @@ impl Client {
                         }
                     }
                 }
+                ComponentType::TYPE_INV => {
+                    // Java Client.java 9746-9820: the slot grid of item
+                    // icons (lit 2D obj sprites) and stack-count text. The
+                    // `objDragArea`/`selectedArea`/`useMode` drag branches
+                    // and the selected-slot white outline are not ported
+                    // (drag state does not exist yet), so the static icon is
+                    // drawn at `slot_x`/`slot_y` with outline 0. TYPE_MODEL
+                    // and TYPE_INV_TEXT remain skipped.
+                    let Some(link_obj_type) = &child.link_obj_type else {
+                        continue;
+                    };
+                    let Some(link_obj_number) = &child.link_obj_number else {
+                        continue;
+                    };
+                    let mut slot = 0;
+                    for row in 0..child.height {
+                        for col in 0..child.width {
+                            let mut slot_x = child_x + col * (child.margin_x + 32);
+                            let mut slot_y = child_y + row * (child.margin_y + 32);
+                            if slot < 20 {
+                                if let Some(xs) = &child.inv_background_x {
+                                    slot_x += xs[slot as usize];
+                                }
+                                if let Some(ys) = &child.inv_background_y {
+                                    slot_y += ys[slot as usize];
+                                }
+                            }
+                            if link_obj_type.get(slot as usize).copied().unwrap_or(0) > 0
+                                && slot_x > surface.clip_min_x - 32
+                                && slot_x < surface.clip_max_x
+                                && slot_y > surface.clip_min_y - 32
+                                && slot_y < surface.clip_max_y
+                            {
+                                let id = link_obj_type[slot as usize] - 1;
+                                let count = link_obj_number[slot as usize];
+                                if let Some(sprite) = ObjType::get_sprite(
+                                    &self.cache,
+                                    &mut self.pix3d,
+                                    id,
+                                    0,
+                                    count,
+                                ) {
+                                    sprite.plot_sprite(surface, slot_x, slot_y);
+                                    // Java 9807-9811: stack counts when the
+                                    // sprite is a stack (owi 33) or the
+                                    // count isn't 1.
+                                    if sprite.owi == 33 || count != 1 {
+                                        let text = self.inv_number(count);
+                                        if let Some(p11) = self.p11.as_mut() {
+                                            p11.draw_string_tag(
+                                                surface, &text, slot_x + 1, slot_y + 10, 0,
+                                                false,
+                                            );
+                                            p11.draw_string_tag(
+                                                surface, &text, slot_x, slot_y + 9, 16776960,
+                                                false,
+                                            );
+                                        }
+                                    }
+                                }
+                            } else if slot < 20 {
+                                // Java 9813-9818: the slot-frame sprite,
+                                // depacked on demand from the "name,index"
+                                // kept at unpack (Java IfType.java 287-300).
+                                if let Some(names) = &child.inv_background_name {
+                                    if let Some(Some(name)) = names.get(slot as usize) {
+                                        if let Some((name, index)) = name.rsplit_once(',') {
+                                            if let Ok(index) = index.trim().parse::<i32>() {
+                                                if let Some(sprite) = Self::graphic_sprite(
+                                                    &mut self.graphic_sprites,
+                                                    &self.config.cache_dir,
+                                                    name,
+                                                    index,
+                                                ) {
+                                                    sprite.plot_sprite(surface, slot_x, slot_y);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            slot += 1;
+                        }
+                    }
+                }
                 _ => {
-                    // TYPE_INV item sprites, TYPE_MODEL (3D), and
-                    // TYPE_INV_TEXT are skipped this task.
+                    // TYPE_MODEL (3D) and TYPE_INV_TEXT are skipped this
+                    // task.
                 }
             }
         }
