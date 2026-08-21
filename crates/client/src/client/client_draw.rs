@@ -693,8 +693,9 @@ impl Client {
     /// `World.resetVisCalc` runs once on the first pass (TS runs it from
     /// the game-loading flow) so `render_all`'s visibility backing is
     /// populated. The overlay passes are no-ops while their lists/sprites
-    /// are not ported; `cinemaCam`, `camShake`, and `otherOverlays`
-    /// (minimenu/main-overlay/fps) are not ported either.
+    /// are not ported; `cinemaCam`, `camShake`, the minimenu, and the fps
+    /// pass are not ported either. `otherOverlays` (the main overlay and
+    /// modal, TS 4250) draws into `area_game` before the blit.
     fn game_draw_main(&mut self) {
         self.scene_cycle += 1;
 
@@ -777,10 +778,29 @@ impl Client {
         self.entity_overlays();
         self.coord_arrow();
         self.texture_run_anims(cycle);
+        self.other_overlays();
 
         if let Some(game) = &self.area_game {
             game.blit_into(&mut self.draw_area, 4, 4);
         }
+    }
+
+    /// `otherOverlays` from client-ts (4853): draw the main overlay then the
+    /// main modal into `area_game` at (0, 0), ahead of the (4, 4) blit.
+    /// `animateInterface` before each draw lands with Task 3; the minimenu
+    /// and `getSpecialArea` passes are not ported.
+    fn other_overlays(&mut self) {
+        let mut game = self.area_game.take();
+        if let Some(game) = game.as_mut() {
+            let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
+            if self.main_overlay_id != -1 {
+                self.draw_interface(self.main_overlay_id, 0, 0, 0, &mut surface);
+            }
+            if self.main_modal_id != -1 {
+                self.draw_interface(self.main_modal_id, 0, 0, 0, &mut surface);
+            }
+        }
+        self.area_game = game;
     }
 
     /// `addPlayers` from client-ts (4260): add the local player (or every
@@ -2004,12 +2024,30 @@ impl Client {
     /// then the plain chat branch (TS 11149-11267): clip (0,0,463,77), the
     /// 100 chat lines as TS 11152-11244, the `username:` + `chat_input + '*'`
     /// input line at y=90, and the `hline` at 77; blit at (17, 357).
-    /// Deviations: the social/dialog/tutorial/modal branches are not ported
-    /// (`chat_modal_id` is only ever -1 this slice), `is_friend` is always
-    /// false (no friend list), the `modIcons`/`drawScrollbar` sprites load
-    /// with Task 14, and the trailing `areaGame.setPixels()` is a no-op here
-    /// (no global Pix2D target).
+    /// Deviations: a chat modal or tutorial interface (TS 11142-11146) draws
+    /// into `area_chat` in place of the plain chat; the social/dialog
+    /// branches are not ported, `is_friend` is always false (no friend
+    /// list), the `modIcons`/`drawScrollbar` sprites load with Task 14, and
+    /// the trailing `areaGame.setPixels()` is a no-op here (no global Pix2D
+    /// target).
     fn draw_chat(&mut self) {
+        if self.chat_modal_id != -1 || self.tut_com_id != -1 {
+            let mut chat = self.area_chat.take();
+            if let Some(chat) = chat.as_mut() {
+                let mut surface = Pix2D::with_pixels(&mut chat.pixels, chat.width, chat.height);
+                let com_id = if self.chat_modal_id != -1 {
+                    self.chat_modal_id
+                } else {
+                    self.tut_com_id
+                };
+                self.draw_interface(com_id, 0, 0, 0, &mut surface);
+            }
+            if let Some(chat) = &chat {
+                chat.blit_into(&mut self.draw_area, 17, 357);
+            }
+            self.area_chat = chat;
+            return;
+        }
         if let Some(chat) = self.area_chat.as_mut() {
             let w = chat.width;
             let h = chat.height;

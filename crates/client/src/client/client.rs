@@ -2361,11 +2361,7 @@ impl Client {
     /// collapsed: a left click inside the side panel (553..743 × 205..466)
     /// walks the open interface tree (`side_modal_id`, else the active tab's
     /// `side_icon`) like `draw_interface` and fires the first hit child's
-    /// button. BUTTON_OK/TOGGLE/SELECT send `IF_BUTTON` + the child id;
-    /// BUTTON_CLOSE sends `CLOSE_MODAL` and clears the modals like TS
-    /// `closeModal` (execute 9194-9196). TOGGLE/SELECT also flip/set the
-    /// local `var` and apply its clientcode via `clientVar` (execute
-    /// 9163-9179) when `scripts[0][0] == 5`; `clientButton` is not ported.
+    /// button through `if_button_dispatch`.
     pub fn handle_side_if_clicks(&mut self) {
         if self.shell.mouse_click_button != 1 {
             return;
@@ -2386,9 +2382,20 @@ impl Client {
             return;
         }
         // panel-local coords like the draw_side draw_interface call
-        let Some(hit_id) = self.side_hit_test(root_id, x - 553, y - 205, 0, 0, 0) else {
+        let Some(hit_id) = self.if_hit_test(root_id, x - 553, y - 205, 0, 0, 0) else {
             return;
         };
+        self.if_button_dispatch(hit_id);
+    }
+
+    /// The shared BUTTON_OK/CLOSE/TOGGLE/SELECT dispatch behind the
+    /// side/main/chat iface click handlers (Java execute var5 == 231,
+    /// Client.java 4557-4567; TS execute 9144-9190): BUTTON_CLOSE sends
+    /// `CLOSE_MODAL` and clears the modals like TS `closeModal`; the rest
+    /// send `IF_BUTTON` + the child id. TOGGLE/SELECT also flip/set the
+    /// local `var` and apply its clientcode via `clientVar` when
+    /// `scripts[0][0] == 5`.
+    fn if_button_dispatch(&mut self, hit_id: i32) {
         // Peek the button type before cloning: BUTTON_CLOSE returns early
         // without deep-copying the IfType (Strings + Vecs).
         let Some(button_type) = self
@@ -2451,6 +2458,45 @@ impl Client {
         }
     }
 
+    /// `buildMinimenu` viewport branch (Java Client.java 5829-5833) with the
+    /// minimenu collapsed: a left click inside the viewport (4..516 ×
+    /// 4..338) walks `main_modal_id` (origin 4, 4) and fires the first hit
+    /// child's button like `handle_side_if_clicks`. A main modal also eats
+    /// the viewport click for Walk-here (`mouse_loop` returns early).
+    pub fn handle_main_if_clicks(&mut self) {
+        if self.shell.mouse_click_button != 1 {
+            return;
+        }
+        let (x, y) = (self.shell.mouse_click_x, self.shell.mouse_click_y);
+        if self.main_modal_id == -1 || !(4..516).contains(&x) || !(4..338).contains(&y) {
+            return;
+        }
+        // viewport-local coords like the other_overlays draw_interface call
+        let Some(hit_id) = self.if_hit_test(self.main_modal_id, x - 4, y - 4, 0, 0, 0) else {
+            return;
+        };
+        self.if_button_dispatch(hit_id);
+    }
+
+    /// `buildMinimenu` chat branch (Java Client.java 5845-5848) with the
+    /// minimenu collapsed: a left click inside the chat panel (17..496 ×
+    /// 357..453) walks `chat_modal_id` (origin 17, 357) and fires the first
+    /// hit child's button like `handle_side_if_clicks`.
+    pub fn handle_chat_if_clicks(&mut self) {
+        if self.shell.mouse_click_button != 1 {
+            return;
+        }
+        let (x, y) = (self.shell.mouse_click_x, self.shell.mouse_click_y);
+        if self.chat_modal_id == -1 || !(17..496).contains(&x) || !(357..453).contains(&y) {
+            return;
+        }
+        // chat-local coords like the draw_chat draw_interface call
+        let Some(hit_id) = self.if_hit_test(self.chat_modal_id, x - 17, y - 357, 0, 0, 0) else {
+            return;
+        };
+        self.if_button_dispatch(hit_id);
+    }
+
     /// `closeModal` from client-ts (10941-10958): send CLOSE_MODAL and
     /// close the side and chat modals locally; `main_modal_id` is reset
     /// like Java `closeModal` (Client.java 3353-3367).
@@ -2474,11 +2520,12 @@ impl Client {
 
     /// Walk `com_id`'s children like TS `addComponentOptions` (9628-9841)
     /// and return the first hit child with a BUTTON_OK/CLOSE/TOGGLE/SELECT
-    /// `button_type`. Layers recurse with the same scroll clamp as
-    /// `draw_interface`; TYPE_INV children are skipped (their menu options
-    /// land with the inventory task). The layer must be visible and its rect
-    /// must contain the point (TS 9629).
-    fn side_hit_test(
+    /// `button_type`, shared by the side/main/chat click handlers. Layers
+    /// recurse with the same scroll clamp as `draw_interface`; TYPE_INV
+    /// children are skipped (their menu options land with the inventory
+    /// task). The layer must be visible and its rect must contain the point
+    /// (TS 9629).
+    fn if_hit_test(
         &self,
         com_id: i32,
         mouse_x: i32,
@@ -2519,7 +2566,7 @@ impl Client {
                     if scroll_pos < 0 {
                         scroll_pos = 0;
                     }
-                    if let Some(hit) = self.side_hit_test(
+                    if let Some(hit) = self.if_hit_test(
                         children[i],
                         mouse_x,
                         mouse_y,
@@ -5009,6 +5056,11 @@ impl Client {
         if self.shell.mouse_click_button != 1 {
             return;
         }
+        // Java Client.java 5829: a main modal eats the viewport click, so
+        // there is no world walk while it is open.
+        if self.main_modal_id != -1 {
+            return;
+        }
         let (x, y) = (self.shell.mouse_click_x, self.shell.mouse_click_y);
         if !(4..516).contains(&x) || !(4..338).contains(&y) {
             return;
@@ -5882,8 +5934,8 @@ impl Client {
 
     /// `gameLoop` from Java (`Client.java` 9341): count down a pending
     /// logout request, read up to five TCP packets, the side-tab click
-    /// pass (TS `iconLoop`), the side-interface button pass
-    /// (`buildMinimenu` side branch), the chat key pass (TS
+    /// pass (TS `iconLoop`), the side/main/chat interface button passes
+    /// (`buildMinimenu` branches), the chat key pass (TS
     /// `handleInputKey`), the
     /// in-game silence watchdog (`timeoutTimer > 750` → `lostCon`), then
     /// idle `NO_TIMEOUT` and flush `out` through `ClientStream::write`.
@@ -5912,6 +5964,8 @@ impl Client {
         }
         self.handle_tab_clicks();
         self.handle_side_if_clicks();
+        self.handle_main_if_clicks();
+        self.handle_chat_if_clicks();
         self.chat_mode_loop();
         self.handle_chat_input();
         // consume the previous frame's `World` ground pick (TS 2310-2323)

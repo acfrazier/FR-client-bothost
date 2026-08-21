@@ -1007,3 +1007,75 @@ fn inv_number_formats_k_and_m() {
     assert_eq!(c.inv_number(150_000), "150K");
     assert_eq!(c.inv_number(12_000_000), "12M");
 }
+
+// ---- main/chat modal drawing and clicks (slice 3 Task 2) ----
+
+#[test]
+fn draw_chat_uses_chat_modal_instead_of_lines() {
+    let mut c = client();
+    c.ingame = true;
+    c.game_draw(); // prepare_game allocates area_chat
+    c.chat_text[0] = "hello".into();
+    c.chat_modal_id = 1;
+    let mut layer = IfType::default();
+    layer.r#type = ComponentType::TYPE_LAYER;
+    layer.width = 479;
+    layer.height = 96;
+    layer.children = Some(vec![2]);
+    layer.child_x = Some(vec![0]);
+    layer.child_y = Some(vec![0]);
+    let mut rect = IfType::default();
+    rect.r#type = ComponentType::TYPE_RECT;
+    rect.fill = true;
+    rect.width = 40;
+    rect.height = 10;
+    rect.colour = 0x00ff00;
+    c.cache.ifaces.resize(3, None);
+    c.cache.ifaces[1] = Some(layer);
+    c.cache.ifaces[2] = Some(rect);
+    c.redraw_chat = true;
+    c.game_draw();
+    let chat = c.area_chat.as_ref().expect("prepare_game allocates area_chat");
+    assert!(
+        chat.pixels.iter().any(|&p| p & 0xffffff == 0x00ff00),
+        "chat modal TYPE_RECT must plot into area_chat"
+    );
+}
+
+#[test]
+fn main_modal_click_sends_if_button() {
+    let mut c = client();
+    c.main_modal_id = 1;
+    let mut layer = IfType::default();
+    layer.r#type = ComponentType::TYPE_LAYER;
+    layer.width = 512;
+    layer.height = 334;
+    layer.children = Some(vec![2]);
+    layer.child_x = Some(vec![10]);
+    layer.child_y = Some(vec![10]);
+    let mut btn = IfType::default();
+    btn.r#type = ComponentType::TYPE_TEXT;
+    btn.button_type = ButtonType::BUTTON_OK;
+    btn.width = 80;
+    btn.height = 20;
+    c.cache.ifaces.resize(3, None);
+    c.cache.ifaces[1] = Some(layer);
+    c.cache.ifaces[2] = Some(btn);
+    c.shell.apply_mouse_down(1, 4 + 10 + 5, 4 + 10 + 5);
+    c.shell.latch_click();
+    c.handle_main_if_clicks();
+    assert_eq!(c.out.data()[0], ClientProt::IF_BUTTON.id as u8);
+    assert_eq!(c.out.data()[1], 0);
+    assert_eq!(c.out.data()[2], 2);
+}
+
+#[test]
+fn mouse_loop_skips_walk_when_main_modal_open() {
+    let mut c = client();
+    c.main_modal_id = 1;
+    c.shell.apply_mouse_down(1, 100, 100);
+    c.shell.latch_click();
+    let pos = c.out.pos;
+    c.mouse_loop();
+    assert_eq!(c.out.pos, pos);
+}
