@@ -158,6 +158,12 @@ mod device {
     /// 22050 Hz, the rustysynth/JagFX rate (tinymidipcm.js `sampleRate`).
     const SAMPLE_RATE: u32 = 22050;
 
+    /// rustysynth-only headroom on the synth samples in the i16 mix: 274
+    /// Java has no extra gain, and Task 6's chorus-off did not stop the live
+    /// scape_main flute clip. JagFX `waves` are already i16 and stay
+    /// unscaled.
+    const RUSTYSYNTH_MIX_SCALE: f32 = 0.5;
+
     /// The open speaker. Dropping the `Stream` stops the callback.
     pub struct AudioOut {
         _stream: cpal::Stream,
@@ -315,8 +321,10 @@ mod device {
                 let mut wave = drained.into_iter();
                 for (frame, out) in data.chunks_exact_mut(2).enumerate() {
                     let w = wave.next().unwrap_or(0) as f32;
-                    out[0] = (left[frame] * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
-                    out[1] = (right[frame] * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
+                    out[0] = (left[frame] * gain * RUSTYSYNTH_MIX_SCALE * 32767.0 + w)
+                        .clamp(-32768.0, 32767.0) as i16;
+                    out[1] = (right[frame] * gain * RUSTYSYNTH_MIX_SCALE * 32767.0 + w)
+                        .clamp(-32768.0, 32767.0) as i16;
                 }
             } else {
                 for (frame, out) in data.chunks_exact_mut(2).enumerate() {
@@ -328,8 +336,10 @@ mod device {
                     let l = left[i] * (1.0 - frac) + left[i1] * frac;
                     let r = right[i] * (1.0 - frac) + right[i1] * frac;
                     let w = *drained.get(i).unwrap_or(&0) as f32;
-                    out[0] = (l * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
-                    out[1] = (r * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
+                    out[0] = (l * gain * RUSTYSYNTH_MIX_SCALE * 32767.0 + w)
+                        .clamp(-32768.0, 32767.0) as i16;
+                    out[1] = (r * gain * RUSTYSYNTH_MIX_SCALE * 32767.0 + w)
+                        .clamp(-32768.0, 32767.0) as i16;
                 }
             }
         }
@@ -366,7 +376,21 @@ mod device {
             let mut data = vec![0i16; 4];
             let mut scratch = Vec::new();
             fill_buffer(&mut data, &mut scratch, &midi, &waves, &fade, SAMPLE_RATE, SAMPLE_RATE);
-            assert_eq!(data, vec![16383, 16383, 16383, 16383]);
+            // 0.5 * 1.0 * 0.5 * 32767 = 8191 (trunc toward 0)
+            assert_eq!(data, vec![8191, 8191, 8191, 8191]);
+        }
+
+        #[test]
+        fn mix_applies_rustysynth_headroom() {
+            let fade = Mutex::new(Fade::new());
+            fade.lock().unwrap().finish_fade(0); // gain 1.0
+            let midi = Mutex::new(Tone { level: 0.5 });
+            let waves = Mutex::new(Vec::new());
+            let mut data = vec![0i16; 4];
+            let mut scratch = Vec::new();
+            fill_buffer(&mut data, &mut scratch, &midi, &waves, &fade, SAMPLE_RATE, SAMPLE_RATE);
+            // 0.5 * 1.0 * 0.5 * 32767 = 8191 (trunc toward 0)
+            assert_eq!(data, vec![8191, 8191, 8191, 8191]);
         }
 
         #[test]
@@ -374,12 +398,13 @@ mod device {
             let fade = Mutex::new(Fade::new());
             fade.lock().unwrap().finish_fade(0);
             let midi = Mutex::new(Tone { level: 1.0 });
-            let waves = Mutex::new(vec![500i16, -32768i16]);
+            let waves = Mutex::new(vec![32767i16, -32768i16]);
             let mut data = vec![0i16; 4];
             let mut scratch = Vec::new();
             fill_buffer(&mut data, &mut scratch, &midi, &waves, &fade, SAMPLE_RATE, SAMPLE_RATE);
-            // 32767 + 500 clips to 32767; 32767 + (-32768) = -1
-            assert_eq!(data, vec![32767, 32767, -1, -1]);
+            // 16383 + 32767 clips to 32767; 16383 + (-32768) = -16384:
+            // waves still add at full i16, only the synth path is scaled.
+            assert_eq!(data, vec![32767, 32767, -16384, -16384]);
         }
 
         #[test]
