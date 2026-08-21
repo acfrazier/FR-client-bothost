@@ -6,7 +6,10 @@
 pub trait Midi: Send {
     /// `saveMidi(fading, data)`: start the on-demand archive-2 bytes. The
     /// 274 `midivol` ladder is applied by the output `Fade`, never here.
-    fn play(&mut self, data: &[u8], volume: i32, fading: bool);
+    /// Returns true when the backend accepted the bytes and started them;
+    /// false when the file cannot be played (parse failure), in which case
+    /// the caller must not restore the fade gain.
+    fn play(&mut self, data: &[u8], volume: i32, fading: bool) -> bool;
     /// `stopMidi()`: silence the current song.
     fn stop(&mut self);
     /// True while the backend is still rendering. Headless backends report
@@ -32,7 +35,9 @@ pub trait Midi: Send {
 pub struct NullMidi;
 
 impl Midi for NullMidi {
-    fn play(&mut self, _data: &[u8], _volume: i32, _fading: bool) {}
+    fn play(&mut self, _data: &[u8], _volume: i32, _fading: bool) -> bool {
+        true
+    }
     fn stop(&mut self) {}
     fn set_volume(&mut self, _volume: i32) {}
 }
@@ -127,19 +132,27 @@ mod rusty {
     }
 
     impl Midi for RustyMidi {
-        fn play(&mut self, data: &[u8], _volume: i32, _fading: bool) {
-            let Some(sequencer) = &mut self.sequencer else { return };
+        fn play(&mut self, data: &[u8], _volume: i32, _fading: bool) -> bool {
+            let Some(sequencer) = &mut self.sequencer else {
+                // No soundfont: the backend accepts (and stays silent), like
+                // `NullMidi`; there is nothing to leave playing.
+                return true;
+            };
             let Ok(midi_file) = MidiFile::new_with_loop_type(
                 &mut Cursor::new(data),
                 MidiFileLoopType::RpgMaker,
             ) else {
-                return;
+                // A rejected swap-in must not silently keep the old song: the
+                // caller leaves the fade at the floor, so the previous song
+                // cannot come back at full volume.
+                return false;
             };
             let midi_file = Arc::new(midi_file);
             // One-shot, like the native player behind Java `midisave`: a
             // finished song reports `is_playing()` false, so the next
             // `saveMidi(fading=true)` replaces the file immediately.
             sequencer.play(&midi_file, false);
+            true
         }
 
         fn is_playing(&self) -> bool {

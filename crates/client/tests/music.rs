@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use client::sound::{Fade, Midi};
@@ -27,13 +28,18 @@ fn set_target_vol_jumps_when_not_fading() {
 }
 
 fn client() -> client::client::Client {
-    client::client::Client::new(client::client::ClientConfig {
+    let mut c = client::client::Client::new(client::client::ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
         cache_dir: "/tmp".into(),
         members: true,
         lowmem: false,
-    })
+    });
+    // The control-plane tests drive the fade and the swap by hand; pin the
+    // backend to `NullMidi` so the `audio` feature (a parsing rustysynth)
+    // cannot reject the fake byte arrays these tests pass to `save_midi`.
+    c.midi = Arc::new(Mutex::new(client::sound::NullMidi));
+    c
 }
 
 /// The first song plays now even with `fading=true` (nothing to fade out):
@@ -103,7 +109,9 @@ fn stop_midi_drops_pending() {
 struct EndedMidi;
 
 impl Midi for EndedMidi {
-    fn play(&mut self, _data: &[u8], _volume: i32, _fading: bool) {}
+    fn play(&mut self, _data: &[u8], _volume: i32, _fading: bool) -> bool {
+        true
+    }
     fn stop(&mut self) {}
     fn set_volume(&mut self, _volume: i32) {}
     fn is_playing(&self) -> bool {
@@ -153,4 +161,87 @@ fn music_delay_zero_does_not_requeue_when_midi_inactive() {
     c.sounds_do_queue();
     assert_eq!(c.next_music_delay, 0);
     assert_eq!(c.midi_song, -1);
+}
+
+/// A backend that accepts every play except the zone-swap and jingle bytes
+/// (parse failures): the title plays, the later swaps are rejected.
+struct PickyMidi;
+
+impl Midi for PickyMidi {
+    fn play(&mut self, data: &[u8], _volume: i32, _fading: bool) -> bool {
+        data != &[4, 5, 6] && data != &[7, 8, 9]
+    }
+    fn stop(&mut self) {}
+    fn set_volume(&mut self, _volume: i32) {}
+}
+
+/// A rejected zone-swap play must consume the pending bytes but not restore
+/// the fade: the gain stays at the -36 dB floor, so the previous song
+/// cannot come back at full volume.
+#[test]
+fn failed_zone_swap_consumes_pending_but_keeps_fade_at_floor() {
+    let mut c = client();
+    c.midi = Arc::new(Mutex::new(PickyMidi));
+    c.save_midi(&[1, 2, 3], true); // title plays now
+    assert!(c.midi_playing);
+    c.save_midi(&[4, 5, 6], true); // zone change: held pending
+    assert!(c.midi_pending.is_some());
+    {
+        let mut fade = c.fade.lock().unwrap();
+        fade.step_ms(200 * 50); // ramp past the 144 ticks to -36 dB
+        let floor = fade.gain();
+        drop(fade);
+        c.music_tick();
+        assert!(c.midi_pending.is_none());
+        assert!((c.fade.lock().unwrap().gain() - floor).abs() < 1e-6);
+        assert!((c.fade.lock().unwrap().gain() - 1.0).abs() > 1e-3);
+    }
+}
+
+/// The immediate arm on a failed play does not claim `midi_playing` and does
+/// not drop a zone-swap already held pending.
+#[test]
+fn failed_immediate_play_keeps_state() {
+    let mut c = client();
+    c.midi = Arc::new(Mutex::new(PickyMidi));
+    c.save_midi(&[1, 2, 3], true); // title plays now
+    c.save_midi(&[4, 5, 6], true); // zone change: held pending
+    assert!(c.midi_pending.is_some());
+    c.save_midi(&[7, 8, 9], false); // jingle: immediate arm, rejected
+    assert!(c.midi_pending.is_some()); // the held swap survives
+    assert!(c.midi_playing);
+}
+
+/// A backend that accepts every play, recording the calls.
+struct AcceptingMidi {
+    plays: Arc<AtomicUsize>,
+}
+
+impl Midi for AcceptingMidi {
+    fn play(&mut self, _data: &[u8], _volume: i32, _fading: bool) -> bool {
+        self.plays.fetch_add(1, Ordering::Relaxed);
+        true
+    }
+    fn stop(&mut self) {}
+    fn set_volume(&mut self, _volume: i32) {}
+}
+
+/// A successful swap-in (`play` true) restores the fade to the `midivol`
+/// target once the ramp hits the floor.
+#[test]
+fn successful_swap_restores_gain() {
+    let plays = Arc::new(AtomicUsize::new(0));
+    let mut c = client();
+    c.midi = Arc::new(Mutex::new(AcceptingMidi { plays: plays.clone() }));
+    c.save_midi(&[1, 2, 3], true); // title plays now
+    c.midi_volume = -800;
+    c.save_midi(&[4, 5, 6], true); // zone change: held pending
+    {
+        let mut fade = c.fade.lock().unwrap();
+        fade.step_ms(200 * 50); // ramp to -36 dB, latch swap
+    }
+    c.music_tick();
+    assert!(c.midi_pending.is_none());
+    assert_eq!(plays.load(Ordering::Relaxed), 2); // title + swap
+    assert!((c.fade.lock().unwrap().gain() - 10f32.powf(-800.0 / 2000.0)).abs() < 1e-3);
 }

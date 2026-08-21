@@ -344,7 +344,9 @@ mod device {
         }
 
         impl Midi for Tone {
-            fn play(&mut self, _data: &[u8], _volume: i32, _fading: bool) {}
+            fn play(&mut self, _data: &[u8], _volume: i32, _fading: bool) -> bool {
+                true
+            }
             fn stop(&mut self) {}
             fn set_volume(&mut self, _volume: i32) {}
             fn render(&mut self, left: &mut [f32], right: &mut [f32]) {

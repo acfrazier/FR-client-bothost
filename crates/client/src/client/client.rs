@@ -5977,10 +5977,13 @@ impl Client {
     pub fn save_midi(&mut self, data: &[u8], fading: bool) {
         let mut midi = self.midi.lock().unwrap();
         if !fading || !self.midi_playing || !midi.is_playing() {
-            midi.play(data, self.midi_volume, fading);
-            self.fade.lock().unwrap().finish_fade(self.midi_volume);
-            self.midi_playing = true;
-            self.midi_pending = None;
+            if midi.play(data, self.midi_volume, fading) {
+                self.fade.lock().unwrap().finish_fade(self.midi_volume);
+                self.midi_playing = true;
+                self.midi_pending = None;
+            }
+            // A rejected play keeps the old state: no gain restore, no
+            // `midi_playing`, and any held pending swap survives.
         } else {
             self.midi_pending = Some((data.to_vec(), self.midi_volume));
             self.fade.lock().unwrap().fade_out();
@@ -5996,8 +5999,11 @@ impl Client {
             return;
         }
         if let Some((data, volume)) = self.midi_pending.take() {
-            self.midi.lock().unwrap().play(&data, volume, false);
-            self.fade.lock().unwrap().finish_fade(volume);
+            if self.midi.lock().unwrap().play(&data, volume, false) {
+                self.fade.lock().unwrap().finish_fade(volume);
+            }
+            // A rejected swap-in leaves the fade at the floor: the new song
+            // never started, so the old song must not come back at volume.
         }
     }
 
