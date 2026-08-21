@@ -1657,3 +1657,129 @@ fn active_text_uses_text2() {
         "an active text must render text2, not text"
     );
 }
+
+// ---- inventory obj-drag (Task 8) ----
+
+#[test]
+fn swap_slots_exchanges_type_and_count() {
+    let mut com = IfType {
+        link_obj_type: Some(vec![10, 20]),
+        link_obj_number: Some(vec![1, 5]),
+        ..IfType::default()
+    };
+    com.swap_slots(0, 1);
+    assert_eq!(com.link_obj_type.as_ref().unwrap(), &vec![20, 10]);
+    assert_eq!(com.link_obj_number.as_ref().unwrap(), &vec![5, 1]);
+}
+
+#[test]
+fn obj_drag_release_sends_inv_buttond() {
+    let mut c = client();
+    c.side_modal_id = 1;
+    let layer = IfType {
+        id: 1,
+        r#type: ComponentType::TYPE_LAYER,
+        width: 190,
+        height: 261,
+        children: Some(vec![2]),
+        child_x: Some(vec![0]),
+        child_y: Some(vec![0]),
+        ..IfType::default()
+    };
+    let inv = IfType {
+        id: 2,
+        layer_id: 1,
+        r#type: ComponentType::TYPE_INV,
+        obj_swap: true,
+        width: 2,
+        height: 1,
+        margin_x: 0,
+        margin_y: 0,
+        link_obj_type: Some(vec![5, 0]),
+        link_obj_number: Some(vec![1, 0]),
+        ..IfType::default()
+    };
+    c.cache.ifaces.resize(3, None);
+    c.cache.ifaces[1] = Some(layer);
+    c.cache.ifaces[2] = Some(inv);
+    // grab slot 0
+    c.shell.apply_mouse_down(1, 553 + 16, 205 + 16);
+    c.shell.latch_click();
+    c.handle_side_if_clicks();
+    assert_eq!(c.obj_drag_area, 2);
+    assert_eq!(c.obj_drag_slot, 0);
+    // move past 5px and hold for 5 cycles
+    c.shell.mouse_x = 553 + 16 + 40;
+    c.shell.mouse_y = 205 + 16;
+    c.shell.mouse_button = 1;
+    for _ in 0..5 {
+        c.handle_obj_drag();
+    }
+    // drop on slot 1
+    c.shell.mouse_x = 553 + 32 + 16;
+    c.shell.mouse_y = 205 + 16;
+    c.shell.mouse_button = 0;
+    c.handle_obj_drag();
+    assert_eq!(c.obj_drag_area, 0);
+    assert_eq!(
+        c.cache.ifaces[2].as_ref().unwrap().link_obj_type.as_ref().unwrap()[1],
+        5
+    );
+    // INV_BUTTOND (id 93): p1_enc(93) p2(com) p2(src) p2(dst) p1(mode),
+    // p2 big-endian — dst 1 is bytes [5]=0, [6]=1
+    assert_eq!(c.out.data()[0], ClientProt::INV_BUTTOND.id as u8);
+    assert_eq!(c.out.data()[1], 0);
+    assert_eq!(c.out.data()[2], 2);
+    assert_eq!(c.out.data()[3], 0);
+    assert_eq!(c.out.data()[4], 0);
+    assert_eq!(c.out.data()[5], 0);
+    assert_eq!(c.out.data()[6], 1);
+    assert_eq!(c.out.data()[7], 0);
+}
+
+#[test]
+fn obj_drag_release_without_threshold_does_not_send() {
+    let mut c = client();
+    c.side_modal_id = 1;
+    let layer = IfType {
+        id: 1,
+        r#type: ComponentType::TYPE_LAYER,
+        width: 190,
+        height: 261,
+        children: Some(vec![2]),
+        child_x: Some(vec![0]),
+        child_y: Some(vec![0]),
+        ..IfType::default()
+    };
+    let inv = IfType {
+        id: 2,
+        layer_id: 1,
+        r#type: ComponentType::TYPE_INV,
+        obj_swap: true,
+        width: 2,
+        height: 1,
+        margin_x: 0,
+        margin_y: 0,
+        link_obj_type: Some(vec![5, 0]),
+        link_obj_number: Some(vec![1, 0]),
+        ..IfType::default()
+    };
+    c.cache.ifaces.resize(3, None);
+    c.cache.ifaces[1] = Some(layer);
+    c.cache.ifaces[2] = Some(inv);
+    c.shell.apply_mouse_down(1, 553 + 16, 205 + 16);
+    c.shell.latch_click();
+    c.handle_side_if_clicks();
+    assert_eq!(c.obj_drag_area, 2);
+    // release on the same spot: below the ±5px threshold, no INV_BUTTOND
+    c.shell.mouse_x = 553 + 16;
+    c.shell.mouse_y = 205 + 16;
+    c.shell.mouse_button = 0;
+    c.handle_obj_drag();
+    assert_eq!(c.obj_drag_area, 0);
+    assert_eq!(c.out.pos, 0, "a cancelled drag must not send or move items");
+    assert_eq!(
+        c.cache.ifaces[2].as_ref().unwrap().link_obj_type.as_ref().unwrap(),
+        &vec![5, 0]
+    );
+}

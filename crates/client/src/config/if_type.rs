@@ -178,6 +178,20 @@ impl Default for IfType {
 }
 
 impl IfType {
+    /// `swapSlots` from client-ts IfType.ts 350-361: exchange the object
+    /// id and count of two inventory slots.
+    pub fn swap_slots(&mut self, src: usize, dst: usize) {
+        if self.link_obj_type.is_none() || self.link_obj_number.is_none() {
+            return;
+        }
+        let (t, n) = (
+            self.link_obj_type.as_mut().unwrap(),
+            self.link_obj_number.as_mut().unwrap(),
+        );
+        t.swap(src, dst);
+        n.swap(src, dst);
+    }
+
     /// Component ids are sparse, so this returns `Vec<Option<IfType>>`
     /// indexed by component id (the TS `list` array grows the same way).
     pub fn unpack(jag: &JagFile) -> Vec<Option<IfType>> {

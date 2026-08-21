@@ -613,11 +613,19 @@ impl Client {
             self.game_draw_main();
         }
 
-        // `sideModalId`/`animateInterface` redrawSide trigger (TS 3931-3937);
-        // the isMenuOpen/selectedArea/objDragArea triggers are not ported.
+        // `sideModalId`/`animateInterface` redrawSide trigger (TS 3931-3937).
         if self.side_modal_id != -1
             && self.animate_interface(self.side_modal_id, self.world_update_num)
         {
+            self.redraw_side = true;
+        }
+
+        // TS 3935-3941: the OP_HELD outline and the in-flight obj drag
+        // redraw the side panel every frame.
+        if self.selected_area == 2 {
+            self.redraw_side = true;
+        }
+        if self.obj_drag_area == 2 {
             self.redraw_side = true;
         }
 
@@ -626,8 +634,7 @@ impl Client {
             self.redraw_side = false;
         }
 
-        // `chatModalId`/`animateInterface` redrawChat trigger (TS 3966-3971);
-        // the tutComMessage trigger is not ported.
+        // `chatModalId`/`animateInterface` redrawChat trigger (TS 3966-3971).
 
         // TS 3948-3967: with no chat modal the chat scrollbar is live. The
         // held-arrow step goes through `chat_interface` (a synthetic IfType,
@@ -663,6 +670,15 @@ impl Client {
         if self.chat_modal_id != -1
             && self.animate_interface(self.chat_modal_id, self.world_update_num)
         {
+            self.redraw_chat = true;
+        }
+
+        // TS 3977-3982: the OP_HELD outline and the in-flight obj drag
+        // redraw the chat panel every frame.
+        if self.selected_area == 3 {
+            self.redraw_chat = true;
+        }
+        if self.obj_drag_area == 3 {
             self.redraw_chat = true;
         }
 
@@ -1566,6 +1582,12 @@ impl Client {
         let child_y = com.child_y.clone().unwrap_or_default();
         let width = com.width;
         let height = com.height;
+        // The dragged icon autoscrolls the layer holding the TYPE_INV
+        // (TS 9990-10017); track the live scroll here and write it back
+        // after the children loop (the `com` borrow must end first).
+        let base_scroll = com.scroll_pos;
+        let mut layer_scroll = base_scroll;
+        let layer_sh = com.scroll_height;
 
         let left = surface.clip_min_x;
         let top = surface.clip_min_y;
@@ -1768,12 +1790,14 @@ impl Client {
                     }
                 }
                 ComponentType::TYPE_INV => {
-                    // Java Client.java 9746-9820: the slot grid of item
-                    // icons (lit 2D obj sprites) and stack-count text. The
-                    // `objDragArea`/`selectedArea`/`useMode` drag branches
-                    // and the selected-slot white outline are not ported
-                    // (drag state does not exist yet), so the static icon is
-                    // drawn at `slot_x`/`slot_y` with outline 0.
+                    // Java Client.java 9746-9820 / TS 9965-10039: the slot
+                    // grid of item icons (lit 2D obj sprites) and
+                    // stack-count text. The dragged slot plots
+                    // `trans_plot_sprite` at 128 alpha with the grab offset
+                    // (and autoscrolls the parent layer at the viewport
+                    // edges); the last OP_HELD slot stays translucent until
+                    // the `selected_area` timeout; `use_mode == 1` outlines
+                    // the selected use target in white (16777215).
                     let Some(link_obj_type) = &child.link_obj_type else {
                         continue;
                     };
@@ -1793,36 +1817,134 @@ impl Client {
                                     slot_y += ys[slot as usize];
                                 }
                             }
-                            if link_obj_type.get(slot as usize).copied().unwrap_or(0) > 0
-                                && slot_x > surface.clip_min_x - 32
-                                && slot_x < surface.clip_max_x
-                                && slot_y > surface.clip_min_y - 32
-                                && slot_y < surface.clip_max_y
-                            {
+                            if link_obj_type.get(slot as usize).copied().unwrap_or(0) > 0 {
                                 let id = link_obj_type[slot as usize] - 1;
                                 let count = link_obj_number[slot as usize];
-                                if let Some(sprite) = ObjType::get_sprite(
-                                    &self.cache,
-                                    &mut self.pix3d,
-                                    id,
-                                    0,
-                                    count,
-                                ) {
-                                    sprite.plot_sprite(surface, slot_x, slot_y);
-                                    // Java 9807-9811: stack counts when the
-                                    // sprite is a stack (owi 33) or the
-                                    // count isn't 1.
-                                    if sprite.owi == 33 || count != 1 {
-                                        let text = self.inv_number(count);
-                                        if let Some(p11) = self.p11.as_mut() {
-                                            p11.draw_string_tag(
-                                                surface, &text, slot_x + 1, slot_y + 10, 0,
-                                                false,
+                                let mut dx = 0;
+                                let mut dy = 0;
+                                let dragging = self.obj_drag_area != 0
+                                    && self.obj_drag_slot == slot
+                                    && self.obj_drag_com_id == child.id;
+                                // TS 9967-9968: the dragged slot draws even
+                                // outside the clip rect (it follows the
+                                // pointer past the panel edge).
+                                if (slot_x > surface.clip_min_x - 32
+                                    && slot_x < surface.clip_max_x
+                                    && slot_y > surface.clip_min_y - 32
+                                    && slot_y < surface.clip_max_y)
+                                    || (self.obj_drag_area != 0 && self.obj_drag_slot == slot)
+                                {
+                                    let outline = if self.use_mode == 1
+                                        && self.obj_selected_slot == slot
+                                        && self.obj_selected_com_id == child.id
+                                    {
+                                        16777215
+                                    } else {
+                                        0
+                                    };
+                                    if let Some(sprite) = ObjType::get_sprite(
+                                        &self.cache,
+                                        &mut self.pix3d,
+                                        id,
+                                        outline,
+                                        count,
+                                    ) {
+                                        if dragging {
+                                            // TS 9975-9989: the grab offset,
+                                            // snapped to 0 under ±5px and
+                                            // before 5 held cycles.
+                                            dx = self.shell.mouse_x - self.obj_grab_x;
+                                            dy = self.shell.mouse_y - self.obj_grab_y;
+                                            if dx < 5 && dx > -5 {
+                                                dx = 0;
+                                            }
+                                            if dy < 5 && dy > -5 {
+                                                dy = 0;
+                                            }
+                                            if self.obj_drag_cycles < 5 {
+                                                dx = 0;
+                                                dy = 0;
+                                            }
+                                            sprite.trans_plot_sprite(
+                                                surface,
+                                                slot_x + dx,
+                                                slot_y + dy,
+                                                128,
                                             );
-                                            p11.draw_string_tag(
-                                                surface, &text, slot_x, slot_y + 9, 16776960,
-                                                false,
-                                            );
+                                            // TS 9990-10017: dragging past
+                                            // the layer's viewport edge
+                                            // autoscrolls the parent layer
+                                            // and shifts the grab point by
+                                            // the same amount.
+                                            if slot_y + dy < surface.clip_min_y && layer_scroll > 0
+                                            {
+                                                let mut autoscroll =
+                                                    ((surface.clip_min_y - slot_y - dy)
+                                                        * self.world_update_num)
+                                                        / 3;
+                                                if autoscroll > self.world_update_num * 10 {
+                                                    autoscroll = self.world_update_num * 10;
+                                                }
+                                                if autoscroll > layer_scroll {
+                                                    autoscroll = layer_scroll;
+                                                }
+                                                layer_scroll -= autoscroll;
+                                                self.obj_grab_y += autoscroll;
+                                            }
+                                            if slot_y + dy + 32 > surface.clip_max_y
+                                                && layer_scroll < layer_sh - height
+                                            {
+                                                let mut autoscroll = ((slot_y + dy + 32
+                                                    - surface.clip_max_y)
+                                                    * self.world_update_num)
+                                                    / 3;
+                                                if autoscroll > self.world_update_num * 10 {
+                                                    autoscroll = self.world_update_num * 10;
+                                                }
+                                                if autoscroll
+                                                    > layer_sh - height - layer_scroll
+                                                {
+                                                    autoscroll =
+                                                        layer_sh - height - layer_scroll;
+                                                }
+                                                layer_scroll += autoscroll;
+                                                self.obj_grab_y -= autoscroll;
+                                            }
+                                        } else if self.selected_area != 0
+                                            && self.selected_item == slot
+                                            && self.selected_com_id == child.id
+                                        {
+                                            // TS 10019-10021: the OP_HELD
+                                            // slot stays translucent until
+                                            // its 15-cycle timeout.
+                                            sprite.trans_plot_sprite(surface, slot_x, slot_y, 128);
+                                        } else {
+                                            sprite.plot_sprite(surface, slot_x, slot_y);
+                                        }
+                                        // Java 9807-9811: stack counts when
+                                        // the sprite is a stack (owi 33) or
+                                        // the count isn't 1; the drag offset
+                                        // follows the icon (TS 10027-10029).
+                                        if sprite.owi == 33 || count != 1 {
+                                            let text = self.inv_number(count);
+                                            if let Some(p11) = self.p11.as_mut() {
+                                                p11.draw_string_tag(
+                                                    surface,
+                                                    &text,
+                                                    slot_x + dx + 1,
+                                                    slot_y + dy + 10,
+                                                    0,
+                                                    false,
+                                                );
+                                                p11.draw_string_tag(
+                                                    surface,
+                                                    &text,
+                                                    slot_x + dx,
+                                                    slot_y + dy + 9,
+                                                    16776960,
+                                                    false,
+                                                );
+                                            }
                                         }
                                     }
                                 }
@@ -1973,6 +2095,13 @@ impl Client {
                     self.pix3d.origin_y = saved_origin_y;
                 }
                 _ => {}
+            }
+        }
+
+        // write back the drag-autoscrolled layer scroll (TS 9990-10017).
+        if layer_scroll != base_scroll {
+            if let Some(c) = self.cache.ifaces.get_mut(com_id as usize).and_then(|o| o.as_mut()) {
+                c.scroll_pos = layer_scroll;
             }
         }
 

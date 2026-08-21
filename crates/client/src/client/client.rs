@@ -54,6 +54,10 @@ const LOGIN_UID: i32 = 1337;
 /// arms `logoutTimer` (Java `Client.java` 8746).
 const CC_LOGOUT: i32 = 205;
 
+/// Client code of the bank inventory interface; the bank arrange-mode
+/// toggle makes obj-drag insert instead of swap (TS `CC_BANKMODE`).
+const CC_BANKMODE: i32 = 206;
+
 /// Client code of the Report abuse button; `chatModeLoop` records
 /// `main_modal_id` from the first interface with this code (TS
 /// `ClientCode.CC_REPORT_INPUT`).
@@ -348,6 +352,27 @@ pub struct Client {
     pub obj_com_id: i32,
     pub obj_selected_slot: i32,
     pub obj_selected_com_id: i32,
+    /// `selectedArea`/`selectedComId`/`selectedItem`/`selectedCycle`
+    /// (TS 378-381): the last OP_HELD slot and its 15-cycle outline
+    /// timeout, cleared in `game_loop`.
+    pub selected_area: i32,
+    pub selected_com_id: i32,
+    pub selected_item: i32,
+    pub selected_cycle: i32,
+    /// `objDragArea`/`objDragComId`/`objDragSlot`/`objGrabX`/`objGrabY`/
+    /// `objGrabThreshold`/`objDragCycles` (TS 383-391): the in-flight
+    /// inventory drag grabbed from a TYPE_INV click. `obj_drag_area` is
+    /// 1 main modal, 2 side panel, 3 chat modal, 0 none.
+    pub obj_drag_area: i32,
+    pub obj_drag_com_id: i32,
+    pub obj_drag_slot: i32,
+    pub obj_grab_x: i32,
+    pub obj_grab_y: i32,
+    pub obj_grab_threshold: bool,
+    pub obj_drag_cycles: i32,
+    /// `bankArrangeMode` (TS): the bank's arrange-mode toggle; when 1,
+    /// drops into a bank interface insert instead of swapping.
+    pub bank_arrange_mode: i32,
 
     pub out: Packet,
     pub r#in: Packet,
@@ -749,6 +774,18 @@ impl Client {
             obj_com_id: 0,
             obj_selected_slot: 0,
             obj_selected_com_id: 0,
+            selected_area: 0,
+            selected_com_id: 0,
+            selected_item: 0,
+            selected_cycle: 0,
+            obj_drag_area: 0,
+            obj_drag_com_id: 0,
+            obj_drag_slot: 0,
+            obj_grab_x: 0,
+            obj_grab_y: 0,
+            obj_grab_threshold: false,
+            obj_drag_cycles: 0,
+            bank_arrange_mode: 0,
 
             out: Packet::alloc(1),
             r#in: Packet::alloc(1),
@@ -2466,6 +2503,221 @@ impl Client {
         }
     }
 
+    /// TS 2229-2300: the in-flight inventory drag tick, run from
+    /// `game_loop` before `handle_tab_clicks` (TS 2214-2300). Cycles count
+    /// frames, the grab threshold arms once the pointer moves past ±5 px,
+    /// and release reads `mouse_button == 0` (held state, not the click
+    /// latch). A real drop (threshold + 5 held cycles) moves the item
+    /// (`obj_replace` copy, bank-arrange insert, or `swap_slots`) and
+    /// writes `INV_BUTTOND`; a cancelled drag never `doAction`/`openMenu`
+    /// (the minimenu is slice 4, TS drops those branches too).
+    pub fn handle_obj_drag(&mut self) {
+        if self.obj_drag_area == 0 {
+            return;
+        }
+        self.obj_drag_cycles += 1;
+        if self.shell.mouse_x > self.obj_grab_x + 5
+            || self.shell.mouse_x < self.obj_grab_x - 5
+            || self.shell.mouse_y > self.obj_grab_y + 5
+            || self.shell.mouse_y < self.obj_grab_y - 5
+        {
+            self.obj_grab_threshold = true;
+        }
+        if self.shell.mouse_button != 0 {
+            return;
+        }
+        if self.obj_drag_area == 2 {
+            self.redraw_side = true;
+        }
+        if self.obj_drag_area == 3 {
+            self.redraw_chat = true;
+        }
+        self.obj_drag_area = 0;
+        if self.obj_grab_threshold && self.obj_drag_cycles >= 5 {
+            // drop: re-walk the pointer so `hovered_slot`/`hovered_slot_com_id`
+            // are the live drop target, not the pre-drag hover (TS 2247-2248).
+            self.hovered_slot_com_id = -1;
+            self.update_if_pointer();
+            if self.hovered_slot_com_id == self.obj_drag_com_id
+                && self.hovered_slot != self.obj_drag_slot
+            {
+                let com_id = self.obj_drag_com_id as usize;
+                let src = self.obj_drag_slot as usize;
+                let dst = self.hovered_slot as usize;
+                if let Some(com) = self.cache.ifaces.get_mut(com_id).and_then(|o| o.as_mut()) {
+                    let mut mode = 0;
+                    if self.bank_arrange_mode == 1 && com.client_code == CC_BANKMODE {
+                        mode = 1;
+                    }
+                    if com
+                        .link_obj_type
+                        .as_ref()
+                        .is_some_and(|t| t.get(dst).copied().unwrap_or(0) <= 0)
+                    {
+                        mode = 0;
+                    }
+                    // TS 2261-2281: `obj_replace` moves src into dst (copy,
+                    // then clear src); bank arrange inserts by bubbling the
+                    // item toward dst; otherwise the two slots swap.
+                    match (com.obj_replace, com.link_obj_type.as_mut(), com.link_obj_number.as_mut())
+                    {
+                        (true, Some(t), Some(n)) => {
+                            t[dst] = t[src];
+                            n[dst] = n[src];
+                            t[src] = -1;
+                            n[src] = 0;
+                        }
+                        (_, _, _) if mode == 1 => {
+                            let mut s = self.obj_drag_slot;
+                            while s != self.hovered_slot {
+                                if s > self.hovered_slot {
+                                    com.swap_slots(s as usize, (s - 1) as usize);
+                                    s -= 1;
+                                } else {
+                                    com.swap_slots(s as usize, (s + 1) as usize);
+                                    s += 1;
+                                }
+                            }
+                        }
+                        _ => {
+                            com.swap_slots(src, dst);
+                        }
+                    }
+                    self.out.p1_enc(ClientProt::INV_BUTTOND.id);
+                    self.out.p2(self.obj_drag_com_id);
+                    self.out.p2(self.obj_drag_slot);
+                    self.out.p2(self.hovered_slot);
+                    self.out.p1(mode);
+                }
+            }
+        }
+        // TS 2298-2299: with the drop consumed, reset the outline timeout
+        // and clear the click so the tab/side/main/chat click handlers that
+        // run after this tick don't also fire on the release frame.
+        self.selected_cycle = 10;
+        self.shell.mouse_click_button = 0;
+    }
+
+    /// TS `mouseLoop` drag start (8343-8368), ported without the minimenu:
+    /// a left click on a TYPE_INV slot holding an item (`obj_swap` or
+    /// `obj_replace`) grabs it. Returns true when a drag started so the
+    /// click handler returns without hitting `IF_BUTTON`.
+    fn obj_drag_start(&mut self, com_id: i32, slot: i32, x: i32, y: i32) -> bool {
+        let Some(com) = self.cache.ifaces.get(com_id as usize).and_then(|o| o.as_ref()) else {
+            return false;
+        };
+        if !(com.obj_swap || com.obj_replace) {
+            return false;
+        }
+        if com
+            .link_obj_type
+            .as_ref()
+            .is_some_and(|t| t.get(slot as usize).copied().unwrap_or(0) <= 0)
+        {
+            return false;
+        }
+        self.obj_grab_threshold = false;
+        self.obj_drag_cycles = 0;
+        self.obj_drag_com_id = com_id;
+        self.obj_drag_slot = slot;
+        self.obj_drag_area = 2;
+        self.obj_grab_x = x;
+        self.obj_grab_y = y;
+        if com.layer_id == self.main_modal_id {
+            self.obj_drag_area = 1;
+        }
+        if com.layer_id == self.chat_modal_id {
+            self.obj_drag_area = 3;
+        }
+        true
+    }
+
+    /// The TYPE_INV slot under `(mouse_x, mouse_y)` in the tree rooted at
+    /// `com_id`, mirroring `add_component_hover`'s slot math
+    /// (`col * (margin_x + 32)`) and `if_hit_test`'s layer walk/scroll
+    /// clamp. Returns `(com_id, slot)` of the first hit inventory child —
+    /// the drag-start grab and the drop-target read both use it.
+    fn inv_slot_hit(
+        &self,
+        com_id: i32,
+        mouse_x: i32,
+        mouse_y: i32,
+        x: i32,
+        y: i32,
+        scroll: i32,
+    ) -> Option<(i32, i32)> {
+        let com = self
+            .cache
+            .ifaces
+            .get(com_id as usize)
+            .and_then(|o| o.as_ref())?;
+        if com.r#type != ComponentType::TYPE_LAYER || com.hide {
+            return None;
+        }
+        if mouse_x < x || mouse_y < y || mouse_x > x + com.width || mouse_y > y + com.height {
+            return None;
+        }
+        let children = com.children.as_ref()?;
+        let child_x = com.child_x.as_ref()?;
+        let child_y = com.child_y.as_ref()?;
+        for i in 0..children.len() {
+            let child_id = children[i] as usize;
+            let Some(child) = self.cache.ifaces.get(child_id).and_then(|o| o.as_ref()) else {
+                continue;
+            };
+            let child_x = child_x[i] + x + child.x;
+            let child_y = child_y[i] + y - scroll + child.y;
+            match child.r#type {
+                ComponentType::TYPE_LAYER => {
+                    let mut scroll_pos = child.scroll_pos;
+                    if scroll_pos > child.scroll_height - child.height {
+                        scroll_pos = child.scroll_height - child.height;
+                    }
+                    if scroll_pos < 0 {
+                        scroll_pos = 0;
+                    }
+                    if let Some(hit) = self.inv_slot_hit(
+                        children[i],
+                        mouse_x,
+                        mouse_y,
+                        child_x,
+                        child_y,
+                        scroll_pos,
+                    ) {
+                        return Some(hit);
+                    }
+                }
+                ComponentType::TYPE_INV => {
+                    let mut slot = 0;
+                    for row in 0..child.height {
+                        for col in 0..child.width {
+                            let mut slot_x = child_x + col * (child.margin_x + 32);
+                            let mut slot_y = child_y + row * (child.margin_y + 32);
+                            if slot < 20 {
+                                if let Some(xs) = &child.inv_background_x {
+                                    slot_x += xs[slot as usize];
+                                }
+                                if let Some(ys) = &child.inv_background_y {
+                                    slot_y += ys[slot as usize];
+                                }
+                            }
+                            if mouse_x >= slot_x
+                                && mouse_y >= slot_y
+                                && mouse_x < slot_x + 32
+                                && mouse_y < slot_y + 32
+                            {
+                                return Some((child.id, slot));
+                            }
+                            slot += 1;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
     /// `clientButton` from Java (`Client.java` 8725-8747), ported for the
     /// CC_LOGOUT arm only: `if (var3 == 205) { logoutTimer = 250; return
     /// true; }`. Java returns `false` for the other client codes (handled
@@ -2503,6 +2755,14 @@ impl Client {
         };
         if root_id == -1 {
             return;
+        }
+        // TS `mouseLoop` drag start (8266-8368) without the minimenu: a
+        // click on a TYPE_INV slot holding an item grabs it and returns
+        // (no IF_BUTTON for that click).
+        if let Some((com_id, slot)) = self.inv_slot_hit(root_id, x - 553, y - 205, 0, 0, 0) {
+            if self.obj_drag_start(com_id, slot, x, y) {
+                return;
+            }
         }
         // panel-local coords like the draw_side draw_interface call
         let Some(hit_id) = self.if_hit_test(root_id, x - 553, y - 205, 0, 0, 0) else {
@@ -2594,6 +2854,12 @@ impl Client {
         if self.main_modal_id == -1 || !(4..516).contains(&x) || !(4..338).contains(&y) {
             return;
         }
+        // drag start from a main-modal TYPE_INV slot (`obj_drag_area` 1)
+        if let Some((com_id, slot)) = self.inv_slot_hit(self.main_modal_id, x - 4, y - 4, 0, 0, 0) {
+            if self.obj_drag_start(com_id, slot, x, y) {
+                return;
+            }
+        }
         // viewport-local coords like the other_overlays draw_interface call
         let Some(hit_id) = self.if_hit_test(self.main_modal_id, x - 4, y - 4, 0, 0, 0) else {
             return;
@@ -2612,6 +2878,12 @@ impl Client {
         let (x, y) = (self.shell.mouse_click_x, self.shell.mouse_click_y);
         if self.chat_modal_id == -1 || !(17..496).contains(&x) || !(357..453).contains(&y) {
             return;
+        }
+        // drag start from a chat-modal TYPE_INV slot (`obj_drag_area` 3)
+        if let Some((com_id, slot)) = self.inv_slot_hit(self.chat_modal_id, x - 17, y - 357, 0, 0, 0) {
+            if self.obj_drag_start(com_id, slot, x, y) {
+                return;
+            }
         }
         // chat-local coords like the draw_chat draw_interface call
         let Some(hit_id) = self.if_hit_test(self.chat_modal_id, x - 17, y - 357, 0, 0, 0) else {
@@ -6264,6 +6536,23 @@ impl Client {
         if !self.draw {
             self.world_update_num = 0;
         }
+        // TS 2214-2226: the OP_HELD outline timeout — `selected_cycle`
+        // counts frames and clears `selected_area` at 15 with a redraw.
+        if self.selected_area != 0 {
+            self.selected_cycle += 1;
+            if self.selected_cycle >= 15 {
+                if self.selected_area == 2 {
+                    self.redraw_side = true;
+                }
+                if self.selected_area == 3 {
+                    self.redraw_chat = true;
+                }
+                self.selected_area = 0;
+            }
+        }
+        // TS 2229-2300: the in-flight obj-drag tick runs before the click
+        // handlers so a release consumes the click before `handle_tab_clicks`.
+        self.handle_obj_drag();
         self.handle_tab_clicks();
         self.handle_side_if_clicks();
         self.handle_main_if_clicks();
