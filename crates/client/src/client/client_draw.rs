@@ -267,6 +267,7 @@ impl Client {
             if let Some(b12) = self.b12.as_mut() {
                 b12.centre_string_tag(&mut surface, message, mid_x, y + 22, Colour::WHITE, true);
             }
+            self.present_progress();
             return;
         }
 
@@ -344,6 +345,26 @@ impl Client {
             if let Some(t8) = &self.image_title8 {
                 t8.blit_into(&mut self.draw_area, 562, 171);
             }
+        }
+
+        self.present_progress();
+    }
+
+    /// Java `messageBox` presents immediately. `run` only blits after
+    /// maininit, so the loading bar has to blit here or the title looks
+    /// like loading already finished.
+    fn present_progress(&mut self) {
+        #[cfg(feature = "window")]
+        if let Some(present) = self.present.as_mut() {
+            let _ = present.poll(&mut self.shell);
+        }
+        #[cfg(feature = "window")]
+        if let Some(present) = self.present.as_mut() {
+            present.blit(
+                &self.draw_area.pixels,
+                self.draw_area.width as u32,
+                self.draw_area.height as u32,
+            );
         }
     }
 

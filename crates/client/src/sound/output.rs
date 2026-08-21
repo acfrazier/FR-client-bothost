@@ -158,11 +158,10 @@ mod device {
     /// 22050 Hz, the rustysynth/JagFX rate (tinymidipcm.js `sampleRate`).
     const SAMPLE_RATE: u32 = 22050;
 
-    /// rustysynth-only headroom on the synth samples in the i16 mix: 274
-    /// Java has no extra gain, and Task 6's chorus-off did not stop the live
-    /// scape_main flute clip. JagFX `waves` are already i16 and stay
-    /// unscaled.
-    const RUSTYSYNTH_MIX_SCALE: f32 = 0.5;
+    /// rustysynth-only headroom on the synth samples in the i16 mix. 274
+    /// Java uses the OS midi synth (no extra gain); rustysynth+Florestan
+    /// still rails the flute at 0.5. JagFX `waves` stay unscaled.
+    const RUSTYSYNTH_MIX_SCALE: f32 = 0.25;
 
     /// The open speaker. Dropping the `Stream` stops the callback.
     pub struct AudioOut {
@@ -376,8 +375,8 @@ mod device {
             let mut data = vec![0i16; 4];
             let mut scratch = Vec::new();
             fill_buffer(&mut data, &mut scratch, &midi, &waves, &fade, SAMPLE_RATE, SAMPLE_RATE);
-            // 0.5 * 1.0 * 0.5 * 32767 = 8191 (trunc toward 0)
-            assert_eq!(data, vec![8191, 8191, 8191, 8191]);
+            // 0.5 * 1.0 * 0.25 * 32767 = 4095 (trunc toward 0)
+            assert_eq!(data, vec![4095, 4095, 4095, 4095]);
         }
 
         #[test]
@@ -389,8 +388,8 @@ mod device {
             let mut data = vec![0i16; 4];
             let mut scratch = Vec::new();
             fill_buffer(&mut data, &mut scratch, &midi, &waves, &fade, SAMPLE_RATE, SAMPLE_RATE);
-            // 0.5 * 1.0 * 0.5 * 32767 = 8191 (trunc toward 0)
-            assert_eq!(data, vec![8191, 8191, 8191, 8191]);
+            // 0.5 * 1.0 * 0.25 * 32767 = 4095 (trunc toward 0)
+            assert_eq!(data, vec![4095, 4095, 4095, 4095]);
         }
 
         #[test]
@@ -402,9 +401,9 @@ mod device {
             let mut data = vec![0i16; 4];
             let mut scratch = Vec::new();
             fill_buffer(&mut data, &mut scratch, &midi, &waves, &fade, SAMPLE_RATE, SAMPLE_RATE);
-            // 16383 + 32767 clips to 32767; 16383 + (-32768) = -16384:
-            // waves still add at full i16, only the synth path is scaled.
-            assert_eq!(data, vec![32767, 32767, -16384, -16384]);
+            // 8191.75 + 32767 clips to 32767; 8191.75 + (-32768) = -24576.25
+            // trunc toward 0 → -24576. Waves stay full i16.
+            assert_eq!(data, vec![32767, 32767, -24576, -24576]);
         }
 
         #[test]

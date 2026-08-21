@@ -896,12 +896,12 @@ impl Worker {
             if now.duration_since(self.socket_open_time) < SOCKET_OPEN_GATE {
                 return;
             }
-            self.socket_open_time = now;
             if self.open_socket().is_err() {
                 self.part_available = 0;
                 self.set_fail_count(self.fail_count + 1);
                 return;
             }
+            self.socket_open_time = now;
             self.packet_cycle = 0;
         }
         self.buf[0] = archive as u8;

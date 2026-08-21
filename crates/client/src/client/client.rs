@@ -1089,17 +1089,26 @@ impl Client {
 
             self.draw_progress("Requesting models", 70);
             let model_count = self.on_demand.as_ref().unwrap().get_file_count(0);
+            // Java waits remaining()==0 for `model_use & 1`, then prefetches
+            // the rest. Prefetch is not in remaining() and Rust does not
+            // write the jagex cache, so a title-screen prefetch still
+            // downloads after the bar. Request every model Java would
+            // prefetch (priority != 0, which includes `& 1`) as urgent and
+            // wait here so the loading bar owns the download, matching
+            // Java's "bodies ready at login".
             for i in 0..model_count {
-                if self.on_demand.as_ref().unwrap().get_model_use(i) & 0x1 != 0 {
+                let priority =
+                    OnDemand::model_use_priority(self.on_demand.as_ref().unwrap().get_model_use(i));
+                if priority != 0 {
                     self.on_demand.as_mut().unwrap().request(0, i);
                 }
             }
-            let model_prefetch = self.on_demand.as_ref().unwrap().remaining() as i32;
+            let model_total = self.on_demand.as_ref().unwrap().remaining() as i32;
             while self.on_demand.as_ref().unwrap().remaining() > 0 {
-                let progress = model_prefetch - self.on_demand.as_ref().unwrap().remaining() as i32;
-                if progress > 0 {
+                let progress = model_total - self.on_demand.as_ref().unwrap().remaining() as i32;
+                if progress > 0 && model_total > 0 {
                     self.draw_progress(
-                        &format!("Loading models - {}%", (progress * 100) / model_prefetch),
+                        &format!("Loading models - {}%", (progress * 100) / model_total),
                         70,
                     );
                 }
@@ -1107,20 +1116,32 @@ impl Client {
                 thread::sleep(Duration::from_millis(100));
             }
 
-            // TS maininit 5251-5277: prefetch every remaining model by its
-            // `model_use` priority (the `& 0x1` urgent set above was already
-            // waited on), then the maps. Background only — Java does not wait
-            // on prefetch, so neither do we.
-            for i in 0..model_count {
-                let priority =
-                    OnDemand::model_use_priority(self.on_demand.as_ref().unwrap().get_model_use(i));
-                if priority != 0 {
-                    self.on_demand
-                        .as_mut()
-                        .unwrap()
-                        .prefetch_priority(0, i, priority);
+            // Java `Client.java:5224-5250`: urgent Lumbridge starter maps,
+            // waited on the loading bar (`remaining() == 0`) before title.
+            self.draw_progress("Requesting maps", 75);
+            const LUMBRIDGE_SQUARES: [(i32, i32); 6] =
+                [(47, 48), (48, 48), (49, 48), (47, 47), (48, 47), (48, 148)];
+            for (x, z) in LUMBRIDGE_SQUARES {
+                for ty in [0, 1] {
+                    let file = self.on_demand.as_ref().unwrap().get_map_file(x, z, ty);
+                    if file != -1 {
+                        self.on_demand.as_mut().unwrap().request(3, file);
+                    }
                 }
             }
+            let map_total = self.on_demand.as_ref().unwrap().remaining() as i32;
+            while self.on_demand.as_ref().unwrap().remaining() > 0 {
+                let progress = map_total - self.on_demand.as_ref().unwrap().remaining() as i32;
+                if progress > 0 && map_total > 0 {
+                    self.draw_progress(
+                        &format!("Loading maps - {}%", (progress * 100) / map_total),
+                        75,
+                    );
+                }
+                self.on_demand_loop();
+                thread::sleep(Duration::from_millis(100));
+            }
+
             self.on_demand.as_mut().unwrap().prefetch_maps(self.config.members);
         }
 
