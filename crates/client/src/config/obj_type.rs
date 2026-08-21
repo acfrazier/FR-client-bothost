@@ -258,6 +258,39 @@ impl ObjType {
         self.stackable = true;
     }
 
+    /// `getModelUnlit(count)` from client-ts (ObjType.ts 296-322): the
+    /// un-lit model for interface/head rendering (`IfType.getModel` type 4).
+    /// The count-co walk resolves stackable variants; no `calculate_normals`
+    /// (that is the lit path).
+    pub fn get_model_unlit(&self, cache: &Cache, count: i32) -> Option<Model> {
+        if count > 1 {
+            if let (Some(countobj), Some(countco)) = (&self.countobj, &self.countco) {
+                let mut id = -1;
+                for i in 0..10 {
+                    if count >= countco[i] as i32 && countco[i] != 0 {
+                        id = countobj[i] as i32;
+                    }
+                }
+                if id != -1 {
+                    if (id as usize) < cache.objs.len() {
+                        return cache.objs[id as usize].get_model_unlit(cache, 1);
+                    }
+                    return None;
+                }
+            }
+        }
+
+        let mut model = Model::load(self.model)?;
+
+        if let (Some(rs), Some(rd)) = (&self.recol_s, &self.recol_d) {
+            for i in 0..rs.len() {
+                model.recolour(rs[i] as i32, rd[i] as i32);
+            }
+        }
+
+        Some(model)
+    }
+
     /// `getModelLit(count)` from client-ts.
     pub fn get_model_lit(&self, cache: &Cache, count: i32) -> Option<Model> {
         if let (Some(countobj), Some(countco)) = (&self.countobj, &self.countco) {

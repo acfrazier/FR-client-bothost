@@ -254,4 +254,38 @@ impl NpcType {
 
         Some(tmp)
     }
+
+    /// `getHead()` from client-ts (NpcType.ts 233-267): the NPC's head
+    /// models for the chat-head interface (`IfType.getModel` type 2). Any
+    /// head model that is not yet downloaded returns None; otherwise each
+    /// model loads and they combine, recoloured.
+    pub fn get_head(&self) -> Option<Model> {
+        let heads = self.head.as_ref()?;
+        for &h in heads {
+            if !Model::request_download(h) {
+                return None;
+            }
+        }
+
+        let mut loaded: Vec<Option<Model>> = Vec::with_capacity(heads.len());
+        for &h in heads {
+            loaded.push(Model::load(h));
+        }
+
+        let mut model = if heads.len() == 1 {
+            loaded.into_iter().next().flatten()
+        } else {
+            Some(Model::combine_for_anim(&loaded, loaded.len()))
+        };
+
+        if let Some(model) = model.as_mut() {
+            if let (Some(rs), Some(rd)) = (&self.recol_s, &self.recol_d) {
+                for i in 0..rs.len() {
+                    model.recolour(rs[i] as i32, rd[i] as i32);
+                }
+            }
+        }
+
+        model
+    }
 }

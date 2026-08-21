@@ -3,7 +3,20 @@
 // `unpack` of a config jag returns empty. Sprite loads (`graphic`/`graphic2`
 // and the `invBackground` names are kept and depacked from the `media` jag by
 // `draw_interface`); `font` keeps the font-array index for the same task.
+use std::sync::{Mutex, OnceLock};
+
+use crate::config::Cache;
+use crate::dash3d::{AnimFrame, ClientPlayer, Model};
+use crate::datastruct::LruCache;
 use crate::io::{JagFile, Packet};
+
+// Process-wide by design: an LRU of decoded, immutable models shared by
+// every client (the TS `IfType.modelCache` static). Cache bookkeeping, not
+// per-client draw state; eviction is LRU so clients only contend on the lock.
+fn model_cache() -> &'static Mutex<LruCache<Model>> {
+    static CACHE: OnceLock<Mutex<LruCache<Model>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(LruCache::new(30)))
+}
 
 /// `ComponentType` const enum from client-ts.
 pub struct ComponentType;
@@ -401,5 +414,91 @@ impl IfType {
             list[id as usize] = Some(com);
         }
         list
+    }
+
+    /// `getModel(type, id)` from Java IfType.java 482-506: the cached base
+    /// model for a TYPE_MODEL component. LRU key `(type << 16) + id`; type 1
+    /// loads a model, 2 an NPC head, 3 the local player's head, 4 an obj's
+    /// unlit model (count 50), anything else (5) is null.
+    pub fn get_model(
+        cache: &Cache,
+        local_player: Option<&ClientPlayer>,
+        r#type: i32,
+        id: i32,
+    ) -> Option<Model> {
+        let key = ((r#type as i64) << 16) + id as i64;
+        {
+            let mut model_cache = model_cache().lock().unwrap();
+            if let Some(model) = model_cache.find(key) {
+                return Some(model.clone());
+            }
+        }
+
+        let model = match r#type {
+            1 => Model::load(id),
+            2 => {
+                if (id as usize) < cache.npcs.len() {
+                    cache.npc(id as usize).get_head()
+                } else {
+                    None
+                }
+            }
+            3 => local_player.and_then(|p| p.get_head_model(cache)),
+            4 => {
+                if (id as usize) < cache.objs.len() {
+                    cache.obj(id as usize).get_model_unlit(cache, 50)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+
+        if let Some(model) = &model {
+            model_cache().lock().unwrap().put(model.clone(), key);
+        }
+        model
+    }
+
+    /// `getTempModel(primaryFrame, secondaryFrame, active)` from Java
+    /// IfType.java 454-478 (TS IfType.ts 364-394): the animated model for a
+    /// TYPE_MODEL component, picked from the active (`model2`) or inactive
+    /// (`model1`) slot. With no frame ids and no face colours the base model
+    /// returns directly; otherwise a copy animates both frames and re-lights.
+    pub fn get_temp_model(
+        &self,
+        cache: &Cache,
+        local_player: Option<&ClientPlayer>,
+        primary: i32,
+        secondary: i32,
+        active: bool,
+    ) -> Option<Model> {
+        let base = if active {
+            Self::get_model(cache, local_player, self.model2_type, self.model2_id)
+        } else {
+            Self::get_model(cache, local_player, self.model1_type, self.model1_id)
+        }?;
+
+        if primary == -1 && secondary == -1 && base.face_colour.is_none() {
+            return Some(base);
+        }
+
+        let mut tmp = Model::copy_for_anim(
+            &base,
+            true,
+            AnimFrame::animate_transparencies(primary) && AnimFrame::animate_transparencies(secondary),
+            false,
+        );
+        if primary != -1 || secondary != -1 {
+            tmp.prepare_anim();
+        }
+        if primary != -1 {
+            tmp.animate(primary);
+        }
+        if secondary != -1 {
+            tmp.animate(secondary);
+        }
+        tmp.calculate_normals(64, 768, -50, -10, -50, true);
+        Some(tmp)
     }
 }

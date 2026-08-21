@@ -847,6 +847,9 @@ impl Client {
         let mut game = self.area_game.take();
         if let Some(game) = game.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
+            // `draw_interface`'s TYPE_MODEL arm rasters into this surface:
+            // bind `pix3d` clipping to it once before drawing.
+            self.pix3d.set_clipping(surface.width, surface.height);
             if self.main_overlay_id != -1 {
                 self.animate_interface(self.main_overlay_id, self.world_update_num);
                 self.draw_interface(self.main_overlay_id, 0, 0, 0, &mut surface);
@@ -1478,6 +1481,9 @@ impl Client {
         let mut side = self.area_side.take();
         if let Some(side) = side.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut side.pixels, side.width, side.height);
+            // `draw_interface`'s TYPE_MODEL arm rasters into this surface:
+            // bind `pix3d` clipping to it once before drawing.
+            self.pix3d.set_clipping(surface.width, surface.height);
             if let Some(invback) = &self.invback {
                 invback.plot_sprite(&mut surface, 0, 0);
             }
@@ -1533,9 +1539,11 @@ impl Client {
     /// fill/outline, `TYPE_TEXT` with the font at `com.font` index 0-3
     /// (p11/p12/b12/q8) and the `%1`-`%5` `getIfVar` substitution,
     /// `TYPE_GRAPHIC` from its `media` sprite, `TYPE_INV` item icons +
-    /// stack counts (Java Client.java 9746-9820), and `TYPE_INV_TEXT`
-    /// object-name grids (Java Client.java 9972-9994). `TYPE_MODEL` (3D) is
-    /// skipped; the `clientComponent` scripts load with Task 14.
+    /// stack counts (Java Client.java 9746-9820), `TYPE_INV_TEXT`
+    /// object-name grids (Java Client.java 9972-9994), and `TYPE_MODEL`
+    /// (Java Client.java 9944-9970, via `get_temp_model` + `objRender`).
+    /// The caller binds `pix3d` to the target surface once
+    /// (`set_clipping`); the `clientComponent` scripts load with Task 14.
     pub fn draw_interface(&mut self, com_id: i32, x: i32, y: i32, scroll_y: i32, surface: &mut Pix2D) {
         let Some(com) = self.cache.ifaces.get(com_id as usize).and_then(|o| o.as_ref()) else {
             return;
@@ -1765,8 +1773,7 @@ impl Client {
                     // `objDragArea`/`selectedArea`/`useMode` drag branches
                     // and the selected-slot white outline are not ported
                     // (drag state does not exist yet), so the static icon is
-                    // drawn at `slot_x`/`slot_y` with outline 0. TYPE_MODEL
-                    // remains skipped.
+                    // drawn at `slot_x`/`slot_y` with outline 0.
                     let Some(link_obj_type) = &child.link_obj_type else {
                         continue;
                     };
@@ -1903,9 +1910,69 @@ impl Client {
                         }
                     }
                 }
-                _ => {
-                    // TYPE_MODEL (3D) is skipped this task.
+                ComponentType::TYPE_MODEL => {
+                    // Java Client.java 9944-9970 / TS 10200-10217: the 3D
+                    // model centred on the component. Save/restore the
+                    // raster origin; a missing/unloaded model skips.
+                    let child = child.clone();
+                    let saved_origin_x = self.pix3d.origin_x;
+                    let saved_origin_y = self.pix3d.origin_y;
+                    self.pix3d.origin_x = child_x + child.width / 2;
+                    self.pix3d.origin_y = child_y + child.height / 2;
+
+                    let sin_xan = Pix3D::sin_table()
+                        .get(child.model_xan as usize)
+                        .copied()
+                        .unwrap_or(0);
+                    let cos_xan = Pix3D::cos_table()
+                        .get(child.model_xan as usize)
+                        .copied()
+                        .unwrap_or(0);
+                    let eye_y = sin_xan.wrapping_mul(child.model_zoom) >> 16;
+                    let eye_z = cos_xan.wrapping_mul(child.model_zoom) >> 16;
+
+                    let active = self.get_if_active(&child);
+                    let model_anim = if active { child.model_anim2 } else { child.model_anim };
+                    let local_player = self.local_player.as_ref();
+                    let model = if model_anim == -1 {
+                        child.get_temp_model(&self.cache, local_player, -1, -1, active)
+                    } else if (model_anim as usize) < self.cache.seqs.len() {
+                        let seq = &self.cache.seqs[model_anim as usize];
+                        let frame = child.anim_frame as usize;
+                        match (seq.frames.as_ref(), seq.iframes.as_ref()) {
+                            (Some(frames), Some(iframes))
+                                if frame < frames.len() && frame < iframes.len() =>
+                            {
+                                child.get_temp_model(
+                                    &self.cache,
+                                    local_player,
+                                    frames[frame],
+                                    iframes[frame],
+                                    active,
+                                )
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    if let Some(model) = model {
+                        model.obj_render(
+                            &mut self.pix3d,
+                            surface,
+                            0,
+                            child.model_yan,
+                            0,
+                            child.model_xan,
+                            0,
+                            eye_y,
+                            eye_z,
+                        );
+                    }
+                    self.pix3d.origin_x = saved_origin_x;
+                    self.pix3d.origin_y = saved_origin_y;
                 }
+                _ => {}
             }
         }
 
@@ -2340,8 +2407,10 @@ impl Client {
             if self.chat_modal_id != -1 {
                 // TS 11142-11146: a chat interface replaces the chat lines
                 // (the chatback frame still plots underneath it).
+                self.pix3d.set_clipping(surface.width, surface.height);
                 self.draw_interface(self.chat_modal_id, 0, 0, 0, &mut surface);
             } else if self.tut_com_id != -1 {
+                self.pix3d.set_clipping(surface.width, surface.height);
                 self.draw_interface(self.tut_com_id, 0, 0, 0, &mut surface);
             } else {
                 let font = self.p12.as_ref();
