@@ -104,6 +104,91 @@ fn worker_downloads_and_gunzips_from_ondemand_socket() {
     assert_eq!(got.as_deref(), Some(payload));
 }
 
+/// Task 10: after `drop_socket` the worker must reopen the ondemand socket
+/// immediately — no 4 s `socket_open_time` gate and no 750-cycle dead-socket
+/// wait. The server accepts two connections on the same listener: the first
+/// is served and left to the worker's `drop_socket` to close; the second
+/// (a reconnect) is served right after.
+#[test]
+fn worker_reopens_socket_immediately_after_drop_socket() {
+    use std::io::Read;
+    use std::net::TcpListener;
+
+    let files: Vec<(&str, Vec<u8>)> = vec![
+        ("model_version", vec![0, 1]),
+        ("anim_version", vec![0, 1]),
+        ("midi_version", vec![0, 1]),
+        ("map_version", vec![0, 1]),
+        ("model_crc", vec![0, 0, 0, 0]),
+        ("anim_crc", vec![0, 0, 0, 0]),
+        ("midi_crc", vec![0, 0, 0, 0]),
+        ("map_crc", vec![0, 0, 0, 0]),
+    ];
+    let entries: Vec<(&str, &[u8])> = files.iter().map(|(n, d)| (*n, d.as_slice())).collect();
+    let versionlist = JagFile::new(jag(&entries));
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let payload: &'static [u8] = b"midi bytes";
+    let server = thread::spawn(move || {
+        for round in 0..2 {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut b = [0u8; 1];
+            sock.read_exact(&mut b).unwrap();
+            assert_eq!(b[0], 15, "ondemand handshake byte (round {round})");
+            sock.write_all(&[0; 8]).unwrap();
+            let mut req = [0u8; 4];
+            sock.read_exact(&mut req).unwrap();
+            assert_eq!(req[0], 2, "archive");
+            assert_eq!(u16::from_be_bytes([req[1], req[2]]), 0, "file");
+            assert_eq!(req[3], 2, "urgent priority");
+            let mut body = gz(payload);
+            body.extend_from_slice(&[0, 1]);
+            let len = body.len() as u16;
+            let mut chunk = vec![2, 0, 0, (len >> 8) as u8, len as u8, 0];
+            chunk.extend_from_slice(&body);
+            sock.write_all(&chunk).unwrap();
+        }
+    });
+
+    let mut od = OnDemand::new(
+        &versionlist,
+        "127.0.0.1",
+        port,
+        "/tmp",
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+
+    // One full download cycle, polling the OnDemand pump like the client
+    // main loop; `None` when the deadline passes without a completion.
+    let fetch = |od: &mut OnDemand, deadline: Duration| -> Option<Vec<u8>> {
+        od.request(2, 0);
+        let deadline = Instant::now() + deadline;
+        loop {
+            od.run(false);
+            if let Some(req) = od.loop_request() {
+                return req.data;
+            }
+            if Instant::now() > deadline {
+                return None;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    };
+
+    let first = fetch(&mut od, Duration::from_secs(5));
+    assert_eq!(first.as_deref(), Some(payload));
+
+    // Logout drops the engine update connection; the worker must drop its
+    // stream and reopen on the next request without the 4 s gate.
+    od.drop_socket();
+    let second = fetch(&mut od, Duration::from_millis(1500));
+    assert_eq!(second.as_deref(), Some(payload));
+
+    server.join().unwrap();
+}
+
 /// Versionlist jag in the engine pack layout (bzip2 per file, like the
 /// `jag` helper in tests/graphics.rs).
 fn jag(files: &[(&str, &[u8])]) -> Vec<u8> {

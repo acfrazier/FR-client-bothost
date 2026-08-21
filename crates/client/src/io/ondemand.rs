@@ -20,6 +20,11 @@ use crate::io::client_stream::ClientStream;
 use crate::io::jagfile::JagFile;
 use crate::io::packet::Packet;
 
+/// Reconnect gate in Java `OnDemand.send`: the socket is not reopened within
+/// 4 s of the last open. Spawn starts past the gate (first send is not
+/// gated) and `DropSocket` resets it so a relogin reconnects immediately.
+const SOCKET_OPEN_GATE: Duration = Duration::from_millis(4000);
+
 /// One requested file, Java `OnDemandRequest` / TS `OnDemandRequest`. Implements
 /// `LinkableTrait` so requests sit on the TS `LinkList2` and completed files on
 /// the `LinkList`, using the two independent link chains as in TS.
@@ -87,6 +92,10 @@ enum WorkerCommand {
     PrefetchPriority { archive: i32, file: i32, priority: i32 },
     Prefetch { archive: i32, file: i32 },
     ClearPrefetches,
+    /// Logout: the engine dropped the update connection, so drop the
+    /// worker's stream and reset the reconnect state. Unlike `Stop`, the
+    /// worker and the version tables stay alive for the next login.
+    DropSocket,
     Stop,
 }
 
@@ -303,7 +312,7 @@ impl OnDemand {
             packet_cycle: 0,
             no_timeout_cycle: 0,
             active: false,
-            socket_open_time: Instant::now() - Duration::from_millis(4000),
+            socket_open_time: Instant::now() - SOCKET_OPEN_GATE,
             current: None,
             stream: None,
             host: host.to_string(),
@@ -352,6 +361,16 @@ impl OnDemand {
         }
         if let Some(handle) = self.worker.take() {
             let _ = handle.join();
+        }
+    }
+
+    /// `logout` path: the engine dropped the update connection, so the
+    /// worker drops its stream and resets the reopen gate. The worker and
+    /// the version tables stay alive (Java `unload` stops OnDemand, not
+    /// `logout`); a no-op when there is no worker (`new_unconnected`).
+    pub fn drop_socket(&self) {
+        if let Some(tx) = &self.tx {
+            let _ = tx.send(WorkerCommand::DropSocket);
         }
     }
 
@@ -567,6 +586,15 @@ impl Worker {
                     self.prefetch(archive, file);
                 }
                 WorkerCommand::ClearPrefetches => self.prefetches.clear(),
+                WorkerCommand::DropSocket => {
+                    if let Some(mut stream) = self.stream.take() {
+                        stream.close();
+                    }
+                    self.packet_cycle = 0;
+                    self.part_available = 0;
+                    self.current = None;
+                    self.socket_open_time = Instant::now() - SOCKET_OPEN_GATE;
+                }
                 WorkerCommand::Stop => return,
             }
         }
@@ -837,7 +865,7 @@ impl Worker {
     fn send(&mut self, archive: i32, file: i32, urgent: bool) {
         if self.stream.is_none() {
             let now = Instant::now();
-            if now.duration_since(self.socket_open_time) < Duration::from_millis(4000) {
+            if now.duration_since(self.socket_open_time) < SOCKET_OPEN_GATE {
                 return;
             }
             self.socket_open_time = now;

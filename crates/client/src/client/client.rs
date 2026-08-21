@@ -4299,6 +4299,14 @@ impl Client {
         if let Some(mut stream) = self.stream.take() {
             stream.close();
         }
+        // The engine drops the update connection on logout, so the OnDemand
+        // worker must drop its stream too: a dead socket would otherwise
+        // stall the next login's downloads on the 750-cycle timeout and the
+        // 4 s reopen gate. The worker itself stays alive (Java `unload`
+        // stops OnDemand, not `logout`).
+        if let Some(od) = self.on_demand.as_ref() {
+            od.drop_socket();
+        }
         self.ingame = false;
         self.loginscreen = 0;
         self.login_user.clear();
