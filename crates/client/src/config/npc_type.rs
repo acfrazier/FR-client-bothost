@@ -256,15 +256,20 @@ impl NpcType {
     }
 
     /// `getHead()` from client-ts (NpcType.ts 233-267): the NPC's head
-    /// models for the chat-head interface (`IfType.getModel` type 2). Any
-    /// head model that is not yet downloaded returns None; otherwise each
-    /// model loads and they combine, recoloured.
+    /// models for the chat-head interface (`IfType.getModel` type 2). Every
+    /// head id is queued through `request_download` first (a missing one
+    /// sets the flag, so later ids still queue); only when all are
+    /// downloaded do the models load and combine, recoloured.
     pub fn get_head(&self) -> Option<Model> {
         let heads = self.head.as_ref()?;
+        let mut not_ready = false;
         for &h in heads {
             if !Model::request_download(h) {
-                return None;
+                not_ready = true;
             }
+        }
+        if not_ready {
+            return None;
         }
 
         let mut loaded: Vec<Option<Model>> = Vec::with_capacity(heads.len());

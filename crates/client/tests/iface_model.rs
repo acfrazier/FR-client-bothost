@@ -45,6 +45,37 @@ fn draw_interface_type_model_missing_does_not_panic() {
     c.draw_interface(1, 0, 0, 0, &mut surface);
 }
 
+#[test]
+fn npc_get_head_queues_every_missing_head_id() {
+    use client::dash3d::model::ModelProvider;
+    use std::sync::{Arc, Mutex};
+
+    /// OnDemand hook counting every `request_model` call, so the test can
+    /// assert each head id was queued even when the head is not ready.
+    struct CountingProvider {
+        requested: Arc<Mutex<Vec<i32>>>,
+    }
+    impl ModelProvider for CountingProvider {
+        fn request_model(&mut self, id: i32) {
+            self.requested.lock().unwrap().push(id);
+        }
+    }
+
+    let requested = Arc::new(Mutex::new(Vec::new()));
+    Model::init(7, Box::new(CountingProvider { requested: requested.clone() }));
+
+    let npc = NpcType {
+        head: Some(vec![5, 6]),
+        ..NpcType::default()
+    };
+    assert!(npc.get_head().is_none(), "missing head models -> None");
+    assert_eq!(
+        *requested.lock().unwrap(),
+        vec![5, 6],
+        "both head ids must queue, not just the first"
+    );
+}
+
 fn hud_client() -> client::client::Client {
     client::client::Client::new(client::client::ClientConfig {
         host: "127.0.0.1".into(),
