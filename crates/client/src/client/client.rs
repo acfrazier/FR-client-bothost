@@ -4799,6 +4799,7 @@ impl Client {
         self.minimap_level = -1;
         self.spotanims.clear();
         self.projectiles.clear();
+        self.pix3d.clear_texels();
         self.world.reset_map();
 
         for level in 0..BuildArea::LEVELS {
