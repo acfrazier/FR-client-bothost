@@ -15,7 +15,7 @@
 //! (`TYPE_LAYER`/`TYPE_RECT`/`TYPE_TEXT`/`TYPE_GRAPHIC`).
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::client::client::{level_experience, Client};
 use crate::client::client_build::random_float;
@@ -28,6 +28,11 @@ use crate::dash3d::{BuildArea, LocAngle, LocShape, MapFlag, SceneModel, World};
 use crate::graphics::{Colour, Pix2D, Pix3D, Pix32, Pix8, PixFont, PixMap};
 use crate::io::{ClientProt, JagFile};
 use crate::util::JString;
+
+fn try_title_jag(cache_dir: &str) -> Option<JagFile> {
+    let bytes = std::fs::read(format!("{cache_dir}/title")).ok()?;
+    catch_unwind(AssertUnwindSafe(|| JagFile::new(bytes))).ok()
+}
 
 fn plot_title_bg(map: &mut Option<PixMap>, background: &Pix32, x: i32, y: i32) {
     if let Some(map) = map {
@@ -249,6 +254,11 @@ impl Client {
             return;
         }
 
+        // Java `Client.messageBox`: prepareTitle() then the title-framed bar
+        // with b12. Without this, maininit stays on the GameShell fallback
+        // (no fonts) after the title jag is already on disk.
+        self.prepare_title();
+
         if self.image_title4.is_none() {
             let width = self.draw_area.width;
             let height = self.draw_area.height;
@@ -264,8 +274,8 @@ impl Client {
                 30,
                 Colour::BLACK,
             );
-            if let Some(b12) = self.b12.as_mut() {
-                b12.centre_string_tag(&mut surface, message, mid_x, y + 22, Colour::WHITE, true);
+            if let Some(b12) = self.b12.as_ref() {
+                b12.centre_string(&mut surface, Some(message), mid_x, y + 22, Colour::WHITE);
             }
             self.present_progress();
             return;
@@ -277,14 +287,13 @@ impl Client {
         let offset_y = 20;
         if let Some(map4) = self.image_title4.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut map4.pixels, w, h);
-            if let Some(b12) = self.b12.as_mut() {
-                b12.centre_string_tag(
+            if let Some(b12) = self.b12.as_ref() {
+                b12.centre_string(
                     &mut surface,
-                    "RuneScape is loading - please wait...",
+                    Some("RuneScape is loading - please wait..."),
                     w / 2,
                     (h / 2) - offset_y - 26,
                     Colour::WHITE,
-                    true,
                 );
             }
             let mid_y = (h / 2) - 18 - offset_y;
@@ -298,14 +307,13 @@ impl Client {
                 30,
                 Colour::BLACK,
             );
-            if let Some(b12) = self.b12.as_mut() {
-                b12.centre_string_tag(
+            if let Some(b12) = self.b12.as_ref() {
+                b12.centre_string(
                     &mut surface,
-                    message,
+                    Some(message),
                     w / 2,
                     (h / 2) + 5 - offset_y,
                     Colour::WHITE,
-                    true,
                 );
             }
         }
@@ -416,12 +424,7 @@ impl Client {
         self.image_title8 = Some(PixMap::new(75, 94));
 
         if self.title.is_none() {
-            let path = format!("{}/title", self.config.cache_dir);
-            if Path::new(&path).is_file() {
-                if let Ok(bytes) = std::fs::read(&path) {
-                    self.title = Some(JagFile::new(bytes));
-                }
-            }
+            self.title = try_title_jag(&self.config.cache_dir);
         }
 
         // `take` so the jag outlives the `&mut self` loads (TS loads it in
@@ -442,7 +445,7 @@ impl Client {
     /// above have loaded, so the music starts once the title is prepared
     /// instead of at `Client::new`. The `midi_song < 0` guard makes it a
     /// one-shot (the first prepare arms it; later prepares keep song 0).
-    fn request_scape_main(&mut self) {
+    pub(crate) fn request_scape_main(&mut self) {
         if self.config.lowmem || self.midi_song >= 0 {
             return;
         }
@@ -462,12 +465,7 @@ impl Client {
             return;
         }
         if self.title.is_none() {
-            let path = format!("{}/title", self.config.cache_dir);
-            if Path::new(&path).is_file() {
-                if let Ok(bytes) = std::fs::read(&path) {
-                    self.title = Some(JagFile::new(bytes));
-                }
-            }
+            self.title = try_title_jag(&self.config.cache_dir);
         }
         if let Some(jag) = self.title.take() {
             self.p11 = PixFont::depack(&jag, "p11_full", false).ok();

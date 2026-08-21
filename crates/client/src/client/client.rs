@@ -1053,6 +1053,10 @@ impl Client {
         }
 
         self.on_demand = Self::load_on_demand(&self.config);
+        // `draw_progress` may have already `prepare_title`'d before OnDemand
+        // existed (Java `messageBox` → `prepareTitle`). Request scape_main
+        // now that the worker is up (`midi_song < 0` keeps it one-shot).
+        self.request_scape_main();
 
         // TS maininit 886-888: `AnimFrame.init`/`Model.init` size the
         // process-wide stores from the versionlist before any prefetch.

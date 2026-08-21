@@ -44,6 +44,34 @@ fn draw_progress_headed_paints_red_bar() {
     assert_eq!(c.draw_area.pixels[idx], 0x8c1111);
 }
 
+/// Java `Client.messageBox` calls `prepareTitle()` then draws the stage
+/// string with `b12`. Without that, headed maininit keeps the GameShell
+/// fallback bar (no fonts) and the operator sees a mute red bar.
+#[test]
+fn draw_progress_headed_paints_stage_text_once_title_jag_exists() {
+    let cache = format!(
+        "{}/experiments/Server/engine/data/pack/client",
+        std::env::var("HOME").unwrap()
+    );
+    if !std::path::Path::new(&format!("{cache}/title")).is_file() {
+        return;
+    }
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache,
+        members: true,
+        lowmem: false,
+    });
+    c.set_draw(true);
+    c.draw_progress("Loading models - 50%", 70);
+    assert!(c.b12.is_some(), "messageBox prepareTitle loads b12 from title jag");
+    assert!(
+        c.draw_area.pixels.iter().any(|&p| p == 0xffffff),
+        "stage text must be plotted in white (Java b12.centreString)"
+    );
+}
+
 /// Read the full HTTP request (headers) before responding: closing with
 /// unread data in the receive buffer sends RST (not FIN) on macOS,
 /// discarding the response the client is waiting for. Returns the raw
