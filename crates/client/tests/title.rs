@@ -46,18 +46,18 @@ fn title_requests_scape_main() {
     assert_eq!(c.midi_song, -1);
 }
 
-/// Once `prepare_title` has loaded the title fonts/sprites, scape_main
-/// (song 0) is requested from on-demand archive 2 with a fade.
+/// Java `prepareTitle` does not request scape_main. Song 0 is requested
+/// from `maininit` after OnDemand.init (`Client.java` 5164-5182). A
+/// title draw before that must leave `midi_song == -1`.
 #[test]
-fn scape_main_requested_after_title_prepare() {
+fn prepare_title_does_not_request_scape_main() {
     let Some(cache) = cache_dir() else {
         return;
     };
     let mut c = client(cache);
     assert_eq!(c.midi_song, -1);
     c.title_screen_draw();
-    assert_eq!(c.midi_song, 0);
-    assert!(c.midi_fading);
+    assert_eq!(c.midi_song, -1);
 }
 
 /// title.dat JPEG is tiled into the left torch column (imageTitle0 at 0,0).

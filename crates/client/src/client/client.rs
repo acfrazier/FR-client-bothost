@@ -1053,10 +1053,28 @@ impl Client {
         }
 
         self.on_demand = Self::load_on_demand(&self.config);
-        // `draw_progress` may have already `prepare_title`'d before OnDemand
-        // existed (Java `messageBox` → `prepareTitle`). Request scape_main
-        // now that the worker is up (`midi_song < 0` keeps it one-shot).
-        self.request_scape_main();
+
+        // Java 5164-5182: request scape_main on *this* OnDemand (maininit
+        // replaces any Client::new worker) and wait remaining()==0 so
+        // onDemandLoop → saveMidi fires before anim/model flood. A prior
+        // prepare_title request on the discarded worker must not skip this
+        // (`midi_song` may already be 0).
+        if !self.config.lowmem {
+            if let Some(od) = &mut self.on_demand {
+                self.midi_song = 0;
+                self.midi_fading = true;
+                od.request(2, 0);
+            }
+            while self.on_demand.as_ref().is_some_and(|od| od.remaining() > 0) {
+                self.on_demand_loop();
+                thread::sleep(Duration::from_millis(100));
+                if self.on_demand.as_ref().is_some_and(|od| od.fail_count > 3) {
+                    self.error_loading = true;
+                    self.shell.set_framerate(1);
+                    return;
+                }
+            }
+        }
 
         // TS maininit 886-888: `AnimFrame.init`/`Model.init` size the
         // process-wide stores from the versionlist before any prefetch.
