@@ -288,6 +288,9 @@ pub struct Client {
     pub side_icon: [i32; 14],
     pub side_modal_id: i32,
     pub chat_modal_id: i32,
+    /// The open main modal (Java `mainModalId`), set by the report-abuse
+    /// button in `chat_mode_loop` and cleared by `close_modal` (-1 none).
+    pub main_modal_id: i32,
     pub target_com_id: i32,
     pub obj_com_id: i32,
     pub obj_selected_slot: i32,
@@ -657,6 +660,7 @@ impl Client {
             side_icon: [-1; 14],
             side_modal_id: -1,
             chat_modal_id: -1,
+            main_modal_id: -1,
             target_com_id: 0,
             obj_com_id: 0,
             obj_selected_slot: 0,
@@ -2118,8 +2122,9 @@ impl Client {
     }
 
     /// `closeModal` from client-ts (10941-10958): send CLOSE_MODAL and
-    /// close the side and chat modals locally. `main_modal_id` and
-    /// `resumed_pause_button` are not ported; the per-modal redraw flags
+    /// close the side and chat modals locally; `main_modal_id` is reset
+    /// like Java `closeModal` (Client.java 3353-3367).
+    /// `resumed_pause_button` is not ported; the per-modal redraw flags
     /// mirror TS `redrawSide`/`redrawIcons`/`redrawChat`. Not to be
     /// confused with the incoming-server `apply_if_close`.
     fn close_modal(&mut self) {
@@ -2133,6 +2138,7 @@ impl Client {
             self.chat_modal_id = -1;
             self.redraw_chat = true;
         }
+        self.main_modal_id = -1;
     }
 
     /// Walk `com_id`'s children like TS `addComponentOptions` (9628-9841)
@@ -4391,6 +4397,73 @@ impl Client {
         }
     }
 
+    /// `chatModeLoop` (Java `Client.java` 2755-2800), verbatim: a left
+    /// click in the Public (6..106), Private (135..235) or Trade/duel
+    /// (273..373) button strip at y 467..499 cycles the mode, re-runs the
+    /// mode labels (`redrawPrivacySettings`/`redrawChatback`) and sends
+    /// `CHAT_SETMODE` with the three modes; the Report abuse button
+    /// (412..512) closes the modals and records `main_modal_id` from the
+    /// first interface with client code 600. `reportAbuseInput`,
+    /// `reportAbuseMuteOption` and `reportAbuseComId` are not ported.
+    pub fn chat_mode_loop(&mut self) {
+        if self.shell.mouse_click_button != 1 {
+            return;
+        }
+        if self.shell.mouse_click_x >= 6
+            && self.shell.mouse_click_x <= 106
+            && self.shell.mouse_click_y >= 467
+            && self.shell.mouse_click_y <= 499
+        {
+            self.chat_public_mode = (self.chat_public_mode + 1) % 4;
+            self.redraw_chat_mode = true;
+            self.redraw_chat = true;
+            self.out.p1_enc(ClientProt::CHAT_SETMODE.id);
+            self.out.p1(self.chat_public_mode);
+            self.out.p1(self.chat_private_mode);
+            self.out.p1(self.chat_trade_mode);
+        }
+        if self.shell.mouse_click_x >= 135
+            && self.shell.mouse_click_x <= 235
+            && self.shell.mouse_click_y >= 467
+            && self.shell.mouse_click_y <= 499
+        {
+            self.chat_private_mode = (self.chat_private_mode + 1) % 3;
+            self.redraw_chat_mode = true;
+            self.redraw_chat = true;
+            self.out.p1_enc(ClientProt::CHAT_SETMODE.id);
+            self.out.p1(self.chat_public_mode);
+            self.out.p1(self.chat_private_mode);
+            self.out.p1(self.chat_trade_mode);
+        }
+        if self.shell.mouse_click_x >= 273
+            && self.shell.mouse_click_x <= 373
+            && self.shell.mouse_click_y >= 467
+            && self.shell.mouse_click_y <= 499
+        {
+            self.chat_trade_mode = (self.chat_trade_mode + 1) % 3;
+            self.redraw_chat_mode = true;
+            self.redraw_chat = true;
+            self.out.p1_enc(ClientProt::CHAT_SETMODE.id);
+            self.out.p1(self.chat_public_mode);
+            self.out.p1(self.chat_private_mode);
+            self.out.p1(self.chat_trade_mode);
+        }
+        if self.shell.mouse_click_x < 412
+            || self.shell.mouse_click_x > 512
+            || self.shell.mouse_click_y < 467
+            || self.shell.mouse_click_y > 499
+        {
+            return;
+        }
+        self.close_modal();
+        for entry in self.cache.ifaces.iter().flatten() {
+            if entry.client_code == 600 {
+                self.main_modal_id = entry.layer_id;
+                return;
+            }
+        }
+    }
+
     /// `handleInputKey` from client-ts (2937), chat branch: poll queued
     /// keys while no chat modal is open. Printable 32..=122 (up to 126
     /// once the input starts with `::`) appends below 80 chars, 8
@@ -5435,6 +5508,7 @@ impl Client {
         }
         self.handle_tab_clicks();
         self.handle_side_if_clicks();
+        self.chat_mode_loop();
         self.handle_chat_input();
         // consume the previous frame's `World` ground pick (TS 2310-2323)
         // into a MOVE_GAMECLICK walk, then the click passes
