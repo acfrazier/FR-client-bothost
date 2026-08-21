@@ -3321,6 +3321,17 @@ impl Client {
 
     /// `getPlayerPosDecodeExtended` from client-ts.
     fn get_player_pos_decode_extended(&mut self, index: usize, mask: i32, buf: &mut Packet) {
+        // Java's `localPlayer` is `players[LOCAL_PLAYER_INDEX]` itself, so
+        // these mask writes already hit the drawn entity; the Rust login
+        // keeps a separate clone, so they must target `local_player` here.
+        // x/z/route are not copied — `players[2047]` stays the stale walk
+        // slot and the live walk lives on `local_player`.
+        let mut player = if index == LOCAL_PLAYER_INDEX as usize {
+            self.local_player.as_mut()
+        } else {
+            self.players[index].as_mut()
+        };
+
         if mask & player_update::APPEARANCE != 0 {
             let length = buf.g1() as usize;
 
@@ -3328,7 +3339,7 @@ impl Client {
             buf.gdata(length, 0, &mut data);
 
             self.player_appearance_buffer[index] = Some(Packet::new(data));
-            if let Some(player) = self.players[index].as_mut() {
+            if let Some(player) = player.as_mut() {
                 let mut appearance = self.player_appearance_buffer[index].take().unwrap();
                 appearance.pos = 0;
                 player.set_appearance(&mut appearance, &self.cache);
@@ -3342,7 +3353,7 @@ impl Client {
                 seq_id = -1;
             }
 
-            if let Some(player) = self.players[index].as_mut() {
+            if let Some(player) = player.as_mut() {
                 if seq_id == player.primary_anim {
                     player.primary_anim_loop = 0;
                 }
@@ -3384,14 +3395,14 @@ impl Client {
             if face_entity == 65535 {
                 face_entity = -1;
             }
-            if let Some(player) = self.players[index].as_mut() {
+            if let Some(player) = player.as_mut() {
                 player.face_entity = face_entity;
             }
         }
 
         if mask & player_update::SAY != 0 {
             let message = buf.gjstr();
-            if let Some(player) = self.players[index].as_mut() {
+            if let Some(player) = player.as_mut() {
                 player.chat_message = Some(message);
                 player.chat_colour = 0;
                 player.chat_effect = 0;
@@ -3404,7 +3415,7 @@ impl Client {
         if mask & player_update::HITMARK != 0 {
             let damage = buf.g1();
             let damage_type = buf.g1();
-            if let Some(player) = self.players[index].as_mut() {
+            if let Some(player) = player.as_mut() {
                 player.add_hitmark(self.loop_cycle, damage_type, damage);
                 player.combat_cycle = self.loop_cycle + 400;
                 player.health = buf.g1();
@@ -3415,7 +3426,7 @@ impl Client {
         if mask & player_update::FACESQUARE != 0 {
             let x = buf.g2();
             let z = buf.g2();
-            if let Some(player) = self.players[index].as_mut() {
+            if let Some(player) = player.as_mut() {
                 player.face_square_x = x;
                 player.face_square_z = z;
             }
@@ -3436,7 +3447,7 @@ impl Client {
         if mask & player_update::SPOTANIM != 0 {
             let spotanim_id = buf.g2();
             let height_delay = buf.g4();
-            if let Some(player) = self.players[index].as_mut() {
+            if let Some(player) = player.as_mut() {
                 player.spotanim_id = spotanim_id;
                 player.spotanim_height = height_delay >> 16;
                 player.spotanim_last_cycle = self.loop_cycle + (height_delay & 0xffff);
@@ -3461,7 +3472,7 @@ impl Client {
             let exact_move_end = buf.g2() + self.loop_cycle;
             let exact_move_start = buf.g2() + self.loop_cycle;
             let exact_move_facing = buf.g1();
-            if let Some(player) = self.players[index].as_mut() {
+            if let Some(player) = player.as_mut() {
                 player.exact_start_x = exact_start_x;
                 player.exact_start_z = exact_start_z;
                 player.exact_end_x = exact_end_x;
@@ -3477,7 +3488,7 @@ impl Client {
         if mask & player_update::HITMARK2 != 0 {
             let damage = buf.g1();
             let damage_type = buf.g1();
-            if let Some(player) = self.players[index].as_mut() {
+            if let Some(player) = player.as_mut() {
                 player.add_hitmark(self.loop_cycle, damage_type, damage);
                 player.combat_cycle = self.loop_cycle + 400;
                 player.health = buf.g1();
