@@ -189,13 +189,11 @@ mod rusty {
     use client::sound::{Midi, RustyMidi};
 
     #[test]
-    fn no_font_stays_silent_but_tracks_volume() {
+    fn no_font_stays_silent() {
         let mut m = RustyMidi::new("/nonexistent");
         // truncated midi: parse fails inside play and stays silent
         m.play(&[0x4d, 0x54, 0x68, 0x64], -400, true);
-        assert_eq!(m.volume(), -400);
-        m.set_volume(-1200);
-        assert_eq!(m.volume(), -1200);
+        m.set_volume(-1200); // documented no-op; gain lives on the Fade
         m.stop();
         m.render(&mut [0f32; 64], &mut [0f32; 64]);
     }

@@ -1,13 +1,17 @@
 //! Midi backend: the 274 `signlink` control plane condensed into one trait.
 //! `saveMidi`/`stopMidi`/`setMidiVolume` become `play`/`stop`/`set_volume`;
-//! volumes are the 274 `midivol` ladder 0 / -400 / -800 / -1200 (1/100 dB).
+//! volumes are the 274 `midivol` ladder 0 / -400 / -800 / -1200 (1/100 dB),
+//! applied by the output `Fade` — the backend plays raw.
 
 pub trait Midi: Send {
-    /// `saveMidi(fading, data)`: start the on-demand archive-2 bytes.
+    /// `saveMidi(fading, data)`: start the on-demand archive-2 bytes. The
+    /// 274 `midivol` ladder is applied by the output `Fade`, never here.
     fn play(&mut self, data: &[u8], volume: i32, fading: bool);
     /// `stopMidi()`: silence the current song.
     fn stop(&mut self);
-    /// `setMidiVolume(active, volume)`: the "voladjust" poke.
+    /// `setMidiVolume(active, volume)`: the "voladjust" poke. The backend
+    /// has no gain stage (volume lives on the output `Fade`), so the trait
+    /// keeps this as a documented no-op.
     fn set_volume(&mut self, volume: i32);
     /// Render one stereo f32 block at 22050 Hz into the output buffers; the
     /// mixer multiplies it by the shared fade gain. Headless backends have
@@ -60,14 +64,13 @@ mod rusty {
 
     /// The `audio` backend: one rustysynth sequencer and one SF2. The SF2 is
     /// picked up from `cache_dir` (`soundfont.sf2` / `Florestan.sf2`) or the
-    /// current directory; without one the backend stays silent but tracks the
-    /// volume plane. `fading` is a fade-in hint from the control plane; the
-    /// headless synth has no render clock to fade against, so it is ignored.
-    /// The synthesizer keeps its own `Arc<SoundFont>` and the sequencer keeps
-    /// its own `Arc<MidiFile>`, so neither is stored here after construction.
+    /// current directory; without one the backend stays silent. The fade and
+    /// the `midivol` ladder live entirely on the output `Fade`, so the
+    /// backend plays raw. The synthesizer keeps its own `Arc<SoundFont>` and
+    /// the sequencer keeps its own `Arc<MidiFile>`, so neither is stored
+    /// here after construction.
     pub struct RustyMidi {
         sequencer: Option<MidiFileSequencer>,
-        volume: i32,
     }
 
     impl RustyMidi {
@@ -80,7 +83,7 @@ mod rusty {
             eprintln!(
                 "audio: no soundfont (looked for Florestan.sf2 / SCC1_Florestan.sf2 under {cache_dir} and engine/public); midi silent"
             );
-            Self { sequencer: None, volume: 0 }
+            Self { sequencer: None }
         }
 
         /// True when an SF2 loaded and rustysynth can render.
@@ -97,18 +100,7 @@ mod rusty {
             let settings = SynthesizerSettings::new(SAMPLE_RATE);
             let synthesizer = Synthesizer::new(&sound_font, &settings).ok()?;
             let sequencer = MidiFileSequencer::new(synthesizer);
-            Some(Self { sequencer: Some(sequencer), volume: 0 })
-        }
-
-        pub fn volume(&self) -> i32 {
-            self.volume
-        }
-
-        /// 274 `midivol` (1/100 dB) → linear gain, as the client-ts
-        /// tinymidipcm `decibelsToGain`: 0 → 1.0, -400 → -4 dB, ... The
-        /// mixer's `Fade` maps the same ladder.
-        pub fn gain(volume: i32) -> f32 {
-            10f32.powf(volume as f32 / 2000.0)
+            Some(Self { sequencer: Some(sequencer) })
         }
 
         /// Render one block of stereo f32. The output is raw here: the 274
@@ -122,8 +114,7 @@ mod rusty {
     }
 
     impl Midi for RustyMidi {
-        fn play(&mut self, data: &[u8], volume: i32, _fading: bool) {
-            self.volume = volume;
+        fn play(&mut self, data: &[u8], _volume: i32, _fading: bool) {
             let Some(sequencer) = &mut self.sequencer else { return };
             let Ok(midi_file) = MidiFile::new_with_loop_type(
                 &mut Cursor::new(data),
@@ -141,9 +132,10 @@ mod rusty {
             }
         }
 
-        fn set_volume(&mut self, volume: i32) {
-            self.volume = volume;
-        }
+        /// `setMidiVolume`: the 274 `midivol` ladder is applied by the
+        /// output `Fade`; the backend has no gain stage, so this is a
+        /// documented no-op.
+        fn set_volume(&mut self, _volume: i32) {}
 
         fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
             RustyMidi::render(self, left, right);

@@ -1,43 +1,50 @@
-//! The mandatory period fade: `saveMidi(fading=true)` ramps the output gain
-//! out then in toward the `midivol` target (0.25 dB per 50 ms tick,
-//! tinymidipcm.js `fadeStepDb`/`fadeInterval`); jingles/`stopMidi` hard-cut.
+//! The mandatory period fade: `saveMidi(fading=true)` ramps the current song
+//! out to the floor (0.25 dB per 50 ms tick — tinymidipcm.js
+//! `fadeStepDb`/`fadeInterval`, a documented proxy for the native player),
+//! then `music_tick` swaps the new song in via `finish_fade` at the `midivol`
+//! target. There is no fade-in leg; jingles and `stopMidi` hard-cut.
 
 use client::sound::Fade;
 
 #[test]
-fn fade_true_does_not_jump() {
+fn fade_out_ramps_down_not_up() {
     let mut f = Fade::new();
-    f.begin_song(true, 0); // target 0 dB
+    f.fade_out();
     let g0 = f.gain();
     f.step_ms(50);
     let g1 = f.gain();
-    assert_ne!(g0, g1); // moving
+    assert!(g1 < g0); // moving, and only downwards
 }
 
 #[test]
-fn fade_false_jumps_to_target() {
+fn finish_fade_jumps_to_target() {
     let mut f = Fade::new();
-    f.begin_song(false, 0);
+    f.finish_fade(0);
     assert!((f.gain() - 1.0).abs() < 1e-4);
 }
 
 #[test]
 fn stop_hard_is_silence() {
     let mut f = Fade::new();
-    f.begin_song(false, 0);
+    f.finish_fade(0);
     f.stop_hard();
     assert_eq!(f.gain(), 0.0);
 }
 
-/// The full out-then-in ramp lands exactly on the ladder value and holds
-/// (144 fade-out steps to -36 dB, then back up to -4 dB).
+/// The full fade-out lands on the floor, latches `swap_due` once, and the
+/// swap-in jumps straight to the ladder value and holds (144 fade-out steps
+/// to -36 dB, then `finish_fade` to -4 dB — no fade-in).
 #[test]
-fn fade_true_ramp_lands_on_target_and_holds() {
+fn fade_out_then_swap_lands_on_target_and_holds() {
     let mut f = Fade::new();
-    f.begin_song(true, -400);
-    for _ in 0..272 {
+    f.fade_out();
+    for _ in 0..200 {
         f.step_ms(50);
+        if f.swap_due() {
+            break;
+        }
     }
+    f.finish_fade(-400);
     let expected = 10f32.powf(-400.0 / 2000.0); // -4 dB
     assert!((f.gain() - expected).abs() < 1e-3);
     let held = f.gain();
@@ -46,7 +53,7 @@ fn fade_true_ramp_lands_on_target_and_holds() {
 }
 
 #[test]
-fn fade_false_jumps_to_ladder_volumes() {
+fn finish_fade_jumps_to_ladder_volumes() {
     for (midivol, expect) in [
         (0, 1.0),
         (-400, 10f32.powf(-400.0 / 2000.0)),
@@ -54,19 +61,30 @@ fn fade_false_jumps_to_ladder_volumes() {
         (-1200, 10f32.powf(-1200.0 / 2000.0)),
     ] {
         let mut f = Fade::new();
-        f.begin_song(false, midivol);
+        f.finish_fade(midivol);
         assert!((f.gain() - expect).abs() < 1e-4, "midivol {midivol}");
     }
 }
 
 #[test]
+fn set_target_vol_jumps_when_not_fading() {
+    let mut f = Fade::new();
+    f.set_target_vol(-400); // −4 dB
+    assert!((f.gain() - 0.6310).abs() < 1e-3);
+}
+
+#[test]
 fn set_target_vol_retargets_mid_ramp() {
     let mut f = Fade::new();
-    f.begin_song(true, 0);
-    f.set_target_vol(-400);
-    for _ in 0..300 {
+    f.fade_out();
+    f.set_target_vol(-400); // retargets only while fading
+    for _ in 0..200 {
         f.step_ms(50);
+        if f.swap_due() {
+            break;
+        }
     }
+    f.finish_fade(-400);
     let expected = 10f32.powf(-400.0 / 2000.0);
     assert!((f.gain() - expected).abs() < 1e-3);
 }
@@ -74,7 +92,7 @@ fn set_target_vol_retargets_mid_ramp() {
 #[test]
 fn step_ms_accumulates_to_ticks() {
     let mut f = Fade::new();
-    f.begin_song(true, 0);
+    f.fade_out();
     f.step_ms(25);
     let g1 = f.gain();
     f.step_ms(25);
@@ -83,16 +101,12 @@ fn step_ms_accumulates_to_ticks() {
 }
 
 #[test]
-fn stop_hard_then_begin_song_ramps_back_in() {
+fn stop_hard_then_finish_fade_recovers() {
     let mut f = Fade::new();
-    f.begin_song(true, 0);
+    f.fade_out();
     f.step_ms(50);
     f.stop_hard();
     assert_eq!(f.gain(), 0.0);
-    f.begin_song(true, 0);
-    f.step_ms(50); // out phase snaps to the floor
-    let g1 = f.gain();
-    f.step_ms(50);
-    let g2 = f.gain();
-    assert!(g2 > g1);
+    f.finish_fade(0);
+    assert!((f.gain() - 1.0).abs() < 1e-4);
 }

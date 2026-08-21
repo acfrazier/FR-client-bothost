@@ -5,15 +5,17 @@
 //! compiled. `AudioOut` needs a real audio device and lives behind
 //! `feature = "audio"`.
 
-/// tinymidipcm.js `fadeStepDb`: one fade tick moves the output 0.25 dB.
+/// One fade tick moves the output 0.25 dB (tinymidipcm.js `fadeStepDb`).
+/// The 274 deob exposes only the `midifade` boolean and the `midivol`
+/// ladder; the native signlink player's curve is not in the source, so this
+/// is a documented TS-proxy for it.
 const FADE_STEP_DB: f32 = 0.25;
-/// tinymidipcm.js `fadeInterval`: one fade tick per 50 ms.
+/// One fade tick per 50 ms (tinymidipcm.js `fadeInterval`).
 const FADE_TICK_MS: u64 = 50;
-/// tinymidipcm.js `fadeEndStep * fadeStepDb`: the fade-out floor (-36 dB).
+/// The fade-out floor (-36 dB; tinymidipcm.js `fadeEndStep * fadeStepDb`).
 const FADE_FLOOR_DB: f32 = -36.0;
 
-/// 274 `midivol` (1/100 dB) → dB, the fade ramp target; `RustyMidi::gain`
-/// maps the same ladder to linear gain.
+/// 274 `midivol` (1/100 dB) → dB, the fade swap-in target.
 fn midivol_to_db(midivol: i32) -> f32 {
     midivol as f32 / 100.0
 }
@@ -23,19 +25,24 @@ fn db_to_gain(db: f32) -> f32 {
     10f32.powf(db / 20.0)
 }
 
-/// The output-gain envelope: `saveMidi(fading=true)` fades the period music
-/// out then in toward the `midivol` target; jingles/`stopMidi` hard-cut.
-/// `gain()` is the linear multiplier the mixer applies; `step_ms` advances
-/// the 0.25 dB / 50 ms ramp from the audio callback clock.
+/// The output-gain envelope: a zone-song change (`saveMidi(fading=true)`)
+/// ramps the current song out to the floor; `Client::music_tick` then swaps
+/// the pending song in at the `midivol` target (`finish_fade`). Jingles and
+/// `stopMidi` hard-cut. There is no fade-in leg — Java's `midifade` is a
+/// boolean "fade the outgoing song out", nothing more. `gain()` is the
+/// linear multiplier the mixer applies; `step_ms` advances the 0.25 dB /
+/// 50 ms ramp from the audio callback clock.
 pub struct Fade {
     /// Current output gain in dB; `-inf` after `stop_hard` (gain 0.0).
     db: f32,
-    /// Ramp endpoint from `midivol` (`begin_song`/`set_target_vol`).
+    /// Ramp endpoint from `midivol` (`finish_fade`/`set_target_vol`).
     target_db: f32,
-    /// A zone-song ramp is running (`begin_song(true, ...)`).
+    /// A zone-song fade-out is running.
     fading: bool,
-    /// Ramping down to the floor before ramping up to the target.
+    /// Ramping down to the floor (the only direction a fade runs).
     fading_out: bool,
+    /// Latched once when the ramp hits the floor; `swap_due` consumes it.
+    swap_due: bool,
     /// Milliseconds accumulated toward the next 50 ms fade tick.
     tick_ms: u64,
 }
@@ -47,27 +54,43 @@ impl Fade {
             db: 0.0,
             target_db: 0.0,
             fading: false,
-            fading_out: true,
+            fading_out: false,
+            swap_due: false,
             tick_ms: 0,
         }
     }
 
-    /// `saveMidi(fading, midivol)`: with `fading` the output ramps down to
-    /// the floor and back up to the `midivol` target; without it the gain
-    /// jumps straight to the target (jingles).
-    pub fn begin_song(&mut self, fading: bool, target_midivol: i32) {
-        self.target_db = midivol_to_db(target_midivol);
-        self.fading = fading;
+    /// `saveMidi(fading=true)`: arm a fade-out of the current song. The new
+    /// song is held (`Client::midi_pending`) until the ramp hits the floor.
+    pub fn fade_out(&mut self) {
+        self.fading = true;
         self.fading_out = true;
+        self.swap_due = false;
         self.tick_ms = 0;
-        if !fading {
-            self.db = self.target_db;
-        }
+    }
+
+    /// `saveMidi(fading=false)` / the swap-in: jump the gain to the `midivol`
+    /// target and end any fade (Java `midisave` starts the new song at the
+    /// current `midivol`, with no fade-in).
+    pub fn finish_fade(&mut self, target_midivol: i32) {
+        self.target_db = midivol_to_db(target_midivol);
+        self.db = self.target_db;
+        self.fading = false;
+        self.fading_out = false;
+        self.swap_due = false;
+        self.tick_ms = 0;
+    }
+
+    /// `Client::music_tick`: `true` once when the fade-out ramp reached the
+    /// floor (-36 dB), clearing the latch.
+    pub fn swap_due(&mut self) -> bool {
+        std::mem::take(&mut self.swap_due)
     }
 
     /// `stopMidi()`: hard-cut to silence.
     pub fn stop_hard(&mut self) {
         self.fading = false;
+        self.fading_out = false;
         self.db = f32::NEG_INFINITY;
         self.tick_ms = 0;
     }
@@ -102,11 +125,8 @@ impl Fade {
             self.db = (self.db - FADE_STEP_DB).max(FADE_FLOOR_DB);
             if self.db <= FADE_FLOOR_DB {
                 self.fading_out = false;
-            }
-        } else {
-            self.db = (self.db + FADE_STEP_DB).min(self.target_db);
-            if self.db >= self.target_db {
                 self.fading = false;
+                self.swap_due = true;
             }
         }
     }
@@ -338,7 +358,7 @@ mod device {
         #[test]
         fn mix_scales_render_by_fade_gain() {
             let fade = Mutex::new(Fade::new());
-            fade.lock().unwrap().begin_song(false, 0); // gain 1.0
+            fade.lock().unwrap().finish_fade(0); // gain 1.0
             let midi = Mutex::new(Tone { level: 0.5 });
             let waves = Mutex::new(Vec::new());
             let mut data = vec![0i16; 4];
@@ -350,7 +370,7 @@ mod device {
         #[test]
         fn mix_adds_waves_and_clips() {
             let fade = Mutex::new(Fade::new());
-            fade.lock().unwrap().begin_song(false, 0);
+            fade.lock().unwrap().finish_fade(0);
             let midi = Mutex::new(Tone { level: 1.0 });
             let waves = Mutex::new(vec![500i16, -32768i16]);
             let mut data = vec![0i16; 4];
@@ -363,7 +383,7 @@ mod device {
         #[test]
         fn stop_hard_zeroes_midi_output() {
             let fade = Mutex::new(Fade::new());
-            fade.lock().unwrap().begin_song(false, 0);
+            fade.lock().unwrap().finish_fade(0);
             fade.lock().unwrap().stop_hard();
             let midi = Mutex::new(Tone { level: 1.0 });
             let waves = Mutex::new(vec![1000i16; 2]);

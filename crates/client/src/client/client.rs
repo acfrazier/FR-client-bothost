@@ -237,6 +237,14 @@ pub struct Client {
     pub midi_fading: bool,
     pub midi_volume: i32,
     pub midi: Arc<Mutex<dyn Midi>>,
+    /// A zone-song change held by `saveMidi(fading=true)`: `(bytes, midivol)`
+    /// played by `music_tick` once the current song has faded out to the
+    /// floor.
+    pub midi_pending: Option<(Vec<u8>, i32)>,
+    /// True once the first song/jingle has been handed to the backend; the
+    /// first song plays immediately (Java first-song short-circuit), later
+    /// zone-song changes fade the current song out first.
+    pub midi_playing: bool,
 
     /// The period fade and the JagFX wave queue, shared with the audio
     /// output thread. `saveMidi`/`stopMidi`/`setMidiVolume` arm the fade;
@@ -619,6 +627,8 @@ impl Client {
             midi_fading: true,
             midi_volume: 0,
             midi,
+            midi_pending: None,
+            midi_playing: false,
             fade: Arc::new(Mutex::new(Fade::new())),
             waves: Arc::new(Mutex::new(Vec::new())),
 
@@ -4252,6 +4262,7 @@ impl Client {
             self.title_screen_loop();
         }
         self.on_demand_loop();
+        self.music_tick();
     }
 
     /// `titleScreenLoop` from client-ts (1378): the title-screen input pass,
@@ -5650,34 +5661,56 @@ impl Client {
     }
 
     /// `saveMidi(fading, data)` from Java (`Client.java` 6266): hand the
-    /// on-demand archive-2 bytes to the backend (signlink midisave). Zone
-    /// songs (`fading=true`) arm the fade: out, then in to the `midivol`
-    /// target.
+    /// on-demand archive-2 bytes to the backend (signlink midisave). A
+    /// jingle (`fading=false`) or the first song plays immediately at the
+    /// `midivol` ladder value (Java first-song short-circuit); a zone-song
+    /// change (`fading=true`) holds the bytes pending and fades the current
+    /// song out, swapping in `music_tick` once the ramp hits the floor.
     pub fn save_midi(&mut self, data: &[u8], fading: bool) {
-        self.fade
-            .lock()
-            .unwrap()
-            .begin_song(fading, self.midi_volume);
-        self.midi.lock().unwrap().play(data, self.midi_volume, fading);
+        if !fading || !self.midi_playing {
+            self.midi.lock().unwrap().play(data, self.midi_volume, fading);
+            self.fade.lock().unwrap().finish_fade(self.midi_volume);
+            self.midi_playing = true;
+            self.midi_pending = None;
+        } else {
+            self.midi_pending = Some((data.to_vec(), self.midi_volume));
+            self.fade.lock().unwrap().fade_out();
+        }
+    }
+
+    /// `musicTick`: once per mainloop pass, swap the pending zone song in
+    /// when the fade-out ramp has reached the floor (Java `midisave` starts
+    /// the new song at the current `midivol`, no fade-in). The latch is only
+    /// advanced by the audio callback, so headless there is no swap.
+    pub fn music_tick(&mut self) {
+        if !self.fade.lock().unwrap().swap_due() {
+            return;
+        }
+        if let Some((data, volume)) = self.midi_pending.take() {
+            self.midi.lock().unwrap().play(&data, volume, false);
+            self.fade.lock().unwrap().finish_fade(volume);
+        }
     }
 
     /// `stopMidi()` from Java (`Client.java` 6272): clear the fade flag and
-    /// stop the backend (signlink `midi = "stop"`). The fade hard-cuts.
+    /// stop the backend (signlink `midi = "stop"`). The fade hard-cuts and
+    /// any pending zone-song swap is dropped.
     pub fn stop_midi(&mut self) {
         self.midi_fading = false;
         self.fade.lock().unwrap().stop_hard();
         self.midi.lock().unwrap().stop();
+        self.midi_pending = None;
+        self.midi_playing = false;
     }
 
     /// `setMidiVolume(active, volume)` from Java (`Client.java` 7712): store
-    /// the 274 `midivol` and poke the backend when the music plane is live
-    /// (signlink `midi = "voladjust"`). The fade retargets without restarting
-    /// the song.
+    /// the 274 `midivol` and retarget the output fade when the music plane
+    /// is live (signlink `midi = "voladjust"`). The ladder is the single
+    /// gain path — the backend's `set_volume` is a documented no-op.
     pub fn set_midi_volume(&mut self, active: bool, volume: i32) {
         self.midi_volume = volume;
         if active {
             self.fade.lock().unwrap().set_target_vol(volume);
-            self.midi.lock().unwrap().set_volume(volume);
         }
     }
 
