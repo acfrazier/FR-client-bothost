@@ -3444,8 +3444,8 @@ impl Client {
     /// and release reads `mouse_button == 0` (held state, not the click
     /// latch). A real drop (threshold + 5 held cycles) moves the item
     /// (`obj_replace` copy, bank-arrange insert, or `swap_slots`) and
-    /// writes `INV_BUTTOND`; a picked-up item released over its own slot
-    /// falls back to `openMenu`/`doAction` like TS 2291-2296.
+    /// writes `INV_BUTTOND`; a quick release without a grab falls back to
+    /// `openMenu`/`doAction` like TS 2291-2296.
     pub fn handle_obj_drag(&mut self) {
         if self.obj_drag_area == 0 {
             return;
@@ -3524,19 +3524,18 @@ impl Client {
                     self.out.p2(self.hovered_slot);
                     self.out.p1(mode);
                 }
-            } else if (self.one_mouse_button == 1
-                || self.is_add_friend_option(self.menu_num_entries - 1))
-                && self.menu_num_entries > 2
-            {
-                // TS 2291-2293: a picked-up item released over its own slot
-                // (or an invalid target) opens the multi-entry menu.
-                self.open_menu();
-            } else if self.menu_num_entries > 0 {
-                // TS 2294-2296: otherwise the release falls back to the
-                // last menu entry (the left-click Wear/Eat/Drop the drag
-                // grabbed), so a cancelled drag still acts.
-                self.doAction(self.menu_num_entries - 1);
             }
+        } else if (self.one_mouse_button == 1
+            || self.is_add_friend_option(self.menu_num_entries - 1))
+            && self.menu_num_entries > 2
+        {
+            // TS 2291-2293: a quick release without a grab opens the
+            // multi-entry menu instead.
+            self.open_menu();
+        } else if self.menu_num_entries > 0 {
+            // TS 2294-2296: a quick release falls back to the last menu
+            // entry (the left-click Wear/Eat/Drop the drag grabbed).
+            self.doAction(self.menu_num_entries - 1);
         }
         // TS 2298-2299: with the drop consumed, reset the outline timeout
         // and clear the click so the tab/side/main/chat click handlers that

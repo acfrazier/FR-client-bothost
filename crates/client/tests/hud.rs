@@ -1811,7 +1811,7 @@ fn obj_drag_release_sends_inv_buttond() {
 }
 
 #[test]
-fn obj_drag_release_without_threshold_does_not_send() {
+fn obj_drag_quick_release_fires_last_entry_same_slot_drop_does_not() {
     let mut c = client();
     c.side_modal_id = 1;
     let layer = IfType {
@@ -1855,23 +1855,30 @@ fn obj_drag_release_without_threshold_does_not_send() {
     c.shell.latch_click();
     c.mouse_loop();
     assert_eq!(c.obj_drag_area, 2);
-    // release on the same spot: below the ±5px threshold, no INV_BUTTOND
-    // and no last-entry doAction (the TS 2245-2247 block needs both the
-    // threshold and 5 held cycles)
+    // quick release (no grab threshold): the TS 2291-2296 else-if fires
+    // the last menu entry — the slot's Examine (OP_HELD6) — which chats;
+    // no INV_BUTTOND and no item move.
     c.shell.mouse_x = 553 + 16;
     c.shell.mouse_y = 205 + 16;
     c.shell.mouse_button = 0;
     c.handle_obj_drag();
     assert_eq!(c.obj_drag_area, 0);
-    assert_eq!(c.out.pos, 0, "a quick release must not send or move items");
+    assert_eq!(c.out.pos, 0, "a quick release must not send INV_BUTTOND");
     assert_eq!(
         c.cache.ifaces[2].as_ref().unwrap().link_obj_type.as_ref().unwrap(),
-        &vec![5, 0]
+        &vec![5, 0],
+        "a quick release must not move the item"
     );
+    assert_eq!(
+        c.chat_text[0], "It's a Rune.",
+        "a quick release fires the last-entry Examine"
+    );
+    // mark the chat so a second doAction is detectable
+    c.chat_text[0] = "sentinel".into();
     // pick the item up again, hold past the threshold for 5 cycles, and
-    // release over its own slot: the drag is cancelled, so TS 2291-2296
-    // falls back to the last menu entry — the slot's Examine (OP_HELD6) —
-    // which chats instead of sending INV_BUTTOND or moving the item.
+    // release over its own slot: the threshold branch re-walks and finds
+    // the same slot, so neither INV_BUTTOND nor the last-entry doAction
+    // fires (the else-if is the else of the threshold if, TS 2246-2296).
     c.shell.mouse_x = 553 + 16;
     c.shell.mouse_y = 205 + 16;
     c.build_minimenu();
@@ -1888,11 +1895,14 @@ fn obj_drag_release_without_threshold_does_not_send() {
     c.shell.mouse_button = 0;
     c.handle_obj_drag();
     assert_eq!(c.obj_drag_area, 0);
-    assert_eq!(c.out.pos, 0, "a cancelled drag must not send INV_BUTTOND");
+    assert_eq!(c.out.pos, 0, "a same-slot drop must not send INV_BUTTOND");
     assert_eq!(
         c.cache.ifaces[2].as_ref().unwrap().link_obj_type.as_ref().unwrap(),
         &vec![5, 0],
-        "a cancelled drag must not move the item"
+        "a same-slot drop must not move the item"
     );
-    assert_eq!(c.chat_text[0], "It's a Rune.", "the last-entry Examine fires");
+    assert_eq!(
+        c.chat_text[0], "sentinel",
+        "a same-slot drop must not fire the last-entry doAction"
+    );
 }
