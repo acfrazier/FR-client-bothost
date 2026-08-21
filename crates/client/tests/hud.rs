@@ -1008,6 +1008,55 @@ fn inv_number_formats_k_and_m() {
     assert_eq!(c.inv_number(12_000_000), "12M");
 }
 
+#[test]
+fn nice_number_groups_and_colours() {
+    let c = client();
+    assert_eq!(c.nice_number(1), " 1");
+    assert_eq!(c.nice_number(1234), " @cya@1K @whi@(1,234)");
+    assert_eq!(c.nice_number(12_345_678), " @gre@12 million @whi@(12,345,678)");
+}
+
+#[test]
+fn draw_interface_inv_text_writes_obj_name() {
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("title").is_file() {
+        return;
+    }
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache,
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    c.game_draw(); // fonts
+    let mut layer = IfType::default();
+    layer.r#type = ComponentType::TYPE_LAYER;
+    layer.width = 200;
+    layer.height = 50;
+    layer.children = Some(vec![2]);
+    layer.child_x = Some(vec![0]);
+    layer.child_y = Some(vec![0]);
+    let mut inv = IfType::default();
+    inv.r#type = ComponentType::TYPE_INV_TEXT;
+    inv.width = 1;
+    inv.height = 1;
+    inv.link_obj_type = Some(vec![1]); // obj id 0 + 1
+    inv.link_obj_number = Some(vec![1]);
+    inv.colour = 0xffffff;
+    c.cache.ifaces.resize(3, None);
+    c.cache.ifaces[1] = Some(layer);
+    c.cache.ifaces[2] = Some(inv);
+    if c.cache.objs.is_empty() {
+        return;
+    }
+    let mut pixels = vec![0i32; 200 * 50];
+    let mut surface = Pix2D::with_pixels(&mut pixels, 200, 50);
+    c.draw_interface(1, 0, 0, 0, &mut surface);
+    assert!(pixels.iter().any(|&p| p != 0), "inv-text should plot the obj name");
+}
+
 // ---- main/chat modal drawing and clicks (slice 3 Task 2) ----
 
 #[test]

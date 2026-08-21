@@ -1463,14 +1463,36 @@ impl Client {
         }
     }
 
+    /// `Client.niceNumber` from client-ts (10278-10289): comma-group the
+    /// decimal every 3 digits from the right, then abbreviate counts over 4
+    /// characters as `K` and over 8 as `million`, keeping the grouped value
+    /// in parentheses; always prefixed with a space.
+    pub fn nice_number(&self, amount: i32) -> String {
+        let mut s = amount.to_string();
+        let mut i = s.len() as i32 - 3;
+        while i > 0 {
+            s.insert(i as usize, ',');
+            i -= 3;
+        }
+        if s.len() > 8 {
+            let (prefix, _) = s.split_at(s.len() - 8);
+            s = format!("@gre@{prefix} million @whi@({s})");
+        } else if s.len() > 4 {
+            let (prefix, _) = s.split_at(s.len() - 4);
+            s = format!("@cya@{prefix}K @whi@({s})");
+        }
+        format!(" {s}")
+    }
+
     /// `drawInterface` from client-ts (9900) for the 2D component types:
     /// recurse `TYPE_LAYER` children, draw `TYPE_RECT` fill/outline,
     /// `TYPE_TEXT` with the font at `com.font` index 0-3 (p11/p12/b12/q8)
     /// and the `%1`-`%5` `getIfVar` substitution, `TYPE_GRAPHIC` from its
-    /// `media` sprite, and `TYPE_INV` item icons + stack counts (Java
-    /// Client.java 9746-9820). `TYPE_MODEL` (3D) and `TYPE_INV_TEXT` are
-    /// skipped; the `clientComponent` scripts and `drawScrollbar` sprites
-    /// load with Task 14.
+    /// `media` sprite, `TYPE_INV` item icons + stack counts (Java
+    /// Client.java 9746-9820), and `TYPE_INV_TEXT` object-name grids (Java
+    /// Client.java 9972-9994). `TYPE_MODEL` (3D) is skipped; the
+    /// `clientComponent` scripts and `drawScrollbar` sprites load with Task
+    /// 14.
     pub fn draw_interface(&mut self, com_id: i32, x: i32, y: i32, scroll_y: i32, surface: &mut Pix2D) {
         let Some(com) = self.cache.ifaces.get(com_id as usize).and_then(|o| o.as_ref()) else {
             return;
@@ -1646,7 +1668,7 @@ impl Client {
                     // and the selected-slot white outline are not ported
                     // (drag state does not exist yet), so the static icon is
                     // drawn at `slot_x`/`slot_y` with outline 0. TYPE_MODEL
-                    // and TYPE_INV_TEXT remain skipped.
+                    // remains skipped.
                     let Some(link_obj_type) = &child.link_obj_type else {
                         continue;
                     };
@@ -1724,9 +1746,67 @@ impl Client {
                         }
                     }
                 }
+                ComponentType::TYPE_INV_TEXT => {
+                    // Java Client.java 9972-9994 / TS 10228-10261: the grid
+                    // of object names, with `nice_number` stack counts. The
+                    // `cache.obj` index panics out of range, so slots past
+                    // the loaded `objs` are skipped.
+                    let Some(link_obj_type) = &child.link_obj_type else {
+                        continue;
+                    };
+                    let Some(link_obj_number) = &child.link_obj_number else {
+                        continue;
+                    };
+                    let mut slot = 0;
+                    for row in 0..child.height {
+                        for col in 0..child.width {
+                            if link_obj_type.get(slot as usize).copied().unwrap_or(0) > 0 {
+                                let id = link_obj_type[slot as usize] - 1;
+                                if id as usize >= self.cache.objs.len() {
+                                    slot += 1;
+                                    continue;
+                                }
+                                let count = link_obj_number[slot as usize];
+                                let mut text = self.cache.objs[id as usize].name.clone();
+                                if self.cache.objs[id as usize].stackable || count != 1 {
+                                    text.push_str(&format!(" x{}", self.nice_number(count)));
+                                }
+                                let text_x = child_x + col * (child.margin_x + 115);
+                                let text_y = child_y + row * (child.margin_y + 12);
+                                let font = match child.font {
+                                    1 => self.p12.as_mut(),
+                                    2 => self.b12.as_mut(),
+                                    3 => self.q8.as_mut(),
+                                    _ => self.p11.as_mut(),
+                                };
+                                if let Some(font) = font {
+                                    if child.centre {
+                                        font.centre_string_tag(
+                                            surface,
+                                            &text,
+                                            text_x + child.width / 2,
+                                            text_y,
+                                            child.colour,
+                                            child.shadow,
+                                        );
+                                    } else {
+                                        font.draw_string_tag(
+                                            surface,
+                                            &text,
+                                            text_x,
+                                            text_y,
+                                            child.colour,
+                                            child.shadow,
+                                        );
+                                    }
+                                }
+                            }
+                            slot += 1;
+                        }
+                    }
+                }
                 _ => {
-                    // TYPE_MODEL (3D) and TYPE_INV_TEXT are skipped this
-                    // task.
+                    // TYPE_MODEL (3D) is skipped this task.
                 }
             }
         }
