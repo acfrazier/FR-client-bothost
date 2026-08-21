@@ -58,6 +58,63 @@ const CC_LOGOUT: i32 = 205;
 /// toggle makes obj-drag insert instead of swap (TS `CC_BANKMODE`).
 const CC_BANKMODE: i32 = 206;
 
+/// `combatColourCode` from Client.ts (9868-9897): the @-colour prefix for
+/// the level-relative combat level shown on npc/player menu options.
+fn combat_colour_code(viewer_level: i32, other_level: i32) -> &'static str {
+    let diff = viewer_level - other_level;
+    if diff < -9 {
+        "@red@"
+    } else if diff < -6 {
+        "@or3@"
+    } else if diff < -3 {
+        "@or2@"
+    } else if diff < 0 {
+        "@or1@"
+    } else if diff > 9 {
+        "@gre@"
+    } else if diff > 6 {
+        "@gr3@"
+    } else if diff > 3 {
+        "@gr2@"
+    } else if diff > 0 {
+        "@gr1@"
+    } else {
+        "@yel@"
+    }
+}
+
+/// `OP_LOC1..5`/`OP_NPC1..5`/`OP_OBJ1..5`/`OP_PLAYER1..5` by zero-based op
+/// index. The ids are not consecutive, so the TS if/else chain becomes a
+/// lookup (TS 9289-9298, 9485-9494, 9623-9632, and the obj/player arms).
+const LOC_OP_ACTIONS: [i32; 5] = [
+    MiniMenuAction::OP_LOC1,
+    MiniMenuAction::OP_LOC2,
+    MiniMenuAction::OP_LOC3,
+    MiniMenuAction::OP_LOC4,
+    MiniMenuAction::OP_LOC5,
+];
+const NPC_OP_ACTIONS: [i32; 5] = [
+    MiniMenuAction::OP_NPC1,
+    MiniMenuAction::OP_NPC2,
+    MiniMenuAction::OP_NPC3,
+    MiniMenuAction::OP_NPC4,
+    MiniMenuAction::OP_NPC5,
+];
+const OBJ_OP_ACTIONS: [i32; 5] = [
+    MiniMenuAction::OP_OBJ1,
+    MiniMenuAction::OP_OBJ2,
+    MiniMenuAction::OP_OBJ3,
+    MiniMenuAction::OP_OBJ4,
+    MiniMenuAction::OP_OBJ5,
+];
+const PLAYER_OP_ACTIONS: [i32; 5] = [
+    MiniMenuAction::OP_PLAYER1,
+    MiniMenuAction::OP_PLAYER2,
+    MiniMenuAction::OP_PLAYER3,
+    MiniMenuAction::OP_PLAYER4,
+    MiniMenuAction::OP_PLAYER5,
+];
+
 /// Client code of the Report abuse button; `chatModeLoop` records
 /// `main_modal_id` from the first interface with this code (TS
 /// `ClientCode.CC_REPORT_INPUT`).
@@ -293,11 +350,12 @@ pub struct Client {
     pub menu_y: i32,
     pub menu_width: i32,
     pub menu_height: i32,
-    /// `objSelectedName`/`targetOp` (TS 440/447): the Use/Target hint text
-    /// for `draw_feedback`; set by the `USEHELD_START`/`TGT_*` doAction
-    /// arms (Task 3).
+    /// `objSelectedName`/`targetOp`/`targetMask` (TS 440/447/449): the
+    /// Use/Target hint text and the spell target mask for `draw_feedback`;
+    /// set by the `USEHELD_START`/`TGT_*` doAction arms (Task 3).
     pub obj_selected_name: String,
     pub target_op: String,
+    pub target_mask: i32,
 
     pub dir_map: Vec<i32>,
     pub dist_map: Vec<i32>,
@@ -323,6 +381,11 @@ pub struct Client {
 
     pub use_mode: i32,
     pub target_mode: i32,
+    /// `playerOp`/`playerOpPriority` (TS 412-413): the five right-click
+    /// options on other players, set by `SET_PLAYER_OP` and consumed by
+    /// `add_player_options`.
+    pub player_op: [Option<String>; 5],
+    pub player_op_priority: [bool; 5],
     pub redraw_side: bool,
     /// Side-tab state (`Client.ts` `sideIcon`/`activeIcon`): `side_icon[icon]`
     /// is the interface id drawn on tab `icon` (-1 hidden), `active_icon` the
@@ -751,6 +814,7 @@ impl Client {
             menu_height: 0,
             obj_selected_name: String::new(),
             target_op: String::new(),
+            target_mask: 0,
 
             dir_map: vec![0; BUILD_AREA_TILES],
             dist_map: vec![0; BUILD_AREA_TILES],
@@ -776,6 +840,8 @@ impl Client {
 
             use_mode: 0,
             target_mode: 0,
+            player_op: Default::default(),
+            player_op_priority: Default::default(),
             redraw_side: false,
             active_icon: 3,
             side_icon: [-1; 14],
@@ -1518,6 +1584,10 @@ impl Client {
             for slot in self.player_appearance_buffer.iter_mut() {
                 *slot = None;
             }
+            // Client.ts:1889-1892 — cold login clears the player right-click
+            // options (the server re-sends SET_PLAYER_OP).
+            self.player_op = Default::default();
+            self.player_op_priority = Default::default();
             // Client.ts:1853 — localPlayer = players[LOCAL_PLAYER_INDEX] = new
             let player = ClientPlayer::default();
             self.players[LOCAL_PLAYER_INDEX as usize] = Some(player.clone());
@@ -3802,8 +3872,24 @@ impl Client {
             ServerProt::LAST_LOGIN_INFO
             | ServerProt::P_COUNTDIALOG
             | ServerProt::SET_MULTIWAY
-            | ServerProt::SET_PLAYER_OP
             | ServerProt::MINIMAP_TOGGLE => {
+                self.ptype = -1;
+            }
+
+            ServerProt::SET_PLAYER_OP => {
+                // TS 6789-6800: `SET_PLAYER_OP` fills `playerOp`/`playerOpPriority`.
+                let index = payload.g1();
+                let priority = payload.g1();
+                let op = payload.gjstr();
+                if (1..=5).contains(&index) {
+                    let op = if op.eq_ignore_ascii_case("null") {
+                        None
+                    } else {
+                        Some(op)
+                    };
+                    self.player_op[(index - 1) as usize] = op;
+                    self.player_op_priority[(index - 1) as usize] = priority == 0;
+                }
                 self.ptype = -1;
             }
 
@@ -5769,6 +5855,361 @@ impl Client {
             self.menu_width = width;
             self.menu_height = self.menu_num_entries * 15 + 22;
         }
+    }
+
+    /// `addWorldOptions` from Client.ts (9276-9457): fill the menu from the
+    /// `pix3d` pick list. Walk here goes first when no item is held and no
+    /// target is armed; each picked typecode decodes into a loc, npc,
+    /// player, or ground-obj option block (duplicate typecodes skipped).
+    pub fn add_world_options(&mut self) {
+        if self.use_mode == 0 && self.target_mode == 0 {
+            let option = "Walk here".to_string();
+            self.push_option(
+                option,
+                MiniMenuAction::WALK,
+                0,
+                self.shell.mouse_x,
+                self.shell.mouse_y,
+            );
+        }
+
+        let mut last_typecode = -1i32;
+        for picked in 0..self.pix3d.picked_count {
+            let typecode = self.pix3d.picked_entity_typecode[picked as usize];
+            let x = typecode & 0x7f;
+            let z = (typecode >> 7) & 0x7f;
+            let entity_type = (typecode >> 29) & 0x3;
+            let type_id = (typecode >> 14) & 0x7fff;
+
+            if typecode == last_typecode {
+                continue;
+            }
+            last_typecode = typecode;
+
+            if entity_type == 2 && self.world.type_code2(self.minusedlevel, x, z, typecode) >= 0 {
+                // loc: ops 4..0, then Examine; Use/TGT replace them
+                let loc = self.cache.locs.get(type_id as usize);
+                if let Some(loc) = loc {
+                    let loc_name = loc.name.clone();
+                    let loc_ops = loc.op.clone();
+                    if self.use_mode == 1 {
+                        let option = format!("Use {} with @cya@{}", self.obj_selected_name, loc_name);
+                        self.push_option(option, MiniMenuAction::USEHELD_ONLOC, typecode, x, z);
+                    } else if self.target_mode == 1 {
+                        if (self.target_mask & 0x4) == 0x4 {
+                            let option = format!("{} @cya@{}", self.target_op, loc_name);
+                            self.push_option(option, MiniMenuAction::TGT_LOC, typecode, x, z);
+                        }
+                    } else {
+                        for i in (0..=4).rev() {
+                            if let Some(op) = loc_ops.get(i).and_then(|o| o.clone()) {
+                                let option = format!("{op} @cya@{loc_name}");
+                                self.push_option(
+                                    option,
+                                    LOC_OP_ACTIONS[i],
+                                    typecode,
+                                    x,
+                                    z,
+                                );
+                            }
+                        }
+                        let option = format!("Examine @cya@{loc_name}");
+                        self.push_option(option, MiniMenuAction::OP_LOC6, typecode, x, z);
+                    }
+                }
+            } else if entity_type == 1 {
+                // npc: stacked npcs sharing the tile, then the picked one
+                let npc = self.npc.get(type_id as usize).and_then(|n| n.as_ref());
+                if let Some(npc) = npc {
+                    let npc_type = npc.r#type;
+                    let (npc_x, npc_z) = (npc.x, npc.z);
+                    if let Some(npc_type) = npc_type {
+                        let size_one = self
+                            .cache
+                            .npcs
+                            .get(npc_type)
+                            .map(|t| t.size == 1)
+                            .unwrap_or(false);
+                        if size_one && (npc_x & 0x7f) == 64 && (npc_z & 0x7f) == 64 {
+                            for i in 0..self.npc_count {
+                                let id = self.npc_ids[i as usize];
+                                if id == type_id {
+                                    continue;
+                                }
+                                let other = self.npc.get(id as usize).and_then(|n| n.as_ref());
+                                if let Some(other) = other {
+                                    if let Some(other_type) = other.r#type {
+                                        let size_one = self
+                                            .cache
+                                            .npcs
+                                            .get(other_type)
+                                            .map(|t| t.size == 1)
+                                            .unwrap_or(false);
+                                        if size_one && other.x == npc_x && other.z == npc_z {
+                                            self.add_npc_options(other_type as i32, id, x, z);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some(npc_type) = npc_type {
+                        self.add_npc_options(npc_type as i32, type_id, x, z);
+                    }
+                }
+            } else if entity_type == 0 {
+                // player: stacked npcs/players sharing the tile, then self
+                let player = self.players.get(type_id as usize).and_then(|p| p.as_ref());
+                if let Some(player) = player {
+                    let (player_x, player_z) = (player.x, player.z);
+                    if (player_x & 0x7f) == 64 && (player_z & 0x7f) == 64 {
+                        for i in 0..self.npc_count {
+                            let id = self.npc_ids[i as usize];
+                            let other = self.npc.get(id as usize).and_then(|n| n.as_ref());
+                            if let Some(other) = other {
+                                if let Some(other_type) = other.r#type {
+                                    let size_one = self
+                                        .cache
+                                        .npcs
+                                        .get(other_type)
+                                        .map(|t| t.size == 1)
+                                        .unwrap_or(false);
+                                    if size_one && other.x == player_x && other.z == player_z {
+                                        self.add_npc_options(other_type as i32, id, x, z);
+                                    }
+                                }
+                            }
+                        }
+                        for i in 0..self.player_count {
+                            let id = self.player_ids[i as usize];
+                            if id == type_id {
+                                continue;
+                            }
+                            let other = self.players.get(id as usize).and_then(|p| p.as_ref());
+                            if let Some(other) = other {
+                                if other.x == player_x && other.z == player_z {
+                                    self.add_player_options(id, x, z);
+                                }
+                            }
+                        }
+                    }
+                    self.add_player_options(type_id, x, z);
+                }
+            } else if entity_type == 3 {
+                // ground objs: iterate the tile list tail->prev
+                let level = self.minusedlevel as usize;
+                let mut cell = self.ground_obj[level][x as usize][z as usize].take();
+                if let Some(objs) = cell.as_mut() {
+                    let mut node = objs.tail();
+                    while let Some(obj) = node {
+                        let obj_id = obj.id;
+                        let type_name = self
+                            .cache
+                            .objs
+                            .get(obj_id as usize)
+                            .map(|t| t.name.clone())
+                            .unwrap_or_default();
+                        let type_ops = self
+                            .cache
+                            .objs
+                            .get(obj_id as usize)
+                            .map(|t| t.op.clone())
+                            .unwrap_or_default();
+                        if self.use_mode == 1 {
+                            let option =
+                                format!("Use {} with @lre@{}", self.obj_selected_name, type_name);
+                            self.push_option(
+                                option,
+                                MiniMenuAction::USEHELD_ONOBJ,
+                                obj_id,
+                                x,
+                                z,
+                            );
+                        } else if self.target_mode == 1 {
+                            if (self.target_mask & 0x1) == 0x1 {
+                                let option = format!("{} @lre@{}", self.target_op, type_name);
+                                self.push_option(option, MiniMenuAction::TGT_OBJ, obj_id, x, z);
+                            }
+                        } else {
+                            for op in (0..=4).rev() {
+                                if let Some(o) = type_ops[op].as_deref() {
+                                    let option = format!("{o} @lre@{type_name}");
+                                    self.push_option(
+                                        option,
+                                        OBJ_OP_ACTIONS[op],
+                                        obj_id,
+                                        x,
+                                        z,
+                                    );
+                                } else if op == 2 {
+                                    let option = format!("Take @lre@{type_name}");
+                                    self.push_option(
+                                        option,
+                                        MiniMenuAction::OP_OBJ3,
+                                        obj_id,
+                                        x,
+                                        z,
+                                    );
+                                }
+                            }
+                            let option = format!("Examine @lre@{type_name}");
+                            self.push_option(option, MiniMenuAction::OP_OBJ6, obj_id, x, z);
+                        }
+                        node = objs.prev();
+                    }
+                }
+                self.ground_obj[level][x as usize][z as usize] = cell;
+            }
+        }
+    }
+
+    /// `addNpcOptions` from Client.ts (9459-9535): one npc's menu block.
+    /// `npc_id` indexes `cache.npcs`, `a` is the npc's slot in `self.npc`
+    /// (sent in the OP_NPC packets). Attack is deferred past the other ops
+    /// and priority-pinned when it outlevels the local player.
+    pub fn add_npc_options(&mut self, npc_id: i32, a: i32, b: i32, c: i32) {
+        if self.menu_num_entries >= 400 {
+            return;
+        }
+        let npc_type = match self.cache.npcs.get(npc_id as usize) {
+            Some(t) => t,
+            None => return,
+        };
+        let name = npc_type.name.clone();
+        let vislevel = npc_type.vislevel;
+        let ops = npc_type.op.clone();
+
+        let mut tooltip = name;
+        if vislevel != 0 {
+            if let Some(local) = &self.local_player {
+                tooltip.push_str(combat_colour_code(local.combat_level, vislevel));
+                tooltip.push_str(&format!(" (level-{vislevel})"));
+            }
+        }
+
+        if self.use_mode == 1 {
+            let option = format!("Use {} with @yel@{}", self.obj_selected_name, tooltip);
+            self.push_option(option, MiniMenuAction::USEHELD_ONNPC, a, b, c);
+        } else if self.target_mode == 1 {
+            if (self.target_mask & 0x2) == 0x2 {
+                let option = format!("{} @yel@{}", self.target_op, tooltip);
+                self.push_option(option, MiniMenuAction::TGT_NPC, a, b, c);
+            }
+        } else {
+            for i in (0..=4).rev() {
+                let Some(op) = ops.get(i).and_then(|o| o.clone()) else {
+                    continue;
+                };
+                if op.eq_ignore_ascii_case("attack") {
+                    continue;
+                }
+                let option = format!("{op} @yel@{tooltip}");
+                self.push_option(option, NPC_OP_ACTIONS[i], a, b, c);
+            }
+            for i in (0..=4).rev() {
+                let Some(op) = ops.get(i).and_then(|o| o.clone()) else {
+                    continue;
+                };
+                if !op.eq_ignore_ascii_case("attack") {
+                    continue;
+                }
+                let mut priority = 0;
+                if let Some(local) = &self.local_player {
+                    if vislevel > local.combat_level {
+                        priority = MiniMenuAction::_PRIORITY;
+                    }
+                }
+                let option = format!("{op} @yel@{tooltip}");
+                self.push_option(option, priority + NPC_OP_ACTIONS[i], a, b, c);
+            }
+            let option = format!("Examine @yel@{tooltip}");
+            self.push_option(option, MiniMenuAction::OP_NPC6, a, b, c);
+        }
+    }
+
+    /// `addPlayerOptions` from Client.ts (9537-9616): the local player is
+    /// skipped (`players[LOCAL_PLAYER_INDEX]`), the `player_op` list fills
+    /// the menu, and the Walk here entry is renamed with the player name.
+    pub fn add_player_options(&mut self, a: i32, b: i32, c: i32) {
+        if a == LOCAL_PLAYER_INDEX || self.menu_num_entries >= 400 {
+            return;
+        }
+        let player = match self.players.get(a as usize).and_then(|p| p.as_ref()) {
+            Some(p) => p,
+            None => return,
+        };
+        let name = player.name.clone().unwrap_or_default();
+        let combat_level = player.combat_level;
+        let skill_level = player.skill_level;
+
+        let tooltip = if skill_level == 0 {
+            if let Some(local) = &self.local_player {
+                format!(
+                    "{name}{} (level-{combat_level})",
+                    combat_colour_code(local.combat_level, combat_level)
+                )
+            } else {
+                format!("{name} (skill-{skill_level})")
+            }
+        } else {
+            format!("{name} (skill-{skill_level})")
+        };
+
+        if self.use_mode == 1 {
+            let option = format!("Use {} with @whi@{}", self.obj_selected_name, tooltip);
+            self.push_option(option, MiniMenuAction::USEHELD_ONPLAYER, a, b, c);
+        } else if self.target_mode == 1 {
+            if (self.target_mask & 0x8) == 0x8 {
+                let option = format!("{} @whi@{}", self.target_op, tooltip);
+                self.push_option(option, MiniMenuAction::TGT_PLAYER, a, b, c);
+            }
+        } else {
+            for i in (0..=4).rev() {
+                let Some(op) = self.player_op[i].clone() else {
+                    continue;
+                };
+                let option = format!("{op} @whi@{tooltip}");
+                let mut priority = 0;
+                if op.eq_ignore_ascii_case("attack") {
+                    if let Some(local) = &self.local_player {
+                        if combat_level > local.combat_level {
+                            priority = MiniMenuAction::_PRIORITY;
+                        }
+                    }
+                } else if self.player_op_priority[i] {
+                    priority = MiniMenuAction::_PRIORITY;
+                }
+                self.push_option(
+                    option,
+                    priority + PLAYER_OP_ACTIONS[i],
+                    a,
+                    b,
+                    c,
+                );
+            }
+        }
+
+        for i in 0..self.menu_num_entries {
+            if self.menu_action[i as usize] == MiniMenuAction::WALK {
+                self.menu_option[i as usize] = format!("Walk here @whi@{tooltip}");
+                break;
+            }
+        }
+    }
+
+    /// Append one menu row. `MENU_CAPACITY` bounds the fixed arrays; real
+    /// menus never approach it (npc/player adders cap at 400 like TS).
+    fn push_option(&mut self, option: String, action: i32, a: i32, b: i32, c: i32) {
+        if self.menu_num_entries as usize >= MENU_CAPACITY {
+            return;
+        }
+        let index = self.menu_num_entries as usize;
+        self.menu_option[index] = option;
+        self.menu_action[index] = action;
+        self.menu_param_a[index] = a;
+        self.menu_param_b[index] = b;
+        self.menu_param_c[index] = c;
+        self.menu_num_entries += 1;
     }
 
     /// `minimapLoop` from Client.ts (2742): a left click inside the
