@@ -548,12 +548,9 @@ impl Client {
         // mouse is held (Client.ts 2341-2343); 0/1 here is enough for the
         // held-arrow scrollbar repeat.
         self.scroll_cycle = if self.shell.mouse_button != 0 { 1 } else { 0 };
-        // TS `buildMinimenu` hover walk (Client.ts 2524-2566): run it
-        // first so this frame's side/chat draws use the new hover (and so
-        // a hover change redraws in the same frame).
-        if self.ingame {
-            self.update_if_pointer();
-        }
+        // TS `buildMinimenu` (hover walk + menu options) runs from
+        // `other_overlays` when no menu is open (Client.ts 4865-4867),
+        // ahead of this frame's side/chat draws.
         self.prepare_game();
 
         if self.redraw_frame {
@@ -857,9 +854,10 @@ impl Client {
 
     /// `otherOverlays` from client-ts (4853): draw the main overlay then the
     /// main modal into `area_game` at (0, 0), ahead of the (4, 4) blit.
-    /// `animateInterface` runs before each draw (TS 4853-4861); the minimenu
-    /// (area 0) draws after them, and `draw_feedback` when no menu is open
-    /// (TS 4867-4869, `buildMinimenu` before it is Task 2).
+    /// `animateInterface` runs before each draw (TS 4853-4861); with no
+    /// menu open `buildMinimenu` rebuilds the menu (the pointer walk plus
+    /// the option strings) before `draw_feedback` (TS 4865-4867), and the
+    /// open minimenu (area 0) draws after the modal (TS 4868-4870).
     fn other_overlays(&mut self) {
         let mut game = self.area_game.take();
         if let Some(game) = game.as_mut() {
@@ -882,6 +880,7 @@ impl Client {
         self.area_game = game;
 
         if !self.is_menu_open {
+            self.build_minimenu();
             self.draw_feedback();
         }
     }

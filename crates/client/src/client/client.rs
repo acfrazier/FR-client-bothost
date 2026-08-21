@@ -2726,7 +2726,7 @@ impl Client {
     }
 
     /// The TYPE_INV slot under `(mouse_x, mouse_y)` in the tree rooted at
-    /// `com_id`, mirroring `add_component_hover`'s slot math
+    /// `com_id`, mirroring `add_component_options`' slot math
     /// (`col * (margin_x + 32)`) and `if_hit_test`'s layer walk/scroll
     /// clamp. Returns `(com_id, slot)` of the first hit inventory child —
     /// the drag-start grab and the drop-target read both use it.
@@ -3011,8 +3011,8 @@ impl Client {
     /// and return the first hit child with a BUTTON_OK/CLOSE/TOGGLE/SELECT
     /// `button_type`, shared by the side/main/chat click handlers. Layers
     /// recurse with the same scroll clamp as `draw_interface`; TYPE_INV
-    /// children are skipped (their menu options land with the inventory
-    /// task). The layer must be visible and its rect must contain the point
+    /// children are skipped (their menu options land in `build_minimenu`).
+    /// The layer must be visible and its rect must contain the point
     /// (TS 9629).
     fn if_hit_test(
         &self,
@@ -3088,24 +3088,48 @@ impl Client {
         None
     }
 
-    /// TS `buildMinimenu` (2524-2566) hover walk, without the minimenu
-    /// option strings (slice 4): the component under the pointer in each
-    /// region becomes `over_main_com_id`/`over_side_com_id`/`over_chat_com_id`
-    /// (0 when nothing is hovered), and a change sets `redraw_side`/
-    /// `redraw_chat`. `add_component_hover` also steps scrollable layers'
-    /// `do_scrollbar` and records `hovered_slot`. Called from `game_draw`
-    /// when `ingame`; `pub` so tests can drive it directly.
-    pub fn update_if_pointer(&mut self) {
+    /// `buildMinimenu` from Client.ts (2514-2599): rebuild the minimenu
+    /// from the pointer position every frame (called from `other_overlays`
+    /// when no menu is open). Returns immediately while an inventory drag
+    /// is in flight (`obj_drag_area != 0`, TS 2515). Seeds Cancel at [0]
+    /// with `menu_num_entries = 1`, then fills the three regions — the
+    /// viewport walks the world picks (`add_world_options`) or the main
+    /// modal, the side walks the side modal or the active-tab interface,
+    /// the chat walks the chat modal or the chat lines (`add_chat_options`).
+    /// The walk also does the slice-3 hover writes (`over_*_com_id`,
+    /// scrollbar steps, `hovered_slot`). Finally the bubble sort (TS
+    /// 2569-2598) swaps adjacent `<1000`/`>1000` action pairs so the 1000+
+    /// examine entries sink toward the bottom of the menu.
+    pub fn build_minimenu(&mut self) {
+        if self.obj_drag_area != 0 {
+            return;
+        }
+
+        self.menu_option[0] = "Cancel".into();
+        self.menu_action[0] = MiniMenuAction::CANCEL;
+        self.menu_num_entries = 1;
+
+        self.add_private_chat_options();
         self.last_over_com_id = 0;
 
-        // Viewport 4..516 x 4..338: the main modal (not the world).
+        // Viewport 4..516 x 4..338: the main modal, else the world picks.
         if self.shell.mouse_x > 4
             && self.shell.mouse_y > 4
             && self.shell.mouse_x < 516
             && self.shell.mouse_y < 338
-            && self.main_modal_id != -1
         {
-            self.add_component_hover(self.main_modal_id, self.shell.mouse_x, self.shell.mouse_y, 4, 4, 0);
+            if self.main_modal_id == -1 {
+                self.add_world_options();
+            } else {
+                self.add_component_options(
+                    self.main_modal_id,
+                    self.shell.mouse_x,
+                    self.shell.mouse_y,
+                    4,
+                    4,
+                    0,
+                );
+            }
         }
         if self.last_over_com_id != self.over_main_com_id {
             self.over_main_com_id = self.last_over_com_id;
@@ -3119,11 +3143,25 @@ impl Client {
             && self.shell.mouse_y < 466
         {
             if self.side_modal_id != -1 {
-                self.add_component_hover(self.side_modal_id, self.shell.mouse_x, self.shell.mouse_y, 553, 205, 0);
+                self.add_component_options(
+                    self.side_modal_id,
+                    self.shell.mouse_x,
+                    self.shell.mouse_y,
+                    553,
+                    205,
+                    0,
+                );
             } else {
                 let icon_id = self.side_icon.get(self.active_icon as usize).copied().unwrap_or(-1);
                 if icon_id != -1 {
-                    self.add_component_hover(icon_id, self.shell.mouse_x, self.shell.mouse_y, 553, 205, 0);
+                    self.add_component_options(
+                        icon_id,
+                        self.shell.mouse_x,
+                        self.shell.mouse_y,
+                        553,
+                        205,
+                        0,
+                    );
                 }
             }
         }
@@ -3132,32 +3170,149 @@ impl Client {
             self.over_side_com_id = self.last_over_com_id;
         }
 
-        // Chat 17..496 x 357..453: the chat modal only (chat lines have no
-        // hover state).
+        // Chat 17..496 x 357..453: the chat modal, else the chat lines.
         self.last_over_com_id = 0;
         if self.shell.mouse_x > 17
             && self.shell.mouse_y > 357
             && self.shell.mouse_x < 496
             && self.shell.mouse_y < 453
-            && self.chat_modal_id != -1
         {
-            self.add_component_hover(self.chat_modal_id, self.shell.mouse_x, self.shell.mouse_y, 17, 357, 0);
+            if self.chat_modal_id != -1 {
+                self.add_component_options(
+                    self.chat_modal_id,
+                    self.shell.mouse_x,
+                    self.shell.mouse_y,
+                    17,
+                    357,
+                    0,
+                );
+            } else if self.shell.mouse_y < 434 && self.shell.mouse_x < 426 {
+                self.add_chat_options(self.shell.mouse_x - 17, self.shell.mouse_y - 357);
+            }
         }
         if self.chat_modal_id != -1 && self.last_over_com_id != self.over_chat_com_id {
             self.redraw_chat = true;
             self.over_chat_com_id = self.last_over_com_id;
         }
+
+        // Bubble sort (TS 2569-2598): a `<1000` action directly above a
+        // `>1000` one swaps all five fields, so the 1000+ examine entries
+        // sink toward the bottom of the drawn menu (index 0 is Cancel).
+        let mut sorted = false;
+        while !sorted {
+            sorted = true;
+            for i in 0..(self.menu_num_entries - 1) {
+                let (l, r) = (i as usize, (i + 1) as usize);
+                if self.menu_action[l] < 1000 && self.menu_action[r] > 1000 {
+                    self.menu_option.swap(l, r);
+                    self.menu_action.swap(l, r);
+                    self.menu_param_b.swap(l, r);
+                    self.menu_param_c.swap(l, r);
+                    self.menu_param_a.swap(l, r);
+                    sorted = false;
+                }
+            }
+        }
     }
 
-    /// TS `addComponentOptions` (9628-9655) hover walk, without the minimenu
-    /// option strings (slice 4): a pointer inside a child with `over_layer_id`
-    /// or `colour_over` records `last_over_com_id` (the `over_layer_id` when
-    /// set, else the child id). `TYPE_LAYER` children recurse with their
-    /// scroll, then a scrollable layer (`scroll_height > height`) steps its
-    /// `do_scrollbar`; `TYPE_INV` children record the slot under the pointer
+    /// `addPrivateChatOptions` from Client.ts (2600): the private-chat
+    /// friend/ignore/PM menu is slice 5; stub empty.
+    fn add_private_chat_options(&mut self) {}
+
+    /// `addChatOptions` from Client.ts (2658-2740) with the friend/ignore/
+    /// accept-trade/accept-duel options skipped (slice 5): only "Report
+    /// abuse" for a staff player hovering a public or private chat line.
+    /// `is_friend` is always false in this port (no friend list), matching
+    /// `draw_chat`.
+    fn add_chat_options(&mut self, _mouse_x: i32, mouse_y: i32) {
+        let mut line = 0;
+        for i in 0..100 {
+            if self.chat_text[i].is_empty() {
+                continue;
+            }
+            let r#type = self.chat_type[i];
+            let y = self.chat_scroll_pos + 70 + 4 - line * 14;
+            if y < -20 {
+                break;
+            }
+            let mut sender = self.chat_username[i].clone();
+            let mut _mod = false;
+            if sender.starts_with("@cr1@") {
+                sender = sender[5..].to_string();
+                _mod = true;
+            } else if sender.starts_with("@cr2@") {
+                sender = sender[5..].to_string();
+                _mod = true;
+            }
+
+            if r#type == 0 {
+                line += 1;
+            } else if (r#type == 1 || r#type == 2)
+                && (r#type == 1
+                    || self.chat_public_mode == 0
+                    || (self.chat_public_mode == 1 && false))
+            {
+                // TS 2687: `localPlayer && sender !== localPlayer.name`.
+                let not_self = match &self.local_player {
+                    None => false,
+                    Some(p) => p.name.as_deref() != Some(sender.as_str()),
+                };
+                if mouse_y > y - 14 && mouse_y <= y && not_self {
+                    if self.staffmodlevel >= 1 {
+                        let option = format!("Report abuse @whi@{sender}");
+                        self.push_option(option, MiniMenuAction::ABUSE_REPORT, 0, 0, 0);
+                    }
+                }
+                line += 1;
+            } else if (r#type == 3 || r#type == 7)
+                // split private chat is not implemented (TS `splitPrivateChat`
+                // stays 0), so the `&& splitPrivateChat === 0` gate is
+                // dropped like in draw_chat.
+                && (r#type == 7
+                    || self.chat_private_mode == 0
+                    || (self.chat_private_mode == 1 && false))
+            {
+                if mouse_y > y - 14 && mouse_y <= y {
+                    if self.staffmodlevel >= 1 {
+                        let option = format!("Report abuse @whi@{sender}");
+                        self.push_option(option, MiniMenuAction::ABUSE_REPORT, 0, 0, 0);
+                    }
+                }
+                line += 1;
+            } else if r#type == 4 && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && false)) {
+                // the accept-trade option is slice 5; the line still counts
+                // so the y positions match draw_chat.
+                line += 1;
+            } else if (r#type == 5 || r#type == 6) && self.chat_private_mode < 2 {
+                line += 1;
+            } else if r#type == 8 && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && false)) {
+                line += 1;
+            }
+        }
+    }
+
+    /// Slice-3 hover entry point, kept for the obj-drag drop re-walk and
+    /// the hud tests: the pointer walk now lives in `build_minimenu`.
+    pub fn update_if_pointer(&mut self) {
+        self.build_minimenu();
+    }
+
+    /// `addComponentOptions` from Client.ts (9628-9841): the hover walk
+    /// plus the minimenu option strings for the tree rooted at `com_id`.
+    /// A pointer inside a child with `over_layer_id` or `colour_over`
+    /// records `last_over_com_id` (the `over_layer_id` when set, else the
+    /// child id). `TYPE_LAYER` children recurse with their scroll, then a
+    /// scrollable layer (`scroll_height > height`) steps its `do_scrollbar`.
+    /// `TYPE_INV` children record the slot under the pointer
     /// (`hovered_slot`/`hovered_slot_com_id`) even when the slot is empty
-    /// (the Task 8 drop target).
-    fn add_component_hover(
+    /// (the Task 8 drop target), and push the held/button options for an
+    /// occupied slot — Use/TGT, obj iop 4..3 with the Drop fallback, Use,
+    /// obj iop 2..0, `child.iop` INV_BUTTONs, then Examine (TS 9684-9790).
+    /// Non-inv children under the pointer push their button option
+    /// (OK/CLOSE/TOGGLE/SELECT/CONTINUE/TARGET, TS 9795-9839); the social
+    /// (friend/ignore) override is slice 5, so BUTTON_OK always uses
+    /// `button_text`.
+    fn add_component_options(
         &mut self,
         com_id: i32,
         mouse_x: i32,
@@ -3192,7 +3347,9 @@ impl Client {
         };
         for i in 0..children.len() {
             let child_id = children[i];
-            let Some(child) = self.cache.ifaces.get(child_id as usize).and_then(|o| o.as_ref()) else {
+            // An owned copy: the option pushes below call `push_option`
+            // (`&mut self`) while the walk reads the child fields.
+            let Some(child) = self.cache.ifaces.get(child_id as usize).and_then(|o| o.clone()) else {
                 continue;
             };
             let child_x = child_x[i] + x + child.x;
@@ -3213,7 +3370,7 @@ impl Client {
 
             match child.r#type {
                 ComponentType::TYPE_LAYER => {
-                    self.add_component_hover(child_id, mouse_x, mouse_y, child_x, child_y, child.scroll_pos);
+                    self.add_component_options(child_id, mouse_x, mouse_y, child_x, child_y, child.scroll_pos);
                     let (child_w, child_h, child_sh) = self
                         .cache
                         .ifaces
@@ -3235,6 +3392,10 @@ impl Client {
                     }
                 }
                 ComponentType::TYPE_INV => {
+                    let child_id = child.id;
+                    let inv_iop = child.iop;
+                    let obj_ops = child.obj_ops;
+                    let obj_use = child.obj_use;
                     let mut slot = 0;
                     for row in 0..child.height {
                         for col in 0..child.width {
@@ -3257,12 +3418,233 @@ impl Client {
                                 continue;
                             }
                             self.hovered_slot = slot;
-                            self.hovered_slot_com_id = child.id;
+                            self.hovered_slot_com_id = child_id;
+
+                            // TS 9678: empty slots (no link) stop here.
+                            let Some(obj_id) = child
+                                .link_obj_type
+                                .as_ref()
+                                .and_then(|t| t.get(slot as usize))
+                                .copied()
+                                .filter(|&id| id > 0)
+                            else {
+                                slot += 1;
+                                continue;
+                            };
+                            let obj_id = obj_id - 1;
+                            let Some((obj_name, obj_iop)) = self
+                                .cache
+                                .objs
+                                .get(obj_id as usize)
+                                .map(|o| (o.name.clone(), o.iop.clone()))
+                            else {
+                                slot += 1;
+                                continue;
+                            };
+
+                            if self.use_mode == 1 && obj_ops {
+                                // the selected slot itself has no Use option
+                                // (TS 9686)
+                                if child_id != self.obj_selected_com_id
+                                    || slot != self.obj_selected_slot
+                                {
+                                    let option = format!(
+                                        "Use {} with @lre@{}",
+                                        self.obj_selected_name, obj_name
+                                    );
+                                    self.push_option(
+                                        option,
+                                        MiniMenuAction::USEHELD_ONHELD,
+                                        obj_id,
+                                        slot,
+                                        child_id,
+                                    );
+                                }
+                            } else if self.target_mode == 1 && obj_ops {
+                                if (self.target_mask & 0x10) == 0x10 {
+                                    let option = format!("{} @lre@{}", self.target_op, obj_name);
+                                    self.push_option(
+                                        option,
+                                        MiniMenuAction::TGT_HELD,
+                                        obj_id,
+                                        slot,
+                                        child_id,
+                                    );
+                                }
+                            } else {
+                                // obj iop 4..3 with the Drop fallback at 4
+                                // (TS 9706-9724)
+                                if obj_ops {
+                                    for op in (3..=4).rev() {
+                                        if let Some(text) = &obj_iop[op as usize] {
+                                            let option = format!("{text} @lre@{obj_name}");
+                                            let action = if op == 3 {
+                                                MiniMenuAction::OP_HELD4
+                                            } else {
+                                                MiniMenuAction::OP_HELD5
+                                            };
+                                            self.push_option(
+                                                option,
+                                                action,
+                                                obj_id,
+                                                slot,
+                                                child_id,
+                                            );
+                                        } else if op == 4 {
+                                            let option = format!("Drop @lre@{obj_name}");
+                                            self.push_option(
+                                                option,
+                                                MiniMenuAction::OP_HELD5,
+                                                obj_id,
+                                                slot,
+                                                child_id,
+                                            );
+                                        }
+                                    }
+                                }
+
+                                if obj_use {
+                                    let option = format!("Use @lre@{obj_name}");
+                                    self.push_option(
+                                        option,
+                                        MiniMenuAction::USEHELD_START,
+                                        obj_id,
+                                        slot,
+                                        child_id,
+                                    );
+                                }
+
+                                // obj iop 2..0 (TS 9737-9753)
+                                if obj_ops {
+                                    for op in (0..=2).rev() {
+                                        if let Some(text) = &obj_iop[op as usize] {
+                                            let option = format!("{text} @lre@{obj_name}");
+                                            let action = match op {
+                                                0 => MiniMenuAction::OP_HELD1,
+                                                1 => MiniMenuAction::OP_HELD2,
+                                                _ => MiniMenuAction::OP_HELD3,
+                                            };
+                                            self.push_option(
+                                                option,
+                                                action,
+                                                obj_id,
+                                                slot,
+                                                child_id,
+                                            );
+                                        }
+                                    }
+                                }
+
+                                // the component's own iop 4..0 (TS 9759-9781)
+                                for op in (0..=4).rev() {
+                                    if let Some(text) = &inv_iop[op as usize] {
+                                        let option = format!("{text} @lre@{obj_name}");
+                                        let action = match op {
+                                            0 => MiniMenuAction::INV_BUTTON1,
+                                            1 => MiniMenuAction::INV_BUTTON2,
+                                            2 => MiniMenuAction::INV_BUTTON3,
+                                            3 => MiniMenuAction::INV_BUTTON4,
+                                            _ => MiniMenuAction::INV_BUTTON5,
+                                        };
+                                        self.push_option(
+                                            option,
+                                            action,
+                                            obj_id,
+                                            slot,
+                                            child_id,
+                                        );
+                                    }
+                                }
+
+                                let option = format!("Examine @lre@{obj_name}");
+                                self.push_option(
+                                    option,
+                                    MiniMenuAction::OP_HELD6,
+                                    obj_id,
+                                    slot,
+                                    child_id,
+                                );
+                            }
+
                             slot += 1;
                         }
                     }
                 }
-                _ => {}
+                _ => {
+                    if mouse_x >= child_x
+                        && mouse_y >= child_y
+                        && mouse_x < child_x + child.width
+                        && mouse_y < child_y + child.height
+                    {
+                        if child.button_type == ButtonType::BUTTON_OK {
+                            // `addSocialOptions` (friends/ignore) is slice
+                            // 5, so the override is always false (TS 9799).
+                            if !child.button_text.is_empty() {
+                                self.push_option(
+                                    child.button_text.clone(),
+                                    MiniMenuAction::IF_BUTTON,
+                                    0,
+                                    0,
+                                    child.id,
+                                );
+                            }
+                        } else if child.button_type == ButtonType::BUTTON_TARGET && self.target_mode == 0 {
+                            // prefix is the first word of `target_verb`
+                            // (TS 9808-9811)
+                            let mut prefix = child.target_verb.clone();
+                            if let Some(space) = prefix.find(' ') {
+                                prefix.truncate(space);
+                            }
+                            let option = format!("{} @gre@{}", prefix, child.target_base);
+                            self.push_option(
+                                option,
+                                MiniMenuAction::TGT_BUTTON,
+                                0,
+                                0,
+                                child.id,
+                            );
+                        } else if child.button_type == ButtonType::BUTTON_CLOSE {
+                            self.push_option(
+                                "Close".into(),
+                                MiniMenuAction::CLOSE_BUTTON,
+                                0,
+                                0,
+                                child.id,
+                            );
+                        } else if child.button_type == ButtonType::BUTTON_TOGGLE
+                            && !child.button_text.is_empty()
+                        {
+                            self.push_option(
+                                child.button_text.clone(),
+                                MiniMenuAction::TOGGLE_BUTTON,
+                                0,
+                                0,
+                                child.id,
+                            );
+                        } else if child.button_type == ButtonType::BUTTON_SELECT
+                            && !child.button_text.is_empty()
+                        {
+                            self.push_option(
+                                child.button_text.clone(),
+                                MiniMenuAction::SELECT_BUTTON,
+                                0,
+                                0,
+                                child.id,
+                            );
+                        } else if child.button_type == ButtonType::BUTTON_CONTINUE
+                            && !self.resumed_pause_button
+                            && !child.button_text.is_empty()
+                        {
+                            self.push_option(
+                                child.button_text.clone(),
+                                MiniMenuAction::PAUSE_BUTTON,
+                                0,
+                                0,
+                                child.id,
+                            );
+                        }
+                    }
+                }
             }
         }
     }
@@ -5730,10 +6112,10 @@ impl Client {
     }
 
     /// The 3D-viewport arm of `mouseLoop` (Client.ts 8256) with the minimenu
-    /// collapsed: a left click inside the viewport builds the `buildMinimenu`
-    /// world branch (Cancel + Walk here, `addWorldOptions` 9275-2282 — no
-    /// loc/npc/player ops in this port) and auto-fires the top entry
-    /// (`doAction(menuNumEntries - 1)`), which arms `World` mouse picking.
+    /// collapsed: a left click inside the viewport builds a Cancel + Walk
+    /// here menu and auto-fires the top entry (`doAction(menuNumEntries -
+    /// 1)`), which arms `World` mouse picking. The full `buildMinimenu`/
+    /// `openMenu` click path replaces this in the mouseLoop task.
     /// HUD clicks lose: `handle_tab_clicks`/`handle_side_if_clicks` run
     /// first and `mouse_loop` only walks inside 4..516 × 4..338.
     pub fn mouse_loop(&mut self) {

@@ -5,6 +5,7 @@
 // `Cache::default()` and never touches the network (the /crc fetch on
 // 127.0.0.1 is refused instantly).
 use client::client::{Client, ClientConfig, MiniMenuAction};
+use client::config::if_type::{ButtonType, ComponentType, IfType};
 use client::config::{LocType, NpcType, ObjType};
 use client::dash3d::{ClientNpc, ClientObj, ClientPlayer, Model, SceneModel};
 use client::datastruct::LinkList;
@@ -319,5 +320,279 @@ fn add_npc_options_and_add_player_options_callable_directly() {
     assert!(actions.contains(&MiniMenuAction::OP_NPC6), "npc Examine");
     assert!(actions.contains(&MiniMenuAction::OP_NPC1), "npc Attack");
     assert!(actions.contains(&MiniMenuAction::OP_PLAYER2), "player op[1]");
+}
+
+// ---- `build_minimenu`: Cancel seed, inv/held/button options, sort (Task 3) ----
+
+/// A side-panel TYPE_INV tree: the side icon at `active_icon` is walked
+/// when no side modal is open (`side_modal_id == -1`), the same path the
+/// hover walk uses.
+fn side_inv_fixture(c: &mut Client) {
+    c.side_modal_id = -1;
+    c.side_icon[3] = 1;
+    c.active_icon = 3;
+    let mut layer = IfType::default();
+    layer.r#type = ComponentType::TYPE_LAYER;
+    layer.width = 190;
+    layer.height = 261;
+    layer.children = Some(vec![2]);
+    layer.child_x = Some(vec![0]);
+    layer.child_y = Some(vec![0]);
+    let mut inv = IfType::default();
+    inv.id = 2;
+    inv.r#type = ComponentType::TYPE_INV;
+    inv.obj_ops = true;
+    inv.width = 1;
+    inv.height = 1;
+    inv.link_obj_type = Some(vec![2]); // obj id 1
+    inv.link_obj_number = Some(vec![1]);
+    c.cache.ifaces.resize(3, None);
+    c.cache.ifaces[1] = Some(layer);
+    c.cache.ifaces[2] = Some(inv);
+    if c.cache.objs.len() < 2 {
+        c.cache.objs.resize(2, ObjType::default());
+        c.cache.objs[1].name = "Rune".into();
+    }
+    c.shell.mouse_x = 553 + 16;
+    c.shell.mouse_y = 205 + 16;
+}
+
+#[test]
+fn build_minimenu_starts_with_cancel() {
+    let mut c = client();
+    c.build_minimenu();
+    assert_eq!(c.menu_num_entries, 1);
+    assert_eq!(c.menu_action[0], MiniMenuAction::CANCEL);
+}
+
+#[test]
+fn inv_slot_adds_drop_and_examine() {
+    let mut c = client();
+    side_inv_fixture(&mut c);
+    c.build_minimenu();
+    let actions: Vec<i32> =
+        (0..c.menu_num_entries).map(|i| c.menu_action[i as usize]).collect();
+    assert!(actions.contains(&MiniMenuAction::OP_HELD5), "Drop");
+    assert!(actions.contains(&MiniMenuAction::OP_HELD6), "Examine");
+}
+
+/// The bubble sort (TS 2569-2598) moves adjacent `<1000`/`>1000` pairs so
+/// the `>1000` entry sinks: Cancel (1106) pins index 0, Examine (1328)
+/// lands below Drop (100).
+#[test]
+fn build_minimenu_sorts_1000_plus_below_actions() {
+    let mut c = client();
+    side_inv_fixture(&mut c);
+    c.build_minimenu();
+    assert_eq!(c.menu_action[1], MiniMenuAction::OP_HELD6, "Examine sinks below the actions");
+    assert_eq!(c.menu_action[2], MiniMenuAction::OP_HELD5, "Drop stays last entry");
+}
+
+/// `obj.iop` and the component's `iop` fill the held ops: obj iop[3] is
+/// OP_HELD4, iop[0] is OP_HELD1, and the component iop[0] is INV_BUTTON1
+/// (TS 9737-9781). All carry the obj id, slot and component id params.
+#[test]
+fn inv_slot_obj_iop_and_component_iop_options() {
+    let mut c = client();
+    side_inv_fixture(&mut c);
+    let inv = c.cache.ifaces[2].as_mut().unwrap();
+    inv.iop[0] = Some("Bank".into());
+    if c.cache.objs.len() < 2 {
+        c.cache.objs.resize(2, ObjType::default());
+    }
+    c.cache.objs[1].name = "Rune".into();
+    c.cache.objs[1].iop[0] = Some("Wield".into());
+    c.cache.objs[1].iop[3] = Some("Unnote".into());
+    c.build_minimenu();
+    let actions: Vec<i32> =
+        (0..c.menu_num_entries).map(|i| c.menu_action[i as usize]).collect();
+    assert!(actions.contains(&MiniMenuAction::OP_HELD1), "obj iop[0]");
+    assert!(actions.contains(&MiniMenuAction::OP_HELD4), "obj iop[3]");
+    assert!(actions.contains(&MiniMenuAction::INV_BUTTON1), "component iop[0]");
+    let held1 = actions.iter().position(|&a| a == MiniMenuAction::OP_HELD1).unwrap();
+    assert_eq!(c.menu_option[held1], "Wield @lre@Rune");
+    assert_eq!(c.menu_param_a[held1], 1, "obj id");
+    assert_eq!(c.menu_param_b[held1], 0, "slot");
+    assert_eq!(c.menu_param_c[held1], 2, "component id");
+    let inv1 = actions.iter().position(|&a| a == MiniMenuAction::INV_BUTTON1).unwrap();
+    assert_eq!(c.menu_option[inv1], "Bank @lre@Rune");
+}
+
+/// `use_mode`/`target_mode` replace the held ops: Use → USEHELD_ONHELD
+/// (skipping the selected slot itself), target with the `0x10` mask bit →
+/// TGT_HELD (TS 9684-9701).
+#[test]
+fn inv_slot_use_and_target_replace_ops() {
+    let mut c = client();
+    side_inv_fixture(&mut c);
+    c.use_mode = 1;
+    c.obj_selected_name = "Knife".into();
+    c.obj_selected_com_id = 2;
+    c.obj_selected_slot = 1; // not the hovered slot 0
+    c.build_minimenu();
+    let actions: Vec<i32> =
+        (0..c.menu_num_entries).map(|i| c.menu_action[i as usize]).collect();
+    assert!(actions.contains(&MiniMenuAction::USEHELD_ONHELD), "Use with");
+    assert!(!actions.contains(&MiniMenuAction::OP_HELD5), "no Drop in use mode");
+    assert!(!actions.contains(&MiniMenuAction::OP_HELD6), "no Examine in use mode");
+
+    c.use_mode = 0;
+    c.target_mode = 1;
+    c.target_op = "Cast".into();
+    c.target_mask = 0x10;
+    c.build_minimenu();
+    let actions: Vec<i32> =
+        (0..c.menu_num_entries).map(|i| c.menu_action[i as usize]).collect();
+    assert!(actions.contains(&MiniMenuAction::TGT_HELD), "target with 0x10 mask");
+    assert!(!actions.contains(&MiniMenuAction::OP_HELD6));
+
+    c.target_mask = 0x1; // no 0x10 bit: nothing is pushed for the slot
+    c.build_minimenu();
+    assert_eq!(c.menu_num_entries, 1, "no target option without the 0x10 mask bit");
+}
+
+/// Overlapping non-inv children: each visible button under the pointer
+/// pushes its option — OK→IF_BUTTON (button_text), CLOSE→'Close',
+/// TOGGLE/SELECT→button_text, CONTINUE→PAUSE_BUTTON, TARGET→TGT_BUTTON
+/// (prefix verb + base) — with the component id in `menu_param_c`
+/// (TS 9795-9839).
+#[test]
+fn non_inv_buttons_push_button_actions() {
+    let mut c = client();
+    c.side_modal_id = -1;
+    c.side_icon[3] = 1;
+    c.active_icon = 3;
+    let mut layer = IfType::default();
+    layer.r#type = ComponentType::TYPE_LAYER;
+    layer.width = 190;
+    layer.height = 261;
+    layer.children = Some(vec![2, 3, 4, 5, 6, 7]);
+    layer.child_x = Some(vec![0, 0, 0, 0, 0, 0]);
+    layer.child_y = Some(vec![0, 0, 0, 0, 0, 0]);
+    c.cache.ifaces.resize(8, None);
+    c.cache.ifaces[1] = Some(layer);
+    let button = |id: i32, button_type: i32| IfType {
+        id,
+        r#type: ComponentType::TYPE_RECT,
+        width: 50,
+        height: 15,
+        button_type,
+        ..IfType::default()
+    };
+    let mut ok = button(2, ButtonType::BUTTON_OK);
+    ok.button_text = "Ok".into();
+    c.cache.ifaces[2] = Some(ok);
+    c.cache.ifaces[3] = Some(button(3, ButtonType::BUTTON_CLOSE));
+    let mut toggle = button(4, ButtonType::BUTTON_TOGGLE);
+    toggle.button_text = "Trade".into();
+    c.cache.ifaces[4] = Some(toggle);
+    let mut select = button(5, ButtonType::BUTTON_SELECT);
+    select.button_text = "Deposit".into();
+    c.cache.ifaces[5] = Some(select);
+    let mut cont = button(6, ButtonType::BUTTON_CONTINUE);
+    cont.button_text = "Continue".into();
+    c.cache.ifaces[6] = Some(cont);
+    let mut target = button(7, ButtonType::BUTTON_TARGET);
+    target.target_verb = "Cast on".into();
+    target.target_base = "Tree".into();
+    c.cache.ifaces[7] = Some(target);
+    c.shell.mouse_x = 553 + 10;
+    c.shell.mouse_y = 205 + 10;
+    c.build_minimenu();
+    let actions: Vec<i32> =
+        (0..c.menu_num_entries).map(|i| c.menu_action[i as usize]).collect();
+    assert!(actions.contains(&MiniMenuAction::IF_BUTTON));
+    assert!(actions.contains(&MiniMenuAction::CLOSE_BUTTON));
+    assert!(actions.contains(&MiniMenuAction::TOGGLE_BUTTON));
+    assert!(actions.contains(&MiniMenuAction::SELECT_BUTTON));
+    assert!(actions.contains(&MiniMenuAction::PAUSE_BUTTON));
+    assert!(actions.contains(&MiniMenuAction::TGT_BUTTON));
+    let close = actions.iter().position(|&a| a == MiniMenuAction::CLOSE_BUTTON).unwrap();
+    assert_eq!(c.menu_option[close], "Close");
+    assert_eq!(c.menu_param_c[close], 3);
+    let target = actions.iter().position(|&a| a == MiniMenuAction::TGT_BUTTON).unwrap();
+    assert_eq!(c.menu_option[target], "Cast @gre@Tree", "prefix is the first word of targetVerb");
+}
+
+/// `resumed_pause_button` suppresses the CONTINUE option and `target_mode`
+/// suppresses the TARGET option (TS 9831-9839).
+#[test]
+fn paused_and_targeting_suppress_continue_and_target_buttons() {
+    let mut c = client();
+    c.side_modal_id = -1;
+    c.side_icon[3] = 1;
+    c.active_icon = 3;
+    let mut layer = IfType::default();
+    layer.r#type = ComponentType::TYPE_LAYER;
+    layer.width = 190;
+    layer.height = 261;
+    layer.children = Some(vec![2, 3]);
+    layer.child_x = Some(vec![0, 0]);
+    layer.child_y = Some(vec![0, 0]);
+    let mut cont = IfType::default();
+    cont.id = 2;
+    cont.r#type = ComponentType::TYPE_RECT;
+    cont.width = 50;
+    cont.height = 15;
+    cont.button_type = ButtonType::BUTTON_CONTINUE;
+    cont.button_text = "Continue".into();
+    let mut target = IfType::default();
+    target.id = 3;
+    target.r#type = ComponentType::TYPE_RECT;
+    target.width = 50;
+    target.height = 15;
+    target.button_type = ButtonType::BUTTON_TARGET;
+    target.target_verb = "Cast".into();
+    target.target_base = "Tree".into();
+    c.cache.ifaces.resize(4, None);
+    c.cache.ifaces[1] = Some(layer);
+    c.cache.ifaces[2] = Some(cont);
+    c.cache.ifaces[3] = Some(target);
+    c.shell.mouse_x = 553 + 10;
+    c.shell.mouse_y = 205 + 10;
+    c.resumed_pause_button = true;
+    c.target_mode = 1;
+    c.build_minimenu();
+    let actions: Vec<i32> =
+        (0..c.menu_num_entries).map(|i| c.menu_action[i as usize]).collect();
+    assert!(!actions.contains(&MiniMenuAction::PAUSE_BUTTON), "paused latches the Continue");
+    assert!(!actions.contains(&MiniMenuAction::TGT_BUTTON), "targeting replaces TGT_BUTTON");
+}
+
+/// An in-flight inventory drag returns before seeding Cancel (TS 2515).
+#[test]
+fn build_minimenu_returns_while_obj_drag_active() {
+    let mut c = client();
+    c.obj_drag_area = 2;
+    c.menu_num_entries = 0;
+    c.build_minimenu();
+    assert_eq!(c.menu_num_entries, 0);
+}
+
+/// The no-chat-modal branch (TS 2556-2560): a staff player hovering a
+/// public line gets "Report abuse" (ABUSE_REPORT); a non-staff player gets
+/// nothing (friends/ignore options are slice 5).
+#[test]
+fn chat_region_adds_report_abuse_for_staff() {
+    let mut c = client();
+    let mut local = ClientPlayer::default();
+    local.name = Some("Me".into());
+    c.local_player = Some(local);
+    c.staffmodlevel = 1;
+    c.add_chat(1, "hello", "Bob");
+    c.shell.mouse_x = 200;
+    c.shell.mouse_y = 420; // line 0's band: relative 63 in (60, 74]
+    c.build_minimenu();
+    let actions: Vec<i32> =
+        (0..c.menu_num_entries).map(|i| c.menu_action[i as usize]).collect();
+    assert!(actions.contains(&MiniMenuAction::ABUSE_REPORT), "staff report-abuse");
+    let abuse = actions.iter().position(|&a| a == MiniMenuAction::ABUSE_REPORT).unwrap();
+    assert_eq!(c.menu_option[abuse], "Report abuse @whi@Bob");
+
+    c.staffmodlevel = 0;
+    c.build_minimenu();
+    let actions: Vec<i32> =
+        (0..c.menu_num_entries).map(|i| c.menu_action[i as usize]).collect();
+    assert!(!actions.contains(&MiniMenuAction::ABUSE_REPORT), "non-staff has no report abuse");
 }
 
