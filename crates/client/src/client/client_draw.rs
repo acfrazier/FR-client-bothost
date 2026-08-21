@@ -363,6 +363,9 @@ impl Client {
     /// `prepareTitle` from client-ts (1579): create the 9 title `PixMap`
     /// regions (sizes as TS) on the first frame, load the `title` jag from
     /// the cache, the four fonts, and the titlebox/titlebutton sprites.
+    /// `logout` nulls `image_title2` (the gate below), so the next title
+    /// draw reallocates the regions like Java `prepareTitle` after
+    /// `prepareGame` dropped them.
     fn prepare_title(&mut self) {
         if self.image_title2.is_some() {
             return;
@@ -1169,14 +1172,17 @@ impl Client {
     /// minimap/compass scanline masks are built from `mapback.data` as TS
     /// 1180-1216 (TS builds them in maininit; the depacks live here in this
     /// port). A missing `media` pack skips the sprite loads — `game_draw`
-    /// still draws the panels that are present. The title sprites are kept
-    /// (deviation from TS `unloadTitle`: a logout back to the title screen
-    /// still draws).
+    /// still draws the panels that are present. The title is unloaded and
+    /// `image_title2` nulled as Java `prepareGame` (`Client.java` 6919);
+    /// `logout` nulls it again so a later `prepare_title` reallocates the
+    /// regions from the `title` jag.
     fn prepare_game(&mut self) {
         if self.area_chat.is_some() {
             return;
         }
 
+        self.unload_title();
+        self.image_title2 = None;
         self.load_fonts();
 
         self.area_game = Some(PixMap::new(512, 334));

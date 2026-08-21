@@ -4229,12 +4229,19 @@ impl Client {
     }
 
     /// `logout()` from client-ts: close the stream and return to the login
-    /// screen. Java also stops the midi and clears the music state.
+    /// screen. Java also stops the midi and clears the music state, and
+    /// drops back to the welcome screen (`loginscreen = 0`). The title
+    /// rebuild mirrors Java `prepareGame`+`prepareTitle`: `unload_title`
+    /// and a nulled `image_title2` make the next `prepare_title` reallocate
+    /// the 9 regions from the `title` jag, `redraw_frame` forces the full
+    /// recomposite, and a one-shot `draw_area` cls guarantees no game-frame
+    /// viewport/chat/side pixel survives.
     pub fn logout(&mut self) {
         if let Some(mut stream) = self.stream.take() {
             stream.close();
         }
         self.ingame = false;
+        self.loginscreen = 0;
         self.login_user.clear();
         self.login_pass.clear();
         self.world.reset_map();
@@ -4255,6 +4262,10 @@ impl Client {
         self.next_midi_song = -1;
         self.midi_song = -1;
         self.next_music_delay = 0;
+        self.unload_title();
+        self.image_title2 = None;
+        self.redraw_frame = true;
+        self.draw_area.fill(0);
     }
 
     /// `lostCon` from Java (`Client.java` 6147): in-game connection loss. A

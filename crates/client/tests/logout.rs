@@ -5,8 +5,9 @@
 //! 2026-08-20 — the full `clientButton` port is slice 3/5). The
 //! `handle_side_if_clicks` hook fires only in the BUTTON_OK arm, matching
 //! Java `execute` (`var5 == 231`, `Client.java` 4562).
-use client::client::{Client, ClientConfig};
+use client::client::{Client, ClientConfig, APPLET_H, APPLET_W};
 use client::config::if_type::{ButtonType, ComponentType, IfType};
+use client::graphics::PixMap;
 
 fn client() -> Client {
     Client::new(ClientConfig {
@@ -94,4 +95,51 @@ fn side_layer(
         child_y: Some(child_y),
         ..IfType::default()
     }
+}
+
+// --- Task 4: `logout()` restores the title frame ---
+// Java `logout` (`Client.java` 6357-6379) drops `ingame`/`loginscreen` and
+// clears the caches; the title rebuild is `prepareGame`+`prepareTitle`
+// parity — `unload_title` + `image_title2 = None` so the next
+// `prepare_title` reallocates the 9 regions, plus `redraw_frame = true` and
+// a one-shot `draw_area` cls so no game-frame pixel can survive.
+
+#[test]
+fn logout_restores_title_frame() {
+    let mut c = client();
+    c.ingame = true;
+    c.loginscreen = 2;
+    c.redraw_frame = false;
+    c.draw_area = PixMap::new(APPLET_W, APPLET_H);
+    c.draw_area.fill(0x00ff00);
+    c.logout();
+    assert!(!c.ingame, "logout must leave the game state");
+    assert_eq!(c.loginscreen, 0, "logout returns to the welcome screen");
+    assert!(c.redraw_frame, "logout must force a full title redraw");
+    assert!(
+        c.image_title2.is_none(),
+        "logout must drop image_title2 so prepare_title reallocates"
+    );
+    assert!(
+        c.draw_area.pixels.iter().all(|&p| p == 0),
+        "logout must clear draw_area so no game-frame pixel survives"
+    );
+}
+
+#[test]
+fn logout_then_title_draw_reallocates_regions() {
+    let mut c = client();
+    c.ingame = true;
+    c.loginscreen = 2;
+    c.redraw_frame = false;
+    c.draw_area = PixMap::new(APPLET_W, APPLET_H);
+    c.draw_area.fill(0x00ff00);
+    c.logout();
+    assert!(c.image_title2.is_none());
+    c.title_screen_draw();
+    assert!(
+        c.image_title2.is_some(),
+        "the next title draw must reallocate the title regions"
+    );
+    assert!(c.image_title0.is_some() && c.image_title1.is_some());
 }
