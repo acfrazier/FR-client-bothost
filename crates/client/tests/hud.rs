@@ -998,6 +998,52 @@ fn iftype_unpack_keeps_inv_background_names() {
     );
 }
 
+// ---- scrollbars (Task 5) ----
+
+#[test]
+fn draw_scrollbar_fills_track() {
+    let mut c = client();
+    let mut pixels = vec![0i32; 16 * 77];
+    let mut surface = Pix2D::with_pixels(&mut pixels, 16, 77);
+    c.draw_scrollbar(&mut surface, 0, 0, 0, 200, 77);
+    // track is fill_rect(x, y+16, 16, height-32, 0x23201b); the grip (rows
+    // 16..33 at scroll_y 0) and its lowlight hlines stay above row 50.
+    let idx = (16 * 50) as usize; // a pixel inside the track
+    assert_eq!(pixels[idx] & 0xffffff, 0x23201b);
+}
+
+#[test]
+fn do_scrollbar_up_arrow_decreases_pos() {
+    let mut c = client();
+    c.scroll_cycle = 1;
+    let mut com = IfType::default();
+    com.r#type = ComponentType::TYPE_LAYER;
+    com.scroll_height = 200;
+    com.height = 77;
+    com.scroll_pos = 40;
+    com.width = 100;
+    c.cache.ifaces.resize(1, None);
+    c.cache.ifaces[0] = Some(com);
+    // x,y inside the top 16×16 at left=463 top=0 → pass x=463 y=0
+    c.do_scrollbar(463, 0, 200, 77, true, 463, 0, 0);
+    assert_eq!(c.cache.ifaces[0].as_ref().unwrap().scroll_pos, 36); // - scroll_cycle*4
+    assert!(c.redraw_side);
+}
+
+#[test]
+fn game_draw_chat_scrollbar_up_arrow_steps_scroll_pos() {
+    let mut c = client();
+    c.ingame = true;
+    // TS 3948-3967: with no chat modal, a held mouse on the chat
+    // scrollbar's top arrow (applet 480,357 → local 463,0) steps
+    // `chat_scroll_pos` through `chat_interface`.
+    c.shell.mouse_button = 1;
+    c.shell.mouse_x = 480;
+    c.shell.mouse_y = 357;
+    c.game_draw();
+    assert_eq!(c.chat_scroll_pos, 1);
+}
+
 #[test]
 fn inv_number_formats_k_and_m() {
     let c = client();

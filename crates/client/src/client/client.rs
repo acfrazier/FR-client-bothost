@@ -470,6 +470,12 @@ pub struct Client {
     pub backbase1: Option<Pix8>,
     pub backbase2: Option<Pix8>,
     pub backhmid1: Option<Pix8>,
+    /// `scrollbar1`/`scrollbar2` from client-ts (1065-1066): the top and
+    /// bottom cap sprites of an interface/chat scrollbar. Missing sprites
+    /// are `None` (a cache without the `media` pack); `draw_scrollbar`
+    /// still fills the track and grip.
+    pub scrollbar1: Option<Pix8>,
+    pub scrollbar2: Option<Pix8>,
     /// `sideicons`/`redstone1..2hv` from client-ts (1013, 1068-1093): the
     /// side-tab sprites and the redstone highlight for `active_icon`. The
     /// `*h`/`*v`/`*hv` copies are the same sprites hflip/vflip'd. Missing
@@ -549,6 +555,18 @@ pub struct Client {
     pub chat_input: String,
     pub chat_scroll_pos: i32,
     pub chat_scroll_height: i32,
+    /// `chatInterface` from client-ts (480): the synthetic IfType the chat
+    /// scrollbar reads/writes (not in the jag), synced to the chat scroll
+    /// state by `game_draw`/`draw_chat`.
+    pub chat_interface: IfType,
+    /// Scrollbar input state (`scrollGrabbed`/`scrollInputPadding`/
+    /// `scrollCycle` from client-ts 338-340): `scroll_grabbed` widens the
+    /// track hit area to 32 px while held, and `scroll_cycle` is the
+    /// mouse-held repeat (set from `shell.mouse_button` at the top of
+    /// `game_draw`, since the TS GameShell already ticks it).
+    pub scroll_grabbed: bool,
+    pub scroll_input_padding: i32,
+    pub scroll_cycle: i32,
 
     /// Reconnect flag of the most recent `login` call (`None` until the
     /// first login). `lostCon` reestablishes with `reconnect = true`
@@ -799,6 +817,8 @@ impl Client {
             backbase1: None,
             backbase2: None,
             backhmid1: None,
+            scrollbar1: None,
+            scrollbar2: None,
             sideicons: [const { None }; 13],
             redstone1: None,
             redstone2: None,
@@ -852,6 +872,10 @@ impl Client {
             chat_input: String::new(),
             chat_scroll_pos: 0,
             chat_scroll_height: 78,
+            chat_interface: IfType::default(),
+            scroll_grabbed: false,
+            scroll_input_padding: 0,
+            scroll_cycle: 0,
             last_login_reconnect: None,
             logout_timer: 0,
             cyclelogic3: 0,

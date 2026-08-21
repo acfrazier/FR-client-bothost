@@ -544,6 +544,10 @@ impl Client {
     /// before its (550, 4) blit. The chrome strips, side, chat,
     /// icon-strip backgrounds, and chat-mode panels draw 1:1.
     pub fn game_draw(&mut self) {
+        // TS GameShell ticks `scrollCycle` each mainloop pass while the
+        // mouse is held (Client.ts 2341-2343); 0/1 here is enough for the
+        // held-arrow scrollbar repeat.
+        self.scroll_cycle = if self.shell.mouse_button != 0 { 1 } else { 0 };
         self.prepare_game();
 
         if self.redraw_frame {
@@ -617,7 +621,38 @@ impl Client {
         }
 
         // `chatModalId`/`animateInterface` redrawChat trigger (TS 3966-3971);
-        // the chat scrollbar and tutComMessage triggers are not ported.
+        // the tutComMessage trigger is not ported.
+
+        // TS 3948-3967: with no chat modal the chat scrollbar is live. The
+        // held-arrow step goes through `chat_interface` (a synthetic IfType,
+        // `com_id` -1), then `chat_scroll_pos` is re-derived from it.
+        if self.chat_modal_id == -1 {
+            self.chat_interface.scroll_pos = self.chat_scroll_height - self.chat_scroll_pos - 77;
+            self.chat_interface.scroll_height = self.chat_scroll_height;
+            if self.shell.mouse_x > 448 && self.shell.mouse_x < 560 && self.shell.mouse_y > 332 {
+                self.do_scrollbar(
+                    self.shell.mouse_x - 17,
+                    self.shell.mouse_y - 357,
+                    self.chat_scroll_height,
+                    77,
+                    false,
+                    463,
+                    0,
+                    -1,
+                );
+            }
+            let mut offset = self.chat_scroll_height - self.chat_interface.scroll_pos - 77;
+            if offset < 0 {
+                offset = 0;
+            }
+            if offset > self.chat_scroll_height - 77 {
+                offset = self.chat_scroll_height - 77;
+            }
+            if self.chat_scroll_pos != offset {
+                self.chat_scroll_pos = offset;
+                self.redraw_chat = true;
+            }
+        }
 
         if self.chat_modal_id != -1
             && self.animate_interface(self.chat_modal_id, self.world_update_num)
@@ -1249,6 +1284,8 @@ impl Client {
         if let Ok(bytes) = std::fs::read(&path) {
             let jag = JagFile::new(bytes);
             self.invback = Pix8::depack(&jag, "invback", 0).ok();
+            self.scrollbar1 = Pix8::depack(&jag, "scrollbar", 0).ok();
+            self.scrollbar2 = Pix8::depack(&jag, "scrollbar", 1).ok();
             self.chatback = Pix8::depack(&jag, "chatback", 0).ok();
             self.backbase1 = Pix8::depack(&jag, "backbase1", 0).ok();
             self.backbase2 = Pix8::depack(&jag, "backbase2", 0).ok();
@@ -1485,14 +1522,14 @@ impl Client {
     }
 
     /// `drawInterface` from client-ts (9900) for the 2D component types:
-    /// recurse `TYPE_LAYER` children, draw `TYPE_RECT` fill/outline,
-    /// `TYPE_TEXT` with the font at `com.font` index 0-3 (p11/p12/b12/q8)
-    /// and the `%1`-`%5` `getIfVar` substitution, `TYPE_GRAPHIC` from its
-    /// `media` sprite, `TYPE_INV` item icons + stack counts (Java
-    /// Client.java 9746-9820), and `TYPE_INV_TEXT` object-name grids (Java
-    /// Client.java 9972-9994). `TYPE_MODEL` (3D) is skipped; the
-    /// `clientComponent` scripts and `drawScrollbar` sprites load with Task
-    /// 14.
+    /// recurse `TYPE_LAYER` children (drawing a scrollbar after a layer
+    /// whose `scroll_height` exceeds its height), draw `TYPE_RECT`
+    /// fill/outline, `TYPE_TEXT` with the font at `com.font` index 0-3
+    /// (p11/p12/b12/q8) and the `%1`-`%5` `getIfVar` substitution,
+    /// `TYPE_GRAPHIC` from its `media` sprite, `TYPE_INV` item icons +
+    /// stack counts (Java Client.java 9746-9820), and `TYPE_INV_TEXT`
+    /// object-name grids (Java Client.java 9972-9994). `TYPE_MODEL` (3D) is
+    /// skipped; the `clientComponent` scripts load with Task 14.
     pub fn draw_interface(&mut self, com_id: i32, x: i32, y: i32, scroll_y: i32, surface: &mut Pix2D) {
         let Some(com) = self.cache.ifaces.get(com_id as usize).and_then(|o| o.as_ref()) else {
             return;
@@ -1544,8 +1581,25 @@ impl Client {
                         }
                     }
                     self.draw_interface(children[i], child_x, child_y, scroll_pos, surface);
-                    // drawScrollbar (TS 9941): scrollbar sprites load with
-                    // Task 14.
+                    // drawScrollbar (TS 9941): a scrollable layer draws its
+                    // scrollbar after the recurse.
+                    let (child_w, child_h, child_sh) = self
+                        .cache
+                        .ifaces
+                        .get(child_id)
+                        .and_then(|o| o.as_ref())
+                        .map(|c| (c.width, c.height, c.scroll_height))
+                        .unwrap_or((0, 0, 0));
+                    if child_sh > child_h {
+                        self.draw_scrollbar(
+                            surface,
+                            child_x + child_w,
+                            child_y,
+                            scroll_pos,
+                            child_sh,
+                            child_h,
+                        );
+                    }
                 }
                 ComponentType::TYPE_RECT => {
                     // hovered is false: the `over*ComId` state is not ported.
@@ -1812,6 +1866,109 @@ impl Client {
         }
 
         surface.set_clipping(left, top, right, bottom);
+    }
+
+    /// `drawScrollbar` from client-ts (10331-10355): the `scrollbar` cap
+    /// sprites at `x, y` and `x, y+height-16`, the `0x23201b` track fill,
+    /// and the grip with its highlight/lowlight edges. Missing cap sprites
+    /// (`scrollbar1`/`scrollbar2` are `None` without the `media` pack) skip
+    /// the two Pix8 plots; the track and grip always fill.
+    pub fn draw_scrollbar(
+        &mut self,
+        surface: &mut Pix2D,
+        x: i32,
+        y: i32,
+        scroll_y: i32,
+        scroll_height: i32,
+        height: i32,
+    ) {
+        if let Some(sprite) = &self.scrollbar1 {
+            sprite.plot_sprite(surface, x, y);
+        }
+        if let Some(sprite) = &self.scrollbar2 {
+            sprite.plot_sprite(surface, x, y + height - 16);
+        }
+        surface.fill_rect(x, y + 16, 16, height - 32, 0x23201b);
+        let mut grip_size = ((height - 32) * height) / scroll_height;
+        if grip_size < 8 {
+            grip_size = 8;
+        }
+        let grip_y = ((height - grip_size - 32) * scroll_y) / (scroll_height - height);
+        surface.fill_rect(x, y + grip_y + 16, 16, grip_size, 0x4d4233);
+        surface.vline(x, y + grip_y + 16, grip_size, 0x766654);
+        surface.vline(x + 1, y + grip_y + 16, grip_size, 0x766654);
+        surface.hline(x, y + grip_y + 16, 16, 0x766654);
+        surface.hline(x, y + grip_y + 17, 16, 0x766654);
+        surface.vline(x + 15, y + grip_y + 16, grip_size, 0x332d25);
+        surface.vline(x + 14, y + grip_y + 17, grip_size - 1, 0x332d25);
+        surface.hline(x, y + grip_y + grip_size + 15, 16, 0x332d25);
+        surface.hline(x + 1, y + grip_y + grip_size + 14, 15, 0x332d25);
+    }
+
+    /// `doScrollbar` from client-ts (10291-10329): the up/down arrows step
+    /// `scroll_pos` by `scroll_cycle*4`, and a press in the track/grip
+    /// jumps to the grip position (grabbing it widens the track hit area to
+    /// 32 px next call). The target is `cache.ifaces[com_id]`, or
+    /// `chat_interface` for a negative `com_id` (the chat scrollbar is a
+    /// synthetic interface, TS `chatInterface`, not in the jag).
+    pub fn do_scrollbar(
+        &mut self,
+        x: i32,
+        y: i32,
+        scrollable_height: i32,
+        height: i32,
+        redraw: bool,
+        left: i32,
+        top: i32,
+        com_id: i32,
+    ) {
+        if self.scroll_grabbed {
+            self.scroll_input_padding = 32;
+        } else {
+            self.scroll_input_padding = 0;
+        }
+        self.scroll_grabbed = false;
+
+        let com = if com_id < 0 {
+            Some(&mut self.chat_interface)
+        } else {
+            self.cache
+                .ifaces
+                .get_mut(com_id as usize)
+                .and_then(|o| o.as_mut())
+        };
+        let Some(com) = com else {
+            return;
+        };
+
+        if x >= left && x < left + 16 && y >= top && y < top + 16 {
+            com.scroll_pos -= self.scroll_cycle * 4;
+            if redraw {
+                self.redraw_side = true;
+            }
+        } else if x >= left && x < left + 16 && y >= top + height - 16 && y < top + height {
+            com.scroll_pos += self.scroll_cycle * 4;
+            if redraw {
+                self.redraw_side = true;
+            }
+        } else if x >= left - self.scroll_input_padding
+            && x < left + self.scroll_input_padding + 16
+            && y >= top + 16
+            && y < top + height - 16
+            && self.scroll_cycle > 0
+        {
+            let mut grip_size = ((height - 32) * height) / scrollable_height;
+            if grip_size < 8 {
+                grip_size = 8;
+            }
+            let grip_y = y - top - (grip_size / 2) - 16;
+            let max_y = height - grip_size - 32;
+            com.scroll_pos = ((scrollable_height - height) * grip_y) / max_y;
+            if redraw {
+                self.redraw_side = true;
+            }
+            self.scroll_grabbed = true;
+        }
     }
 
     /// `IfType.getSprite` from client-ts (IfType.ts 232): depack a `Pix32`
@@ -2257,14 +2414,23 @@ impl Client {
                 if self.chat_scroll_height < 78 {
                     self.chat_scroll_height = 78;
                 }
-                // drawScrollbar (TS 11252) is not ported (no scrollbar sprites).
+                // drawScrollbar (TS 11252): the chat scrollbar, scrolled
+                // from the bottom (scroll_y is 77 at scroll_pos 0).
+                self.draw_scrollbar(
+                    &mut surface,
+                    463,
+                    0,
+                    self.chat_scroll_height - self.chat_scroll_pos - 77,
+                    self.chat_scroll_height,
+                    77,
+                );
 
                 let username = match self.local_player.as_ref().and_then(|p| p.name.as_ref()) {
                     Some(name) => name.clone(),
                     None => JString::to_screen_name(&self.login_user),
                 };
 
-                if let Some(font) = font {
+                if let Some(font) = self.p12.as_ref() {
                     font.draw_string(&mut surface, Some(&format!("{username}:")), 4, 90, Colour::BLACK);
                     let input_x = font.string_wid(Some(&format!("{username}: "))) + 6;
                     font.draw_string(&mut surface, Some(&format!("{}*", self.chat_input)), input_x, 90, Colour::BLUE);
