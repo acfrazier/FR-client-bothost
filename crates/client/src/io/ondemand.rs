@@ -424,6 +424,34 @@ impl OnDemand {
         self.model_use[id as usize] & 0xFF
     }
 
+    /// Java `Client.maininit` (5251-5277) `getModelUse` bits to a prefetch
+    /// priority: the first matching bit in the 8/0x20/0x10/0x40/0x80/2/4
+    /// ladder wins, then `& 1` overrides everything with 3.
+    pub(crate) fn model_use_priority(use_bits: i32) -> i32 {
+        let priority = if use_bits & 0x8 != 0 {
+            10
+        } else if use_bits & 0x20 != 0 {
+            9
+        } else if use_bits & 0x10 != 0 {
+            8
+        } else if use_bits & 0x40 != 0 {
+            7
+        } else if use_bits & 0x80 != 0 {
+            6
+        } else if use_bits & 0x2 != 0 {
+            5
+        } else if use_bits & 0x4 != 0 {
+            4
+        } else {
+            0
+        };
+        if use_bits & 0x1 != 0 {
+            3
+        } else {
+            priority
+        }
+    }
+
     /// `isMidiJingle(id)`.
     pub fn is_midi_jingle(&self, id: i32) -> bool {
         self.midi_jingle[id as usize] == 1
@@ -1146,5 +1174,27 @@ fn read_raw_table<F: Fn(&mut Packet) -> i32>(
             (0..count).map(|_| read(&mut buf)).collect()
         }
         None => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OnDemand;
+
+    /// Java `Client.maininit` (5251-5277) maps `getModelUse` bits to a
+    /// prefetch priority: the first matching bit in the 8/0x20/0x10/0x40/
+    /// 0x80/2/4 ladder wins, then `& 1` overrides everything with 3.
+    #[test]
+    fn model_use_priority_matches_java() {
+        assert_eq!(OnDemand::model_use_priority(0), 0);
+        assert_eq!(OnDemand::model_use_priority(1), 3); // &1 last, wins
+        assert_eq!(OnDemand::model_use_priority(2), 5);
+        assert_eq!(OnDemand::model_use_priority(4), 4);
+        assert_eq!(OnDemand::model_use_priority(8), 10);
+        assert_eq!(OnDemand::model_use_priority(0x10), 8);
+        assert_eq!(OnDemand::model_use_priority(0x20), 9);
+        assert_eq!(OnDemand::model_use_priority(0x40), 7);
+        assert_eq!(OnDemand::model_use_priority(0x80), 6);
+        assert_eq!(OnDemand::model_use_priority(0x09), 3); // 8 then &1 -> 3
     }
 }

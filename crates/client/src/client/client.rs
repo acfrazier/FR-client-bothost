@@ -1106,6 +1106,22 @@ impl Client {
                 self.on_demand_loop();
                 thread::sleep(Duration::from_millis(100));
             }
+
+            // TS maininit 5251-5277: prefetch every remaining model by its
+            // `model_use` priority (the `& 0x1` urgent set above was already
+            // waited on), then the maps. Background only — Java does not wait
+            // on prefetch, so neither do we.
+            for i in 0..model_count {
+                let priority =
+                    OnDemand::model_use_priority(self.on_demand.as_ref().unwrap().get_model_use(i));
+                if priority != 0 {
+                    self.on_demand
+                        .as_mut()
+                        .unwrap()
+                        .prefetch_priority(0, i, priority);
+                }
+            }
+            self.on_demand.as_mut().unwrap().prefetch_maps(self.config.members);
         }
 
         self.draw_progress("Preparing game engine", 100);
