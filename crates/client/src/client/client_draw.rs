@@ -318,23 +318,17 @@ impl Client {
             }
         }
 
-        // TS 3868-3883: composite the title regions into draw_area. The
-        // 0/1 torch columns blit only while the flames are inactive (the
-        // TS guard); the rest redraw only on `redraw_frame`.
+        // TS 3868-3883 / Java messageBox: title4 always; chrome 2/3/5/6/7/8
+        // on redraw_frame. Java's flame thread keeps painting titleLeft/
+        // titleRight while flameActive; we have no thread, so tick + blit
+        // 0/1 every progress frame (otherwise those strips stay black until
+        // title_screen_draw).
         if let Some(t4) = &self.image_title4 {
             t4.blit_into(&mut self.draw_area, 202, 171);
         }
 
         if self.redraw_frame {
             self.redraw_frame = false;
-            if !self.title_flames.as_ref().is_some_and(|f| f.active) {
-                if let Some(t0) = &self.image_title0 {
-                    t0.blit_into(&mut self.draw_area, 0, 0);
-                }
-                if let Some(t1) = &self.image_title1 {
-                    t1.blit_into(&mut self.draw_area, 637, 0);
-                }
-            }
             if let Some(t2) = &self.image_title2 {
                 t2.blit_into(&mut self.draw_area, 128, 0);
             }
@@ -353,6 +347,14 @@ impl Client {
             if let Some(t8) = &self.image_title8 {
                 t8.blit_into(&mut self.draw_area, 562, 171);
             }
+        }
+
+        self.tick_title_flames();
+        if let Some(t0) = &self.image_title0 {
+            t0.blit_into(&mut self.draw_area, 0, 0);
+        }
+        if let Some(t1) = &self.image_title1 {
+            t1.blit_into(&mut self.draw_area, 637, 0);
         }
 
         self.present_progress();
