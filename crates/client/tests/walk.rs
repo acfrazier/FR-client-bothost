@@ -81,7 +81,9 @@ fn minimap_loop_outside_rect_is_ignored() {
 }
 
 /// A left click in the 3D viewport builds the (undrawn) Cancel + Walk here
-/// minimenu and auto-fires the top entry: picking is armed with the click.
+/// minimenu (`build_minimenu` runs each frame from `game_draw`; headless
+/// tests call it directly) and `mouse_loop` auto-fires the top entry:
+/// picking is armed with the click.
 #[test]
 fn mouse_loop_viewport_click_arms_picking() {
     let mut c = client();
@@ -89,6 +91,7 @@ fn mouse_loop_viewport_click_arms_picking() {
     c.local_player = Some(ClientPlayer::at(10, 10));
     c.shell.apply_mouse_down(1, 100, 80);
     c.shell.latch_click();
+    c.build_minimenu();
     c.mouse_loop();
     assert_eq!(c.menu_num_entries, 2);
     assert_eq!(c.menu_action[0], MiniMenuAction::CANCEL);
@@ -108,6 +111,7 @@ fn mouse_loop_chrome_click_does_not_walk() {
     c.local_player = Some(ClientPlayer::at(10, 10));
     c.shell.apply_mouse_down(1, 600, 300);
     c.shell.latch_click();
+    c.build_minimenu();
     c.mouse_loop();
     assert!(!c.world.click);
     assert_eq!(c.out.pos, 0);

@@ -381,6 +381,10 @@ pub struct Client {
 
     pub use_mode: i32,
     pub target_mode: i32,
+    /// `oneMouseButton` (Java `Client.java` 808): the one-button-mouse
+    /// option (`WINDOW_STATUS`), 0 off 1 on — a left click on a multi-entry
+    /// menu opens it instead of firing the last entry (TS 8370-8372).
+    pub one_mouse_button: i32,
     /// `playerOp`/`playerOpPriority` (TS 412-413): the five right-click
     /// options on other players, set by `SET_PLAYER_OP` and consumed by
     /// `add_player_options`.
@@ -840,6 +844,7 @@ impl Client {
 
             use_mode: 0,
             target_mode: 0,
+            one_mouse_button: 0,
             player_op: Default::default(),
             player_op_priority: Default::default(),
             redraw_side: false,
@@ -2725,92 +2730,6 @@ impl Client {
         true
     }
 
-    /// The TYPE_INV slot under `(mouse_x, mouse_y)` in the tree rooted at
-    /// `com_id`, mirroring `add_component_options`' slot math
-    /// (`col * (margin_x + 32)`) and `if_hit_test`'s layer walk/scroll
-    /// clamp. Returns `(com_id, slot)` of the first hit inventory child —
-    /// the drag-start grab and the drop-target read both use it.
-    fn inv_slot_hit(
-        &self,
-        com_id: i32,
-        mouse_x: i32,
-        mouse_y: i32,
-        x: i32,
-        y: i32,
-        scroll: i32,
-    ) -> Option<(i32, i32)> {
-        let com = self
-            .cache
-            .ifaces
-            .get(com_id as usize)
-            .and_then(|o| o.as_ref())?;
-        if com.r#type != ComponentType::TYPE_LAYER || com.hide {
-            return None;
-        }
-        if mouse_x < x || mouse_y < y || mouse_x > x + com.width || mouse_y > y + com.height {
-            return None;
-        }
-        let children = com.children.as_ref()?;
-        let child_x = com.child_x.as_ref()?;
-        let child_y = com.child_y.as_ref()?;
-        for i in 0..children.len() {
-            let child_id = children[i] as usize;
-            let Some(child) = self.cache.ifaces.get(child_id).and_then(|o| o.as_ref()) else {
-                continue;
-            };
-            let child_x = child_x[i] + x + child.x;
-            let child_y = child_y[i] + y - scroll + child.y;
-            match child.r#type {
-                ComponentType::TYPE_LAYER => {
-                    let mut scroll_pos = child.scroll_pos;
-                    if scroll_pos > child.scroll_height - child.height {
-                        scroll_pos = child.scroll_height - child.height;
-                    }
-                    if scroll_pos < 0 {
-                        scroll_pos = 0;
-                    }
-                    if let Some(hit) = self.inv_slot_hit(
-                        children[i],
-                        mouse_x,
-                        mouse_y,
-                        child_x,
-                        child_y,
-                        scroll_pos,
-                    ) {
-                        return Some(hit);
-                    }
-                }
-                ComponentType::TYPE_INV => {
-                    let mut slot = 0;
-                    for row in 0..child.height {
-                        for col in 0..child.width {
-                            let mut slot_x = child_x + col * (child.margin_x + 32);
-                            let mut slot_y = child_y + row * (child.margin_y + 32);
-                            if slot < 20 {
-                                if let Some(xs) = &child.inv_background_x {
-                                    slot_x += xs[slot as usize];
-                                }
-                                if let Some(ys) = &child.inv_background_y {
-                                    slot_y += ys[slot as usize];
-                                }
-                            }
-                            if mouse_x >= slot_x
-                                && mouse_y >= slot_y
-                                && mouse_x < slot_x + 32
-                                && mouse_y < slot_y + 32
-                            {
-                                return Some((child.id, slot));
-                            }
-                            slot += 1;
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        None
-    }
-
     /// `clientButton` from Java (`Client.java` 8725-8747), ported for the
     /// CC_LOGOUT arm only: `if (var3 == 205) { logoutTimer = 250; return
     /// true; }`. Java returns `false` for the other client codes (handled
@@ -2825,13 +2744,15 @@ impl Client {
         true
     }
 
-    /// `buildMinimenu` side branch (Client.ts 2540-2547) with the minimenu
-    /// collapsed: a left click inside the side panel (553..743 × 205..466)
-    /// walks the open interface tree (`side_modal_id`, else the active tab's
-    /// `side_icon`) like `draw_interface` and fires the first hit child's
-    /// button through `if_button_dispatch`.
+    /// `buildMinimenu` side branch (Client.ts 2540-2547): a left click
+    /// inside the side panel (553..743 × 205..466) walks the open interface
+    /// tree (`side_modal_id`, else the active tab's `side_icon`) like
+    /// `draw_interface` and fires the first hit child's button through
+    /// `if_button_dispatch`. Drag start moved to `mouse_loop` (TS
+    /// 8339-8368): while the menu is open or a drag is in flight, the click
+    /// belongs to `mouse_loop`/`handle_obj_drag`, so return immediately.
     pub fn handle_side_if_clicks(&mut self) {
-        if self.shell.mouse_click_button != 1 {
+        if self.shell.mouse_click_button != 1 || self.is_menu_open || self.obj_drag_area != 0 {
             return;
         }
         let (x, y) = (self.shell.mouse_click_x, self.shell.mouse_click_y);
@@ -2848,14 +2769,6 @@ impl Client {
         };
         if root_id == -1 {
             return;
-        }
-        // TS `mouseLoop` drag start (8266-8368) without the minimenu: a
-        // click on a TYPE_INV slot holding an item grabs it and returns
-        // (no IF_BUTTON for that click).
-        if let Some((com_id, slot)) = self.inv_slot_hit(root_id, x - 553, y - 205, 0, 0, 0) {
-            if self.obj_drag_start(com_id, slot, x, y) {
-                return;
-            }
         }
         // panel-local coords like the draw_side draw_interface call
         let Some(hit_id) = self.if_hit_test(root_id, x - 553, y - 205, 0, 0, 0) else {
@@ -2934,24 +2847,20 @@ impl Client {
         }
     }
 
-    /// `buildMinimenu` viewport branch (Java Client.java 5829-5833) with the
-    /// minimenu collapsed: a left click inside the viewport (4..516 ×
-    /// 4..338) walks `main_modal_id` (origin 4, 4) and fires the first hit
-    /// child's button like `handle_side_if_clicks`. A main modal also eats
-    /// the viewport click for Walk-here (`mouse_loop` returns early).
+    /// `buildMinimenu` viewport branch (Java Client.java 5829-5833): a left
+    /// click inside the viewport (4..516 × 4..338) walks `main_modal_id`
+    /// (origin 4, 4) and fires the first hit child's button like
+    /// `handle_side_if_clicks`. A main modal also eats the viewport click
+    /// for Walk-here (`build_minimenu` walks the modal, not the world).
+    /// Drag start moved to `mouse_loop`; skip while the menu is open or a
+    /// drag is in flight.
     pub fn handle_main_if_clicks(&mut self) {
-        if self.shell.mouse_click_button != 1 {
+        if self.shell.mouse_click_button != 1 || self.is_menu_open || self.obj_drag_area != 0 {
             return;
         }
         let (x, y) = (self.shell.mouse_click_x, self.shell.mouse_click_y);
         if self.main_modal_id == -1 || !(4..516).contains(&x) || !(4..338).contains(&y) {
             return;
-        }
-        // drag start from a main-modal TYPE_INV slot (`obj_drag_area` 1)
-        if let Some((com_id, slot)) = self.inv_slot_hit(self.main_modal_id, x - 4, y - 4, 0, 0, 0) {
-            if self.obj_drag_start(com_id, slot, x, y) {
-                return;
-            }
         }
         // viewport-local coords like the other_overlays draw_interface call
         let Some(hit_id) = self.if_hit_test(self.main_modal_id, x - 4, y - 4, 0, 0, 0) else {
@@ -2960,23 +2869,18 @@ impl Client {
         self.if_button_dispatch(hit_id);
     }
 
-    /// `buildMinimenu` chat branch (Java Client.java 5845-5848) with the
-    /// minimenu collapsed: a left click inside the chat panel (17..496 ×
-    /// 357..453) walks `chat_modal_id` (origin 17, 357) and fires the first
-    /// hit child's button like `handle_side_if_clicks`.
+    /// `buildMinimenu` chat branch (Java Client.java 5845-5848): a left
+    /// click inside the chat panel (17..496 × 357..453) walks `chat_modal_id`
+    /// (origin 17, 357) and fires the first hit child's button like
+    /// `handle_side_if_clicks`. Drag start moved to `mouse_loop`; skip while
+    /// the menu is open or a drag is in flight.
     pub fn handle_chat_if_clicks(&mut self) {
-        if self.shell.mouse_click_button != 1 {
+        if self.shell.mouse_click_button != 1 || self.is_menu_open || self.obj_drag_area != 0 {
             return;
         }
         let (x, y) = (self.shell.mouse_click_x, self.shell.mouse_click_y);
         if self.chat_modal_id == -1 || !(17..496).contains(&x) || !(357..453).contains(&y) {
             return;
-        }
-        // drag start from a chat-modal TYPE_INV slot (`obj_drag_area` 3)
-        if let Some((com_id, slot)) = self.inv_slot_hit(self.chat_modal_id, x - 17, y - 357, 0, 0, 0) {
-            if self.obj_drag_start(com_id, slot, x, y) {
-                return;
-            }
         }
         // chat-local coords like the draw_chat draw_interface call
         let Some(hit_id) = self.if_hit_test(self.chat_modal_id, x - 17, y - 357, 0, 0, 0) else {
@@ -6111,34 +6015,171 @@ impl Client {
         }
     }
 
-    /// The 3D-viewport arm of `mouseLoop` (Client.ts 8256) with the minimenu
-    /// collapsed: a left click inside the viewport builds a Cancel + Walk
-    /// here menu and auto-fires the top entry (`doAction(menuNumEntries -
-    /// 1)`), which arms `World` mouse picking. The full `buildMinimenu`/
-    /// `openMenu` click path replaces this in the mouseLoop task.
-    /// HUD clicks lose: `handle_tab_clicks`/`handle_side_if_clicks` run
-    /// first and `mouse_loop` only walks inside 4..516 × 4..338.
+    /// `mouseLoop` from Client.ts (8256-8380): the minimenu click pass.
+    /// `build_minimenu` must have run this frame (`game_draw` calls it from
+    /// `other_overlays` when no menu is open) so the entry arrays are
+    /// populated. An in-flight inventory drag returns immediately — the
+    /// drag owns the click (TS 8258-8260). While the menu is open a left
+    /// click on an option row fires it through `doAction` and closes the
+    /// menu; any other click (or hover with no click) that leaves the menu
+    /// plus a 10px gutter closes it without an action (TS 8293-8337). With
+    /// no menu open, a left click whose last entry is a held/inv action on
+    /// a swap/replace component starts an inventory drag (TS 8339-8368),
+    /// `oneMouseButton`/add-friend remaps left to right for multi-entry
+    /// menus, otherwise left fires the last entry and right opens the menu
+    /// (TS 8370-8380). The mobile `dialogInputOpen` skip (8261-8263) is not
+    /// ported.
     pub fn mouse_loop(&mut self) {
-        if self.shell.mouse_click_button != 1 {
+        if self.obj_drag_area != 0 {
             return;
         }
-        // Java Client.java 5829: a main modal eats the viewport click, so
-        // there is no world walk while it is open.
-        if self.main_modal_id != -1 {
-            return;
+
+        let mut button = self.shell.mouse_click_button;
+        // TS 8263-8265: a target-mode click in the 516..765 x 160..205
+        // strip (minimap/feedback area) is swallowed.
+        if self.target_mode == 1
+            && self.shell.mouse_click_x >= 516
+            && self.shell.mouse_click_y >= 160
+            && self.shell.mouse_click_x <= 765
+            && self.shell.mouse_click_y <= 205
+        {
+            button = 0;
         }
-        let (x, y) = (self.shell.mouse_click_x, self.shell.mouse_click_y);
-        if !(4..516).contains(&x) || !(4..338).contains(&y) {
-            return;
+
+        if self.is_menu_open {
+            if button == 1 {
+                let menu_x = self.menu_x;
+                let menu_y = self.menu_y;
+                let menu_width = self.menu_width;
+
+                let mut click_x = self.shell.mouse_click_x;
+                let mut click_y = self.shell.mouse_click_y;
+                if self.menu_area == 0 {
+                    click_x -= 4;
+                    click_y -= 4;
+                } else if self.menu_area == 1 {
+                    click_x -= 553;
+                    click_y -= 205;
+                } else if self.menu_area == 2 {
+                    click_x -= 17;
+                    click_y -= 357;
+                }
+
+                let mut option = -1;
+                for i in 0..self.menu_num_entries {
+                    let option_y = menu_y + (self.menu_num_entries - 1 - i) * 15 + 31;
+                    if click_x > menu_x
+                        && click_x < menu_x + menu_width
+                        && click_y > option_y - 13
+                        && click_y < option_y + 3
+                    {
+                        option = i;
+                    }
+                }
+
+                if option != -1 {
+                    self.doAction(option);
+                }
+
+                self.is_menu_open = false;
+                if self.menu_area == 1 {
+                    self.redraw_side = true;
+                } else if self.menu_area == 2 {
+                    self.redraw_chat = true;
+                }
+            } else {
+                // TS 8293-8325: leave-check on the live pointer position.
+                let mut x = self.shell.mouse_x;
+                let mut y = self.shell.mouse_y;
+                if self.menu_area == 0 {
+                    x -= 4;
+                    y -= 4;
+                } else if self.menu_area == 1 {
+                    x -= 553;
+                    y -= 205;
+                } else if self.menu_area == 2 {
+                    x -= 17;
+                    y -= 357;
+                }
+
+                if x < self.menu_x - 10
+                    || x > self.menu_x + self.menu_width + 10
+                    || y < self.menu_y - 10
+                    || y > self.menu_y + self.menu_height + 10
+                {
+                    self.is_menu_open = false;
+                    if self.menu_area == 1 {
+                        self.redraw_side = true;
+                    }
+                    if self.menu_area == 2 {
+                        self.redraw_chat = true;
+                    }
+                }
+            }
+        } else {
+            // TS 8339-8368: drag start from the last entry when it is a
+            // held/inv action on a swap/replace component (`paramB` slot,
+            // `paramC` com id, grab at the click coords).
+            if button == 1 && self.menu_num_entries > 0 {
+                let last = self.menu_num_entries as usize - 1;
+                let action = self.menu_action[last];
+                if Self::is_drag_start_action(action) {
+                    let slot = self.menu_param_b[last];
+                    let com_id = self.menu_param_c[last];
+                    if self.obj_drag_start(
+                        com_id,
+                        slot,
+                        self.shell.mouse_click_x,
+                        self.shell.mouse_click_y,
+                    ) {
+                        return;
+                    }
+                }
+            }
+
+            // TS 8370-8372: a one-button mouse (or an add-friend last
+            // entry) left-click opens a multi-entry menu instead.
+            if button == 1
+                && (self.one_mouse_button == 1
+                    || self.is_add_friend_option(self.menu_num_entries - 1))
+                && self.menu_num_entries > 2
+            {
+                button = 2;
+            }
+
+            if button == 1 && self.menu_num_entries > 0 {
+                self.doAction(self.menu_num_entries - 1);
+            } else if button == 2 && self.menu_num_entries > 0 {
+                self.open_menu();
+            }
         }
-        self.menu_num_entries = 2;
-        self.menu_option[0] = "Cancel".into();
-        self.menu_action[0] = MiniMenuAction::CANCEL;
-        self.menu_option[1] = "Walk here".into();
-        self.menu_action[1] = MiniMenuAction::WALK;
-        self.menu_param_b[1] = x;
-        self.menu_param_c[1] = y;
-        self.doAction(self.menu_num_entries - 1);
+    }
+
+    /// The TS 8339-8344 drag-start action set: `INV_BUTTON1..5`,
+    /// `OP_HELD1..5`, `USEHELD_START`, `OP_HELD6`.
+    fn is_drag_start_action(action: i32) -> bool {
+        matches!(
+            action,
+            MiniMenuAction::INV_BUTTON1
+                | MiniMenuAction::INV_BUTTON2
+                | MiniMenuAction::INV_BUTTON3
+                | MiniMenuAction::INV_BUTTON4
+                | MiniMenuAction::INV_BUTTON5
+                | MiniMenuAction::OP_HELD1
+                | MiniMenuAction::OP_HELD2
+                | MiniMenuAction::OP_HELD3
+                | MiniMenuAction::OP_HELD4
+                | MiniMenuAction::OP_HELD5
+                | MiniMenuAction::USEHELD_START
+                | MiniMenuAction::OP_HELD6
+        )
+    }
+
+    /// `isAddFriendOption` from Java (Client.java 5513-5522): the option is
+    /// `FRIENDLIST_ADD` (605 after the priority suffix). Friends/ignore are
+    /// slice 5, so this always returns false for now.
+    fn is_add_friend_option(&self, _option: i32) -> bool {
+        false
     }
 
     /// `openMenu` from client-ts (8442-8546): size the menu to the widest

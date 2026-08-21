@@ -610,6 +610,12 @@ impl Client {
             self.game_draw_main();
         }
 
+        // TS 3924-3926: an open side minimenu redraws the side panel every
+        // frame so the hover-highlighted option rows track the pointer.
+        if self.is_menu_open && self.menu_area == 1 {
+            self.redraw_side = true;
+        }
+
         // `sideModalId`/`animateInterface` redrawSide trigger (TS 3931-3937).
         if self.side_modal_id != -1
             && self.animate_interface(self.side_modal_id, self.world_update_num)
@@ -676,6 +682,12 @@ impl Client {
             self.redraw_chat = true;
         }
         if self.obj_drag_area == 3 {
+            self.redraw_chat = true;
+        }
+
+        // TS 3989-3991: an open chat minimenu redraws the chat panel every
+        // frame so the hover-highlighted option rows track the pointer.
+        if self.is_menu_open && self.menu_area == 2 {
             self.redraw_chat = true;
         }
 

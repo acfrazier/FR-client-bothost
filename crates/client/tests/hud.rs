@@ -6,7 +6,7 @@
 // 127.0.0.1 is refused instantly).
 use client::client::{Client, ClientConfig, ClientPlayer};
 use client::config::if_type::{ButtonType, ComponentType, IfType};
-use client::config::{SeqType, VarpType};
+use client::config::{ObjType, SeqType, VarpType};
 use client::graphics::{Colour, Pix2D, PixMap};
 use client::io::{ClientProt, JagFile, Packet};
 
@@ -1245,9 +1245,14 @@ fn mouse_loop_skips_walk_when_main_modal_open() {
     c.main_modal_id = 1;
     c.shell.apply_mouse_down(1, 100, 100);
     c.shell.latch_click();
+    // the main modal eats the viewport: build_minimenu walks the modal
+    // (no component options in an empty cache), so there is no WALK entry
+    // for `mouse_loop` to fire
+    c.build_minimenu();
     let pos = c.out.pos;
     c.mouse_loop();
     assert_eq!(c.out.pos, pos);
+    assert!(!c.world.click);
 }
 
 #[test]
@@ -1714,10 +1719,21 @@ fn obj_drag_release_sends_inv_buttond() {
     c.cache.ifaces.resize(3, None);
     c.cache.ifaces[1] = Some(layer);
     c.cache.ifaces[2] = Some(inv);
-    // grab slot 0
+    // the slot holds obj id 5, so `build_minimenu` can name it for the
+    // Examine entry (the drag-start target)
+    if c.cache.objs.len() < 5 {
+        c.cache.objs.resize(5, ObjType::default());
+    }
+    c.cache.objs[4].name = "Rune".into();
+    // grab slot 0: build the menu (the last entry is the occupied slot's
+    // Examine, in the drag-start action set), then left-click through
+    // `mouse_loop` like the real frame
+    c.shell.mouse_x = 553 + 16;
+    c.shell.mouse_y = 205 + 16;
+    c.build_minimenu();
     c.shell.apply_mouse_down(1, 553 + 16, 205 + 16);
     c.shell.latch_click();
-    c.handle_side_if_clicks();
+    c.mouse_loop();
     assert_eq!(c.obj_drag_area, 2);
     assert_eq!(c.obj_drag_slot, 0);
     // move past 5px and hold for 5 cycles
@@ -1779,9 +1795,20 @@ fn obj_drag_release_without_threshold_does_not_send() {
     c.cache.ifaces.resize(3, None);
     c.cache.ifaces[1] = Some(layer);
     c.cache.ifaces[2] = Some(inv);
+    // the slot holds obj id 5, so `build_minimenu` can name it for the
+    // Examine entry (the drag-start target)
+    if c.cache.objs.len() < 5 {
+        c.cache.objs.resize(5, ObjType::default());
+    }
+    c.cache.objs[4].name = "Rune".into();
+    // grab slot 0 via the full click path: build the menu, then left-click
+    // through `mouse_loop`
+    c.shell.mouse_x = 553 + 16;
+    c.shell.mouse_y = 205 + 16;
+    c.build_minimenu();
     c.shell.apply_mouse_down(1, 553 + 16, 205 + 16);
     c.shell.latch_click();
-    c.handle_side_if_clicks();
+    c.mouse_loop();
     assert_eq!(c.obj_drag_area, 2);
     // release on the same spot: below the ±5px threshold, no INV_BUTTOND
     c.shell.mouse_x = 553 + 16;

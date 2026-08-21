@@ -596,3 +596,60 @@ fn chat_region_adds_report_abuse_for_staff() {
     assert!(!actions.contains(&MiniMenuAction::ABUSE_REPORT), "non-staff has no report abuse");
 }
 
+// ---- `mouse_loop`: right-click opens, left-click fires the last entry (Task 4) ----
+
+/// A right click in the viewport opens the minimenu in the viewport
+/// (`menu_area` 0) via `open_menu` (TS 8379-8380).
+#[test]
+fn right_click_viewport_opens_menu() {
+    let mut c = client();
+    c.shell.mouse_x = 100;
+    c.shell.mouse_y = 100;
+    c.build_minimenu();
+    c.shell.apply_mouse_down(2, 100, 100);
+    c.shell.latch_click();
+    c.mouse_loop();
+    assert!(c.is_menu_open);
+    assert_eq!(c.menu_area, 0);
+}
+
+/// A left click fires the last menu entry (TS 8375-8376). With no picks
+/// and no use/target armed, the last entry is Walk here: WALK arms picking
+/// and does not write `out`.
+#[test]
+fn left_click_fires_last_entry_walk() {
+    let mut c = client();
+    c.shell.mouse_x = 100;
+    c.shell.mouse_y = 100;
+    c.build_minimenu();
+    let last = c.menu_num_entries - 1;
+    assert_eq!(c.menu_action[last as usize], MiniMenuAction::WALK);
+    c.shell.apply_mouse_down(1, 100, 100);
+    c.shell.latch_click();
+    c.mouse_loop();
+    // WALK arms picking; does not write out
+    assert!(!c.is_menu_open);
+}
+
+/// With the menu open, a left click on an option row fires it and closes
+/// the menu (TS 8266-8291). The two-entry viewport menu renders bottom-up:
+/// row 1 (Walk here) sits at `menu_y + 31`, so a click there arms picking.
+#[test]
+fn left_click_on_open_menu_row_fires_option_and_closes() {
+    let mut c = client();
+    c.shell.mouse_x = 100;
+    c.shell.mouse_y = 100;
+    c.build_minimenu();
+    c.shell.apply_mouse_down(2, 100, 100);
+    c.shell.latch_click();
+    c.mouse_loop();
+    assert!(c.is_menu_open);
+    // row 1 band: option_y = menu_y + 31, click within option_y - 13 .. + 3
+    // (menu_y + 23 lands at shifted click_y menu_y + 19, inside the band)
+    c.shell.apply_mouse_down(1, 100, c.menu_y + 23);
+    c.shell.latch_click();
+    c.mouse_loop();
+    assert!(!c.is_menu_open);
+    assert!(c.world.click, "the Walk row fires doAction(WALK)");
+}
+
