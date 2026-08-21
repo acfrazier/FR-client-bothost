@@ -240,3 +240,44 @@ fn check_scene_ready_sets_state_2_and_map_build_complete() {
         ClientProt::MAP_BUILD_COMPLETE.id as u8
     );
 }
+
+/// `map_build` must mirror the decoded heights into `World.groundh`: Java
+/// hands `World` the one `groundh` array Client writes, so the render pass
+/// (`render_quick_ground`, which reads `World.groundh`) sees the same
+/// heights the camera reads (`get_av_h` on `Client.groundh`). Without the
+/// copy the world reads zeros and the outdoor ground renders a checkerboard.
+#[test]
+fn world_groundh_matches_client_after_load_ground() {
+    let mut c = client();
+    c.ingame = true;
+    c.awaiting_player_info = false;
+    c.scene_state = 1;
+    // a 64x64x4 opcode-0 terrain square (the perlin fixture) parked as the
+    // loaded ground data for the single requested region; files -1 so
+    // check_scene does not wait on the on-demand queue.
+    let mut map = Packet::alloc(2);
+    for _level in 0..4 {
+        for _x in 0..64 {
+            for _z in 0..64 {
+                map.p1(0);
+            }
+        }
+    }
+    c.map_build_index = vec![0];
+    c.map_build_ground_file = vec![-1];
+    c.map_build_location_file = vec![-1];
+    c.map_build_ground_data = vec![Some(map.data().to_vec())];
+    c.map_build_location_data = vec![None];
+    c.map_build_centre_zone_x = 50;
+    c.map_build_centre_zone_z = 50;
+    c.map_build_base_x = 0;
+    c.map_build_base_z = 0;
+
+    let status = c.check_scene();
+    assert_eq!(status, 0);
+
+    // the perlin terrain gives interior level-0 heights well away from 0;
+    // the world must read the same heights the camera reads.
+    assert_ne!(c.groundh[0][20][20], 0);
+    assert_eq!(c.world.groundh_at(0, 20, 20), c.groundh[0][20][20]);
+}

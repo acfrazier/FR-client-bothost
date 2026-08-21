@@ -107,8 +107,10 @@ pub struct World {
     max_tile_x: i32,
     max_tile_z: i32,
     /// Read by the render pass (`renderGround`, `renderQuickGround`, the
-    /// `renderAll` visibility gate).
-    groundh: LevelHeightmaps,
+    /// `renderAll` visibility gate). `pub(crate)` so `Client::map_build`
+    /// mirrors `Client.groundh` after the load/fade pass (Java shares the
+    /// one array between Client and World).
+    pub(crate) groundh: LevelHeightmaps,
     squares: Vec<Vec<Vec<Option<Square>>>>,
     sprites: Vec<Option<Sprite>>,
     dynamic_count: i32,
@@ -777,6 +779,13 @@ impl World {
     /// `mapBuild`-adjacent queries read through this).
     pub fn square(&self, level: i32, x: i32, z: i32) -> Option<&Square> {
         self.squares[level as usize][x as usize][z as usize].as_ref()
+    }
+
+    /// `groundh[level][x][z]` read (guarded like `ground_h`; the field is
+    /// `pub(crate)` for `Client::map_build`, external tests read through
+    /// this).
+    pub fn groundh_at(&self, level: i32, x: i32, z: i32) -> i32 {
+        ground_h(self, level, x, z)
     }
 
     /// Number of live dynamic sprites (`dynamic_sprites` is private).

@@ -200,8 +200,8 @@ pub struct Client {
     pub player_appearance_buffer: Vec<Option<Packet>>,
 
     /// Scene height map, `groundh[level][x][z]` sized `[4][105][105]`; owned
-    /// here and copied into `world` (Task 16's `ClientBuild` owns the write
-    /// side and will reconcile the sharing).
+    /// here and mirrored into `world` after each `map_build` load/fade pass
+    /// (Java shares the one array; `ClientBuild` owns the write side).
     pub groundh: LevelHeightmaps,
     /// Map-land flags `mapl[level][x][z]` (`MapFlag` bits), sized
     /// `[BuildArea.LEVELS][BuildArea.SIZE][BuildArea.SIZE]`; written by
@@ -4868,6 +4868,11 @@ impl Client {
                 }
             }
         }
+
+        // Java hands `World` the one `groundh` array Client writes; mirror
+        // the decoded heights so the render pass (`render_quick_ground`)
+        // reads the same ground the camera's `get_av_h` does.
+        self.world.groundh.clone_from(&self.groundh);
 
         if !self.map_build_location_data.is_empty() {
             self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
