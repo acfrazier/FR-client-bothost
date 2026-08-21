@@ -158,11 +158,6 @@ mod device {
     /// 22050 Hz, the rustysynth/JagFX rate (tinymidipcm.js `sampleRate`).
     const SAMPLE_RATE: u32 = 22050;
 
-    /// rustysynth-only headroom on the synth samples in the i16 mix. 274
-    /// Java uses the OS midi synth (no extra gain); rustysynth+Florestan
-    /// still rails the flute at 0.5. JagFX `waves` stay unscaled.
-    const RUSTYSYNTH_MIX_SCALE: f32 = 0.25;
-
     /// The open speaker. Dropping the `Stream` stops the callback.
     pub struct AudioOut {
         _stream: cpal::Stream,
@@ -320,10 +315,8 @@ mod device {
                 let mut wave = drained.into_iter();
                 for (frame, out) in data.chunks_exact_mut(2).enumerate() {
                     let w = wave.next().unwrap_or(0) as f32;
-                    out[0] = (left[frame] * gain * RUSTYSYNTH_MIX_SCALE * 32767.0 + w)
-                        .clamp(-32768.0, 32767.0) as i16;
-                    out[1] = (right[frame] * gain * RUSTYSYNTH_MIX_SCALE * 32767.0 + w)
-                        .clamp(-32768.0, 32767.0) as i16;
+                    out[0] = (left[frame] * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
+                    out[1] = (right[frame] * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
                 }
             } else {
                 for (frame, out) in data.chunks_exact_mut(2).enumerate() {
@@ -335,10 +328,8 @@ mod device {
                     let l = left[i] * (1.0 - frac) + left[i1] * frac;
                     let r = right[i] * (1.0 - frac) + right[i1] * frac;
                     let w = *drained.get(i).unwrap_or(&0) as f32;
-                    out[0] = (l * gain * RUSTYSYNTH_MIX_SCALE * 32767.0 + w)
-                        .clamp(-32768.0, 32767.0) as i16;
-                    out[1] = (r * gain * RUSTYSYNTH_MIX_SCALE * 32767.0 + w)
-                        .clamp(-32768.0, 32767.0) as i16;
+                    out[0] = (l * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
+                    out[1] = (r * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
                 }
             }
         }
@@ -375,21 +366,8 @@ mod device {
             let mut data = vec![0i16; 4];
             let mut scratch = Vec::new();
             fill_buffer(&mut data, &mut scratch, &midi, &waves, &fade, SAMPLE_RATE, SAMPLE_RATE);
-            // 0.5 * 1.0 * 0.25 * 32767 = 4095 (trunc toward 0)
-            assert_eq!(data, vec![4095, 4095, 4095, 4095]);
-        }
-
-        #[test]
-        fn mix_applies_rustysynth_headroom() {
-            let fade = Mutex::new(Fade::new());
-            fade.lock().unwrap().finish_fade(0); // gain 1.0
-            let midi = Mutex::new(Tone { level: 0.5 });
-            let waves = Mutex::new(Vec::new());
-            let mut data = vec![0i16; 4];
-            let mut scratch = Vec::new();
-            fill_buffer(&mut data, &mut scratch, &midi, &waves, &fade, SAMPLE_RATE, SAMPLE_RATE);
-            // 0.5 * 1.0 * 0.25 * 32767 = 4095 (trunc toward 0)
-            assert_eq!(data, vec![4095, 4095, 4095, 4095]);
+            // Fade gain 1.0 (midivol 0) × 0.5 × 32767 — no extra mix scale.
+            assert_eq!(data, vec![16383, 16383, 16383, 16383]);
         }
 
         #[test]
@@ -397,13 +375,12 @@ mod device {
             let fade = Mutex::new(Fade::new());
             fade.lock().unwrap().finish_fade(0);
             let midi = Mutex::new(Tone { level: 1.0 });
-            let waves = Mutex::new(vec![32767i16, -32768i16]);
+            let waves = Mutex::new(vec![500i16, -32768i16]);
             let mut data = vec![0i16; 4];
             let mut scratch = Vec::new();
             fill_buffer(&mut data, &mut scratch, &midi, &waves, &fade, SAMPLE_RATE, SAMPLE_RATE);
-            // 8191.75 + 32767 clips to 32767; 8191.75 + (-32768) = -24576.25
-            // trunc toward 0 → -24576. Waves stay full i16.
-            assert_eq!(data, vec![32767, 32767, -24576, -24576]);
+            // 32767 + 500 clips to 32767; 32767 + (-32768) = -1
+            assert_eq!(data, vec![32767, 32767, -1, -1]);
         }
 
         #[test]
