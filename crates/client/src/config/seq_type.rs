@@ -12,6 +12,7 @@ pub const POSTANIM_MERGE: i32 = 2;
 pub const RESTART_RESET: i32 = 1;
 pub const RESTART_RESETLOOP: i32 = 2;
 
+#[derive(Clone)]
 pub struct SeqType {
     pub num_frames: i32,
     pub frames: Option<Vec<i32>>,

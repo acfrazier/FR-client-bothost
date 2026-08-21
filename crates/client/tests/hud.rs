@@ -6,7 +6,7 @@
 // 127.0.0.1 is refused instantly).
 use client::client::{Client, ClientConfig, ClientPlayer};
 use client::config::if_type::{ButtonType, ComponentType, IfType};
-use client::config::VarpType;
+use client::config::{SeqType, VarpType};
 use client::graphics::{Colour, Pix2D, PixMap};
 use client::io::{ClientProt, JagFile, Packet};
 
@@ -1141,4 +1141,138 @@ fn mouse_loop_skips_walk_when_main_modal_open() {
     let pos = c.out.pos;
     c.mouse_loop();
     assert_eq!(c.out.pos, pos);
+}
+
+#[test]
+fn animate_interface_advances_model_frame() {
+    let mut c = client();
+    let mut layer = IfType::default();
+    layer.r#type = ComponentType::TYPE_LAYER;
+    layer.children = Some(vec![2]);
+    layer.child_x = Some(vec![0]);
+    layer.child_y = Some(vec![0]);
+    let mut model = IfType::default();
+    model.r#type = ComponentType::TYPE_MODEL;
+    model.model_anim = 0;
+    model.anim_frame = 0;
+    model.anim_cycle = 0;
+    c.cache.ifaces.resize(3, None);
+    c.cache.ifaces[1] = Some(layer);
+    c.cache.ifaces[2] = Some(model);
+    c.cache.seqs.resize(1, SeqType::default());
+    c.cache.seqs[0].num_frames = 2;
+    c.cache.seqs[0].frames = Some(vec![0, 0]);
+    c.cache.seqs[0].iframes = Some(vec![-1, -1]);
+    c.cache.seqs[0].delay = Some(vec![1, 1]);
+    c.cache.seqs[0].loops = 2;
+    assert!(c.animate_interface(1, 2));
+    assert_eq!(c.cache.ifaces[2].as_ref().unwrap().anim_frame, 1);
+}
+
+#[test]
+fn if_anim_reset_zeros_nested_layer_child() {
+    let mut c = client();
+    let mut root = IfType::default();
+    root.r#type = ComponentType::TYPE_LAYER;
+    root.children = Some(vec![2]);
+    let mut inner = IfType::default();
+    inner.id = 2; // recursion follows child.id, so the layer must know it
+    inner.r#type = ComponentType::TYPE_LAYER;
+    inner.children = Some(vec![3]);
+    let mut model = IfType::default();
+    model.r#type = ComponentType::TYPE_MODEL;
+    model.anim_frame = 4;
+    model.anim_cycle = 9;
+    c.cache.ifaces.resize(4, None);
+    c.cache.ifaces[1] = Some(root);
+    c.cache.ifaces[2] = Some(inner);
+    c.cache.ifaces[3] = Some(model);
+    c.if_anim_reset(1);
+    assert_eq!(c.cache.ifaces[3].as_ref().unwrap().anim_frame, 0);
+    assert_eq!(c.cache.ifaces[3].as_ref().unwrap().anim_cycle, 0);
+}
+
+#[test]
+fn game_draw_redraws_side_and_chat_when_modal_anims() {
+    let mut c = client();
+    // separate model trees for the side and chat modals; world_update_num 2
+    // must advance both frames through the game_draw animate triggers
+    let mut layer = IfType::default();
+    layer.r#type = ComponentType::TYPE_LAYER;
+    layer.children = Some(vec![2]);
+    layer.child_x = Some(vec![0]);
+    layer.child_y = Some(vec![0]);
+    let mut model = IfType::default();
+    model.r#type = ComponentType::TYPE_MODEL;
+    model.model_anim = 0;
+    let mut chat_layer = IfType::default();
+    chat_layer.r#type = ComponentType::TYPE_LAYER;
+    chat_layer.children = Some(vec![4]);
+    chat_layer.child_x = Some(vec![0]);
+    chat_layer.child_y = Some(vec![0]);
+    let mut chat_model = IfType::default();
+    chat_model.r#type = ComponentType::TYPE_MODEL;
+    chat_model.model_anim = 0;
+    c.cache.ifaces.resize(5, None);
+    c.cache.ifaces[1] = Some(layer);
+    c.cache.ifaces[2] = Some(model);
+    c.cache.ifaces[3] = Some(chat_layer);
+    c.cache.ifaces[4] = Some(chat_model);
+    c.cache.seqs.resize(1, SeqType::default());
+    c.cache.seqs[0].num_frames = 2;
+    c.cache.seqs[0].frames = Some(vec![0, 0]);
+    c.cache.seqs[0].iframes = Some(vec![-1, -1]);
+    c.cache.seqs[0].delay = Some(vec![1, 1]);
+    c.cache.seqs[0].loops = 2;
+    c.side_modal_id = 1;
+    c.chat_modal_id = 3;
+    c.world_update_num = 2;
+    c.redraw_side = false;
+    c.redraw_chat = false;
+    c.game_draw();
+    assert_eq!(c.cache.ifaces[2].as_ref().unwrap().anim_frame, 1);
+    assert_eq!(c.cache.ifaces[4].as_ref().unwrap().anim_frame, 1);
+}
+
+#[test]
+fn draw_icons_flash_sends_tut_clickside_and_clears() {
+    let mut c = client();
+    c.tut_flash_icon = 3;
+    c.active_icon = 3;
+    c.redraw_icons = true;
+    c.game_draw();
+    assert_eq!(c.tut_flash_icon, -1);
+    assert_eq!(c.out.data()[0], ClientProt::TUT_CLICKSIDE.id as u8);
+    assert_eq!(c.out.data()[1], 3);
+}
+
+#[test]
+fn draw_icons_blinks_flashing_tab() {
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("media").is_file() {
+        return;
+    }
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache,
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    c.side_icon[3] = 1;
+    c.active_icon = 0; // flash stays (flash tab != active tab)
+    c.tut_flash_icon = 3;
+    c.game_draw();
+    // blink on half-cycle (loopCycle % 20 < 10): the tab plots
+    c.loop_cycle = 5;
+    c.redraw_icons = true;
+    c.game_draw();
+    let on = c.area_backhmid1.as_ref().unwrap().pixels.clone();
+    // blink off half-cycle (loopCycle % 20 >= 10): the tab is hidden
+    c.loop_cycle = 15;
+    c.redraw_icons = true;
+    c.game_draw();
+    let off = c.area_backhmid1.as_ref().unwrap().pixels.clone();
+    assert_ne!(on, off, "the flashing tab must blink with loop_cycle");
 }

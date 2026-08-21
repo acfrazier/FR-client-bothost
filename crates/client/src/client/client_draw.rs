@@ -603,17 +603,27 @@ impl Client {
             self.game_draw_main();
         }
 
-        // `isMenuOpen`/`sideModalId`/`animateInterface`/`selectedArea`/
-        // `objDragArea` redrawSide triggers: interface state not ported.
+        // `sideModalId`/`animateInterface` redrawSide trigger (TS 3931-3937);
+        // the isMenuOpen/selectedArea/objDragArea triggers are not ported.
+        if self.side_modal_id != -1
+            && self.animate_interface(self.side_modal_id, self.world_update_num)
+        {
+            self.redraw_side = true;
+        }
 
         if self.redraw_side {
             self.draw_side();
             self.redraw_side = false;
         }
 
-        // `chatInterface.scrollPos`/`doScrollbar` and the chatModal/
-        // selectedArea/objDragArea/tutComMessage redrawChat triggers: not
-        // ported.
+        // `chatModalId`/`animateInterface` redrawChat trigger (TS 3966-3971);
+        // the chat scrollbar and tutComMessage triggers are not ported.
+
+        if self.chat_modal_id != -1
+            && self.animate_interface(self.chat_modal_id, self.world_update_num)
+        {
+            self.redraw_chat = true;
+        }
 
         if self.redraw_chat {
             self.draw_chat();
@@ -633,7 +643,10 @@ impl Client {
             }
         }
 
-        // `tutFlashIcon !== -1` redrawIcons trigger: not ported.
+        // `tutFlashIcon !== -1` redrawIcons trigger (TS 4003-4004).
+        if self.tut_flash_icon != -1 {
+            self.redraw_icons = true;
+        }
 
         if self.redraw_icons {
             self.draw_icons();
@@ -787,16 +800,18 @@ impl Client {
 
     /// `otherOverlays` from client-ts (4853): draw the main overlay then the
     /// main modal into `area_game` at (0, 0), ahead of the (4, 4) blit.
-    /// `animateInterface` before each draw lands with Task 3; the minimenu
+    /// `animateInterface` runs before each draw (TS 4853-4861); the minimenu
     /// and `getSpecialArea` passes are not ported.
     fn other_overlays(&mut self) {
         let mut game = self.area_game.take();
         if let Some(game) = game.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
             if self.main_overlay_id != -1 {
+                self.animate_interface(self.main_overlay_id, self.world_update_num);
                 self.draw_interface(self.main_overlay_id, 0, 0, 0, &mut surface);
             }
             if self.main_modal_id != -1 {
+                self.animate_interface(self.main_modal_id, self.world_update_num);
                 self.draw_interface(self.main_modal_id, 0, 0, 0, &mut surface);
             }
         }
@@ -1742,7 +1757,9 @@ impl Client {
     /// `getIfActive` from client-ts (10361): comparator scripts pick the
     /// active colour for a component. Every comparator's script runs
     /// through `get_if_var`; a component without scripts reads inactive.
-    fn get_if_active(&self, com: &IfType) -> bool {
+    /// `pub(super)` so `client.rs`'s `animate_interface` can select the
+    /// active model anim.
+    pub(super) fn get_if_active(&self, com: &IfType) -> bool {
         let Some(comparator) = &com.script_comparator else {
             return false;
         };
@@ -2183,19 +2200,25 @@ impl Client {
         self.area_chat = chat;
     }
 
-    /// `redrawIcons` from client-ts (4005), 1:1: plot `backhmid1` into
+    /// `redrawIcons` from client-ts (4005), 1:1: when the flashing tab is the
+    /// active one, clear `tut_flash_icon` and send `TUT_CLICKSIDE` +
+    /// `active_icon` (4006-4011). Then plot `backhmid1` into
     /// `area_backhmid1` and, when `side_modal_id == -1`, the redstone
     /// highlight under `active_icon` (tabs 0-6) plus the side icons whose
     /// tab is bound (`side_icon[i] != -1`); blit at (516, 160). Then
     /// `backbase2` into `area_backbase2` with the tabs 7-13 redstone and
-    /// icons, and blit at (496, 466). Offsets verbatim from 4018-4112.
-    /// Deviations: the `tutFlashIcon` blink conditions are dropped with the
-    /// tutorial feature (TS `tutFlashIcon` stays -1, so they were always
-    /// true), and the bottom-row guard index quirk of 4090-4111 (checks
-    /// `side_icon[8]` while plotting `sideicons[7]`, and so on) is kept 1:1.
-    /// The trailing `areaGame.setPixels()` is a no-op here (no global Pix2D
-    /// target).
+    /// icons, and blit at (496, 466). Offsets verbatim from 4018-4112. Each
+    /// icon plots only when it is not the flashing tab, or it is on its
+    /// blink half-cycle (`loop_cycle % 20 < 10`), TS 4037-4112. The
+    /// bottom-row guard index quirk of 4090-4111 (checks `side_icon[8]`
+    /// while plotting `sideicons[7]`, and so on) is kept 1:1. The trailing
+    /// `areaGame.setPixels()` is a no-op here (no global Pix2D target).
     fn draw_icons(&mut self) {
+        if self.tut_flash_icon != -1 && self.tut_flash_icon == self.active_icon {
+            self.tut_flash_icon = -1;
+            self.out.p1_enc(ClientProt::TUT_CLICKSIDE.id);
+            self.out.p1(self.active_icon);
+        }
         if let Some(area) = self.area_backhmid1.as_mut() {
             if let Some(backhmid1) = &self.backhmid1 {
                 let w = area.width;
@@ -2231,7 +2254,11 @@ impl Client {
                         (5, 180, 11),
                         (6, 208, 13),
                     ] {
-                        if self.side_icon[icon] != -1 {
+                        // 1:1 with 4037-4049: the flashing tab hides on the
+                        // off half-cycle (`loop_cycle % 20 >= 10`).
+                        if self.side_icon[icon] != -1
+                            && (self.tut_flash_icon != icon as i32 || self.loop_cycle % 20 < 10)
+                        {
                             if let Some(s) = &self.sideicons[icon] {
                                 s.plot_sprite(&mut surface, x, y);
                             }
@@ -2268,7 +2295,8 @@ impl Client {
                         }
                     }
                     // 1:1 with 4090-4111: the guard index trails the sprite
-                    // index (tab 7's sprite gated on `side_icon[8]`, ...).
+                    // index (tab 7's sprite gated on `side_icon[8]`, ...),
+                    // and the flashing tab hides on the off half-cycle.
                     for (guard, sprite, x, y) in [
                         (8, 7, 74, 2),
                         (9, 8, 102, 3),
@@ -2277,7 +2305,9 @@ impl Client {
                         (12, 11, 201, 2),
                         (13, 12, 226, 2),
                     ] {
-                        if self.side_icon[guard] != -1 {
+                        if self.side_icon[guard] != -1
+                            && (self.tut_flash_icon != guard as i32 || self.loop_cycle % 20 < 10)
+                        {
                             if let Some(s) = &self.sideicons[sprite] {
                                 s.plot_sprite(&mut surface, x, y);
                             }

@@ -2104,6 +2104,85 @@ impl Client {
         }
     }
 
+    /// `animateInterface` from client-ts (10552): advance the animation of
+    /// `id`'s children by `delta`, recursing `TYPE_LAYER` children (the layer
+    /// recursion is 0, not TS `type === 1`, matching `if_anim_reset`). A
+    /// `TYPE_MODEL` child with a model anim selects the active/inactive seq
+    /// (`get_if_active` picks `model_anim2` else `model_anim`), adds `delta`
+    /// to `anim_cycle`, and steps `anim_frame` while the cycle exceeds the
+    /// frame delay, wrapping with `loops` (TS 10571-10589). Missing children
+    /// or a missing seq skip. Returns whether any child frame advanced.
+    pub fn animate_interface(&mut self, id: i32, delta: i32) -> bool {
+        let Some(children) = self
+            .cache
+            .ifaces
+            .get(id as usize)
+            .and_then(|o| o.as_ref())
+            .and_then(|com| com.children.clone())
+        else {
+            return false;
+        };
+
+        let mut updated = false;
+
+        for child_id in children {
+            if child_id == -1 {
+                break;
+            }
+            let Some(child) = self
+                .cache
+                .ifaces
+                .get(child_id as usize)
+                .and_then(|o| o.as_ref())
+            else {
+                break;
+            };
+            let child = child.clone();
+            if child.r#type == ComponentType::TYPE_LAYER {
+                updated |= self.animate_interface(child.id, delta);
+            }
+
+            if child.r#type == ComponentType::TYPE_MODEL
+                && (child.model_anim != -1 || child.model_anim2 != -1)
+            {
+                let active = self.get_if_active(&child);
+                let seq_id = if active { child.model_anim2 } else { child.model_anim };
+                if seq_id != -1 && (seq_id as usize) < self.cache.seqs.len() {
+                    let seq = &self.cache.seqs[seq_id as usize];
+                    // TS 10569: `animCycle += delta` accumulates even when
+                    // no frame advances; the cycle/frame write-back below is
+                    // the in-place mutation of the TS `child`.
+                    let mut anim_cycle = child.anim_cycle + delta;
+                    let mut anim_frame = child.anim_frame;
+                    let mut advanced = false;
+                    while anim_cycle > seq.get_delay(anim_frame) {
+                        anim_cycle -= seq.get_delay(anim_frame) + 1;
+                        anim_frame += 1;
+                        if anim_frame >= seq.num_frames {
+                            anim_frame -= seq.loops;
+                            if anim_frame < 0 || anim_frame >= seq.num_frames {
+                                anim_frame = 0;
+                            }
+                        }
+                        advanced = true;
+                    }
+                    if let Some(com) = self
+                        .cache
+                        .ifaces
+                        .get_mut(child_id as usize)
+                        .and_then(|o| o.as_mut())
+                    {
+                        com.anim_cycle = anim_cycle;
+                        com.anim_frame = anim_frame;
+                    }
+                    updated |= advanced;
+                }
+            }
+        }
+
+        updated
+    }
+
     /// `IF_OPENCHAT` handler (Client.ts 5925): open `com_id` as the chat
     /// modal, closing any open side modal and the main modal (TS 5926-5938).
     pub fn apply_if_openchat(&mut self, payload: &mut Packet) {
