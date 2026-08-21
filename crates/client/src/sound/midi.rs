@@ -105,7 +105,12 @@ mod rusty {
             let file = File::open(path).ok()?;
             let mut file = file;
             let sound_font = Arc::new(SoundFont::new(&mut file).ok()?);
-            let settings = SynthesizerSettings::new(SAMPLE_RATE);
+            let mut settings = SynthesizerSettings::new(SAMPLE_RATE);
+            // 274 has no chorus/reverb engine (Java plays midi dry), and
+            // rustysynth defaults both on; the reverb tail pushes dense
+            // songs like scape_main toward the i16 rail. Keep master_volume
+            // at rustysynth's default 0.5.
+            settings.enable_reverb_and_chorus = false;
             let synthesizer = Synthesizer::new(&sound_font, &settings).ok()?;
             let sequencer = MidiFileSequencer::new(synthesizer);
             Some(Self { sequencer: Some(sequencer) })

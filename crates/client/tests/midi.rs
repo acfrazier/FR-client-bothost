@@ -197,4 +197,37 @@ mod rusty {
         m.stop();
         m.render(&mut [0f32; 64], &mut [0f32; 64]);
     }
+
+    /// Clip guard for the scape_main symptom: render the real title song
+    /// through the engine soundfont at full volume (fade gain 1.0) and
+    /// assert no sample reaches the i16 rail (`max(|i16|) < 32767`). Skips
+    /// silently when the engine assets are absent, like
+    /// `jagfx_init_and_generate_from_engine_sounds`. rustysynth's
+    /// reverb/chorus are disabled in the backend (274 has no effects
+    /// buses), so this pins the whole chain: a regression that pushes the
+    /// mix toward the rail (e.g. re-enabling effects) is caught.
+    #[test]
+    fn scape_main_render_stays_below_i16_rail() {
+        let home = std::env::var("HOME").unwrap();
+        let engine = std::env::var("ENGINE_DIR")
+            .unwrap_or_else(|_| format!("{home}/experiments/Server/engine"));
+        let font = format!("{engine}/public/client/SCC1_Florestan.sf2");
+        let song = format!("{home}/experiments/Server/content/songs/scape main.mid");
+        let mut m = match RustyMidi::with_sound_font(&font) {
+            Some(m) => m,
+            None => return, // no engine soundfont → nothing to render
+        };
+        let Ok(song) = std::fs::read(&song) else { return };
+        m.play(&song, 0, true);
+        let mut left = vec![0f32; 22050 * 10];
+        let mut right = vec![0f32; 22050 * 10];
+        m.render(&mut left, &mut right);
+        let peak = left
+            .iter()
+            .chain(right.iter())
+            .fold(0f32, |p, s| p.max(s.abs()));
+        assert!(peak > 0.01, "scape_main must render audibly");
+        let rail = (peak * 32767.0) as i32;
+        assert!(rail < 32767, "scape_main hard-clips: peak {rail}/32767");
+    }
 }
