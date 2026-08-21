@@ -3,7 +3,9 @@
 // `moveCode` take the config `Cache` because the `SeqType.list` static moved
 // onto the `Client`.
 use crate::config::Cache;
-use crate::config::seq_type::POSTANIM_ABORTANIM;
+use crate::config::seq_type::{
+    POSTANIM_ABORTANIM, POSTANIM_DELAYMOVE, PREANIM_DELAYANIM, PREANIM_DELAYMOVE,
+};
 
 const ROUTE_CAPACITY: usize = 10;
 
@@ -230,6 +232,200 @@ impl ClientEntity {
     pub fn abort_route(&mut self) {
         self.route_length = 0;
         self.preanim_route_length = 0;
+    }
+
+    /// `routeMove(e)` from Java (`Client.java` 10639): advance one 20 ms
+    /// step toward the route head `route[routeLength - 1]`. Speed is 4 (2
+    /// while turning), 6/8 for longer routes, doubled when the head segment
+    /// is a run; the walk/run anim id is picked from the yaw-delta octants.
+    pub fn route_move(&mut self, cache: &Cache) {
+        self.secondary_anim = self.readyanim;
+        if self.route_length == 0 {
+            self.anim_delay_move = 0;
+            return;
+        }
+        if self.primary_anim != -1 && self.primary_anim_delay == 0 {
+            let seq = cache.seq(self.primary_anim as usize);
+            if self.preanim_route_length > 0 && seq.preanim_move == PREANIM_DELAYMOVE {
+                self.anim_delay_move += 1;
+                return;
+            }
+            if self.preanim_route_length <= 0 && seq.postanim_move == POSTANIM_DELAYMOVE {
+                self.anim_delay_move += 1;
+                return;
+            }
+        }
+        let x = self.x;
+        let z = self.z;
+        let dest_x = self.route_x[self.route_length as usize - 1] * 128 + self.size * 64;
+        let dest_z = self.route_z[self.route_length as usize - 1] * 128 + self.size * 64;
+        if dest_x - x > 256 || dest_x - x < -256 || dest_z - z > 256 || dest_z - z < -256 {
+            self.x = dest_x;
+            self.z = dest_z;
+            return;
+        }
+        if x < dest_x {
+            if z < dest_z {
+                self.dst_yaw = 1280;
+            } else if z > dest_z {
+                self.dst_yaw = 1792;
+            } else {
+                self.dst_yaw = 1536;
+            }
+        } else if x > dest_x {
+            if z < dest_z {
+                self.dst_yaw = 768;
+            } else if z > dest_z {
+                self.dst_yaw = 256;
+            } else {
+                self.dst_yaw = 512;
+            }
+        } else if z < dest_z {
+            self.dst_yaw = 1024;
+        } else {
+            self.dst_yaw = 0;
+        }
+        let mut delta_yaw = (self.dst_yaw - self.yaw) & 0x7ff;
+        if delta_yaw > 1024 {
+            delta_yaw -= 2048;
+        }
+        let mut seq_id = self.walkanim_b;
+        if delta_yaw >= -256 && delta_yaw <= 256 {
+            seq_id = self.walkanim;
+        } else if delta_yaw >= 256 && delta_yaw < 768 {
+            seq_id = self.walkanim_l;
+        } else if delta_yaw >= -768 && delta_yaw <= -256 {
+            seq_id = self.walkanim_r;
+        }
+        if seq_id == -1 {
+            seq_id = self.walkanim;
+        }
+        self.secondary_anim = seq_id;
+        let mut move_speed = 4;
+        if self.yaw != self.dst_yaw && self.face_entity == -1 && self.turnspeed != 0 {
+            move_speed = 2;
+        }
+        if self.route_length > 2 {
+            move_speed = 6;
+        }
+        if self.route_length > 3 {
+            move_speed = 8;
+        }
+        if self.anim_delay_move > 0 && self.route_length > 1 {
+            move_speed = 8;
+            self.anim_delay_move -= 1;
+        }
+        if self.route_run[self.route_length as usize - 1] {
+            move_speed <<= 1;
+        }
+        if move_speed >= 8 && self.secondary_anim == self.walkanim && self.runanim != -1 {
+            self.secondary_anim = self.runanim;
+        }
+        if x < dest_x {
+            self.x += move_speed;
+            if self.x > dest_x {
+                self.x = dest_x;
+            }
+        } else if x > dest_x {
+            self.x -= move_speed;
+            if self.x < dest_x {
+                self.x = dest_x;
+            }
+        }
+        if z < dest_z {
+            self.z += move_speed;
+            if self.z > dest_z {
+                self.z = dest_z;
+            }
+        } else if z > dest_z {
+            self.z -= move_speed;
+            if self.z < dest_z {
+                self.z = dest_z;
+            }
+        }
+        if self.x == dest_x && self.z == dest_z {
+            self.route_length -= 1;
+            if self.preanim_route_length > 0 {
+                self.preanim_route_length -= 1;
+            }
+        }
+    }
+
+    /// `entityAnim(e)` from Java (`Client.java` 10813): advance the
+    /// secondary (walk/run), spotanim, and primary animation frame cycles.
+    /// The primary `preanim_move == DELAYANIM` hold keeps the pose during
+    /// an exact move.
+    pub fn entity_anim(&mut self, cache: &Cache, loop_cycle: i32) {
+        self.needs_forward_draw_padding = false;
+        if self.secondary_anim != -1 {
+            let seq = cache.seq(self.secondary_anim as usize);
+            self.secondary_anim_cycle += 1;
+            if self.secondary_anim_frame < seq.num_frames
+                && self.secondary_anim_cycle > seq.get_delay(self.secondary_anim_frame)
+            {
+                self.secondary_anim_cycle = 0;
+                self.secondary_anim_frame += 1;
+            }
+            if self.secondary_anim_frame >= seq.num_frames {
+                self.secondary_anim_cycle = 0;
+                self.secondary_anim_frame = 0;
+            }
+        }
+        if self.spotanim_id != -1 && loop_cycle >= self.spotanim_last_cycle {
+            if self.spotanim_frame < 0 {
+                self.spotanim_frame = 0;
+            }
+            if let Some(seq_id) = cache.spot(self.spotanim_id as usize).seq {
+                let seq = cache.seq(seq_id);
+                self.spotanim_cycle += 1;
+                while self.spotanim_frame < seq.num_frames
+                    && self.spotanim_cycle > seq.get_delay(self.spotanim_frame)
+                {
+                    self.spotanim_cycle -= seq.get_delay(self.spotanim_frame);
+                    self.spotanim_frame += 1;
+                }
+                if self.spotanim_frame >= seq.num_frames
+                    && (self.spotanim_frame < 0 || self.spotanim_frame >= seq.num_frames)
+                {
+                    self.spotanim_id = -1;
+                }
+            }
+        }
+        if self.primary_anim != -1 && self.primary_anim_delay <= 1 {
+            let seq = cache.seq(self.primary_anim as usize);
+            if seq.preanim_move == PREANIM_DELAYANIM
+                && self.preanim_route_length > 0
+                && self.exact_move_start <= loop_cycle
+                && self.exact_move_end < loop_cycle
+            {
+                self.primary_anim_delay = 1;
+                return;
+            }
+        }
+        if self.primary_anim != -1 && self.primary_anim_delay == 0 {
+            let seq = cache.seq(self.primary_anim as usize);
+            self.primary_anim_cycle += 1;
+            while self.primary_anim_frame < seq.num_frames
+                && self.primary_anim_cycle > seq.get_delay(self.primary_anim_frame)
+            {
+                self.primary_anim_cycle -= seq.get_delay(self.primary_anim_frame);
+                self.primary_anim_frame += 1;
+            }
+            if self.primary_anim_frame >= seq.num_frames {
+                self.primary_anim_frame -= seq.loops;
+                self.primary_anim_loop += 1;
+                if self.primary_anim_loop >= seq.maxloops {
+                    self.primary_anim = -1;
+                }
+                if self.primary_anim_frame < 0 || self.primary_anim_frame >= seq.num_frames {
+                    self.primary_anim = -1;
+                }
+            }
+            self.needs_forward_draw_padding = seq.reachforward;
+        }
+        if self.primary_anim_delay > 0 {
+            self.primary_anim_delay -= 1;
+        }
     }
 
     /// `addHitmark(loopCycle, type, value)` from client-ts.

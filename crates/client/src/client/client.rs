@@ -30,9 +30,9 @@ use crate::config::seq_type::{RESTART_RESET, RESTART_RESETLOOP};
 use crate::config::Cache;
 use crate::dash3d::world::LevelHeightmaps;
 use crate::dash3d::{
-    AnimFrame, BuildArea, ClientLocAnim, ClientObj, ClientProj, CollisionFlag, CollisionMap,
-    DirectionFlag, LocAngle, LocChange, LocLayer, LocShape, MapFlag, MapSpotAnim, Model,
-    SceneModel, World, LOC_SHAPE_TO_LAYER,
+    AnimFrame, BuildArea, ClientEntity, ClientLocAnim, ClientObj, ClientProj, CollisionFlag,
+    CollisionMap, DirectionFlag, LocAngle, LocChange, LocLayer, LocShape, MapFlag, MapSpotAnim,
+    Model, SceneModel, World, LOC_SHAPE_TO_LAYER,
 };
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
 use crate::datastruct::LinkList;
@@ -5560,6 +5560,10 @@ impl Client {
         }
         self.mouse_loop();
         self.minimap_loop();
+        // Java 9466-9467 then 9580: the entity movement pass runs before
+        // `followCamera`, so the orbit camera and minimap follow the walk.
+        self.move_players();
+        self.move_npcs();
         // TS 2346: `followCamera` in the 3D scene — the orbit camera tracks
         // the local player and the arrow keys rotate yaw/pitch.
         if self.scene_state == 2 {
@@ -5592,6 +5596,226 @@ impl Client {
             Some(Err(_)) => self.lost_con(),
             None => {}
         }
+    }
+
+    /// `movePlayers` from Java (`Client.java` 7559): one movement step for
+    /// the local player — the `i == -1` slot. Rust login clones
+    /// `players[LOCAL_PLAYER_INDEX]` into `local_player`, so the live walk
+    /// interpolates `local_player`, not the stale clone — then every
+    /// tracked player in `playerIds` order.
+    pub fn move_players(&mut self) {
+        if let Some(local) = self.local_player.as_ref() {
+            let mut e = local.entity.clone();
+            self.move_entity(true, &mut e);
+            self.local_player.as_mut().unwrap().entity = e;
+        }
+        for i in 0..self.player_count as usize {
+            let index = self.player_ids[i] as usize;
+            let Some(player) = self.players.get(index).and_then(|p| p.as_ref()) else {
+                continue;
+            };
+            let mut e = player.entity.clone();
+            self.move_entity(false, &mut e);
+            if let Some(slot) = self.players.get_mut(index).and_then(|p| p.as_mut()) {
+                slot.entity = e;
+            }
+        }
+    }
+
+    /// `moveNpcs` from Java (`Client.java` 10547): one movement step for
+    /// every tracked NPC in `npcIds` order.
+    pub fn move_npcs(&mut self) {
+        for i in 0..self.npc_count as usize {
+            let index = self.npc_ids[i] as usize;
+            let Some(npc) = self.npc.get(index).and_then(|n| n.as_ref()) else {
+                continue;
+            };
+            let mut e = npc.entity.clone();
+            self.move_entity(false, &mut e);
+            if let Some(slot) = self.npc.get_mut(index).and_then(|n| n.as_mut()) {
+                slot.entity = e;
+            }
+        }
+    }
+
+    /// `moveEntity(e)` from Java (`Client.java` 10558): snap out-of-bounds
+    /// entities back to their route head, then step an exact move
+    /// (`exact_move_1` before it starts, `exact_move_2` during it) or a
+    /// `route_move` walk, and finish with `entity_face` + `entity_anim`.
+    /// `is_local` marks the live local player (the Java
+    /// `arg0 == localPlayer` bounds check and the facing-self read).
+    fn move_entity(&self, is_local: bool, e: &mut ClientEntity) {
+        if e.x < 128 || e.z < 128 || e.x >= 13184 || e.z >= 13184 {
+            e.primary_anim = -1;
+            e.spotanim_id = -1;
+            e.exact_move_start = 0;
+            e.exact_move_end = 0;
+            e.x = e.route_x[0] * 128 + e.size * 64;
+            e.z = e.route_z[0] * 128 + e.size * 64;
+            e.abort_route();
+        }
+        if is_local && (e.x < 1536 || e.z < 1536 || e.x >= 11776 || e.z >= 11776) {
+            e.primary_anim = -1;
+            e.spotanim_id = -1;
+            e.exact_move_start = 0;
+            e.exact_move_end = 0;
+            e.x = e.route_x[0] * 128 + e.size * 64;
+            e.z = e.route_z[0] * 128 + e.size * 64;
+            e.abort_route();
+        }
+        // TS `Client.ts` 3508 branch order: the packet decode (TS naming)
+        // assigns the first g2 to `exact_move_end`, so it is the earlier
+        // cycle here — the Java `exactMoveStart` role.
+        if e.exact_move_end > self.loop_cycle {
+            self.exact_move_1(e);
+        } else if e.exact_move_start >= self.loop_cycle {
+            self.exact_move_2(e);
+        } else {
+            e.route_move(&self.cache);
+        }
+        self.entity_face(is_local, e);
+        e.entity_anim(&self.cache, self.loop_cycle);
+    }
+
+    /// `exactMove1(e)` from Java (`Client.java` 10589): the pre-move phase
+    /// creeps the entity toward the start tile as the move approaches.
+    fn exact_move_1(&self, e: &mut ClientEntity) {
+        let delta = e.exact_move_end - self.loop_cycle;
+        let dst_x = e.exact_start_x * 128 + e.size * 64;
+        let dst_z = e.exact_start_z * 128 + e.size * 64;
+        e.x += (dst_x - e.x) / delta;
+        e.z += (dst_z - e.z) / delta;
+        e.anim_delay_move = 0;
+        if e.exact_move_facing == 0 {
+            e.dst_yaw = 1024;
+        }
+        if e.exact_move_facing == 1 {
+            e.dst_yaw = 1536;
+        }
+        if e.exact_move_facing == 2 {
+            e.dst_yaw = 0;
+        }
+        if e.exact_move_facing == 3 {
+            e.dst_yaw = 512;
+        }
+    }
+
+    /// `exactMove2(e)` from Java (`Client.java` 10610): the moving phase
+    /// interpolates between the start and end tiles over the move duration.
+    fn exact_move_2(&self, e: &mut ClientEntity) {
+        if e.exact_move_start == self.loop_cycle
+            || e.primary_anim == -1
+            || e.primary_anim_delay != 0
+            || e.primary_anim_cycle + 1
+                > self.cache.seq(e.primary_anim as usize).get_delay(e.primary_anim_frame)
+        {
+            let duration = e.exact_move_start - e.exact_move_end;
+            let delta = self.loop_cycle - e.exact_move_end;
+            let start_x = e.exact_start_x * 128 + e.size * 64;
+            let start_z = e.exact_start_z * 128 + e.size * 64;
+            let end_x = e.exact_end_x * 128 + e.size * 64;
+            let end_z = e.exact_end_z * 128 + e.size * 64;
+            // Java divides by `duration` here; a zero-duration exact move
+            // (fresh entity at loop_cycle 0) would throw where the client
+            // cannot — skip the interpolation instead.
+            if duration != 0 {
+                e.x = (start_x * (duration - delta) + end_x * delta) / duration;
+                e.z = (start_z * (duration - delta) + end_z * delta) / duration;
+            }
+        }
+        e.anim_delay_move = 0;
+        if e.exact_move_facing == 0 {
+            e.dst_yaw = 1024;
+        }
+        if e.exact_move_facing == 1 {
+            e.dst_yaw = 1536;
+        }
+        if e.exact_move_facing == 2 {
+            e.dst_yaw = 0;
+        }
+        if e.exact_move_facing == 3 {
+            e.dst_yaw = 512;
+        }
+        e.yaw = e.dst_yaw;
+    }
+
+    /// `entityFace(e)` from Java (`Client.java` 10755): resolve the face
+    /// target — an NPC, a player, or the last loc-square click — into a
+    /// `dst_yaw`, then turn `yaw` toward it at `turnspeed`, switching to
+    /// the turn anim. The target positions are read while the entity is a
+    /// detached clone, so the pass never aliases `&mut players[i]` with a
+    /// read of `players[j]`.
+    fn entity_face(&self, is_local: bool, e: &mut ClientEntity) {
+        if e.turnspeed == 0 {
+            return;
+        }
+        if e.face_entity != -1 && e.face_entity < 32768 {
+            if let Some(npc) = self.npc.get(e.face_entity as usize).and_then(|n| n.as_ref()) {
+                let dx = e.x - npc.x;
+                let dz = e.z - npc.z;
+                if dx != 0 || dz != 0 {
+                    e.dst_yaw = ((dx as f64).atan2(dz as f64) * 325.949) as i32 & 0x7ff;
+                }
+            }
+        }
+        if e.face_entity >= 32768 {
+            let mut index = e.face_entity - 32768;
+            if index == self.self_slot {
+                index = LOCAL_PLAYER_INDEX;
+            }
+            let target = if index == LOCAL_PLAYER_INDEX {
+                if is_local {
+                    // Java reads `players[LOCAL_PLAYER_INDEX]`, which is the
+                    // moving entity itself here.
+                    Some((e.x, e.z))
+                } else {
+                    self.local_player.as_ref().map(|local| (local.x, local.z))
+                }
+            } else {
+                self.players
+                    .get(index as usize)
+                    .and_then(|p| p.as_ref())
+                    .map(|player| (player.x, player.z))
+            };
+            if let Some((player_x, player_z)) = target {
+                let dx = e.x - player_x;
+                let dz = e.z - player_z;
+                if dx != 0 || dz != 0 {
+                    e.dst_yaw = ((dx as f64).atan2(dz as f64) * 325.949) as i32 & 0x7ff;
+                }
+            }
+        }
+        if (e.face_square_x != 0 || e.face_square_z != 0)
+            && (e.route_length == 0 || e.anim_delay_move > 0)
+        {
+            let dx = e.x - (e.face_square_x - self.map_build_base_x - self.map_build_base_x) * 64;
+            let dz = e.z - (e.face_square_z - self.map_build_base_z - self.map_build_base_z) * 64;
+            if dx != 0 || dz != 0 {
+                e.dst_yaw = ((dx as f64).atan2(dz as f64) * 325.949) as i32 & 0x7ff;
+            }
+            e.face_square_x = 0;
+            e.face_square_z = 0;
+        }
+        let remaining = (e.dst_yaw - e.yaw) & 0x7ff;
+        if remaining == 0 {
+            return;
+        }
+        if remaining < e.turnspeed || remaining > 2048 - e.turnspeed {
+            e.yaw = e.dst_yaw;
+        } else if remaining > 1024 {
+            e.yaw -= e.turnspeed;
+        } else {
+            e.yaw += e.turnspeed;
+        }
+        e.yaw &= 0x7ff;
+        if e.secondary_anim != e.readyanim || e.yaw == e.dst_yaw {
+            return;
+        }
+        if e.turnanim != -1 {
+            e.secondary_anim = e.turnanim;
+            return;
+        }
+        e.secondary_anim = e.walkanim;
     }
 
     /// `mainredraw` from Java — the frame render pass: title screen or
