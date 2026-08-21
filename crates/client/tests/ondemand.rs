@@ -189,6 +189,85 @@ fn worker_reopens_socket_immediately_after_drop_socket() {
     server.join().unwrap();
 }
 
+/// Task 12 fix: a prefetched (non-urgent) archive-0 model must still be
+/// posted to `completed` so `Client::on_demand_loop` can `Model::unpack` it.
+/// Java persists every completed file to its local cache and re-reads it on
+/// the next `handleQueue`; this port never writes the cache, so dropping
+/// non-urgent completions would discard every prefetched model and first-
+/// login `get_temp_model` would still network-fetch.
+#[test]
+fn prefetched_archive0_model_posts_to_completed() {
+    use std::io::Read;
+    use std::net::TcpListener;
+
+    let files: Vec<(&str, Vec<u8>)> = vec![
+        // g2 table, two entries: file 0 version 0, file 1 version 1.
+        ("model_version", vec![0, 0, 0, 1]),
+        ("anim_version", vec![0, 1]),
+        ("midi_version", vec![0, 1]),
+        ("map_version", vec![0, 1]),
+        // g4 table, two entries so `validate` can index file 1.
+        ("model_crc", vec![0, 0, 0, 0, 0, 0, 0, 0]),
+        ("anim_crc", vec![0, 0, 0, 0]),
+        ("midi_crc", vec![0, 0, 0, 0]),
+        ("map_crc", vec![0, 0, 0, 0]),
+    ];
+    let entries: Vec<(&str, &[u8])> = files.iter().map(|(n, d)| (*n, d.as_slice())).collect();
+    let versionlist = JagFile::new(jag(&entries));
+
+    // `prefetch_priority` only engages when a local cache exists.
+    let cache_dir = std::env::temp_dir().join("274bot-t12").join("cache");
+    let _ = std::fs::remove_dir_all(cache_dir.parent().unwrap());
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    std::fs::write(cache_dir.join("main_file_cache.dat"), b"").unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let payload: &'static [u8] = b"model bytes";
+    let server = thread::spawn(move || {
+        let (mut sock, _) = listener.accept().unwrap();
+        let mut b = [0u8; 1];
+        sock.read_exact(&mut b).unwrap();
+        assert_eq!(b[0], 15, "ondemand handshake byte");
+        sock.write_all(&[0; 8]).unwrap();
+        let mut req = [0u8; 4];
+        sock.read_exact(&mut req).unwrap();
+        assert_eq!(req[0], 0, "archive 0");
+        assert_eq!(u16::from_be_bytes([req[1], req[2]]), 1, "file 1");
+        assert_eq!(req[3], 1, "prefetch, not urgent, not ingame");
+        // gzip(payload) + 2-byte version trailer, served as one part
+        let mut body = gz(payload);
+        body.extend_from_slice(&[0, 1]);
+        let len = body.len() as u16;
+        let mut chunk = vec![0, 0, 1, (len >> 8) as u8, len as u8, 0];
+        chunk.extend_from_slice(&body);
+        sock.write_all(&chunk).unwrap();
+    });
+
+    let mut od = OnDemand::new(
+        &versionlist,
+        "127.0.0.1",
+        port,
+        cache_dir.to_str().unwrap(),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    od.prefetch_priority(0, 1, 5);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let got = loop {
+        od.run(false);
+        if let Some(req) = od.loop_request() {
+            break req.data;
+        }
+        if Instant::now() > deadline {
+            panic!("prefetched model never posted to completed");
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    server.join().unwrap();
+    assert_eq!(got.as_deref(), Some(payload));
+}
+
 /// Versionlist jag in the engine pack layout (bzip2 per file, like the
 /// `jag` helper in tests/graphics.rs).
 fn jag(files: &[(&str, &[u8])]) -> Vec<u8> {

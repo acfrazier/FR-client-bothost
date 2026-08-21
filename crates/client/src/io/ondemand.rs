@@ -944,7 +944,11 @@ impl Worker {
 
     /// `complete`: remove the request from `pending`, convert finished
     /// non-urgent map prefetches to urgent archive 93 (TS `complete`), and
-    /// post urgent completions to the client.
+    /// post completions to the client. Java persists every completed file to
+    /// its local cache, so only urgent files hit `completed` there; this port
+    /// never writes the cache, so archive-0 files are posted even when not
+    /// urgent — that is what warms the process-wide `Model` store for
+    /// first-login `get_temp_model` (`on_demand_loop` -> `Model::unpack`).
     fn complete(&mut self, mut req: OnDemandRequest) {
         if let Some(i) = self
             .pending
@@ -957,7 +961,7 @@ impl Worker {
             req.urgent = true;
             req.archive = 93;
         }
-        if req.urgent {
+        if req.urgent || req.archive == 0 {
             let _ = self.tx.send(WorkerMessage::Completed {
                 archive: req.archive,
                 file: req.file,
