@@ -288,8 +288,6 @@ impl OnDemand {
         let (command_tx, command_rx) = mpsc::channel();
         let (message_tx, message_rx) = mpsc::channel();
         let worker_running = Arc::new(AtomicBool::new(true));
-        let cache_present =
-            std::path::Path::new(&format!("{cache_dir}/main_file_cache.dat")).exists();
         let worker = Worker {
             commands: command_rx,
             versions: versions.clone(),
@@ -317,7 +315,7 @@ impl OnDemand {
             stream: None,
             host: host.to_string(),
             port,
-            cache_dir: cache_present.then(|| cache_dir.to_string()),
+            cache_dir: resolve_file_store(cache_dir),
             tx: message_tx,
             running: worker_running.clone(),
             ingame: ingame.clone(),
@@ -685,6 +683,17 @@ impl Worker {
             self.versions[archive as usize][file as usize],
             data.as_deref(),
         ) {
+            // Java skips the extra-files download. This port never writes
+            // idx, so Model::unpack only runs on Completed: post archive-0
+            // cache hits the same way `complete` posts non-urgent models.
+            if archive == 0 {
+                if let Some(bytes) = data {
+                    let mut req = OnDemandRequest::new(archive, file);
+                    req.urgent = false;
+                    req.data = Some(bytes);
+                    self.complete(req);
+                }
+            }
             return;
         }
         self.priorities[archive as usize][file as usize] = priority;
@@ -1102,6 +1111,21 @@ impl Worker {
         self.fail_count = fail_count;
         let _ = self.tx.send(WorkerMessage::FailCount(fail_count));
     }
+}
+
+/// Directory that actually holds `main_file_cache.dat`. `--cache` is the
+/// jag pack (`pack/client`); the idx store lives in `pack/` one level up,
+/// matching `cache_read`'s parent fallback. Java `fileStreams[0] != null`.
+fn resolve_file_store(cache_dir: &str) -> Option<String> {
+    let here = std::path::Path::new(cache_dir);
+    if here.join("main_file_cache.dat").is_file() {
+        return Some(cache_dir.to_string());
+    }
+    let parent = here.parent()?;
+    if parent.join("main_file_cache.dat").is_file() {
+        return Some(parent.to_str()?.to_string());
+    }
+    None
 }
 
 /// One read from the `main_file_cache` file store, the read path of the

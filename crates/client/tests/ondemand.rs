@@ -305,6 +305,57 @@ fn bar_urgent_models_are_in_use_bit_only() {
     );
 }
 
+/// Java `prefetchPriority` skips a CRC-valid FileStream copy (no extra-files
+/// bar). This port never writes idx, so `Model::unpack` only happens on
+/// `Completed`. A cache-hit extra model (not `getModelUse & 1`) must still
+/// post archive-0 data so first login can `Model::load` it. The engine pack
+/// keeps `main_file_cache.dat` in `pack/`, one directory above `--cache`
+/// `pack/client`.
+#[test]
+fn prefetch_cache_hit_posts_extra_model_for_unpack() {
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let path = format!("{cache}/versionlist");
+    if !std::path::Path::new(&path).is_file() {
+        return;
+    }
+    let versionlist = JagFile::new(std::fs::read(&path).unwrap());
+    let mut od = OnDemand::new(
+        &versionlist,
+        "127.0.0.1",
+        1,
+        &cache,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .expect("engine versionlist");
+    let extra = (0..od.get_file_count(0)).find(|&i| {
+        let bits = od.get_model_use(i);
+        bits & 1 == 0 && OnDemand::model_use_priority(bits) != 0
+    });
+    let Some(extra) = extra else {
+        return;
+    };
+    od.prefetch_extra_files(true, false);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut got = false;
+    while Instant::now() < deadline {
+        od.run(false);
+        while let Some(req) = od.loop_request() {
+            if req.archive == 0 && req.file == extra && req.data.as_ref().is_some_and(|d| !d.is_empty())
+            {
+                got = true;
+            }
+        }
+        if got {
+            break;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        got,
+        "prefetch cache-hit of extra model {extra} must complete with bytes for Model::unpack"
+    );
+}
+
 /// Versionlist jag in the engine pack layout (bzip2 per file, like the
 /// `jag` helper in tests/graphics.rs).
 fn jag(files: &[(&str, &[u8])]) -> Vec<u8> {

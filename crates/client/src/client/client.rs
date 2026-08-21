@@ -1164,6 +1164,24 @@ impl Client {
                 .as_mut()
                 .unwrap()
                 .prefetch_extra_files(members, lowmem);
+            // Prefetch is not in remaining(). Cache-hit extra models post
+            // Completed on the worker; drain them so CLI login (no title
+            // extra-files window) still unpacks before the first frame.
+            let started = Instant::now();
+            let deadline = started + Duration::from_secs(2);
+            let mut idle = 0;
+            while Instant::now() < deadline {
+                let n = self.on_demand_loop();
+                if n == 0 {
+                    idle += 1;
+                } else {
+                    idle = 0;
+                }
+                if idle >= 5 && started.elapsed() > Duration::from_millis(150) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
         }
 
         self.draw_progress("Preparing game engine", 100);
@@ -6245,7 +6263,7 @@ impl Client {
     /// dispatch every completed file by the TS archive cases — models (0),
     /// anim frames (1), midi (2), map squares (3) — and the archive-93 map
     /// prefetch completions. Null data skips the dispatch as TS does.
-    pub fn on_demand_loop(&mut self) {
+    pub fn on_demand_loop(&mut self) -> usize {
         let mut done = Vec::new();
         if let Some(od) = &mut self.on_demand {
             od.run(self.ingame);
@@ -6253,6 +6271,7 @@ impl Client {
                 done.push(req);
             }
         }
+        let n = done.len();
         for req in done {
             let Some(data) = req.data else {
                 if req.archive == 3 {
@@ -6292,6 +6311,7 @@ impl Client {
                 _ => {}
             }
         }
+        n
     }
 
     /// The TS archive-3 case of `onDemandLoop`: park a finished map square
