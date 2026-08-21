@@ -143,3 +143,54 @@ fn logout_then_title_draw_reallocates_regions() {
     );
     assert!(c.image_title0.is_some() && c.image_title1.is_some());
 }
+
+// --- Task 4b: `prepare_title` drops the game-frame areas ---
+// Java `prepareTitle` (`Client.java` 1477-1511) nulls `super.drawArea` and
+// the seven game areas before allocating the title regions, so a second
+// login re-runs `prepareGame` instead of early-returning on a surviving
+// `areaChatback`. Rust `prepare_title` must do the same (minus `draw_area`,
+// which stays a single compositor PixMap).
+
+#[test]
+fn title_draw_drops_game_areas_so_relogin_rebuilds() {
+    let mut c = client();
+    c.ingame = true;
+    c.loginscreen = 2;
+    // A logged-in frame: all game areas alive, title regions gone.
+    c.area_chat = Some(PixMap::new(479, 96));
+    c.area_game = Some(PixMap::new(512, 334));
+    c.area_map = Some(PixMap::new(172, 156));
+    c.area_side = Some(PixMap::new(190, 261));
+    c.area_backbase1 = Some(PixMap::new(496, 50));
+    c.area_backbase2 = Some(PixMap::new(269, 37));
+    c.area_backhmid1 = Some(PixMap::new(249, 45));
+    c.logout();
+    c.title_screen_draw();
+    assert!(
+        c.area_chat.is_none(),
+        "prepare_title must drop the game chat area (Java 1482)"
+    );
+    assert!(
+        c.area_game.is_none(),
+        "prepare_title must drop the game viewport area"
+    );
+    assert!(
+        c.area_map.is_none() && c.area_side.is_none(),
+        "prepare_title must drop the map/side areas"
+    );
+    assert!(
+        c.image_title2.is_some(),
+        "title regions must be reallocated"
+    );
+    // Second login: the next game draw rebuilds the frame and unloads the
+    // title, instead of early-returning on the surviving `area_chat`.
+    c.game_draw();
+    assert!(
+        c.area_chat.is_some(),
+        "prepare_game must rebuild the game areas after a relogin"
+    );
+    assert!(
+        c.image_title2.is_none(),
+        "prepare_game must unload the title regions"
+    );
+}

@@ -371,6 +371,19 @@ impl Client {
             return;
         }
 
+        // Java `prepareTitle` (Client.java 1481-1488) nulls the game-frame
+        // areas before allocating the title regions, so a second login
+        // re-runs `prepareGame` instead of early-returning on a surviving
+        // `areaChatback`. `draw_area` stays: Rust keeps one compositor
+        // PixMap and `logout` cls it.
+        self.area_chat = None;
+        self.area_map = None;
+        self.area_side = None;
+        self.area_game = None;
+        self.area_backbase1 = None;
+        self.area_backbase2 = None;
+        self.area_backhmid1 = None;
+
         self.image_title0 = Some(PixMap::new(128, 265));
         self.image_title1 = Some(PixMap::new(128, 265));
         self.image_title2 = Some(PixMap::new(509, 171));
