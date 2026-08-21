@@ -858,7 +858,8 @@ impl Client {
     /// `otherOverlays` from client-ts (4853): draw the main overlay then the
     /// main modal into `area_game` at (0, 0), ahead of the (4, 4) blit.
     /// `animateInterface` runs before each draw (TS 4853-4861); the minimenu
-    /// and `getSpecialArea` passes are not ported.
+    /// (area 0) draws after them, and `draw_feedback` when no menu is open
+    /// (TS 4867-4869, `buildMinimenu` before it is Task 2).
     fn other_overlays(&mut self) {
         let mut game = self.area_game.take();
         if let Some(game) = game.as_mut() {
@@ -873,6 +874,114 @@ impl Client {
             if self.main_modal_id != -1 {
                 self.animate_interface(self.main_modal_id, self.world_update_num);
                 self.draw_interface(self.main_modal_id, 0, 0, 0, &mut surface);
+            }
+            if self.is_menu_open && self.menu_area == 0 {
+                self.draw_minimenu(&mut surface);
+            }
+        }
+        self.area_game = game;
+
+        if !self.is_menu_open {
+            self.draw_feedback();
+        }
+    }
+
+    /// `drawMinimenu` from client-ts (8383-8418): the menu box — `0x5d5447`
+    /// fill, black title bar with `Choose Option`, then the options
+    /// bottom-to-top (`menu_num_entries - 1 - i`), yellow when the pointer
+    /// (offset to the panel's origin) sits in the option's row. The caller
+    /// binds the panel surface holding the menu (0 viewport, 1 side,
+    /// 2 chat).
+    fn draw_minimenu(&mut self, surface: &mut Pix2D) {
+        let x = self.menu_x;
+        let y = self.menu_y;
+        let w = self.menu_width;
+        let h = self.menu_height;
+        let background: i32 = 0x5d5447;
+
+        surface.fill_rect(x, y, w, h, background);
+        surface.fill_rect(x + 1, y + 1, w - 2, 16, Colour::BLACK);
+        surface.draw_rect(x + 1, y + 18, w - 2, h - 19, Colour::BLACK);
+
+        let mut mouse_x = self.shell.mouse_x;
+        let mut mouse_y = self.shell.mouse_y;
+        if self.menu_area == 0 {
+            mouse_x -= 4;
+            mouse_y -= 4;
+        } else if self.menu_area == 1 {
+            mouse_x -= 553;
+            mouse_y -= 205;
+        } else if self.menu_area == 2 {
+            mouse_x -= 17;
+            mouse_y -= 357;
+        }
+
+        if let Some(b12) = &mut self.b12 {
+            b12.draw_string(surface, Some("Choose Option"), x + 3, y + 14, background);
+
+            for i in 0..self.menu_num_entries {
+                let option_y = y + (self.menu_num_entries - 1 - i) * 15 + 31;
+
+                let mut rgb = Colour::WHITE;
+                if mouse_x > x
+                    && mouse_x < x + w
+                    && mouse_y > option_y - 13
+                    && mouse_y < option_y + 3
+                {
+                    rgb = Colour::YELLOW;
+                }
+
+                b12.draw_string_tag(
+                    surface,
+                    &self.menu_option[i as usize],
+                    x + 3,
+                    option_y,
+                    rgb,
+                    true,
+                );
+            }
+        }
+    }
+
+    /// `drawFeedback` from client-ts (8421-8439): the tooltip line — the
+    /// last menu option, or the Use/Target hint — into `area_game` at
+    /// (4, 15) via `b12` anti-macro. Drawn when no menu is open.
+    fn draw_feedback(&mut self) {
+        if self.menu_num_entries < 2 && self.use_mode == 0 && self.target_mode == 0 {
+            return;
+        }
+
+        let tooltip = if self.use_mode == 1 && self.menu_num_entries < 2 {
+            format!("Use {} with...", self.obj_selected_name)
+        } else if self.target_mode == 1 && self.menu_num_entries < 2 {
+            format!("{}...", self.target_op)
+        } else {
+            self.menu_option[(self.menu_num_entries - 1) as usize].clone()
+        };
+
+        let tooltip = if self.menu_num_entries > 2 {
+            format!(
+                "{}@whi@ / {} more options",
+                tooltip,
+                self.menu_num_entries - 2
+            )
+        } else {
+            tooltip
+        };
+
+        let mut game = self.area_game.take();
+        if let Some(game) = game.as_mut() {
+            let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
+            if let Some(b12) = &mut self.b12 {
+                b12.draw_string_anti_macro(
+                    &mut surface,
+                    &tooltip,
+                    4,
+                    15,
+                    Colour::WHITE,
+                    true,
+                    (self.loop_cycle / 1000) as i32,
+                );
             }
         }
         self.area_game = game;
@@ -1490,9 +1599,9 @@ impl Client {
 
     /// `drawSide` from client-ts (11098): plot `invback` into `area_side`,
     /// draw the open side interface (`side_modal_id`, else the active tab's
-    /// `side_icon`) via `drawInterface` (TS 11106-11110), and blit at
-    /// (553, 205). The minimenu branch and the trailing `areaGame.setPixels()`
-    /// (no global Pix2D target) are not ported.
+    /// `side_icon`) via `drawInterface` (TS 11106-11110), the side-area
+    /// minimenu (TS 11113), and blit at (553, 205). The trailing
+    /// `areaGame.setPixels()` (no global Pix2D target) is not ported.
     fn draw_side(&mut self) {
         let mut side = self.area_side.take();
         if let Some(side) = side.as_mut() {
@@ -1507,6 +1616,9 @@ impl Client {
                 self.draw_interface(self.side_modal_id, 0, 0, 0, &mut surface);
             } else if self.side_icon.get(self.active_icon as usize).copied() != Some(-1) {
                 self.draw_interface(self.side_icon[self.active_icon as usize], 0, 0, 0, &mut surface);
+            }
+            if self.is_menu_open && self.menu_area == 1 {
+                self.draw_minimenu(&mut surface);
             }
         }
         if let Some(side) = &side {
@@ -2679,6 +2791,10 @@ impl Client {
                 }
 
                 surface.hline(0, 77, 479, Colour::BLACK);
+            }
+
+            if self.is_menu_open && self.menu_area == 2 {
+                self.draw_minimenu(&mut surface);
             }
         }
 

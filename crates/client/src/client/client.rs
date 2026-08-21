@@ -283,6 +283,21 @@ pub struct Client {
     pub menu_param_a: Vec<i32>,
     pub menu_param_b: Vec<i32>,
     pub menu_param_c: Vec<i32>,
+    /// Minimenu chrome (`Client.ts` `isMenuOpen`/`menuArea`/`menuX`/...,
+    /// 444-450): `open_menu` opens the menu in the panel holding the click
+    /// (`menu_area` 0 viewport, 1 side, 2 chat) and clamps its geometry
+    /// into that panel; `draw_minimenu` renders it there.
+    pub is_menu_open: bool,
+    pub menu_area: i32,
+    pub menu_x: i32,
+    pub menu_y: i32,
+    pub menu_width: i32,
+    pub menu_height: i32,
+    /// `objSelectedName`/`targetOp` (TS 440/447): the Use/Target hint text
+    /// for `draw_feedback`; set by the `USEHELD_START`/`TGT_*` doAction
+    /// arms (Task 3).
+    pub obj_selected_name: String,
+    pub target_op: String,
 
     pub dir_map: Vec<i32>,
     pub dist_map: Vec<i32>,
@@ -728,6 +743,14 @@ impl Client {
             menu_param_a: vec![0; MENU_CAPACITY],
             menu_param_b: vec![0; MENU_CAPACITY],
             menu_param_c: vec![0; MENU_CAPACITY],
+            is_menu_open: false,
+            menu_area: 0,
+            menu_x: 0,
+            menu_y: 0,
+            menu_width: 0,
+            menu_height: 0,
+            obj_selected_name: String::new(),
+            target_op: String::new(),
 
             dir_map: vec![0; BUILD_AREA_TILES],
             dist_map: vec![0; BUILD_AREA_TILES],
@@ -5648,6 +5671,104 @@ impl Client {
         self.menu_param_b[1] = x;
         self.menu_param_c[1] = y;
         self.doAction(self.menu_num_entries - 1);
+    }
+
+    /// `openMenu` from client-ts (8442-8546): size the menu to the widest
+    /// option (`b12.string_wid`; 0+8 when no font), then clamp it into the
+    /// first panel holding the click — viewport 0 (512×334), side 1
+    /// (190×261), chat 2 (479×96). The `menu_num_entries * 15 + 21` local
+    /// fits the y-clamp; the stored `menu_height` is `entries * 15 + 22`,
+    /// both verbatim from TS.
+    pub fn open_menu(&mut self) {
+        let mut width: i32 = 0;
+        if let Some(b12) = &self.b12 {
+            width = b12.string_wid(Some("Choose Option"));
+            for i in 0..self.menu_num_entries {
+                let max_width = b12.string_wid(Some(&self.menu_option[i as usize]));
+                if max_width > width {
+                    width = max_width;
+                }
+            }
+        }
+        width += 8;
+
+        let height: i32 = self.menu_num_entries * 15 + 21;
+
+        let (click_x, click_y) = (self.shell.mouse_click_x, self.shell.mouse_click_y);
+
+        // the viewport (TS 8463-8482)
+        if click_x > 4 && click_y > 4 && click_x < 516 && click_y < 338 {
+            let mut x = click_x - (width / 2) - 4;
+            if x + width > 512 {
+                x = 512 - width;
+            }
+            if x < 0 {
+                x = 0;
+            }
+
+            let mut y = click_y - 4;
+            if y + height > 334 {
+                y = 334 - height;
+            }
+            if y < 0 {
+                y = 0;
+            }
+
+            self.is_menu_open = true;
+            self.menu_area = 0;
+            self.menu_x = x;
+            self.menu_y = y;
+            self.menu_width = width;
+            self.menu_height = self.menu_num_entries * 15 + 22;
+        }
+
+        // the sidebar/tabs area (TS 8485-8508)
+        if click_x > 553 && click_y > 205 && click_x < 743 && click_y < 466 {
+            let mut x = click_x - (width / 2) - 553;
+            if x < 0 {
+                x = 0;
+            } else if x + width > 190 {
+                x = 190 - width;
+            }
+
+            let mut y = click_y - 205;
+            if y < 0 {
+                y = 0;
+            } else if y + height > 261 {
+                y = 261 - height;
+            }
+
+            self.is_menu_open = true;
+            self.menu_area = 1;
+            self.menu_x = x;
+            self.menu_y = y;
+            self.menu_width = width;
+            self.menu_height = self.menu_num_entries * 15 + 22;
+        }
+
+        // the chatbox area (TS 8511-8533)
+        if click_x > 17 && click_y > 357 && click_x < 496 && click_y < 453 {
+            let mut x = click_x - (width / 2) - 17;
+            if x < 0 {
+                x = 0;
+            } else if x + width > 479 {
+                x = 479 - width;
+            }
+
+            let mut y = click_y - 357;
+            if y < 0 {
+                y = 0;
+            } else if y + height > 96 {
+                y = 96 - height;
+            }
+
+            self.is_menu_open = true;
+            self.menu_area = 2;
+            self.menu_x = x;
+            self.menu_y = y;
+            self.menu_width = width;
+            self.menu_height = self.menu_num_entries * 15 + 22;
+        }
     }
 
     /// `minimapLoop` from Client.ts (2742): a left click inside the
