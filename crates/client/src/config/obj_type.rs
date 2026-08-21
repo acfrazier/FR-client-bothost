@@ -591,3 +591,181 @@ impl ObjType {
         Some(model)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::MutexGuard;
+
+    /// The sprite/model caches are process-wide statics shared by every test
+    /// in this binary, so tests that clear them or depend on their contents
+    /// must not interleave (a concurrent clear would evict a hit mid-test).
+    /// A failed test poisons the lock; recover so one failure does not
+    /// cascade into the rest.
+    static CACHE_LOCK: Mutex<()> = Mutex::new(());
+
+    fn lock_caches() -> MutexGuard<'static, ()> {
+        CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// One 3-vertex, 1-face triangle: v0=(0,40,0), v1=(40,40,0),
+    /// v2=(0,0,0). Under `get_sprite` (zoom2d 2000, eye_z 2000, identity
+    /// rotations) it projects to screen (16,26)/(26,26)/(16,16) — a ~10x10
+    /// front-facing triangle fully inside the 32x32 sprite — with the face
+    /// normal (-z) pointing at the light so the shade is bright.
+    const MODEL: &[u8] = &[
+        7, 7, 7, // vertex order: x+y+z deltas for each of 3 vertices
+        1, // face index order: a,b,c are all deltas
+        0x40, 0x41, 0x41, // face index deltas: a=0, b=1, c=2 (cumulative)
+        0x00, 0xFF, // face colour (HSL 255)
+        0x40, 0x68, 0x18, // vertexX deltas: 0, +40, -40
+        0x68, 0x40, 0x18, // vertexY deltas: +40, 0, -40
+        0x40, 0x40, 0x40, // vertexZ deltas: 0, 0, 0
+        0, 3, 0, 1, 0, 0, 0, 0, 0, 0, 0, 3, 0, 3, 0, 3, 0, 3, // trailer
+    ];
+
+    fn reset_caches() {
+        sprite_cache().lock().unwrap().clear();
+        model_cache().lock().unwrap().clear();
+        Model::unpack(0, Some(MODEL));
+    }
+
+    fn pix3d() -> Pix3DDraw {
+        Pix3D::init_colour_table(0.8);
+        Pix3DDraw::default()
+    }
+
+    /// A `Cache` with every slot up to `len` holding an obj whose id equals
+    /// its index and whose model is the synthetic triangle.
+    fn cache_of(len: usize) -> Cache {
+        let mut cache = Cache::default();
+        cache.objs.resize(len, ObjType::default());
+        for (i, obj) in cache.objs.iter_mut().enumerate() {
+            *obj = ObjType {
+                id: i as i32,
+                model: 0,
+                countobj: Some(vec![0; 10]),
+                ..ObjType::default()
+            };
+        }
+        cache
+    }
+
+    #[test]
+    fn get_sprite_resolves_owi_ohi_and_count_variants() {
+        let _guard = lock_caches();
+        reset_caches();
+        let mut cache = cache_of(100);
+        let mut pix = pix3d();
+
+        // non-stackable without countobj: `countobj == null` forces count -1
+        cache.objs[10] = ObjType {
+            id: 10,
+            model: 0,
+            countobj: None,
+            ..ObjType::default()
+        };
+        let s = ObjType::get_sprite(&cache, &mut pix, 10, 0, 5).unwrap();
+        assert_eq!(s.owi, 32, "non-stackable -> owi 32");
+        assert_eq!(s.ohi, -1, "countobj null forces ohi -1 regardless of the request");
+
+        // stackable with countobj: owi 33, ohi = the requested count
+        cache.objs[11].stackable = true;
+        let s = ObjType::get_sprite(&cache, &mut pix, 11, 0, 1).unwrap();
+        assert_eq!(s.owi, 33, "stackable -> owi 33");
+        assert_eq!(s.ohi, 1, "ohi carries the requested count");
+
+        // countco walk: base (non-stackable, countco[0]=5) with count 5
+        // resolves the stackable variant 12; owi comes from the *resolved*
+        // obj while ohi stays the requested count
+        cache.objs[12].stackable = true;
+        let mut countobj = vec![0u16; 10];
+        let mut countco = vec![0u16; 10];
+        countobj[0] = 12;
+        countco[0] = 5;
+        cache.objs[13] = ObjType {
+            id: 13,
+            model: 0,
+            stackable: false,
+            countobj: Some(countobj),
+            countco: Some(countco),
+            ..ObjType::default()
+        };
+        let s = ObjType::get_sprite(&cache, &mut pix, 13, 0, 5).unwrap();
+        assert_eq!(s.owi, 33, "count >= threshold resolves the variant; owi from the resolved obj");
+        assert_eq!(s.ohi, 5, "ohi stays the requested count");
+    }
+
+    #[test]
+    fn sprite_cache_hits_same_key_and_unlinks_stale_counts() {
+        let _guard = lock_caches();
+        reset_caches();
+        let cache = cache_of(100);
+        let mut pix = pix3d();
+
+        // same id/count: the second call must be a sprite-cache hit, so it
+        // must not touch the model at all — with the model dropped from the
+        // store (and the model cache cleared), a re-render would fail.
+        assert!(ObjType::get_sprite(&cache, &mut pix, 20, 0, 5).is_some());
+        model_cache().lock().unwrap().clear();
+        Model::unload(0);
+        let hit = ObjType::get_sprite(&cache, &mut pix, 20, 0, 5);
+        assert!(hit.is_some(), "same id/count must hit the sprite cache, not re-render");
+        assert_eq!(hit.unwrap().ohi, 5);
+        assert!(
+            ObjType::get_sprite(&cache, &mut pix, 21, 0, 5).is_none(),
+            "a different key is a miss and must need the model"
+        );
+
+        // different count: the stale ohi=5 node must be unlinked before the
+        // re-put, so the bucket chain holds only the ohi=10 entry (Java
+        // `Linkable.unlink()` at ObjType.java 210-212). Without the unlink
+        // the appended node is shadowed by the stale head of the chain and
+        // this read returns 5.
+        Model::unpack(0, Some(MODEL));
+        assert!(ObjType::get_sprite(&cache, &mut pix, 22, 0, 5).is_some());
+        assert!(ObjType::get_sprite(&cache, &mut pix, 22, 0, 10).is_some());
+        let cached_ohi = sprite_cache().lock().unwrap().find(22).map(|s| s.ohi).unwrap();
+        assert_eq!(cached_ohi, 10, "the ohi=5 node must not shadow the re-put");
+    }
+
+    #[test]
+    fn sprite_cache_evicts_at_capacity_100() {
+        let _guard = lock_caches();
+        reset_caches();
+        let cache = cache_of(150);
+        let mut pix = pix3d();
+
+        // capacity 100: the 101st put evicts the least-recently-used entry
+        for i in 0..101 {
+            assert!(
+                ObjType::get_sprite(&cache, &mut pix, i, 0, 1).is_some(),
+                "render for obj {i}"
+            );
+        }
+        let mut sprite_cache = sprite_cache().lock().unwrap();
+        assert!(sprite_cache.find(0).is_none(), "the first-put (LRU) entry must be evicted");
+        assert!(sprite_cache.find(100).is_some(), "the most recent entry stays");
+    }
+
+    #[test]
+    fn sprite_drop_shadow_only_when_outline_zero() {
+        let _guard = lock_caches();
+        reset_caches();
+        let cache = cache_of(100);
+        let mut pix = pix3d();
+
+        // outline 0: the model must rasterise, and the `3153952` drop-shadow
+        // fill applies (Java ObjType.java 290-306)
+        let s0 = ObjType::get_sprite(&cache, &mut pix, 30, 0, 1).unwrap();
+        assert!(s0.data.iter().any(|&p| p != 0), "the model must rasterise into the sprite");
+        assert!(s0.data.contains(&3153952), "outline 0 draws the 3153952 drop shadow");
+
+        // outline -1 (the cert-template zoom 1.5x): still renders, but the
+        // `else if outline_rgb == 0` shadow fill is skipped
+        let s1 = ObjType::get_sprite(&cache, &mut pix, 30, -1, 1).unwrap();
+        assert!(s1.data.iter().any(|&p| p != 0), "outline -1 still renders at 1.5x zoom");
+        assert!(!s1.data.contains(&3153952), "outline -1 must skip the 3153952 fill");
+    }
+}
+

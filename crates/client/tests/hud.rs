@@ -901,6 +901,8 @@ fn iftype_unpack_keeps_inv_background_names() {
 fn inv_number_formats_k_and_m() {
     let c = client();
     assert_eq!(c.inv_number(999), "999");
+    assert_eq!(c.inv_number(99_999), "99999");
+    assert_eq!(c.inv_number(100_000), "100K");
     assert_eq!(c.inv_number(150_000), "150K");
     assert_eq!(c.inv_number(12_000_000), "12M");
 }

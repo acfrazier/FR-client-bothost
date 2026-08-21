@@ -166,3 +166,87 @@ fn iftype_unpack_keeps_inv_background_names() {
         "a TYPE_INV component should keep its inv-background sprite names"
     );
 }
+
+/// Strip the pack obj's render fields down to the deterministic synthetic
+/// triangle (model 0, identity angles, no cert/recolour/resize), keeping the
+/// pack-decoded identity/name/op fields: the sprite must resolve purely from
+/// the engine pack's config jag without the OnDemand model stream.
+fn renderable(obj: ObjType) -> ObjType {
+    ObjType {
+        model: 0,
+        zoom2d: 2000,
+        xan2d: 0,
+        yan2d: 0,
+        zan2d: 0,
+        xof2d: 0,
+        yof2d: 0,
+        stackable: false,
+        resizex: 128,
+        resizey: 128,
+        resizez: 128,
+        ambient: 0,
+        contrast: 0,
+        recol_s: None,
+        recol_d: None,
+        countobj: None,
+        countco: None,
+        certlink: -1,
+        certtemplate: -1,
+        ..obj
+    }
+}
+
+#[test]
+fn get_sprite_resolves_engine_pack_obj() {
+    let Some(jag) = engine_config_jag() else {
+        return;
+    };
+    let mut cache = Cache::unpack(&jag);
+    if cache.objs.len() < 4 {
+        return;
+    }
+    use client::dash3d::Model;
+    use client::graphics::{Pix3D, Pix3DDraw};
+
+    // One 3-vertex, 1-face triangle (same byte-crafted model as the
+    // obj_type.rs unit tests): registered as model 0 so get_sprite can
+    // render without OnDemand.
+    const MODEL: &[u8] = &[
+        7, 7, 7, // vertex order: x+y+z deltas for each of 3 vertices
+        1, // face index order: a,b,c are all deltas
+        0x40, 0x41, 0x41, // face index deltas: a=0, b=1, c=2 (cumulative)
+        0x00, 0xFF, // face colour (HSL 255)
+        0x40, 0x68, 0x18, // vertexX deltas: 0, +40, -40
+        0x68, 0x40, 0x18, // vertexY deltas: +40, 0, -40
+        0x40, 0x40, 0x40, // vertexZ deltas: 0, 0, 0
+        0, 3, 0, 1, 0, 0, 0, 0, 0, 0, 0, 3, 0, 3, 0, 3, 0, 3, // trailer
+    ];
+    Model::unpack(0, Some(MODEL));
+    Pix3D::init_colour_table(0.8);
+    let mut pix = Pix3DDraw::default();
+
+    // non-stackable pack obj without countobj: owi 32, ohi -1, and the
+    // render arm produces a non-empty sprite
+    cache.objs[1] = renderable(cache.objs[1].clone());
+    let s = ObjType::get_sprite(&cache, &mut pix, 1, 0, 5)
+        .expect("a pack obj with a resolvable model must render a sprite");
+    assert_eq!(s.owi, 32, "non-stackable -> owi 32");
+    assert_eq!(s.ohi, -1, "countobj null forces ohi -1");
+    assert!(s.data.iter().any(|&p| p != 0), "the sprite must contain rendered pixels");
+
+    // countco walk onto a stackable variant: owi comes from the *resolved*
+    // obj (33) while ohi stays the requested count
+    let mut countobj = vec![0u16; 10];
+    let mut countco = vec![0u16; 10];
+    countobj[0] = 3;
+    countco[0] = 5;
+    cache.objs[2] = renderable(cache.objs[2].clone());
+    cache.objs[2].countobj = Some(countobj);
+    cache.objs[2].countco = Some(countco);
+    cache.objs[3] = renderable(cache.objs[3].clone());
+    cache.objs[3].stackable = true;
+    let s = ObjType::get_sprite(&cache, &mut pix, 2, 0, 5)
+        .expect("the countco-walked variant must render a sprite");
+    assert_eq!(s.owi, 33, "owi comes from the resolved (stackable) variant");
+    assert_eq!(s.ohi, 5, "ohi stays the requested count");
+}

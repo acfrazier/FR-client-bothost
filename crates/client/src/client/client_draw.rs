@@ -1394,7 +1394,7 @@ impl Client {
 
     /// `Client.invNumber` from the Java oracle (Client.java 1394-1401):
     /// stack counts under 100k as-is, then `K` per 1000, else `M` per
-    /// 1000000 (integer division, so 1500 -> "1K").
+    /// 1000000 (integer division, so 1500 -> "1500"; `K` starts at 100000).
     pub fn inv_number(&self, amount: i32) -> String {
         if amount < 100000 {
             amount.to_string()
