@@ -427,7 +427,7 @@ impl OnDemand {
     /// Java `Client.maininit` (5251-5277) `getModelUse` bits to a prefetch
     /// priority: the first matching bit in the 8/0x20/0x10/0x40/0x80/2/4
     /// ladder wins, then `& 1` overrides everything with 3.
-    pub(crate) fn model_use_priority(use_bits: i32) -> i32 {
+    pub fn model_use_priority(use_bits: i32) -> i32 {
         let priority = if use_bits & 0x8 != 0 {
             10
         } else if use_bits & 0x20 != 0 {
@@ -454,7 +454,42 @@ impl OnDemand {
 
     /// `isMidiJingle(id)`.
     pub fn is_midi_jingle(&self, id: i32) -> bool {
-        self.midi_jingle[id as usize] == 1
+        self.midi_jingle.get(id as usize).copied() == Some(1)
+    }
+
+    /// Java `Client.maininit` 5206-5210: urgent `request` of models whose
+    /// `getModelUse & 1` bit is set. The red loading bar waits
+    /// `remaining()==0` on this set only.
+    pub fn request_in_use_models(&mut self) {
+        let n = self.get_file_count(0);
+        for i in 0..n {
+            if self.get_model_use(i) & 1 != 0 {
+                self.request(0, i);
+            }
+        }
+    }
+
+    /// Java `Client.maininit` 5251-5285: `prefetchPriority` the rest of the
+    /// models, then maps, then midi jingles. These are not in `remaining()`
+    /// — OnDemand downloads them after title, and `onDemand.message`
+    /// becomes `"Loading extra files - x%"` under the login buttons.
+    pub fn prefetch_extra_files(&mut self, members: bool, lowmem: bool) {
+        let n = self.get_file_count(0);
+        for i in 0..n {
+            let priority = Self::model_use_priority(self.get_model_use(i));
+            if priority != 0 {
+                self.prefetch_priority(0, i, priority);
+            }
+        }
+        self.prefetch_maps(members);
+        if !lowmem {
+            let midi = self.get_file_count(2);
+            for i in 1..midi {
+                if self.is_midi_jingle(i) {
+                    self.prefetch_priority(2, i, 1);
+                }
+            }
+        }
     }
 
     /// `prefetchPriority(archive, file, priority)` — forwarded to the worker,

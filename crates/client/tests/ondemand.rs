@@ -268,6 +268,43 @@ fn prefetched_archive0_model_posts_to_completed() {
     assert_eq!(got.as_deref(), Some(payload));
 }
 
+/// Java `Client.maininit` 5206-5210 urgent-`request`s only `getModelUse & 1`.
+/// Prefetchable models (`model_use_priority != 0`) outnumber that set, so the
+/// red bar must not `request` the rest. Extra files go through
+/// `prefetchPriority` and do not count in `remaining()`.
+#[test]
+fn bar_urgent_models_are_in_use_bit_only() {
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let path = format!("{cache}/versionlist");
+    if !std::path::Path::new(&path).is_file() {
+        return;
+    }
+    let versionlist = JagFile::new(std::fs::read(&path).unwrap());
+    let mut od = OnDemand::new(
+        &versionlist,
+        "127.0.0.1",
+        1,
+        &cache,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .expect("engine versionlist");
+    od.request_in_use_models();
+    let bar = od.remaining();
+    let prefetchable = (0..od.get_file_count(0))
+        .filter(|&i| OnDemand::model_use_priority(od.get_model_use(i)) != 0)
+        .count();
+    assert!(
+        bar < prefetchable,
+        "Java waits remaining()==0 only for getModelUse&1 ({bar}); other use bits ({prefetchable}) prefetch after title"
+    );
+    od.prefetch_extra_files(true, false);
+    assert_eq!(
+        od.remaining(),
+        bar,
+        "prefetchPriority must not count in remaining(); extra files download on the title"
+    );
+}
+
 /// Versionlist jag in the engine pack layout (bzip2 per file, like the
 /// `jag` helper in tests/graphics.rs).
 fn jag(files: &[(&str, &[u8])]) -> Vec<u8> {

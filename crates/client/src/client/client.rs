@@ -1110,21 +1110,15 @@ impl Client {
             }
 
             self.draw_progress("Requesting models", 70);
-            let model_count = self.on_demand.as_ref().unwrap().get_file_count(0);
-            // Java waits remaining()==0 for `model_use & 1`, then prefetches
-            // the rest. Prefetch is not in remaining() and Rust does not
-            // write the jagex cache, so a title-screen prefetch still
-            // downloads after the bar. Request every model Java would
-            // prefetch (priority != 0, which includes `& 1`) as urgent and
-            // wait here so the loading bar owns the download, matching
-            // Java's "bodies ready at login".
-            for i in 0..model_count {
-                let priority =
-                    OnDemand::model_use_priority(self.on_demand.as_ref().unwrap().get_model_use(i));
-                if priority != 0 {
-                    self.on_demand.as_mut().unwrap().request(0, i);
-                }
-            }
+            // Java 5206-5210: remaining()==0 only for `getModelUse & 1`.
+            // Other use bits + maps + midi jingles are prefetchPriority
+            // after the bar (5251-5285). Title `titleScreenDraw` plots
+            // `onDemand.message` ("Loading extra files - x%") under the
+            // two login buttons while those drain (Java 3927, colour
+            // 7711145). Live-verify used to urgent-request every
+            // `priority != 0` model on the bar; that skipped the title
+            // extra-files pass and made startup slower than Java.
+            self.on_demand.as_mut().unwrap().request_in_use_models();
             let model_total = self.on_demand.as_ref().unwrap().remaining() as i32;
             while self.on_demand.as_ref().unwrap().remaining() > 0 {
                 let progress = model_total - self.on_demand.as_ref().unwrap().remaining() as i32;
@@ -1164,7 +1158,12 @@ impl Client {
                 thread::sleep(Duration::from_millis(100));
             }
 
-            self.on_demand.as_mut().unwrap().prefetch_maps(self.config.members);
+            let members = self.config.members;
+            let lowmem = self.config.lowmem;
+            self.on_demand
+                .as_mut()
+                .unwrap()
+                .prefetch_extra_files(members, lowmem);
         }
 
         self.draw_progress("Preparing game engine", 100);
