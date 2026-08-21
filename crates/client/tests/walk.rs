@@ -27,6 +27,7 @@ fn walk_here_uses_picking_not_tiles_as_params() {
     c.draw = true;
     c.local_player = Some(ClientPlayer::at(10, 10));
     c.menu_num_entries = 2;
+    c.is_menu_open = true; // the menu-open WALK uses the param coords (TS 9218-9219)
     c.menu_action[1] = MiniMenuAction::WALK;
     c.menu_param_b[1] = 100; // mouse x
     c.menu_param_c[1] = 80; // mouse y

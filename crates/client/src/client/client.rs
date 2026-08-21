@@ -356,6 +356,31 @@ pub struct Client {
     pub obj_selected_name: String,
     pub target_op: String,
     pub target_mask: i32,
+    /// `crossX`/`crossY`/`crossMode`/`crossCycle` (TS 373-376): the
+    /// crosshair position for the last op click, set by the `doAction` /
+    /// `interactWithLoc` arms (mode 2) and the minimap click (mode 1).
+    pub cross_x: i32,
+    pub cross_y: i32,
+    pub cross_mode: i32,
+    pub cross_cycle: i32,
+    /// Anticheat oplogic counters (Java `Client.java` static fields),
+    /// accumulated inside the `doAction` arms and flushed as the
+    /// `ANTICHEAT_OPLOGIC*` packets when they pass their thresholds.
+    pub oplogic1: i32,
+    pub oplogic2: i32,
+    pub oplogic3: i32,
+    pub oplogic4: i32,
+    pub oplogic5: i32,
+    pub oplogic6: i32,
+    pub oplogic7: i32,
+    pub oplogic8: i32,
+    pub oplogic9: i32,
+    pub cyclelogic2: i32,
+    /// `reportAbuseInput`/`reportAbuseMuteOption`/`reportAbuseComId` (TS):
+    /// the report-abuse form state set by the `ABUSE_REPORT` doAction arm.
+    pub report_abuse_input: String,
+    pub report_abuse_mute_option: bool,
+    pub report_abuse_com_id: i32,
 
     pub dir_map: Vec<i32>,
     pub dist_map: Vec<i32>,
@@ -819,6 +844,23 @@ impl Client {
             obj_selected_name: String::new(),
             target_op: String::new(),
             target_mask: 0,
+            cross_x: 0,
+            cross_y: 0,
+            cross_mode: 0,
+            cross_cycle: 0,
+            oplogic1: 0,
+            oplogic2: 0,
+            oplogic3: 0,
+            oplogic4: 0,
+            oplogic5: 0,
+            oplogic6: 0,
+            oplogic7: 0,
+            oplogic8: 0,
+            oplogic9: 0,
+            cyclelogic2: 0,
+            report_abuse_input: String::new(),
+            report_abuse_mute_option: false,
+            report_abuse_com_id: 0,
 
             dir_map: vec![0; BUILD_AREA_TILES],
             dist_map: vec![0; BUILD_AREA_TILES],
@@ -1698,13 +1740,20 @@ impl Client {
     }
 
     /// Menu dispatch, port of client-ts `Client.ts` `doAction` (8548-9273).
-    /// Headless encode paths only: the branches that need config types, chat,
-    /// or the scene (`OP_OBJ*`, `OP_LOC*`, `OP_PLAYER*`, `OP_HELD*`,
-    /// `INV_BUTTON*`, buttons, examine, friend/ignore) land with Tasks 13/15.
+    /// Friends/PM (`FRIENDLIST_*`, `IGNORELIST_*`, `MESSAGE_PRIVATE`) are
+    /// slice 5; the anticheat oplogic counters are `Client` fields (the TS
+    /// statics). The `USEHELD_START`/`TGT_BUTTON` arms return before the
+    /// trailing `use_mode`/`target_mode` wipe so Use/Target stays armed.
     #[allow(non_snake_case)] // Java name kept for the RawClient mapping
     pub fn doAction(&mut self, option_id: i32) {
         if option_id < 0 {
             return;
+        }
+
+        // TS 8553-8556: an open enter-name dialog closes on any action.
+        if self.dialog_input_open {
+            self.dialog_input_open = false;
+            self.redraw_chat = true;
         }
 
         let mut action = self.menu_action[option_id as usize];
@@ -1714,6 +1763,126 @@ impl Client {
 
         if action >= MiniMenuAction::_PRIORITY {
             action -= MiniMenuAction::_PRIORITY;
+        }
+
+        if OBJ_OP_ACTIONS.contains(&action) {
+            // TS 8568-8623: walk to the obj tile (with the 1x1 retry),
+            // arm the crosshair, then the per-op anticheat preamble.
+            let local_route = self
+                .local_player
+                .as_ref()
+                .map(|p| (p.route_x[0], p.route_z[0]));
+            if let Some((px, pz)) = local_route {
+                if !self.tryMove(px, pz, b, c, false, 0, 0, 0, 0, 0, 2) {
+                    self.tryMove(px, pz, b, c, false, 1, 1, 0, 0, 0, 2);
+                }
+
+                self.cross_x = self.shell.mouse_click_x;
+                self.cross_y = self.shell.mouse_click_y;
+                self.cross_mode = 2;
+                self.cross_cycle = 0;
+
+                if action == MiniMenuAction::OP_OBJ1 {
+                    if (b & 0x3) == 0 {
+                        self.oplogic7 += 1;
+                    }
+                    if self.oplogic7 >= 123 {
+                        self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC7.id);
+                        self.out.p4(0);
+                    }
+                    self.out.p1_enc(ClientProt::OPOBJ1.id);
+                }
+                if action == MiniMenuAction::OP_OBJ2 {
+                    self.out.p1_enc(ClientProt::OPOBJ2.id);
+                }
+                if action == MiniMenuAction::OP_OBJ3 {
+                    self.out.p1_enc(ClientProt::OPOBJ3.id);
+                }
+                if action == MiniMenuAction::OP_OBJ4 {
+                    self.oplogic8 += c;
+                    if self.oplogic8 >= 75 {
+                        self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC8.id);
+                        self.out.p1(19);
+                    }
+                    self.out.p1_enc(ClientProt::OPOBJ4.id);
+                }
+                if action == MiniMenuAction::OP_OBJ5 {
+                    self.oplogic3 += self.map_build_base_z;
+                    if self.oplogic3 >= 118 {
+                        self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC3.id);
+                        self.out.p4(0);
+                    }
+                    self.out.p1_enc(ClientProt::OPOBJ5.id);
+                }
+
+                self.out.p2(b + self.map_build_base_x);
+                self.out.p2(c + self.map_build_base_z);
+                self.out.p2(a);
+            }
+        }
+
+        if action == MiniMenuAction::OP_OBJ6 {
+            let obj = self
+                .cache
+                .objs
+                .get(a as usize)
+                .cloned()
+                .unwrap_or_default();
+            let examine = if obj.desc.is_empty() {
+                format!("It's a {}.", obj.name)
+            } else {
+                obj.desc
+            };
+            self.add_chat(0, &examine, "");
+        }
+
+        if action == MiniMenuAction::TGT_OBJ {
+            // TS 8638-8654: walk, crosshair, then OPOBJT.
+            let local_route = self
+                .local_player
+                .as_ref()
+                .map(|p| (p.route_x[0], p.route_z[0]));
+            if let Some((px, pz)) = local_route {
+                if !self.tryMove(px, pz, b, c, false, 0, 0, 0, 0, 0, 2) {
+                    self.tryMove(px, pz, b, c, false, 1, 1, 0, 0, 0, 2);
+                }
+
+                self.cross_x = self.shell.mouse_click_x;
+                self.cross_y = self.shell.mouse_click_y;
+                self.cross_mode = 2;
+                self.cross_cycle = 0;
+
+                self.out.p1_enc(ClientProt::OPOBJT.id);
+                self.out.p2(b + self.map_build_base_x);
+                self.out.p2(c + self.map_build_base_z);
+                self.out.p2(a);
+                self.out.p2(self.target_com_id);
+            }
+        }
+
+        if action == MiniMenuAction::USEHELD_ONOBJ {
+            let local_route = self
+                .local_player
+                .as_ref()
+                .map(|p| (p.route_x[0], p.route_z[0]));
+            if let Some((px, pz)) = local_route {
+                if !self.tryMove(px, pz, b, c, false, 0, 0, 0, 0, 0, 2) {
+                    self.tryMove(px, pz, b, c, false, 1, 1, 0, 0, 0, 2);
+                }
+
+                self.cross_x = self.shell.mouse_click_x;
+                self.cross_y = self.shell.mouse_click_y;
+                self.cross_mode = 2;
+                self.cross_cycle = 0;
+
+                self.out.p1_enc(ClientProt::OPOBJU.id);
+                self.out.p2(b + self.map_build_base_x);
+                self.out.p2(c + self.map_build_base_z);
+                self.out.p2(a);
+                self.out.p2(self.obj_com_id);
+                self.out.p2(self.obj_selected_slot);
+                self.out.p2(self.obj_selected_com_id);
+            }
         }
 
         if action == MiniMenuAction::OP_NPC1
@@ -1736,6 +1905,11 @@ impl Client {
             if let (Some((npc_x, npc_z)), Some((px, pz))) = (npc_route, local_route) {
                 self.tryMove(px, pz, npc_x, npc_z, false, 1, 1, 0, 0, 0, 2);
 
+                self.cross_x = self.shell.mouse_click_x;
+                self.cross_y = self.shell.mouse_click_y;
+                self.cross_mode = 2;
+                self.cross_cycle = 0;
+
                 let opcode = match action {
                     MiniMenuAction::OP_NPC1 => ClientProt::OPNPC1.id,
                     MiniMenuAction::OP_NPC2 => ClientProt::OPNPC2.id,
@@ -1748,33 +1922,696 @@ impl Client {
             }
         }
 
+        if action == MiniMenuAction::OP_NPC6 {
+            let examine = self
+                .npc
+                .get(a as usize)
+                .and_then(|n| n.as_ref())
+                .and_then(|n| n.r#type)
+                .and_then(|id| self.cache.npcs.get(id))
+                .map(|t| {
+                    if t.desc.is_empty() {
+                        format!("It's a {}.", t.name)
+                    } else {
+                        t.desc.clone()
+                    }
+                });
+            if let Some(examine) = examine {
+                self.add_chat(0, &examine, "");
+            }
+        }
+
         if action == MiniMenuAction::TGT_NPC {
-            self.out.p1_enc(ClientProt::OPNPCT.id);
-            self.out.p2(a);
-            self.out.p2(self.target_com_id);
+            let npc_route = self
+                .npc
+                .get(a as usize)
+                .and_then(|n| n.as_ref())
+                .map(|n| (n.route_x[0], n.route_z[0]));
+            let local_route = self
+                .local_player
+                .as_ref()
+                .map(|p| (p.route_x[0], p.route_z[0]));
+            if let (Some((npc_x, npc_z)), Some((px, pz))) = (npc_route, local_route) {
+                self.tryMove(px, pz, npc_x, npc_z, false, 1, 1, 0, 0, 0, 2);
+
+                self.cross_x = self.shell.mouse_click_x;
+                self.cross_y = self.shell.mouse_click_y;
+                self.cross_mode = 2;
+                self.cross_cycle = 0;
+
+                self.out.p1_enc(ClientProt::OPNPCT.id);
+                self.out.p2(a);
+                self.out.p2(self.target_com_id);
+            }
         }
 
         if action == MiniMenuAction::USEHELD_ONNPC {
-            self.out.p1_enc(ClientProt::OPNPCU.id);
-            self.out.p2(a);
+            let npc_route = self
+                .npc
+                .get(a as usize)
+                .and_then(|n| n.as_ref())
+                .map(|n| (n.route_x[0], n.route_z[0]));
+            let local_route = self
+                .local_player
+                .as_ref()
+                .map(|p| (p.route_x[0], p.route_z[0]));
+            if let (Some((npc_x, npc_z)), Some((px, pz))) = (npc_route, local_route) {
+                self.tryMove(px, pz, npc_x, npc_z, false, 1, 1, 0, 0, 0, 2);
+
+                self.cross_x = self.shell.mouse_click_x;
+                self.cross_y = self.shell.mouse_click_y;
+                self.cross_mode = 2;
+                self.cross_cycle = 0;
+
+                self.out.p1_enc(ClientProt::OPNPCU.id);
+                self.out.p2(a);
+                self.out.p2(self.obj_com_id);
+                self.out.p2(self.obj_selected_slot);
+                self.out.p2(self.obj_selected_com_id);
+            }
+        }
+
+        if action == MiniMenuAction::OP_LOC1 {
+            self.interact_with_loc(b, c, a, ClientProt::OPLOC1.id);
+        }
+
+        if action == MiniMenuAction::OP_LOC2 {
+            self.oplogic1 += c;
+            if self.oplogic1 >= 139 {
+                self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC1.id);
+                self.out.p4(0);
+            }
+            self.interact_with_loc(b, c, a, ClientProt::OPLOC2.id);
+        }
+
+        if action == MiniMenuAction::OP_LOC3 {
+            self.oplogic2 += 1;
+            if self.oplogic2 >= 124 {
+                self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC2.id);
+                self.out.p2(37954);
+            }
+            self.interact_with_loc(b, c, a, ClientProt::OPLOC3.id);
+        }
+
+        if action == MiniMenuAction::OP_LOC4 {
+            self.interact_with_loc(b, c, a, ClientProt::OPLOC4.id);
+        }
+
+        if action == MiniMenuAction::OP_LOC5 {
+            self.interact_with_loc(b, c, a, ClientProt::OPLOC5.id);
+        }
+
+        if action == MiniMenuAction::OP_LOC6 {
+            let loc_id = (a >> 14) & 0x7fff;
+            let examine = self.cache.locs.get(loc_id as usize).map(|loc| {
+                if loc.desc.is_empty() {
+                    format!("It's a {}.", loc.name)
+                } else {
+                    loc.desc.clone()
+                }
+            });
+            if let Some(examine) = examine {
+                self.add_chat(0, &examine, "");
+            }
+        }
+
+        if action == MiniMenuAction::TGT_LOC
+            && self.interact_with_loc(b, c, a, ClientProt::OPLOCT.id)
+        {
+            self.out.p2(self.target_com_id);
+        }
+
+        if action == MiniMenuAction::USEHELD_ONLOC
+            && self.interact_with_loc(b, c, a, ClientProt::OPLOCU.id)
+        {
             self.out.p2(self.obj_com_id);
             self.out.p2(self.obj_selected_slot);
             self.out.p2(self.obj_selected_com_id);
         }
 
+        if PLAYER_OP_ACTIONS.contains(&action) {
+            // TS 8824-8868: walk to the player, crosshair, then the
+            // per-op anticheat preamble and the player index.
+            let player_route = self
+                .players
+                .get(a as usize)
+                .and_then(|p| p.as_ref())
+                .map(|p| (p.route_x[0], p.route_z[0]));
+            let local_route = self
+                .local_player
+                .as_ref()
+                .map(|p| (p.route_x[0], p.route_z[0]));
+            if let (Some((tx, tz)), Some((px, pz))) = (player_route, local_route) {
+                self.tryMove(px, pz, tx, tz, false, 1, 1, 0, 0, 0, 2);
+
+                self.cross_x = self.shell.mouse_click_x;
+                self.cross_y = self.shell.mouse_click_y;
+                self.cross_mode = 2;
+                self.cross_cycle = 0;
+
+                if action == MiniMenuAction::OP_PLAYER1 {
+                    self.oplogic4 += 1;
+                    if self.oplogic4 >= 52 {
+                        self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC4.id);
+                        self.out.p1(131);
+                    }
+                    self.out.p1_enc(ClientProt::OPPLAYER1.id);
+                }
+                if action == MiniMenuAction::OP_PLAYER2 {
+                    self.out.p1_enc(ClientProt::OPPLAYER2.id);
+                }
+                if action == MiniMenuAction::OP_PLAYER3 {
+                    self.out.p1_enc(ClientProt::OPPLAYER3.id);
+                }
+                if action == MiniMenuAction::OP_PLAYER4 {
+                    self.oplogic5 += a;
+                    if self.oplogic5 >= 66 {
+                        self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC5.id);
+                        self.out.p1(154);
+                    }
+                    self.out.p1_enc(ClientProt::OPPLAYER4.id);
+                }
+                if action == MiniMenuAction::OP_PLAYER5 {
+                    self.out.p1_enc(ClientProt::OPPLAYER5.id);
+                }
+                self.out.p2(a);
+            }
+        }
+
+        if action == MiniMenuAction::ACCEPT_TRADEREQ || action == MiniMenuAction::ACCEPT_DUELREQ {
+            // TS 8870-8914: the `@whi@`-tagged option name resolves to the
+            // matching tracked player; ACCEPT_TRADEREQ is OPPPLAYER4,
+            // ACCEPT_DUELREQ OPPPLAYER1.
+            let option = self.menu_option[option_id as usize].clone();
+            if let Some(tag) = option.find("@whi@") {
+                let name = option[tag + 5..].trim().to_string();
+                let name = JString::to_screen_name(&JString::to_raw_username(
+                    JString::to_userhash(&name) as i64,
+                ));
+                let mut found = false;
+                for i in 0..self.player_count as usize {
+                    let index = self.player_ids[i] as usize;
+                    let player_route = self
+                        .players
+                        .get(index)
+                        .and_then(|p| p.as_ref())
+                        .filter(|p| {
+                            p.name
+                                .as_deref()
+                                .is_some_and(|n| n.to_lowercase() == name.to_lowercase())
+                        })
+                        .map(|p| (p.route_x[0], p.route_z[0]));
+                    let local_route = self
+                        .local_player
+                        .as_ref()
+                        .map(|p| (p.route_x[0], p.route_z[0]));
+                    if let (Some((tx, tz)), Some((px, pz))) = (player_route, local_route) {
+                        self.tryMove(px, pz, tx, tz, false, 1, 1, 0, 0, 0, 2);
+
+                        if action == MiniMenuAction::ACCEPT_TRADEREQ {
+                            self.oplogic5 += a;
+                            if self.oplogic5 >= 66 {
+                                self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC5.id);
+                                self.out.p1(154);
+                            }
+                            self.out.p1_enc(ClientProt::OPPLAYER4.id);
+                        }
+                        if action == MiniMenuAction::ACCEPT_DUELREQ {
+                            self.oplogic4 += 1;
+                            if self.oplogic4 >= 52 {
+                                self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC4.id);
+                                self.out.p1(131);
+                            }
+                            self.out.p1_enc(ClientProt::OPPLAYER1.id);
+                        }
+                        self.out.p2(index as i32);
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    self.add_chat(0, &format!("Unable to find {name}"), "");
+                }
+            }
+        }
+
+        if action == MiniMenuAction::TGT_PLAYER {
+            let player_route = self
+                .players
+                .get(a as usize)
+                .and_then(|p| p.as_ref())
+                .map(|p| (p.route_x[0], p.route_z[0]));
+            let local_route = self
+                .local_player
+                .as_ref()
+                .map(|p| (p.route_x[0], p.route_z[0]));
+            if let (Some((tx, tz)), Some((px, pz))) = (player_route, local_route) {
+                self.tryMove(px, pz, tx, tz, false, 1, 1, 0, 0, 0, 2);
+
+                self.cross_x = self.shell.mouse_click_x;
+                self.cross_y = self.shell.mouse_click_y;
+                self.cross_mode = 2;
+                self.cross_cycle = 0;
+
+                self.out.p1_enc(ClientProt::OPPLAYERT.id);
+                self.out.p2(a);
+                self.out.p2(self.target_com_id);
+            }
+        }
+
+        if action == MiniMenuAction::USEHELD_ONPLAYER {
+            let player_route = self
+                .players
+                .get(a as usize)
+                .and_then(|p| p.as_ref())
+                .map(|p| (p.route_x[0], p.route_z[0]));
+            let local_route = self
+                .local_player
+                .as_ref()
+                .map(|p| (p.route_x[0], p.route_z[0]));
+            if let (Some((tx, tz)), Some((px, pz))) = (player_route, local_route) {
+                self.tryMove(px, pz, tx, tz, false, 1, 1, 0, 0, 0, 2);
+
+                self.cross_x = self.shell.mouse_click_x;
+                self.cross_y = self.shell.mouse_click_y;
+                self.cross_mode = 2;
+                self.cross_cycle = 0;
+
+                self.out.p1_enc(ClientProt::OPPLAYERU.id);
+                self.out.p2(a);
+                self.out.p2(self.obj_com_id);
+                self.out.p2(self.obj_selected_slot);
+                self.out.p2(self.obj_selected_com_id);
+            }
+        }
+
+        if action == MiniMenuAction::OP_HELD1
+            || action == MiniMenuAction::OP_HELD2
+            || action == MiniMenuAction::OP_HELD3
+            || action == MiniMenuAction::OP_HELD4
+            || action == MiniMenuAction::OP_HELD5
+        {
+            // TS 8956-8997: p2(obj) p2(slot) p2(com), then the selected
+            // outline fields.
+            if action == MiniMenuAction::OP_HELD1 {
+                self.out.p1_enc(ClientProt::OPHELD1.id);
+            }
+            if action == MiniMenuAction::OP_HELD2 {
+                self.out.p1_enc(ClientProt::OPHELD2.id);
+            }
+            if action == MiniMenuAction::OP_HELD3 {
+                self.out.p1_enc(ClientProt::OPHELD3.id);
+            }
+            if action == MiniMenuAction::OP_HELD4 {
+                self.oplogic9 += 1;
+                if self.oplogic9 >= 116 {
+                    self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC9.id);
+                    self.out.p3(13018169);
+                }
+                self.out.p1_enc(ClientProt::OPHELD4.id);
+            }
+            if action == MiniMenuAction::OP_HELD5 {
+                self.out.p1_enc(ClientProt::OPHELD5.id);
+            }
+            self.out.p2(a);
+            self.out.p2(b);
+            self.out.p2(c);
+            self.mark_selected(b, c);
+        }
+
+        if action == MiniMenuAction::OP_HELD6 {
+            let obj = self
+                .cache
+                .objs
+                .get(a as usize)
+                .cloned()
+                .unwrap_or_default();
+            // TS 8999-9010: a com-link count >= 100000 reports "<n> x <name>"
+            let examine = self
+                .cache
+                .ifaces
+                .get(c as usize)
+                .and_then(|o| o.as_ref())
+                .and_then(|com| com.link_obj_number.as_ref())
+                .and_then(|numbers| numbers.get(b as usize).copied())
+                .filter(|&n| n >= 100000)
+                .map(|n| format!("{n} x {}", obj.name))
+                .unwrap_or_else(|| {
+                    if obj.desc.is_empty() {
+                        format!("It's a {}.", obj.name)
+                    } else {
+                        obj.desc
+                    }
+                });
+            self.add_chat(0, &examine, "");
+        }
+
+        if action == MiniMenuAction::USEHELD_START {
+            // TS 9013-9022: arms Use mode and returns before the wipe.
+            self.use_mode = 1;
+            self.obj_selected_slot = b;
+            self.obj_selected_com_id = c;
+            self.obj_com_id = a;
+            self.obj_selected_name = self
+                .cache
+                .objs
+                .get(a as usize)
+                .map(|o| o.name.clone())
+                .unwrap_or_default();
+            self.target_mode = 0;
+            self.redraw_side = true;
+            return;
+        }
+
+        if action == MiniMenuAction::TGT_BUTTON {
+            // TS 9024-9050: target mode for the spell, `targetOp` from the
+            // verb prefix/suffix and base; returns before the wipe.
+            let com = self
+                .cache
+                .ifaces
+                .get(c as usize)
+                .and_then(|o| o.as_ref())
+                .cloned();
+            self.target_mode = 1;
+            self.target_com_id = c;
+            self.target_mask = com.as_ref().map(|com| com.target_mask).unwrap_or(0);
+            self.use_mode = 0;
+            self.redraw_side = true;
+
+            let (prefix, suffix) = com
+                .as_ref()
+                .map(|com| {
+                    let verb = com.target_verb.clone();
+                    match verb.find(' ') {
+                        Some(space) => {
+                            (verb[..space].to_string(), verb[space + 1..].to_string())
+                        }
+                        None => (verb.clone(), verb),
+                    }
+                })
+                .unwrap_or_default();
+            let base = com
+                .as_ref()
+                .map(|com| com.target_base.as_str())
+                .unwrap_or("");
+            self.target_op = format!("{prefix} {base} {suffix}");
+
+            if self.target_mask == 0x10 {
+                self.redraw_side = true;
+                self.active_icon = 3;
+                self.redraw_icons = true;
+            }
+            return;
+        }
+
+        if action == MiniMenuAction::TGT_HELD {
+            self.out.p1_enc(ClientProt::OPHELDT.id);
+            self.out.p2(a);
+            self.out.p2(b);
+            self.out.p2(c);
+            self.out.p2(self.target_com_id);
+            self.mark_selected(b, c);
+        }
+
+        if action == MiniMenuAction::USEHELD_ONHELD {
+            self.out.p1_enc(ClientProt::OPHELDU.id);
+            self.out.p2(a);
+            self.out.p2(b);
+            self.out.p2(c);
+            self.out.p2(self.obj_com_id);
+            self.out.p2(self.obj_selected_slot);
+            self.out.p2(self.obj_selected_com_id);
+            self.mark_selected(b, c);
+        }
+
+        if action == MiniMenuAction::INV_BUTTON1
+            || action == MiniMenuAction::INV_BUTTON2
+            || action == MiniMenuAction::INV_BUTTON3
+            || action == MiniMenuAction::INV_BUTTON4
+            || action == MiniMenuAction::INV_BUTTON5
+        {
+            // TS 9096-9141: p2(obj) p2(slot) p2(com), then the selected
+            // outline fields.
+            if action == MiniMenuAction::INV_BUTTON1 {
+                if (a & 0x3) == 0 {
+                    self.oplogic6 += 1;
+                }
+                if self.oplogic6 >= 133 {
+                    self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC6.id);
+                    self.out.p2(6118);
+                }
+                self.out.p1_enc(ClientProt::INV_BUTTON1.id);
+            }
+            if action == MiniMenuAction::INV_BUTTON2 {
+                self.out.p1_enc(ClientProt::INV_BUTTON2.id);
+            }
+            if action == MiniMenuAction::INV_BUTTON3 {
+                self.out.p1_enc(ClientProt::INV_BUTTON3.id);
+            }
+            if action == MiniMenuAction::INV_BUTTON4 {
+                self.out.p1_enc(ClientProt::INV_BUTTON4.id);
+            }
+            if action == MiniMenuAction::INV_BUTTON5 {
+                self.out.p1_enc(ClientProt::INV_BUTTON5.id);
+            }
+            self.out.p2(a);
+            self.out.p2(b);
+            self.out.p2(c);
+            self.mark_selected(b, c);
+        }
+
+        if action == MiniMenuAction::IF_BUTTON {
+            // TS 9144-9154: `clientButton` runs for any positive client
+            // code and can veto the send (the unported codes return true).
+            let com = self
+                .cache
+                .ifaces
+                .get(c as usize)
+                .and_then(|o| o.as_ref())
+                .cloned();
+            let mut notify = true;
+            if let Some(com) = &com {
+                if com.client_code > 0 {
+                    notify = self.client_button(com);
+                }
+            }
+            if notify {
+                self.out.p1_enc(ClientProt::IF_BUTTON.id);
+                self.out.p2(c);
+            }
+        }
+
+        if action == MiniMenuAction::TOGGLE_BUTTON {
+            self.out.p1_enc(ClientProt::IF_BUTTON.id);
+            self.out.p2(c);
+            let com = self
+                .cache
+                .ifaces
+                .get(c as usize)
+                .and_then(|o| o.as_ref())
+                .cloned();
+            if let Some(com) = com {
+                // TS 9163-9169: scripts[0][0] == 5 flips varp scripts[0][1].
+                if let Some(script) = com.scripts.as_ref().and_then(|s| s.first()) {
+                    if script.first() == Some(&5) {
+                        let varp = script.get(1).copied().unwrap_or(0);
+                        let current = self.var.get(varp as usize).copied().unwrap_or(0);
+                        grow_write(&mut self.var, varp, 1 - current);
+                        self.client_var(varp);
+                        self.redraw_side = true;
+                    }
+                }
+            }
+        }
+
+        if action == MiniMenuAction::SELECT_BUTTON {
+            self.out.p1_enc(ClientProt::IF_BUTTON.id);
+            self.out.p2(c);
+            let com = self
+                .cache
+                .ifaces
+                .get(c as usize)
+                .and_then(|o| o.as_ref())
+                .cloned();
+            if let Some(com) = com {
+                // TS 9172-9183: scripts[0][0] == 5 sets varp scripts[0][1]
+                // to scriptOperand[0] when it differs.
+                if let Some(script) = com.scripts.as_ref().and_then(|s| s.first()) {
+                    if script.first() == Some(&5) {
+                        let varp = script.get(1).copied().unwrap_or(0);
+                        if let Some(operand) = com
+                            .script_operand
+                            .as_ref()
+                            .and_then(|o| o.first())
+                            .copied()
+                        {
+                            if self.var.get(varp as usize).copied() != Some(operand) {
+                                grow_write(&mut self.var, varp, operand);
+                                self.client_var(varp);
+                                self.redraw_side = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if action == MiniMenuAction::PAUSE_BUTTON {
+            // TS 9186-9191: RESUME_PAUSEBUTTON, not IF_BUTTON.
+            if !self.resumed_pause_button {
+                self.out.p1_enc(ClientProt::RESUME_PAUSEBUTTON.id);
+                self.out.p2(c);
+                self.resumed_pause_button = true;
+            }
+        }
+
+        if action == MiniMenuAction::CLOSE_BUTTON {
+            self.close_modal();
+        }
+
+        if action == MiniMenuAction::ABUSE_REPORT {
+            let option = self.menu_option[option_id as usize].clone();
+            if let Some(tag) = option.find("@whi@") {
+                self.close_modal();
+                self.report_abuse_input = option[tag + 5..].trim().to_string();
+                self.report_abuse_mute_option = false;
+                if let Some(com) = self
+                    .cache
+                    .ifaces
+                    .iter()
+                    .flatten()
+                    .find(|com| com.client_code == CC_REPORT_INPUT)
+                {
+                    self.report_abuse_com_id = com.layer_id;
+                    self.main_modal_id = com.layer_id;
+                }
+            }
+        }
+
         if action == MiniMenuAction::WALK {
             // `World.updateMousePicking` from Client.ts doAction (9217-9222):
-            // menuParamB/C are the applet click coords (the viewport Walk
-            // here entry), stored as mouseX/Y and converted to scene-local
-            // pixels here; the ground answer is consumed into MOVE_GAMECLICK
-            // by `game_loop` after the next render. The menu is never open
-            // (no minimenu chrome), so the `isMenuOpen` branch is not ported.
-            self.world.update_mouse_picking(b - 4, c - 4);
+            // the menu-open row click uses the stored param coords; the
+            // closed-menu last-entry path uses the live click. The ground
+            // answer is consumed into MOVE_GAMECLICK by `game_loop`.
+            if self.is_menu_open {
+                self.world.update_mouse_picking(b - 4, c - 4);
+            } else {
+                self.world.update_mouse_picking(
+                    self.shell.mouse_click_x - 4,
+                    self.shell.mouse_click_y - 4,
+                );
+            }
         }
 
         self.use_mode = 0;
         self.target_mode = 0;
         self.redraw_side = true;
+    }
+
+    /// `interactWithLoc` from client-ts (5535-5606): resolve the loc id
+    /// from the pick typecode, walk to its tile with the shape/angle-aware
+    /// `tryMove` arguments, then write `p1_enc(opcode) p2(x + base)
+    /// p2(z + base) p2(locId)`. The `ANTICHEAT_CYCLELOGIC2` blob's
+    /// `Math.random` payload is written with fixed values (deterministic;
+    /// the threshold is far beyond any test run).
+    #[allow(non_snake_case)] // Java name kept for the RawClient mapping
+    fn interact_with_loc(&mut self, x: i32, z: i32, typecode: i32, opcode: i32) -> bool {
+        let Some((px, pz)) = self
+            .local_player
+            .as_ref()
+            .map(|p| (p.route_x[0], p.route_z[0]))
+        else {
+            return false;
+        };
+
+        let loc_id = (typecode >> 14) & 0x7fff;
+        let info = self.world.type_code2(self.minusedlevel, x, z, typecode);
+        if info == -1 {
+            return false;
+        }
+
+        let shape = info & 0x1f;
+        let angle = (info >> 6) & 0x3;
+
+        self.cyclelogic2 += 1;
+        if self.cyclelogic2 > 1086 {
+            self.cyclelogic2 = 0;
+            self.out.p1_enc(ClientProt::ANTICHEAT_CYCLELOGIC2.id);
+            self.out.p1(0);
+            let start = self.out.pos;
+            // the Math.random draws become 0 and both 2.0-roll conditionals
+            // take their first branch (TS 5554-5568), kept deterministic
+            self.out.p2(16791);
+            self.out.p1(254);
+            self.out.p2(0);
+            self.out.p2(16128);
+            self.out.p2(52610);
+            self.out.p2(0);
+            self.out.p2(55420);
+            self.out.p2(35025);
+            self.out.p2(46628);
+            self.out.p1(0);
+            self.out.psize1((self.out.pos - start) as i32);
+        }
+
+        if shape == LocShape::CENTREPIECE_STRAIGHT
+            || shape == LocShape::CENTREPIECE_DIAGONAL
+            || shape == LocShape::GROUND_DECOR
+        {
+            let (loc_width, loc_length, loc_forceapproach) = self
+                .cache
+                .locs
+                .get(loc_id as usize)
+                .map(|loc| (loc.width, loc.length, loc.forceapproach))
+                .unwrap_or((0, 0, 0));
+            let (width, height) = if angle == LocAngle::WEST || angle == LocAngle::EAST {
+                (loc_width, loc_length)
+            } else {
+                (loc_length, loc_width)
+            };
+            let mut forceapproach = loc_forceapproach;
+            if angle != 0 {
+                forceapproach =
+                    ((forceapproach << angle) & 0xf) + (forceapproach >> (4 - angle));
+            }
+            self.tryMove(px, pz, x, z, false, width, height, 0, 0, forceapproach, 2);
+        } else {
+            self.tryMove(px, pz, x, z, false, 0, 0, angle, shape + 1, 0, 2);
+        }
+
+        self.cross_x = self.shell.mouse_click_x;
+        self.cross_y = self.shell.mouse_click_y;
+        self.cross_mode = 2;
+        self.cross_cycle = 0;
+
+        self.out.p1_enc(opcode);
+        self.out.p2(x + self.map_build_base_x);
+        self.out.p2(z + self.map_build_base_z);
+        self.out.p2(loc_id);
+        true
+    }
+
+    /// `selectedArea`/`selectedComId`/`selectedItem`/`selectedCycle`
+    /// write-back shared by the OP_HELD/TGT_HELD/USEHELD_ONHELD/INV_BUTTON
+    /// arms (TS 8981-8996 etc.): default area 2, then 1 or 3 when the
+    /// component's layer is the main or chat modal.
+    fn mark_selected(&mut self, b: i32, c: i32) {
+        self.selected_cycle = 0;
+        self.selected_com_id = c;
+        self.selected_item = b;
+        self.selected_area = 2;
+        let layer_id = self
+            .cache
+            .ifaces
+            .get(c as usize)
+            .and_then(|o| o.as_ref())
+            .map(|com| com.layer_id);
+        if layer_id == Some(self.main_modal_id) {
+            self.selected_area = 1;
+        }
+        if layer_id == Some(self.chat_modal_id) {
+            self.selected_area = 3;
+        }
     }
 
     /// Walk-path encode, port of client-ts `Client.ts` `tryMove` (5608-5869)
@@ -2607,8 +3444,8 @@ impl Client {
     /// and release reads `mouse_button == 0` (held state, not the click
     /// latch). A real drop (threshold + 5 held cycles) moves the item
     /// (`obj_replace` copy, bank-arrange insert, or `swap_slots`) and
-    /// writes `INV_BUTTOND`; a cancelled drag never `doAction`/`openMenu`
-    /// (the minimenu is slice 4, TS drops those branches too).
+    /// writes `INV_BUTTOND`; a picked-up item released over its own slot
+    /// falls back to `openMenu`/`doAction` like TS 2291-2296.
     pub fn handle_obj_drag(&mut self) {
         if self.obj_drag_area == 0 {
             return;
@@ -2687,6 +3524,18 @@ impl Client {
                     self.out.p2(self.hovered_slot);
                     self.out.p1(mode);
                 }
+            } else if (self.one_mouse_button == 1
+                || self.is_add_friend_option(self.menu_num_entries - 1))
+                && self.menu_num_entries > 2
+            {
+                // TS 2291-2293: a picked-up item released over its own slot
+                // (or an invalid target) opens the multi-entry menu.
+                self.open_menu();
+            } else if self.menu_num_entries > 0 {
+                // TS 2294-2296: otherwise the release falls back to the
+                // last menu entry (the left-click Wear/Eat/Drop the drag
+                // grabbed), so a cancelled drag still acts.
+                self.doAction(self.menu_num_entries - 1);
             }
         }
         // TS 2298-2299: with the drop consumed, reset the outline timeout
@@ -2744,150 +3593,20 @@ impl Client {
         true
     }
 
-    /// `buildMinimenu` side branch (Client.ts 2540-2547): a left click
-    /// inside the side panel (553..743 × 205..466) walks the open interface
-    /// tree (`side_modal_id`, else the active tab's `side_icon`) like
-    /// `draw_interface` and fires the first hit child's button through
-    /// `if_button_dispatch`. Drag start moved to `mouse_loop` (TS
-    /// 8339-8368): while the menu is open or a drag is in flight, the click
-    /// belongs to `mouse_loop`/`handle_obj_drag`, so return immediately.
-    pub fn handle_side_if_clicks(&mut self) {
-        if self.shell.mouse_click_button != 1 || self.is_menu_open || self.obj_drag_area != 0 {
-            return;
-        }
-        let (x, y) = (self.shell.mouse_click_x, self.shell.mouse_click_y);
-        if !(553..743).contains(&x) || !(205..466).contains(&y) {
-            return;
-        }
-        let root_id = if self.side_modal_id != -1 {
-            self.side_modal_id
-        } else {
-            self.side_icon
-                .get(self.active_icon as usize)
-                .copied()
-                .unwrap_or(-1)
-        };
-        if root_id == -1 {
-            return;
-        }
-        // panel-local coords like the draw_side draw_interface call
-        let Some(hit_id) = self.if_hit_test(root_id, x - 553, y - 205, 0, 0, 0) else {
-            return;
-        };
-        self.if_button_dispatch(hit_id);
-    }
+    /// TS has no `handleSideIfClicks`: every button click flows through
+    /// `buildMinimenu` + `mouseLoop`, which fires the last menu entry via
+    /// `doAction` (IF_BUTTON/CLOSE/TOGGLE/SELECT/PAUSE arms). The pre-menu
+    /// click handlers would double-send (here then `mouse_loop`), so they
+    /// are no-ops; `handle_tab_clicks` still handles the side tabs.
+    pub fn handle_side_if_clicks(&mut self) {}
 
-    /// The shared BUTTON_OK/CLOSE/TOGGLE/SELECT dispatch behind the
-    /// side/main/chat iface click handlers (Java execute var5 == 231,
-    /// Client.java 4557-4567; TS execute 9144-9190): BUTTON_CLOSE sends
-    /// `CLOSE_MODAL` and clears the modals like TS `closeModal`; the rest
-    /// send `IF_BUTTON` + the child id. TOGGLE/SELECT also flip/set the
-    /// local `var` and apply its clientcode via `clientVar` when
-    /// `scripts[0][0] == 5`.
-    fn if_button_dispatch(&mut self, hit_id: i32) {
-        // Peek the button type before cloning: BUTTON_CLOSE returns early
-        // without deep-copying the IfType (Strings + Vecs).
-        let Some(button_type) = self
-            .cache
-            .ifaces
-            .get(hit_id as usize)
-            .and_then(|o| o.as_ref())
-            .map(|o| o.button_type)
-        else {
-            return;
-        };
-        if button_type == ButtonType::BUTTON_CLOSE {
-            self.close_modal();
-            return;
-        }
-        let Some(hit) = self
-            .cache
-            .ifaces
-            .get(hit_id as usize)
-            .and_then(|o| o.as_ref())
-            .cloned()
-        else {
-            return;
-        };
-        // Java execute var5 == 231 (Client.java 4557-4567): clientButton is
-        // called only from the BUTTON_OK arm and runs first, arming the
-        // logout timer for CC_LOGOUT; the ported arm always returns true so
-        // the IF_BUTTON send stays unconditional.
-        if button_type == ButtonType::BUTTON_OK && hit.client_code > 0 {
-            self.client_button(&hit);
-        }
-        self.out.p1_enc(ClientProt::IF_BUTTON.id);
-        self.out.p2(hit_id);
-        if button_type != ButtonType::BUTTON_TOGGLE && button_type != ButtonType::BUTTON_SELECT {
-            return;
-        }
-        let Some(script) = hit.scripts.as_ref().and_then(|s| s.first()) else {
-            return;
-        };
-        if script.first() != Some(&5) {
-            return;
-        }
-        let Some(&varp) = script.get(1) else {
-            return;
-        };
-        // TS execute 9163-9179: flip/set the local var, apply its
-        // clientcode (clientVar), then redraw.
-        let operand = hit.script_operand.as_ref().and_then(|o| o.first()).copied();
-        if button_type == ButtonType::BUTTON_TOGGLE {
-            let current = self.var.get(varp as usize).copied().unwrap_or(0);
-            grow_write(&mut self.var, varp, 1 - current);
-            self.client_var(varp);
-            self.redraw_side = true;
-        } else if let Some(value) = operand {
-            if self.var.get(varp as usize).copied() != Some(value) {
-                grow_write(&mut self.var, varp, value);
-                self.client_var(varp);
-                self.redraw_side = true;
-            }
-        }
-    }
+    /// See `handle_side_if_clicks`: main-modal button clicks flow through
+    /// `build_minimenu` + `mouse_loop`/`doAction`.
+    pub fn handle_main_if_clicks(&mut self) {}
 
-    /// `buildMinimenu` viewport branch (Java Client.java 5829-5833): a left
-    /// click inside the viewport (4..516 × 4..338) walks `main_modal_id`
-    /// (origin 4, 4) and fires the first hit child's button like
-    /// `handle_side_if_clicks`. A main modal also eats the viewport click
-    /// for Walk-here (`build_minimenu` walks the modal, not the world).
-    /// Drag start moved to `mouse_loop`; skip while the menu is open or a
-    /// drag is in flight.
-    pub fn handle_main_if_clicks(&mut self) {
-        if self.shell.mouse_click_button != 1 || self.is_menu_open || self.obj_drag_area != 0 {
-            return;
-        }
-        let (x, y) = (self.shell.mouse_click_x, self.shell.mouse_click_y);
-        if self.main_modal_id == -1 || !(4..516).contains(&x) || !(4..338).contains(&y) {
-            return;
-        }
-        // viewport-local coords like the other_overlays draw_interface call
-        let Some(hit_id) = self.if_hit_test(self.main_modal_id, x - 4, y - 4, 0, 0, 0) else {
-            return;
-        };
-        self.if_button_dispatch(hit_id);
-    }
-
-    /// `buildMinimenu` chat branch (Java Client.java 5845-5848): a left
-    /// click inside the chat panel (17..496 × 357..453) walks `chat_modal_id`
-    /// (origin 17, 357) and fires the first hit child's button like
-    /// `handle_side_if_clicks`. Drag start moved to `mouse_loop`; skip while
-    /// the menu is open or a drag is in flight.
-    pub fn handle_chat_if_clicks(&mut self) {
-        if self.shell.mouse_click_button != 1 || self.is_menu_open || self.obj_drag_area != 0 {
-            return;
-        }
-        let (x, y) = (self.shell.mouse_click_x, self.shell.mouse_click_y);
-        if self.chat_modal_id == -1 || !(17..496).contains(&x) || !(357..453).contains(&y) {
-            return;
-        }
-        // chat-local coords like the draw_chat draw_interface call
-        let Some(hit_id) = self.if_hit_test(self.chat_modal_id, x - 17, y - 357, 0, 0, 0) else {
-            return;
-        };
-        self.if_button_dispatch(hit_id);
-    }
+    /// See `handle_side_if_clicks`: chat-modal button clicks flow through
+    /// `build_minimenu` + `mouse_loop`/`doAction`.
+    pub fn handle_chat_if_clicks(&mut self) {}
 
     /// `closeModal` from client-ts (10941-10958): send CLOSE_MODAL and
     /// close the side and chat modals locally; `main_modal_id` is reset
@@ -2909,87 +3628,6 @@ impl Client {
         }
         self.main_modal_id = -1;
         self.resumed_pause_button = false;
-    }
-
-    /// Walk `com_id`'s children like TS `addComponentOptions` (9628-9841)
-    /// and return the first hit child with a BUTTON_OK/CLOSE/TOGGLE/SELECT
-    /// `button_type`, shared by the side/main/chat click handlers. Layers
-    /// recurse with the same scroll clamp as `draw_interface`; TYPE_INV
-    /// children are skipped (their menu options land in `build_minimenu`).
-    /// The layer must be visible and its rect must contain the point
-    /// (TS 9629).
-    fn if_hit_test(
-        &self,
-        com_id: i32,
-        mouse_x: i32,
-        mouse_y: i32,
-        x: i32,
-        y: i32,
-        scroll: i32,
-    ) -> Option<i32> {
-        let com = self
-            .cache
-            .ifaces
-            .get(com_id as usize)
-            .and_then(|o| o.as_ref())?;
-        if com.r#type != ComponentType::TYPE_LAYER || com.hide {
-            return None;
-        }
-        if mouse_x < x || mouse_y < y || mouse_x > x + com.width || mouse_y > y + com.height {
-            return None;
-        }
-        let children = com.children.as_ref()?;
-        let child_x = com.child_x.as_ref()?;
-        let child_y = com.child_y.as_ref()?;
-        for i in 0..children.len() {
-            let child_id = children[i] as usize;
-            let Some(child) = self.cache.ifaces.get(child_id).and_then(|o| o.as_ref()) else {
-                continue;
-            };
-            let child_x = child_x[i] + x + child.x;
-            let child_y = child_y[i] + y - scroll + child.y;
-            match child.r#type {
-                ComponentType::TYPE_LAYER => {
-                    // TS 9930-9938: clamp the child's scroll position before
-                    // recursing with it (max first, then min, sequentially).
-                    let mut scroll_pos = child.scroll_pos;
-                    if scroll_pos > child.scroll_height - child.height {
-                        scroll_pos = child.scroll_height - child.height;
-                    }
-                    if scroll_pos < 0 {
-                        scroll_pos = 0;
-                    }
-                    if let Some(hit) = self.if_hit_test(
-                        children[i],
-                        mouse_x,
-                        mouse_y,
-                        child_x,
-                        child_y,
-                        scroll_pos,
-                    ) {
-                        return Some(hit);
-                    }
-                }
-                ComponentType::TYPE_INV => {}
-                _ => {
-                    if mouse_x >= child_x
-                        && mouse_y >= child_y
-                        && mouse_x < child_x + child.width
-                        && mouse_y < child_y + child.height
-                        && matches!(
-                            child.button_type,
-                            ButtonType::BUTTON_OK
-                                | ButtonType::BUTTON_CLOSE
-                                | ButtonType::BUTTON_TOGGLE
-                                | ButtonType::BUTTON_SELECT
-                        )
-                    {
-                        return Some(children[i]);
-                    }
-                }
-            }
-        }
-        None
     }
 
     /// `buildMinimenu` from Client.ts (2514-2599): rebuild the minimenu

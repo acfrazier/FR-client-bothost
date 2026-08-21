@@ -2,9 +2,9 @@
 //! Clicking a control with client code 205 arms `logoutTimer` (250 frames,
 //! ~5 s at 20 ms); unported client codes return `true` so the existing
 //! unconditional `IF_BUTTON` send is preserved (operator-accepted deferral,
-//! 2026-08-20 — the full `clientButton` port is slice 3/5). The
-//! `handle_side_if_clicks` hook fires only in the BUTTON_OK arm, matching
-//! Java `execute` (`var5 == 231`, `Client.java` 4562).
+//! 2026-08-20 — the full `clientButton` port is slice 3/5). Clicks reach
+//! `clientButton` through the `doAction` IF_BUTTON arm (TS 9144-9154), and
+//! the non-OK button arms never call it.
 use client::client::{Client, ClientConfig, APPLET_H, APPLET_W};
 use client::config::if_type::{ButtonType, ComponentType, IfType};
 use client::graphics::PixMap;
@@ -46,6 +46,7 @@ fn cc_logout_hook_ignores_non_ok_buttons() {
         id: 2,
         r#type: ComponentType::TYPE_RECT,
         button_type: ButtonType::BUTTON_TOGGLE,
+        button_text: "Toggle".into(),
         client_code: 205,
         width: 190,
         height: 20,
@@ -53,6 +54,7 @@ fn cc_logout_hook_ignores_non_ok_buttons() {
     };
     bind_side(&mut c, 1, vec![root, toggle]);
     click_side(&mut c, 560, 210);
+    // the TOGGLE_BUTTON arm sends IF_BUTTON but never calls clientButton
     assert_eq!(c.logout_timer, 0);
 }
 
@@ -69,11 +71,16 @@ fn bind_side(c: &mut Client, root: i32, components: Vec<IfType>) {
     }
 }
 
-/// Latch a left click at applet coords and run the side click handler.
+/// Latch a left click at applet coords and fire it through the TS menu
+/// path: `build_minimenu` populates the entries, `mouse_loop` fires the
+/// last one (`doAction`).
 fn click_side(c: &mut Client, x: i32, y: i32) {
+    c.shell.mouse_x = x;
+    c.shell.mouse_y = y;
+    c.build_minimenu();
     c.shell.apply_mouse_down(1, x, y);
     c.shell.latch_click();
-    c.handle_side_if_clicks();
+    c.mouse_loop();
 }
 
 /// A TYPE_LAYER with one child list (child offsets and layer size).

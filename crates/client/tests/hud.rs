@@ -649,7 +649,9 @@ fn draw_interface_substitutes_percent1() {
     );
 }
 
-// ---- sidebar left-click IF_BUTTON (Task 4) ----
+// ---- sidebar left-click buttons (Tasks 4/5) ----
+// Clicks flow through `build_minimenu` + `mouse_loop`, which fire the last
+// menu entry's `doAction` (IF_BUTTON/CLOSE/TOGGLE/SELECT/PAUSE arms).
 
 /// Bind `components` into the cache and `root` onto the active side tab (3).
 fn bind_side(c: &mut Client, root: i32, components: Vec<IfType>) {
@@ -664,11 +666,16 @@ fn bind_side(c: &mut Client, root: i32, components: Vec<IfType>) {
     }
 }
 
-/// Latch a left click at applet coords and run the side click handler.
+/// Latch a left click at applet coords and fire it through the TS menu
+/// path: `build_minimenu` populates the entries, `mouse_loop` fires the
+/// last one (`doAction`). `handle_*_if_clicks` are no-ops (double-dispatch).
 fn click_side(c: &mut Client, x: i32, y: i32) {
+    c.shell.mouse_x = x;
+    c.shell.mouse_y = y;
+    c.build_minimenu();
     c.shell.apply_mouse_down(1, x, y);
     c.shell.latch_click();
-    c.handle_side_if_clicks();
+    c.mouse_loop();
 }
 
 /// The bytes written by the outgoing packet buffer.
@@ -697,12 +704,23 @@ fn side_layer(
     }
 }
 
-/// A non-layer child with the given button type and rect.
-fn side_button(id: i32, button_type: i32, x: i32, y: i32, width: i32, height: i32) -> IfType {
+/// A non-layer child with the given button type and rect. `text` is the
+/// button label `build_minimenu` requires before it pushes the option
+/// (TS 9785-9789).
+fn side_button(
+    id: i32,
+    button_type: i32,
+    text: &str,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+) -> IfType {
     IfType {
         id,
         r#type: ComponentType::TYPE_RECT,
         button_type,
+        button_text: text.into(),
         x,
         y,
         width,
@@ -716,7 +734,7 @@ fn side_click_ok_button_writes_if_button() {
     let mut c = client();
     // the panel is blitted at (553, 205); a click at (560, 210) is local (7, 5)
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 20);
-    let button = side_button(2, ButtonType::BUTTON_OK, 0, 0, 190, 20);
+    let button = side_button(2, ButtonType::BUTTON_OK, "OK", 0, 0, 190, 20);
     bind_side(&mut c, 1, vec![root, button]);
     click_side(&mut c, 560, 210);
     // random is None at Client::new, so p1_enc writes the plain opcode
@@ -727,7 +745,7 @@ fn side_click_ok_button_writes_if_button() {
 fn side_click_close_button_sends_close_modal() {
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
-    let button = side_button(2, ButtonType::BUTTON_CLOSE, 0, 0, 190, 20);
+    let button = side_button(2, ButtonType::BUTTON_CLOSE, "", 0, 0, 190, 20);
     bind_side(&mut c, 1, vec![root, button]);
     click_side(&mut c, 560, 210);
     // CLOSE_MODAL (opcode 51, length 0): the opcode only, no p2 payload
@@ -739,7 +757,7 @@ fn side_click_close_button_sends_close_modal() {
 fn close_modal_clears_resumed_pause_button() {
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
-    let button = side_button(2, ButtonType::BUTTON_CLOSE, 0, 0, 190, 20);
+    let button = side_button(2, ButtonType::BUTTON_CLOSE, "", 0, 0, 190, 20);
     bind_side(&mut c, 1, vec![root, button]);
     c.resumed_pause_button = true;
     click_side(&mut c, 560, 210);
@@ -755,6 +773,7 @@ fn side_click_toggle_flips_var_and_redraws() {
         id: 2,
         r#type: ComponentType::TYPE_RECT,
         button_type: ButtonType::BUTTON_TOGGLE,
+        button_text: "Toggle".into(),
         width: 190,
         height: 20,
         scripts: Some(vec![vec![5, 7, 0]]), // scripts[0][0] == 5: varp 7
@@ -772,13 +791,15 @@ fn side_click_toggle_flips_var_and_redraws() {
 fn side_click_toggle_without_script_keeps_var() {
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
-    let toggle = side_button(2, ButtonType::BUTTON_TOGGLE, 0, 0, 190, 20);
+    let toggle = side_button(2, ButtonType::BUTTON_TOGGLE, "Toggle", 0, 0, 190, 20);
     c.var = vec![1];
     bind_side(&mut c, 1, vec![root, toggle]);
     click_side(&mut c, 560, 210);
     assert_eq!(out_bytes(&c), &[9, 0, 2]);
     assert_eq!(c.var, vec![1]);
-    assert!(!c.redraw_side);
+    // the TS doAction tail always redraws after a button action, but the
+    // var is untouched without the scripts[0][0] == 5 preamble
+    assert!(c.redraw_side);
 }
 
 #[test]
@@ -794,6 +815,7 @@ fn side_click_toggle_applies_varp_clientcode() {
         id: 2,
         r#type: ComponentType::TYPE_RECT,
         button_type: ButtonType::BUTTON_TOGGLE,
+        button_text: "Music".into(),
         width: 190,
         height: 20,
         scripts: Some(vec![vec![5, 0, 0]]), // varp 0
@@ -815,6 +837,7 @@ fn side_click_select_sets_var_when_different() {
         id: 2,
         r#type: ComponentType::TYPE_RECT,
         button_type: ButtonType::BUTTON_SELECT,
+        button_text: "Select".into(),
         width: 190,
         height: 20,
         scripts: Some(vec![vec![5, 7, 0]]),
@@ -829,26 +852,32 @@ fn side_click_select_sets_var_when_different() {
     assert_eq!(c.var[7], 42);
     assert!(c.redraw_side);
 
-    // a matching var still sends the packet but neither writes nor redraws
+    // a matching var still sends the packet and the TS doAction tail
+    // still redraws, but the var is untouched
     c.out.pos = 0;
     c.redraw_side = false;
     click_side(&mut c, 560, 210);
     assert_eq!(out_bytes(&c), &[9, 0, 2]);
     assert_eq!(c.var[7], 42);
-    assert!(!c.redraw_side);
+    assert!(c.redraw_side);
 }
 
 #[test]
 fn side_click_requires_left_button_in_panel() {
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
-    let button = side_button(2, ButtonType::BUTTON_OK, 0, 0, 190, 20);
+    let button = side_button(2, ButtonType::BUTTON_OK, "OK", 0, 0, 190, 20);
     bind_side(&mut c, 1, vec![root, button]);
-    // a right click is not a button press
+    // a right click opens the menu instead of pressing the button
+    c.shell.mouse_x = 560;
+    c.shell.mouse_y = 210;
+    c.build_minimenu();
     c.shell.apply_mouse_down(2, 560, 210);
     c.shell.latch_click();
-    c.handle_side_if_clicks();
+    c.mouse_loop();
     assert_eq!(out_bytes(&c), &[]);
+    assert!(c.is_menu_open);
+    c.is_menu_open = false;
     // below the panel (466 is the bottom edge) the click is ignored
     click_side(&mut c, 560, 470);
     assert_eq!(out_bytes(&c), &[]);
@@ -868,7 +897,7 @@ fn side_click_skips_non_button_first_child() {
         height: 40,
         ..IfType::default()
     };
-    let button = side_button(3, ButtonType::BUTTON_OK, 0, 0, 190, 20);
+    let button = side_button(3, ButtonType::BUTTON_OK, "OK", 0, 0, 190, 20);
     bind_side(&mut c, 1, vec![root, text, button]);
     click_side(&mut c, 560, 210);
     assert_eq!(out_bytes(&c), &[9, 0, 3]);
@@ -878,9 +907,9 @@ fn side_click_skips_non_button_first_child() {
 fn side_click_uses_side_modal_when_open() {
     let mut c = client();
     let tab_root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
-    let tab_button = side_button(2, ButtonType::BUTTON_OK, 0, 0, 190, 20);
+    let tab_button = side_button(2, ButtonType::BUTTON_OK, "OK", 0, 0, 190, 20);
     let modal_root = side_layer(4, vec![5], vec![0], vec![0], 190, 261);
-    let modal_button = side_button(5, ButtonType::BUTTON_CLOSE, 0, 0, 190, 20);
+    let modal_button = side_button(5, ButtonType::BUTTON_CLOSE, "", 0, 0, 190, 20);
     bind_side(
         &mut c,
         1,
@@ -898,24 +927,25 @@ fn side_click_uses_side_modal_when_open() {
 }
 
 #[test]
-fn side_click_layer_recurse_with_clamped_scroll() {
+fn side_click_layer_recurse_with_scrolled_child() {
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
-    // scroll_pos 999 clamps to scroll_height - height = 20, so the button
-    // at local y 30 covers 10..30: a click at local y 12 hits, y 35 misses
+    // a scroller at scroll_pos 20 puts the child at local y 30-20 = 10,
+    // covering 10..30: a click at local y 12 hits, y 35 misses
+    // (`addComponentOptions` uses the raw scroll_pos, TS 9653)
     let scroller = IfType {
         id: 2,
         r#type: ComponentType::TYPE_LAYER,
         width: 190,
         height: 100,
         scroll_height: 120,
-        scroll_pos: 999,
+        scroll_pos: 20,
         children: Some(vec![3]),
         child_x: Some(vec![0]),
         child_y: Some(vec![30]),
         ..IfType::default()
     };
-    let button = side_button(3, ButtonType::BUTTON_OK, 0, 0, 190, 20);
+    let button = side_button(3, ButtonType::BUTTON_OK, "OK", 0, 0, 190, 20);
     bind_side(&mut c, 1, vec![root, scroller, button]);
     click_side(&mut c, 558, 217); // local (5, 12)
     assert_eq!(out_bytes(&c), &[9, 0, 3]);
@@ -981,9 +1011,14 @@ fn side_click_real_logout_text_sends_if_button() {
 
     c.side_icon[13] = layer_id;
     c.active_icon = 13;
+    // the menu path: build_minimenu walks the side tree, mouse_loop fires
+    // the last entry (the logout text's IF_BUTTON option)
+    c.shell.mouse_x = 553 + click_x;
+    c.shell.mouse_y = 205 + click_y;
+    c.build_minimenu();
     c.shell.apply_mouse_down(1, 553 + click_x, 205 + click_y);
     c.shell.latch_click();
-    c.handle_side_if_clicks();
+    c.mouse_loop();
     // random is None at Client::new, so p1_enc writes the plain opcode
     let expected = [
         ClientProt::IF_BUTTON.id as u8,
@@ -991,6 +1026,8 @@ fn side_click_real_logout_text_sends_if_button() {
         (logout_id & 0xff) as u8,
     ];
     assert_eq!(&c.out.data()[..c.out.pos], &expected);
+    // the CC_LOGOUT client code arms the logout timer through clientButton
+    assert_eq!(c.logout_timer, 250);
 }
 
 #[test]
@@ -1224,16 +1261,24 @@ fn main_modal_click_sends_if_button() {
     layer.child_x = Some(vec![10]);
     layer.child_y = Some(vec![10]);
     let mut btn = IfType::default();
+    btn.id = 2;
     btn.r#type = ComponentType::TYPE_TEXT;
     btn.button_type = ButtonType::BUTTON_OK;
+    btn.button_text = "Continue".into();
     btn.width = 80;
     btn.height = 20;
     c.cache.ifaces.resize(3, None);
     c.cache.ifaces[1] = Some(layer);
     c.cache.ifaces[2] = Some(btn);
+    // the menu path: build_minimenu pushes the button's IF_BUTTON option,
+    // mouse_loop fires the last entry (build_minimenu needs the live
+    // pointer at the click position)
+    c.shell.mouse_x = 4 + 10 + 5;
+    c.shell.mouse_y = 4 + 10 + 5;
+    c.build_minimenu();
     c.shell.apply_mouse_down(1, 4 + 10 + 5, 4 + 10 + 5);
     c.shell.latch_click();
-    c.handle_main_if_clicks();
+    c.mouse_loop();
     assert_eq!(c.out.data()[0], ClientProt::IF_BUTTON.id as u8);
     assert_eq!(c.out.data()[1], 0);
     assert_eq!(c.out.data()[2], 2);
@@ -1811,14 +1856,43 @@ fn obj_drag_release_without_threshold_does_not_send() {
     c.mouse_loop();
     assert_eq!(c.obj_drag_area, 2);
     // release on the same spot: below the ±5px threshold, no INV_BUTTOND
+    // and no last-entry doAction (the TS 2245-2247 block needs both the
+    // threshold and 5 held cycles)
     c.shell.mouse_x = 553 + 16;
     c.shell.mouse_y = 205 + 16;
     c.shell.mouse_button = 0;
     c.handle_obj_drag();
     assert_eq!(c.obj_drag_area, 0);
-    assert_eq!(c.out.pos, 0, "a cancelled drag must not send or move items");
+    assert_eq!(c.out.pos, 0, "a quick release must not send or move items");
     assert_eq!(
         c.cache.ifaces[2].as_ref().unwrap().link_obj_type.as_ref().unwrap(),
         &vec![5, 0]
     );
+    // pick the item up again, hold past the threshold for 5 cycles, and
+    // release over its own slot: the drag is cancelled, so TS 2291-2296
+    // falls back to the last menu entry — the slot's Examine (OP_HELD6) —
+    // which chats instead of sending INV_BUTTOND or moving the item.
+    c.shell.mouse_x = 553 + 16;
+    c.shell.mouse_y = 205 + 16;
+    c.build_minimenu();
+    c.shell.apply_mouse_down(1, 553 + 16, 205 + 16);
+    c.shell.latch_click();
+    c.mouse_loop();
+    assert_eq!(c.obj_drag_area, 2);
+    c.shell.mouse_x = 553 + 16 + 6; // past the ±5px grab threshold
+    c.shell.mouse_y = 205 + 16;
+    c.shell.mouse_button = 1;
+    for _ in 0..5 {
+        c.handle_obj_drag();
+    }
+    c.shell.mouse_button = 0;
+    c.handle_obj_drag();
+    assert_eq!(c.obj_drag_area, 0);
+    assert_eq!(c.out.pos, 0, "a cancelled drag must not send INV_BUTTOND");
+    assert_eq!(
+        c.cache.ifaces[2].as_ref().unwrap().link_obj_type.as_ref().unwrap(),
+        &vec![5, 0],
+        "a cancelled drag must not move the item"
+    );
+    assert_eq!(c.chat_text[0], "It's a Rune.", "the last-entry Examine fires");
 }

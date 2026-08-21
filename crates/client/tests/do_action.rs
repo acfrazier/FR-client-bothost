@@ -1,6 +1,8 @@
 // doAction/tryMove encode: menu arrays → MOVE_GAMECLICK / OPNPC2 through
 // Packet::p1_enc with the client's outbound Isaac.
 use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer, MiniMenuAction};
+use client::config::ObjType;
+use client::dash3d::{Model, SceneModel};
 use client::io::{ClientProt, Isaac};
 
 fn client() -> Client {
@@ -21,6 +23,8 @@ fn walk_menu_arms_mouse_picking() {
     let mut c = client();
     c.ingame = true;
     c.out.random = Some(Isaac::new(&[1, 2, 3, 4]));
+    // the menu-open WALK uses the stored param coords (TS 9218-9219)
+    c.is_menu_open = true;
     c.menu_action[0] = MiniMenuAction::WALK;
     c.menu_param_a[0] = 0;
     c.menu_param_b[0] = 104; // applet mouse x
@@ -136,3 +140,116 @@ fn try_move_flushes_move_gameclick_to_socket() {
     assert_eq!(&bytes[1..7], &[5, 0, 0, 10, 0, 10]);
     server.join().unwrap();
 }
+
+// ---- Task 5: remaining doAction arms ----
+
+/// `OP_OBJ6` examines through `add_chat`: no desc → "It's a <name>."
+#[test]
+fn do_action_obj_examine_adds_chat() {
+    let mut c = client();
+    if c.cache.objs.is_empty() {
+        c.cache.objs.resize(1, ObjType::default());
+        c.cache.objs[0].name = "Coins".into();
+        c.cache.objs[0].desc = String::new();
+    }
+    c.menu_num_entries = 1;
+    c.menu_action[0] = MiniMenuAction::OP_OBJ6;
+    c.menu_param_a[0] = 0;
+    c.doAction(0);
+    assert_eq!(c.chat_text[0], "It's a Coins.");
+}
+
+/// `INV_BUTTON1` writes the raw opcode first (no Isaac → p1_enc is plain),
+/// then `p2(a) p2(b) p2(c)` = obj, slot, com (TS 9099-9127).
+#[test]
+fn do_action_inv_button1_encodes() {
+    let mut c = client();
+    c.menu_action[0] = MiniMenuAction::INV_BUTTON1;
+    c.menu_param_b[0] = 3; // slot
+    c.menu_param_c[0] = 10; // com
+    c.doAction(0);
+    let d = c.out.data();
+    assert_eq!(d[0], ClientProt::INV_BUTTON1.id as u8);
+    // a (obj) defaults to 0; obj, slot, com big-endian after the opcode
+    assert_eq!(&d[..7], &[74, 0, 0, 0, 3, 0, 10]);
+}
+
+/// `PAUSE_BUTTON` latches `resumed_pause_button` (TS 9186-9191).
+#[test]
+fn do_action_pause_button_latches_please_wait() {
+    let mut c = client();
+    c.menu_action[0] = MiniMenuAction::PAUSE_BUTTON;
+    c.menu_param_c[0] = 5;
+    c.doAction(0);
+    assert!(c.resumed_pause_button);
+    // the RESUME_PAUSEBUTTON frame is the raw opcode + p2(c)
+    assert_eq!(&c.out.data()[..3], &[72, 0, 5]);
+}
+
+/// `OP_LOC1` routes through `interactWithLoc`: the packet is
+/// `p1_enc(opcode) p2(x + base) p2(z + base) p2(locId)` — locId from the
+/// typecode, not the naive shape/angle bytes.
+#[test]
+fn do_action_op_loc_encodes_loc_id_not_shape() {
+    let mut c = client();
+    c.local_player = Some(ClientPlayer::at(5, 5));
+    // typecode: entity 2, locId 1, x=10, z=12
+    let type_id = 1i32;
+    let x = 10i32;
+    let z = 12i32;
+    let typecode = (2 << 29) | ((type_id & 0x7fff) << 14) | ((z & 0x7f) << 7) | (x & 0x7f);
+    c.world.add_scenery(0, x, z, 0, Some(SceneModel::Model(Model::default())), typecode, 0, 1, 1, 0);
+    assert!(c.world.type_code2(0, x, z, typecode) >= 0);
+    c.menu_action[0] = MiniMenuAction::OP_LOC1;
+    c.menu_param_a[0] = typecode;
+    c.menu_param_b[0] = x;
+    c.menu_param_c[0] = z;
+    c.doAction(0);
+    // the walk (MOVE_OPCLICK) precedes it, so assert the trailing frame:
+    // OPLOC1 id 215 raw, p2(10) p2(12) p2(locId 1)
+    let d = c.out.data();
+    assert!(c.out.pos >= 7);
+    assert_eq!(&d[c.out.pos - 7..c.out.pos], &[215, 0, 10, 0, 12, 0, 1]);
+    assert_eq!(c.cross_mode, 2);
+    assert_eq!(c.cross_x, c.shell.mouse_click_x);
+}
+
+/// `OP_HELD2` writes `p2(obj) p2(slot) p2(com)` in TS 8958-8980 order and
+/// arms the `selected_*` outline fields.
+#[test]
+fn do_action_op_held_writes_p2_obj_slot_com() {
+    let mut c = client();
+    c.menu_action[0] = MiniMenuAction::OP_HELD2;
+    c.menu_param_a[0] = 7; // obj
+    c.menu_param_b[0] = 3; // slot
+    c.menu_param_c[0] = 10; // com
+    c.doAction(0);
+    // OPHELD2 id 2 raw, then p2(obj) p2(slot) p2(com)
+    assert_eq!(&c.out.data()[..7], &[2, 0, 7, 0, 3, 0, 10]);
+    assert_eq!(c.selected_item, 3);
+    assert_eq!(c.selected_com_id, 10);
+    assert_eq!(c.selected_area, 2);
+}
+
+/// `USEHELD_START` arms Use mode and returns before the trailing
+/// `use_mode = 0` wipe (TS 9013-9022), so the mode sticks.
+#[test]
+fn do_action_useheld_start_returns_with_use_mode_armed() {
+    let mut c = client();
+    if c.cache.objs.is_empty() {
+        c.cache.objs.resize(1, ObjType::default());
+    }
+    c.cache.objs[0].name = "Coins".into();
+    c.menu_action[0] = MiniMenuAction::USEHELD_START;
+    c.menu_param_a[0] = 0; // obj
+    c.menu_param_b[0] = 3; // slot
+    c.menu_param_c[0] = 10; // com
+    c.doAction(0);
+    assert_eq!(c.use_mode, 1);
+    assert_eq!(c.obj_com_id, 0);
+    assert_eq!(c.obj_selected_slot, 3);
+    assert_eq!(c.obj_selected_com_id, 10);
+    assert_eq!(c.obj_selected_name, "Coins");
+    assert_eq!(c.out.pos, 0);
+}
+
