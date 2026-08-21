@@ -50,6 +50,10 @@ const MENU_CAPACITY: usize = 500;
 const CLIENT_VERSION: i32 = 274;
 const LOGIN_UID: i32 = 1337;
 
+/// Client code of the red "Click here to logout" control; `clientButton`
+/// arms `logoutTimer` (Java `Client.java` 8746).
+const CC_LOGOUT: i32 = 205;
+
 /// Index of the local player in `players` (`Client.ts` `LOCAL_PLAYER_INDEX`);
 /// `game_draw_main`'s `addPlayers` uses it for the local-player typecode.
 pub(crate) const LOCAL_PLAYER_INDEX: i32 = 2047;
@@ -2005,6 +2009,20 @@ impl Client {
         }
     }
 
+    /// `clientButton` from Java (`Client.java` 8725-8747), ported for the
+    /// CC_LOGOUT arm only: `if (var3 == 205) { logoutTimer = 250; return
+    /// true; }`. Java returns `false` for the other client codes (handled
+    /// locally, no `IF_BUTTON`); those handlers are not ported yet
+    /// (operator-accepted deferral 2026-08-20, slice 3/5), so unported
+    /// codes return `true` to keep the unconditional `IF_BUTTON` send.
+    pub fn client_button(&mut self, com: &IfType) -> bool {
+        if com.client_code == CC_LOGOUT {
+            self.logout_timer = 250;
+            return true;
+        }
+        true
+    }
+
     /// `buildMinimenu` side branch (Client.ts 2540-2547) with the minimenu
     /// collapsed: a left click inside the side panel (553..743 × 205..466)
     /// walks the open interface tree (`side_modal_id`, else the active tab's
@@ -2042,6 +2060,7 @@ impl Client {
             .ifaces
             .get(hit_id as usize)
             .and_then(|o| o.as_ref())
+            .cloned()
         else {
             return;
         };
@@ -2049,6 +2068,12 @@ impl Client {
         if button_type == ButtonType::BUTTON_CLOSE {
             self.close_modal();
             return;
+        }
+        // Java execute var5 == 231 (Client.java 4557-4567): clientButton
+        // runs first and arms the logout timer for CC_LOGOUT; our ported
+        // arm always returns true so the IF_BUTTON send is unconditional.
+        if hit.client_code > 0 {
+            self.client_button(&hit);
         }
         self.out.p1_enc(ClientProt::IF_BUTTON.id);
         self.out.p2(hit_id);
