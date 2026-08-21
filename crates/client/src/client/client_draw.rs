@@ -1188,8 +1188,9 @@ impl Client {
     /// still draws the panels that are present. The title is unloaded and
     /// `image_title2` nulled as Java `prepareGame` (`Client.java` 6919);
     /// `logout` nulls it again so a later `prepare_title` reallocates the
-    /// regions from the `title` jag.
-    fn prepare_game(&mut self) {
+    /// regions from the `title` jag. `pub(super)` so the cold-login path
+    /// (`client.rs` response 2) can call it as Java `login` does.
+    pub(super) fn prepare_game(&mut self) {
         if self.area_chat.is_some() {
             return;
         }

@@ -171,9 +171,11 @@ fn main() -> ExitCode {
     }
 
     // Live proof: print the local-player tile every 50 loop_cycle once
-    // player info arrives (after REBUILD_NORMAL).
+    // player info arrives (after REBUILD_NORMAL). `local_player` survives
+    // logout Java-shape, so gate on `ingame` — the title screen is not a
+    // tile.
     client.run(|c| {
-        if c.loop_cycle % 50 == 0 {
+        if c.loop_cycle % 50 == 0 && c.ingame {
             if let Some(p) = &c.local_player {
                 println!(
                     "tile: {} {} (cycle {})",

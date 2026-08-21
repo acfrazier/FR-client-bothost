@@ -1288,10 +1288,30 @@ impl Client {
             self.timeout_timer = 0;
             self.logout_timer = 0;
             self.no_timeout_timer = 0;
+            // Java `Client.java` 3630-3699: a cold login restores the tab,
+            // modals, minimap, and chat defaults a previous logout left in
+            // place (`sideTab = 3`, closed modals, empty chat, no flag).
+            self.active_icon = 3;
+            self.side_modal_id = -1;
+            self.chat_modal_id = -1;
+            self.main_modal_id = -1;
+            self.minimap_level = -1;
+            self.minimap_flag_x = 0;
+            self.minimap_flag_z = 0;
+            for entry in self.chat_text.iter_mut() {
+                *entry = String::new();
+            }
+            self.redraw_frame = true;
+            self.redraw_side = true;
+            self.redraw_icons = true;
             // Client.ts:1853 — localPlayer = players[LOCAL_PLAYER_INDEX] = new
             let player = ClientPlayer::default();
             self.players[LOCAL_PLAYER_INDEX as usize] = Some(player.clone());
             self.local_player = Some(player);
+            // Java `Client.java` 3700: `prepareGame()` rebuilds the game
+            // frame the title draw consumed (Task 4b nulls the game areas,
+            // so the `area_chat` gate does not fire after a title frame).
+            self.prepare_game();
             self.stream = Some(stream);
             return Ok(());
         }

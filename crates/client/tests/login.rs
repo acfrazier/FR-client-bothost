@@ -46,9 +46,12 @@ fn cold_login_opcode_16_success() {
         assert_eq!(buf[5], 0); // info: lowmem off
         assert_eq!(n, 2 + size);
         if client::LOGIN_RSAN.starts_with("7162900525229798032761816791230527296329313291") {
-            // baked Java 274 key is 512-bit: rsa len byte + 64-byte ciphertext
-            assert_eq!(buf[42], 64);
-            assert_eq!(n, 2 + 40 + 1 + 64);
+            // Java `Packet.rsaenc` writes `BigInteger.toByteArray()` length:
+            // 64, or 65 with the leading 0x00 two's-complement byte when the
+            // ciphertext MSB is set (random per login).
+            let rsa_len = buf[42] as usize;
+            assert!(rsa_len == 64 || rsa_len == 65, "rsa len byte {rsa_len}");
+            assert_eq!(n, 2 + 40 + 1 + rsa_len);
         }
         s.write_all(&[2, 0, 0]).unwrap(); // response 2, staff=0, mouseTrack=0
     });
@@ -151,6 +154,78 @@ fn reconnect_response_15_keeps_game_and_local_player() {
     assert!(c.ingame);
     assert!(c.stream.is_some());
     assert_eq!(c.local_player.as_ref().unwrap().y, 77);
+    server.join().unwrap();
+}
+
+#[test]
+fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
+    // Task 4c: a cold login after logout must restore the Java response-2
+    // defaults (`sideTab = 3`, closed modals, empty chat, no minimap flag)
+    // and call `prepareGame` so the game frame the title draw consumed is
+    // rebuilt. Rust `login` previously skipped the field reset and never
+    // called `prepare_game`; the logout-tab (10) redstone survived and the
+    // frame stayed on "Loading - please wait." with title flames.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        let mut hdr = [0u8; 2];
+        s.read_exact(&mut hdr).unwrap();
+        assert_eq!(hdr[0], 14);
+        for _ in 0..8 {
+            let _ = s.write_all(&[0]);
+        }
+        s.write_all(&[0]).unwrap();
+        s.write_all(&[0u8; 8]).unwrap();
+        let mut buf = [0u8; 512];
+        let n = s.read(&mut buf).unwrap();
+        assert!(n > 0);
+        assert_eq!(buf[0], 16); // cold login
+        s.write_all(&[2, 0, 0]).unwrap(); // response 2, staff=0, mouseTrack=0
+    });
+
+    let mut c = Client::new(ClientConfig {
+        host: addr.ip().to_string(),
+        port: addr.port(),
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    // A logged-in session that left the logout tab selected, the minimap
+    // flagged, chat history, and the scene mid-load.
+    c.ingame = true;
+    c.active_icon = 10;
+    c.scene_state = 2;
+    c.minimap_level = 0;
+    c.minimap_flag_x = 1;
+    c.minimap_flag_z = 2;
+    c.chat_text[0] = "leftover".into();
+    c.logout();
+    c.title_screen_draw(); // consumes the game frame (Task 4b)
+    assert!(c.area_chat.is_none());
+    c.login("bob", "pw", false).unwrap();
+    assert!(c.ingame);
+    assert_eq!(c.active_icon, 3, "response 2 must select the inventory tab");
+    assert_eq!(c.scene_state, 0);
+    assert_eq!(c.side_modal_id, -1);
+    assert_eq!(c.chat_modal_id, -1);
+    assert_eq!(c.main_modal_id, -1);
+    assert_eq!(c.minimap_level, -1);
+    assert_eq!(c.minimap_flag_x, 0);
+    assert_eq!(c.minimap_flag_z, 0);
+    assert!(
+        c.chat_text.iter().all(|t| t.is_empty()),
+        "response 2 must clear the chat history"
+    );
+    assert!(
+        c.area_chat.is_some(),
+        "prepare_game must rebuild the game frame"
+    );
+    assert!(
+        c.image_title2.is_none(),
+        "prepare_game must unload the title regions"
+    );
+    assert!(c.redraw_frame && c.redraw_side && c.redraw_icons);
     server.join().unwrap();
 }
 
