@@ -21,7 +21,7 @@ use crate::client::client::{level_experience, Client};
 use crate::client::client_build::random_float;
 use crate::client::skill::Skill;
 use crate::client::title_flames::TitleFlames;
-use crate::config::if_type::{ComponentType, IfType};
+use crate::config::if_type::{ButtonType, ComponentType, IfType};
 use crate::config::{Cache, ObjType};
 use crate::dash3d::world::LevelHeightmaps;
 use crate::dash3d::{BuildArea, LocAngle, LocShape, MapFlag, SceneModel, World};
@@ -548,6 +548,12 @@ impl Client {
         // mouse is held (Client.ts 2341-2343); 0/1 here is enough for the
         // held-arrow scrollbar repeat.
         self.scroll_cycle = if self.shell.mouse_button != 0 { 1 } else { 0 };
+        // TS `buildMinimenu` hover walk (Client.ts 2524-2566): run it
+        // first so this frame's side/chat draws use the new hover (and so
+        // a hover change redraws in the same frame).
+        if self.ingame {
+            self.update_if_pointer();
+        }
         self.prepare_game();
 
         if self.redraw_frame {
@@ -1534,9 +1540,14 @@ impl Client {
         let Some(com) = self.cache.ifaces.get(com_id as usize).and_then(|o| o.as_ref()) else {
             return;
         };
-        // TS 9901: only TYPE_LAYER draws; a hidden layer skips unless hovered
-        // (the `over*ComId` hover state is not ported, so hide is absolute).
-        if com.r#type != ComponentType::TYPE_LAYER || com.hide {
+        // TS 9901-9905: only TYPE_LAYER draws; a hidden layer still draws
+        // while its id is hovered (the `over*ComId` pointer state).
+        if com.r#type != ComponentType::TYPE_LAYER
+            || (com.hide
+                && self.over_main_com_id != com.id
+                && self.over_side_com_id != com.id
+                && self.over_chat_com_id != com.id)
+        {
             return;
         }
         let children = match &com.children {
@@ -1602,9 +1613,19 @@ impl Client {
                     }
                 }
                 ComponentType::TYPE_RECT => {
-                    // hovered is false: the `over*ComId` state is not ported.
+                    // TS 10041-10059: hovered picks `colour_over`/
+                    // `colour2_over`, from the `over*ComId` pointer state.
+                    let hovered = self.over_main_com_id == child.id
+                        || self.over_side_com_id == child.id
+                        || self.over_chat_com_id == child.id;
                     let colour = if self.get_if_active(child) {
-                        child.colour2
+                        if hovered && child.colour2_over != 0 {
+                            child.colour2_over
+                        } else {
+                            child.colour2
+                        }
+                    } else if hovered && child.colour_over != 0 {
+                        child.colour_over
                     } else {
                         child.colour
                     };
@@ -1638,8 +1659,31 @@ impl Client {
                 ComponentType::TYPE_TEXT => {
                     let active = self.get_if_active(child);
                     let mut text = child.text.clone();
-                    // hovered is false: the `over*ComId` state is not ported.
-                    let mut colour = if active { child.colour2 } else { child.colour };
+                    // TS 10077-10098: hovered picks `colour_over`/
+                    // `colour2_over`; an active text renders `text2`.
+                    let hovered = self.over_main_com_id == child.id
+                        || self.over_side_com_id == child.id
+                        || self.over_chat_com_id == child.id;
+                    let mut colour = if active {
+                        if hovered && child.colour2_over != 0 {
+                            child.colour2_over
+                        } else {
+                            child.colour2
+                        }
+                    } else if hovered && child.colour_over != 0 {
+                        child.colour_over
+                    } else {
+                        child.colour
+                    };
+                    if active && !child.text2.is_empty() {
+                        text = child.text2.clone();
+                    }
+                    // TS 10101-10104: the latched pause button shows its
+                    // wait text in the base colour.
+                    if child.button_type == ButtonType::BUTTON_CONTINUE && self.resumed_pause_button {
+                        text = "Please wait...".into();
+                        colour = child.colour;
+                    }
 
                     // TS 10107-10116: the chat-area colour remap.
                     if surface.width == 479 {

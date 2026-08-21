@@ -330,6 +330,20 @@ pub struct Client {
     /// `resumedPauseButton` (TS): the pause button latched since the last
     /// modal transition.
     pub resumed_pause_button: bool,
+    /// `overMainComId`/`overSideComId`/`overChatComId` (TS 453-456): the
+    /// component under the pointer in each region, from the `update_if_pointer`
+    /// walk (TS `buildMinimenu` 2524-2566). Defaults 0 like TS — 0 means
+    /// nothing hovered; a hidden layer still draws while its id matches.
+    pub over_main_com_id: i32,
+    pub over_side_com_id: i32,
+    pub over_chat_com_id: i32,
+    /// `lastOverComId` (TS 453): the walk's running value, reset between the
+    /// main/side/chat regions.
+    pub last_over_com_id: i32,
+    /// `hoveredSlot`/`hoveredSlotComId` (TS 385/389): the TYPE_INV slot under
+    /// the pointer — set even on empty slots (the Task 8 drop target).
+    pub hovered_slot: i32,
+    pub hovered_slot_com_id: i32,
     pub target_com_id: i32,
     pub obj_com_id: i32,
     pub obj_selected_slot: i32,
@@ -725,6 +739,12 @@ impl Client {
             tut_flash_icon: -1,
             dialog_input_open: false,
             resumed_pause_button: false,
+            over_main_com_id: 0,
+            over_side_com_id: 0,
+            over_chat_com_id: 0,
+            last_over_com_id: 0,
+            hovered_slot: 0,
+            hovered_slot_com_id: 0,
             target_com_id: 0,
             obj_com_id: 0,
             obj_selected_slot: 0,
@@ -2700,6 +2720,185 @@ impl Client {
             }
         }
         None
+    }
+
+    /// TS `buildMinimenu` (2524-2566) hover walk, without the minimenu
+    /// option strings (slice 4): the component under the pointer in each
+    /// region becomes `over_main_com_id`/`over_side_com_id`/`over_chat_com_id`
+    /// (0 when nothing is hovered), and a change sets `redraw_side`/
+    /// `redraw_chat`. `add_component_hover` also steps scrollable layers'
+    /// `do_scrollbar` and records `hovered_slot`. Called from `game_draw`
+    /// when `ingame`; `pub` so tests can drive it directly.
+    pub fn update_if_pointer(&mut self) {
+        self.last_over_com_id = 0;
+
+        // Viewport 4..516 x 4..338: the main modal (not the world).
+        if self.shell.mouse_x > 4
+            && self.shell.mouse_y > 4
+            && self.shell.mouse_x < 516
+            && self.shell.mouse_y < 338
+            && self.main_modal_id != -1
+        {
+            self.add_component_hover(self.main_modal_id, self.shell.mouse_x, self.shell.mouse_y, 4, 4, 0);
+        }
+        if self.last_over_com_id != self.over_main_com_id {
+            self.over_main_com_id = self.last_over_com_id;
+        }
+
+        // Side 553..743 x 205..466: the side modal, else the active tab.
+        self.last_over_com_id = 0;
+        if self.shell.mouse_x > 553
+            && self.shell.mouse_y > 205
+            && self.shell.mouse_x < 743
+            && self.shell.mouse_y < 466
+        {
+            if self.side_modal_id != -1 {
+                self.add_component_hover(self.side_modal_id, self.shell.mouse_x, self.shell.mouse_y, 553, 205, 0);
+            } else {
+                let icon_id = self.side_icon.get(self.active_icon as usize).copied().unwrap_or(-1);
+                if icon_id != -1 {
+                    self.add_component_hover(icon_id, self.shell.mouse_x, self.shell.mouse_y, 553, 205, 0);
+                }
+            }
+        }
+        if self.last_over_com_id != self.over_side_com_id {
+            self.redraw_side = true;
+            self.over_side_com_id = self.last_over_com_id;
+        }
+
+        // Chat 17..496 x 357..453: the chat modal only (chat lines have no
+        // hover state).
+        self.last_over_com_id = 0;
+        if self.shell.mouse_x > 17
+            && self.shell.mouse_y > 357
+            && self.shell.mouse_x < 496
+            && self.shell.mouse_y < 453
+            && self.chat_modal_id != -1
+        {
+            self.add_component_hover(self.chat_modal_id, self.shell.mouse_x, self.shell.mouse_y, 17, 357, 0);
+        }
+        if self.chat_modal_id != -1 && self.last_over_com_id != self.over_chat_com_id {
+            self.redraw_chat = true;
+            self.over_chat_com_id = self.last_over_com_id;
+        }
+    }
+
+    /// TS `addComponentOptions` (9628-9655) hover walk, without the minimenu
+    /// option strings (slice 4): a pointer inside a child with `over_layer_id`
+    /// or `colour_over` records `last_over_com_id` (the `over_layer_id` when
+    /// set, else the child id). `TYPE_LAYER` children recurse with their
+    /// scroll, then a scrollable layer (`scroll_height > height`) steps its
+    /// `do_scrollbar`; `TYPE_INV` children record the slot under the pointer
+    /// (`hovered_slot`/`hovered_slot_com_id`) even when the slot is empty
+    /// (the Task 8 drop target).
+    fn add_component_hover(
+        &mut self,
+        com_id: i32,
+        mouse_x: i32,
+        mouse_y: i32,
+        x: i32,
+        y: i32,
+        scroll: i32,
+    ) {
+        let Some(com) = self.cache.ifaces.get(com_id as usize).and_then(|o| o.as_ref()) else {
+            return;
+        };
+        if com.r#type != ComponentType::TYPE_LAYER
+            || com.hide
+            || mouse_x < x
+            || mouse_y < y
+            || mouse_x > x + com.width
+            || mouse_y > y + com.height
+        {
+            return;
+        }
+        let children = match &com.children {
+            Some(c) => c.clone(),
+            None => return,
+        };
+        let child_x = match &com.child_x {
+            Some(c) => c.clone(),
+            None => return,
+        };
+        let child_y = match &com.child_y {
+            Some(c) => c.clone(),
+            None => return,
+        };
+        for i in 0..children.len() {
+            let child_id = children[i];
+            let Some(child) = self.cache.ifaces.get(child_id as usize).and_then(|o| o.as_ref()) else {
+                continue;
+            };
+            let child_x = child_x[i] + x + child.x;
+            let child_y = child_y[i] + y - scroll + child.y;
+
+            if (child.over_layer_id >= 0 || child.colour_over != 0)
+                && mouse_x >= child_x
+                && mouse_y >= child_y
+                && mouse_x < child_x + child.width
+                && mouse_y < child_y + child.height
+            {
+                self.last_over_com_id = if child.over_layer_id >= 0 {
+                    child.over_layer_id
+                } else {
+                    child.id
+                };
+            }
+
+            match child.r#type {
+                ComponentType::TYPE_LAYER => {
+                    self.add_component_hover(child_id, mouse_x, mouse_y, child_x, child_y, child.scroll_pos);
+                    let (child_w, child_h, child_sh) = self
+                        .cache
+                        .ifaces
+                        .get(child_id as usize)
+                        .and_then(|o| o.as_ref())
+                        .map(|c| (c.width, c.height, c.scroll_height))
+                        .unwrap_or((0, 0, 0));
+                    if child_sh > child_h {
+                        self.do_scrollbar(
+                            mouse_x,
+                            mouse_y,
+                            child_sh,
+                            child_h,
+                            true,
+                            child_x + child_w,
+                            child_y,
+                            child_id,
+                        );
+                    }
+                }
+                ComponentType::TYPE_INV => {
+                    let mut slot = 0;
+                    for row in 0..child.height {
+                        for col in 0..child.width {
+                            let mut slot_x = child_x + col * (child.margin_x + 32);
+                            let mut slot_y = child_y + row * (child.margin_y + 32);
+                            if slot < 20 {
+                                if let Some(xs) = &child.inv_background_x {
+                                    slot_x += xs[slot as usize];
+                                }
+                                if let Some(ys) = &child.inv_background_y {
+                                    slot_y += ys[slot as usize];
+                                }
+                            }
+                            if mouse_x < slot_x
+                                || mouse_y < slot_y
+                                || mouse_x >= slot_x + 32
+                                || mouse_y >= slot_y + 32
+                            {
+                                slot += 1;
+                                continue;
+                            }
+                            self.hovered_slot = slot;
+                            self.hovered_slot_com_id = child.id;
+                            slot += 1;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     fn dispatch_packet(&mut self, ptype: i32, payload: &mut Packet) {

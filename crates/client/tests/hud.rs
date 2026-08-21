@@ -1371,3 +1371,289 @@ fn draw_icons_blinks_flashing_tab() {
     let off = c.area_backhmid1.as_ref().unwrap().pixels.clone();
     assert_ne!(on, off, "the flashing tab must blink with loop_cycle");
 }
+
+// ---- pointer hover over*ComId (Task 6) ----
+
+/// A TYPE_LAYER with one child list (child offsets and layer size).
+fn hover_layer(id: i32, width: i32, height: i32, children: Vec<i32>, child_x: Vec<i32>, child_y: Vec<i32>) -> IfType {
+    IfType {
+        id,
+        r#type: ComponentType::TYPE_LAYER,
+        width,
+        height,
+        children: Some(children),
+        child_x: Some(child_x),
+        child_y: Some(child_y),
+        ..IfType::default()
+    }
+}
+
+#[test]
+fn update_if_pointer_sets_over_side_and_redraws() {
+    let mut c = client();
+    c.side_modal_id = 1;
+    let mut layer = IfType::default();
+    layer.r#type = ComponentType::TYPE_LAYER;
+    layer.width = 190;
+    layer.height = 261;
+    layer.children = Some(vec![2]);
+    layer.child_x = Some(vec![0]);
+    layer.child_y = Some(vec![0]);
+    let mut child = IfType::default();
+    child.id = 2;
+    child.r#type = ComponentType::TYPE_TEXT;
+    child.width = 50;
+    child.height = 20;
+    child.colour_over = 0xff0000;
+    child.over_layer_id = -1;
+    c.cache.ifaces.resize(3, None);
+    c.cache.ifaces[1] = Some(layer);
+    c.cache.ifaces[2] = Some(child);
+    c.shell.mouse_x = 553 + 5;
+    c.shell.mouse_y = 205 + 5;
+    c.update_if_pointer();
+    assert_eq!(c.over_side_com_id, 2);
+    assert!(c.redraw_side);
+}
+
+#[test]
+fn hidden_layer_draws_when_hovered() {
+    let mut c = client();
+    c.over_side_com_id = 1;
+    let mut layer = IfType::default();
+    layer.id = 1;
+    layer.r#type = ComponentType::TYPE_LAYER;
+    layer.hide = true;
+    layer.width = 20;
+    layer.height = 20;
+    layer.children = Some(vec![2]);
+    layer.child_x = Some(vec![0]);
+    layer.child_y = Some(vec![0]);
+    let mut rect = IfType::default();
+    rect.r#type = ComponentType::TYPE_RECT;
+    rect.fill = true;
+    rect.width = 20;
+    rect.height = 20;
+    rect.colour = 0x112233;
+    c.cache.ifaces.resize(3, None);
+    c.cache.ifaces[1] = Some(layer);
+    c.cache.ifaces[2] = Some(rect);
+    let mut pixels = vec![0i32; 20 * 20];
+    let mut surface = Pix2D::with_pixels(&mut pixels, 20, 20);
+    c.draw_interface(1, 0, 0, 0, &mut surface);
+    assert_eq!(pixels[0] & 0xffffff, 0x112233);
+}
+
+#[test]
+fn update_if_pointer_sets_over_main() {
+    let mut c = client();
+    c.main_modal_id = 1;
+    let layer = hover_layer(1, 512, 334, vec![2], vec![0], vec![0]);
+    let mut child = IfType::default();
+    child.id = 2;
+    child.r#type = ComponentType::TYPE_TEXT;
+    child.width = 200;
+    child.height = 200;
+    child.colour_over = 0xff0000;
+    c.cache.ifaces.resize(3, None);
+    c.cache.ifaces[1] = Some(layer);
+    c.cache.ifaces[2] = Some(child);
+    c.shell.mouse_x = 100;
+    c.shell.mouse_y = 100;
+    c.update_if_pointer();
+    assert_eq!(c.over_main_com_id, 2);
+}
+
+#[test]
+fn update_if_pointer_sets_over_chat_and_redraws_chat() {
+    let mut c = client();
+    c.chat_modal_id = 1;
+    let layer = hover_layer(1, 479, 96, vec![2], vec![0], vec![0]);
+    let mut child = IfType::default();
+    child.id = 2;
+    child.r#type = ComponentType::TYPE_TEXT;
+    child.width = 190;
+    child.height = 96;
+    child.colour_over = 0xff0000;
+    c.cache.ifaces.resize(3, None);
+    c.cache.ifaces[1] = Some(layer);
+    c.cache.ifaces[2] = Some(child);
+    c.shell.mouse_x = 200;
+    c.shell.mouse_y = 400;
+    c.update_if_pointer();
+    assert_eq!(c.over_chat_com_id, 2);
+    assert!(c.redraw_chat);
+}
+
+#[test]
+fn update_if_pointer_resets_over_side_when_pointer_leaves() {
+    let mut c = client();
+    c.over_side_com_id = 2;
+    c.redraw_side = false;
+    c.shell.mouse_x = 750;
+    c.shell.mouse_y = 480;
+    c.update_if_pointer();
+    assert_eq!(c.over_side_com_id, 0);
+    assert!(c.redraw_side);
+}
+
+#[test]
+fn hovered_rect_uses_colour_over() {
+    let mut c = client();
+    let layer = hover_layer(1, 20, 20, vec![2], vec![0], vec![0]);
+    let mut rect = IfType::default();
+    rect.id = 2;
+    rect.r#type = ComponentType::TYPE_RECT;
+    rect.fill = true;
+    rect.width = 20;
+    rect.height = 20;
+    rect.colour = 0x112233;
+    rect.colour_over = 0xff0000;
+    c.cache.ifaces.resize(3, None);
+    c.cache.ifaces[1] = Some(layer);
+    c.cache.ifaces[2] = Some(rect);
+
+    let mut plain = vec![0i32; 20 * 20];
+    let mut plain_surface = Pix2D::with_pixels(&mut plain, 20, 20);
+    c.draw_interface(1, 0, 0, 0, &mut plain_surface);
+    assert_eq!(plain[0] & 0xffffff, 0x112233);
+
+    c.over_side_com_id = 2;
+    let mut hovered = vec![0i32; 20 * 20];
+    let mut hovered_surface = Pix2D::with_pixels(&mut hovered, 20, 20);
+    c.draw_interface(1, 0, 0, 0, &mut hovered_surface);
+    assert_eq!(hovered[0] & 0xffffff, 0xff0000);
+}
+
+#[test]
+fn hover_walk_steps_scrollable_layer_scrollbar() {
+    let mut c = client();
+    c.side_modal_id = 1;
+    // the scroller sits at local (0, 30) of the side panel (553, 205)
+    let root = hover_layer(1, 190, 261, vec![2], vec![0], vec![30]);
+    let mut scroller = IfType::default();
+    scroller.id = 2;
+    scroller.r#type = ComponentType::TYPE_LAYER;
+    scroller.width = 100;
+    scroller.height = 100;
+    scroller.scroll_height = 120;
+    scroller.children = Some(vec![3]);
+    scroller.child_x = Some(vec![0]);
+    scroller.child_y = Some(vec![0]);
+    let mut button = IfType::default();
+    button.id = 3;
+    button.r#type = ComponentType::TYPE_RECT;
+    button.width = 100;
+    button.height = 20;
+    c.cache.ifaces.resize(4, None);
+    c.cache.ifaces[1] = Some(root);
+    c.cache.ifaces[2] = Some(scroller);
+    c.cache.ifaces[3] = Some(button);
+    // the scroller's scrollbar sits at left = 553 + 100 = 653, top =
+    // 205 + 30 = 235; its down arrow is x 653..669, y 319..335.
+    c.scroll_cycle = 1;
+    c.shell.mouse_x = 660;
+    c.shell.mouse_y = 327;
+    c.update_if_pointer();
+    assert_eq!(c.cache.ifaces[2].as_ref().unwrap().scroll_pos, 4); // + scroll_cycle*4
+    assert!(c.redraw_side);
+}
+
+#[test]
+fn type_inv_hover_sets_hovered_slot_on_empty_slot() {
+    let mut c = client();
+    c.side_modal_id = 1;
+    let root = hover_layer(1, 190, 261, vec![2], vec![0], vec![0]);
+    let mut inv = IfType::default();
+    inv.id = 2;
+    inv.r#type = ComponentType::TYPE_INV;
+    inv.width = 1; // one column
+    inv.height = 1; // one row
+    inv.margin_x = 0;
+    inv.margin_y = 0;
+    c.cache.ifaces.resize(3, None);
+    c.cache.ifaces[1] = Some(root);
+    c.cache.ifaces[2] = Some(inv);
+    c.shell.mouse_x = 553 + 5;
+    c.shell.mouse_y = 205 + 5;
+    c.update_if_pointer();
+    assert_eq!(c.hovered_slot, 0);
+    assert_eq!(c.hovered_slot_com_id, 2);
+}
+
+#[test]
+fn resumed_pause_button_text_is_please_wait() {
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("title").is_file() {
+        return;
+    }
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache,
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    c.game_draw(); // loads the p11/p12/b12/q8 fonts from the title jag
+
+    let cont = IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_TEXT,
+        text: "Hello".into(),
+        button_type: ButtonType::BUTTON_CONTINUE,
+        colour: 0xffffff,
+        font: 0, // p11
+        ..IfType::default()
+    };
+    c.resumed_pause_button = true;
+    let waiting = draw_text(&mut c, &cont);
+    c.resumed_pause_button = false;
+    let plain = draw_text(&mut c, &cont);
+    let literal = draw_text(&mut c, &text_com("Please wait...", None));
+    assert_eq!(
+        waiting.pixels, literal.pixels,
+        "BUTTON_CONTINUE + resumed_pause_button must render 'Please wait...'"
+    );
+    assert_ne!(
+        plain.pixels, literal.pixels,
+        "without resumed_pause_button the button text stays 'Hello'"
+    );
+}
+
+#[test]
+fn active_text_uses_text2() {
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("title").is_file() {
+        return;
+    }
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache,
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    c.game_draw(); // loads the p11/p12/b12/q8 fonts from the title jag
+
+    // an active (comparator-satisfied) text with text2 must render text2
+    let active = IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_TEXT,
+        text: "Hello".into(),
+        text2: "Over".into(),
+        colour: 0xffffff,
+        colour2: 0xffffff,
+        font: 0, // p11
+        scripts: Some(vec![vec![0]]), // halt with acc 0
+        script_comparator: Some(vec![1]),
+        script_operand: Some(vec![0]),
+        ..IfType::default()
+    };
+    assert_eq!(
+        draw_text(&mut c, &active).pixels,
+        draw_text(&mut c, &text_com("Over", None)).pixels,
+        "an active text must render text2, not text"
+    );
+}
