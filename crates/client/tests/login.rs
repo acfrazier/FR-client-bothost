@@ -320,4 +320,116 @@ fn login_code_6_is_error() {
     });
     let e = c.login("bob", "pw", false).unwrap_err();
     assert_eq!(e.code, 6);
+    assert!(!c.ingame);
+    assert_eq!(c.loginscreen, 2, "failed login stays on the title form");
+}
+
+/// Response 5 ("already logged in") is a title-screen error, not a process
+/// abort: `login_mes*` carry the Java lines, credentials stay, and a later
+/// `login` on the same `Client` can succeed (bot-host retry).
+#[test]
+fn already_logged_in_leaves_title_ready_to_retry() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        let mut hdr = [0u8; 2];
+        s.read_exact(&mut hdr).unwrap();
+        for _ in 0..8 {
+            let _ = s.write_all(&[0]);
+        }
+        s.write_all(&[0]).unwrap();
+        s.write_all(&[0u8; 8]).unwrap();
+        let mut buf = [0u8; 512];
+        let _ = s.read(&mut buf).unwrap();
+        s.write_all(&[5]).unwrap();
+    });
+
+    let mut c = Client::new(ClientConfig {
+        host: addr.ip().to_string(),
+        port: addr.port(),
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    let e = c.login("bob", "pw", false).unwrap_err();
+    assert_eq!(e.code, 5);
+    assert_eq!(e.mes1, "Your account is already logged in.");
+    assert_eq!(c.login_mes1, "Your account is already logged in.");
+    assert_eq!(c.login_mes2, "Try again in 60 secs...");
+    assert!(!c.ingame);
+    assert_eq!(c.loginscreen, 2);
+    assert_eq!(c.login_user, "bob");
+    assert_eq!(c.login_pass, "pw");
+    server.join().unwrap();
+}
+
+#[test]
+fn failed_login_can_be_retried_on_the_same_client() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        for grant in [5u8, 2u8] {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut hdr = [0u8; 2];
+            s.read_exact(&mut hdr).unwrap();
+            for _ in 0..8 {
+                let _ = s.write_all(&[0]);
+            }
+            s.write_all(&[0]).unwrap();
+            s.write_all(&[0u8; 8]).unwrap();
+            let mut buf = [0u8; 512];
+            let _ = s.read(&mut buf).unwrap();
+            if grant == 2 {
+                s.write_all(&[2, 0, 0]).unwrap();
+            } else {
+                s.write_all(&[grant]).unwrap();
+            }
+        }
+    });
+
+    let mut c = Client::new(ClientConfig {
+        host: addr.ip().to_string(),
+        port: addr.port(),
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    assert!(c.login("bob", "pw", false).is_err());
+    assert!(!c.ingame);
+    c.login("bob", "pw", false).unwrap();
+    assert!(c.ingame);
+    server.join().unwrap();
+}
+
+#[test]
+fn lowmem_login_writes_info_byte_one() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        let mut hdr = [0u8; 2];
+        s.read_exact(&mut hdr).unwrap();
+        for _ in 0..8 {
+            let _ = s.write_all(&[0]);
+        }
+        s.write_all(&[0]).unwrap();
+        s.write_all(&[0, 0, 0, 0, 0, 0, 0, 1]).unwrap();
+        let mut buf = [0u8; 512];
+        let n = s.read(&mut buf).unwrap();
+        assert!(n > 0);
+        assert_eq!(buf[5], 1, "lowmem login info byte");
+        s.write_all(&[2, 0, 0]).unwrap();
+    });
+
+    let mut c = Client::new(ClientConfig {
+        host: addr.ip().to_string(),
+        port: addr.port(),
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: true,
+    });
+    c.login("bob", "pw", false).unwrap();
+    assert!(c.ingame);
+    server.join().unwrap();
 }

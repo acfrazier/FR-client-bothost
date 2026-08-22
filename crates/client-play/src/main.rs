@@ -1,8 +1,11 @@
 //! `client-play`: log into a local 274 engine over TCP and run the client
 //! machine on the calling thread (`Client::new` + `run`). `--user/--pass`
 //! skip title login; without them the title screen is the control plane.
-//! `--window` presents the 765×503 applet (feature `window`); `--audio`
-//! opens the cpal speaker (feature `audio`).
+//! `--window` presents the 765×503 applet (feature `window`, highmem);
+//! omit it for headless (lowmem, bot-host default). `--lowmem`/`--highmem`
+//! override. `--audio` opens the cpal speaker (feature `audio`). A login
+//! error (already logged in, wrong password, …) stays in `run` on the
+//! title form so Login can be retried.
 //!
 //! The RSA public half is baked at compile time (`LOGIN_RSAN`/`LOGIN_RSAE`).
 //! `tools/redeploy.sh` extracts the engine's `private.pem` and rebuilds this
@@ -31,6 +34,8 @@ struct Args {
     cache: String,
     window: bool,
     audio: bool,
+    /// `None` = pick from `--window` (windowed highmem, headless/bots lowmem).
+    lowmem: Option<bool>,
 }
 
 fn default_cache_dir() -> String {
@@ -52,6 +57,7 @@ fn parse_args() -> Args {
         cache: default_cache_dir(),
         window: false,
         audio: false,
+        lowmem: None,
     };
     let mut it = env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -63,6 +69,8 @@ fn parse_args() -> Args {
             "--cache" => args.cache = value(&mut it),
             "--window" => args.window = true,
             "--audio" => args.audio = true,
+            "--lowmem" => args.lowmem = Some(true),
+            "--highmem" => args.lowmem = Some(false),
             "--help" | "-h" => usage(),
             _ => usage(),
         }
@@ -73,7 +81,8 @@ fn parse_args() -> Args {
 fn usage() -> ! {
     eprintln!(
         "usage: client-play [--user USER --pass PASS] \
-         [--host HOST] [--port PORT] [--cache DIR] [--window] [--audio]"
+         [--host HOST] [--port PORT] [--cache DIR] [--window] [--audio] \
+         [--lowmem|--highmem]"
     );
     std::process::exit(2);
 }
@@ -102,12 +111,16 @@ fn main() -> ExitCode {
         );
     }
 
+    // Windowed play defaults highmem (full textures). Headless / bot-host
+    // defaults lowmem. `--lowmem` / `--highmem` override either way. The
+    // bot host can also set `ClientConfig.lowmem` directly.
+    let lowmem = args.lowmem.unwrap_or(!args.window);
     let config = ClientConfig {
         host: args.host,
         port: args.port,
         cache_dir: args.cache,
         members: true,
-        lowmem: false,
+        lowmem,
     };
     let mut client = Client::new(config);
 
@@ -165,7 +178,9 @@ fn main() -> ExitCode {
                 if e.code == 6 {
                     eprintln!("wrong RSA key for this engine - run tools/redeploy.sh and rebuild");
                 }
-                return ExitCode::FAILURE;
+                // Stay in `run` so the title form can retry (window) or the
+                // bot host can call `Client::login` again. Do not kill the
+                // process on "already logged in" / world-full / etc.
             }
         }
     }

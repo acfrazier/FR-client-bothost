@@ -24,24 +24,28 @@ client machine. RSA is baked at compile time; run the binary
 
    Options (defaults): `--host` `127.0.0.1`, `--port` `43594`, `--cache`
    `$HOME/experiments/Server/engine/data/pack/client`. `--window` opens the
-   765×503 applet and the cpal speaker (`window`/`audio` are default
-   features). A window open failure exits 1; an audio device failure logs
-   and continues without sound. Omit `--window` for headless. A later
-   `cargo build` without `--no-default-features` will not strip the window.
-   Nothing here is required to log in.
+   765×503 applet (highmem textures) and the cpal speaker (`window`/`audio`
+   are default features). Headless defaults **lowmem** (bot host). Override
+   with `--lowmem` / `--highmem`; the bot host can also set
+   `ClientConfig.lowmem` directly. A window open failure exits 1; an audio
+   device failure logs and continues without sound. Omit `--window` for
+   headless. A later `cargo build` without `--no-default-features` will not
+   strip the window. Nothing here is required to log in.
 
 ## Expected output (live proof, operator step — needs the Server running)
 
 - **Wrong key** (skip redeploy against a rotated engine pem): login code 6,
-  "Wrong RSA key - run tools/redeploy.sh and rebuild". Exit non-zero; there
-  is no title-screen retry loop.
+  "Wrong RSA key - run tools/redeploy.sh and rebuild". The process stays
+  in `run` on the title form so Login can be clicked again (or the bot
+  host can call `Client::login` again). Same for "already logged in" (5)
+  and the other title-screen codes.
 - **After `./tools/redeploy.sh`**: login code 2, `ingame`, then the world
   rebuilds (`REBUILD_NORMAL` → `scene_state`) and the local-player tile
   prints every 50 `loop_cycle`s once player info is wired:
   `tile: <x> <z> (cycle N)`.
 
-With the Server down, the CLI exits with the connect error and the unit
-suite still covers `lostCon` (`cargo test -p client`).
+With the Server down, a connect error is a login error (not a process
+exit); the unit suite still covers `lostCon` (`cargo test -p client`).
 
 ## Why not `cargo run`
 

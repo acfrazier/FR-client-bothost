@@ -1762,7 +1762,7 @@ impl Client {
 
         let mut stream = match ClientStream::connect(&self.config.host, self.config.port) {
             Ok(s) => s,
-            Err(_) => return Err(io_error()),
+            Err(_) => return Err(self.fail_title_login(io_error(), reconnect)),
         };
 
         let userhash = JString::to_userhash(username);
@@ -1771,17 +1771,17 @@ impl Client {
         self.out.pos = 0;
         self.out.p1(14);
         self.out.p1(login_server);
-        stream.write(self.out.data(), 2).map_err(|_| io_error())?;
+        stream.write(self.out.data(), 2).map_err(|_| self.fail_title_login(io_error(), reconnect))?;
 
         for _ in 0..8 {
-            stream.read().map_err(|_| io_error())?;
+            stream.read().map_err(|_| self.fail_title_login(io_error(), reconnect))?;
         }
-        let mut response = stream.read().map_err(|_| io_error())?;
+        let mut response = stream.read().map_err(|_| self.fail_title_login(io_error(), reconnect))?;
 
         if response == 0 {
             stream
                 .read_bytes(self.r#in.data_mut(), 0, 8)
-                .map_err(|_| io_error())?;
+                .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
             self.r#in.pos = 0;
             let login_seed = self.r#in.g8();
             let mut seed = [
@@ -1827,8 +1827,8 @@ impl Client {
 
             stream
                 .write(loginout.data(), loginout.pos)
-                .map_err(|_| io_error())?;
-            response = stream.read().map_err(|_| io_error())?;
+                .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+            response = stream.read().map_err(|_| self.fail_title_login(io_error(), reconnect))?;
         }
 
         if response == 1 {
@@ -1838,8 +1838,8 @@ impl Client {
         }
 
         if response == 2 {
-            self.staffmodlevel = stream.read().map_err(|_| io_error())?;
-            self.mouse_tracked = stream.read().map_err(|_| io_error())? == 1;
+            self.staffmodlevel = stream.read().map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+            self.mouse_tracked = stream.read().map_err(|_| self.fail_title_login(io_error(), reconnect))? == 1;
             self.ingame = true;
             self.out.pos = 0;
             self.r#in.pos = 0;
@@ -1981,14 +1981,28 @@ impl Client {
                 "Please try using a different world.".into(),
             ),
         };
-        self.login_mes1 = mes1.clone();
-        self.login_mes2 = mes2.clone();
         self.stream = Some(stream);
-        Err(LoginError {
-            code: response,
-            mes1,
-            mes2,
-        })
+        Err(self.fail_title_login(
+            LoginError {
+                code: response,
+                mes1,
+                mes2,
+            },
+            reconnect,
+        ))
+    }
+
+    /// Cold-login failures land on the title form (`loginscreen` 2) with
+    /// the Java `loginMes` lines so CLI `--user/--pass` can retry instead
+    /// of dying, and a title Login click already on screen 2 just refreshes
+    /// the messages. Reconnect is `lost_con`'s problem.
+    fn fail_title_login(&mut self, e: LoginError, reconnect: bool) -> LoginError {
+        if !reconnect {
+            self.login_mes1 = e.mes1.clone();
+            self.login_mes2 = e.mes2.clone();
+            self.loginscreen = 2;
+        }
+        e
     }
 
     /// Linear build-area index, `CollisionMap.index(x, z) = x * SIZE + z`.

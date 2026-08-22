@@ -41,8 +41,10 @@ pub(crate) fn random_float() -> f64 {
 }
 
 pub struct ClientBuild {
-    /// `ClientBuild.lowMem` from client-ts (static default true); the
-    /// map-build flow sets it from the world/config low-mem setting.
+    /// `ClientBuild.lowMem` Java/TS static default is `true` until
+    /// `setHighMem`/`setLowMem`. Live `client-play` is highmem
+    /// (`ClientConfig.lowmem = false`); `map_build` copies that here before
+    /// `addLoc` / `finishBuild`.
     pub low_mem: bool,
     /// `ClientBuild.minusedlevel` from client-ts; consumed by `addLoc`.
     pub minusedlevel: i32,
