@@ -371,3 +371,21 @@ fn game_loop_holds_reboot_timer_at_one() {
     c.game_loop();
     assert_eq!(c.reboot_timer, 1);
 }
+
+#[test]
+fn pm_options_shift_below_reboot_line() {
+    let mut c = client();
+    c.split_private_chat = 1;
+    c.chat_text[0] = "hello".into();
+    c.chat_type[0] = 3;
+    c.chat_username[0] = "eve".into();
+    c.reboot_timer = 100;
+    // the first PM row draws at y 316 when the reboot line reserves 329
+    // (TS 2607-2609), so its hover band is mouse_y 311..=323: 320 hits.
+    // With the unshifted line = 0 the band was 324..=336 and 320 missed.
+    c.shell.mouse_x = 100;
+    c.shell.mouse_y = 320;
+    c.build_minimenu();
+    assert!(c.menu_num_entries > 1, "the PM row must offer menu options");
+    assert_eq!(c.menu_option[1], "Add ignore @whi@eve");
+}

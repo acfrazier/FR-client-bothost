@@ -4565,15 +4565,16 @@ impl Client {
     /// private-chat overlay's menu, active only when `split_private_chat`
     /// is set by clientcode 8. Incoming (3/7) lines offer Report abuse
     /// (staff), Add ignore and Add friend; sent (5/6) lines only count
-    /// towards the 5-line cap. The `rebootTimer` line offset (TS 2607) is
-    /// 0 — the reboot timer is not ported. The add-friend/ignore options
+    /// towards the 5-line cap. An active `rebootTimer` shifts the rows
+    /// down one line (TS 2607-2609) so the hover bands match the drawn
+    /// rows under the "System update in" line. The add-friend/ignore options
     /// carry `_PRIORITY` like TS 2635/2641.
     fn add_private_chat_options(&mut self) {
         if self.split_private_chat == 0 {
             return;
         }
 
-        let mut line = 0;
+        let mut line = if self.reboot_timer != 0 { 1 } else { 0 };
         for i in 0..100 {
             if self.chat_text[i].is_empty() {
                 continue;
