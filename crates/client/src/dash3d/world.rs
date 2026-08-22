@@ -20,8 +20,8 @@ use std::collections::VecDeque;
 use crate::config::Cache;
 use crate::dash3d::TerrainOverlayShape;
 use crate::dash3d::{
-    Decor, Ground, GroundDecor, GroundObject, LocAngle, Occlude, QuickGround, SceneModel, Sprite,
-    Square, Wall,
+    Decor, Ground, GroundDecor, GroundObject, LocAngle, Model, Occlude, QuickGround, SceneModel,
+    Sprite, Square, Wall,
 };
 use crate::graphics::{Pix2D, Pix3D, Pix3DDraw};
 
@@ -180,6 +180,13 @@ pub struct World {
     ground_draw_texture_vertex_x: [i32; 6],
     ground_draw_texture_vertex_y: [i32; 6],
     ground_draw_texture_vertex_z: [i32; 6],
+    /// TS `World.shareTic`/`shareMap`/`shareMap2` (World.ts 145-147): the
+    /// share-light merge stamps. The maps grow to the largest model seen
+    /// instead of TS's fixed 10000-slot arrays (stale stamps are aged out
+    /// by the `share_tic` comparison, exactly like TS).
+    share_tic: i32,
+    share_map: Vec<i32>,
+    share_map2: Vec<i32>,
 }
 
 impl World {
@@ -248,6 +255,9 @@ impl World {
             ground_draw_texture_vertex_x: [0; 6],
             ground_draw_texture_vertex_y: [0; 6],
             ground_draw_texture_vertex_z: [0; 6],
+            share_tic: 0,
+            share_map: Vec::new(),
+            share_map2: Vec::new(),
         };
         world.reset_map();
         world
@@ -940,6 +950,425 @@ impl World {
             }
         }
         -1
+    }
+
+    /// `shareLight(ambient, contrast, lightSrcX, lightSrcY, lightSrcZ)`
+    /// from World.ts 589-628: after `calculateNormals` (which keeps
+    /// `shared_point_normal` when the loc shares light), merge touching
+    /// vertices' normals across walls/sprites/ground-decor and then run
+    /// `Model.light` over every placed model. Each tile is taken out of
+    /// `squares` for the duration of its pass because the helpers need
+    /// `&mut self` (share scratch, other tiles) and `&mut Model`
+    /// simultaneously; `shareLightLoc` never revisits the current tile
+    /// (its own tile is inside the `allowFaceRemoval` skip or on another
+    /// level), so the hole is never observed.
+    pub fn share_light(
+        &mut self,
+        ambient: i32,
+        contrast: i32,
+        light_src_x: i32,
+        light_src_y: i32,
+        light_src_z: i32,
+    ) {
+        let light_magnitude = ((light_src_x * light_src_x
+            + light_src_y * light_src_y
+            + light_src_z * light_src_z) as f64)
+            .sqrt() as i32;
+        let attenuation = (contrast * light_magnitude) >> 8;
+
+        for level in 0..self.max_tile_level {
+            for tile_x in 0..self.max_tile_x {
+                for tile_z in 0..self.max_tile_z {
+                    let tile = self.squares[level as usize][tile_x as usize][tile_z as usize]
+                        .take();
+                    let Some(mut tile) = tile else { continue };
+
+                    if let Some(wall) = tile.wall.as_mut() {
+                        if let Some(SceneModel::Model(model1)) = wall.model1.as_mut() {
+                            if model1.point_normal.is_some() {
+                                self.share_light_loc(level, tile_x, tile_z, 1, 1, model1);
+                                if let Some(SceneModel::Model(model2)) = wall.model2.as_mut() {
+                                    if model2.point_normal.is_some() {
+                                        self.share_light_loc(level, tile_x, tile_z, 1, 1, model2);
+                                        self.model_share_light(model1, model2, 0, 0, 0, false);
+                                        model2.light(ambient, attenuation, light_src_x, light_src_y, light_src_z);
+                                    }
+                                }
+                                model1.light(ambient, attenuation, light_src_x, light_src_y, light_src_z);
+                            }
+                        }
+                    }
+
+                    for i in 0..tile.sprite_count as usize {
+                        let Some(idx) = tile.sprites[i] else { continue };
+                        let sprite = self.sprites[idx].take();
+                        let Some(mut sprite) = sprite else { continue };
+                        if let Some(SceneModel::Model(model)) = sprite.model.as_mut() {
+                            if model.point_normal.is_some() {
+                                self.share_light_loc(
+                                    level,
+                                    tile_x,
+                                    tile_z,
+                                    sprite.max_tile_x + 1 - sprite.min_tile_x,
+                                    sprite.max_tile_z - sprite.min_tile_z + 1,
+                                    model,
+                                );
+                                model.light(ambient, attenuation, light_src_x, light_src_y, light_src_z);
+                            }
+                        }
+                        self.sprites[idx] = Some(sprite);
+                    }
+
+                    if let Some(gd) = tile.ground_decor.as_mut() {
+                        if let Some(SceneModel::Model(model)) = gd.model.as_mut() {
+                            if model.point_normal.is_some() {
+                                self.share_light_gd(level, tile_x, tile_z, model);
+                                model.light(ambient, attenuation, light_src_x, light_src_y, light_src_z);
+                            }
+                        }
+                    }
+
+                    self.squares[level as usize][tile_x as usize][tile_z as usize] = Some(tile);
+                }
+            }
+        }
+    }
+
+    /// `shareLightGd(level, tileX, tileZ, model)` from World.ts 630-658:
+    /// merge the ground-decor model with the four diagonal/east/south
+    /// neighbours' ground-decor models. The neighbour bounds checks are
+    /// replicated verbatim (including the TS `tileZ < maxTileX` quirk at
+    /// 638); the world is square so they coincide, and `take_square` keeps
+    /// an OOB `tileZ + 1` a no-op instead of a TS typed-array miss.
+    fn share_light_gd(&mut self, level: i32, tile_x: i32, tile_z: i32, model: &mut Model) {
+        if tile_x < self.max_tile_x {
+            let mut tile = self.take_square(level, tile_x + 1, tile_z);
+            if let Some(tile) = tile.as_mut() {
+                let mut gd = tile.ground_decor.take();
+                if let Some(SceneModel::Model(model_b)) =
+                    gd.as_mut().and_then(|g| g.model.as_mut())
+                {
+                    if model_b.point_normal.is_some() {
+                        self.model_share_light(model, model_b, 128, 0, 0, true);
+                    }
+                }
+                tile.ground_decor = gd;
+            }
+            self.put_square(level, tile_x + 1, tile_z, tile);
+        }
+
+        if tile_z < self.max_tile_x {
+            let mut tile = self.take_square(level, tile_x, tile_z + 1);
+            if let Some(tile) = tile.as_mut() {
+                let mut gd = tile.ground_decor.take();
+                if let Some(SceneModel::Model(model_b)) =
+                    gd.as_mut().and_then(|g| g.model.as_mut())
+                {
+                    if model_b.point_normal.is_some() {
+                        self.model_share_light(model, model_b, 0, 0, 128, true);
+                    }
+                }
+                tile.ground_decor = gd;
+            }
+            self.put_square(level, tile_x, tile_z + 1, tile);
+        }
+
+        if tile_x < self.max_tile_x && tile_z < self.max_tile_z {
+            let mut tile = self.take_square(level, tile_x + 1, tile_z + 1);
+            if let Some(tile) = tile.as_mut() {
+                let mut gd = tile.ground_decor.take();
+                if let Some(SceneModel::Model(model_b)) =
+                    gd.as_mut().and_then(|g| g.model.as_mut())
+                {
+                    if model_b.point_normal.is_some() {
+                        self.model_share_light(model, model_b, 128, 0, 128, true);
+                    }
+                }
+                tile.ground_decor = gd;
+            }
+            self.put_square(level, tile_x + 1, tile_z + 1, tile);
+        }
+
+        if tile_x < self.max_tile_x && tile_z > 0 {
+            let mut tile = self.take_square(level, tile_x + 1, tile_z - 1);
+            if let Some(tile) = tile.as_mut() {
+                let mut gd = tile.ground_decor.take();
+                if let Some(SceneModel::Model(model_b)) =
+                    gd.as_mut().and_then(|g| g.model.as_mut())
+                {
+                    if model_b.point_normal.is_some() {
+                        self.model_share_light(model, model_b, 128, 0, -128, true);
+                    }
+                }
+                tile.ground_decor = gd;
+            }
+            self.put_square(level, tile_x + 1, tile_z - 1, tile);
+        }
+    }
+
+    /// Bounds-checked take of one square slot. `shareLightGd`'s neighbours
+    /// can land outside the grid because the TS guards compare against
+    /// `maxTileX` while indexing the `maxTileZ` axis; OOB reads return
+    /// `None` like a TS typed-array miss.
+    fn take_square(&mut self, level: i32, x: i32, z: i32) -> Option<Square> {
+        self.squares
+            .get_mut(level as usize)
+            .and_then(|l| l.get_mut(x as usize))
+            .and_then(|r| r.get_mut(z as usize))
+            .and_then(Option::take)
+    }
+
+    fn put_square(&mut self, level: i32, x: i32, z: i32, square: Option<Square>) {
+        if let Some(slot) = self
+            .squares
+            .get_mut(level as usize)
+            .and_then(|l| l.get_mut(x as usize))
+            .and_then(|r| r.get_mut(z as usize))
+        {
+            *slot = square;
+        }
+    }
+
+    /// `shareLightLoc(level, tileX, tileZ, tileSizeX, tileSizeZ, model)`
+    /// from World.ts 660-719: merge `model`'s normals with every wall and
+    /// sprite model in the 3×3(+1) neighbourhood (the current tile itself
+    /// is always skipped by the `allowFaceRemoval` gate, and the second
+    /// pass runs on `level + 1`). Candidate tiles and arena sprites are
+    /// taken out for the duration of their own merge, mirroring the TS
+    /// object aliasing with disjoint borrows.
+    fn share_light_loc(
+        &mut self,
+        level: i32,
+        tile_x: i32,
+        tile_z: i32,
+        tile_size_x: i32,
+        tile_size_z: i32,
+        model_a: &mut Model,
+    ) {
+        let mut allow_face_removal = true;
+
+        let mut min_tile_x = tile_x;
+        let max_tile_x = tile_x + tile_size_x;
+        let min_tile_z = tile_z - 1;
+        let max_tile_z = tile_z + tile_size_z;
+
+        for l in level..=level + 1 {
+            if l == self.max_tile_level {
+                continue;
+            }
+
+            for x in min_tile_x..=max_tile_x {
+                if x < 0 || x >= self.max_tile_x {
+                    continue;
+                }
+
+                for z in min_tile_z..=max_tile_z {
+                    if z < 0
+                        || z >= self.max_tile_z
+                        || (allow_face_removal
+                            && x < max_tile_x
+                            && z < max_tile_z
+                            && (z >= tile_z || x == tile_x))
+                    {
+                        continue;
+                    }
+
+                    let offset_x = (x - tile_x) * 128 + (1 - tile_size_x) * 64;
+                    let offset_z = (z - tile_z) * 128 + (1 - tile_size_z) * 64;
+                    let offset_y = ((ground_h(self, l, x, z)
+                        + ground_h(self, l, x + 1, z)
+                        + ground_h(self, l, x, z + 1)
+                        + ground_h(self, l, x + 1, z + 1))
+                        / 4)
+                        - ((ground_h(self, level, tile_x, tile_z)
+                            + ground_h(self, level, tile_x + 1, tile_z)
+                            + ground_h(self, level, tile_x, tile_z + 1)
+                            + ground_h(self, level, tile_x + 1, tile_z + 1))
+                            / 4);
+
+                    let candidate =
+                        self.squares[l as usize][x as usize][z as usize].take();
+                    let Some(mut candidate) = candidate else { continue };
+
+                    if let Some(wall) = candidate.wall.as_mut() {
+                        if let Some(SceneModel::Model(model_b)) = wall.model1.as_mut() {
+                            if model_b.point_normal.is_some() {
+                                self.model_share_light(
+                                    model_a, model_b, offset_x, offset_y, offset_z,
+                                    allow_face_removal,
+                                );
+                            }
+                        }
+                        if let Some(SceneModel::Model(model_b)) = wall.model2.as_mut() {
+                            if model_b.point_normal.is_some() {
+                                self.model_share_light(
+                                    model_a, model_b, offset_x, offset_y, offset_z,
+                                    allow_face_removal,
+                                );
+                            }
+                        }
+                    }
+
+                    for i in 0..candidate.sprite_count as usize {
+                        let Some(idx) = candidate.sprites[i] else { continue };
+                        let sprite = self.sprites[idx].take();
+                        let Some(mut sprite) = sprite else { continue };
+                        if let Some(SceneModel::Model(model_b)) = sprite.model.as_mut() {
+                            if model_b.point_normal.is_some() {
+                                let size_x = sprite.max_tile_x + 1 - sprite.min_tile_x;
+                                let size_z = sprite.max_tile_z + 1 - sprite.min_tile_z;
+                                let sx = (sprite.min_tile_x - tile_x) * 128
+                                    + (size_x - tile_size_x) * 64;
+                                let sz = (sprite.min_tile_z - tile_z) * 128
+                                    + (size_z - tile_size_z) * 64;
+                                self.model_share_light(
+                                    model_a, model_b, sx, offset_y, sz, allow_face_removal,
+                                );
+                            }
+                        }
+                        self.sprites[idx] = Some(sprite);
+                    }
+
+                    self.squares[l as usize][x as usize][z as usize] = Some(candidate);
+                }
+            }
+
+            min_tile_x -= 1;
+            allow_face_removal = false;
+        }
+    }
+
+    /// `modelShareLight(modelA, modelB, offsetX, offsetY, offsetZ,
+    /// allowFaceRemoval)` from World.ts 722-794: merge the normals of
+    /// coincident vertices of the two models, then hide the faces whose
+    /// vertices all merged (3+ merges, unless face removal is disabled).
+    fn model_share_light(
+        &mut self,
+        model_a: &mut Model,
+        model_b: &mut Model,
+        offset_x: i32,
+        offset_y: i32,
+        offset_z: i32,
+        allow_face_removal: bool,
+    ) {
+        self.share_tic += 1;
+
+        let mut merged = 0;
+        let vertex_count_b = model_b.num_points;
+
+        if self.share_map.len() < model_a.num_points as usize {
+            self.share_map.resize(model_a.num_points as usize, 0);
+        }
+        if self.share_map2.len() < vertex_count_b as usize {
+            self.share_map2.resize(vertex_count_b as usize, 0);
+        }
+
+        if model_a.point_normal.is_some() && model_a.shared_point_normal.is_some() {
+            let point_normal_a = model_a.point_normal.as_mut().unwrap();
+            let shared_normal_a = model_a.shared_point_normal.as_ref().unwrap();
+            let point_x_a = model_a.point_x.as_ref().unwrap();
+            let point_y_a = model_a.point_y.as_ref().unwrap();
+            let point_z_a = model_a.point_z.as_ref().unwrap();
+            let max_y_b = model_b.max_y;
+            let min_x_b = model_b.min_x;
+            let max_x_b = model_b.max_x;
+            let min_z_b = model_b.min_z;
+            let max_z_b = model_b.max_z;
+
+            for vertex_a in 0..model_a.num_points as usize {
+                let mut normal_a = point_normal_a[vertex_a].as_mut();
+                let Some(original_normal_a) = shared_normal_a[vertex_a].as_ref() else {
+                    continue;
+                };
+                if original_normal_a.w != 0 {
+                    let y = point_y_a[vertex_a] - offset_y;
+                    if y > max_y_b {
+                        continue;
+                    }
+
+                    let x = point_x_a[vertex_a] - offset_x;
+                    if x < min_x_b || x > max_x_b {
+                        continue;
+                    }
+
+                    let z = point_z_a[vertex_a] - offset_z;
+                    if z < min_z_b || z > max_z_b {
+                        continue;
+                    }
+
+                    if model_b.point_normal.is_some() && model_b.shared_point_normal.is_some() {
+                        let point_normal_b = model_b.point_normal.as_mut().unwrap();
+                        let shared_normal_b = model_b.shared_point_normal.as_ref().unwrap();
+                        let point_x_b = model_b.point_x.as_ref().unwrap();
+                        let point_y_b = model_b.point_y.as_ref().unwrap();
+                        let point_z_b = model_b.point_z.as_ref().unwrap();
+
+                        for vertex_b in 0..vertex_count_b as usize {
+                            let mut normal_b = point_normal_b[vertex_b].as_mut();
+                            let original_normal_b = shared_normal_b[vertex_b].as_ref();
+                            if x != point_x_b[vertex_b]
+                                || z != point_z_b[vertex_b]
+                                || y != point_y_b[vertex_b]
+                                || original_normal_b.map_or(false, |n| n.w == 0)
+                            {
+                                continue;
+                            }
+
+                            if let (Some(normal_a), Some(normal_b), Some(original_normal_b)) = (
+                                normal_a.as_deref_mut(),
+                                normal_b.as_deref_mut(),
+                                original_normal_b,
+                            ) {
+                                normal_a.x += original_normal_b.x;
+                                normal_a.y += original_normal_b.y;
+                                normal_a.z += original_normal_b.z;
+                                normal_a.w += original_normal_b.w;
+                                normal_b.x += original_normal_a.x;
+                                normal_b.y += original_normal_a.y;
+                                normal_b.z += original_normal_a.z;
+                                normal_b.w += original_normal_a.w;
+                                merged += 1;
+                            }
+
+                            self.share_map[vertex_a] = self.share_tic;
+                            self.share_map2[vertex_b] = self.share_tic;
+                        }
+                    }
+                }
+            }
+        }
+
+        if merged < 3 || !allow_face_removal {
+            return;
+        }
+
+        if let Some(face_render_type) = model_a.face_render_type.as_mut() {
+            let face_vertex_a = model_a.face_vertex_a.as_ref().unwrap();
+            let face_vertex_b = model_a.face_vertex_b.as_ref().unwrap();
+            let face_vertex_c = model_a.face_vertex_c.as_ref().unwrap();
+            for i in 0..model_a.num_faces as usize {
+                if self.share_map[face_vertex_a[i] as usize] == self.share_tic
+                    && self.share_map[face_vertex_b[i] as usize] == self.share_tic
+                    && self.share_map[face_vertex_c[i] as usize] == self.share_tic
+                {
+                    face_render_type[i] = -1;
+                }
+            }
+        }
+
+        if let Some(face_render_type) = model_b.face_render_type.as_mut() {
+            let face_vertex_a = model_b.face_vertex_a.as_ref().unwrap();
+            let face_vertex_b = model_b.face_vertex_b.as_ref().unwrap();
+            let face_vertex_c = model_b.face_vertex_c.as_ref().unwrap();
+            for i in 0..model_b.num_faces as usize {
+                if self.share_map2[face_vertex_a[i] as usize] == self.share_tic
+                    && self.share_map2[face_vertex_b[i] as usize] == self.share_tic
+                    && self.share_map2[face_vertex_c[i] as usize] == self.share_tic
+                {
+                    face_render_type[i] = -1;
+                }
+            }
+        }
     }
 
     /// `render2DGround(level, x, z, dst, offset, step)` from World.ts

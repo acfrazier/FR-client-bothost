@@ -1484,8 +1484,8 @@ impl ClientBuild {
             }
         }
 
-        // TS 331: `world?.shareLight(64, 768, -50, -10, -50)` — deferred
-        // until `World::share_light` is ported.
+        // TS 331: `world?.shareLight(64, 768, -50, -10, -50)`.
+        world.share_light(64, 768, -50, -10, -50);
 
         // TS 333-339: `LinkBelow` tiles are pushed down a level.
         for x in 0..BuildArea::SIZE {

@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use client::client::{Client, ClientBuild, ClientConfig};
 use client::config::{Cache, FloType, LocType};
 use client::dash3d::model::ModelProvider;
-use client::dash3d::{BuildArea, CollisionFlag, LocAngle, MapFlag, Model, TerrainOverlayShape};
+use client::dash3d::{BuildArea, CollisionFlag, LocAngle, MapFlag, Model, SceneModel, TerrainOverlayShape};
 use client::graphics::Colour;
 use client::io::{OnDemand, Packet};
 
@@ -507,6 +507,40 @@ fn finish_build_clears_flat_floor_occluder_bits() {
     for z in 8..=12 {
         assert_eq!(build.mapo[0][10][z] & 0x4, 0, "floor bit cleared at z={z}");
     }
+}
+
+#[test]
+fn finish_build_hooks_share_light() {
+    // A wall model with computed point normals (as `addLoc` leaves one)
+    // must be lit by the TS 331 hook: `finishBuild` calls
+    // `world.shareLight(64, 768, -50, -10, -50)`, so after the pass the
+    // model's normals are consumed and its vertices carry lit colours.
+    let mut c = client();
+    let mut model = Model::default();
+    model.num_points = 3;
+    model.point_x = Some(vec![-50, 50, 50]);
+    model.point_y = Some(vec![-50, -50, 50]);
+    model.point_z = Some(vec![0, 0, 0]);
+    model.num_faces = 1;
+    model.face_vertex_a = Some(vec![0]);
+    model.face_vertex_b = Some(vec![2]);
+    model.face_vertex_c = Some(vec![1]);
+    model.face_colour = Some(vec![Colour::CYAN]);
+    model.calc_bounding_cylinder();
+    model.calculate_normals(64, 768, -50, -10, -50, false);
+    c.world.set_wall(0, 2, 2, 0, 0, 0, Some(SceneModel::Model(model)), None, 0, 0);
+
+    let mut build = ClientBuild::new();
+    build.finish_build(&c.cache, &mut c.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+
+    let wall = c.world.get_wall(0, 2, 2).expect("wall");
+    let SceneModel::Model(m) = wall.model1.as_ref().unwrap() else {
+        panic!("wall model1 must be a Model")
+    };
+    assert!(m.point_normal.is_none(), "finishBuild must call share_light");
+    assert!(m.shared_point_normal.is_none(), "finishBuild must call share_light");
+    let lit = m.face_colour_a.as_ref().expect("lit colour")[0];
+    assert_ne!(lit, 0, "finishBuild's share_light must light wall vertices");
 }
 
 #[test]

@@ -69,6 +69,103 @@ fn flat_world() -> World {
     world
 }
 
+/// A one-face model with computed point normals, as a placed loc would be
+/// after `calculate_normals(..., doNotShareLight: false)` (LocType
+/// `sharelight` path): `shared_point_normal` is retained for the
+/// `World.shareLight` merge, `face_colour_a` starts zeroed.
+fn normals_model() -> Model {
+    let mut model = Model::default();
+    model.num_points = 3;
+    model.point_x = Some(vec![-50, 50, 50]);
+    model.point_y = Some(vec![-50, -50, 50]);
+    model.point_z = Some(vec![0, 0, 0]);
+    model.num_faces = 1;
+    model.face_vertex_a = Some(vec![0]);
+    model.face_vertex_b = Some(vec![2]);
+    model.face_vertex_c = Some(vec![1]);
+    model.face_colour = Some(vec![SHADE]);
+    model.calc_bounding_cylinder();
+    model.calculate_normals(64, 768, -50, -10, -50, false);
+    model
+}
+
+// --- World.shareLight (World.ts 589-796) ---
+
+#[test]
+fn share_light_empty_world_is_noop() {
+    // No base level filled: every tile is None, so the whole scan must be a
+    // no-op without panicking (the brief's empty-world requirement).
+    let max_level: i32 = 1;
+    let max_tile_x: i32 = 3;
+    let max_tile_z: i32 = 3;
+    let groundh = vec![
+        vec![vec![2000i32; max_tile_z as usize + 1]; max_tile_x as usize + 1];
+        max_level as usize
+    ];
+    let mut world = World::new(groundh, max_tile_z, max_level, max_tile_x);
+    world.share_light(64, 768, -50, -10, -50);
+}
+
+#[test]
+fn share_light_lights_wall_models_and_consumes_normals() {
+    let mut world = flat_world();
+    world.set_wall(0, 1, 1, 0, 0, 0, Some(SceneModel::Model(normals_model())), None, 0, 0);
+
+    world.share_light(64, 768, -50, -10, -50);
+
+    let wall = world.get_wall(0, 1, 1).expect("wall");
+    let SceneModel::Model(model) = wall.model1.as_ref().unwrap() else {
+        panic!("wall model1 must be a Model")
+    };
+    assert!(model.point_normal.is_none(), "light() must consume point normals");
+    assert!(model.shared_point_normal.is_none(), "light() must consume shared normals");
+    let lit = model.face_colour_a.as_ref().expect("lit colour")[0];
+    assert_ne!(lit, 0, "shareLight must light wall vertices (face_colour_a)");
+}
+
+#[test]
+fn share_light_lights_scenery_sprites() {
+    let mut world = flat_world();
+    // typecode bit 30 set so `get_scene` finds the sprite after the pass.
+    let ok = world.add_scenery(
+        0,
+        1,
+        1,
+        2000,
+        Some(SceneModel::Model(normals_model())),
+        0x40000000,
+        0,
+        1,
+        1,
+        0,
+    );
+    assert!(ok);
+
+    world.share_light(64, 768, -50, -10, -50);
+
+    let sprite = world.get_scene(0, 1, 1).expect("sprite");
+    let SceneModel::Model(model) = sprite.model.as_ref().unwrap() else {
+        panic!("sprite model must be a Model")
+    };
+    assert!(model.point_normal.is_none());
+    assert_ne!(model.face_colour_a.as_ref().unwrap()[0], 0);
+}
+
+#[test]
+fn share_light_lights_ground_decor() {
+    let mut world = flat_world();
+    world.set_ground_decor(Some(SceneModel::Model(normals_model())), 0, 1, 1, 2000, 0, 0);
+
+    world.share_light(64, 768, -50, -10, -50);
+
+    let gd = world.get_gd(0, 1, 1).expect("ground decor");
+    let SceneModel::Model(model) = gd.model.as_ref().unwrap() else {
+        panic!("gd model must be a Model")
+    };
+    assert!(model.point_normal.is_none());
+    assert_ne!(model.face_colour_a.as_ref().unwrap()[0], 0);
+}
+
 /// 512×334 viewport (the `area_game` size) bound as the render target.
 fn viewport(pix: &mut Pix3DDraw, surface: &mut Pix2D) {
     pix.set_render_clipping(surface);
