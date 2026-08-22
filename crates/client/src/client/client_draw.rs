@@ -864,6 +864,80 @@ impl Client {
         }
     }
 
+    /// `drawPrivateMessages` from Client.ts (4915-4986): the split
+    /// private-chat overlay, drawn into `area_game` when clientcode 8 set
+    /// `split_private_chat`. Incoming (3/7) and sent (5/6) lines stack
+    /// bottom-up from y 329 with the double-shadowed cyan text; the
+    /// `modIcons` sprite advance is kept without the sprite (like
+    /// `draw_chat`). The `rebootTimer` line offset is 0.
+    fn draw_private_messages(&mut self, surface: &mut Pix2D) {
+        if self.split_private_chat == 0 {
+            return;
+        }
+
+        let mut line_offset = 0;
+        for i in 0..100 {
+            if self.chat_text[i].is_empty() {
+                continue;
+            }
+            let r#type = self.chat_type[i];
+            let mut sender = self.chat_username[i].clone();
+            let mut modlevel = 0;
+            if sender.starts_with("@cr1@") {
+                sender = sender[5..].to_string();
+                modlevel = 1;
+            } else if sender.starts_with("@cr2@") {
+                sender = sender[5..].to_string();
+                modlevel = 2;
+            }
+
+            if (r#type == 3 || r#type == 7)
+                && (r#type == 7
+                    || self.chat_private_mode == 0
+                    || (self.chat_private_mode == 1 && self.is_friend(&sender)))
+            {
+                let y = 329 - line_offset * 13;
+                let mut x = 4;
+                if let Some(font) = self.p12.as_ref() {
+                    font.draw_string(surface, Some("From"), 4, y, Colour::BLACK);
+                    font.draw_string(surface, Some("From"), 4, y - 1, Colour::CYAN);
+                    x += font.string_wid(Some("From "));
+                }
+                if modlevel == 1 || modlevel == 2 {
+                    x += 14;
+                }
+                if let Some(font) = self.p12.as_ref() {
+                    font.draw_string(surface, Some(&format!("{sender}: {}", self.chat_text[i])), x, y, Colour::BLACK);
+                    font.draw_string(surface, Some(&format!("{sender}: {}", self.chat_text[i])), x, y - 1, Colour::CYAN);
+                }
+                line_offset += 1;
+                if line_offset >= 5 {
+                    return;
+                }
+            } else if r#type == 5 && self.chat_private_mode < 2 {
+                let y = 329 - line_offset * 13;
+                if let Some(font) = self.p12.as_ref() {
+                    font.draw_string(surface, Some(&self.chat_text[i]), 4, y, Colour::BLACK);
+                    font.draw_string(surface, Some(&self.chat_text[i]), 4, y - 1, Colour::CYAN);
+                }
+                line_offset += 1;
+                if line_offset >= 5 {
+                    return;
+                }
+            } else if r#type == 6 && self.chat_private_mode < 2 {
+                let y = 329 - line_offset * 13;
+                if let Some(font) = self.p12.as_ref() {
+                    font.draw_string(surface, Some(&format!("To {sender}: {}", self.chat_text[i])), 4, y, Colour::BLACK);
+                    font.draw_string(surface, Some(&format!("To {sender}: {}", self.chat_text[i])), 4, y - 1, Colour::CYAN);
+                }
+                line_offset += 1;
+                if line_offset >= 5 {
+                    return;
+                }
+            }
+        }
+    }
+
     /// `otherOverlays` from client-ts (4853): draw the main overlay then the
     /// main modal into `area_game` at (0, 0), ahead of the (4, 4) blit.
     /// `animateInterface` runs before each draw (TS 4853-4861); with no
@@ -877,6 +951,8 @@ impl Client {
             // `draw_interface`'s TYPE_MODEL arm rasters into this surface:
             // bind `pix3d` clipping to it once before drawing.
             self.pix3d.set_clipping(surface.width, surface.height);
+            // TS 4838: the split private-chat overlay draws first.
+            self.draw_private_messages(&mut surface);
             if self.main_overlay_id != -1 {
                 self.animate_interface(self.main_overlay_id, self.world_update_num);
                 self.draw_interface(self.main_overlay_id, 0, 0, 0, &mut surface);
@@ -1720,13 +1796,14 @@ impl Client {
 
         for i in 0..children.len() {
             let child_id = children[i] as usize;
+            // TS 9926: `clientComponent(child)` fills the friend/ignore
+            // text/button/scroll fields before the child plots.
+            self.client_component(child_id as i32);
             let Some(child) = self.cache.ifaces.get(child_id).and_then(|o| o.as_ref()) else {
                 continue;
             };
             let child_x = child_x[i] + x + child.x;
             let child_y = child_y[i] + y - scroll_y + child.y;
-
-            // `clientComponent(child)` (TS 9926): scripts not ported.
 
             match child.r#type {
                 ComponentType::TYPE_LAYER => {
@@ -2638,15 +2715,14 @@ fn inf(value: i32) -> String {
 
 impl Client {
     /// `drawChat` from client-ts (11125): plot `chatback` into `area_chat`,
-    /// then the plain chat branch (TS 11149-11267): clip (0,0,463,77), the
-    /// 100 chat lines as TS 11152-11244, the `username:` + `chat_input + '*'`
-    /// input line at y=90, and the `hline` at 77; blit at (17, 357).
-    /// Deviations: a chat modal or tutorial interface (TS 11142-11146) draws
-    /// into `area_chat` in place of the plain chat; the social/dialog
-    /// branches are not ported, `is_friend` is always false (no friend
-    /// list), the `modIcons`/`drawScrollbar` sprites load with Task 14, and
-    /// the trailing `areaGame.setPixels()` is a no-op here (no global Pix2D
-    /// target).
+    /// then the social prompt (TS 11133-11135) or the plain chat branch
+    /// (TS 11149-11267): clip (0,0,463,77), the 100 chat lines as
+    /// TS 11152-11244, the `username:` + `chat_input + '*'` input line at
+    /// y=90, and the `hline` at 77; blit at (17, 357). Deviations: a chat
+    /// modal or tutorial interface (TS 11142-11146) draws into `area_chat`
+    /// in place of the plain chat; the `modIcons`/`drawScrollbar` sprites
+    /// load with Task 14, and the trailing `areaGame.setPixels()` is a
+    /// no-op here (no global Pix2D target).
     fn draw_chat(&mut self) {
         let mut chat = self.area_chat.take();
         if let Some(chat) = chat.as_mut() {
@@ -2656,7 +2732,13 @@ impl Client {
             if let Some(chatback) = &self.chatback {
                 chatback.plot_sprite(&mut surface, 0, 0);
             }
-            if self.chat_modal_id != -1 {
+            if self.social_input_open {
+                // TS 11133-11135: the social prompt replaces the chat lines.
+                if let Some(b12) = self.b12.as_ref() {
+                    b12.centre_string(&mut surface, Some(&self.social_input_header), 239, 40, Colour::BLACK);
+                    b12.centre_string(&mut surface, Some(&format!("{}*", self.social_input)), 239, 60, Colour::DARKBLUE);
+                }
+            } else if self.chat_modal_id != -1 {
                 // TS 11142-11146: a chat interface replaces the chat lines
                 // (the chatback frame still plots underneath it).
                 self.pix3d.set_clipping(surface.width, surface.height);
@@ -2697,7 +2779,7 @@ impl Client {
                     } else if (r#type == 1 || r#type == 2)
                         && (r#type == 1
                             || self.chat_public_mode == 0
-                            || (self.chat_public_mode == 1 && false))
+                            || (self.chat_public_mode == 1 && self.is_friend(&sender)))
                     {
                         if y > 0 && y < 110 {
                             let mut x = 4;
@@ -2715,9 +2797,10 @@ impl Client {
                         }
                         line += 1;
                     } else if (r#type == 3 || r#type == 7)
+                        && self.split_private_chat == 0
                         && (r#type == 7
                             || self.chat_private_mode == 0
-                            || (self.chat_private_mode == 1 && false))
+                            || (self.chat_private_mode == 1 && self.is_friend(&sender)))
                     {
                         if y > 0 && y < 110 {
                             let mut x = 4;
@@ -2735,21 +2818,21 @@ impl Client {
                             }
                         }
                         line += 1;
-                    } else if r#type == 4 && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && false)) {
+                    } else if r#type == 4 && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && self.is_friend(&sender))) {
                         if y > 0 && y < 110 {
                             if let Some(font) = font {
                                 font.draw_string(&mut surface, Some(&format!("{sender} {message}")), 4, y, 0x800080);
                             }
                         }
                         line += 1;
-                    } else if r#type == 5 && self.chat_private_mode < 2 {
+                    } else if r#type == 5 && self.split_private_chat == 0 && self.chat_private_mode < 2 {
                         if y > 0 && y < 110 {
                             if let Some(font) = font {
                                 font.draw_string(&mut surface, Some(&message), 4, y, Colour::DARKRED);
                             }
                         }
                         line += 1;
-                    } else if r#type == 6 && self.chat_private_mode < 2 {
+                    } else if r#type == 6 && self.split_private_chat == 0 && self.chat_private_mode < 2 {
                         if y > 0 && y < 110 {
                             if let Some(font) = font {
                                 font.draw_string(&mut surface, Some(&format!("To {sender}:")), 4, y, Colour::BLACK);
@@ -2763,7 +2846,7 @@ impl Client {
                             }
                         }
                         line += 1;
-                    } else if r#type == 8 && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && false)) {
+                    } else if r#type == 8 && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && self.is_friend(&sender))) {
                         if y > 0 && y < 110 {
                             if let Some(font) = font {
                                 font.draw_string(&mut surface, Some(&format!("{sender} {message}")), 4, y, 0x7e3200);

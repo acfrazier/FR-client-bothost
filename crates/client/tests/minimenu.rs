@@ -653,3 +653,118 @@ fn left_click_on_open_menu_row_fires_option_and_closes() {
     assert!(c.world.click, "the Walk row fires doAction(WALK)");
 }
 
+// ---- Task 5: friends/ignore/PM menu options ----
+
+/// A public line (TS gate: type 1 always counts, type 2 only for friends
+/// in chatPublicMode 1) offers Add ignore / Add friend after the staff
+/// Report abuse (TS 2687-2698).
+#[test]
+fn chat_line_adds_friend_and_ignore_for_friend() {
+    let mut c = client();
+    let mut local = ClientPlayer::default();
+    local.name = Some("Me".into());
+    c.local_player = Some(local);
+    c.chat_public_mode = 1;
+    c.friend_count = 1;
+    c.friend_username[0] = "Bob".into();
+    c.add_chat(1, "hello", "Bob");
+    c.shell.mouse_x = 200;
+    c.shell.mouse_y = 420; // line 0's band: relative 63 in (60, 74]
+    c.build_minimenu();
+    let actions: Vec<i32> =
+        (0..c.menu_num_entries).map(|i| c.menu_action[i as usize]).collect();
+    assert!(actions.contains(&MiniMenuAction::FRIENDLIST_ADD), "Add friend");
+    assert!(actions.contains(&MiniMenuAction::IGNORELIST_ADD), "Add ignore");
+    let add = actions
+        .iter()
+        .position(|&a| a == MiniMenuAction::FRIENDLIST_ADD)
+        .unwrap();
+    assert_eq!(c.menu_option[add], "Add friend @whi@Bob");
+
+    // a non-friend's type-2 line in chatPublicMode 1 counts/hovers nothing
+    let mut c2 = client();
+    let mut local = ClientPlayer::default();
+    local.name = Some("Me".into());
+    c2.local_player = Some(local);
+    c2.chat_public_mode = 1;
+    c2.friend_count = 1;
+    c2.friend_username[0] = "Bob".into();
+    c2.add_chat(2, "hello", "Eve");
+    c2.shell.mouse_x = 200;
+    c2.shell.mouse_y = 420;
+    c2.build_minimenu();
+    let actions: Vec<i32> =
+        (0..c2.menu_num_entries).map(|i| c2.menu_action[i as usize]).collect();
+    assert!(!actions.contains(&MiniMenuAction::FRIENDLIST_ADD), "non-friend has no Add friend");
+}
+
+/// A BUTTON_OK with a friend-list client code (1..=200 or 701..=900)
+/// pushes Remove/Message via `addSocialOptions` instead of the button text
+/// (TS 9799-9807); the ignore range pushes Remove only (TS 9866-9872).
+#[test]
+fn social_component_ok_override_pushes_remove_and_message() {
+    let mut c = client();
+    c.friend_count = 1;
+    c.friend_username[0] = "Bob".into();
+    let mut layer = IfType::default();
+    layer.r#type = ComponentType::TYPE_LAYER;
+    layer.width = 190;
+    layer.height = 261;
+    layer.children = Some(vec![2]);
+    layer.child_x = Some(vec![0]);
+    layer.child_y = Some(vec![0]);
+    let mut button = IfType::default();
+    button.id = 2;
+    button.r#type = ComponentType::TYPE_RECT;
+    button.button_type = ButtonType::BUTTON_OK;
+    button.button_text = "OK".into();
+    button.client_code = 1; // CC_FRIENDS_START → friendUsername[0]
+    button.width = 50;
+    button.height = 15;
+    c.cache.ifaces.resize(3, None);
+    c.cache.ifaces[1] = Some(layer);
+    c.cache.ifaces[2] = Some(button);
+    c.side_modal_id = -1;
+    c.side_icon[3] = 1;
+    c.active_icon = 3;
+    c.shell.mouse_x = 553 + 10;
+    c.shell.mouse_y = 205 + 10;
+    c.build_minimenu();
+    let actions: Vec<i32> =
+        (0..c.menu_num_entries).map(|i| c.menu_action[i as usize]).collect();
+    assert!(!actions.contains(&MiniMenuAction::IF_BUTTON), "override suppresses IF_BUTTON");
+    assert!(actions.contains(&MiniMenuAction::FRIENDLIST_DEL), "Remove");
+    assert!(actions.contains(&MiniMenuAction::MESSAGE_PRIVATE), "Message");
+    let remove = actions
+        .iter()
+        .position(|&a| a == MiniMenuAction::FRIENDLIST_DEL)
+        .unwrap();
+    assert_eq!(c.menu_option[remove], "Remove @whi@Bob");
+}
+
+/// A left click whose last menu entry is FRIENDLIST_ADD opens the
+/// multi-entry menu instead of firing (TS 8370-8372).
+#[test]
+fn left_click_add_friend_last_entry_opens_menu() {
+    let mut c = client();
+    let mut local = ClientPlayer::default();
+    local.name = Some("Me".into());
+    c.local_player = Some(local);
+    c.chat_public_mode = 1;
+    c.friend_count = 1;
+    c.friend_username[0] = "Bob".into();
+    c.add_chat(1, "hello", "Bob");
+    c.shell.mouse_x = 200;
+    c.shell.mouse_y = 420;
+    c.build_minimenu();
+    let last = c.menu_num_entries - 1;
+    assert_eq!(
+        c.menu_action[last as usize],
+        MiniMenuAction::FRIENDLIST_ADD,
+        "last entry is Add friend"
+    );
+    c.shell.apply_mouse_down(1, 200, 420);
+    c.shell.latch_click();
+    c.mouse_loop();
+    assert!(c.is_menu_open, "the add-friend last entry must open the menu");
+}

@@ -201,3 +201,109 @@ fn del_friend_removes_and_encodes() {
     assert_eq!(c.friend_userhash[0], eve);
     assert_eq!(c.friend_username[0], "Eve");
 }
+
+// ---- Task 5: social UI, menus, PM send ----
+
+#[test]
+fn client_component_fills_friend_name() {
+    let mut c = client();
+    c.friend_server_status = 2;
+    c.friend_count = 1;
+    c.friend_username[0] = "Bob".into();
+    c.friend_node_id[0] = 0;
+    let mut com = client::config::IfType::default();
+    com.id = 2;
+    com.client_code = 1; // CC_FRIENDS_START → index 0 after -1
+    c.cache.ifaces.resize(3, None);
+    c.cache.ifaces[2] = Some(com);
+    c.client_component(2);
+    assert_eq!(c.cache.ifaces[2].as_ref().unwrap().text, "Bob");
+}
+
+#[test]
+fn client_component_update_range_writes_world_text() {
+    let mut c = client();
+    c.friend_server_status = 2;
+    c.friend_count = 1;
+    c.friend_username[0] = "Bob".into();
+    c.friend_node_id[0] = 10; // same world as node_id default 10
+    let mut com = client::config::IfType::default();
+    com.id = 2;
+    com.client_code = 101; // CC_FRIENDS_UPDATE_START → index 0 after -101
+    c.cache.ifaces.resize(3, None);
+    c.cache.ifaces[2] = Some(com);
+    c.client_component(2);
+    assert_eq!(c.cache.ifaces[2].as_ref().unwrap().text, "@gre@World-1");
+}
+
+#[test]
+fn do_action_message_private_opens_social_input() {
+    let mut c = client();
+    c.friend_count = 1;
+    c.friend_username[0] = "Bob".into();
+    c.friend_userhash[0] = JString::to_userhash("bob") as i64;
+    c.friend_node_id[0] = 10;
+    c.menu_option[0] = "Message @whi@Bob".into();
+    c.menu_action[0] = client::client::MiniMenuAction::MESSAGE_PRIVATE;
+    c.doAction(0);
+    assert!(c.social_input_open);
+    assert_eq!(c.social_input_type, 3);
+}
+
+#[test]
+fn social_enter_add_friend_encodes() {
+    let mut c = client();
+    c.local_player = Some(client::client::ClientPlayer::at(5, 5));
+    if let Some(p) = c.local_player.as_mut() {
+        p.name = Some("Test".into());
+    }
+    c.social_input_open = true;
+    c.social_input_type = 1;
+    c.social_input = "bob".into();
+    c.shell.apply_key(true, 0, 13);
+    c.handle_chat_input();
+    assert_eq!(c.out.data()[0], ClientProt::FRIENDLIST_ADD.id as u8);
+}
+
+#[test]
+fn social_enter_pm_sends_message_private() {
+    let mut c = client();
+    c.social_input_open = true;
+    c.social_input_type = 3;
+    c.social_input = "hi".into();
+    c.social_userhash = JString::to_userhash("bob") as i64;
+    c.shell.apply_key(true, 0, 13);
+    c.handle_chat_input();
+    // MESSAGE_PRIVATE: p1_enc(139) p1(0) psize1 p8(hash) WordPack("hi")
+    assert_eq!(c.out.data()[0], ClientProt::MESSAGE_PRIVATE.id as u8);
+    assert_eq!(c.out.data()[1] as usize - 8, c.out.pos - 10, "size is p8 + wordpack");
+    let packed_len = c.out.data()[1] as usize - 8;
+    let mut tail = Packet::new(c.out.data()[10..10 + packed_len].to_vec());
+    assert_eq!(WordPack::unpack(&mut tail, packed_len), "Hi"); // even nibbles, no carry
+    // the own PM echoes as type 6 with the screen name
+    assert_eq!(c.chat_text[0], "Hi");
+    assert_eq!(c.chat_type[0], 6);
+    assert_eq!(c.chat_username[0], "Bob");
+    assert!(!c.social_input_open, "Enter closes the social input");
+}
+
+#[test]
+fn apply_clientcode_8_sets_split_private_chat() {
+    let mut c = client();
+    c.apply_clientcode(8, 1);
+    assert_eq!(c.split_private_chat, 1);
+    assert!(c.redraw_chat);
+}
+
+#[test]
+fn do_action_ignorelist_del_calls_del_ignore() {
+    let mut c = client();
+    let eve = JString::to_userhash("eve") as i64;
+    c.ignore_userhash[0] = eve;
+    c.ignore_count = 1;
+    c.menu_option[0] = "Remove @whi@Eve".into();
+    c.menu_action[0] = client::client::MiniMenuAction::IGNORELIST_DEL;
+    c.doAction(0);
+    assert_eq!(c.ignore_count, 0);
+    assert_eq!(c.out.data()[0], ClientProt::IGNORELIST_DEL.id as u8);
+}

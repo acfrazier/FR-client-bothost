@@ -59,6 +59,24 @@ const CC_LOGOUT: i32 = 205;
 /// toggle makes obj-drag insert instead of swap (TS `CC_BANKMODE`).
 const CC_BANKMODE: i32 = 206;
 
+// Friend/ignore client-code ranges, verbatim `ClientCode.ts`.
+const CC_FRIENDS_START: i32 = 1;
+const CC_FRIENDS_END: i32 = 100;
+const CC_FRIENDS_UPDATE_START: i32 = 101;
+const CC_FRIENDS_UPDATE_END: i32 = 200;
+const CC_ADD_FRIEND: i32 = 201;
+const CC_DEL_FRIEND: i32 = 202;
+const CC_FRIENDS_SIZE: i32 = 203;
+const CC_FRIENDS2_START: i32 = 701;
+const CC_FRIENDS2_END: i32 = 800;
+const CC_FRIENDS2_UPDATE_START: i32 = 801;
+const CC_FRIENDS2_UPDATE_END: i32 = 900;
+const CC_IGNORES_START: i32 = 401;
+const CC_IGNORES_END: i32 = 500;
+const CC_ADD_IGNORE: i32 = 501;
+const CC_DEL_IGNORE: i32 = 502;
+const CC_IGNORES_SIZE: i32 = 503;
+
 /// `combatColourCode` from Client.ts (9868-9897): the @-colour prefix for
 /// the level-relative combat level shown on npc/player menu options.
 fn combat_colour_code(viewer_level: i32, other_level: i32) -> &'static str {
@@ -721,6 +739,17 @@ pub struct Client {
     pub private_message_ids: [i32; 100],
     pub private_message_count: i32,
     pub node_id: i32,
+    /// Social enter-name dialog from client-ts (`socialInputOpen`/
+    /// `socialInput`/`socialInputType` 1-5/`socialInputHeader`/
+    /// `socialUserhash`): the add/del friend (1/2), PM (3) and add/del
+    /// ignore (4/5) prompts. `splitPrivateChat` (clientcode 8) splits the
+    /// PM overlay out of the main chat area.
+    pub social_input_open: bool,
+    pub social_input: String,
+    pub social_input_type: i32,
+    pub social_input_header: String,
+    pub social_userhash: i64,
+    pub split_private_chat: i32,
     /// `chatInterface` from client-ts (480): the synthetic IfType the chat
     /// scrollbar reads/writes (not in the jag), synced to the chat scroll
     /// state by `game_draw`/`draw_chat`.
@@ -1096,6 +1125,12 @@ impl Client {
             private_message_ids: [0; 100],
             private_message_count: 0,
             node_id: 10,
+            social_input_open: false,
+            social_input: String::new(),
+            social_input_type: 0,
+            social_input_header: String::new(),
+            social_userhash: 0,
+            split_private_chat: 0,
             chat_interface: IfType::default(),
             scroll_grabbed: false,
             scroll_input_padding: 0,
@@ -2543,6 +2578,54 @@ impl Client {
             }
         }
 
+        if action == MiniMenuAction::FRIENDLIST_ADD
+            || action == MiniMenuAction::IGNORELIST_ADD
+            || action == MiniMenuAction::FRIENDLIST_DEL
+            || action == MiniMenuAction::IGNORELIST_DEL
+        {
+            // TS 9226-9240: the `@whi@`-tagged option name resolves to the
+            // userhash of the target player.
+            let option = self.menu_option[option_id as usize].clone();
+            if let Some(tag) = option.find("@whi@") {
+                let username = JString::to_userhash(option[tag + 5..].trim()) as i64;
+                if action == MiniMenuAction::FRIENDLIST_ADD {
+                    self.add_friend(username);
+                } else if action == MiniMenuAction::IGNORELIST_ADD {
+                    self.add_ignore(username);
+                } else if action == MiniMenuAction::FRIENDLIST_DEL {
+                    self.del_friend(username);
+                } else if action == MiniMenuAction::IGNORELIST_DEL {
+                    self.del_ignore(username);
+                }
+            }
+        }
+
+        if action == MiniMenuAction::MESSAGE_PRIVATE {
+            // TS 9242-9266: open the PM social prompt only when the
+            // resolved friend is online (`friendNodeId > 0`).
+            let option = self.menu_option[option_id as usize].clone();
+            if let Some(tag) = option.find("@whi@") {
+                let userhash = JString::to_userhash(option[tag + 5..].trim()) as i64;
+                let mut friend = -1;
+                for i in 0..self.friend_count {
+                    if self.friend_userhash[i as usize] == userhash {
+                        friend = i;
+                        break;
+                    }
+                }
+                if friend != -1 && self.friend_node_id[friend as usize] > 0 {
+                    self.redraw_chat = true;
+                    self.dialog_input_open = false;
+                    self.social_input_open = true;
+                    self.social_input = String::new();
+                    self.social_input_type = 3;
+                    self.social_userhash = self.friend_userhash[friend as usize];
+                    self.social_input_header =
+                        format!("Enter message to send to {}", self.friend_username[friend as usize]);
+                }
+            }
+        }
+
         self.use_mode = 0;
         self.target_mode = 0;
         self.redraw_side = true;
@@ -3935,18 +4018,147 @@ impl Client {
         true
     }
 
-    /// `clientButton` from Java (`Client.java` 8725-8747), ported for the
-    /// CC_LOGOUT arm only: `if (var3 == 205) { logoutTimer = 250; return
-    /// true; }`. Java returns `false` for the other client codes (handled
-    /// locally, no `IF_BUTTON`); those handlers are not ported yet
-    /// (operator-accepted deferral 2026-08-20, slice 3/5), so unported
-    /// codes return `true` to keep the unconditional `IF_BUTTON` send.
+    /// `clientButton` from Java (`Client.java` 8725-8841): CC_ADD/DEL_FRIEND
+    /// (201/202, only while the friend server is connected) open the add/
+    /// delete-friend social prompts, CC_LOGOUT (205) arms `logoutTimer`,
+    /// CC_ADD/DEL_IGNORE (501/502) open the add/delete-ignore prompts, and
+    /// everything else returns false. The player-design (300-327) and
+    /// report-abuse (601-613) arms are slice 6. Social codes return `false`
+    /// so the `doAction` IF_BUTTON arm skips the send (TS sets the prompt
+    /// and falls through); logout returns `true` and the click is sent.
     pub fn client_button(&mut self, com: &IfType) -> bool {
+        if self.friend_server_status == 2 {
+            if com.client_code == CC_ADD_FRIEND {
+                self.redraw_chat = true;
+                self.dialog_input_open = false;
+                self.social_input_open = true;
+                self.social_input = String::new();
+                self.social_input_type = 1;
+                self.social_input_header = "Enter name of friend to add to list".into();
+            } else if com.client_code == CC_DEL_FRIEND {
+                self.redraw_chat = true;
+                self.dialog_input_open = false;
+                self.social_input_open = true;
+                self.social_input = String::new();
+                self.social_input_type = 2;
+                self.social_input_header = "Enter name of friend to delete from list".into();
+            }
+        }
+
         if com.client_code == CC_LOGOUT {
             self.logout_timer = 250;
             return true;
+        } else if com.client_code == CC_ADD_IGNORE {
+            self.redraw_chat = true;
+            self.dialog_input_open = false;
+            self.social_input_open = true;
+            self.social_input = String::new();
+            self.social_input_type = 4;
+            self.social_input_header = "Enter name of player to add to list".into();
+        } else if com.client_code == CC_DEL_IGNORE {
+            self.redraw_chat = true;
+            self.dialog_input_open = false;
+            self.social_input_open = true;
+            self.social_input = String::new();
+            self.social_input_type = 5;
+            self.social_input_header = "Enter name of player to delete from list".into();
         }
-        true
+        false
+    }
+
+    /// `clientComponent` from Client.ts (10687-10768), friends/ignore/size
+    /// only (the player-design 327/324/325 and welcome-screen arms are
+    /// slice 6): fill `text`/`button_type`/`scroll_height` on the friend
+    /// name (1..=100, 701..=800), world/offline update (101..=200,
+    /// 801..=900), friend list size (203), ignore names (401..=500) and
+    /// ignore list size (503) components. Called from `draw_interface`
+    /// before each child plots (TS 9926).
+    pub fn client_component(&mut self, com_id: i32) {
+        let Some(com) = self.cache.ifaces.get_mut(com_id as usize).and_then(|o| o.as_mut()) else {
+            return;
+        };
+        let mut client_code = com.client_code;
+        if (CC_FRIENDS_START..=CC_FRIENDS_END).contains(&client_code)
+            || (CC_FRIENDS2_START..=CC_FRIENDS2_END).contains(&client_code)
+        {
+            if client_code == CC_FRIENDS_START && self.friend_server_status == 0 {
+                com.text = "Loading friend list".into();
+                com.button_type = 0;
+            } else if client_code == CC_FRIENDS_START && self.friend_server_status == 1 {
+                com.text = "Connecting to friendserver".into();
+                com.button_type = 0;
+            } else if client_code == 2 && self.friend_server_status != 2 {
+                com.text = "Please wait...".into();
+                com.button_type = 0;
+            } else {
+                let mut count = self.friend_count;
+                if self.friend_server_status != 2 {
+                    count = 0;
+                }
+                if client_code > 700 {
+                    client_code -= 601;
+                } else {
+                    client_code -= 1;
+                }
+                if client_code >= count {
+                    com.text = String::new();
+                    com.button_type = 0;
+                } else {
+                    com.text = self.friend_username[client_code as usize].clone();
+                    com.button_type = 1;
+                }
+            }
+        } else if (CC_FRIENDS_UPDATE_START..=CC_FRIENDS_UPDATE_END).contains(&client_code)
+            || (CC_FRIENDS2_UPDATE_START..=CC_FRIENDS2_UPDATE_END).contains(&client_code)
+        {
+            let mut count = self.friend_count;
+            if self.friend_server_status != 2 {
+                count = 0;
+            }
+            if client_code > 800 {
+                client_code -= 701;
+            } else {
+                client_code -= 101;
+            }
+            if client_code >= count {
+                com.text = String::new();
+                com.button_type = 0;
+            } else {
+                if self.friend_node_id[client_code as usize] == 0 {
+                    com.text = "@red@Offline".into();
+                } else if self.friend_node_id[client_code as usize] == self.node_id {
+                    com.text = format!("@gre@World-{}", self.friend_node_id[client_code as usize] - 9);
+                } else {
+                    com.text = format!("@yel@World-{}", self.friend_node_id[client_code as usize] - 9);
+                }
+                com.button_type = 1;
+            }
+        } else if client_code == CC_FRIENDS_SIZE {
+            let mut count = self.friend_count;
+            if self.friend_server_status != 2 {
+                count = 0;
+            }
+            com.scroll_height = count * 15 + 20;
+            if com.scroll_height <= com.height {
+                com.scroll_height = com.height + 1;
+            }
+        } else if (CC_IGNORES_START..=CC_IGNORES_END).contains(&client_code) {
+            client_code -= CC_IGNORES_START;
+            if client_code >= self.ignore_count {
+                com.text = String::new();
+                com.button_type = 0;
+            } else {
+                com.text = JString::to_screen_name(&JString::to_raw_username(
+                    self.ignore_userhash[client_code as usize],
+                ));
+                com.button_type = 1;
+            }
+        } else if client_code == CC_IGNORES_SIZE {
+            com.scroll_height = self.ignore_count * 15 + 20;
+            if com.scroll_height <= com.height {
+                com.scroll_height = com.height + 1;
+            }
+        }
     }
 
     /// TS has no `handleSideIfClicks`: every button click flows through
@@ -4113,14 +4325,91 @@ impl Client {
         }
     }
 
-    /// `addPrivateChatOptions` from Client.ts (2600): the private-chat
-    /// friend/ignore/PM menu is slice 5; stub empty.
-    fn add_private_chat_options(&mut self) {}
+    /// `addPrivateChatOptions` from Client.ts (2600-2657): the split
+    /// private-chat overlay's menu, active only when `split_private_chat`
+    /// is set by clientcode 8. Incoming (3/7) lines offer Report abuse
+    /// (staff), Add ignore and Add friend; sent (5/6) lines only count
+    /// towards the 5-line cap. The `rebootTimer` line offset (TS 2607) is
+    /// 0 — the reboot timer is not ported. The add-friend/ignore options
+    /// carry `_PRIORITY` like TS 2635/2641.
+    fn add_private_chat_options(&mut self) {
+        if self.split_private_chat == 0 {
+            return;
+        }
 
-    /// `addChatOptions` from Client.ts (2658-2740) with the friend/ignore/
-    /// accept-trade/accept-duel options skipped (slice 5): only "Report
-    /// abuse" for a staff player hovering a public or private chat line.
-    /// The `isFriend(sender)` mode-1 gates are live (TS 2685/2702/2721/2730).
+        let mut line = 0;
+        for i in 0..100 {
+            if self.chat_text[i].is_empty() {
+                continue;
+            }
+            let r#type = self.chat_type[i];
+            let mut sender = self.chat_username[i].clone();
+            let mut _mod = false;
+            if sender.starts_with("@cr1@") {
+                sender = sender[5..].to_string();
+                _mod = true;
+            } else if sender.starts_with("@cr2@") {
+                sender = sender[5..].to_string();
+                _mod = true;
+            }
+
+            if (r#type == 3 || r#type == 7)
+                && (r#type == 7
+                    || self.chat_private_mode == 0
+                    || (self.chat_private_mode == 1 && self.is_friend(&sender)))
+            {
+                let y = 329 - line * 13;
+                if self.shell.mouse_x > 4
+                    && self.shell.mouse_x < 516
+                    && self.shell.mouse_y - 4 > y - 10
+                    && self.shell.mouse_y - 4 <= y + 3
+                {
+                    if self.staffmodlevel != 0 {
+                        let option = format!("Report abuse @whi@{sender}");
+                        self.push_option(
+                            option,
+                            MiniMenuAction::_PRIORITY + MiniMenuAction::ABUSE_REPORT,
+                            0,
+                            0,
+                            0,
+                        );
+                    }
+                    let option = format!("Add ignore @whi@{sender}");
+                    self.push_option(
+                        option,
+                        MiniMenuAction::_PRIORITY + MiniMenuAction::IGNORELIST_ADD,
+                        0,
+                        0,
+                        0,
+                    );
+                    let option = format!("Add friend @whi@{sender}");
+                    self.push_option(
+                        option,
+                        MiniMenuAction::_PRIORITY + MiniMenuAction::FRIENDLIST_ADD,
+                        0,
+                        0,
+                        0,
+                    );
+                }
+                line += 1;
+                if line >= 5 {
+                    return;
+                }
+            } else if (r#type == 5 || r#type == 6) && self.chat_private_mode < 2 {
+                line += 1;
+                if line >= 5 {
+                    return;
+                }
+            }
+        }
+    }
+
+    /// `addChatOptions` from Client.ts (2658-2740): the chat-line menu.
+    /// Public lines (1/2) and private lines (3/7, only while the split
+    /// overlay is off) offer Report abuse (staff), Add ignore and
+    /// Add friend; trade (4) / duel (8) reqs offer Accept; sent PM lines
+    /// (5/6) count only. The mode-1 `isFriend(sender)` gates match
+    /// `draw_chat`, so hover bands line up with the drawn rows.
     fn add_chat_options(&mut self, _mouse_x: i32, mouse_y: i32) {
         let mut line = 0;
         for i in 0..100 {
@@ -4159,12 +4448,14 @@ impl Client {
                         let option = format!("Report abuse @whi@{sender}");
                         self.push_option(option, MiniMenuAction::ABUSE_REPORT, 0, 0, 0);
                     }
+                    let option = format!("Add ignore @whi@{sender}");
+                    self.push_option(option, MiniMenuAction::IGNORELIST_ADD, 0, 0, 0);
+                    let option = format!("Add friend @whi@{sender}");
+                    self.push_option(option, MiniMenuAction::FRIENDLIST_ADD, 0, 0, 0);
                 }
                 line += 1;
             } else if (r#type == 3 || r#type == 7)
-                // split private chat is not implemented (TS `splitPrivateChat`
-                // stays 0), so the `&& splitPrivateChat === 0` gate is
-                // dropped like in draw_chat.
+                && self.split_private_chat == 0
                 && (r#type == 7
                     || self.chat_private_mode == 0
                     || (self.chat_private_mode == 1 && self.is_friend(&sender)))
@@ -4174,15 +4465,32 @@ impl Client {
                         let option = format!("Report abuse @whi@{sender}");
                         self.push_option(option, MiniMenuAction::ABUSE_REPORT, 0, 0, 0);
                     }
+                    let option = format!("Add ignore @whi@{sender}");
+                    self.push_option(option, MiniMenuAction::IGNORELIST_ADD, 0, 0, 0);
+                    let option = format!("Add friend @whi@{sender}");
+                    self.push_option(option, MiniMenuAction::FRIENDLIST_ADD, 0, 0, 0);
                 }
                 line += 1;
-            } else if r#type == 4 && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && self.is_friend(&sender))) {
-                // the accept-trade option is slice 5; the line still counts
-                // so the y positions match draw_chat.
+            } else if r#type == 4
+                && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && self.is_friend(&sender)))
+            {
+                if mouse_y > y - 14 && mouse_y <= y {
+                    let option = format!("Accept trade @whi@{sender}");
+                    self.push_option(option, MiniMenuAction::ACCEPT_TRADEREQ, 0, 0, 0);
+                }
                 line += 1;
-            } else if (r#type == 5 || r#type == 6) && self.chat_private_mode < 2 {
+            } else if (r#type == 5 || r#type == 6)
+                && self.split_private_chat == 0
+                && self.chat_private_mode < 2
+            {
                 line += 1;
-            } else if r#type == 8 && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && self.is_friend(&sender))) {
+            } else if r#type == 8
+                && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && self.is_friend(&sender)))
+            {
+                if mouse_y > y - 14 && mouse_y <= y {
+                    let option = format!("Accept duel @whi@{sender}");
+                    self.push_option(option, MiniMenuAction::ACCEPT_DUELREQ, 0, 0, 0);
+                }
                 line += 1;
             }
         }
@@ -4474,9 +4782,14 @@ impl Client {
                         && mouse_y < child_y + child.height
                     {
                         if child.button_type == ButtonType::BUTTON_OK {
-                            // `addSocialOptions` (friends/ignore) is slice
-                            // 5, so the override is always false (TS 9799).
-                            if !child.button_text.is_empty() {
+                            // TS 9798-9807: a friend/ignore-list component
+                            // overrides the button text with Remove/Message
+                            // options; otherwise the label fires IF_BUTTON.
+                            let mut override_ = false;
+                            if child.client_code != 0 {
+                                override_ = self.add_social_options(&child);
+                            }
+                            if !override_ && !child.button_text.is_empty() {
                                 self.push_option(
                                     child.button_text.clone(),
                                     MiniMenuAction::IF_BUTTON,
@@ -4544,6 +4857,43 @@ impl Client {
                 }
             }
         }
+    }
+
+    /// `addSocialOptions` from Client.ts (9844-9873): a friend/ignore-list
+    /// BUTTON_OK component's right-click options. The friend ranges
+    /// (1..=200, 701..=900) push Remove and Message with the friend name
+    /// (the index arithmetic is TS 9847-9855, including the 701/801
+    /// offsets); the ignore range (401..=500) pushes Remove with the
+    /// component's own text. Returns true when the button text is
+    /// overridden, false otherwise.
+    fn add_social_options(&mut self, component: &IfType) -> bool {
+        let mut client_code = component.client_code;
+        if (CC_FRIENDS_START..=CC_FRIENDS_UPDATE_END).contains(&client_code)
+            || (CC_FRIENDS2_START..=CC_FRIENDS2_UPDATE_END).contains(&client_code)
+        {
+            if client_code >= 801 {
+                client_code -= 701;
+            } else if client_code >= 701 {
+                client_code -= 601;
+            } else if client_code >= CC_FRIENDS_UPDATE_START {
+                client_code -= CC_FRIENDS_UPDATE_START;
+            } else {
+                client_code -= 1;
+            }
+
+            let option = format!("Remove @whi@{}", self.friend_username[client_code as usize]);
+            self.push_option(option, MiniMenuAction::FRIENDLIST_DEL, 0, 0, 0);
+
+            let option = format!("Message @whi@{}", self.friend_username[client_code as usize]);
+            self.push_option(option, MiniMenuAction::MESSAGE_PRIVATE, 0, 0, 0);
+            return true;
+        } else if (CC_IGNORES_START..=CC_IGNORES_END).contains(&client_code) {
+            let option = format!("Remove @whi@{}", component.text);
+            self.push_option(option, MiniMenuAction::IGNORELIST_DEL, 0, 0, 0);
+            return true;
+        }
+
+        false
     }
 
     fn dispatch_packet(&mut self, ptype: i32, payload: &mut Packet) {
@@ -6671,6 +7021,7 @@ impl Client {
         self.loc_changes = LinkList::new();
         self.friend_server_status = 0;
         self.friend_count = 0;
+        self.social_input_open = false;
         for level in 0..BuildArea::LEVELS {
             for x in 0..BuildArea::SIZE {
                 for z in 0..BuildArea::SIZE {
@@ -6948,9 +7299,12 @@ impl Client {
     }
 
     /// `handleInputKey` from client-ts (2937), chat branch: poll queued
-    /// keys while no chat modal is open. Printable 32..=122 (up to 126
-    /// once the input starts with `::`) appends below 80 chars, 8
-    /// backspaces, 10/13 sends. A `::` command goes out as `CLIENT_CHEAT`
+    /// keys. An open social prompt (TS 2962-3020) consumes printable
+    /// 32..=122 into `social_input` and 10/13 fires the add/del
+    /// friend/ignore or PM send; otherwise keys reach the public input
+    /// while no chat modal is open. Printable 32..=122 (up to 126 once the
+    /// input starts with `::`) appends below 80 chars, 8 backspaces,
+    /// 10/13 sends. A `::` command goes out as `CLIENT_CHEAT`
     /// (TS 3093-3095); anything else packs `MESSAGE_PUBLIC` (TS 3158-3165)
     /// with the colour/effect prefixes parsed as TS 3097-3155 and the text
     /// WordPacked. The own message echoes locally as
@@ -6962,6 +7316,67 @@ impl Client {
             if key == -1 {
                 break;
             }
+
+            if self.social_input_open {
+                if key >= 32 && key <= 122 && self.social_input.len() < 80 {
+                    self.social_input.push(char::from_u32(key as u32).unwrap());
+                    self.redraw_chat = true;
+                }
+                if key == 8 && !self.social_input.is_empty() {
+                    self.social_input.pop();
+                    self.redraw_chat = true;
+                }
+                if key == 13 || key == 10 {
+                    self.social_input_open = false;
+                    self.redraw_chat = true;
+
+                    if self.social_input_type == 1 {
+                        let userhash = JString::to_userhash(&self.social_input) as i64;
+                        self.add_friend(userhash);
+                    }
+                    if self.social_input_type == 2 && self.friend_count > 0 {
+                        let userhash = JString::to_userhash(&self.social_input) as i64;
+                        self.del_friend(userhash);
+                    }
+                    if self.social_input_type == 3
+                        && !self.social_input.is_empty()
+                        && self.social_userhash != 0
+                    {
+                        self.out.p1_enc(ClientProt::MESSAGE_PRIVATE.id);
+                        self.out.p1(0);
+                        let start = self.out.pos;
+                        self.out.p8(self.social_userhash);
+                        WordPack::pack(&mut self.out, &self.social_input);
+                        self.out.psize1((self.out.pos - start) as i32);
+
+                        let mut text = JString::to_sentence_case(&self.social_input);
+                        text = WordFilter::filter(&text);
+                        let screen_name = JString::to_screen_name(&JString::to_raw_username(
+                            self.social_userhash,
+                        ));
+                        self.add_chat(6, &text, &screen_name);
+
+                        if self.chat_private_mode == 2 {
+                            self.chat_private_mode = 1;
+                            self.redraw_chat_mode = true;
+                            self.out.p1_enc(ClientProt::CHAT_SETMODE.id);
+                            self.out.p1(self.chat_public_mode);
+                            self.out.p1(self.chat_private_mode);
+                            self.out.p1(self.chat_trade_mode);
+                        }
+                    }
+                    if self.social_input_type == 4 && self.ignore_count < 100 {
+                        let userhash = JString::to_userhash(&self.social_input) as i64;
+                        self.add_ignore(userhash);
+                    }
+                    if self.social_input_type == 5 && self.ignore_count > 0 {
+                        let userhash = JString::to_userhash(&self.social_input) as i64;
+                        self.del_ignore(userhash);
+                    }
+                }
+                continue;
+            }
+
             if self.chat_modal_id != -1 {
                 continue;
             }
@@ -7246,10 +7661,16 @@ impl Client {
     }
 
     /// `isAddFriendOption` from Java (Client.java 5513-5522): the option is
-    /// `FRIENDLIST_ADD` (605 after the priority suffix). Friends/ignore are
-    /// slice 5, so this always returns false for now.
-    fn is_add_friend_option(&self, _option: i32) -> bool {
-        false
+    /// `FRIENDLIST_ADD` (605 after the priority suffix).
+    fn is_add_friend_option(&self, option: i32) -> bool {
+        if option < 0 {
+            return false;
+        }
+        let mut action = self.menu_action[option as usize];
+        if action >= MiniMenuAction::_PRIORITY {
+            action -= MiniMenuAction::_PRIORITY;
+        }
+        action == MiniMenuAction::FRIENDLIST_ADD
     }
 
     /// `openMenu` from client-ts (8442-8546): size the menu to the widest
@@ -9050,10 +9471,16 @@ impl Client {
     }
 
     /// The clientcode switch from `clientVar` (Java `Client.java` 3032).
+    /// clientcode 8 sets the split private-chat overlay (TS 10679-10681);
     /// clientcode 3 is the midi volume ladder: 0 → +0 dB, 1 → -400, 2 → -800,
     /// 3 → -1200, 4 → mute. Mutating the active state re-requests the next
     /// song (unmute) or stops the midi (mute), guarded by `lowmem` as Java.
     pub fn apply_clientcode(&mut self, clientcode: i32, value: i32) {
+        if clientcode == 8 {
+            self.split_private_chat = value;
+            self.redraw_chat = true;
+            return;
+        }
         if clientcode != 3 {
             return;
         }

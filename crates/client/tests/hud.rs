@@ -541,6 +541,33 @@ fn draw_chat_renders_type0_line_and_input() {
     assert!(chat.pixels.contains(&Colour::BLUE));
 }
 
+#[test]
+fn draw_chat_social_overlay_draws_header_and_input() {
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("title").is_file() {
+        return;
+    }
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache,
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    c.game_draw(); // loads the b12 font from the title jag
+    c.add_chat(0, "hidden by the overlay", "");
+    c.social_input_open = true;
+    c.social_input_header = "Enter name of friend to add to list".into();
+    c.social_input = "bob".into();
+    c.redraw_chat = true;
+    c.game_draw();
+    // TS 11133-11135: header black at (239,40), input dark blue at (239,60)
+    let chat = c.area_chat.as_ref().unwrap();
+    assert!(chat.pixels.contains(&Colour::BLACK));
+    assert!(chat.pixels.contains(&Colour::DARKBLUE));
+}
+
 /// draw a single TYPE_TEXT child under a fixed layer; returns the pixmap.
 fn draw_text(c: &mut Client, text: &IfType) -> PixMap {
     let layer = IfType {

@@ -32,8 +32,34 @@ fn cc_logout_arms_logout_timer() {
         client_code: 3,
         ..IfType::default()
     };
-    assert!(c.client_button(&other));
+    assert!(!c.client_button(&other), "Java clientButton returns false for non-205 codes");
     assert_eq!(c.logout_timer, 250); // unchanged for unported codes
+}
+
+#[test]
+fn cc_add_friend_opens_social_input_without_if_button() {
+    let mut c = client();
+    c.friend_server_status = 2;
+    let com = IfType {
+        client_code: 201, // CC_ADD_FRIEND
+        ..IfType::default()
+    };
+    assert!(!c.client_button(&com), "social codes do not send IF_BUTTON");
+    assert!(c.social_input_open);
+    assert_eq!(c.social_input_type, 1);
+    assert_eq!(c.social_input_header, "Enter name of friend to add to list");
+}
+
+#[test]
+fn cc_add_ignore_opens_social_input_without_friend_server() {
+    let mut c = client();
+    let com = IfType {
+        client_code: 501, // CC_ADD_IGNORE
+        ..IfType::default()
+    };
+    assert!(!c.client_button(&com));
+    assert!(c.social_input_open);
+    assert_eq!(c.social_input_type, 4);
 }
 
 #[test]
