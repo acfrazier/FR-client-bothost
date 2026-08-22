@@ -50,7 +50,6 @@ const MAX_PLAYER_COUNT: usize = 2048;
 const MAX_NPC_COUNT: usize = 16384;
 const MENU_CAPACITY: usize = 500;
 const CLIENT_VERSION: i32 = 274;
-const LOGIN_UID: i32 = 1337;
 
 /// Client code of the red "Click here to logout" control; `clientButton`
 /// arms `logoutTimer` (Java `Client.java` 8746).
@@ -593,6 +592,10 @@ pub struct Client {
     pub random_in: Option<Isaac>,
     pub jag_checksum: [i32; 9],
 
+    /// Per-client login uid, sent in the 274 handshake RSA block. `new`
+    /// fills it with a random non-zero i32 (`login_uid()`); the host may
+    /// overwrite it with a profile uid before `login`.
+    pub login_uid: i32,
     pub login_user: String,
     pub login_pass: String,
     pub login_mes1: String,
@@ -939,6 +942,7 @@ impl Client {
             cache: Arc::new(cache),
             ifaces,
             gens: ClientGens::default(),
+            login_uid: login_uid(),
 
             ingame: false,
             draw: false,
@@ -1833,7 +1837,7 @@ impl Client {
             self.out.p4(seed[1]);
             self.out.p4(seed[2]);
             self.out.p4(seed[3]);
-            self.out.p4(LOGIN_UID);
+            self.out.p4(self.login_uid);
             self.out.pjstr(username);
             self.out.pjstr(password);
             let n = BigUint::from_str(LOGIN_RSAN).unwrap();
@@ -10668,6 +10672,29 @@ fn grow_write(table: &mut Vec<i32>, id: i32, value: i32) {
         table.resize(index + 1, 0);
     }
     table[index] = value;
+}
+
+/// Per-client login uid for the 274 handshake RSA block (Java 274
+/// `loginUid`): `(SystemTime::now(), &a as *const _)` mixed into a random
+/// i32, retried if the mix lands on 0 or the old shared `1337` constant.
+fn login_uid() -> i32 {
+    loop {
+        let probe = 0u8;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        let mut x = now ^ ((&probe as *const u8) as u64);
+        x ^= x >> 16;
+        x = x.wrapping_mul(0x7feb_352d);
+        x ^= x >> 15;
+        x = x.wrapping_mul(0x846c_a68b);
+        x ^= x >> 16;
+        let uid = x as i32;
+        if uid != 0 && uid != 1337 {
+            return uid;
+        }
+    }
 }
 
 /// Stand-in for Java `(int)(Math.random() * 99999999)`: a non-negative

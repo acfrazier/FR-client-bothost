@@ -5,6 +5,28 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
 
+fn cfg() -> ClientConfig {
+    ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    }
+}
+
+/// Task 3: every Client gets its own login uid, so the 274 handshake does
+/// not broadcast the shared `1337` constant to the server. `new` fills it
+/// with a random non-zero i32; the host may overwrite it before `login`.
+#[test]
+fn two_clients_get_distinct_login_uids() {
+    let a = Client::new(cfg());
+    let b = Client::new(cfg());
+    assert_ne!(a.login_uid, 0);
+    assert_ne!(a.login_uid, 1337);
+    assert_ne!(a.login_uid, b.login_uid);
+}
+
 #[test]
 fn to_userhash_matches_client_ts() {
     // values generated with webclient JString.ts toUserhash
