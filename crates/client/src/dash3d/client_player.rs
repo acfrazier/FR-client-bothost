@@ -21,7 +21,10 @@ fn model_cache() -> &'static Mutex<LruCache<Model>> {
     CACHE.get_or_init(|| Mutex::new(LruCache::new(200)))
 }
 
-fn recol1d() -> &'static [Vec<i32>; 5] {
+// `ClientPlayer.recol1d`/`recol2d` from client-ts. `pub(crate)`: the
+// design-preview `clientComponent` arm re-colours the kit model with the
+// same tables (TS 10797-10804).
+pub(crate) fn recol1d() -> &'static [Vec<i32>; 5] {
     static TABLES: OnceLock<[Vec<i32>; 5]> = OnceLock::new();
     TABLES.get_or_init(|| {
         [
@@ -46,7 +49,7 @@ fn recol1d() -> &'static [Vec<i32>; 5] {
     })
 }
 
-fn recol2d() -> &'static [i32; 16] {
+pub(crate) fn recol2d() -> &'static [i32; 16] {
     static TABLE: OnceLock<[i32; 16]> = OnceLock::new();
     TABLE.get_or_init(|| {
         [

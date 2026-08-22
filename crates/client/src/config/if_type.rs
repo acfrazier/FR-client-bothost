@@ -474,6 +474,19 @@ impl IfType {
         model
     }
 
+    /// `cacheModel(model, type, id)` from IfType.ts 424-430: clear the whole
+    /// model cache, then put the temp model under `(type << 16) + id` (type 4
+    /// is skipped). The design-preview arm caches under `(5 << 16) + 0`,
+    /// which `get_model(5, 0)` finds before its `_ => None` arm (TS
+    /// `getModel` type 5 reads the cache the same way).
+    pub fn cache_model(model: Model, r#type: i32, id: i32) {
+        let mut model_cache = model_cache().lock().unwrap();
+        model_cache.clear();
+        if r#type != 4 {
+            model_cache.put(model, ((r#type as i64) << 16) + id as i64);
+        }
+    }
+
     /// `getTempModel(primaryFrame, secondaryFrame, active)` from Java
     /// IfType.java 454-478 (TS IfType.ts 364-394): the animated model for a
     /// TYPE_MODEL component, picked from the active (`model2`) or inactive

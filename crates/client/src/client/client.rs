@@ -28,6 +28,7 @@ use crate::client::skill::Skill;
 use crate::config::if_type::{ButtonType, ComponentType, IfType};
 use crate::config::seq_type::{RESTART_RESET, RESTART_RESETLOOP};
 use crate::config::Cache;
+use crate::dash3d::client_player::{recol1d, recol2d};
 use crate::dash3d::world::LevelHeightmaps;
 use crate::dash3d::{
     AnimFrame, BuildArea, ClientEntity, ClientLocAnim, ClientObj, ClientProj, CollisionFlag,
@@ -76,6 +77,16 @@ const CC_IGNORES_END: i32 = 500;
 const CC_ADD_IGNORE: i32 = 501;
 const CC_DEL_IGNORE: i32 = 502;
 const CC_IGNORES_SIZE: i32 = 503;
+
+// Player-design client codes, verbatim `ClientCode.ts` (300-327).
+const CC_CHANGE_HEAD_L: i32 = 300;
+const CC_CHANGE_FEET_R: i32 = 313;
+const CC_RECOLOUR_HAIR_L: i32 = 314;
+const CC_RECOLOUR_SKIN_R: i32 = 323;
+const CC_SWITCH_TO_MALE: i32 = 324;
+const CC_SWITCH_TO_FEMALE: i32 = 325;
+const CC_ACCEPT_DESIGN: i32 = 326;
+const CC_DESIGN_PREVIEW: i32 = 327;
 
 /// `combatColourCode` from Client.ts (9868-9897): the @-colour prefix for
 /// the level-relative combat level shown on npc/player menu options.
@@ -793,6 +804,18 @@ pub struct Client {
     pub social_input_header: String,
     pub social_userhash: i64,
     pub split_private_chat: i32,
+    /// Player-design (300-327) state from client-ts 559-564: the gender
+    /// flag, the preview redraw latch, and the kit/colour selection.
+    /// `idk_design_part` inits at -1 (the brief's choice over TS's
+    /// zero-filled `Int32Array`, so an empty idk table never indexes kit 0);
+    /// `idk_design_button1/2` snapshot the male/female switch-button
+    /// graphics (TS 10822-10836).
+    pub idk_design_gender: bool,
+    pub idk_design_redraw: bool,
+    pub idk_design_part: [i32; 7],
+    pub idk_design_colour: [i32; 5],
+    pub idk_design_button1: Option<String>,
+    pub idk_design_button2: Option<String>,
     /// `chatInterface` from client-ts (480): the synthetic IfType the chat
     /// scrollbar reads/writes (not in the jag), synced to the chat scroll
     /// state by `game_draw`/`draw_chat`.
@@ -1202,6 +1225,12 @@ impl Client {
             social_input_header: String::new(),
             social_userhash: 0,
             split_private_chat: 0,
+            idk_design_gender: true,
+            idk_design_redraw: false,
+            idk_design_part: [-1; 7],
+            idk_design_colour: [0; 5],
+            idk_design_button1: None,
+            idk_design_button2: None,
             chat_interface: IfType::default(),
             scroll_grabbed: false,
             scroll_input_padding: 0,
@@ -4260,14 +4289,16 @@ impl Client {
         true
     }
 
-    /// `clientButton` from Java (`Client.java` 8725-8841): CC_ADD/DEL_FRIEND
-    /// (201/202, only while the friend server is connected) open the add/
-    /// delete-friend social prompts, CC_LOGOUT (205) arms `logoutTimer`,
-    /// CC_ADD/DEL_IGNORE (501/502) open the add/delete-ignore prompts, and
-    /// everything else returns false. The player-design (300-327) and
-    /// report-abuse (601-613) arms are slice 6. Social codes return `false`
-    /// so the `doAction` IF_BUTTON arm skips the send (TS sets the prompt
-    /// and falls through); logout returns `true` and the click is sent.
+    /// `clientButton` from Java (`Client.java` 8725-8841) / Client.ts
+    /// 10960-11080: CC_ADD/DEL_FRIEND (201/202, only while the friend server
+    /// is connected) open the add/delete-friend social prompts, CC_LOGOUT
+    /// (205) arms `logoutTimer`, CC_ADD/DEL_IGNORE (501/502) open the
+    /// add/delete-ignore prompts, the player-design codes 300-327 cycle
+    /// kit/colour, switch gender and send `IDK_SAVEDESIGN`, and the
+    /// report-abuse codes (601-613) are slice 6. Social codes return
+    /// `false` so the `doAction` IF_BUTTON arm skips the send (TS sets the
+    /// prompt and falls through); logout and accept-design return `true`
+    /// and the click is sent.
     pub fn client_button(&mut self, com: &IfType) -> bool {
         if self.friend_server_status == 2 {
             if com.client_code == CC_ADD_FRIEND {
@@ -4304,18 +4335,170 @@ impl Client {
             self.social_input = String::new();
             self.social_input_type = 5;
             self.social_input_header = "Enter name of player to delete from list".into();
+        } else if (CC_CHANGE_HEAD_L..=CC_CHANGE_FEET_R).contains(&com.client_code) {
+            // TS 10998-11025: the 7 kit arrows step the current kit up/down
+            // to the next non-disabled kit of the gender's part. The TS
+            // `while(true)` is bounded by the table size here (a real table
+            // always has a match; an empty one must not spin forever).
+            let part = ((com.client_code - CC_CHANGE_HEAD_L) / 2) as usize;
+            let direction = com.client_code & 0x1;
+            let mut kit = self.idk_design_part[part];
+            if kit != -1 {
+                let want = part as i32 + if self.idk_design_gender { 0 } else { 7 };
+                for _ in 0..self.cache.idks.len() {
+                    if direction == 0 {
+                        kit -= 1;
+                        if kit < 0 {
+                            kit = self.cache.idks.len() as i32 - 1;
+                        }
+                    } else {
+                        kit += 1;
+                        if kit >= self.cache.idks.len() as i32 {
+                            kit = 0;
+                        }
+                    }
+                    if let Some(idk) = self.cache.idks.get(kit as usize) {
+                        if !idk.disable && idk.part == want {
+                            self.idk_design_part[part] = kit;
+                            self.idk_design_redraw = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        } else if (CC_RECOLOUR_HAIR_L..=CC_RECOLOUR_SKIN_R).contains(&com.client_code) {
+            // TS 11026-11046: the 5 colour arrows step the colour index
+            // around the `recol1d` table for the part.
+            let part = ((com.client_code - CC_RECOLOUR_HAIR_L) / 2) as usize;
+            let direction = com.client_code & 0x1;
+            let mut colour = self.idk_design_colour[part];
+            if direction == 0 {
+                colour -= 1;
+                if colour < 0 {
+                    colour = recol1d()[part].len() as i32 - 1;
+                }
+            } else {
+                colour += 1;
+                if colour >= recol1d()[part].len() as i32 {
+                    colour = 0;
+                }
+            }
+            self.idk_design_colour[part] = colour;
+            self.idk_design_redraw = true;
+        } else if com.client_code == CC_SWITCH_TO_MALE && !self.idk_design_gender {
+            self.idk_design_gender = true;
+            self.validate_idk_design();
+        } else if com.client_code == CC_SWITCH_TO_FEMALE && self.idk_design_gender {
+            self.idk_design_gender = false;
+            self.validate_idk_design();
+        } else if com.client_code == CC_ACCEPT_DESIGN {
+            // TS 11053-11065: IDK_SAVEDESIGN (id 125, length 13) carries
+            // the gender byte, 7 kit bytes and 5 colour bytes.
+            self.out.p1_enc(ClientProt::IDK_SAVEDESIGN.id);
+            self.out.p1(if self.idk_design_gender { 0 } else { 1 });
+            for i in 0..7 {
+                self.out.p1(self.idk_design_part[i]);
+            }
+            for i in 0..5 {
+                self.out.p1(self.idk_design_colour[i]);
+            }
+            return true;
         }
         false
     }
 
-    /// `clientComponent` from Client.ts (10687-10768), friends/ignore/size
-    /// only (the player-design 327/324/325 and welcome-screen arms are
-    /// slice 6): fill `text`/`button_type`/`scroll_height` on the friend
-    /// name (1..=100, 701..=800), world/offline update (101..=200,
-    /// 801..=900), friend list size (203), ignore names (401..=500) and
-    /// ignore list size (503) components. Called from `draw_interface`
-    /// before each child plots (TS 9926).
+    /// `validateIdkDesign` from Client.ts 11082-11096: re-pick the first
+    /// non-disabled kit of each part for the current gender and re-arm the
+    /// preview redraw. A no-op against an empty idk table (parts stay -1).
+    fn validate_idk_design(&mut self) {
+        self.idk_design_redraw = true;
+        for i in 0..7 {
+            self.idk_design_part[i] = -1;
+            for (j, idk) in self.cache.idks.iter().enumerate() {
+                if !idk.disable && idk.part == i as i32 + if self.idk_design_gender { 0 } else { 7 }
+                {
+                    self.idk_design_part[i] = j as i32;
+                    break;
+                }
+            }
+        }
+    }
+
+    /// TS `clientComponent` CC_DESIGN_PREVIEW build (10777-10819): combine
+    /// the selected idk kits, apply the recolour tables and the local
+    /// player's readyanim pose, and hand the model back for caching under
+    /// `getModel(5, 0)`. Runs before the `com` borrow in
+    /// `client_component` because both touch `cache`.
+    fn design_preview_model(&mut self) -> Option<Model> {
+        if !self.idk_design_redraw {
+            return None;
+        }
+        for i in 0..7 {
+            let kit = self.idk_design_part[i];
+            if kit >= 0 && !self.cache.idks[kit as usize].check_model() {
+                return None;
+            }
+        }
+        self.idk_design_redraw = false;
+
+        let mut models: [Option<Model>; 7] = Default::default();
+        let mut model_count = 0;
+        for part in 0..7 {
+            let kit = self.idk_design_part[part];
+            if kit >= 0 {
+                models[model_count] = self.cache.idks[kit as usize].get_model_no_check();
+                model_count += 1;
+            }
+        }
+        let mut model = Model::combine_for_anim(&models, model_count);
+        for part in 0..5 {
+            let colour = self.idk_design_colour[part];
+            if colour != 0 {
+                model.recolour(recol1d()[part][0], recol1d()[part][colour as usize]);
+                if part == 1 {
+                    model.recolour(recol2d()[0], recol2d()[colour as usize]);
+                }
+            }
+        }
+        model.prepare_anim();
+        model.calculate_normals(64, 850, -30, -50, -30, true);
+        if let Some(local) = &self.local_player {
+            if let Some(frame) = self
+                .cache
+                .seqs
+                .get(local.readyanim as usize)
+                .and_then(|seq| seq.frames.as_ref())
+                .and_then(|frames| frames.first().copied())
+            {
+                model.animate(frame);
+            }
+        }
+        Some(model)
+    }
+
+    /// `clientComponent` from Client.ts (10687-10842), friends/ignore/size
+    /// plus the player-design preview and switch-button arms: fill
+    /// `text`/`button_type`/`scroll_height` on the friend name (1..=100,
+    /// 701..=800), world/offline update (101..=200, 801..=900), friend list
+    /// size (203), ignore names (401..=500) and ignore list size (503)
+    /// components; CC_DESIGN_PREVIEW (327) rotates the kit preview and
+    /// rebuilds its temp model, CC_SWITCH_TO_MALE/FEMALE (324/325) swap the
+    /// button graphic to the gender being switched to. Called from
+    /// `draw_interface` before each child plots (TS 9926).
     pub fn client_component(&mut self, com_id: i32) {
+        // The CC_DESIGN_PREVIEW build needs the idk/seq tables while `com`
+        // is borrowed from the same `cache.ifaces`, so it runs before the
+        // borrow (TS 10777-10819; `com.model_xan/yan` are set after).
+        let preview_model = match self
+            .cache
+            .ifaces
+            .get(com_id as usize)
+            .and_then(|o| o.as_ref())
+            .map(|com| com.client_code)
+        {
+            Some(CC_DESIGN_PREVIEW) => self.design_preview_model(),
+            _ => None,
+        };
         let Some(com) = self.cache.ifaces.get_mut(com_id as usize).and_then(|o| o.as_mut()) else {
             return;
         };
@@ -4399,6 +4582,40 @@ impl Client {
             com.scroll_height = self.ignore_count * 15 + 20;
             if com.scroll_height <= com.height {
                 com.scroll_height = com.height + 1;
+            }
+        } else if client_code == CC_DESIGN_PREVIEW {
+            // TS 10773-10820: spin the preview model around the y axis
+            // every frame; the combined kit model (built above) is cached
+            // under `getModel(5, 0)` when the design changed.
+            com.model_xan = 150;
+            com.model_yan = ((self.loop_cycle as f64 / 40.0).sin() * 256.0) as i32 & 0x7ff;
+            if let Some(model) = preview_model {
+                com.model1_type = 5;
+                com.model1_id = 0;
+                IfType::cache_model(model, 5, 0);
+            }
+        } else if client_code == CC_SWITCH_TO_MALE {
+            // TS 10821-10831: snapshot the two switch-button graphics once,
+            // then show the one for the gender being switched to.
+            if self.idk_design_button1.is_none() {
+                self.idk_design_button1 = Some(com.graphic_name.clone());
+                self.idk_design_button2 = Some(com.graphic2_name.clone());
+            }
+            if self.idk_design_gender {
+                com.graphic_name = self.idk_design_button2.clone().unwrap_or_default();
+            } else {
+                com.graphic_name = self.idk_design_button1.clone().unwrap_or_default();
+            }
+        } else if client_code == CC_SWITCH_TO_FEMALE {
+            // TS 10832-10842.
+            if self.idk_design_button1.is_none() {
+                self.idk_design_button1 = Some(com.graphic_name.clone());
+                self.idk_design_button2 = Some(com.graphic2_name.clone());
+            }
+            if self.idk_design_gender {
+                com.graphic_name = self.idk_design_button1.clone().unwrap_or_default();
+            } else {
+                com.graphic_name = self.idk_design_button2.clone().unwrap_or_default();
             }
         }
     }
