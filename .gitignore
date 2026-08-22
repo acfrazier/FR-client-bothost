@@ -1,6 +1,7 @@
 /target
 **/*.rs.bk
 .DS_Store
-docs/
+# Agent working notes (specs/plans). Product docs under docs/ are tracked.
+docs/superpowers/
 
 .worktrees/
