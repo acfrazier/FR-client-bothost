@@ -1,10 +1,12 @@
 // CAM_* / HINT_ARROW / UPDATE_RUNWEIGHT / UPDATE_REBOOT_TIMER /
 // P_COUNTDIALOG / SET_MULTIWAY / MINIMAP_TOGGLE applies, the cinema camera
-// and the shake jitter, plus the dialog-amount keys. The /tmp cache has no
-// packs, so `Client::new` falls back to `Cache::default()` and never touches
-// the network (the /crc fetch on 127.0.0.1 is refused instantly).
-use client::client::{Client, ClientConfig};
+// and the shake jitter, plus the dialog-amount keys, the click-crosshair
+// tick / walk consume / plot. The /tmp cache has no packs, so `Client::new`
+// falls back to `Cache::default()` and never touches the network (the /crc
+// fetch on 127.0.0.1 is refused instantly).
+use client::client::{Client, ClientConfig, ClientPlayer};
 use client::config::if_type::IfType;
+use client::graphics::Pix32;
 use client::io::{ClientProt, Packet, ServerProt};
 use client::util::JavaRandom;
 
@@ -388,4 +390,96 @@ fn pm_options_shift_below_reboot_line() {
     c.build_minimenu();
     assert!(c.menu_num_entries > 1, "the PM row must offer menu options");
     assert_eq!(c.menu_option[1], "Add ignore @whi@eve");
+}
+
+/// `game_loop` advances `cross_cycle` by 20 per loop and clears
+/// `cross_mode` once it passes 400 (TS 2206-2211).
+#[test]
+fn cross_tick_clears_after_400() {
+    let mut c = client();
+    c.ingame = true;
+    c.cross_mode = 1;
+    c.cross_cycle = 380;
+    c.game_loop();
+    assert_eq!(c.cross_cycle, 400);
+    assert_eq!(c.cross_mode, 0);
+}
+
+/// A successful walk consume re-arms the crosshair at the clicked point
+/// (mode 1, cycle 0) as TS 2317-2322.
+#[test]
+fn walk_consume_sets_cross_mode_1() {
+    let mut c = client();
+    c.ingame = true;
+    c.local_player = Some(ClientPlayer::at(5, 5));
+    c.world.ground_x = 6;
+    c.world.ground_z = 5;
+    c.shell.mouse_click_x = 100;
+    c.shell.mouse_click_y = 80;
+    c.game_loop();
+    assert_eq!(c.cross_mode, 1);
+    assert_eq!(c.cross_cycle, 0);
+    assert_eq!(c.cross_x, 100);
+    assert_eq!(c.cross_y, 80);
+}
+
+/// The click crosshair plots into `area_game` at `(cross_x - 12,
+/// cross_y - 12)` (TS 4840-4843). Real pack only: a missing `media` pack
+/// leaves the sprites `None` and the plot is a no-op.
+#[test]
+fn cross_plot_mode1_into_area_game() {
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("media").is_file() {
+        return;
+    }
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache,
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    c.scene_state = 2; // game_draw_main (and its overlays) run only in-scene
+    c.game_draw(); // prepare_game loads the media sprites
+    let mut s = Pix32::new(16, 16);
+    s.data[0] = 0x123456; // known top-left pixel: verifies the plot origin
+    c.cross[0] = Some(s);
+    c.cross_x = 100;
+    c.cross_y = 80;
+    c.cross_mode = 1;
+    c.cross_cycle = 0;
+    c.game_draw();
+    let game = c.area_game.as_ref().unwrap();
+    assert_eq!(game.pixels[68 * 512 + 88], 0x123456);
+}
+
+/// Mode 2 ops plot `cross[cycle/100 + 4]`; the sprite frame is the
+/// second half of the array (TS 4842).
+#[test]
+fn cross_plot_mode2_uses_second_half() {
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("media").is_file() {
+        return;
+    }
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache,
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    c.scene_state = 2;
+    c.game_draw();
+    let mut s = Pix32::new(16, 16);
+    s.data[0] = 0x654321;
+    c.cross[4] = Some(s); // mode 2, cycle 0 -> index 4
+    c.cross_x = 100;
+    c.cross_y = 80;
+    c.cross_mode = 2;
+    c.cross_cycle = 0;
+    c.game_draw();
+    let game = c.area_game.as_ref().unwrap();
+    assert_eq!(game.pixels[68 * 512 + 88], 0x654321);
 }

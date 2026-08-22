@@ -382,11 +382,16 @@ pub struct Client {
     pub target_mask: i32,
     /// `crossX`/`crossY`/`crossMode`/`crossCycle` (TS 373-376): the
     /// crosshair position for the last op click, set by the `doAction` /
-    /// `interactWithLoc` arms (mode 2) and the minimap click (mode 1).
+    /// `interactWithLoc` arms (mode 2) and the walk consume (mode 1).
     pub cross_x: i32,
     pub cross_y: i32,
     pub cross_mode: i32,
     pub cross_cycle: i32,
+    /// `cross` (TS 1056-1058): the 8 click-crosshair frames from the
+    /// `media` pack, `Pix32.depack('cross', i)`. Mode 1 walks plot
+    /// `[cross_cycle/100]`, mode 2 ops `[cross_cycle/100 + 4]`; a cache
+    /// without the pack leaves the sprites `None` (no-op plot).
+    pub cross: [Option<Pix32>; 8],
     /// Anticheat oplogic counters (Java `Client.java` static fields),
     /// accumulated inside the `doAction` arms and flushed as the
     /// `ANTICHEAT_OPLOGIC*` packets when they pass their thresholds.
@@ -941,6 +946,7 @@ impl Client {
             cross_y: 0,
             cross_mode: 0,
             cross_cycle: 0,
+            cross: [const { None }; 8],
             oplogic1: 0,
             oplogic2: 0,
             oplogic3: 0,
@@ -9427,6 +9433,14 @@ impl Client {
         if !self.draw {
             self.world_update_num = 0;
         }
+        // TS 2206-2211: the click crosshair fades — `cross_cycle` advances
+        // 20 per loop and clears `cross_mode` once it passes 400.
+        if self.cross_mode != 0 {
+            self.cross_cycle += 20;
+            if self.cross_cycle >= 400 {
+                self.cross_mode = 0;
+            }
+        }
         // TS 2214-2226: the OP_HELD outline timeout — `selected_cycle`
         // counts frames and clears `selected_area` at 15 with a redraw.
         if self.selected_area != 0 {
@@ -9461,7 +9475,14 @@ impl Client {
             let ground_z = self.world.ground_z;
             self.world.ground_x = -1;
             if let Some((src_x, src_z)) = src {
-                self.tryMove(src_x, src_z, ground_x, ground_z, true, 0, 0, 0, 0, 0, 0);
+                // TS 2317-2322: a successful walk re-arms the crosshair at
+                // the clicked point (mode 1, cycle 0).
+                if self.tryMove(src_x, src_z, ground_x, ground_z, true, 0, 0, 0, 0, 0, 0) {
+                    self.cross_x = self.shell.mouse_click_x;
+                    self.cross_y = self.shell.mouse_click_y;
+                    self.cross_mode = 1;
+                    self.cross_cycle = 0;
+                }
             }
         }
         self.mouse_loop();

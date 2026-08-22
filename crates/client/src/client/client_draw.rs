@@ -975,6 +975,20 @@ impl Client {
             self.pix3d.set_clipping(surface.width, surface.height);
             // TS 4838: the split private-chat overlay draws first.
             self.draw_private_messages(&mut surface);
+            // TS 4840-4843: the click crosshair plots the fade frame
+            // (mode 1) or the op frame (mode 2) at the click point;
+            // `cross_cycle/100` picks the sprite, missing media is a no-op.
+            if self.cross_mode == 1 {
+                let idx = (self.cross_cycle / 100) as usize;
+                if let Some(s) = self.cross.get(idx).and_then(|o| o.as_ref()) {
+                    s.plot_sprite(&mut surface, self.cross_x - 8 - 4, self.cross_y - 8 - 4);
+                }
+            } else if self.cross_mode == 2 {
+                let idx = (self.cross_cycle / 100) as usize + 4;
+                if let Some(s) = self.cross.get(idx).and_then(|o| o.as_ref()) {
+                    s.plot_sprite(&mut surface, self.cross_x - 8 - 4, self.cross_y - 8 - 4);
+                }
+            }
             if self.main_overlay_id != -1 {
                 self.animate_interface(self.main_overlay_id, self.world_update_num);
                 self.draw_interface(self.main_overlay_id, 0, 0, 0, &mut surface);
@@ -1615,6 +1629,10 @@ impl Client {
             self.backhmid1 = Pix8::depack(&jag, "backhmid1", 0).ok();
             for i in 0..13 {
                 self.sideicons[i] = Pix8::depack(&jag, "sideicons", i as i32).ok();
+            }
+            // TS 1056-1058: the click-crosshair frames are Pix32, not Pix8.
+            for i in 0..8 {
+                self.cross[i] = Pix32::depack(&jag, "cross", i as i32).ok();
             }
             // redstone1..2hv as Client.ts 1068-1093: the flipped copies are
             // fresh depacks of the base sprite, hflip/vflip'd in place.
