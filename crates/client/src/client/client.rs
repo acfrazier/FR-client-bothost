@@ -9826,6 +9826,9 @@ impl Client {
         // `followCamera`, so the orbit camera and minimap follow the walk.
         self.move_players();
         self.move_npcs();
+        // Java 9468 / TS 2202: `timeoutChat` after move, so overhead bubbles
+        // expire (`chatTimer` 150 → 0 then `chatMessage = null`).
+        self.timeout_chat();
         // TS 2346-2353: `followCamera` in the 3D scene — the orbit camera
         // tracks the local player and the arrow keys rotate yaw/pitch —
         // then the cutscene camera when a CAM_* packet has set one, and the
@@ -9888,6 +9891,37 @@ impl Client {
             self.move_entity(false, &mut e);
             if let Some(slot) = self.players.get_mut(index).and_then(|p| p.as_mut()) {
                 slot.entity = e;
+            }
+        }
+    }
+
+    /// `timeoutChat` from Java (`Client.java` 9152-9177): one tick of every
+    /// live overhead bubble. Local player is the `i == -1` slot (Rust's
+    /// `local_player`, not the stale `players[2047]` clone); then tracked
+    /// players and NPCs. `chatTimer == 0` clears `chatMessage`.
+    pub fn timeout_chat(&mut self) {
+        if let Some(player) = self.local_player.as_mut() {
+            Self::timeout_entity_chat(&mut player.entity);
+        }
+        for i in 0..self.player_count as usize {
+            let index = self.player_ids[i] as usize;
+            if let Some(player) = self.players.get_mut(index).and_then(|p| p.as_mut()) {
+                Self::timeout_entity_chat(&mut player.entity);
+            }
+        }
+        for i in 0..self.npc_count as usize {
+            let index = self.npc_ids[i] as usize;
+            if let Some(npc) = self.npc.get_mut(index).and_then(|n| n.as_mut()) {
+                Self::timeout_entity_chat(&mut npc.entity);
+            }
+        }
+    }
+
+    fn timeout_entity_chat(e: &mut ClientEntity) {
+        if e.chat_timer > 0 {
+            e.chat_timer -= 1;
+            if e.chat_timer == 0 {
+                e.chat_message = None;
             }
         }
     }

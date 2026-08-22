@@ -2,7 +2,7 @@
 // and filtered (Task 3). The /tmp cache has no packs, so `Client::new`
 // falls back to `Cache::default()` and never touches the network (the
 // /crc fetch on 127.0.0.1 is refused instantly).
-use client::client::{Client, ClientConfig, ClientPlayer};
+use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer};
 use client::io::{ClientProt, Packet, ServerProt};
 use client::util::JString;
 use client::wordfilter::WordPack;
@@ -193,6 +193,65 @@ fn public_send_without_name_skips_bubble() {
     c.handle_chat_input();
     assert_eq!(c.local_player.as_ref().unwrap().chat_timer, 100, "never stamped");
     assert_eq!(c.chat_public_mode, 3, "mode flip is independent of the name");
+}
+
+/// Java `timeoutChat` (`Client.java` 9152-9177): each game loop decrements
+/// `chatTimer` on the local player, tracked players, and NPCs; at 0 the
+/// overhead `chatMessage` is cleared. Without this, bubbles persist forever.
+#[test]
+fn timeout_chat_expires_local_bubble_on_the_150th_tick() {
+    let mut c = client();
+    let mut player = ClientPlayer::at(1, 1);
+    player.chat_message = Some("Hi".into());
+    player.chat_timer = 150;
+    c.local_player = Some(player);
+    for _ in 0..149 {
+        c.timeout_chat();
+        assert!(c.local_player.as_ref().unwrap().chat_message.is_some());
+    }
+    assert_eq!(c.local_player.as_ref().unwrap().chat_timer, 1);
+    c.timeout_chat();
+    let p = c.local_player.as_ref().unwrap();
+    assert_eq!(p.chat_timer, 0);
+    assert_eq!(p.chat_message, None);
+}
+
+#[test]
+fn timeout_chat_expires_tracked_player_and_npc() {
+    let mut c = client();
+    let mut other = ClientPlayer::at(2, 2);
+    other.chat_message = Some("Yo".into());
+    other.chat_timer = 1;
+    c.players[0] = Some(other);
+    c.player_count = 1;
+    c.player_ids[0] = 0;
+
+    let mut npc = ClientNpc::at(3, 3);
+    npc.chat_message = Some("grr".into());
+    npc.chat_timer = 1;
+    c.npc[5] = Some(npc);
+    c.npc_count = 1;
+    c.npc_ids[0] = 5;
+
+    c.timeout_chat();
+    assert_eq!(c.players[0].as_ref().unwrap().chat_message, None);
+    assert_eq!(c.players[0].as_ref().unwrap().chat_timer, 0);
+    assert_eq!(c.npc[5].as_ref().unwrap().chat_message, None);
+    assert_eq!(c.npc[5].as_ref().unwrap().chat_timer, 0);
+}
+
+#[test]
+fn game_loop_runs_timeout_chat() {
+    let mut c = client();
+    c.ingame = true;
+    let mut player = ClientPlayer::at(1, 1);
+    player.chat_message = Some("Hi".into());
+    player.chat_timer = 150;
+    c.local_player = Some(player);
+    c.game_loop();
+    let p = c.local_player.as_ref().unwrap();
+    assert_eq!(p.chat_timer, 149);
+    assert_eq!(p.chat_message.as_deref(), Some("Hi"));
 }
 
 #[test]
