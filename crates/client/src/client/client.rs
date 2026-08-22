@@ -251,7 +251,8 @@ pub const APPLET_H: i32 = 503;
 
 /// Packet-family generations: monotonic counters the host reads to know
 /// which world slices changed since its last poll. `handle_packet` bumps one
-/// family per applied packet; `REBUILD_NORMAL`/`LOGOUT` (and T2) bump all.
+/// family per applied packet; `REBUILD_NORMAL` and `logout()` (T1/T2/LOGOUT)
+/// bump all.
 #[derive(Default, Clone, Copy)]
 pub struct ClientGens {
     pub npc: u64,
@@ -922,12 +923,34 @@ impl Client {
         // to files for tests without a web server.
         let jag_checksum = Self::get_jag_checksums(&config.host, 80)
             .unwrap_or_else(|| Self::read_jag_checksums(&config.cache_dir));
-        let on_demand = Self::load_on_demand(&config);
-        let midi = midi_backend(&config.cache_dir);
         let (cache, ifaces, error_loading) = match Self::load_cache(&config.cache_dir) {
             Ok((cache, ifaces)) => (cache, ifaces, false),
             Err(()) => (Cache::default(), Vec::new(), true),
         };
+        Self::construct(config, Arc::new(cache), ifaces, error_loading, jag_checksum)
+    }
+
+    /// Host construct: inject a process-wide `Arc<Cache>` and a cloned iface
+    /// template. Skips `load_cache` and the `/crc` probe. `error_loading` is
+    /// false so `mainloop` is not a no-op after a successful inject.
+    pub fn from_shared(
+        config: ClientConfig,
+        cache: Arc<Cache>,
+        ifaces: Vec<Option<IfType>>,
+    ) -> Self {
+        let jag_checksum = Self::read_jag_checksums(&config.cache_dir);
+        Self::construct(config, cache, ifaces, false, jag_checksum)
+    }
+
+    fn construct(
+        config: ClientConfig,
+        cache: Arc<Cache>,
+        ifaces: Vec<Option<IfType>>,
+        error_loading: bool,
+        jag_checksum: [i32; 9],
+    ) -> Self {
+        let on_demand = Self::load_on_demand(&config);
+        let midi = midi_backend(&config.cache_dir);
         let jagfx = Self::unpack_jagfx(&config.cache_dir, config.lowmem);
         let groundh: LevelHeightmaps =
             vec![
@@ -939,7 +962,7 @@ impl Client {
             #[cfg(feature = "window")]
             present: None,
             config,
-            cache: Arc::new(cache),
+            cache,
             ifaces,
             gens: ClientGens::default(),
             login_uid: login_uid(),
@@ -3406,19 +3429,17 @@ impl Client {
         }));
         if result.is_err() {
             eprintln!("T2 - {ptype},{ptype1},{ptype2}");
+            // `logout()` bumps every family (spec: REBUILD/logout → all).
             self.logout();
-            // The frame aborted mid-apply, so every world slice may be
-            // stale; the host re-reads all of them.
-            self.bump_all_gens();
         } else {
             self.bump_gens(ptype);
         }
     }
 
     /// Bump the generation counter of `ptype`'s family. `REBUILD_NORMAL`
-    /// and `LOGOUT` invalidate every family (new scene / full reset);
-    /// everything else bumps exactly one. Unknown opcodes bump nothing
-    /// (they never reach here — the T1 default logs out without one).
+    /// invalidates every family (new scene). `LOGOUT` and unknown T1
+    /// opcodes reach here after `dispatch` already called `logout()`, which
+    /// bumps all; they must not double-bump.
     pub fn bump_gens(&mut self, ptype: i32) {
         match ptype {
             ServerProt::NPC_INFO => self.gens.npc += 1,
@@ -3446,13 +3467,13 @@ impl Client {
             | ServerProt::OBJ_COUNT
             | ServerProt::MAP_ANIM
             | ServerProt::OBJ_ADD => self.gens.scene += 1,
-            ServerProt::REBUILD_NORMAL | ServerProt::LOGOUT => self.bump_all_gens(),
+            ServerProt::REBUILD_NORMAL => self.bump_all_gens(),
             _ => {}
         }
     }
 
     /// Bump every family generation (`REBUILD_NORMAL` scene rebuilds and
-    /// `LOGOUT`/T2 resets make every slice stale).
+    /// `logout()` / T2 resets make every slice stale).
     fn bump_all_gens(&mut self) {
         self.gens.npc += 1;
         self.gens.player += 1;
@@ -7708,6 +7729,9 @@ impl Client {
         self.image_title2 = None;
         self.redraw_frame = true;
         self.draw_area.fill(0);
+        // Spec: REBUILD/logout → all. T1, tcp_in T2, in-band PLAYER/NPC T2,
+        // and lost_con all wipe through here; the host snapshot follows gens.
+        self.bump_all_gens();
     }
 
     /// `lostCon` from Java (`Client.java` 6147): in-game connection loss. A
@@ -10675,16 +10699,18 @@ fn grow_write(table: &mut Vec<i32>, id: i32, value: i32) {
 }
 
 /// Per-client login uid for the 274 handshake RSA block (Java 274
-/// `loginUid`): `(SystemTime::now(), &a as *const _)` mixed into a random
-/// i32, retried if the mix lands on 0 or the old shared `1337` constant.
+/// `loginUid`): clock nanos XOR an `AtomicU64` (like `login_random`), retried
+/// if the mix lands on 0 or the old shared `1337` constant. The counter
+/// advances on every attempt so concurrent `Client::new` cannot collide on
+/// the same tick and a 0/1337 retry cannot livelock.
 fn login_uid() -> i32 {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     loop {
-        let probe = 0u8;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0);
-        let mut x = now ^ ((&probe as *const u8) as u64);
+        let mut x = now ^ COUNTER.fetch_add(0x9e37_79b9_7f4a_7c15, Ordering::Relaxed);
         x ^= x >> 16;
         x = x.wrapping_mul(0x7feb_352d);
         x ^= x >> 15;

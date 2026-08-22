@@ -29,7 +29,7 @@ pub use varp_type::VarpType;
 
 use crate::io::JagFile;
 
-/// All config tables for one `Client`, replacing the TS class statics.
+/// Shared immutable config tables (`Arc<Cache>`), replacing the TS class statics.
 /// `list(id)` from client-ts becomes `cache.obj(id)` / `npc` / `loc` / ...
 #[derive(Default)]
 pub struct Cache {

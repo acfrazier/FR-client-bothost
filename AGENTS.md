@@ -6,7 +6,7 @@ Read this file once. Do **not** search the disk for another `AGENTS.md`.
 
 **Do not:** add a bot API; add a dummy tick-end opcode; put bot crates here; invent packets.
 
-**Already landed:** `Client.cache: Arc<Cache>` (no live ifaces); `Client.ifaces`; `Client.gens` / `bump_gens`; per-client `login_uid` (not `1337`). Customizations: `docs/client-customizations.md`.
+**Already landed:** `Client.cache: Arc<Cache>` (no live ifaces); `Client.ifaces`; `Client.gens` / `bump_gens`; `logout()` bumps all gens; per-client `login_uid` (not `1337`); `Client::from_shared`. Customizations: `docs/client-customizations.md`.
 
 **Do:** TDD as the task brief. `cargo test -p client --offline`. One task only. Commit on `feat/274-client-port`. Write the report file the orch named.
 

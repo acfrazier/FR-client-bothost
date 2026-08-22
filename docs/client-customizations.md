@@ -16,15 +16,23 @@ The per-client mutable state lives in `Client.ifaces`. (Task 1)
 bumps a `u64` counter after every applied packet via
 `Client.bump_gens(ServerProt)`. The host polls the counters to tell which world
 slices changed since its last read. `handle_packet` bumps after every
-successful dispatch; a panicking frame (T2 + logout) bumps every family.
+successful dispatch; `logout()` (T1, T2, `LOGOUT`, `lost_con`) bumps every
+family so wipe paths do not leave a live snapshot.
 (Task 2)
 
 ## Per-client login uid
 
-`Client.login_uid: i32` is random per `Client` (time + address mix, never `0`
+`Client.login_uid: i32` is random per `Client` (clock XOR `AtomicU64`, never `0`
 or the old shared `1337`) and is written into the 274 handshake RSA block at
 `login()`. The host may overwrite it (e.g. from a profile uid) before `login`.
 (Task 3)
+
+## Shared construct
+
+`Client::from_shared(config, Arc<Cache>, ifaces)` skips `load_cache` and the
+`/crc` probe so the host can unpack once per `cache_dir`. `Client::new` still
+unpacks for tests/`client-play`. `error_loading` is false after a successful
+`from_shared`.
 
 ## No bot API
 
