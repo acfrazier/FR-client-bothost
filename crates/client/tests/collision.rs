@@ -100,6 +100,33 @@ fn walk_route_avoids_blocked_tile() {
 }
 
 #[test]
+fn scenery_blocked_tile_not_arrived_at() {
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    c.out.random = Some(client::io::Isaac::new(&[1, 2, 3, 4]));
+    // a blockwalk scenery loc stamps WALK_SCENERY on its tile (addLoc 1x1)
+    c.collision[0].add_loc(10, 10, 1, 1, LocAngle::WEST, false);
+    assert_ne!(c.collision[0].flags[10][10] & CollisionFlag::WALK_SCENERY, 0);
+
+    // plain walk click onto the loc tile from the adjacent open tile: no route
+    assert!(!c.tryMove(9, 10, 10, 10, false, 0, 0, 0, 0, 0, 0));
+
+    // walking to the open tile next to the loc arrives there, not on the loc
+    assert!(c.tryMove(8, 10, 9, 10, false, 0, 0, 0, 0, 0, 0));
+    assert_eq!((c.route_x[0], c.route_z[0]), (9, 10));
+
+    // nearest-tile fallback (minimap / loc-op click) must not hop onto the loc
+    assert!(c.tryMove(9, 10, 10, 10, true, 0, 0, 0, 0, 0, 0));
+    assert_eq!((c.route_x[0], c.route_z[0]), (9, 10));
+}
+
+#[test]
 fn client_player_at_and_route_arrays() {
     let mut p = ClientPlayer::at(3, 4);
     assert_eq!(p.route_x[0], 3);
