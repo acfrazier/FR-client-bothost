@@ -8,6 +8,7 @@
 // surface (TS binds a target with `Pix2D.setPixels`; the TS Pix3D statics
 // `pixels`/`width`/`clipMaxY`/`sizeX` become the surface's fields).
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
 use super::pix2d::Pix2D;
@@ -24,7 +25,36 @@ struct TrigTables {
 }
 
 static TRIG: OnceLock<TrigTables> = OnceLock::new();
-static COLOUR_TABLE: OnceLock<Box<[i32; 65536]>> = OnceLock::new();
+/// One table per options-panel brightness (0.9/0.8/0.7/0.6). Java rebuilds
+/// the table on each slider click; a single OnceLock made the slider a no-op.
+static COLOUR_TABLES: [OnceLock<Box<[i32; 65536]>>; 4] = [
+    OnceLock::new(),
+    OnceLock::new(),
+    OnceLock::new(),
+    OnceLock::new(),
+];
+static COLOUR_TABLE_SLOT: AtomicUsize = AtomicUsize::new(1);
+
+fn brightness_slot(brightness: f64) -> usize {
+    if (brightness - 0.9).abs() < 0.05 {
+        0
+    } else if (brightness - 0.8).abs() < 0.05 {
+        1
+    } else if (brightness - 0.7).abs() < 0.05 {
+        2
+    } else {
+        3
+    }
+}
+
+fn slot_brightness(slot: usize) -> f64 {
+    match slot {
+        0 => 0.9,
+        1 => 0.8,
+        2 => 0.7,
+        _ => 0.6,
+    }
+}
 
 fn trig() -> &'static TrigTables {
     TRIG.get_or_init(|| {
@@ -80,17 +110,21 @@ impl Pix3D {
     /// machinery (~1.9 MB of stack in debug), leaving `Client::new` within
     /// ~16 KB of the 2 MB test-thread stack.
     pub fn init_colour_table(brightness: f64) {
-        let _ = COLOUR_TABLE.get_or_init(|| {
+        let slot = brightness_slot(brightness);
+        COLOUR_TABLES[slot].get_or_init(|| {
             let mut table: Box<[i32; 65536]> =
                 vec![0i32; 65536].into_boxed_slice().try_into().unwrap();
-            build_colour_table(&mut table[..], brightness);
+            build_colour_table(&mut table[..], slot_brightness(slot));
             table
         });
+        COLOUR_TABLE_SLOT.store(slot, Ordering::Relaxed);
     }
 
     pub fn colour_table() -> &'static [i32; 65536] {
-        COLOUR_TABLE
+        let slot = COLOUR_TABLE_SLOT.load(Ordering::Relaxed);
+        COLOUR_TABLES[slot]
             .get()
+            .or_else(|| COLOUR_TABLES[1].get())
             .expect("Pix3D::init_colour_table must be called before colour_table()")
             .as_ref()
     }

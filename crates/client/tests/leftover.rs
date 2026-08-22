@@ -7,7 +7,7 @@
 use client::client::{Client, ClientConfig, ClientPlayer};
 use client::config::idk_type::IdkType;
 use client::config::if_type::IfType;
-use client::graphics::Pix32;
+use client::graphics::{Pix3D, Pix32};
 use client::io::{ClientProt, Packet, ServerProt};
 use client::util::JavaRandom;
 
@@ -782,4 +782,31 @@ fn scene_loading_splash_keeps_last_frame() {
         0x00ff00,
         "splash must not cls the frozen viewport"
     );
+}
+
+/// Options-panel varp clientcodes (TS 10608-10684). Brightness rebuilds
+/// the HSL table (OnceLock-first-wins was why the slider did nothing).
+#[test]
+fn clientcode_1_rebuilds_colour_table() {
+    Pix3D::init_colour_table(0.8);
+    let mid = Pix3D::colour_table()[200 * 128 + 64];
+    Pix3D::init_colour_table(0.6);
+    let dark = Pix3D::colour_table()[200 * 128 + 64];
+    assert_ne!(mid, dark, "darker brightness must change the HSL table");
+}
+
+#[test]
+fn clientcode_options_panel_fields() {
+    let mut c = client();
+    c.apply_clientcode(5, 1);
+    assert_eq!(c.one_mouse_button, 1);
+    c.apply_clientcode(6, 1);
+    assert_eq!(c.chat_effects, 1);
+    c.apply_clientcode(9, 1);
+    assert_eq!(c.bank_arrange_mode, 1);
+    c.apply_clientcode(4, 4);
+    assert!(!c.wave_enabled);
+    c.apply_clientcode(4, 0);
+    assert!(c.wave_enabled);
+    assert_eq!(c.wave_volume, 0);
 }

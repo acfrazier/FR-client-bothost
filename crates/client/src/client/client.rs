@@ -27,7 +27,7 @@ use crate::client::mini_menu_action::MiniMenuAction;
 use crate::client::skill::Skill;
 use crate::config::if_type::{ButtonType, ComponentType, IfType};
 use crate::config::seq_type::{RESTART_RESET, RESTART_RESETLOOP};
-use crate::config::Cache;
+use crate::config::{Cache, ObjType};
 use crate::dash3d::client_player::{recol1d, recol2d};
 use crate::dash3d::world::LevelHeightmaps;
 use crate::dash3d::{
@@ -362,6 +362,10 @@ pub struct Client {
 
     /// `SYNTH_SOUND` queue (`Client.ts` `waveEnabled`/`waveIds`/...).
     pub wave_enabled: bool,
+    /// `waveVolume` from client-ts (clientcode 4): 0/-400/-800/-1200; 4 mutes.
+    pub wave_volume: i32,
+    /// `chatEffects` from client-ts (clientcode 6).
+    pub chat_effects: i32,
     pub wave_count: i32,
     pub wave_ids: Vec<i32>,
     pub wave_loops: Vec<i32>,
@@ -948,6 +952,8 @@ impl Client {
             waves: Arc::new(Mutex::new(Vec::new())),
 
             wave_enabled: true,
+            wave_volume: 0,
+            chat_effects: 0,
             wave_count: 0,
             wave_ids: vec![0; 50],
             wave_loops: vec![0; 50],
@@ -10171,54 +10177,105 @@ impl Client {
         self.apply_clientcode(varp.clientcode, value);
     }
 
-    /// The clientcode switch from `clientVar` (Java `Client.java` 3032).
-    /// clientcode 8 sets the split private-chat overlay (TS 10679-10681);
-    /// clientcode 3 is the midi volume ladder: 0 → +0 dB, 1 → -400, 2 → -800,
-    /// 3 → -1200, 4 → mute. Mutating the active state re-requests the next
-    /// song (unmute) or stops the midi (mute), guarded by `lowmem` as Java.
+    /// The clientcode switch from `clientVar` (Java `Client.java` 3032 /
+    /// TS 10608-10684). 1 brightness, 3 midi, 4 wave, 5 one-mouse, 6 chat
+    /// effects, 8 split-private, 9 bank-arrange.
     pub fn apply_clientcode(&mut self, clientcode: i32, value: i32) {
+        if clientcode == 0 {
+            return;
+        }
+        if clientcode == 1 {
+            let brightness = match value {
+                1 => 0.9,
+                2 => 0.8,
+                3 => 0.7,
+                4 => 0.6,
+                _ => return,
+            };
+            Pix3D::init_colour_table(brightness);
+            self.pix3d.init_texture_palettes(brightness);
+            ObjType::clear_sprite_cache();
+            self.redraw_frame = true;
+            return;
+        }
+        if clientcode == 3 {
+            let last_midi_active = self.midi_active;
+            match value {
+                0 => {
+                    self.set_midi_volume(self.midi_active, 0);
+                    self.midi_active = true;
+                }
+                1 => {
+                    self.set_midi_volume(self.midi_active, -400);
+                    self.midi_active = true;
+                }
+                2 => {
+                    self.set_midi_volume(self.midi_active, -800);
+                    self.midi_active = true;
+                }
+                3 => {
+                    self.set_midi_volume(self.midi_active, -1200);
+                    self.midi_active = true;
+                }
+                4 => {
+                    self.midi_active = false;
+                }
+                _ => {}
+            }
+            if self.midi_active != last_midi_active && !self.config.lowmem {
+                if self.midi_active {
+                    self.midi_song = self.next_midi_song;
+                    self.midi_fading = true;
+                    if let Some(od) = &mut self.on_demand {
+                        od.request(2, self.midi_song);
+                    }
+                } else {
+                    self.stop_midi();
+                }
+                self.next_music_delay = 0;
+            }
+            return;
+        }
+        if clientcode == 4 {
+            match value {
+                0 => {
+                    self.wave_volume = 0;
+                    self.wave_enabled = true;
+                }
+                1 => {
+                    self.wave_volume = -400;
+                    self.wave_enabled = true;
+                }
+                2 => {
+                    self.wave_volume = -800;
+                    self.wave_enabled = true;
+                }
+                3 => {
+                    self.wave_volume = -1200;
+                    self.wave_enabled = true;
+                }
+                4 => {
+                    self.wave_enabled = false;
+                }
+                _ => {}
+            }
+            return;
+        }
+        if clientcode == 5 {
+            self.one_mouse_button = value;
+            return;
+        }
+        if clientcode == 6 {
+            self.chat_effects = value;
+            return;
+        }
         if clientcode == 8 {
             self.split_private_chat = value;
             self.redraw_chat = true;
             return;
         }
-        if clientcode != 3 {
-            return;
-        }
-        let last_midi_active = self.midi_active;
-        match value {
-            0 => {
-                self.set_midi_volume(self.midi_active, 0);
-                self.midi_active = true;
-            }
-            1 => {
-                self.set_midi_volume(self.midi_active, -400);
-                self.midi_active = true;
-            }
-            2 => {
-                self.set_midi_volume(self.midi_active, -800);
-                self.midi_active = true;
-            }
-            3 => {
-                self.set_midi_volume(self.midi_active, -1200);
-                self.midi_active = true;
-            }
-            4 => {
-                self.midi_active = false;
-            }
-            _ => {}
-        }
-        if self.midi_active != last_midi_active && !self.config.lowmem {
-            if self.midi_active {
-                self.midi_song = self.next_midi_song;
-                self.midi_fading = true;
-                if let Some(od) = &mut self.on_demand {
-                    od.request(2, self.midi_song);
-                }
-            } else {
-                self.stop_midi();
-            }
-            self.next_music_delay = 0;
+        if clientcode == 9 {
+            self.bank_arrange_mode = value;
         }
     }
 

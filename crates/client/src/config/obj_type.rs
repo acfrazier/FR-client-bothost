@@ -113,6 +113,11 @@ impl Default for ObjType {
 }
 
 impl ObjType {
+    /// Java `ObjType.spriteCache.clear()` from `clientVar` brightness.
+    pub fn clear_sprite_cache() {
+        sprite_cache().lock().unwrap().clear();
+    }
+
     /// Eager form of the TS `init` + `list(id)`: `obj.idx` offsets the
     /// entries concatenated in `obj.dat` (both files lead with a g2 count,
     /// so entry `id` starts at `2 + sum(idx[0..id])`). The TS `list` also
