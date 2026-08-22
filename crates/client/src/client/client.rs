@@ -8739,16 +8739,12 @@ impl Client {
         }
     }
 
-    /// `sceneLoadingSplash` draws from client-ts (6832-6835, 5078-5081):
-    /// the "Loading - please wait." text centred at (256, 150) on
-    /// `area_game` (black at (257, 151) behind the white), then the (4, 4)
-    /// blit into `draw_area`. `area_game` is cls'd black first — with
-    /// fonts missing (`p12` is `None` without a title jag) the splash is
-    /// just the black surface; the blit is gated on the `draw` CPU-save
-    /// switch like the rest of the render.
+    /// Java `REBUILD_NORMAL` / `checkMinimap` (Client.java / TS 6832-6835):
+    /// bind `area_game` without cls so the last 3D frame stays frozen, plot
+    /// "Loading - please wait." on top, blit (4, 4). Missing `p12` skips
+    /// the string (the frozen pixels still blit). Gated on `draw`.
     fn scene_loading_splash(&mut self) {
         if let Some(ag) = self.area_game.as_mut() {
-            ag.fill(Colour::BLACK);
             let mut surface = Pix2D::with_pixels(&mut ag.pixels, ag.width, ag.height);
             if let Some(p12) = self.p12.as_ref() {
                 p12.centre_string(&mut surface, Some("Loading - please wait."), 257, 151, Colour::BLACK);

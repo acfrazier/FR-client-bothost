@@ -763,3 +763,23 @@ fn cold_login_reset_empty_table_leaves_parts_minus_one() {
     assert!(c.idk_design_redraw);
     assert_eq!(c.idk_design_part, [-1; 7]);
 }
+
+/// Java `REBUILD_NORMAL` binds `areaGame` without cls, then plots
+/// "Loading - please wait." on the frozen last 3D frame. Filling black
+/// is the live "viewport goes completely black between chunks" bug.
+#[test]
+fn scene_loading_splash_keeps_last_frame() {
+    let mut c = client();
+    c.ingame = true;
+    c.draw = true;
+    c.scene_state = 1;
+    c.game_draw();
+    let game = c.area_game.as_mut().expect("prepare_game allocates area_game");
+    game.pixels[100] = 0x00ff00;
+    c.game_loop();
+    assert_eq!(
+        c.area_game.as_ref().unwrap().pixels[100],
+        0x00ff00,
+        "splash must not cls the frozen viewport"
+    );
+}
