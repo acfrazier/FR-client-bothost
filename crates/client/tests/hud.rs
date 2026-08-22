@@ -4,6 +4,8 @@
 // into `area_side`. The /tmp cache has no packs, so `Client::new` falls back
 // to `Cache::default()` and never touches the network (the /crc fetch on
 // 127.0.0.1 is refused instantly).
+use std::sync::Arc;
+
 use client::client::{Client, ClientConfig, ClientPlayer};
 use client::config::if_type::{ButtonType, ComponentType, IfType};
 use client::config::{ObjType, SeqType, VarpType};
@@ -250,9 +252,9 @@ fn draw_interface_text_writes_pixels() {
         font: 0, // p11
         ..IfType::default()
     };
-    c.cache.ifaces.resize(3, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(text);
+    c.ifaces.resize(3, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(text);
 
     let mut map = PixMap::new(100, 50);
     let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
@@ -277,8 +279,7 @@ fn iftype_keeps_graphic_name() {
     c.ingame = true;
     c.game_draw();
     assert!(
-        c.cache
-            .ifaces
+        c.ifaces
             .iter()
             .flatten()
             .any(|i| i.r#type == ComponentType::TYPE_GRAPHIC && !i.graphic_name.is_empty()),
@@ -320,9 +321,9 @@ fn draw_graphic_writes_pixels() {
         graphic_name: "miscgraphics,0".into(),
         ..IfType::default()
     };
-    c.cache.ifaces.resize(3, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(graphic);
+    c.ifaces.resize(3, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(graphic);
 
     let mut map = PixMap::new(190, 261);
     let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
@@ -369,9 +370,9 @@ fn draw_side_text_component_writes_pixels() {
         colour: 0xffffff,
         ..IfType::default()
     };
-    c.cache.ifaces.resize(3, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(text);
+    c.ifaces.resize(3, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(text);
     c.side_icon[3] = 1;
     c.redraw_side = true;
     c.game_draw();
@@ -767,9 +768,9 @@ fn draw_text(c: &mut Client, text: &IfType) -> PixMap {
         child_y: Some(vec![0]),
         ..IfType::default()
     };
-    c.cache.ifaces.resize(3, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(text.clone());
+    c.ifaces.resize(3, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(text.clone());
     let mut map = PixMap::new(100, 50);
     let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
     c.draw_interface(1, 0, 0, 0, &mut surface);
@@ -878,10 +879,10 @@ fn bind_side(c: &mut Client, root: i32, components: Vec<IfType>) {
     c.side_icon[3] = root;
     c.active_icon = 3;
     let max = components.iter().map(|com| com.id).max().unwrap_or(0) as usize;
-    c.cache.ifaces.resize(max + 1, None);
+    c.ifaces.resize(max + 1, None);
     for com in components {
         let id = com.id as usize;
-        c.cache.ifaces[id] = Some(com);
+        c.ifaces[id] = Some(com);
     }
 }
 
@@ -1026,7 +1027,7 @@ fn side_click_toggle_applies_varp_clientcode() {
     let mut c = client();
     // varp 0 carries the music clientcode (3): flipping the toggle must
     // change the volume through clientVar, not just var/redraw_side
-    c.cache.varps = vec![VarpType { clientcode: 3 }];
+    Arc::get_mut(&mut c.cache).unwrap().varps = vec![VarpType { clientcode: 3 }];
     c.var = vec![1];
     c.midi_volume = -800;
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
@@ -1192,7 +1193,6 @@ fn side_click_real_logout_text_sends_if_button() {
     // the "Click here to logout" control: a BUTTON_OK text child of the
     // logout interface's root layer (id/offset come from the real pack)
     let Some(logout) = c
-        .cache
         .ifaces
         .iter()
         .flatten()
@@ -1206,7 +1206,6 @@ fn side_click_real_logout_text_sends_if_button() {
     let (mut click_x, mut click_y) = (0, 0);
     let mut placed = false;
     if let Some(layer) = c
-        .cache
         .ifaces
         .get(layer_id as usize)
         .and_then(|o| o.as_ref())
@@ -1290,11 +1289,11 @@ fn do_scrollbar_up_arrow_decreases_pos() {
     com.height = 77;
     com.scroll_pos = 40;
     com.width = 100;
-    c.cache.ifaces.resize(1, None);
-    c.cache.ifaces[0] = Some(com);
+    c.ifaces.resize(1, None);
+    c.ifaces[0] = Some(com);
     // x,y inside the top 16×16 at left=463 top=0 → pass x=463 y=0
     c.do_scrollbar(463, 0, 200, 77, true, 463, 0, 0);
-    assert_eq!(c.cache.ifaces[0].as_ref().unwrap().scroll_pos, 36); // - scroll_cycle*4
+    assert_eq!(c.ifaces[0].as_ref().unwrap().scroll_pos, 36); // - scroll_cycle*4
     assert!(c.redraw_side);
 }
 
@@ -1359,9 +1358,9 @@ fn draw_interface_inv_text_writes_obj_name() {
     inv.link_obj_type = Some(vec![1]); // obj id 0 + 1
     inv.link_obj_number = Some(vec![1]);
     inv.colour = 0xffffff;
-    c.cache.ifaces.resize(3, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(inv);
+    c.ifaces.resize(3, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(inv);
     if c.cache.objs.is_empty() {
         return;
     }
@@ -1393,9 +1392,9 @@ fn draw_chat_uses_chat_modal_instead_of_lines() {
     rect.width = 40;
     rect.height = 10;
     rect.colour = 0x00ff00;
-    c.cache.ifaces.resize(3, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(rect);
+    c.ifaces.resize(3, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(rect);
     c.redraw_chat = true;
     c.game_draw();
     let chat = c.area_chat.as_ref().expect("prepare_game allocates area_chat");
@@ -1449,9 +1448,9 @@ fn draw_chat_modal_clears_stale_chat_lines() {
     rect.width = 40;
     rect.height = 10;
     rect.colour = 0x00ff00;
-    c.cache.ifaces.resize(3, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(rect);
+    c.ifaces.resize(3, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(rect);
     c.redraw_chat = true;
     c.game_draw();
     let chat = c.area_chat.as_ref().unwrap();
@@ -1486,9 +1485,9 @@ fn main_modal_click_sends_if_button() {
     btn.button_text = "Continue".into();
     btn.width = 80;
     btn.height = 20;
-    c.cache.ifaces.resize(3, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(btn);
+    c.ifaces.resize(3, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(btn);
     // the menu path: build_minimenu pushes the button's IF_BUTTON option,
     // mouse_loop fires the last entry (build_minimenu needs the live
     // pointer at the click position)
@@ -1532,17 +1531,17 @@ fn animate_interface_advances_model_frame() {
     model.model_anim = 0;
     model.anim_frame = 0;
     model.anim_cycle = 0;
-    c.cache.ifaces.resize(3, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(model);
-    c.cache.seqs.resize(1, SeqType::default());
-    c.cache.seqs[0].num_frames = 2;
-    c.cache.seqs[0].frames = Some(vec![0, 0]);
-    c.cache.seqs[0].iframes = Some(vec![-1, -1]);
-    c.cache.seqs[0].delay = Some(vec![1, 1]);
-    c.cache.seqs[0].loops = 2;
+    c.ifaces.resize(3, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(model);
+    Arc::get_mut(&mut c.cache).unwrap().seqs.resize(1, SeqType::default());
+    Arc::get_mut(&mut c.cache).unwrap().seqs[0].num_frames = 2;
+    Arc::get_mut(&mut c.cache).unwrap().seqs[0].frames = Some(vec![0, 0]);
+    Arc::get_mut(&mut c.cache).unwrap().seqs[0].iframes = Some(vec![-1, -1]);
+    Arc::get_mut(&mut c.cache).unwrap().seqs[0].delay = Some(vec![1, 1]);
+    Arc::get_mut(&mut c.cache).unwrap().seqs[0].loops = 2;
     assert!(c.animate_interface(1, 2));
-    assert_eq!(c.cache.ifaces[2].as_ref().unwrap().anim_frame, 1);
+    assert_eq!(c.ifaces[2].as_ref().unwrap().anim_frame, 1);
 }
 
 #[test]
@@ -1559,13 +1558,13 @@ fn if_anim_reset_zeros_nested_layer_child() {
     model.r#type = ComponentType::TYPE_MODEL;
     model.anim_frame = 4;
     model.anim_cycle = 9;
-    c.cache.ifaces.resize(4, None);
-    c.cache.ifaces[1] = Some(root);
-    c.cache.ifaces[2] = Some(inner);
-    c.cache.ifaces[3] = Some(model);
+    c.ifaces.resize(4, None);
+    c.ifaces[1] = Some(root);
+    c.ifaces[2] = Some(inner);
+    c.ifaces[3] = Some(model);
     c.if_anim_reset(1);
-    assert_eq!(c.cache.ifaces[3].as_ref().unwrap().anim_frame, 0);
-    assert_eq!(c.cache.ifaces[3].as_ref().unwrap().anim_cycle, 0);
+    assert_eq!(c.ifaces[3].as_ref().unwrap().anim_frame, 0);
+    assert_eq!(c.ifaces[3].as_ref().unwrap().anim_cycle, 0);
 }
 
 #[test]
@@ -1589,25 +1588,25 @@ fn game_draw_redraws_side_and_chat_when_modal_anims() {
     let mut chat_model = IfType::default();
     chat_model.r#type = ComponentType::TYPE_MODEL;
     chat_model.model_anim = 0;
-    c.cache.ifaces.resize(5, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(model);
-    c.cache.ifaces[3] = Some(chat_layer);
-    c.cache.ifaces[4] = Some(chat_model);
-    c.cache.seqs.resize(1, SeqType::default());
-    c.cache.seqs[0].num_frames = 2;
-    c.cache.seqs[0].frames = Some(vec![0, 0]);
-    c.cache.seqs[0].iframes = Some(vec![-1, -1]);
-    c.cache.seqs[0].delay = Some(vec![1, 1]);
-    c.cache.seqs[0].loops = 2;
+    c.ifaces.resize(5, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(model);
+    c.ifaces[3] = Some(chat_layer);
+    c.ifaces[4] = Some(chat_model);
+    Arc::get_mut(&mut c.cache).unwrap().seqs.resize(1, SeqType::default());
+    Arc::get_mut(&mut c.cache).unwrap().seqs[0].num_frames = 2;
+    Arc::get_mut(&mut c.cache).unwrap().seqs[0].frames = Some(vec![0, 0]);
+    Arc::get_mut(&mut c.cache).unwrap().seqs[0].iframes = Some(vec![-1, -1]);
+    Arc::get_mut(&mut c.cache).unwrap().seqs[0].delay = Some(vec![1, 1]);
+    Arc::get_mut(&mut c.cache).unwrap().seqs[0].loops = 2;
     c.side_modal_id = 1;
     c.chat_modal_id = 3;
     c.world_update_num = 2;
     c.redraw_side = false;
     c.redraw_chat = false;
     c.game_draw();
-    assert_eq!(c.cache.ifaces[2].as_ref().unwrap().anim_frame, 1);
-    assert_eq!(c.cache.ifaces[4].as_ref().unwrap().anim_frame, 1);
+    assert_eq!(c.ifaces[2].as_ref().unwrap().anim_frame, 1);
+    assert_eq!(c.ifaces[4].as_ref().unwrap().anim_frame, 1);
 }
 
 #[test]
@@ -1687,9 +1686,9 @@ fn update_if_pointer_sets_over_side_and_redraws() {
     child.height = 20;
     child.colour_over = 0xff0000;
     child.over_layer_id = -1;
-    c.cache.ifaces.resize(3, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(child);
+    c.ifaces.resize(3, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(child);
     c.shell.mouse_x = 553 + 5;
     c.shell.mouse_y = 205 + 5;
     c.update_if_pointer();
@@ -1716,9 +1715,9 @@ fn hidden_layer_draws_when_hovered() {
     rect.width = 20;
     rect.height = 20;
     rect.colour = 0x112233;
-    c.cache.ifaces.resize(3, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(rect);
+    c.ifaces.resize(3, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(rect);
     let mut pixels = vec![0i32; 20 * 20];
     let mut surface = Pix2D::with_pixels(&mut pixels, 20, 20);
     c.draw_interface(1, 0, 0, 0, &mut surface);
@@ -1736,9 +1735,9 @@ fn update_if_pointer_sets_over_main() {
     child.width = 200;
     child.height = 200;
     child.colour_over = 0xff0000;
-    c.cache.ifaces.resize(3, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(child);
+    c.ifaces.resize(3, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(child);
     c.shell.mouse_x = 100;
     c.shell.mouse_y = 100;
     c.update_if_pointer();
@@ -1756,9 +1755,9 @@ fn update_if_pointer_sets_over_chat_and_redraws_chat() {
     child.width = 190;
     child.height = 96;
     child.colour_over = 0xff0000;
-    c.cache.ifaces.resize(3, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(child);
+    c.ifaces.resize(3, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(child);
     c.shell.mouse_x = 200;
     c.shell.mouse_y = 400;
     c.update_if_pointer();
@@ -1790,9 +1789,9 @@ fn hovered_rect_uses_colour_over() {
     rect.height = 20;
     rect.colour = 0x112233;
     rect.colour_over = 0xff0000;
-    c.cache.ifaces.resize(3, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(rect);
+    c.ifaces.resize(3, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(rect);
 
     let mut plain = vec![0i32; 20 * 20];
     let mut plain_surface = Pix2D::with_pixels(&mut plain, 20, 20);
@@ -1826,17 +1825,17 @@ fn hover_walk_steps_scrollable_layer_scrollbar() {
     button.r#type = ComponentType::TYPE_RECT;
     button.width = 100;
     button.height = 20;
-    c.cache.ifaces.resize(4, None);
-    c.cache.ifaces[1] = Some(root);
-    c.cache.ifaces[2] = Some(scroller);
-    c.cache.ifaces[3] = Some(button);
+    c.ifaces.resize(4, None);
+    c.ifaces[1] = Some(root);
+    c.ifaces[2] = Some(scroller);
+    c.ifaces[3] = Some(button);
     // the scroller's scrollbar sits at left = 553 + 100 = 653, top =
     // 205 + 30 = 235; its down arrow is x 653..669, y 319..335.
     c.scroll_cycle = 1;
     c.shell.mouse_x = 660;
     c.shell.mouse_y = 327;
     c.update_if_pointer();
-    assert_eq!(c.cache.ifaces[2].as_ref().unwrap().scroll_pos, 4); // + scroll_cycle*4
+    assert_eq!(c.ifaces[2].as_ref().unwrap().scroll_pos, 4); // + scroll_cycle*4
     assert!(c.redraw_side);
 }
 
@@ -1852,9 +1851,9 @@ fn type_inv_hover_sets_hovered_slot_on_empty_slot() {
     inv.height = 1; // one row
     inv.margin_x = 0;
     inv.margin_y = 0;
-    c.cache.ifaces.resize(3, None);
-    c.cache.ifaces[1] = Some(root);
-    c.cache.ifaces[2] = Some(inv);
+    c.ifaces.resize(3, None);
+    c.ifaces[1] = Some(root);
+    c.ifaces[2] = Some(inv);
     c.shell.mouse_x = 553 + 5;
     c.shell.mouse_y = 205 + 5;
     c.update_if_pointer();
@@ -1980,15 +1979,15 @@ fn obj_drag_release_sends_inv_buttond() {
         link_obj_number: Some(vec![1, 0]),
         ..IfType::default()
     };
-    c.cache.ifaces.resize(3, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(inv);
+    c.ifaces.resize(3, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(inv);
     // the slot holds obj id 5, so `build_minimenu` can name it for the
     // Examine entry (the drag-start target)
     if c.cache.objs.len() < 5 {
-        c.cache.objs.resize(5, ObjType::default());
+        Arc::get_mut(&mut c.cache).unwrap().objs.resize(5, ObjType::default());
     }
-    c.cache.objs[4].name = "Rune".into();
+    Arc::get_mut(&mut c.cache).unwrap().objs[4].name = "Rune".into();
     // grab slot 0: build the menu (the last entry is the occupied slot's
     // Examine, in the drag-start action set), then left-click through
     // `mouse_loop` like the real frame
@@ -2014,7 +2013,7 @@ fn obj_drag_release_sends_inv_buttond() {
     c.handle_obj_drag();
     assert_eq!(c.obj_drag_area, 0);
     assert_eq!(
-        c.cache.ifaces[2].as_ref().unwrap().link_obj_type.as_ref().unwrap()[1],
+        c.ifaces[2].as_ref().unwrap().link_obj_type.as_ref().unwrap()[1],
         5
     );
     // INV_BUTTOND (id 93): p1_enc(93) p2(com) p2(src) p2(dst) p1(mode),
@@ -2056,15 +2055,15 @@ fn obj_drag_quick_release_fires_last_entry_same_slot_drop_does_not() {
         link_obj_number: Some(vec![1, 0]),
         ..IfType::default()
     };
-    c.cache.ifaces.resize(3, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(inv);
+    c.ifaces.resize(3, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(inv);
     // the slot holds obj id 5, so `build_minimenu` can name it for the
     // Examine entry (the drag-start target)
     if c.cache.objs.len() < 5 {
-        c.cache.objs.resize(5, ObjType::default());
+        Arc::get_mut(&mut c.cache).unwrap().objs.resize(5, ObjType::default());
     }
-    c.cache.objs[4].name = "Rune".into();
+    Arc::get_mut(&mut c.cache).unwrap().objs[4].name = "Rune".into();
     // grab slot 0 via the full click path: build the menu, then left-click
     // through `mouse_loop`
     c.shell.mouse_x = 553 + 16;
@@ -2084,7 +2083,7 @@ fn obj_drag_quick_release_fires_last_entry_same_slot_drop_does_not() {
     assert_eq!(c.obj_drag_area, 0);
     assert_eq!(c.out.pos, 0, "a quick release must not send INV_BUTTOND");
     assert_eq!(
-        c.cache.ifaces[2].as_ref().unwrap().link_obj_type.as_ref().unwrap(),
+        c.ifaces[2].as_ref().unwrap().link_obj_type.as_ref().unwrap(),
         &vec![5, 0],
         "a quick release must not move the item"
     );
@@ -2116,7 +2115,7 @@ fn obj_drag_quick_release_fires_last_entry_same_slot_drop_does_not() {
     assert_eq!(c.obj_drag_area, 0);
     assert_eq!(c.out.pos, 0, "a same-slot drop must not send INV_BUTTOND");
     assert_eq!(
-        c.cache.ifaces[2].as_ref().unwrap().link_obj_type.as_ref().unwrap(),
+        c.ifaces[2].as_ref().unwrap().link_obj_type.as_ref().unwrap(),
         &vec![5, 0],
         "a same-slot drop must not move the item"
     );

@@ -2480,7 +2480,7 @@ impl Client {
     /// The caller binds `pix3d` to the target surface once
     /// (`set_clipping`); the `clientComponent` scripts load with Task 14.
     pub fn draw_interface(&mut self, com_id: i32, x: i32, y: i32, scroll_y: i32, surface: &mut Pix2D) {
-        let Some(com) = self.cache.ifaces.get(com_id as usize).and_then(|o| o.as_ref()) else {
+        let Some(com) = self.ifaces.get(com_id as usize).and_then(|o| o.as_ref()) else {
             return;
         };
         // TS 9901-9905: only TYPE_LAYER draws; a hidden layer still draws
@@ -2519,7 +2519,7 @@ impl Client {
             // TS 9926: `clientComponent(child)` fills the friend/ignore
             // text/button/scroll fields before the child plots.
             self.client_component(child_id as i32);
-            let Some(child) = self.cache.ifaces.get(child_id).and_then(|o| o.as_ref()) else {
+            let Some(child) = self.ifaces.get(child_id).and_then(|o| o.as_ref()) else {
                 continue;
             };
             let child_x = child_x[i] + x + child.x;
@@ -2537,7 +2537,7 @@ impl Client {
                         scroll_pos = 0;
                     }
                     if scroll_pos != child.scroll_pos {
-                        if let Some(c) = self.cache.ifaces.get_mut(child_id).and_then(|o| o.as_mut()) {
+                        if let Some(c) = self.ifaces.get_mut(child_id).and_then(|o| o.as_mut()) {
                             c.scroll_pos = scroll_pos;
                         }
                     }
@@ -2545,7 +2545,6 @@ impl Client {
                     // drawScrollbar (TS 9941): a scrollable layer draws its
                     // scrollbar after the recurse.
                     let (child_w, child_h, child_sh) = self
-                        .cache
                         .ifaces
                         .get(child_id)
                         .and_then(|o| o.as_ref())
@@ -3020,7 +3019,7 @@ impl Client {
 
         // write back the drag-autoscrolled layer scroll (TS 9990-10017).
         if layer_scroll != base_scroll {
-            if let Some(c) = self.cache.ifaces.get_mut(com_id as usize).and_then(|o| o.as_mut()) {
+            if let Some(c) = self.ifaces.get_mut(com_id as usize).and_then(|o| o.as_mut()) {
                 c.scroll_pos = layer_scroll;
             }
         }
@@ -3068,7 +3067,7 @@ impl Client {
     /// `doScrollbar` from client-ts (10291-10329): the up/down arrows step
     /// `scroll_pos` by `scroll_cycle*4`, and a press in the track/grip
     /// jumps to the grip position (grabbing it widens the track hit area to
-    /// 32 px next call). The target is `cache.ifaces[com_id]`, or
+    /// 32 px next call). The target is `ifaces[com_id]`, or
     /// `chat_interface` for a negative `com_id` (the chat scrollbar is a
     /// synthetic interface, TS `chatInterface`, not in the jag).
     pub fn do_scrollbar(
@@ -3092,8 +3091,7 @@ impl Client {
         let com = if com_id < 0 {
             Some(&mut self.chat_interface)
         } else {
-            self.cache
-                .ifaces
+            self.ifaces
                 .get_mut(com_id as usize)
                 .and_then(|o| o.as_mut())
         };
@@ -3249,7 +3247,7 @@ impl Client {
                     let obj = obj + 1;
                     // TS `IfType.list[id]` on an out-of-range id throws,
                     // which the catch maps to -1.
-                    let Some(com) = self.cache.ifaces.get(com_id as usize).and_then(|o| o.as_ref())
+                    let Some(com) = self.ifaces.get(com_id as usize).and_then(|o| o.as_ref())
                     else {
                         return Some(-1);
                     };
@@ -3314,7 +3312,7 @@ impl Client {
                         return Some(-1);
                     };
                     let obj = obj + 1;
-                    let Some(com) = self.cache.ifaces.get(com_id as usize).and_then(|o| o.as_ref())
+                    let Some(com) = self.ifaces.get(com_id as usize).and_then(|o| o.as_ref())
                     else {
                         return Some(-1);
                     };

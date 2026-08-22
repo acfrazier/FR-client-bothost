@@ -36,9 +36,9 @@ fn draw_interface_type_model_missing_does_not_panic() {
     model.model1_type = 1;
     model.model1_id = 999999; // not loaded
     model.model_zoom = 800;
-    c.cache.ifaces.resize(3, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(model);
+    c.ifaces.resize(3, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(model);
     let mut pixels = vec![0i32; 50 * 50];
     let mut surface = client::graphics::Pix2D::with_pixels(&mut pixels, 50, 50);
     c.pix3d.set_clipping(50, 50);

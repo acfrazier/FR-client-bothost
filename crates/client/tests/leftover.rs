@@ -4,6 +4,8 @@
 // tick / walk consume / plot. The /tmp cache has no packs, so `Client::new`
 // falls back to `Cache::default()` and never touches the network (the /crc
 // fetch on 127.0.0.1 is refused instantly).
+use std::sync::Arc;
+
 use client::client::{Client, ClientConfig, ClientPlayer};
 use client::config::idk_type::IdkType;
 use client::config::if_type::IfType;
@@ -593,7 +595,7 @@ fn design_switch_male_female_toggles() {
 fn design_kit_cycle_wraps_and_respects_gender() {
     let mut c = client();
     // idk table: [0] male head, [1] disabled, [2]+[3] female heads.
-    c.cache.idks = vec![
+    Arc::get_mut(&mut c.cache).unwrap().idks = vec![
         IdkType {
             part: 0,
             ..IdkType::default()
@@ -689,8 +691,8 @@ fn design_accept_encodes_idk_savedesign() {
 #[test]
 fn design_preview_sets_rotation_and_caches_temp_model() {
     let mut c = client();
-    c.cache.ifaces.resize(328, None);
-    c.cache.ifaces[327] = Some(IfType {
+    c.ifaces.resize(328, None);
+    c.ifaces[327] = Some(IfType {
         id: 327,
         client_code: 327, // CC_DESIGN_PREVIEW
         ..IfType::default()
@@ -698,7 +700,7 @@ fn design_preview_sets_rotation_and_caches_temp_model() {
     c.loop_cycle = 40;
     c.idk_design_redraw = true; // empty idk table + parts -1 -> empty model
     c.client_component(327);
-    let com = c.cache.ifaces[327].as_ref().unwrap();
+    let com = c.ifaces[327].as_ref().unwrap();
     assert_eq!(com.model_xan, 150);
     assert_eq!(com.model_yan, 215); // sin(40/40)*256 | 0 = 215, & 0x7ff
     assert_eq!(com.model1_type, 5);
@@ -711,8 +713,8 @@ fn design_preview_sets_rotation_and_caches_temp_model() {
 #[test]
 fn design_switch_buttons_swap_graphic_names() {
     let mut c = client();
-    c.cache.ifaces.resize(2, None);
-    c.cache.ifaces[1] = Some(IfType {
+    c.ifaces.resize(2, None);
+    c.ifaces[1] = Some(IfType {
         id: 1,
         client_code: 324, // CC_SWITCH_TO_MALE
         graphic_name: "male".into(),
@@ -722,10 +724,10 @@ fn design_switch_buttons_swap_graphic_names() {
     c.idk_design_gender = true;
     c.client_component(1);
     // male + already male: shows the female snapshot (the button to press).
-    assert_eq!(c.cache.ifaces[1].as_ref().unwrap().graphic_name, "female");
+    assert_eq!(c.ifaces[1].as_ref().unwrap().graphic_name, "female");
     c.idk_design_gender = false;
     c.client_component(1);
-    assert_eq!(c.cache.ifaces[1].as_ref().unwrap().graphic_name, "male");
+    assert_eq!(c.ifaces[1].as_ref().unwrap().graphic_name, "male");
 }
 
 /// Java `Client.java` 3682-3686 / Client.ts 1883-1887: the cold-login
@@ -736,7 +738,7 @@ fn cold_login_reset_revalidates_design() {
     let mut c = client();
     c.idk_design_gender = false;
     c.idk_design_colour = [3; 5];
-    c.cache.idks = vec![
+    Arc::get_mut(&mut c.cache).unwrap().idks = vec![
         IdkType {
             part: 0,
             ..IdkType::default()

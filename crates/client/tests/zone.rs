@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use client::client::{Client, ClientBuild, ClientConfig};
 use client::config::{Cache, LocType, SeqType, SpotType};
 use client::dash3d::{ClientObj, LocChange};
@@ -261,11 +263,11 @@ fn change_loc_unchecked_wall_straight_with_anim_sets_wall() {
 
 fn seed_anim_loc(c: &mut Client, id: usize) {
     while c.cache.locs.len() <= id {
-        c.cache.locs.push(LocType::default());
+        Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType::default());
     }
-    c.cache.locs[id].anim = 0;
+    Arc::get_mut(&mut c.cache).unwrap().locs[id].anim = 0;
     if c.cache.seqs.is_empty() {
-        c.cache.seqs.push(client::config::SeqType::default());
+        Arc::get_mut(&mut c.cache).unwrap().seqs.push(client::config::SeqType::default());
     }
 }
 
@@ -296,11 +298,11 @@ fn loc_add_change_applies_on_do_queue() {
 fn loc_add_change_waits_when_model_not_ready() {
     let mut c = client();
     if c.cache.locs.is_empty() {
-        c.cache.locs.push(LocType::default());
+        Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType::default());
     }
     // shape 0 with model 60000 not downloaded → check_model(0) is false
-    c.cache.locs[0].model = Some(vec![60000]);
-    c.cache.locs[0].shape = Some(vec![0]);
+    Arc::get_mut(&mut c.cache).unwrap().locs[0].model = Some(vec![60000]);
+    Arc::get_mut(&mut c.cache).unwrap().locs[0].shape = Some(vec![0]);
     c.scene_state = 2;
     c.ingame = true;
     let mut p = loc_add_payload(0x11, 0x00, 0);
@@ -604,10 +606,10 @@ fn loc_anim_missing_wall_is_noop() {
 
 fn seed_obj(c: &mut Client, id: usize, cost: i32) {
     while c.cache.objs.len() <= id {
-        c.cache.objs.push(client::config::ObjType::default());
+        Arc::get_mut(&mut c.cache).unwrap().objs.push(client::config::ObjType::default());
     }
-    c.cache.objs[id].id = id as i32;
-    c.cache.objs[id].cost = cost;
+    Arc::get_mut(&mut c.cache).unwrap().objs[id].id = id as i32;
+    Arc::get_mut(&mut c.cache).unwrap().objs[id].cost = cost;
 }
 
 fn obj_add(c: &mut Client, pos: i32, id: i32, count: i32) {
@@ -703,7 +705,7 @@ fn obj_add_headless_still_sets_world() {
 /// `render_all` does not panic on the spotanim index.
 fn seed_spot(c: &mut Client, id: usize) {
     while c.cache.spots.len() <= id {
-        c.cache.spots.push(SpotType::default());
+        Arc::get_mut(&mut c.cache).unwrap().spots.push(SpotType::default());
     }
 }
 
@@ -836,14 +838,14 @@ fn map_anim_pushes_and_add_map_anim_places_dynamic() {
     seed_spot(&mut c, 0);
     // A seq whose delays keep the anim in-frame for this delta lets
     // `update` advance `anim_cycle` without completing the anim.
-    c.cache.spots[0].seq = Some(1);
+    Arc::get_mut(&mut c.cache).unwrap().spots[0].seq = Some(1);
     while c.cache.seqs.len() <= 1 {
-        c.cache.seqs.push(SeqType::default());
+        Arc::get_mut(&mut c.cache).unwrap().seqs.push(SeqType::default());
     }
-    c.cache.seqs[1].num_frames = 2;
-    c.cache.seqs[1].frames = Some(vec![0, 1]);
-    c.cache.seqs[1].iframes = Some(vec![0, 1]);
-    c.cache.seqs[1].delay = Some(vec![10, 5]);
+    Arc::get_mut(&mut c.cache).unwrap().seqs[1].num_frames = 2;
+    Arc::get_mut(&mut c.cache).unwrap().seqs[1].frames = Some(vec![0, 1]);
+    Arc::get_mut(&mut c.cache).unwrap().seqs[1].iframes = Some(vec![0, 1]);
+    Arc::get_mut(&mut c.cache).unwrap().seqs[1].delay = Some(vec![10, 5]);
     c.loop_cycle = 5;
     let mut p = Packet::alloc(0);
     p.p1(0x11);

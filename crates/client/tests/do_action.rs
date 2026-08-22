@@ -1,5 +1,7 @@
 // doAction/tryMove encode: menu arrays → MOVE_GAMECLICK / OPNPC2 through
 // Packet::p1_enc with the client's outbound Isaac.
+use std::sync::Arc;
+
 use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer, MiniMenuAction};
 use client::config::if_type::{ButtonType, IfType};
 use client::config::ObjType;
@@ -43,8 +45,8 @@ fn walk_menu_arms_mouse_picking() {
 #[test]
 fn tgt_button_arms_spell_target_mode() {
     let mut c = client();
-    c.cache.ifaces.resize(8, None);
-    c.cache.ifaces[7] = Some(IfType {
+    c.ifaces.resize(8, None);
+    c.ifaces[7] = Some(IfType {
         id: 7,
         button_type: ButtonType::BUTTON_TARGET,
         target_verb: "Cast on".into(),
@@ -172,9 +174,9 @@ fn try_move_flushes_move_gameclick_to_socket() {
 fn do_action_obj_examine_adds_chat() {
     let mut c = client();
     if c.cache.objs.is_empty() {
-        c.cache.objs.resize(1, ObjType::default());
-        c.cache.objs[0].name = "Coins".into();
-        c.cache.objs[0].desc = String::new();
+        Arc::get_mut(&mut c.cache).unwrap().objs.resize(1, ObjType::default());
+        Arc::get_mut(&mut c.cache).unwrap().objs[0].name = "Coins".into();
+        Arc::get_mut(&mut c.cache).unwrap().objs[0].desc = String::new();
     }
     c.menu_num_entries = 1;
     c.menu_action[0] = MiniMenuAction::OP_OBJ6;
@@ -261,9 +263,9 @@ fn do_action_op_held_writes_p2_obj_slot_com() {
 fn do_action_useheld_start_returns_with_use_mode_armed() {
     let mut c = client();
     if c.cache.objs.is_empty() {
-        c.cache.objs.resize(1, ObjType::default());
+        Arc::get_mut(&mut c.cache).unwrap().objs.resize(1, ObjType::default());
     }
-    c.cache.objs[0].name = "Coins".into();
+    Arc::get_mut(&mut c.cache).unwrap().objs[0].name = "Coins".into();
     c.menu_action[0] = MiniMenuAction::USEHELD_START;
     c.menu_param_a[0] = 0; // obj
     c.menu_param_b[0] = 3; // slot

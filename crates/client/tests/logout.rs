@@ -89,10 +89,10 @@ fn bind_side(c: &mut Client, root: i32, components: Vec<IfType>) {
     c.side_icon[3] = root;
     c.active_icon = 3;
     let max = components.iter().map(|com| com.id).max().unwrap_or(0) as usize;
-    c.cache.ifaces.resize(max + 1, None);
+    c.ifaces.resize(max + 1, None);
     for com in components {
         let id = com.id as usize;
-        c.cache.ifaces[id] = Some(com);
+        c.ifaces[id] = Some(com);
     }
 }
 

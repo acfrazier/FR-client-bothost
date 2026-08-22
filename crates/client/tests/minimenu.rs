@@ -4,6 +4,8 @@
 // The /tmp cache has no packs, so `Client::new` falls back to
 // `Cache::default()` and never touches the network (the /crc fetch on
 // 127.0.0.1 is refused instantly).
+use std::sync::Arc;
+
 use client::client::{Client, ClientConfig, MiniMenuAction};
 use client::config::if_type::{ButtonType, ComponentType, IfType};
 use client::config::{LocType, NpcType, ObjType};
@@ -111,11 +113,11 @@ fn add_world_options_loc_examine_from_pick() {
     c.pix3d.picked_count = 1;
     c.pix3d.picked_entity_typecode[0] = typecode;
     if c.cache.locs.len() <= 1 {
-        c.cache.locs.push(LocType::default());
-        c.cache.locs.push(LocType::default());
+        Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType::default());
+        Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType::default());
     }
-    c.cache.locs[1].name = "Tree".into();
-    c.cache.locs[1].op = vec![Some("Chop".into()), None, None, None, None];
+    Arc::get_mut(&mut c.cache).unwrap().locs[1].name = "Tree".into();
+    Arc::get_mut(&mut c.cache).unwrap().locs[1].op = vec![Some("Chop".into()), None, None, None, None];
     c.world.add_scenery(
         0,
         x,
@@ -155,14 +157,14 @@ fn add_world_options_npc_ops_from_pick() {
     c.pix3d.picked_count = 1;
     c.pix3d.picked_entity_typecode[0] = typecode;
     if c.cache.npcs.len() <= 2 {
-        c.cache.npcs.push(NpcType::default());
-        c.cache.npcs.push(NpcType::default());
-        c.cache.npcs.push(NpcType::default());
+        Arc::get_mut(&mut c.cache).unwrap().npcs.push(NpcType::default());
+        Arc::get_mut(&mut c.cache).unwrap().npcs.push(NpcType::default());
+        Arc::get_mut(&mut c.cache).unwrap().npcs.push(NpcType::default());
     }
-    c.cache.npcs[2].name = "Goblin".into();
-    c.cache.npcs[2].size = 1;
-    c.cache.npcs[2].vislevel = 10;
-    c.cache.npcs[2].op = vec![Some("Attack".into()), Some("Talk".into())];
+    Arc::get_mut(&mut c.cache).unwrap().npcs[2].name = "Goblin".into();
+    Arc::get_mut(&mut c.cache).unwrap().npcs[2].size = 1;
+    Arc::get_mut(&mut c.cache).unwrap().npcs[2].vislevel = 10;
+    Arc::get_mut(&mut c.cache).unwrap().npcs[2].op = vec![Some("Attack".into()), Some("Talk".into())];
     let mut local = ClientPlayer::default();
     local.combat_level = 3;
     c.local_player = Some(local);
@@ -246,13 +248,13 @@ fn add_world_options_obj_take_and_examine_from_pick() {
     c.pix3d.picked_entity_typecode[0] = typecode;
     if c.cache.objs.len() <= 7 {
         while c.cache.objs.len() < 8 {
-            c.cache.objs.push(ObjType::default());
+            Arc::get_mut(&mut c.cache).unwrap().objs.push(ObjType::default());
         }
     }
-    c.cache.objs[7].name = "Coins".into();
-    c.cache.objs[7].op[2] = Some("Take".into());
-    c.cache.objs[6].name = "Rune".into();
-    c.cache.objs[6].op[0] = Some("Loot".into());
+    Arc::get_mut(&mut c.cache).unwrap().objs[7].name = "Coins".into();
+    Arc::get_mut(&mut c.cache).unwrap().objs[7].op[2] = Some("Take".into());
+    Arc::get_mut(&mut c.cache).unwrap().objs[6].name = "Rune".into();
+    Arc::get_mut(&mut c.cache).unwrap().objs[6].op[0] = Some("Loot".into());
     let mut objs = LinkList::new();
     objs.push(ClientObj::new(7, 1)); // tail
     objs.push(ClientObj::new(6, 1)); // head
@@ -281,10 +283,10 @@ fn add_world_options_skips_duplicate_typecodes() {
     c.pix3d.picked_entity_typecode[1] = typecode;
     if c.cache.objs.len() <= 7 {
         while c.cache.objs.len() < 8 {
-            c.cache.objs.push(ObjType::default());
+            Arc::get_mut(&mut c.cache).unwrap().objs.push(ObjType::default());
         }
     }
-    c.cache.objs[7].name = "Coins".into();
+    Arc::get_mut(&mut c.cache).unwrap().objs[7].name = "Coins".into();
     let mut objs = LinkList::new();
     objs.push(ClientObj::new(7, 1));
     c.ground_obj[0][4][5] = Some(objs);
@@ -302,12 +304,12 @@ fn add_npc_options_and_add_player_options_callable_directly() {
     let mut c = client();
     c.menu_num_entries = 1;
     if c.cache.npcs.len() <= 2 {
-        c.cache.npcs.push(NpcType::default());
-        c.cache.npcs.push(NpcType::default());
-        c.cache.npcs.push(NpcType::default());
+        Arc::get_mut(&mut c.cache).unwrap().npcs.push(NpcType::default());
+        Arc::get_mut(&mut c.cache).unwrap().npcs.push(NpcType::default());
+        Arc::get_mut(&mut c.cache).unwrap().npcs.push(NpcType::default());
     }
-    c.cache.npcs[2].name = "Rat".into();
-    c.cache.npcs[2].op = vec![Some("Attack".into())];
+    Arc::get_mut(&mut c.cache).unwrap().npcs[2].name = "Rat".into();
+    Arc::get_mut(&mut c.cache).unwrap().npcs[2].op = vec![Some("Attack".into())];
     c.add_npc_options(2, 7, 3, 4);
     let mut p = ClientPlayer::default();
     p.name = Some("Bob".into());
@@ -346,12 +348,12 @@ fn side_inv_fixture(c: &mut Client) {
     inv.height = 1;
     inv.link_obj_type = Some(vec![2]); // obj id 1
     inv.link_obj_number = Some(vec![1]);
-    c.cache.ifaces.resize(3, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(inv);
+    c.ifaces.resize(3, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(inv);
     if c.cache.objs.len() < 2 {
-        c.cache.objs.resize(2, ObjType::default());
-        c.cache.objs[1].name = "Rune".into();
+        Arc::get_mut(&mut c.cache).unwrap().objs.resize(2, ObjType::default());
+        Arc::get_mut(&mut c.cache).unwrap().objs[1].name = "Rune".into();
     }
     c.shell.mouse_x = 553 + 16;
     c.shell.mouse_y = 205 + 16;
@@ -395,14 +397,14 @@ fn build_minimenu_sorts_1000_plus_below_actions() {
 fn inv_slot_obj_iop_and_component_iop_options() {
     let mut c = client();
     side_inv_fixture(&mut c);
-    let inv = c.cache.ifaces[2].as_mut().unwrap();
+    let inv = c.ifaces[2].as_mut().unwrap();
     inv.iop[0] = Some("Bank".into());
     if c.cache.objs.len() < 2 {
-        c.cache.objs.resize(2, ObjType::default());
+        Arc::get_mut(&mut c.cache).unwrap().objs.resize(2, ObjType::default());
     }
-    c.cache.objs[1].name = "Rune".into();
-    c.cache.objs[1].iop[0] = Some("Wield".into());
-    c.cache.objs[1].iop[3] = Some("Unnote".into());
+    Arc::get_mut(&mut c.cache).unwrap().objs[1].name = "Rune".into();
+    Arc::get_mut(&mut c.cache).unwrap().objs[1].iop[0] = Some("Wield".into());
+    Arc::get_mut(&mut c.cache).unwrap().objs[1].iop[3] = Some("Unnote".into());
     c.build_minimenu();
     let actions: Vec<i32> =
         (0..c.menu_num_entries).map(|i| c.menu_action[i as usize]).collect();
@@ -469,8 +471,8 @@ fn non_inv_buttons_push_button_actions() {
     layer.children = Some(vec![2, 3, 4, 5, 6, 7]);
     layer.child_x = Some(vec![0, 0, 0, 0, 0, 0]);
     layer.child_y = Some(vec![0, 0, 0, 0, 0, 0]);
-    c.cache.ifaces.resize(8, None);
-    c.cache.ifaces[1] = Some(layer);
+    c.ifaces.resize(8, None);
+    c.ifaces[1] = Some(layer);
     let button = |id: i32, button_type: i32| IfType {
         id,
         r#type: ComponentType::TYPE_RECT,
@@ -481,21 +483,21 @@ fn non_inv_buttons_push_button_actions() {
     };
     let mut ok = button(2, ButtonType::BUTTON_OK);
     ok.button_text = "Ok".into();
-    c.cache.ifaces[2] = Some(ok);
-    c.cache.ifaces[3] = Some(button(3, ButtonType::BUTTON_CLOSE));
+    c.ifaces[2] = Some(ok);
+    c.ifaces[3] = Some(button(3, ButtonType::BUTTON_CLOSE));
     let mut toggle = button(4, ButtonType::BUTTON_TOGGLE);
     toggle.button_text = "Trade".into();
-    c.cache.ifaces[4] = Some(toggle);
+    c.ifaces[4] = Some(toggle);
     let mut select = button(5, ButtonType::BUTTON_SELECT);
     select.button_text = "Deposit".into();
-    c.cache.ifaces[5] = Some(select);
+    c.ifaces[5] = Some(select);
     let mut cont = button(6, ButtonType::BUTTON_CONTINUE);
     cont.button_text = "Continue".into();
-    c.cache.ifaces[6] = Some(cont);
+    c.ifaces[6] = Some(cont);
     let mut target = button(7, ButtonType::BUTTON_TARGET);
     target.target_verb = "Cast on".into();
     target.target_base = "Tree".into();
-    c.cache.ifaces[7] = Some(target);
+    c.ifaces[7] = Some(target);
     c.shell.mouse_x = 553 + 10;
     c.shell.mouse_y = 205 + 10;
     c.build_minimenu();
@@ -531,9 +533,9 @@ fn empty_ok_button_still_fires_if_button() {
     layer.children = Some(vec![2]);
     layer.child_x = Some(vec![0]);
     layer.child_y = Some(vec![0]);
-    c.cache.ifaces.resize(3, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(IfType {
+    c.ifaces.resize(3, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(IfType {
         id: 2,
         r#type: ComponentType::TYPE_GRAPHIC,
         width: 36,
@@ -583,10 +585,10 @@ fn paused_and_targeting_suppress_continue_and_target_buttons() {
     target.button_type = ButtonType::BUTTON_TARGET;
     target.target_verb = "Cast".into();
     target.target_base = "Tree".into();
-    c.cache.ifaces.resize(4, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(cont);
-    c.cache.ifaces[3] = Some(target);
+    c.ifaces.resize(4, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(cont);
+    c.ifaces[3] = Some(target);
     c.shell.mouse_x = 553 + 10;
     c.shell.mouse_y = 205 + 10;
     c.resumed_pause_button = true;
@@ -760,9 +762,9 @@ fn social_component_ok_override_pushes_remove_and_message() {
     button.client_code = 1; // CC_FRIENDS_START → friendUsername[0]
     button.width = 50;
     button.height = 15;
-    c.cache.ifaces.resize(3, None);
-    c.cache.ifaces[1] = Some(layer);
-    c.cache.ifaces[2] = Some(button);
+    c.ifaces.resize(3, None);
+    c.ifaces[1] = Some(layer);
+    c.ifaces[2] = Some(button);
     c.side_modal_id = -1;
     c.side_icon[3] = 1;
     c.active_icon = 3;
