@@ -5277,7 +5277,10 @@ impl Client {
                             if child.client_code != 0 {
                                 override_ = self.add_social_options(&child);
                             }
-                            if !override_ && !child.button_text.is_empty() {
+                            // Java 5962-5966: no empty-text gate. Emote
+                            // tiles on the player-controls panel are OK
+                            // graphics with empty option strings.
+                            if !override_ {
                                 self.push_option(
                                     child.button_text.clone(),
                                     MiniMenuAction::IF_BUTTON,

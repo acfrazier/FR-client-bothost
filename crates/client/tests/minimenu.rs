@@ -514,6 +514,45 @@ fn non_inv_buttons_push_button_actions() {
     assert_eq!(c.menu_option[target], "Cast @gre@Tree", "prefix is the first word of targetVerb");
 }
 
+/// Java `addComponentOptions` buttonType 1 has no empty-text gate
+/// (`Client.java` 5962-5966). Emote tiles on the player-controls panel
+/// (`controls:com_13` etc.) are BUTTON_OK graphics with empty option
+/// text; skipping them was a live no-op.
+#[test]
+fn empty_ok_button_still_fires_if_button() {
+    let mut c = client();
+    c.side_modal_id = -1;
+    c.side_icon[13] = 1;
+    c.active_icon = 13;
+    let mut layer = IfType::default();
+    layer.r#type = ComponentType::TYPE_LAYER;
+    layer.width = 190;
+    layer.height = 261;
+    layer.children = Some(vec![2]);
+    layer.child_x = Some(vec![0]);
+    layer.child_y = Some(vec![0]);
+    c.cache.ifaces.resize(3, None);
+    c.cache.ifaces[1] = Some(layer);
+    c.cache.ifaces[2] = Some(IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_GRAPHIC,
+        width: 36,
+        height: 25,
+        button_type: ButtonType::BUTTON_OK,
+        button_text: String::new(),
+        ..IfType::default()
+    });
+    c.shell.mouse_x = 553 + 10;
+    c.shell.mouse_y = 205 + 10;
+    c.build_minimenu();
+    let actions: Vec<i32> =
+        (0..c.menu_num_entries).map(|i| c.menu_action[i as usize]).collect();
+    assert!(
+        actions.contains(&MiniMenuAction::IF_BUTTON),
+        "emote tiles with empty button_text must still send IF_BUTTON"
+    );
+}
+
 /// `resumed_pause_button` suppresses the CONTINUE option and `target_mode`
 /// suppresses the TARGET option (TS 9831-9839).
 #[test]
