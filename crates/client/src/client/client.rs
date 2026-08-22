@@ -407,6 +407,27 @@ pub struct Client {
     /// `[cross_cycle/100]`, mode 2 ops `[cross_cycle/100 + 4]`; a cache
     /// without the pack leaves the sprites `None` (no-op plot).
     pub cross: [Option<Pix32>; 8],
+    /// `projectX`/`projectY` from Java (322-325): the last `getOverlayPos`
+    /// screen projection, consumed by `entity_overlays`; -1 when the point
+    /// is off the playable scene or behind the camera.
+    pub project_x: i32,
+    pub project_y: i32,
+    /// `hitmarks`/`headicons` from Java (256, 328): the damage hitmark and
+    /// overhead prayer sprites from the `media` jag, depacked by
+    /// `prepare_game` (Java 5311-5320). `None` entries skip their plot.
+    pub hitmarks: [Option<Pix32>; 20],
+    pub headicons: [Option<Pix32>; 20],
+    /// Overlay chat stack from Java (`MAX_CHATS` 50, 409-433): the bubbles
+    /// `entityOverlays` collects per frame and draws over the scene.
+    pub chat_count: i32,
+    pub chat_x: [i32; 50],
+    pub chat_y: [i32; 50],
+    pub chat_width: [i32; 50],
+    pub chat_height: [i32; 50],
+    pub chat_colour: [i32; 50],
+    pub chat_effect: [i32; 50],
+    pub chat_timer: [i32; 50],
+    pub chats: [String; 50],
     /// Anticheat oplogic counters (Java `Client.java` static fields),
     /// accumulated inside the `doAction` arms and flushed as the
     /// `ANTICHEAT_OPLOGIC*` packets when they pass their thresholds.
@@ -986,6 +1007,19 @@ impl Client {
             cross_mode: 0,
             cross_cycle: 0,
             cross: [const { None }; 8],
+            project_x: -1,
+            project_y: -1,
+            hitmarks: [const { None }; 20],
+            headicons: [const { None }; 20],
+            chat_count: 0,
+            chat_x: [0; 50],
+            chat_y: [0; 50],
+            chat_width: [0; 50],
+            chat_height: [0; 50],
+            chat_colour: [0; 50],
+            chat_effect: [0; 50],
+            chat_timer: [0; 50],
+            chats: [const { String::new() }; 50],
             oplogic1: 0,
             oplogic2: 0,
             oplogic3: 0,

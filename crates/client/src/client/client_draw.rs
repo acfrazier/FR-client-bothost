@@ -23,6 +23,7 @@ use crate::client::skill::Skill;
 use crate::client::title_flames::TitleFlames;
 use crate::config::if_type::{ButtonType, ComponentType, IfType};
 use crate::config::{Cache, ObjType};
+use crate::dash3d::client_entity::ClientEntity;
 use crate::dash3d::world::LevelHeightmaps;
 use crate::dash3d::{BuildArea, LocAngle, LocShape, MapFlag, SceneModel, World};
 use crate::graphics::{Colour, Pix2D, Pix3D, Pix32, Pix8, PixFont, PixMap};
@@ -40,6 +41,17 @@ fn plot_title_bg(map: &mut Option<PixMap>, background: &Pix32, x: i32, y: i32) {
         background.quick_plot_sprite(&mut surface, x, y);
     }
 }
+
+/// `CHAT_COLOURS` from Java (307): the six static bubble colours, keyed by
+/// `entity.chat_colour` 0-5 (6-11 are the animated ones).
+const CHAT_COLOURS: [i32; 6] = [
+    Colour::YELLOW,
+    Colour::RED,
+    Colour::GREEN,
+    Colour::CYAN,
+    Colour::MAGENTA,
+    Colour::WHITE,
+];
 
 /// `Client.getAvH` from client-ts (5052): the bilinear ground height at a
 /// scene position. A `LinkBelow` flag on the level-1 map lifts the height
@@ -1598,9 +1610,437 @@ impl Client {
         3
     }
 
-    /// `entityOverlays` from client-ts (4573): headicons/chat overlays are
-    /// a no-op while the overlay sprites are not ported.
-    fn entity_overlays(&mut self) {}
+    /// `getOverlayPosEntity` from Java (2026-2027): project an entity at a
+    /// height (the scene coord `entity.x`/`entity.z` in 128ths of a tile).
+    pub fn get_overlay_pos_entity(&mut self, entity: &ClientEntity, height: i32) {
+        self.get_overlay_pos(entity.x, entity.z, height);
+    }
+
+    /// `getOverlayPos` from Java (2031-2056): project a scene point onto the
+    /// screen origin. The 11-bit pitch/yaw rotate keeps Java's i32 wrap on
+    /// the `>> 16` products; `project_x`/`project_y` are -1 when the point
+    /// is off the playable scene or behind the camera (`z' < 50`).
+    pub fn get_overlay_pos(&mut self, x: i32, z: i32, height: i32) {
+        let (px, py) = self.project_overlay(x, z, height);
+        self.project_x = px;
+        self.project_y = py;
+    }
+
+    /// The `getOverlayPos` math (Java 2031-2056) as a pure read, so
+    /// `entity_overlays` can project while holding entity borrows.
+    fn project_overlay(&self, x: i32, z: i32, height: i32) -> (i32, i32) {
+        if x < 128 || z < 128 || x > 13056 || z > 13056 {
+            return (-1, -1);
+        }
+        let y = get_av_h(&self.groundh, &self.mapl, x, z, self.minusedlevel) - height;
+        let dx = x - self.cam_x;
+        let dy = y - self.cam_y;
+        let dz = z - self.cam_z;
+        let sin_pitch = Pix3D::sin_table()[(self.cam_pitch & 0x7ff) as usize];
+        let cos_pitch = Pix3D::cos_table()[(self.cam_pitch & 0x7ff) as usize];
+        let sin_yaw = Pix3D::sin_table()[(self.cam_yaw & 0x7ff) as usize];
+        let cos_yaw = Pix3D::cos_table()[(self.cam_yaw & 0x7ff) as usize];
+        // Java 2039-2044: the wrapped products only feed the `>> 16`
+        // (Java int arithmetic wraps; Rust debug builds would panic).
+        let var13 = dz
+            .wrapping_mul(sin_yaw)
+            .wrapping_add(dx.wrapping_mul(cos_yaw))
+            >> 16;
+        let var14 = dz
+            .wrapping_mul(cos_yaw)
+            .wrapping_sub(dx.wrapping_mul(sin_yaw))
+            >> 16;
+        let var16 = dy
+            .wrapping_mul(cos_pitch)
+            .wrapping_sub(var14.wrapping_mul(sin_pitch))
+            >> 16;
+        let var17 = dy
+            .wrapping_mul(sin_pitch)
+            .wrapping_add(var14.wrapping_mul(cos_pitch))
+            >> 16;
+        if var17 >= 50 {
+            (
+                self.pix3d.origin_x + (var13 << 9) / var17,
+                self.pix3d.origin_y + (var16 << 9) / var17,
+            )
+        } else {
+            (-1, -1)
+        }
+    }
+
+    /// `entityOverlays` from Java (8870-end): the overhead prayer headicons,
+    /// the hint crowns, the chat bubbles, the health bars and the hitmarks
+    /// over every ready entity, drawn into `area_game` (bound here — `take`
+    /// /put back as `other_overlays` does, since `game_draw_main` drops its
+    /// bind before this runs). Chat bubbles collect into the `chat_*` stacks
+    /// and are pushed up past each other before drawing. `coord_arrow` is a
+    /// separate stub.
+    pub fn entity_overlays(&mut self) {
+        self.chat_count = 0;
+        let mut game = self.area_game.take();
+        if let Some(game) = game.as_mut() {
+            let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
+            // `Pix3D.setClipping(512, 334)` (TS 4238-4245): the projection
+            // origin reads the 3D target even when only this pass draws.
+            self.pix3d.set_clipping(surface.width, surface.height);
+            let loop_cycle = self.loop_cycle;
+            let scene_cycle = self.scene_cycle;
+            let player_count = self.player_count;
+            let npc_count = self.npc_count;
+            let chat_effects = self.chat_effects;
+            let chat_public_mode = self.chat_public_mode;
+            let hint_type = self.hint_type;
+            let hint_npc = self.hint_npc;
+            let hint_player = self.hint_player;
+
+            for index in -1..(player_count + npc_count) {
+                // Java 8873-8881: -1 is the local player, then the players
+                // and npcs by their id lists.
+                let (entity, ready, player_chat_name, player_headicons, npc_type) = if index == -1 {
+                    match &self.local_player {
+                        Some(p) => (&p.entity, p.is_ready(), p.name.as_deref(), p.headicons, None),
+                        None => continue,
+                    }
+                } else if index < player_count {
+                    match self
+                        .players
+                        .get(self.player_ids[index as usize] as usize)
+                        .and_then(|o| o.as_ref())
+                    {
+                        Some(p) => (&p.entity, p.is_ready(), p.name.as_deref(), p.headicons, None),
+                        None => continue,
+                    }
+                } else {
+                    match self
+                        .npc
+                        .get(self.npc_ids[(index - player_count) as usize] as usize)
+                        .and_then(|o| o.as_ref())
+                    {
+                        Some(n) => (&n.entity, n.is_ready(), None, 0, n.r#type),
+                        None => continue,
+                    }
+                };
+                if !ready {
+                    continue;
+                }
+
+                if index >= player_count {
+                    // NPC headicon + the type-1 hint crown (Java 8883-8896).
+                    let npc_id = self.npc_ids[(index - player_count) as usize];
+                    if let Some(npc_type) = npc_type {
+                        if npc_type < self.cache.npcs.len() {
+                            let headicon = self.cache.npc(npc_type).headicon;
+                            if (0..20).contains(&headicon) {
+                                let (px, py) = self.project_overlay(entity.x, entity.z, entity.height + 15);
+                                self.project_x = px;
+                                self.project_y = py;
+                                if self.project_x > -1 {
+                                    if let Some(sprite) = self
+                                        .headicons
+                                        .get(headicon as usize)
+                                        .and_then(|o| o.as_ref())
+                                    {
+                                        sprite.plot_sprite(&mut surface, px - 12, py - 30);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if hint_type == 1 && hint_npc == npc_id && loop_cycle % 20 < 10 {
+                        let (px, py) = self.project_overlay(entity.x, entity.z, entity.height + 15);
+                        self.project_x = px;
+                        self.project_y = py;
+                        if self.project_x > -1 {
+                            if let Some(sprite) = self.headicons.get(2).and_then(|o| o.as_ref()) {
+                                sprite.plot_sprite(&mut surface, px - 12, py - 28);
+                            }
+                        }
+                    }
+                } else {
+                    // Player headicons stack bottom-up from 30 then 25 px
+                    // (Java 8897-8915); the type-10 hint crown plots at the
+                    // remaining y.
+                    let mut y = 30;
+                    if player_headicons != 0 {
+                        let (px, py) = self.project_overlay(entity.x, entity.z, entity.height + 15);
+                        self.project_x = px;
+                        self.project_y = py;
+                        if self.project_x > -1 {
+                            for icon in 0..8 {
+                                if (player_headicons & (1 << icon)) != 0 {
+                                    if let Some(sprite) = self
+                                        .headicons
+                                        .get(icon as usize)
+                                        .and_then(|o| o.as_ref())
+                                    {
+                                        sprite.plot_sprite(&mut surface, px - 12, py - y);
+                                    }
+                                    y -= 25;
+                                }
+                            }
+                        }
+                    }
+                    if index >= 0 && hint_type == 10 && hint_player == self.player_ids[index as usize] {
+                        let (px, py) = self.project_overlay(entity.x, entity.z, entity.height + 15);
+                        self.project_x = px;
+                        self.project_y = py;
+                        if self.project_x > -1 {
+                            if let Some(sprite) = self.headicons.get(7).and_then(|o| o.as_ref()) {
+                                sprite.plot_sprite(&mut surface, px - 12, py - y);
+                            }
+                        }
+                    }
+                }
+
+                // Chat bubble collect (Java 8917-8936). The bubble shows for
+                // npcs always; for players in public modes 0/3 or mode 1
+                // when the sender is a friend.
+                if entity.chat_message.is_some()
+                    && (index >= player_count
+                        || chat_public_mode == 0
+                        || chat_public_mode == 3
+                        || (chat_public_mode == 1
+                            && self.is_friend(player_chat_name.unwrap_or(""))))
+                {
+                    let (px, py) = self.project_overlay(entity.x, entity.z, entity.height);
+                    self.project_x = px;
+                    self.project_y = py;
+                    // Java NPEs without the b12 font; the Option guard skips
+                    // the collect instead.
+                    if self.project_x > -1 && self.chat_count < 50 {
+                        if let Some(b12) = &self.b12 {
+                            let message = entity.chat_message.as_deref().unwrap_or("");
+                            let idx = self.chat_count as usize;
+                            self.chat_width[idx] = b12.string_wid(Some(message)) / 2;
+                            self.chat_height[idx] = b12.height;
+                            self.chat_x[idx] = px;
+                            self.chat_y[idx] = py;
+                            self.chat_colour[idx] = entity.chat_colour;
+                            self.chat_effect[idx] = entity.chat_effect;
+                            self.chat_timer[idx] = entity.chat_timer;
+                            self.chats[idx] = message.to_string();
+                            self.chat_count += 1;
+                            // Java 8928-8933: the effect 1/2 sizing writes
+                            // index the slot AFTER the `++` (one past the
+                            // bubble just stored — kept verbatim; a full
+                            // stack would overflow the 50-slot arrays).
+                            if chat_effects == 0 && entity.chat_effect == 1 && self.chat_count < 50 {
+                                self.chat_height[self.chat_count as usize] += 10;
+                                self.chat_y[self.chat_count as usize] += 5;
+                            }
+                            if chat_effects == 0 && entity.chat_effect == 2 && self.chat_count < 50 {
+                                self.chat_width[self.chat_count as usize] = 60;
+                            }
+                        }
+                    }
+                }
+
+                // Health bar (Java 8938-8945): `combatCycle > loopCycle`
+                // (not the TS `+ 100`), green fill then the red remainder.
+                if entity.combat_cycle > loop_cycle {
+                    let (px, py) = self.project_overlay(entity.x, entity.z, entity.height + 15);
+                    self.project_x = px;
+                    self.project_y = py;
+                    if self.project_x > -1 {
+                        let mut w = entity.health * 30 / entity.total_health;
+                        if w > 30 {
+                            w = 30;
+                        }
+                        surface.fill_rect(px - 15, py - 3, w, 5, Colour::GREEN);
+                        surface.fill_rect(px - 15 + w, py - 3, 30 - w, 5, Colour::RED);
+                    }
+                }
+
+                // Hitmarks (Java 8948-8966): up to 4, offset from the head
+                // projection, the damage number in p11 black then white.
+                for i in 0..4 {
+                    if entity.damage_cycles[i] > loop_cycle {
+                        let (mut px, mut py) = self.project_overlay(entity.x, entity.z, entity.height / 2);
+                        self.project_x = px;
+                        self.project_y = py;
+                        if self.project_x > -1 {
+                            if i == 1 {
+                                py -= 20;
+                            }
+                            if i == 2 {
+                                px -= 15;
+                                py -= 10;
+                            }
+                            if i == 3 {
+                                px += 15;
+                                py -= 10;
+                            }
+                            if let Some(sprite) = self
+                                .hitmarks
+                                .get(entity.damage_types[i] as usize)
+                                .and_then(|o| o.as_ref())
+                            {
+                                sprite.plot_sprite(&mut surface, px - 12, py - 12);
+                            }
+                            if let Some(p11) = &self.p11 {
+                                let text = format!("{}", entity.damage_values[i]);
+                                p11.centre_string(&mut surface, Some(&text), px, py + 4, Colour::BLACK);
+                                p11.centre_string(&mut surface, Some(&text), px - 1, py + 3, Colour::WHITE);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // The collected bubbles: push overlapping bubbles up, then draw
+            // (Java 8971-end).
+            for i in 0..self.chat_count as usize {
+                let x = self.chat_x[i];
+                let mut y = self.chat_y[i];
+                let pad = self.chat_width[i];
+                let hgt = self.chat_height[i];
+                let mut sorting = true;
+                while sorting {
+                    sorting = false;
+                    for j in 0..i {
+                        if y + 2 > self.chat_y[j] - self.chat_height[j]
+                            && y - hgt < self.chat_y[j] + 2
+                            && x - pad < self.chat_x[j] + self.chat_width[j]
+                            && x + pad > self.chat_x[j] - self.chat_width[j]
+                            && self.chat_y[j] - self.chat_height[j] < y
+                        {
+                            y = self.chat_y[j] - self.chat_height[j];
+                            sorting = true;
+                        }
+                    }
+                }
+                self.project_x = self.chat_x[i];
+                self.chat_y[i] = y;
+                self.project_y = y;
+                let message = self.chats[i].clone();
+                if chat_effects != 0 {
+                    // TS 4721-4723: global wave effects force the yellow
+                    // fallback.
+                    if let Some(b12) = &self.b12 {
+                        b12.centre_string(
+                            &mut surface,
+                            Some(&message),
+                            self.project_x,
+                            self.project_y + 1,
+                            Colour::BLACK,
+                        );
+                        b12.centre_string(
+                            &mut surface,
+                            Some(&message),
+                            self.project_x,
+                            self.project_y,
+                            Colour::YELLOW,
+                        );
+                    }
+                } else {
+                    let mut colour = Colour::YELLOW;
+                    if (0..6).contains(&self.chat_colour[i]) {
+                        colour = CHAT_COLOURS[self.chat_colour[i] as usize];
+                    }
+                    if self.chat_colour[i] == 6 {
+                        colour = if scene_cycle % 20 < 10 { Colour::RED } else { Colour::YELLOW };
+                    }
+                    if self.chat_colour[i] == 7 {
+                        colour = if scene_cycle % 20 < 10 { Colour::BLUE } else { Colour::CYAN };
+                    }
+                    if self.chat_colour[i] == 8 {
+                        colour = if scene_cycle % 20 < 10 { 0xb000 } else { 0x80ff80 };
+                    }
+                    if self.chat_colour[i] == 9 {
+                        let delta = 150 - self.chat_timer[i];
+                        if delta < 50 {
+                            colour = delta * 1280 + Colour::RED;
+                        } else if delta < 100 {
+                            colour = Colour::YELLOW - (delta - 50) * 327680;
+                        } else if delta < 150 {
+                            colour = (delta - 100) * 5 + Colour::GREEN;
+                        }
+                    }
+                    if self.chat_colour[i] == 10 {
+                        let delta = 150 - self.chat_timer[i];
+                        if delta < 50 {
+                            colour = delta * 5 + Colour::RED;
+                        } else if delta < 100 {
+                            colour = Colour::MAGENTA - (delta - 50) * 327680;
+                        } else if delta < 150 {
+                            colour = (delta - 100) * 327680 + Colour::BLUE - (delta - 100) * 5;
+                        }
+                    }
+                    if self.chat_colour[i] == 11 {
+                        let delta = 150 - self.chat_timer[i];
+                        if delta < 50 {
+                            colour = Colour::WHITE - delta * 327685;
+                        } else if delta < 100 {
+                            colour = (delta - 50) * 327685 + Colour::GREEN;
+                        } else if delta < 150 {
+                            colour = Colour::WHITE - (delta - 100) * 327680;
+                        }
+                    }
+                    if let Some(b12) = &self.b12 {
+                        match self.chat_effect[i] {
+                            1 => {
+                                b12.centre_string_wave(
+                                    &mut surface,
+                                    Some(&message),
+                                    self.project_x,
+                                    self.project_y + 1,
+                                    Colour::BLACK,
+                                    scene_cycle,
+                                );
+                                b12.centre_string_wave(
+                                    &mut surface,
+                                    Some(&message),
+                                    self.project_x,
+                                    self.project_y,
+                                    colour,
+                                    scene_cycle,
+                                );
+                            }
+                            2 => {
+                                let w = b12.string_wid(Some(&message));
+                                let offset_x = (150 - self.chat_timer[i]) * (w + 100) / 150;
+                                // Java 9042-9047 clips to `projectX ± 50`
+                                // for the slide-in text.
+                                surface.set_clipping(self.project_x - 50, 0, self.project_x + 50, 334);
+                                b12.draw_string(
+                                    &mut surface,
+                                    Some(&message),
+                                    self.project_x + 50 - offset_x,
+                                    self.project_y + 1,
+                                    Colour::BLACK,
+                                );
+                                b12.draw_string(
+                                    &mut surface,
+                                    Some(&message),
+                                    self.project_x + 50 - offset_x,
+                                    self.project_y,
+                                    colour,
+                                );
+                                surface.reset_clipping();
+                            }
+                            _ => {
+                                b12.centre_string(
+                                    &mut surface,
+                                    Some(&message),
+                                    self.project_x,
+                                    self.project_y + 1,
+                                    Colour::BLACK,
+                                );
+                                b12.centre_string(
+                                    &mut surface,
+                                    Some(&message),
+                                    self.project_x,
+                                    self.project_y,
+                                    colour,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.area_game = game;
+    }
 
     /// `coordArrow` from client-ts (4781): a no-op while `hintType`/
     /// `headicons` are not ported.
@@ -1736,6 +2176,15 @@ impl Client {
             }
             for i in 0..50 {
                 self.mapfunction[i] = Pix32::depack(&jag, "mapfunction", i as i32).ok();
+            }
+
+            // `hitmarks`/`headicons` as Java 5311-5320: try 20 each; a
+            // missing sprite is skipped per-entry (Java catches the loop).
+            for i in 0..20 {
+                self.hitmarks[i] = Pix32::depack(&jag, "hitmarks", i as i32).ok();
+            }
+            for i in 0..20 {
+                self.headicons[i] = Pix32::depack(&jag, "headicons", i as i32).ok();
             }
 
             // TS prepareGame 2022-2023: `area_map` starts as the `mapback`
