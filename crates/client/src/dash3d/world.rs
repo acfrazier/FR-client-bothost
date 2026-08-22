@@ -138,11 +138,11 @@ pub struct World {
     camera_sin_y: i32,
     camera_cos_y: i32,
     fill_left: i32,
-    /// TS `World.fillQueue` (a `LinkList<Square>`): the queued tiles are
-    /// re-fetched by coordinate because a Rust `&mut Square` cannot outlive
-    /// the `&mut self` raster calls; `drawBack` gates make stale entries
-    /// no-ops exactly like the TS object queue.
-    fill_queue: VecDeque<(i32, i32, i32)>,
+    /// TS `World.fillQueue` (`LinkList<Square>`): `(level, x, z, stamp)`.
+    /// `LinkList.push` unlinks a Square already in the list and appends it
+    /// at the tail; `fill_stamp` plus this deque stamp drop older copies.
+    fill_queue: VecDeque<(i32, i32, i32, i32)>,
+    fill_gen: i32,
     max_level: i32,
     cycle_no: i32,
     min_x: i32,
@@ -228,6 +228,7 @@ impl World {
             camera_cos_y: 0,
             fill_left: 0,
             fill_queue: VecDeque::new(),
+            fill_gen: 0,
             max_level: 0,
             cycle_no: 0,
             min_x: 0,
@@ -2138,11 +2139,24 @@ impl World {
         }
     }
 
-    /// `fill(next, checkAdjacent)` from client-ts 1389-1923. The queue holds
-    /// `(level, x, z)` and every tile access re-fetches the square by
-    /// coordinate: a Rust `&mut Square` cannot live across the `&mut self`
-    /// raster calls, and the TS `LinkList` object identity is reproduced by
-    /// the `drawBack`/`drawFront` gates (stale queue entries are no-ops).
+    /// Java/TS `LinkList.push`: if the square is already queued, unlink it
+    /// and append at the tail. Stamping the square and the deque entry makes
+    /// the older copy a no-op when popped.
+    fn enqueue_fill(&mut self, level: i32, x: i32, z: i32) {
+        self.fill_gen = self.fill_gen.wrapping_add(1);
+        if self.fill_gen == 0 {
+            self.fill_gen = 1;
+        }
+        let stamp = self.fill_gen;
+        if let Some(tile) = tile_at_mut(&mut self.squares, level, x, z) {
+            tile.fill_stamp = stamp;
+        }
+        self.fill_queue.push_back((level, x, z, stamp));
+    }
+
+    /// `fill(next, checkAdjacent)` from client-ts 1389-1923. Queue entries
+    /// are `(level, x, z, stamp)`; tiles are re-fetched by coordinate.
+    /// Java/TS `LinkList.push` moves an already-queued Square to the tail.
     #[allow(clippy::too_many_arguments)]
     fn fill(
         &mut self,
@@ -2153,18 +2167,22 @@ impl World {
         next: (i32, i32, i32),
         mut check_adjacent: bool,
     ) {
-        self.fill_queue.push_back(next);
+        self.enqueue_fill(next.0, next.1, next.2);
 
         'fill: loop {
             // `do { tile = popFront(); if (!tile) return; } while (!tile.drawBack)`
             let (tile_x, tile_z, level) = loop {
-                let Some((level, x, z)) = self.fill_queue.pop_front() else {
+                let Some((level, x, z, stamp)) = self.fill_queue.pop_front() else {
                     return;
                 };
                 let tile = tile_at(&self.squares, level, x, z);
-                if tile.is_some_and(|t| t.draw_back) {
-                    break (x, z, level);
+                if !tile.is_some_and(|t| t.draw_back && t.fill_stamp == stamp) {
+                    continue;
                 }
+                if let Some(tile) = tile_at_mut(&mut self.squares, level, x, z) {
+                    tile.fill_stamp = 0;
+                }
+                break (x, z, level);
             };
 
             // TS `World` statics that never change during a fill.
@@ -2465,28 +2483,28 @@ impl World {
                     if tile_x < gx && (spans & 0x4) != 0 {
                         let adjacent = tile_at(&self.squares, level, tile_x + 1, tile_z);
                         if adjacent.is_some_and(|t| t.draw_back) {
-                            self.fill_queue.push_back((level, tile_x + 1, tile_z));
+                            self.enqueue_fill(level, tile_x + 1, tile_z);
                         }
                     }
 
                     if tile_z < gz && (spans & 0x2) != 0 {
                         let adjacent = tile_at(&self.squares, level, tile_x, tile_z + 1);
                         if adjacent.is_some_and(|t| t.draw_back) {
-                            self.fill_queue.push_back((level, tile_x, tile_z + 1));
+                            self.enqueue_fill(level, tile_x, tile_z + 1);
                         }
                     }
 
                     if tile_x > gx && (spans & 0x1) != 0 {
                         let adjacent = tile_at(&self.squares, level, tile_x - 1, tile_z);
                         if adjacent.is_some_and(|t| t.draw_back) {
-                            self.fill_queue.push_back((level, tile_x - 1, tile_z));
+                            self.enqueue_fill(level, tile_x - 1, tile_z);
                         }
                     }
 
                     if tile_z > gz && (spans & 0x8) != 0 {
                         let adjacent = tile_at(&self.squares, level, tile_x, tile_z - 1);
                         if adjacent.is_some_and(|t| t.draw_back) {
-                            self.fill_queue.push_back((level, tile_x, tile_z - 1));
+                            self.enqueue_fill(level, tile_x, tile_z - 1);
                         }
                     }
                 }
@@ -2697,9 +2715,9 @@ impl World {
                             let draw_back = occupied.draw_back;
 
                             if corner_sides != 0 {
-                                self.fill_queue.push_back((level, x, z));
+                                self.enqueue_fill(level, x, z);
                             } else if (x != tile_x || z != tile_z) && draw_back {
-                                self.fill_queue.push_back((level, x, z));
+                                self.enqueue_fill(level, x, z);
                             }
                         }
                     }
@@ -2711,6 +2729,12 @@ impl World {
             }
 
             // Drop the tile (unless a wall corner still occludes it).
+            // Java `continue` unlinks the Square; vis-window only retries
+            // `drawFront`. A neighbour that already finished RING
+            // (`drawBack && !drawFront`) will not be visited again, so
+            // push those onto the queue (move-to-tail) and do not push
+            // self — re-pushing self spins fill() and never returns to
+            // the vis-window RING walk.
             let (draw_back, corner_sides) = tile_at(&self.squares, level, tile_x, tile_z)
                 .map(|t| (t.draw_back, t.corner_sides))
                 .unwrap_or((false, 0));
@@ -2718,32 +2742,57 @@ impl World {
                 continue 'fill;
             }
 
+            let mut stuck = Vec::new();
+            let mut blocked = false;
             if tile_x <= gx && tile_x > min_x {
-                let adjacent = tile_at(&self.squares, level, tile_x - 1, tile_z);
-                if adjacent.is_some_and(|t| t.draw_back) {
-                    continue 'fill;
+                if let Some(adjacent) = tile_at(&self.squares, level, tile_x - 1, tile_z) {
+                    if adjacent.draw_back {
+                        blocked = true;
+                        if !adjacent.draw_front {
+                            stuck.push((level, tile_x - 1, tile_z));
+                        }
+                    }
                 }
             }
 
             if tile_x >= gx && tile_x < max_x - 1 {
-                let adjacent = tile_at(&self.squares, level, tile_x + 1, tile_z);
-                if adjacent.is_some_and(|t| t.draw_back) {
-                    continue 'fill;
+                if let Some(adjacent) = tile_at(&self.squares, level, tile_x + 1, tile_z) {
+                    if adjacent.draw_back {
+                        blocked = true;
+                        if !adjacent.draw_front {
+                            stuck.push((level, tile_x + 1, tile_z));
+                        }
+                    }
                 }
             }
 
             if tile_z <= gz && tile_z > min_z {
-                let adjacent = tile_at(&self.squares, level, tile_x, tile_z - 1);
-                if adjacent.is_some_and(|t| t.draw_back) {
-                    continue 'fill;
+                if let Some(adjacent) = tile_at(&self.squares, level, tile_x, tile_z - 1) {
+                    if adjacent.draw_back {
+                        blocked = true;
+                        if !adjacent.draw_front {
+                            stuck.push((level, tile_x, tile_z - 1));
+                        }
+                    }
                 }
             }
 
             if tile_z >= gz && tile_z < max_z - 1 {
-                let adjacent = tile_at(&self.squares, level, tile_x, tile_z + 1);
-                if adjacent.is_some_and(|t| t.draw_back) {
-                    continue 'fill;
+                if let Some(adjacent) = tile_at(&self.squares, level, tile_x, tile_z + 1) {
+                    if adjacent.draw_back {
+                        blocked = true;
+                        if !adjacent.draw_front {
+                            stuck.push((level, tile_x, tile_z + 1));
+                        }
+                    }
                 }
+            }
+
+            if blocked {
+                for (bl, bx, bz) in stuck {
+                    self.enqueue_fill(bl, bx, bz);
+                }
+                continue 'fill;
             }
 
             if let Some(tile) = tile_at_mut(&mut self.squares, level, tile_x, tile_z) {
@@ -2858,35 +2907,35 @@ impl World {
             if level < self.max_tile_level - 1 {
                 let above = tile_at(&self.squares, level + 1, tile_x, tile_z);
                 if above.is_some_and(|t| t.draw_back) {
-                    self.fill_queue.push_back((level + 1, tile_x, tile_z));
+                    self.enqueue_fill(level + 1, tile_x, tile_z);
                 }
             }
 
             if tile_x < gx {
                 let adjacent = tile_at(&self.squares, level, tile_x + 1, tile_z);
                 if adjacent.is_some_and(|t| t.draw_back) {
-                    self.fill_queue.push_back((level, tile_x + 1, tile_z));
+                    self.enqueue_fill(level, tile_x + 1, tile_z);
                 }
             }
 
             if tile_z < gz {
                 let adjacent = tile_at(&self.squares, level, tile_x, tile_z + 1);
                 if adjacent.is_some_and(|t| t.draw_back) {
-                    self.fill_queue.push_back((level, tile_x, tile_z + 1));
+                    self.enqueue_fill(level, tile_x, tile_z + 1);
                 }
             }
 
             if tile_x > gx {
                 let adjacent = tile_at(&self.squares, level, tile_x - 1, tile_z);
                 if adjacent.is_some_and(|t| t.draw_back) {
-                    self.fill_queue.push_back((level, tile_x - 1, tile_z));
+                    self.enqueue_fill(level, tile_x - 1, tile_z);
                 }
             }
 
             if tile_z > gz {
                 let adjacent = tile_at(&self.squares, level, tile_x, tile_z - 1);
                 if adjacent.is_some_and(|t| t.draw_back) {
-                    self.fill_queue.push_back((level, tile_x, tile_z - 1));
+                    self.enqueue_fill(level, tile_x, tile_z - 1);
                 }
             }
         }

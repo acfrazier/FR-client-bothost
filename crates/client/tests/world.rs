@@ -4,10 +4,12 @@
 // even with an unpopulated `visBacking`, so the whole scene raster path
 // (fill → renderQuickGround → gouraud) runs without a pack. A mouse click
 // on the projected ground must come back as `ground_x`/`ground_z`.
-use client::config::Cache;
+use client::config::{Cache, LocType};
+use client::dash3d::LocAngle;
 use client::dash3d::ground::Ground;
 use client::dash3d::{Model, SceneModel, TerrainOverlayShape, World};
 use client::graphics::{Pix2D, Pix3D, Pix3DDraw, PixMap};
+use client::io::JagFile;
 
 /// Shade whose colour-table entry is non-zero (same constant as the model
 /// tests: index y=200/x=100).
@@ -168,10 +170,553 @@ fn share_light_lights_ground_decor() {
 }
 
 /// 512×334 viewport (the `area_game` size) bound as the render target.
+/// `low_mem` stays false: `--window` play is highmem. Headless/bots default
+/// lowmem (`--lowmem`); this fixture matches the live windowed raster.
 fn viewport(pix: &mut Pix3DDraw, surface: &mut Pix2D) {
     pix.set_render_clipping(surface);
     pix.trans = 0;
-    pix.low_mem = true;
+    pix.low_mem = false;
+}
+
+/// Vertical south-facing wall (quad in X/Y at z=0). Y more-negative is up.
+/// Unique shade so we can count wall pixels against the ground SHADE.
+const WALL_SHADE: i32 = 40 * 128 + 80;
+
+fn south_wall_model(winding_ccw_from_south: bool) -> Model {
+    let mut model = Model::default();
+    model.num_points = 4;
+    model.point_x = Some(vec![-60, 60, 60, -60]);
+    model.point_y = Some(vec![0, 0, -180, -180]);
+    model.point_z = Some(vec![0, 0, 0, 0]);
+    model.num_faces = 2;
+    // Viewed from -Z (camera south of the wall, looking north): CCW is
+    // (0,1,2)+(0,2,3); CW is the reverse. Live walls being visible from
+    // inside but eaten from outside is a winding/cull split.
+    let (a, b, c) = if winding_ccw_from_south {
+        (vec![0, 0], vec![1, 2], vec![2, 3])
+    } else {
+        (vec![0, 0], vec![2, 3], vec![1, 2])
+    };
+    model.face_vertex_a = Some(a);
+    model.face_vertex_b = Some(b);
+    model.face_vertex_c = Some(c);
+    model.face_colour_a = Some(vec![WALL_SHADE, WALL_SHADE]);
+    model.face_colour_b = Some(vec![WALL_SHADE, WALL_SHADE]);
+    model.face_colour_c = Some(vec![WALL_SHADE, WALL_SHADE]);
+    model.calc_bounding_cylinder();
+    model
+}
+
+fn wall_pixel_count(winding_ccw_from_south: bool) -> usize {
+    Pix3D::init_colour_table(0.6);
+    let wall_rgb = Pix3D::colour_table()[WALL_SHADE as usize];
+    let mut world = flat_world();
+    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    // SOUTH wall (WSHAPE0[3] = 8) on tile (1,2), in front of the vis-test camera.
+    world.set_wall(
+        0,
+        1,
+        2,
+        2000,
+        8,
+        0,
+        Some(SceneModel::Model(south_wall_model(winding_ccw_from_south))),
+        None,
+        0,
+        0,
+    );
+    let mut pix = Pix3DDraw::default();
+    let mut map = PixMap::new(512, 334);
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        viewport(&mut pix, &mut surface);
+        world.render_all(
+            &mut pix, &mut surface, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128,
+        );
+    }
+    map.pixels.iter().filter(|&&p| p == wall_rgb).count()
+}
+
+/// Camera-facing faces of a near loc must still rasterise. Live Seers bank /
+/// Varrock fountain: those faces pop out as the camera rotates; a one-sided
+/// south wall a few tiles in front of a live `camFollow` eye is the same
+/// class of face (large on screen, wrapping i32 cross).
+#[test]
+fn near_camera_facing_south_wall_still_covers() {
+    let ccw = wall_pixel_count_at(true, 192, 1950, 2 * 128 - 80);
+    eprintln!("near south wall pixels={ccw} (eye 80 units in front of the wall)");
+    assert!(
+        ccw > 50,
+        "south wall 80 units in front of the camera painted {ccw} pixels; live camera-facing cabinet/fountain faces vanish when they get large on screen"
+    );
+}
+
+fn wall_pixel_count_at(winding_ccw_from_south: bool, eye_x: i32, eye_y: i32, eye_z: i32) -> usize {
+    Pix3D::init_colour_table(0.6);
+    let wall_rgb = Pix3D::colour_table()[WALL_SHADE as usize];
+    let mut world = flat_world();
+    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    world.set_wall(
+        0,
+        1,
+        2,
+        2000,
+        8,
+        0,
+        Some(SceneModel::Model(south_wall_model(winding_ccw_from_south))),
+        None,
+        0,
+        0,
+    );
+    let mut pix = Pix3DDraw::default();
+    let mut map = PixMap::new(512, 334);
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        viewport(&mut pix, &mut surface);
+        world.render_all(
+            &mut pix, &mut surface, &Cache::default(), 0, eye_x, eye_y, eye_z, 3, 0, 128,
+        );
+    }
+    map.pixels.iter().filter(|&&p| p == wall_rgb).count()
+}
+
+/// A south-facing wall on the tile in front of the orbit camera must cover
+/// pixels. Live Draynor: stone missing from outside, shutters still there.
+#[test]
+fn south_facing_wall_covers_pixels_from_outside() {
+    let ccw = wall_pixel_count(true);
+    let cw = wall_pixel_count(false);
+    eprintln!("south wall pixels ccw={ccw} cw={cw}");
+    assert!(
+        ccw > 50 || cw > 50,
+        "south wall painted 0 unique pixels from the outside camera (ccw={ccw}, cw={cw}); live walls are eaten from outside"
+    );
+}
+
+/// Type-2 occluder on the south wall's plane must not swallow that wall
+/// from the outside camera (Java tests points *on* the plane as not hidden).
+#[test]
+fn south_wall_not_swallowed_by_its_own_occluder() {
+    Pix3D::init_colour_table(0.6);
+    let wall_rgb = Pix3D::colour_table()[WALL_SHADE as usize];
+    let mut world = flat_world();
+    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    world.set_wall(
+        0,
+        1,
+        2,
+        2000,
+        8,
+        0,
+        Some(SceneModel::Model(south_wall_model(true))),
+        None,
+        0,
+        0,
+    );
+    // finishBuild wall1 occluder: plane at tile_z*128, type 2, stored on
+    // outdoor max_level 3.
+    world.set_occlude(3, 2, 0, 2000 - 240, 2 * 128, 3 * 128, 2000, 2 * 128);
+
+    let mut pix = Pix3DDraw::default();
+    let mut map = PixMap::new(512, 334);
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        viewport(&mut pix, &mut surface);
+        world.render_all(
+            &mut pix, &mut surface, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128,
+        );
+    }
+    let n = map.pixels.iter().filter(|&&p| p == wall_rgb).count();
+    eprintln!("south wall pixels with own occluder={n}");
+    assert!(
+        n > 50,
+        "own type-2 occluder swallowed the south wall ({n} pixels); that would eat stone from outside"
+    );
+}
+
+/// Adjacent sharelight walls share an *edge* (2 verts), not a face. Java
+/// `modelShareLight` only hides faces when 3+ verts merge. If the offset is
+/// wrong and the two walls occupy the same space, every face becomes
+/// `faceRenderType = -1` and the stone vanishes while walldecor remains.
+#[test]
+fn share_light_does_not_delete_adjacent_south_walls() {
+    let mut world = flat_world();
+    let mut wall_a = south_wall_model(true);
+    wall_a.face_colour = Some(vec![WALL_SHADE, WALL_SHADE]);
+    wall_a.calculate_normals(64, 768, -50, -10, -50, false);
+    let mut wall_b = south_wall_model(true);
+    wall_b.face_colour = Some(vec![WALL_SHADE, WALL_SHADE]);
+    wall_b.calculate_normals(64, 768, -50, -10, -50, false);
+    world.set_wall(0, 1, 2, 2000, 8, 0, Some(SceneModel::Model(wall_a)), None, 0, 0);
+    world.set_wall(0, 2, 2, 2000, 8, 0, Some(SceneModel::Model(wall_b)), None, 0, 0);
+    world.share_light(64, 768, -50, -10, -50);
+
+    for x in [1, 2] {
+        let wall = world.get_wall(0, x, 2).expect("wall");
+        let SceneModel::Model(model) = wall.model1.as_ref().unwrap() else {
+            panic!("model");
+        };
+        let killed = model
+            .face_render_type
+            .as_ref()
+            .map(|rt| rt.iter().filter(|&&t| t == -1).count())
+            .unwrap_or(0);
+        assert!(
+            killed < model.num_faces as usize,
+            "tile ({x},2) shareLight deleted every face ({killed}/{}) — stone would vanish from outside",
+            model.num_faces
+        );
+    }
+}
+
+/// Real `basic_wall_1` loc (shape 0 / SOUTH) must cover pixels from the
+/// outdoor camera. Live Draynor: stone missing from outside, shutters remain.
+fn loc_ob2(rel: &str) -> Option<Vec<u8>> {
+    let home = std::env::var("HOME").ok()?;
+    std::fs::read(format!(
+        "{home}/experiments/Server/content/models/_sort/basic/{rel}"
+    ))
+    .ok()
+}
+
+fn basic_wall_ob2() -> Option<Vec<u8>> {
+    loc_ob2("basic_wall_1.ob2")
+}
+
+fn textured_pix() -> Pix3DDraw {
+    let mut pix = Pix3DDraw::default();
+    pix.low_mem = false;
+    if let Ok(home) = std::env::var("HOME") {
+        if let Ok(bytes) = std::fs::read(format!(
+            "{home}/experiments/Server/engine/data/pack/client/textures"
+        )) {
+            pix.unpack_textures(&JagFile::new(bytes));
+            pix.init_pool(20);
+            pix.init_texture_palettes(0.8);
+        }
+    }
+    pix
+}
+
+fn count_non_ground(world: &mut World, eye_x: i32, eye_y: i32, eye_z: i32) -> usize {
+    count_non_ground_at(world, eye_x, eye_y, eye_z, 0, 128)
+}
+
+fn count_non_ground_at(
+    world: &mut World,
+    eye_x: i32,
+    eye_y: i32,
+    eye_z: i32,
+    yaw: i32,
+    pitch: i32,
+) -> usize {
+    let mut pix = textured_pix();
+    let mut map = PixMap::new(512, 334);
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        viewport(&mut pix, &mut surface);
+        world.render_all(
+            &mut pix, &mut surface, &Cache::default(), 0, eye_x, eye_y, eye_z, 3, yaw, pitch,
+        );
+    }
+    let ground = Pix3D::colour_table()[SHADE as usize];
+    map.pixels
+        .iter()
+        .filter(|&&p| p != 0 && p != 1 && p != ground)
+        .count()
+}
+
+/// `Client.camFollow` eye for an orbit camera (Java 1515).
+fn orbit_eye(target_x: i32, target_y: i32, target_z: i32, pitch: i32, yaw: i32, distance: i32) -> (i32, i32, i32) {
+    let inv_pitch = (2048 - pitch) & 0x7ff;
+    let inv_yaw = (2048 - yaw) & 0x7ff;
+    let mut x = 0i32;
+    let mut y = 0i32;
+    let mut z = distance;
+    if inv_pitch != 0 {
+        let sin = Pix3D::sin_table()[inv_pitch as usize];
+        let cos = Pix3D::cos_table()[inv_pitch as usize];
+        let tmp = (y * cos - distance * sin) >> 16;
+        z = (y * sin + distance * cos) >> 16;
+        y = tmp;
+    }
+    if inv_yaw != 0 {
+        let sin = Pix3D::sin_table()[inv_yaw as usize];
+        let cos = Pix3D::cos_table()[inv_yaw as usize];
+        let tmp = (z * sin + x * cos) >> 16;
+        z = (z * cos - x * sin) >> 16;
+        x = tmp;
+    }
+    (target_x - x, target_y - y, target_z - z)
+}
+
+/// Draynor house stone is loc 1904–1910 `basic_painted*wall`. The outer faces
+/// are gouraud (HSL 10339), not textured. Java `getModel` + `World.shareLight`
+/// must light those faces so they cover from the outdoor camera. Unlit they
+/// write colour-table 0 and look like holes (furniture shows through).
+#[test]
+fn painted_house_wall_covers_from_outside_after_share_light() {
+    let Some(bytes) = loc_ob2("basic_painted1wall_1.ob2") else {
+        return;
+    };
+    const ID: i32 = 42426;
+    Model::unpack(ID, Some(&bytes));
+    let loc = LocType {
+        id: ID,
+        model: Some(vec![ID]),
+        shape: Some(vec![0]),
+        sharelight: true,
+        occlude: true,
+        ..LocType::default()
+    };
+    let model = loc
+        .get_model(&Cache::default(), 0, LocAngle::SOUTH, 2000, 2000, 2000, 2000, -1)
+        .expect("painted1wall get_model");
+    Pix3D::init_colour_table(0.6);
+    let mut world = flat_world();
+    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    world.set_wall(
+        0, 1, 2, 2000, 8, 0, Some(SceneModel::Model(model)), None, 0, 0,
+    );
+    world.share_light(64, 768, -50, -10, -50);
+    let n = count_non_ground(&mut world, 192, 1950, 64);
+    assert!(
+        n > 50,
+        "painted1wall shareLight painted {n} outdoor pixels; Draynor stone would be eaten from outside"
+    );
+
+    // Live orbit: pitch 128, distance pitch*3+600, looking north at the wall.
+    let pitch = 128i32;
+    let (ex, ey, ez) = orbit_eye(192, 1950, 256, pitch, 0, pitch * 3 + 600);
+    let n = count_non_ground_at(&mut world, ex, ey, ez, 0, pitch);
+    eprintln!("painted1wall orbit eye=({ex},{ey},{ez}) pixels={n}");
+    assert!(
+        n > 50,
+        "painted1wall orbit camera painted {n} pixels (eye {ex},{ey},{ez}); live south facade is missing"
+    );
+}
+
+/// Live groundh is `-height*8` (negative). An 8-tile SOUTH wall run becomes
+/// a type-2 occluder; Java still draws that wall from outside (points on the
+/// plane are not hidden). If we swallow it, stone vanishes while walldecor
+/// (spriteOccluded) remains.
+#[test]
+fn eight_tile_south_occluder_does_not_eat_outside_walls() {
+    let Some(bytes) = basic_wall_ob2() else {
+        eprintln!("basic_wall_1.ob2 missing; skip");
+        return;
+    };
+    const ID: i32 = 42425;
+    Model::unpack(ID, Some(&bytes));
+    let loc = LocType {
+        id: ID,
+        model: Some(vec![ID]),
+        shape: Some(vec![0]),
+        sharelight: true,
+        occlude: true,
+        ..LocType::default()
+    };
+
+    let groundh = -1600i32;
+    let max_level = 4;
+    let max_tile = 16;
+    let heights = vec![
+        vec![vec![groundh; max_tile + 1]; max_tile + 1];
+        max_level
+    ];
+    let mut world = World::new(heights, max_tile as i32, max_level as i32, max_tile as i32);
+    world.fill_base_level(0);
+    for x in 0..max_tile as i32 {
+        for z in 0..max_tile as i32 {
+            world.set_ground(
+                0, x, z, TerrainOverlayShape::PLAIN, 0, -1, 0, 0, 0, 0,
+                SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, 0, 0,
+            );
+        }
+    }
+
+    let wall_z = 8i32;
+    for x in 4..12 {
+        let model = loc
+            .get_model(&Cache::default(), 0, LocAngle::SOUTH, groundh, groundh, groundh, groundh, -1)
+            .expect("wall");
+        world.set_wall(
+            0, x, wall_z, groundh, 8, 0, Some(SceneModel::Model(model)), None, 0, 0,
+        );
+    }
+    world.share_light(64, 768, -50, -10, -50);
+    // finishBuild type-2 box for the 8-tile SOUTH run, stored on outdoor
+    // max_level 3.
+    world.set_occlude(
+        3,
+        2,
+        4 * 128,
+        groundh - 240,
+        wall_z * 128,
+        12 * 128,
+        groundh,
+        wall_z * 128,
+    );
+
+    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    Pix3D::init_colour_table(0.6);
+    let mut pix = textured_pix();
+    let mut map = PixMap::new(512, 334);
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        viewport(&mut pix, &mut surface);
+        // Camera south of the wall run, 50 units above ground, looking north.
+        world.render_all(
+            &mut pix,
+            &mut surface,
+            &Cache::default(),
+            0,
+            8 * 128,
+            groundh - 50,
+            6 * 128,
+            3,
+            0,
+            128,
+        );
+    }
+    let ground = Pix3D::colour_table()[SHADE as usize];
+    let n = map
+        .pixels
+        .iter()
+        .filter(|&&p| p != 0 && p != 1 && p != ground)
+        .count();
+    eprintln!("8-tile south occluder outdoor wall pixels={n}");
+    assert!(
+        n > 50,
+        "type-2 occluder on a negative-groundh 8-tile SOUTH run ate the walls ({n} pixels)"
+    );
+}
+
+/// A south wall in front of the camera must still cover when an interior
+/// scenery sprite sits on the tile behind it. Live Draynor: furniture shows
+/// through eaten stone — if fill defers the wall's back-pass until that
+/// sprite tile drops and never comes back, the stone vanishes.
+fn house_world_with_interior(scenery: bool) -> World {
+    let max_level = 1;
+    let max_tile = 16i32;
+    let groundh = vec![vec![vec![2000i32; max_tile as usize + 1]; max_tile as usize + 1]; max_level];
+    let mut world = World::new(groundh, max_tile, max_level as i32, max_tile);
+    world.fill_base_level(0);
+    for x in 0..max_tile {
+        for z in 0..max_tile {
+            world.set_ground(
+                0, x, z, TerrainOverlayShape::PLAIN, 0, -1, 0, 0, 0, 0,
+                SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, 0, 0,
+            );
+        }
+    }
+    let wall_z = 8i32;
+    for x in 7..9 {
+        world.set_wall(
+            0,
+            x,
+            wall_z,
+            2000,
+            8,
+            0,
+            Some(SceneModel::Model(south_wall_model(true))),
+            None,
+            0,
+            0,
+        );
+    }
+    if scenery {
+        world.add_scenery(
+            0,
+            7,
+            9,
+            2000,
+            Some(SceneModel::Model(one_face_model())),
+            0,
+            0,
+            1,
+            1,
+            0,
+        );
+    }
+    world
+}
+
+fn count_wall_shade(world: &mut World, eye_x: i32, eye_y: i32, eye_z: i32) -> usize {
+    Pix3D::init_colour_table(0.6);
+    let wall_rgb = Pix3D::colour_table()[WALL_SHADE as usize];
+    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let mut pix = Pix3DDraw::default();
+    let mut map = PixMap::new(512, 334);
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        viewport(&mut pix, &mut surface);
+        world.render_all(
+            &mut pix, &mut surface, &Cache::default(), 0, eye_x, eye_y, eye_z, 3, 0, 128,
+        );
+    }
+    map.pixels.iter().filter(|&&p| p == wall_rgb).count()
+}
+
+#[test]
+fn interior_scenery_does_not_eat_south_wall_from_outside() {
+    let mut empty = house_world_with_interior(false);
+    let without = count_wall_shade(&mut empty, 8 * 128, 1950, 6 * 128);
+    let mut furnished = house_world_with_interior(true);
+    let with = count_wall_shade(&mut furnished, 8 * 128, 1950, 6 * 128);
+    eprintln!("south wall pixels without interior={without} with interior={with}");
+    assert!(
+        without > 50,
+        "south wall of the house painted {without} pixels with no interior"
+    );
+    assert!(
+        with > 50,
+        "interior scenery ate the south wall from outside ({with} pixels, empty house had {without})"
+    );
+}
+
+/// Live screenshot: west stone visible, south facade gone. Camera is south-
+/// *east* of the house (gx != wall tile x), so MIDTAB marks the SOUTH wall
+/// as a "corner" and fill's back-pass is skipped — it must still draw via
+/// the corner-sides path (Java does).
+#[test]
+fn south_wall_covers_when_camera_is_southeast() {
+    let max_tile = 16i32;
+    let groundh = vec![vec![vec![2000i32; max_tile as usize + 1]; max_tile as usize + 1]; 1];
+    let mut world = World::new(groundh, max_tile, 1, max_tile);
+    world.fill_base_level(0);
+    for x in 0..max_tile {
+        for z in 0..max_tile {
+            world.set_ground(
+                0, x, z, TerrainOverlayShape::PLAIN, 0, -1, 0, 0, 0, 0,
+                SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, 0, 0,
+            );
+        }
+    }
+    world.set_wall(
+        0,
+        8,
+        8,
+        2000,
+        8,
+        0,
+        Some(SceneModel::Model(south_wall_model(true))),
+        None,
+        0,
+        0,
+    );
+    let aligned = count_wall_shade(&mut world, 8 * 128, 1950, 6 * 128);
+    // One tile west: gx=7, tile_x=8 → direction 2, SOUTH bit hits MIDTAB.
+    let offset = count_wall_shade(&mut world, 7 * 128, 1950, 6 * 128);
+    eprintln!("SOUTH wall pixels aligned_cam={aligned} southeast_cam={offset}");
+    assert!(
+        aligned > 50,
+        "SOUTH wall painted {aligned} pixels from a south-aligned camera"
+    );
+    assert!(
+        offset > 50,
+        "SOUTH wall painted {offset} pixels from a southeast camera (aligned={aligned}); live south facades are missing"
+    );
 }
 
 /// Overlay-edge tiles (shape ≥ 2) mix underlay and overlay face colours.
@@ -466,4 +1011,453 @@ fn render_2d_ground_plain_quick_fills_4x4() {
     }
     assert_eq!(dst[4], 0);
     assert_eq!(dst[512 * 4], 0);
+}
+
+/// Distinct north/south shades so we can tell which side of a 2×2 loc
+/// actually rasterised. Live Varrock fountain / Seers cabinets: the
+/// camera-facing side pops out while the far side stays.
+const SOUTH_SHADE: i32 = 40 * 128 + 80;
+const NORTH_SHADE: i32 = 90 * 128 + 40;
+
+/// Axis-aligned 2×2-tile box centred on the origin. South wall at z=-128
+/// uses the same CCW-from-south winding as `south_wall_model(true)`; north
+/// wall at z=+128 is the reverse so it faces +Z.
+fn ns_box_model(sharelight_cube: bool) -> Model {
+    let mut model = Model::default();
+    model.num_points = 8;
+    model.point_x = Some(vec![-128, 128, 128, -128, -128, 128, 128, -128]);
+    model.point_y = Some(vec![0, 0, -200, -200, 0, 0, -200, -200]);
+    model.point_z = Some(vec![-128, -128, -128, -128, 128, 128, 128, 128]);
+    model.num_faces = 4;
+    // South (z=-128): (0,1,2)+(0,2,3). North (z=+128): reversed (4,6,5)+(4,7,6).
+    model.face_vertex_a = Some(vec![0, 0, 4, 4]);
+    model.face_vertex_b = Some(vec![1, 2, 6, 7]);
+    model.face_vertex_c = Some(vec![2, 3, 5, 6]);
+    model.face_colour_a = Some(vec![SOUTH_SHADE, SOUTH_SHADE, NORTH_SHADE, NORTH_SHADE]);
+    model.face_colour_b = Some(vec![SOUTH_SHADE, SOUTH_SHADE, NORTH_SHADE, NORTH_SHADE]);
+    model.face_colour_c = Some(vec![SOUTH_SHADE, SOUTH_SHADE, NORTH_SHADE, NORTH_SHADE]);
+    if sharelight_cube {
+        model.face_colour = Some(vec![SOUTH_SHADE, SOUTH_SHADE, NORTH_SHADE, NORTH_SHADE]);
+        model.calculate_normals(64, 768, -50, -10, -50, false);
+        model.face_colour_a = Some(vec![SOUTH_SHADE, SOUTH_SHADE, NORTH_SHADE, NORTH_SHADE]);
+        model.face_colour_b = Some(vec![SOUTH_SHADE, SOUTH_SHADE, NORTH_SHADE, NORTH_SHADE]);
+        model.face_colour_c = Some(vec![SOUTH_SHADE, SOUTH_SHADE, NORTH_SHADE, NORTH_SHADE]);
+    } else {
+        model.calc_bounding_cylinder();
+    }
+    model
+}
+
+fn count_shades(pixels: &[i32], south_rgb: i32, north_rgb: i32) -> (usize, usize) {
+    let south = pixels.iter().filter(|&&p| p == south_rgb).count();
+    let north = pixels.iter().filter(|&&p| p == north_rgb).count();
+    (south, north)
+}
+
+/// Direct `world_render` (no World.fill): if the south face is missing here,
+/// the hole is Model projection/winding/depth, not fill order.
+fn render_box_in_world(sharelight_cube: bool, yaw: i32, pitch: i32) -> (usize, usize) {
+    Pix3D::init_colour_table(0.6);
+    let south_rgb = Pix3D::colour_table()[SOUTH_SHADE as usize];
+    let north_rgb = Pix3D::colour_table()[NORTH_SHADE as usize];
+    let max_tile = 16i32;
+    let groundh = vec![vec![vec![2000i32; max_tile as usize + 1]; max_tile as usize + 1]; 1];
+    let mut world = World::new(groundh, max_tile, 1, max_tile);
+    world.fill_base_level(0);
+    for x in 0..max_tile {
+        for z in 0..max_tile {
+            world.set_ground(
+                0, x, z, TerrainOverlayShape::PLAIN, 0, -1, 0, 0, 0, 0,
+                SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, 0, 0,
+            );
+        }
+    }
+    let ok = world.add_scenery(
+        0,
+        6,
+        8,
+        2000,
+        Some(SceneModel::Model(ns_box_model(sharelight_cube))),
+        0,
+        0,
+        2,
+        2,
+        0,
+    );
+    assert!(ok, "2x2 scenery must place");
+    // Corner wall on a footprint tile: Java defers the sprite until this
+    // wall's corner-sides handshake completes (`(spans & cornerSides) ==
+    // sidesAfterCorner`). Without that defer the loc draws too early and
+    // later tiles eat the facing side.
+    world.set_wall(
+        0,
+        7,
+        9,
+        2000,
+        16,
+        0,
+        Some(SceneModel::Model(south_wall_model(true))),
+        None,
+        0,
+        0,
+    );
+    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let mut pix = Pix3DDraw::default();
+    pix.low_mem = false;
+    let mut map = PixMap::new(512, 334);
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        viewport(&mut pix, &mut surface);
+        // South of the loc looking north (yaw=0), or north looking south (yaw=1024).
+        let (eye_x, eye_y, eye_z) = if yaw == 0 {
+            (7 * 128, 1950, 6 * 128)
+        } else {
+            (7 * 128, 1950, 11 * 128)
+        };
+        world.render_all(
+            &mut pix, &mut surface, &Cache::default(), 0, eye_x, eye_y, eye_z, 3, yaw, pitch,
+        );
+    }
+    count_shades(&map.pixels, south_rgb, north_rgb)
+}
+
+#[test]
+fn camera_facing_box_faces_draw_as_2x2_scenery() {
+    let pitch = 128i32;
+    let (south, north) = render_box_in_world(false, 0, pitch);
+    eprintln!("fill cylinder yaw0: south={south} north={north}");
+    let (south_c, north_c) = render_box_in_world(true, 0, pitch);
+    eprintln!("fill cube yaw0: south={south_c} north={north_c}");
+    let (south_back, north_back) = render_box_in_world(true, 1024, pitch);
+    eprintln!("fill cube yaw1024: south={south_back} north={north_back}");
+
+    assert!(
+        south > 50 || south_c > 50,
+        "2x2 scenery south face painted 0 pixels from the south camera (cyl={south} cube={south_c}); live fountain basin / cabinet glass vanish on the facing side"
+    );
+    // Rotating 180° must not steal the (now) camera-facing north wall.
+    assert!(
+        north_back > 50,
+        "2x2 scenery north face painted {north_back} pixels from a north camera; live cabinets pop in/out as the camera rotates"
+    );
+}
+
+fn pack_config() -> Option<Cache> {
+    let home = std::env::var("HOME").ok()?;
+    let bytes = std::fs::read(format!(
+        "{home}/experiments/Server/engine/data/pack/client/config"
+    ))
+    .ok()?;
+    Some(Cache::unpack(&JagFile::new(bytes)))
+}
+
+fn fountain_ob2() -> Option<Vec<u8>> {
+    let home = std::env::var("HOME").ok()?;
+    std::fs::read(format!(
+        "{home}/experiments/Server/content/models/_sort/outdoorfurniture/outdoorfurniture_fountain.ob2"
+    ))
+    .ok()
+}
+
+/// Live Varrock plaza: camera-facing basin walls missing, water/statues stay.
+/// Loc 879 `outdoorfurniture_fountain` is a 2×2 centrepiece (shape 10).
+#[test]
+fn varrock_fountain_facing_side_covers() {
+    let Some(cache) = pack_config() else {
+        eprintln!("config jag missing; skip");
+        return;
+    };
+    let Some(bytes) = fountain_ob2() else {
+        eprintln!("fountain ob2 missing; skip");
+        return;
+    };
+    let loc_idx = cache
+        .locs
+        .iter()
+        .position(|l| l.id == 879 || l.name.to_lowercase().contains("fountain"))
+        .expect("loc 879 fountain");
+    let model_id = cache.locs[loc_idx]
+        .model
+        .as_ref()
+        .and_then(|m| m.first())
+        .copied()
+        .unwrap_or(1497);
+    let width = cache.locs[loc_idx].width.max(1);
+    let length = cache.locs[loc_idx].length.max(1);
+    {
+        let loc = &cache.locs[loc_idx];
+        eprintln!(
+            "fountain loc id={} name={:?} width={} length={} sharelight={} hillskew={} occlude={} ambient={} contrast={} models={:?} shapes={:?}",
+            loc.id, loc.name, loc.width, loc.length, loc.sharelight, loc.hillskew, loc.occlude, loc.ambient, loc.contrast, loc.model, loc.shape
+        );
+    }
+    Model::unpack(model_id, Some(&bytes));
+    let groundh = -1600i32;
+    let model = cache.locs[loc_idx]
+        .get_model(&Cache::default(), 10, LocAngle::WEST, groundh, groundh, groundh, groundh, -1)
+        .expect("fountain get_model");
+    eprintln!(
+        "fountain after get_model: points={} faces={} radius={} min_y={} max_y={} min_depth={} max_depth={} priority={} face_priority={} face_render_type={}",
+        model.num_points,
+        model.num_faces,
+        model.radius,
+        model.min_y,
+        model.max_y,
+        model.min_depth,
+        model.max_depth,
+        model.priority,
+        model.face_priority.as_ref().map(|p| format!("len{} max{:?}", p.len(), p.iter().max())).unwrap_or_else(|| "none".into()),
+        model.face_render_type.as_ref().map(|p| format!("len{} killed{}", p.len(), p.iter().filter(|&&t| t == -1).count())).unwrap_or_else(|| "none".into()),
+    );
+    if let Some(fp) = model.face_priority.as_ref() {
+        let mut hist = [0u32; 12];
+        for &p in fp {
+            if (0..12).contains(&p) {
+                hist[p as usize] += 1;
+            }
+        }
+        eprintln!("fountain face_priority hist={hist:?}");
+    }
+
+    Pix3D::init_colour_table(0.6);
+    let max_tile = 16i32;
+    let heights = vec![vec![vec![groundh; max_tile as usize + 1]; max_tile as usize + 1]; 1];
+    let mut world = World::new(heights, max_tile, 1, max_tile);
+    world.fill_base_level(0);
+    for x in 0..max_tile {
+        for z in 0..max_tile {
+            world.set_ground(
+                0, x, z, TerrainOverlayShape::PLAIN, 0, -1, 0, 0, 0, 0,
+                SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, 0, 0,
+            );
+        }
+    }
+    let placed = world.add_scenery(
+        0,
+        6,
+        8,
+        groundh,
+        Some(SceneModel::Model(model)),
+        0,
+        0,
+        width,
+        length,
+        0,
+    );
+    assert!(placed, "fountain 2x2 must place");
+    world.share_light(64, 768, -50, -10, -50);
+
+    if let Some(l879) = cache.locs.get(879) {
+        eprintln!(
+            "loc 879 name={:?} width={} length={} sharelight={} models={:?} shapes={:?}",
+            l879.name, l879.width, l879.length, l879.sharelight, l879.model, l879.shape
+        );
+    }
+
+    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let ground = Pix3D::colour_table()[SHADE as usize];
+    let mut count_at = |yaw: i32, eye_x: i32, eye_y: i32, eye_z: i32| -> usize {
+        let mut pix = textured_pix();
+        let mut map = PixMap::new(512, 334);
+        {
+            let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+            viewport(&mut pix, &mut surface);
+            world.render_all(
+                &mut pix, &mut surface, &Cache::default(), 0, eye_x, eye_y, eye_z, 3, yaw, 128,
+            );
+        }
+        map.pixels
+            .iter()
+            .filter(|&&p| p != 0 && p != 1 && p != ground)
+            .count()
+    };
+
+    // Live `camFollow`: orbit around the fountain centre, pitch 128,
+    // distance pitch*3+600. yaw 0 looks north (south face nearer); 1024 looks south.
+    let pitch = 128i32;
+    let distance = pitch * 3 + 600;
+    let (sx, sy, sz) = orbit_eye(896, groundh - 50, 1152, pitch, 0, distance);
+    let (nx, ny, nz) = orbit_eye(896, groundh - 50, 1152, pitch, 1024, distance);
+    eprintln!("orbit south eye=({sx},{sy},{sz}) north eye=({nx},{ny},{nz})");
+    let south = count_at(0, sx, sy, sz);
+    let north = count_at(1024, nx, ny, nz);
+    eprintln!("fountain pixels from_south={south} from_north={north}");
+    assert!(
+        south > 50,
+        "fountain painted {south} pixels from the south; live basin walls on the facing side are missing"
+    );
+    assert!(
+        north > 50,
+        "fountain painted {north} pixels from the north; live cabinets/fountain pop in/out as the camera rotates"
+    );
+}
+
+/// Live Varrock/Seers: facing faces vanish only in a populated scene.
+/// Surround the fountain with SOUTH walls and 1×1 scenery and look from
+/// the south; the isolated fountain (above) stays in the 9k pixel range.
+#[test]
+fn fountain_facing_side_survives_dense_neighbours() {
+    let Some(cache) = pack_config() else {
+        eprintln!("config jag missing; skip");
+        return;
+    };
+    let Some(bytes) = fountain_ob2() else {
+        eprintln!("fountain ob2 missing; skip");
+        return;
+    };
+    let loc_idx = cache
+        .locs
+        .iter()
+        .position(|l| l.id == 879)
+        .expect("loc 879");
+    let model_id = cache.locs[loc_idx]
+        .model
+        .as_ref()
+        .and_then(|m| m.first())
+        .copied()
+        .unwrap_or(1497);
+    Model::unpack(model_id, Some(&bytes));
+    let groundh = -1600i32;
+    let model = cache.locs[loc_idx]
+        .get_model(&Cache::default(), 10, LocAngle::WEST, groundh, groundh, groundh, groundh, -1)
+        .expect("fountain get_model");
+
+    Pix3D::init_colour_table(0.6);
+    let max_tile = 32i32;
+    let heights = vec![vec![vec![groundh; max_tile as usize + 1]; max_tile as usize + 1]; 4];
+    let mut world = World::new(heights, max_tile, 4, max_tile);
+    world.fill_base_level(0);
+    for x in 0..max_tile {
+        for z in 0..max_tile {
+            world.set_ground(
+                0, x, z, TerrainOverlayShape::PLAIN, 0, -1, 0, 0, 0, 0,
+                SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, 0, 0,
+            );
+        }
+    }
+    let fx = 14i32;
+    let fz = 16i32;
+    assert!(world.add_scenery(
+        0, fx, fz, groundh, Some(SceneModel::Model(model)), 0, 0, 2, 2, 0,
+    ));
+    for x in 8..22 {
+        for z in 10..24 {
+            if x >= fx && x < fx + 2 && z >= fz && z < fz + 2 {
+                continue;
+            }
+            world.set_wall(
+                0, x, z, groundh, 8, 0,
+                Some(SceneModel::Model(south_wall_model(true))),
+                None, 0, 0,
+            );
+            world.add_scenery(
+                0, x, z, groundh,
+                Some(SceneModel::Model(one_face_model())),
+                0, 0, 1, 1, 0,
+            );
+        }
+    }
+    world.share_light(64, 768, -50, -10, -50);
+    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+
+    let pitch = 128i32;
+    let (ex, ey, ez) = orbit_eye(
+        (fx * 128) + 128,
+        groundh - 50,
+        fz * 128,
+        pitch,
+        0,
+        pitch * 3 + 600,
+    );
+    let mut pix = textured_pix();
+    let mut map = PixMap::new(512, 334);
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        viewport(&mut pix, &mut surface);
+        world.render_all(
+            &mut pix, &mut surface, &Cache::default(), 0, ex, ey, ez, 3, 0, pitch,
+        );
+    }
+    let ground = Pix3D::colour_table()[SHADE as usize];
+    let wall = Pix3D::colour_table()[WALL_SHADE as usize];
+    let n = map
+        .pixels
+        .iter()
+        .filter(|&&p| p != 0 && p != 1 && p != ground && p != wall)
+        .count();
+    eprintln!("dense-neighbour fountain non-wall pixels={n} eye=({ex},{ey},{ez})");
+    assert!(
+        n > 200,
+        "fountain in a dense wall/scenery neighbourhood painted {n} non-wall pixels from the south (isolated orbit is ~9k); live facing basin/glass vanish among neighbours"
+    );
+}
+
+/// Live is a 104×104 vis window. Java/TS `LinkList.push` unlinks a Square
+/// already in `fillQueue` and moves it to the tail; a VecDeque of coordinates
+/// that only `push_back`s draws the loc too early so later tiles eat the
+/// camera-facing side.
+#[test]
+fn camera_facing_box_survives_full_vis_window() {
+    let pitch = 128i32;
+    Pix3D::init_colour_table(0.6);
+    let south_rgb = Pix3D::colour_table()[SOUTH_SHADE as usize];
+    let max_tile = 104i32;
+    let groundh = 2000i32;
+    let heights = vec![vec![vec![groundh; max_tile as usize + 1]; max_tile as usize + 1]; 4];
+    let mut world = World::new(heights, max_tile, 4, max_tile);
+    world.fill_base_level(0);
+    for x in 0..max_tile {
+        for z in 0..max_tile {
+            world.set_ground(
+                0, x, z, TerrainOverlayShape::PLAIN, 0, -1, 0, 0, 0, 0,
+                SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, 0, 0,
+            );
+        }
+    }
+    let mut box_model = ns_box_model(false);
+    // Basin-height walls: live fountain rim is short; a 200-unit south
+    // face can survive overdraw that eats a 40-unit face.
+    if let Some(y) = box_model.point_y.as_mut() {
+        for v in y.iter_mut() {
+            if *v < 0 {
+                *v = -40;
+            }
+        }
+    }
+    box_model.calc_bounding_cylinder();
+    assert!(world.add_scenery(
+        0, 50, 52, groundh,
+        Some(SceneModel::Model(box_model)),
+        0, 0, 2, 2, 0,
+    ));
+    for x in 40..60 {
+        for z in 42..62 {
+            if x >= 50 && x < 52 && z >= 52 && z < 54 {
+                continue;
+            }
+            world.add_scenery(
+                0, x, z, groundh,
+                Some(SceneModel::Model(one_face_model())),
+                0, 0, 1, 1, 0,
+            );
+        }
+    }
+    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let (ex, ey, ez) = orbit_eye(51 * 128, groundh - 50, 52 * 128, pitch, 0, pitch * 3 + 600);
+    let mut pix = Pix3DDraw::default();
+    pix.low_mem = false;
+    let mut map = PixMap::new(512, 334);
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        viewport(&mut pix, &mut surface);
+        world.render_all(
+            &mut pix, &mut surface, &Cache::default(), 0, ex, ey, ez, 3, 0, pitch,
+        );
+    }
+    let south = map.pixels.iter().filter(|&&p| p == south_rgb).count();
+    eprintln!("104-map south-face pixels={south} eye=({ex},{ey},{ez})");
+    assert!(
+        south > 50,
+        "2×2 south face painted {south} pixels in a 104×104 vis window; live facing fountain/cabinet/wall faces vanish"
+    );
 }

@@ -31,6 +31,10 @@ pub struct Square {
     pub sides_before_corner: i32,
     pub sides_after_corner: i32,
     pub back_wall_types: i32,
+    /// Stamp of this square's live `fillQueue` entry. Java/TS `LinkList.push`
+    /// unlinks a node already in the list and appends it at the tail; a
+    /// matching stamp makes older deque copies stale the same way.
+    pub fill_stamp: i32,
 }
 
 impl Square {
@@ -59,6 +63,7 @@ impl Square {
             sides_before_corner: 0,
             sides_after_corner: 0,
             back_wall_types: 0,
+            fill_stamp: 0,
         }
     }
 }
