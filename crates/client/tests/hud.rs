@@ -9,6 +9,7 @@ use client::config::if_type::{ButtonType, ComponentType, IfType};
 use client::config::{ObjType, SeqType, VarpType};
 use client::graphics::{Colour, Pix2D, PixMap};
 use client::io::{ClientProt, JagFile, Packet};
+use client::wordfilter::WordPack;
 
 fn client() -> Client {
     Client::new(ClientConfig {
@@ -443,7 +444,8 @@ fn chat_enter_clears_input_and_echoes_without_player_name() {
     c.shell.apply_key(true, 10, 10);
     c.handle_chat_input();
     assert!(c.chat_input.is_empty());
-    assert_eq!(c.chat_text[0], "hello");
+    // the echo is sentence-cased (WordFilter stays identity without wordenc)
+    assert_eq!(c.chat_text[0], "Hello");
 }
 
 #[test]
@@ -490,14 +492,17 @@ fn chat_input_public_sends_message_public() {
     c.shell.apply_key(true, 0, 13);
     c.handle_chat_input();
     assert_eq!(c.chat_input, "");
-    // MESSAGE_PUBLIC: p1_enc(253) p1(0 len) p1(colour) p1(effect) pjstr("hello")
+    // MESSAGE_PUBLIC: p1_enc(253) p1(0 len) p1(colour) p1(effect) WordPack("hello")
     assert_eq!(c.out.data()[0] as i32, ClientProt::MESSAGE_PUBLIC.id & 0xff);
-    assert_eq!(c.out.data()[1], 8); // len: colour + effect + "hello\n"
     assert_eq!(c.out.data()[2], 0); // colour
     assert_eq!(c.out.data()[3], 0); // effect
-    assert_eq!(&c.out.data()[4..10], b"hello\n");
+    let packed_len = c.out.data()[1] as usize - 2; // size minus colour+effect
+    let mut tail = Packet::new(c.out.data()[4..4 + packed_len].to_vec());
+    // WordPack.unpack of a packed "hello" is "Hello " (trailing carry
+    // space, oracle 61 bb 40); the echo is the sentence-cased text.
+    assert_eq!(WordPack::unpack(&mut tail, packed_len), "Hello ");
     // own message echoes into the chat as type 2 with the player name
-    assert_eq!(c.chat_text[0], "hello");
+    assert_eq!(c.chat_text[0], "Hello");
     assert_eq!(c.chat_type[0], 2);
     assert_eq!(c.chat_username[0], "Bob");
 }

@@ -94,4 +94,21 @@ impl JString {
     pub fn get_repeated_character(str: &str) -> String {
         "*".repeat(str.chars().count())
     }
+
+    /// `JString.toSentenceCase(input)`: lowercase, then uppercase each
+    /// letter that follows the string start or a `.`/`!`.
+    pub fn to_sentence_case(input: &str) -> String {
+        let mut chars: Vec<char> = input.to_lowercase().chars().collect();
+        let mut punctuation = true;
+        for char in chars.iter_mut() {
+            if punctuation && char.is_ascii_lowercase() {
+                *char = char.to_ascii_uppercase();
+                punctuation = false;
+            }
+            if *char == '.' || *char == '!' {
+                punctuation = true;
+            }
+        }
+        chars.into_iter().collect()
+    }
 }

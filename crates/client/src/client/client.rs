@@ -43,6 +43,7 @@ use crate::io::{
 use crate::login_rsa::{LOGIN_RSAE, LOGIN_RSAN};
 use crate::sound::{Fade, JagFX, Midi};
 use crate::util::JString;
+use crate::wordfilter::{WordFilter, WordPack};
 
 const MAX_PLAYER_COUNT: usize = 2048;
 const MAX_NPC_COUNT: usize = 16384;
@@ -701,6 +702,12 @@ pub struct Client {
     pub chat_input: String,
     pub chat_scroll_pos: i32,
     pub chat_scroll_height: i32,
+    /// Ignore list and `chatDisabled` from client-ts (`ignoreCount`/
+    /// `ignoreUserhash[100]`/`chatDisabled`). The CHAT mask reads them for
+    /// the `type <= 1` skip; the list itself is filled by the social slice.
+    pub ignore_count: i32,
+    pub ignore_userhash: [i64; 100],
+    pub chat_disabled: i32,
     /// `chatInterface` from client-ts (480): the synthetic IfType the chat
     /// scrollbar reads/writes (not in the jag), synced to the chat scroll
     /// state by `game_draw`/`draw_chat`.
@@ -1065,6 +1072,9 @@ impl Client {
             chat_input: String::new(),
             chat_scroll_pos: 0,
             chat_scroll_height: 78,
+            ignore_count: 0,
+            ignore_userhash: [0; 100],
+            chat_disabled: 0,
             chat_interface: IfType::default(),
             scroll_grabbed: false,
             scroll_input_padding: 0,
@@ -1257,7 +1267,7 @@ impl Client {
         // TS maininit fetch order/progress: title 25, config 30, interface
         // 35, media 40, textures 45, wordenc 50, sounds 55, versionlist 60
         // (checksum slots 1-8 of `JAG_FILES`). `wordenc` is fetched and
-        // persisted but not unpacked (WordFilter is a later slice).
+        // persisted; `WordFilter.unpack` reads it back after load_cache.
         const JAG_FETCH: [(&str, &str, usize, i32); 8] = [
             ("title screen", "title", 1, 25),
             ("config", "config", 2, 30),
@@ -1286,6 +1296,15 @@ impl Client {
                 self.error_loading = true;
                 self.shell.set_framerate(1);
             }
+        }
+
+        // TS maininit 1236 `WordFilter.unpack(wordenc)`: read the jag the
+        // fetch persisted. A missing or corrupt file is skipped — the
+        // filter stays identity and maininit must not fail. `unpack` is
+        // idempotent (OnceLock), so repeated maininit calls are no-ops.
+        let wordenc_path = format!("{}/wordenc", self.config.cache_dir);
+        if let Ok(bytes) = std::fs::read(&wordenc_path) {
+            let _ = catch_unwind(AssertUnwindSafe(|| WordFilter::unpack(&JagFile::new(bytes))));
         }
 
         self.on_demand = Self::load_on_demand(&self.config);
@@ -5386,16 +5405,73 @@ impl Client {
         }
 
         if mask & player_update::CHAT != 0 {
-            let _colour_effect = buf.g2();
-            let _chat_type = buf.g1();
+            let colour_effect = buf.g2();
+            let chat_type = buf.g1();
             let length = buf.g1();
             let start = buf.pos;
 
-            // TS unpacks/filters the chat via WordPack/WordFilter and
-            // addChat; the chat task owns that. The payload is still skipped
-            // so the frame stays aligned.
+            // TS 7907-7941: unpack/filter the WordPacked chat and addChat
+            // it. `add_chat` needs a whole-`self` borrow, so the shared
+            // `player` borrow ends at the name/ready snapshot and is
+            // re-acquired below for the bubble fields. The ignore list is
+            // filled by the social slice; `ignore_count` stays 0 until then.
+            let (name, ready) = match &player {
+                Some(p) => (p.name.clone(), p.ready),
+                None => (None, false),
+            };
+            let mut filtered = None;
+            if let (Some(name), true) = (name, ready) {
+                let username = JString::to_userhash(&name);
+                let mut ignored = false;
+                if chat_type <= 1 {
+                    for i in 0..self.ignore_count {
+                        if self.ignore_userhash[i as usize] == username as i64 {
+                            ignored = true;
+                            break;
+                        }
+                    }
+                }
+                if !ignored && self.chat_disabled == 0 {
+                    let uncompressed = WordPack::unpack(buf, length as usize);
+                    filtered = Some(WordFilter::filter(&uncompressed));
+                    if chat_type == 2 || chat_type == 3 {
+                        self.add_chat(1, filtered.as_deref().unwrap(), &format!("@cr2@{name}"));
+                    } else if chat_type == 1 {
+                        self.add_chat(1, filtered.as_deref().unwrap(), &format!("@cr1@{name}"));
+                    } else {
+                        self.add_chat(2, filtered.as_deref().unwrap(), &name);
+                    }
+                }
+            }
+            // Ignored/disabled chat still skips the payload (unpack stops
+            // early past 100 chars, so re-align like TS).
             buf.pos = start + length as usize;
+
+            // Re-acquire the player (the shared borrow ended at the
+            // snapshot above) for the chat bubble fields, as TS 7928-7931.
+            let player = if index == LOCAL_PLAYER_INDEX as usize {
+                self.local_player.as_mut()
+            } else {
+                self.players[index].as_mut()
+            };
+            if let Some(filtered) = filtered {
+                if let Some(player) = player {
+                    player.chat_message = Some(filtered.clone());
+                    player.chat_colour = colour_effect >> 8;
+                    player.chat_effect = colour_effect & 0xff;
+                    player.chat_timer = 150;
+                }
+            }
         }
+
+        // The shared `player` binding's last use was the CHAT snapshot
+        // above (`add_chat` needed a whole-`self` borrow), so it is
+        // re-acquired for the remaining masks.
+        let mut player = if index == LOCAL_PLAYER_INDEX as usize {
+            self.local_player.as_mut()
+        } else {
+            self.players[index].as_mut()
+        };
 
         if mask & player_update::SPOTANIM != 0 {
             let spotanim_id = buf.g2();
@@ -6521,10 +6597,10 @@ impl Client {
     /// once the input starts with `::`) appends below 80 chars, 8
     /// backspaces, 10/13 sends. A `::` command goes out as `CLIENT_CHEAT`
     /// (TS 3093-3095); anything else packs `MESSAGE_PUBLIC` (TS 3158-3165)
-    /// with the colour/effect prefixes parsed as TS 3097-3155. `WordPack`
-    /// is not ported, so the pack is the plain jstr via `pjstr`, and the
-    /// `toSentenceCase`/`WordFilter` steps are skipped; the own message
-    /// still echoes locally as `add_chat(2, ...)` as TS 3169-3179.
+    /// with the colour/effect prefixes parsed as TS 3097-3155 and the text
+    /// WordPacked. The own message echoes locally as
+    /// `toSentenceCase` + `WordFilter.filter` + `add_chat(2, ...)`
+    /// (TS 3169-3179).
     pub fn handle_chat_input(&mut self) {
         loop {
             let key = self.shell.poll_key();
@@ -6620,14 +6696,16 @@ impl Client {
                     let start = self.out.pos;
                     self.out.p1(colour);
                     self.out.p1(effect);
-                    // WordPack is not ported: pack the plain jstr.
-                    self.out.pjstr(&text);
+                    WordPack::pack(&mut self.out, &text);
                     self.out.psize1((self.out.pos - start) as i32);
 
-                    // Echo the own message as TS 3169-3179 (the
-                    // toSentenceCase/WordFilter steps are not ported).
-                    // Name falls back to the login user, then "player", so
-                    // the echo is never dropped pre-spawn.
+                    // Echo the own message as TS 3169-3179:
+                    // toSentenceCase then WordFilter (identity until the
+                    // wordenc jag loads). Name falls back to the login
+                    // user, then "player", so the echo is never dropped
+                    // pre-spawn.
+                    text = JString::to_sentence_case(&text);
+                    text = WordFilter::filter(&text);
                     let name = self
                         .local_player
                         .as_ref()
