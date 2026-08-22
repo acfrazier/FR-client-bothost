@@ -30,3 +30,18 @@ fn wordpack_truncates_to_80() {
     let out = WordPack::unpack(&mut p, len);
     assert!(out.len() <= 80);
 }
+
+/// 80 `a`s (TABLE index 3) pack to exactly 40 bytes with no trailing
+/// carry byte (even nibble count), so the 1:1 unpack restores all 80
+/// chars: the sentence-case pass uppercases only the first one.
+#[test]
+fn wordpack_exact_80_roundtrip() {
+    let mut p = Packet::new(vec![0; 256]);
+    WordPack::pack(&mut p, &"a".repeat(80));
+    let len = p.pos;
+    p.pos = 0;
+    let out = WordPack::unpack(&mut p, len);
+    assert_eq!(len, 40, "80 nibble-pairs fill 40 bytes exactly");
+    assert_eq!(out.len(), 80);
+    assert_eq!(out, format!("A{}", "a".repeat(79)));
+}

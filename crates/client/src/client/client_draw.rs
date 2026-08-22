@@ -773,9 +773,9 @@ impl Client {
     /// sequence) and blits it at (4, 4). `World.resetVisCalc` runs once on
     /// the first pass (TS runs it from the game-loading flow) so
     /// `render_all`'s visibility backing is populated. The overlay passes
-    /// are no-ops while their lists/sprites are not ported; the minimenu
-    /// and the fps pass are not ported either. `otherOverlays` (the main
-    /// overlay and modal, TS 4250) draws into `area_game` before the blit.
+    /// are no-ops while their lists/sprites are not ported; the fps pass
+    /// is not ported either. `otherOverlays` (the main overlay and modal,
+    /// TS 4250) draws into `area_game` before the blit.
     fn game_draw_main(&mut self) {
         self.scene_cycle += 1;
 

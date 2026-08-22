@@ -1187,8 +1187,8 @@ impl ClientBuild {
     /// flo table, `pix3d` the texture averages (TS `Pix3D.getTextureAverage`
     /// is a per-client `Pix3DDraw` here), `groundh`/`mapl` are the
     /// `Client`'s scene grids read through the TS constructor references.
-    /// `World.shareLight` (TS 331) is not ported yet, so the light-sharing
-    /// call is skipped until `World` grows it.
+    /// Ends with the `World.shareLight` call (TS 331) so loc/wall/decor
+    /// models are lit as the TS `finishBuild` does.
     #[allow(clippy::too_many_arguments)]
     pub fn finish_build(
         &mut self,

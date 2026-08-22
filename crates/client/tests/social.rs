@@ -125,6 +125,77 @@ fn update_friendlist_adds_and_login_chat() {
 }
 
 #[test]
+fn update_friendlist_existing_world_0_to_10_chats_login() {
+    let mut c = client();
+    let hash = JString::to_userhash("bob") as i64;
+    let mut p = Packet::new(vec![0; 32]);
+    p.p8(hash);
+    p.p1(0); // offline friend
+    p.pos = 0;
+    c.apply_update_friendlist(&mut p);
+    assert_eq!(c.friend_node_id[0], 0);
+
+    let mut p = Packet::new(vec![0; 32]);
+    p.p8(hash);
+    p.p1(10); // same friend logs into world 10
+    p.pos = 0;
+    c.apply_update_friendlist(&mut p);
+    assert_eq!(c.friend_count, 1, "update must not re-add the friend");
+    assert_eq!(c.friend_node_id[0], 10);
+    assert!(c.redraw_side);
+    assert_eq!(c.chat_type[0], 5);
+    assert_eq!(c.chat_text[0], "Bob has logged in.");
+    assert!(c.chat_username[0].is_empty(), "type-5 lines carry no sender");
+}
+
+/// TS 3168-3189: a public send stamps the local player's chat bubble
+/// (colour/effect/timer 150) once the player has a name, and a
+/// `chat_public_mode == 2` ("off") send auto-hides it by flipping to
+/// mode 3 and sending `CHAT_SETMODE`.
+#[test]
+fn public_send_stamps_local_bubble_and_hides_when_off() {
+    let mut c = client();
+    c.ingame = true;
+    c.chat_public_mode = 2;
+    let mut player = ClientPlayer::at(1, 1);
+    player.name = Some("Bob".into());
+    c.local_player = Some(player);
+    for ch in b"hi" {
+        c.shell.apply_key(true, 0, *ch as i32);
+    }
+    c.shell.apply_key(true, 0, 13);
+    c.handle_chat_input();
+    let p = c.local_player.as_ref().unwrap();
+    assert_eq!(p.chat_message.as_deref(), Some("Hi")); // sentence-cased echo
+    assert_eq!(p.chat_colour, 0);
+    assert_eq!(p.chat_effect, 0);
+    assert_eq!(p.chat_timer, 150);
+    assert_eq!(c.chat_public_mode, 3);
+    assert!(c.redraw_chat_mode);
+    // trailing CHAT_SETMODE packet: p1_enc(154) p1(3) p1(private) p1(trade)
+    let pos = c.out.pos;
+    assert_eq!(c.out.data()[pos - 4] as i32, ClientProt::CHAT_SETMODE.id & 0xff);
+    assert_eq!(c.out.data()[pos - 3], 3);
+}
+
+/// The bubble is only stamped once the local player has a name (TS guards
+/// the whole echo on `localPlayer.name`); the mode flip still applies.
+#[test]
+fn public_send_without_name_skips_bubble() {
+    let mut c = client();
+    c.ingame = true;
+    c.chat_public_mode = 2;
+    c.local_player = Some(ClientPlayer::at(1, 1));
+    for ch in b"hi" {
+        c.shell.apply_key(true, 0, *ch as i32);
+    }
+    c.shell.apply_key(true, 0, 13);
+    c.handle_chat_input();
+    assert_eq!(c.local_player.as_ref().unwrap().chat_timer, 100, "never stamped");
+    assert_eq!(c.chat_public_mode, 3, "mode flip is independent of the name");
+}
+
+#[test]
 fn add_friend_encodes_p8() {
     let mut c = client();
     c.local_player = Some(ClientPlayer::at(5, 5));

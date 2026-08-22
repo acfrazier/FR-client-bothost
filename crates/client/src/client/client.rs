@@ -2562,7 +2562,10 @@ impl Client {
 
         if action == MiniMenuAction::IF_BUTTON {
             // TS 9144-9154: `clientButton` runs for any positive client
-            // code and can veto the send (the unported codes return true).
+            // code and can veto the send. Handled codes either open a
+            // prompt (social), arm a timer (logout) or cycle the design
+            // kit; the logout/accept-design arms return `true` so the
+            // click is sent, everything else returns `false`.
             let com = self
                 .cache
                 .ifaces
@@ -5983,7 +5986,9 @@ impl Client {
             }
 
             ServerProt::UPDATE_RUNENERGY => {
-                // TS also redraws the side when activeIcon === 12 (not ported)
+                if self.active_icon == 12 {
+                    self.redraw_side = true;
+                }
                 self.runenergy = payload.g1();
                 self.ptype = -1;
             }
@@ -8004,11 +8009,20 @@ impl Client {
 
                     // Echo the own message as TS 3169-3179:
                     // toSentenceCase then WordFilter (identity until the
-                    // wordenc jag loads). Name falls back to the login
-                    // user, then "player", so the echo is never dropped
-                    // pre-spawn.
+                    // wordenc jag loads), stamping the local player's chat
+                    // bubble only once it has a name (TS 3168-3174). Name
+                    // falls back to the login user, then "player", so the
+                    // echo is never dropped pre-spawn.
                     text = JString::to_sentence_case(&text);
                     text = WordFilter::filter(&text);
+                    if let Some(p) = self.local_player.as_mut() {
+                        if p.name.is_some() {
+                            p.chat_message = Some(text.clone());
+                            p.chat_colour = colour;
+                            p.chat_effect = effect;
+                            p.chat_timer = 150;
+                        }
+                    }
                     let name = self
                         .local_player
                         .as_ref()
@@ -8026,6 +8040,18 @@ impl Client {
                         name
                     };
                     self.add_chat(2, &text, &sender);
+
+                    // TS 3183-3189: a public send while the mode is "off"
+                    // (2) auto-hides the bubble by switching to "friends"
+                    // (3) and telling the server.
+                    if self.chat_public_mode == 2 {
+                        self.chat_public_mode = 3;
+                        self.redraw_chat_mode = true;
+                        self.out.p1_enc(ClientProt::CHAT_SETMODE.id);
+                        self.out.p1(self.chat_public_mode);
+                        self.out.p1(self.chat_private_mode);
+                        self.out.p1(self.chat_trade_mode);
+                    }
                 }
                 self.chat_input.clear();
                 self.redraw_chat = true;

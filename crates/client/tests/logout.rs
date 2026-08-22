@@ -1,10 +1,9 @@
 //! Task 1: `clientButton` CC_LOGOUT arm (Java `Client.java` 8745-8747).
 //! Clicking a control with client code 205 arms `logoutTimer` (250 frames,
-//! ~5 s at 20 ms); unported client codes return `true` so the existing
-//! unconditional `IF_BUTTON` send is preserved (operator-accepted deferral,
-//! 2026-08-20 — the full `clientButton` port is slice 3/5). Clicks reach
-//! `clientButton` through the `doAction` IF_BUTTON arm (TS 9144-9154), and
-//! the non-OK button arms never call it.
+//! ~5 s at 20 ms); the social (200-202/500-502) and player-design
+//! (300-327) codes return `false` so the `IF_BUTTON` send is vetoed.
+//! Clicks reach `clientButton` through the `doAction` IF_BUTTON arm
+//! (TS 9144-9154), and the non-OK button arms never call it.
 use client::client::{Client, ClientConfig, APPLET_H, APPLET_W};
 use client::config::if_type::{ButtonType, ComponentType, IfType};
 use client::graphics::PixMap;
