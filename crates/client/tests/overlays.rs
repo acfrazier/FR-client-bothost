@@ -3,6 +3,8 @@
 // tests need no cache; the sprite/draw tests need the real `media`/`title`
 // packs and skip when they are absent (see hud.rs).
 use client::client::{Client, ClientConfig, ClientPlayer};
+use client::config::IdkType;
+use client::dash3d::Model;
 use client::graphics::{Colour, Pix32};
 use std::collections::HashMap;
 
@@ -152,5 +154,51 @@ fn entity_overlays_collects_chat_bubble() {
     assert!(
         game.pixels.contains(&Colour::YELLOW),
         "the bubble text must draw yellow pixels into area_game"
+    );
+}
+
+/// A hand-crafted model 100 above the origin (`min_y` = 100): 3 points, one
+/// face at y = -100 (the engine's y axis points down, so `min_y` = 100).
+/// The 18-byte trailer claims 3 points, 1 face, y-delta data length 4.
+const LIFTED_MODEL: &[u8] = &[
+    7, 7, 7, // vertex order: x+y+z for each of the 3 vertices
+    1, // face index order: a,b,c are deltas
+    0x40, 0x41, 0x41, // face index deltas: a=0, b=1, c=2
+    0x11, 0x22, // face colour
+    0x40, 0x72, 0x0e, // vertexX deltas: 0, 50, -50
+    0xbf, 0x9c, 0x40, 0x40, // vertexY deltas: -100, -100, -100
+    0x40, 0x40, 0x72, // vertexZ deltas: 0, 0, 50
+    0, 3, 0, 1, 0, 0, 0, 0, 0, 0, 0, 3, 0, 4, 0, 3, 0, 3, // trailer
+];
+
+/// Java 8870 `entityOverlays` reads `entity.height`, which `getTempModel`
+/// stamps as the model `min_y` on the *same* object (Java 8870 vs
+/// ClientPlayer.getTempModel 166-174). Here the scene sprite is a clone, so
+/// the live local player's height stays 0 unless `add_players` stamps it.
+/// After a `gameDrawMain` pass the live player's height must be the model
+/// `min_y` (100), which is also where the headicons project from
+/// (`height + 15`).
+#[test]
+fn add_players_stamps_model_min_y_on_live_player() {
+    Model::unpack(4096, Some(LIFTED_MODEL));
+    let mut c = client();
+    while c.cache.idks.len() <= 0 {
+        c.cache.idks.push(IdkType::default());
+    }
+    c.cache.idks[0].model = Some(vec![4096]);
+    let mut player = ClientPlayer::default();
+    player.ready = true;
+    player.entity.x = 384;
+    player.entity.z = 384;
+    player.appearance[0] = 256; // head = idk 0, whose model is LIFTED_MODEL
+    player.colour[0] = 1; // distinct base_id so no stale model-cache hit
+    c.local_player = Some(player);
+    c.ingame = true;
+    c.scene_state = 2;
+    c.game_draw();
+    let p = c.local_player.as_ref().unwrap();
+    assert_eq!(
+        p.entity.height, 100,
+        "add_players must stamp the live player height with the model min_y"
     );
 }

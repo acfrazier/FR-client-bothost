@@ -1217,6 +1217,11 @@ impl Client {
             }
 
             let y = get_av_h(&self.groundh, &self.mapl, player.x, player.z, self.minusedlevel);
+            // Java stamps `entity.height = model.minY` on the live entity
+            // during the render pass (ClientPlayer.getTempModel); the scene
+            // sprite holds a clone, so stamp the live player here or
+            // `entity_overlays` projects from a height of 0 (Java 8870).
+            player.get_temp_model(&self.cache, self.loop_cycle);
             let model = Some(SceneModel::Player(player.clone()));
 
             if player.loc_model.is_none()
@@ -1294,6 +1299,9 @@ impl Client {
             }
 
             let y = get_av_h(&self.groundh, &self.mapl, npc.x, npc.z, self.minusedlevel);
+            // Same clone-vs-live split as add_players: stamp the live NPC's
+            // height so `entity_overlays` sees the Java value.
+            npc.get_temp_model(&self.cache, self.loop_cycle);
             self.world.add_dynamic(
                 self.minusedlevel,
                 npc.x,
@@ -1596,18 +1604,132 @@ impl Client {
         }
     }
 
-    /// `roofCheck` from client-ts (4476): the highest level drawn this
-    /// frame. The `mapl` `RemoveRoof` guards are not ported (roof removal
-    /// is a later slice), so the answer is the TS no-removal fallback 3.
-    fn roof_check(&self) -> i32 {
-        3
+    /// `roofCheck` from Java (9248-9327) / client-ts (4476): the highest
+    /// level drawn this frame. A `RemoveRoof` (0x4) flag on the camera
+    /// tile, on any tile along the Bresenham-style ray from the camera to
+    /// the local player, or on the player's own tile drops the roof to
+    /// `minusedlevel`.
+    pub fn roof_check(&self) -> i32 {
+        let mut top = 3;
+        let Some(player) = &self.local_player else {
+            return top;
+        };
+
+        if self.cam_pitch < 310 {
+            let mut cam_tile_x = self.cam_x >> 7;
+            let mut cam_tile_z = self.cam_z >> 7;
+            let player_tile_x = player.x >> 7;
+            let player_tile_z = player.z >> 7;
+
+            if self.mapl_remove_roof(self.minusedlevel, cam_tile_x, cam_tile_z) {
+                top = self.minusedlevel;
+            }
+
+            let tile_delta_x = if player_tile_x > cam_tile_x {
+                player_tile_x - cam_tile_x
+            } else {
+                cam_tile_x - player_tile_x
+            };
+            let tile_delta_z = if player_tile_z > cam_tile_z {
+                player_tile_z - cam_tile_z
+            } else {
+                cam_tile_z - player_tile_z
+            };
+
+            // Java 9271-9320: step the dominant axis, cross-stepping the
+            // other when the 16.16 accumulator wraps. Camera tile == player
+            // tile (both deltas 0) skips the ray — Java's `while` would not
+            // run and its division would be `/ 0`.
+            if tile_delta_x > tile_delta_z {
+                if tile_delta_x != 0 {
+                    let delta = tile_delta_z * 65536 / tile_delta_x;
+                    let mut accumulator = 32768;
+                    while cam_tile_x != player_tile_x {
+                        if cam_tile_x < player_tile_x {
+                            cam_tile_x += 1;
+                        } else {
+                            cam_tile_x -= 1;
+                        }
+                        if self.mapl_remove_roof(self.minusedlevel, cam_tile_x, cam_tile_z) {
+                            top = self.minusedlevel;
+                        }
+                        accumulator += delta;
+                        if accumulator >= 65536 {
+                            accumulator -= 65536;
+                            if cam_tile_z < player_tile_z {
+                                cam_tile_z += 1;
+                            } else if cam_tile_z > player_tile_z {
+                                cam_tile_z -= 1;
+                            }
+                            if self.mapl_remove_roof(self.minusedlevel, cam_tile_x, cam_tile_z) {
+                                top = self.minusedlevel;
+                            }
+                        }
+                    }
+                }
+            } else if tile_delta_z != 0 {
+                let delta = tile_delta_x * 65536 / tile_delta_z;
+                let mut accumulator = 32768;
+                while cam_tile_z != player_tile_z {
+                    if cam_tile_z < player_tile_z {
+                        cam_tile_z += 1;
+                    } else if cam_tile_z > player_tile_z {
+                        cam_tile_z -= 1;
+                    }
+                    if self.mapl_remove_roof(self.minusedlevel, cam_tile_x, cam_tile_z) {
+                        top = self.minusedlevel;
+                    }
+                    accumulator += delta;
+                    if accumulator >= 65536 {
+                        accumulator -= 65536;
+                        if cam_tile_x < player_tile_x {
+                            cam_tile_x += 1;
+                        } else if cam_tile_x > player_tile_x {
+                            cam_tile_x -= 1;
+                        }
+                        if self.mapl_remove_roof(self.minusedlevel, cam_tile_x, cam_tile_z) {
+                            top = self.minusedlevel;
+                        }
+                    }
+                }
+            }
+        }
+
+        if self.mapl_remove_roof(self.minusedlevel, player.x >> 7, player.z >> 7) {
+            top = self.minusedlevel;
+        }
+        top
     }
 
-    /// `roofCheck2` from client-ts (4467): the cutscene-camera roof level.
-    /// The `mapl` `RemoveRoof` guards are not ported, so like `roof_check`
-    /// this is the TS no-removal fallback 3.
-    fn roof_check2(&self) -> i32 {
-        3
+    /// `roofCheck2` from Java (9329-9331) / client-ts (4467): the
+    /// cutscene-camera roof level. `minusedlevel` only while the eye is
+    /// under the roof (within 800 of the ground) on a `RemoveRoof` tile; a
+    /// high camera or a clean tile draws every level.
+    pub fn roof_check2(&self) -> i32 {
+        let y = get_av_h(&self.groundh, &self.mapl, self.cam_x, self.cam_z, self.minusedlevel);
+        if y - self.cam_y >= 800
+            || !self.mapl_remove_roof(self.minusedlevel, self.cam_x >> 7, self.cam_z >> 7)
+        {
+            3
+        } else {
+            self.minusedlevel
+        }
+    }
+
+    /// `mapl[level][x][z] & MapFlag::REMOVE_ROOF` with the Java array
+    /// bounds (`BuildArea::SIZE` per side); out-of-range reads are "no
+    /// flag".
+    fn mapl_remove_roof(&self, level: i32, x: i32, z: i32) -> bool {
+        if level < 0
+            || level >= BuildArea::LEVELS
+            || x < 0
+            || x >= BuildArea::SIZE
+            || z < 0
+            || z >= BuildArea::SIZE
+        {
+            return false;
+        }
+        (self.mapl[level as usize][x as usize][z as usize] & MapFlag::REMOVE_ROOF as u8) != 0
     }
 
     /// `getOverlayPosEntity` from Java (2026-2027): project an entity at a

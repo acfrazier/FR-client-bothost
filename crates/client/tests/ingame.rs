@@ -403,3 +403,83 @@ fn minimap_build_buffer_writes_pixels() {
     let mm = c.minimap.as_ref().unwrap();
     assert!(mm.data.iter().any(|&p| p != 0), "minimap buffer must be non-black");
 }
+
+// --- Task 6: roofCheck / roofCheck2 (Java 9248-9331) ---
+
+/// A ready local player on tile (3,3); scene coords are 128ths of a tile.
+fn roof_player() -> ClientPlayer {
+    let mut player = ClientPlayer::default();
+    player.ready = true;
+    player.entity.x = 384; // tile 3
+    player.entity.z = 384;
+    player
+}
+
+/// No `RemoveRoof` flags anywhere on the ray: every level draws.
+#[test]
+fn roof_check_returns_3_outdoors() {
+    let mut c = client("/tmp".into());
+    c.local_player = Some(roof_player());
+    c.cam_pitch = 200; // < 310: the ray walks
+    c.cam_x = 128; // camera tile (1,1)
+    c.cam_z = 128;
+    c.minusedlevel = 0;
+    assert_eq!(c.roof_check(), 3, "no RemoveRoof flags -> draw all levels");
+}
+
+/// The player standing on a `RemoveRoof` tile is the indoor case: the roof
+/// is dropped to `minusedlevel` even when every other tile is clean.
+#[test]
+fn roof_check_returns_minusedlevel_when_player_tile_has_remove_roof() {
+    let mut c = client("/tmp".into());
+    c.local_player = Some(roof_player());
+    c.cam_pitch = 200;
+    c.cam_x = 128; // camera tile (1,1)
+    c.cam_z = 128;
+    c.minusedlevel = 0;
+    c.mapl[0][3][3] = MapFlag::REMOVE_ROOF as u8; // player tile
+    assert_eq!(c.roof_check(), 0);
+}
+
+/// A `RemoveRoof` flag on a tile between the camera and the player (camera
+/// and player tiles both clean) drops the roof: the Bresenham-style ray
+/// steps (2,2)->(6,2) and must hit the flag at (4,2).
+#[test]
+fn roof_check_ray_hits_remove_roof_between_cam_and_player() {
+    let mut c = client("/tmp".into());
+    let mut player = roof_player();
+    player.entity.x = 768; // tile 6
+    c.local_player = Some(player);
+    c.cam_pitch = 200;
+    c.cam_x = 256; // camera tile (2,2)
+    c.cam_z = 256;
+    c.minusedlevel = 0;
+    c.mapl[0][4][2] = MapFlag::REMOVE_ROOF as u8; // on the ray, off the ends
+    assert_eq!(c.roof_check(), 0);
+}
+
+/// `roofCheck2` (cinema camera): a low eye on a `RemoveRoof` tile is under
+/// the roof, so the upper levels stay hidden.
+#[test]
+fn roof_check2_under_roof_and_low_cam_is_minusedlevel() {
+    let mut c = client("/tmp".into());
+    c.cam_x = 384; // camera tile (3,3)
+    c.cam_z = 384;
+    c.cam_y = 0;
+    c.minusedlevel = 0;
+    c.mapl[0][3][3] = MapFlag::REMOVE_ROOF as u8;
+    assert_eq!(c.roof_check2(), 0);
+}
+
+/// `roofCheck2`: an eye 900 above the ground (y - camY >= 800) is above the
+/// roof — all levels draw even though the camera tile carries the flag.
+#[test]
+fn roof_check2_high_cam_is_3() {
+    let mut c = client("/tmp".into());
+    c.cam_x = 384; // camera tile (3,3)
+    c.cam_z = 384;
+    c.cam_y = -900; // 900 above the ground height 0
+    c.minusedlevel = 0;
+    c.mapl[0][3][3] = MapFlag::REMOVE_ROOF as u8;
+    assert_eq!(c.roof_check2(), 3);
+}
