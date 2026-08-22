@@ -766,15 +766,16 @@ impl Client {
     }
 
     /// `gameDrawMain` from client-ts (4172): the 3D pass. Adds the players,
-    /// NPCs and projectiles as dynamic sprites, follows the orbit camera,
-    /// renders the world into `area_game` (`Pix2D.cls()` + `render_all` +
-    /// `removeSprites`, the TS 4238-4245 sequence) and blits it at (4, 4).
-    /// `World.resetVisCalc` runs once on the first pass (TS runs it from
-    /// the game-loading flow) so `render_all`'s visibility backing is
-    /// populated. The overlay passes are no-ops while their lists/sprites
-    /// are not ported; `cinemaCam`, `camShake`, the minimenu, and the fps
-    /// pass are not ported either. `otherOverlays` (the main overlay and
-    /// modal, TS 4250) draws into `area_game` before the blit.
+    /// NPCs and projectiles as dynamic sprites, follows the orbit camera
+    /// (or the cutscene camera while `cinema_cam`), applies the per-frame
+    /// `camShake` jitter, renders the world into `area_game`
+    /// (`Pix2D.cls()` + `render_all` + `removeSprites`, the TS 4238-4245
+    /// sequence) and blits it at (4, 4). `World.resetVisCalc` runs once on
+    /// the first pass (TS runs it from the game-loading flow) so
+    /// `render_all`'s visibility backing is populated. The overlay passes
+    /// are no-ops while their lists/sprites are not ported; the minimenu
+    /// and the fps pass are not ported either. `otherOverlays` (the main
+    /// overlay and modal, TS 4250) draws into `area_game` before the blit.
     fn game_draw_main(&mut self) {
         self.scene_cycle += 1;
 
@@ -785,36 +786,49 @@ impl Client {
         self.add_projectiles();
         self.add_map_anim();
 
-        // Camera (TS 4183-4195): cinemaCam is not ported, so the orbit
-        // camera always follows the local player.
+        // Camera (TS 4183-4195): a cutscene camera skips the orbit follow;
+        // otherwise the orbit camera follows the local player.
         let mut pitch = self.orbit_camera_pitch;
         if self.camera_pitch_clamp / 256 > pitch {
             pitch = self.camera_pitch_clamp / 256;
         }
-        // camShake[4] pitch kick not ported.
+        if self.cam_shake[4] && self.cam_shake_ran[4] + 128 > pitch {
+            pitch = self.cam_shake_ran[4] + 128;
+        }
         let yaw = (self.orbit_camera_yaw + self.macro_camera_angle) & 0x7ff;
 
-        if let Some(player) = &self.local_player {
-            let target_y = get_av_h(&self.groundh, &self.mapl, player.x, player.z, self.minusedlevel) - 50;
-            self.cam_follow(
-                pitch,
-                yaw,
-                self.orbit_camera_x,
-                target_y,
-                self.orbit_camera_z,
-                pitch * 3 + 600,
-            );
+        if !self.cinema_cam {
+            if let Some(player) = &self.local_player {
+                let target_y = get_av_h(&self.groundh, &self.mapl, player.x, player.z, self.minusedlevel) - 50;
+                self.cam_follow(
+                    pitch,
+                    yaw,
+                    self.orbit_camera_x,
+                    target_y,
+                    self.orbit_camera_z,
+                    pitch * 3 + 600,
+                );
+            }
         }
 
-        let level = self.roof_check();
+        // TS 4197-4203: the cutscene camera uses roofCheck2's eye height.
+        let level = if self.cinema_cam {
+            self.roof_check2()
+        } else {
+            self.roof_check()
+        };
 
-        let cam_x = self.cam_x;
-        let cam_y = self.cam_y;
-        let cam_z = self.cam_z;
-        let cam_pitch = self.cam_pitch;
-        let cam_yaw = self.cam_yaw;
+        // TS 4205-4209: snapshot the pre-jitter eye so it can be restored
+        // after the pass (the camShake jitter is per-frame only).
+        let eye_x = self.cam_x;
+        let eye_y = self.cam_y;
+        let eye_z = self.cam_z;
+        let eye_pitch = self.cam_pitch;
+        let eye_yaw = self.cam_yaw;
 
-        // camShake jitter axes not ported (all inactive).
+        // TS 4211-4235: the camShake jitter applies to the rendered eye.
+        let (cam_x, cam_y, cam_z, cam_pitch, cam_yaw) =
+            self.cam_shake_jitter(eye_x, eye_y, eye_z, eye_pitch, eye_yaw);
 
         // `World.resetVisCalc` (Client.ts loadGame 1222-1235): once per
         // game, so `vis_backing` is populated before `render_all` binds its
@@ -858,6 +872,13 @@ impl Client {
         self.coord_arrow();
         self.texture_run_anims(cycle);
         self.other_overlays();
+
+        // TS 4252-4257: restore the pre-jitter eye.
+        self.cam_x = eye_x;
+        self.cam_y = eye_y;
+        self.cam_z = eye_z;
+        self.cam_pitch = eye_pitch;
+        self.cam_yaw = eye_yaw;
 
         if let Some(game) = &self.area_game {
             game.blit_into(&mut self.draw_area, 4, 4);
@@ -1373,6 +1394,53 @@ impl Client {
         self.cam_yaw = yaw;
     }
 
+    /// `camShake` jitter from client-ts (4211-4235): for each active axis,
+    /// add `random * (ran*2 + 1) - ran + sin(cycle * amp/100) * shakeRan`
+    /// to the rendered eye — x/y/z positions, the 11-bit yaw, or the pitch
+    /// clamped to 128..383. TS mutates `cam*` in place for `renderAll` and
+    /// restores the pre-jitter snapshot afterwards; the caller passes that
+    /// snapshot in and receives the jittered eye to render with.
+    pub fn cam_shake_jitter(
+        &mut self,
+        cam_x: i32,
+        cam_y: i32,
+        cam_z: i32,
+        cam_pitch: i32,
+        cam_yaw: i32,
+    ) -> (i32, i32, i32, i32, i32) {
+        let mut cam_x = cam_x;
+        let mut cam_y = cam_y;
+        let mut cam_z = cam_z;
+        let mut cam_pitch = cam_pitch;
+        let mut cam_yaw = cam_yaw;
+
+        for axis in 0..5 {
+            if !self.cam_shake[axis] {
+                continue;
+            }
+
+            let jitter = (self.rand.next_double()
+                * (self.cam_shake_axis[axis] * 2 + 1) as f64
+                - self.cam_shake_axis[axis] as f64
+                + (self.cam_shake_cycle[axis] as f64 * (self.cam_shake_amp[axis] as f64 / 100.0))
+                    .sin()
+                    * self.cam_shake_ran[axis] as f64) as i32;
+
+            match axis {
+                0 => cam_x += jitter,
+                1 => cam_y += jitter,
+                2 => cam_z += jitter,
+                3 => cam_yaw = (cam_yaw + jitter) & 0x7ff,
+                _ => {
+                    cam_pitch += jitter;
+                    cam_pitch = cam_pitch.clamp(128, 383);
+                }
+            }
+        }
+
+        (cam_x, cam_y, cam_z, cam_pitch, cam_yaw)
+    }
+
     /// `followCamera` from client-ts (3222), run from `game_loop` (2346)
     /// while `scene_state == 2`: the orbit camera chases the local player
     /// (snapped when more than 500 away, then a `/16` ease), the arrow keys
@@ -1454,6 +1522,13 @@ impl Client {
     /// frame. The `mapl` `RemoveRoof` guards are not ported (roof removal
     /// is a later slice), so the answer is the TS no-removal fallback 3.
     fn roof_check(&self) -> i32 {
+        3
+    }
+
+    /// `roofCheck2` from client-ts (4467): the cutscene-camera roof level.
+    /// The `mapl` `RemoveRoof` guards are not ported, so like `roof_check`
+    /// this is the TS no-removal fallback 3.
+    fn roof_check2(&self) -> i32 {
         3
     }
 

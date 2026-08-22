@@ -42,7 +42,7 @@ use crate::io::{
 };
 use crate::login_rsa::{LOGIN_RSAE, LOGIN_RSAN};
 use crate::sound::{Fade, JagFX, Midi};
-use crate::util::JString;
+use crate::util::{JavaRandom, JString};
 use crate::wordfilter::{WordFilter, WordPack};
 
 const MAX_PLAYER_COUNT: usize = 2048;
@@ -258,6 +258,8 @@ pub struct Client {
     /// `Present::open`; headless bots keep it false.
     pub draw: bool,
     pub scene_state: i32,
+    /// `inMultizone` from client-ts (TS 132): set by `SET_MULTIWAY`.
+    pub in_multizone: i32,
     /// `Client.buildMinusedlevel` from client-ts: the `minusedlevel` the
     /// current scene was built for. `check_minimap`'s low-memory rebuild
     /// compares it against `self.minusedlevel`.
@@ -318,6 +320,9 @@ pub struct Client {
     /// follows them once `VARP_SYNC` confirms.
     pub var_serv: Vec<i32>,
     pub runenergy: i32,
+    /// `runweight` from client-ts (143): the carried-weight stat, sent by
+    /// `UPDATE_RUNWEIGHT` as a signed g2.
+    pub runweight: i32,
 
     /// Music control plane (`Client.ts` `midiActive`/`midiSong`/...; Java
     /// `midivol` ladder 0 / -400 / -800 / -1200). `midi` is the backend
@@ -457,6 +462,9 @@ pub struct Client {
     pub tut_flash_icon: i32,
     /// `dialogInputOpen` (TS): the chat-mode enter-name dialog is up.
     pub dialog_input_open: bool,
+    /// `dialogInput` (TS 138): the enter-name amount typed into the
+    /// `P_COUNTDIALOG` prompt, sent back with `RESUME_P_COUNTDIALOG`.
+    pub dialog_input: String,
     /// `resumedPauseButton` (TS): the pause button latched since the last
     /// modal transition.
     pub resumed_pause_button: bool,
@@ -587,6 +595,30 @@ pub struct Client {
     pub cam_z: i32,
     pub cam_pitch: i32,
     pub cam_yaw: i32,
+    /// Cutscene camera from client-ts (`cinemaCam`/`camLookAt*`/
+    /// `camMoveTo*` 132-146, `camShake*` 147-156): the CAM_* packets drive
+    /// `cinema_camera()`, and `cam_shake_*` jitter the rendered eye each
+    /// frame. The payload mapping keeps the TS field names even though it
+    /// is shifted: `cam_shake_axis` holds the packet's `ran` byte,
+    /// `cam_shake_ran` its `amp` byte and `cam_shake_amp` its `rate` byte.
+    /// `rand` is the `Math.random` source the TS jitter uses.
+    pub cinema_cam: bool,
+    pub cam_look_at_lx: i32,
+    pub cam_look_at_lz: i32,
+    pub cam_look_at_hei: i32,
+    pub cam_look_at_rate: i32,
+    pub cam_look_at_rate2: i32,
+    pub cam_move_to_lx: i32,
+    pub cam_move_to_lz: i32,
+    pub cam_move_to_hei: i32,
+    pub cam_move_to_rate: i32,
+    pub cam_move_to_rate2: i32,
+    pub cam_shake: [bool; 5],
+    pub cam_shake_axis: [i32; 5],
+    pub cam_shake_ran: [i32; 5],
+    pub cam_shake_amp: [i32; 5],
+    pub cam_shake_cycle: [i32; 5],
+    pub rand: JavaRandom,
     pub orbit_camera_pitch: i32,
     pub orbit_camera_yaw: i32,
     pub orbit_camera_yaw_velocity: i32,
@@ -708,6 +740,12 @@ pub struct Client {
     pub hint_player: i32,
     pub hint_tile_x: i32,
     pub hint_tile_z: i32,
+    /// `hintHeight`/`hintOffsetX`/`hintOffsetZ` from client-ts (161-165):
+    /// the tile-hint arrow's height above the tile and the per-type tile
+    /// corner offset, read by `HINT_ARROW`.
+    pub hint_height: i32,
+    pub hint_offset_x: i32,
+    pub hint_offset_z: i32,
     pub chat_public_mode: i32,
     pub chat_private_mode: i32,
     pub chat_trade_mode: i32,
@@ -769,6 +807,10 @@ pub struct Client {
     pub last_login_reconnect: Option<bool>,
     /// `logoutTimer` from Java: frames remaining until a requested logout.
     pub logout_timer: i32,
+    /// `rebootTimer` from client-ts (140): seconds until the server reboot,
+    /// sent by `UPDATE_REBOOT_TIMER` scaled by 30 (the `gameLoop` tick
+    /// counts it down in the overlay).
+    pub reboot_timer: i32,
     /// `Client.cyclelogic3` from client-ts (a TS static, instance here):
     /// anticheat counter sent with `ANTICHEAT_CYCLELOGIC3` every 113
     /// `minimapBuildBuffer` runs.
@@ -813,6 +855,7 @@ impl Client {
             ingame: false,
             draw: false,
             scene_state: 0,
+            in_multizone: 0,
             build_minusedlevel: 0,
             local_player: None,
             players: vec![None; MAX_PLAYER_COUNT],
@@ -858,6 +901,7 @@ impl Client {
             var: Vec::new(),
             var_serv: Vec::new(),
             runenergy: 0,
+            runweight: 0,
 
             midi_active: true,
             midi_song: -1,
@@ -948,6 +992,7 @@ impl Client {
             tut_com_id: -1,
             tut_flash_icon: -1,
             dialog_input_open: false,
+            dialog_input: String::new(),
             resumed_pause_button: false,
             over_main_com_id: 0,
             over_side_com_id: 0,
@@ -1025,6 +1070,23 @@ impl Client {
             cam_z: 0,
             cam_pitch: 0,
             cam_yaw: 0,
+            cinema_cam: false,
+            cam_look_at_lx: 0,
+            cam_look_at_lz: 0,
+            cam_look_at_hei: 0,
+            cam_look_at_rate: 0,
+            cam_look_at_rate2: 0,
+            cam_move_to_lx: 0,
+            cam_move_to_lz: 0,
+            cam_move_to_hei: 0,
+            cam_move_to_rate: 0,
+            cam_move_to_rate2: 0,
+            cam_shake: [false; 5],
+            cam_shake_axis: [0; 5],
+            cam_shake_ran: [0; 5],
+            cam_shake_amp: [0; 5],
+            cam_shake_cycle: [0; 5],
+            rand: JavaRandom::now(),
             orbit_camera_pitch: 128,
             orbit_camera_yaw: 0,
             orbit_camera_yaw_velocity: 0,
@@ -1105,6 +1167,9 @@ impl Client {
             hint_player: 0,
             hint_tile_x: 0,
             hint_tile_z: 0,
+            hint_height: 0,
+            hint_offset_x: 0,
+            hint_offset_z: 0,
             chat_public_mode: 0,
             chat_private_mode: 0,
             chat_trade_mode: 0,
@@ -1137,6 +1202,7 @@ impl Client {
             scroll_cycle: 0,
             last_login_reconnect: None,
             logout_timer: 0,
+            reboot_timer: 0,
             cyclelogic3: 0,
             timeout_timer: 0,
             no_timeout_timer: 0,
@@ -3200,6 +3266,176 @@ impl Client {
         self.active_icon = icon;
         self.redraw_side = true;
         self.redraw_icons = true;
+    }
+
+    /// `CAM_LOOKAT` handler (Client.ts 6318-6349): enter the cutscene
+    /// camera and aim it at the look-at tile. When `rate2 >= 100` the aim
+    /// is applied immediately (the `getAvH` height minus `hei`); otherwise
+    /// `cinema_camera()` eases toward it each game loop.
+    pub fn apply_cam_lookat(&mut self, payload: &mut Packet) {
+        self.cinema_cam = true;
+
+        self.cam_look_at_lx = payload.g1();
+        self.cam_look_at_lz = payload.g1();
+        self.cam_look_at_hei = payload.g2();
+        self.cam_look_at_rate = payload.g1();
+        self.cam_look_at_rate2 = payload.g1();
+
+        if self.cam_look_at_rate2 >= 100 {
+            let scene_x = self.cam_look_at_lx * 128 + 64;
+            let scene_z = self.cam_look_at_lz * 128 + 64;
+            let scene_y = get_av_h(&self.groundh, &self.mapl, scene_x, scene_z, self.minusedlevel)
+                - self.cam_look_at_hei;
+
+            let delta_x = scene_x - self.cam_x;
+            let delta_y = scene_y - self.cam_y;
+            let delta_z = scene_z - self.cam_z;
+
+            let distance = (f64::sqrt((delta_x * delta_x + delta_z * delta_z) as f64)) as i32;
+
+            self.cam_pitch = ((delta_y as f64).atan2(distance as f64) * 325.949) as i32 & 0x7ff;
+            self.cam_yaw = ((delta_x as f64).atan2(delta_z as f64) * -325.949) as i32 & 0x7ff;
+
+            if self.cam_pitch < 128 {
+                self.cam_pitch = 128;
+            } else if self.cam_pitch > 383 {
+                self.cam_pitch = 383;
+            }
+        }
+    }
+
+    /// `CAM_SHAKE` handler (Client.ts 6352-6365): arm one shake axis. The
+    /// TS field mapping is kept verbatim — the packet's `ran`/`amp`/`rate`
+    /// bytes land in `cam_shake_axis`/`cam_shake_ran`/`cam_shake_amp`.
+    pub fn apply_cam_shake(&mut self, payload: &mut Packet) {
+        let axis = payload.g1();
+        let ran = payload.g1();
+        let amp = payload.g1();
+        let rate = payload.g1();
+
+        if !(0..5).contains(&axis) {
+            return;
+        }
+        self.cam_shake[axis as usize] = true;
+        self.cam_shake_axis[axis as usize] = ran;
+        self.cam_shake_ran[axis as usize] = amp;
+        self.cam_shake_amp[axis as usize] = rate;
+        self.cam_shake_cycle[axis as usize] = 0;
+    }
+
+    /// `CAM_MOVETO` handler (Client.ts 6368-6384): enter the cutscene
+    /// camera and move it toward the tile. When `rate2 >= 100` the camera
+    /// jumps immediately; otherwise `cinema_camera()` eases each loop.
+    pub fn apply_cam_moveto(&mut self, payload: &mut Packet) {
+        self.cinema_cam = true;
+
+        self.cam_move_to_lx = payload.g1();
+        self.cam_move_to_lz = payload.g1();
+        self.cam_move_to_hei = payload.g2();
+        self.cam_move_to_rate = payload.g1();
+        self.cam_move_to_rate2 = payload.g1();
+
+        if self.cam_move_to_rate2 >= 100 {
+            self.cam_x = self.cam_move_to_lx * 128 + 64;
+            self.cam_z = self.cam_move_to_lz * 128 + 64;
+            self.cam_y = get_av_h(&self.groundh, &self.mapl, self.cam_x, self.cam_z, self.minusedlevel)
+                - self.cam_move_to_hei;
+        }
+    }
+
+    /// `CAM_RESET` handler (Client.ts 6387-6395): leave the cutscene camera
+    /// and disarm every shake axis. The packet has no payload.
+    pub fn apply_cam_reset(&mut self, _payload: &mut Packet) {
+        self.cinema_cam = false;
+
+        for i in 0..5 {
+            self.cam_shake[i] = false;
+        }
+    }
+
+    /// `UPDATE_RUNWEIGHT` handler (Client.ts 6595-6602): the carried weight
+    /// as a signed g2, redrawing the side surface when the stats tab (12)
+    /// is up.
+    pub fn apply_update_runweight(&mut self, payload: &mut Packet) {
+        if self.active_icon == 12 {
+            self.redraw_side = true;
+        }
+
+        self.runweight = payload.g2b();
+    }
+
+    /// `HINT_ARROW` handler (Client.ts 6606-6641): set the hint arrow's
+    /// target. The frame layout differs per type — type 1 reads an npc,
+    /// types 2-6 rewrite `hint_type` to 2 and read a tile + height, type 10
+    /// reads a player — and every byte of the frame is consumed so the
+    /// inbound stream stays aligned.
+    pub fn apply_hint_arrow(&mut self, payload: &mut Packet) {
+        self.hint_type = payload.g1();
+
+        if self.hint_type == 1 {
+            self.hint_npc = payload.g2();
+        }
+
+        if (2..=6).contains(&self.hint_type) {
+            match self.hint_type {
+                2 => {
+                    self.hint_offset_x = 64;
+                    self.hint_offset_z = 64;
+                }
+                3 => {
+                    self.hint_offset_x = 0;
+                    self.hint_offset_z = 64;
+                }
+                4 => {
+                    self.hint_offset_x = 128;
+                    self.hint_offset_z = 64;
+                }
+                5 => {
+                    self.hint_offset_x = 64;
+                    self.hint_offset_z = 0;
+                }
+                _ => {
+                    self.hint_offset_x = 64;
+                    self.hint_offset_z = 128;
+                }
+            }
+
+            self.hint_type = 2;
+            self.hint_tile_x = payload.g2();
+            self.hint_tile_z = payload.g2();
+            self.hint_height = payload.g1();
+        }
+
+        if self.hint_type == 10 {
+            self.hint_player = payload.g2();
+        }
+    }
+
+    /// `UPDATE_REBOOT_TIMER` handler (Client.ts 6645-6648): the seconds
+    /// until the server reboot, sent as a g2 scaled by 30.
+    pub fn apply_update_reboot_timer(&mut self, payload: &mut Packet) {
+        self.reboot_timer = payload.g2() * 30;
+    }
+
+    /// `P_COUNTDIALOG` handler (Client.ts 6762-6773): open the enter-amount
+    /// dialog, closing any social prompt. The packet has no payload.
+    pub fn apply_p_countdialog(&mut self) {
+        self.social_input_open = false;
+        self.dialog_input_open = true;
+        self.dialog_input.clear();
+        self.redraw_chat = true;
+    }
+
+    /// `SET_MULTIWAY` handler (Client.ts 6776-6779): mark the current area
+    /// as multi-way combat.
+    pub fn apply_set_multiway(&mut self, payload: &mut Packet) {
+        self.in_multizone = payload.g1();
+    }
+
+    /// `MINIMAP_TOGGLE` handler (Client.ts 6801-6804): lock/unlock the
+    /// minimap rotation.
+    pub fn apply_minimap_toggle(&mut self, payload: &mut Packet) {
+        self.minimap_state = payload.g1();
     }
 
     /// `ifAnimReset` from client-ts (10534): walk `id`'s children, zeroing
@@ -5405,11 +5641,23 @@ impl Client {
                 self.ptype = -1;
             }
 
-            // camera state (cinemaCam, camX/Y/Z, camShake*) is not ported yet
-            ServerProt::CAM_LOOKAT
-            | ServerProt::CAM_SHAKE
-            | ServerProt::CAM_MOVETO
-            | ServerProt::CAM_RESET => {
+            ServerProt::CAM_LOOKAT => {
+                self.apply_cam_lookat(payload);
+                self.ptype = -1;
+            }
+
+            ServerProt::CAM_SHAKE => {
+                self.apply_cam_shake(payload);
+                self.ptype = -1;
+            }
+
+            ServerProt::CAM_MOVETO => {
+                self.apply_cam_moveto(payload);
+                self.ptype = -1;
+            }
+
+            ServerProt::CAM_RESET => {
+                self.apply_cam_reset(payload);
                 self.ptype = -1;
             }
 
@@ -5459,10 +5707,18 @@ impl Client {
                 self.ptype = -1;
             }
 
-            // runweight, hint arrows and the reboot timer are not ported yet
-            ServerProt::UPDATE_RUNWEIGHT
-            | ServerProt::HINT_ARROW
-            | ServerProt::UPDATE_REBOOT_TIMER => {
+            ServerProt::UPDATE_RUNWEIGHT => {
+                self.apply_update_runweight(payload);
+                self.ptype = -1;
+            }
+
+            ServerProt::HINT_ARROW => {
+                self.apply_hint_arrow(payload);
+                self.ptype = -1;
+            }
+
+            ServerProt::UPDATE_REBOOT_TIMER => {
+                self.apply_update_reboot_timer(payload);
                 self.ptype = -1;
             }
 
@@ -5504,20 +5760,30 @@ impl Client {
                 self.ptype = -1;
             }
 
-            // last-login info, dialog input and friend-slot ops are not
-            // ported yet
+            ServerProt::LAST_LOGIN_INFO => {
+                self.ptype = -1;
+            }
+
+            ServerProt::P_COUNTDIALOG => {
+                self.apply_p_countdialog();
+                self.ptype = -1;
+            }
+
+            ServerProt::SET_MULTIWAY => {
+                self.apply_set_multiway(payload);
+                self.ptype = -1;
+            }
+
+            ServerProt::MINIMAP_TOGGLE => {
+                self.apply_minimap_toggle(payload);
+                self.ptype = -1;
+            }
+
             ServerProt::UPDATE_PID => {
                 // TS reads selfSlot (g2) then membersAccount (g1) straight
                 // off the payload.
                 self.self_slot = payload.g2();
                 self.members_account = payload.g1();
-                self.ptype = -1;
-            }
-
-            ServerProt::LAST_LOGIN_INFO
-            | ServerProt::P_COUNTDIALOG
-            | ServerProt::SET_MULTIWAY
-            | ServerProt::MINIMAP_TOGGLE => {
                 self.ptype = -1;
             }
 
@@ -7301,7 +7567,9 @@ impl Client {
     /// `handleInputKey` from client-ts (2937), chat branch: poll queued
     /// keys. An open social prompt (TS 2962-3020) consumes printable
     /// 32..=122 into `social_input` and 10/13 fires the add/del
-    /// friend/ignore or PM send; otherwise keys reach the public input
+    /// friend/ignore or PM send; an open amount dialog (TS 3022-3047)
+    /// consumes digits into `dialog_input` and 10/13 sends
+    /// `RESUME_P_COUNTDIALOG`; otherwise keys reach the public input
     /// while no chat modal is open. Printable 32..=122 (up to 126 once the
     /// input starts with `::`) appends below 80 chars, 8 backspaces,
     /// 10/13 sends. A `::` command goes out as `CLIENT_CHEAT`
@@ -7373,6 +7641,33 @@ impl Client {
                         let userhash = JString::to_userhash(&self.social_input) as i64;
                         self.del_ignore(userhash);
                     }
+                }
+                continue;
+            }
+
+            // TS 3022-3047: the enter-amount dialog — digits append up to
+            // 10 chars, 8 backspaces, and 10/13 sends the amount back with
+            // RESUME_P_COUNTDIALOG.
+            if self.dialog_input_open {
+                if (48..=57).contains(&key) && self.dialog_input.len() < 10 {
+                    self.dialog_input.push(char::from_u32(key as u32).unwrap());
+                    self.redraw_chat = true;
+                }
+
+                if key == 8 && !self.dialog_input.is_empty() {
+                    self.dialog_input.pop();
+                    self.redraw_chat = true;
+                }
+
+                if key == 13 || key == 10 {
+                    if !self.dialog_input.is_empty() {
+                        let value: i32 = self.dialog_input.parse().unwrap_or(0);
+                        self.out.p1_enc(ClientProt::RESUME_P_COUNTDIALOG.id);
+                        self.out.p4(value);
+                    }
+
+                    self.dialog_input_open = false;
+                    self.redraw_chat = true;
                 }
                 continue;
             }
@@ -8983,6 +9278,119 @@ impl Client {
         }
     }
 
+    /// `cinemaCamera` from client-ts (3305): the cutscene camera eases
+    /// `cam_move_to_*` toward the move target (rate plus a rate2 fraction of
+    /// the remaining distance), then eases `cam_pitch`/`cam_yaw` toward the
+    /// look-at target. The lerp is TS 1:1, including the yaw wrap (delta
+    /// over 1024 wraps by 2048) and the final overshoot snap.
+    pub fn cinema_camera(&mut self) {
+        let mut x = self.cam_move_to_lx * 128 + 64;
+        let mut z = self.cam_move_to_lz * 128 + 64;
+        let mut y = get_av_h(&self.groundh, &self.mapl, x, z, self.minusedlevel) - self.cam_move_to_hei;
+
+        if self.cam_x < x {
+            self.cam_x += self.cam_move_to_rate + (((x - self.cam_x) * self.cam_move_to_rate2) / 1000);
+            if self.cam_x > x {
+                self.cam_x = x;
+            }
+        }
+
+        if self.cam_x > x {
+            self.cam_x -= self.cam_move_to_rate + (((self.cam_x - x) * self.cam_move_to_rate2) / 1000);
+            if self.cam_x < x {
+                self.cam_x = x;
+            }
+        }
+
+        if self.cam_y < y {
+            self.cam_y += self.cam_move_to_rate + (((y - self.cam_y) * self.cam_move_to_rate2) / 1000);
+            if self.cam_y > y {
+                self.cam_y = y;
+            }
+        }
+
+        if self.cam_y > y {
+            self.cam_y -= self.cam_move_to_rate + (((self.cam_y - y) * self.cam_move_to_rate2) / 1000);
+            if self.cam_y < y {
+                self.cam_y = y;
+            }
+        }
+
+        if self.cam_z < z {
+            self.cam_z += self.cam_move_to_rate + (((z - self.cam_z) * self.cam_move_to_rate2) / 1000);
+            if self.cam_z > z {
+                self.cam_z = z;
+            }
+        }
+
+        if self.cam_z > z {
+            self.cam_z -= self.cam_move_to_rate + (((self.cam_z - z) * self.cam_move_to_rate2) / 1000);
+            if self.cam_z < z {
+                self.cam_z = z;
+            }
+        }
+
+        x = self.cam_look_at_lx * 128 + 64;
+        z = self.cam_look_at_lz * 128 + 64;
+        y = get_av_h(&self.groundh, &self.mapl, x, z, self.minusedlevel) - self.cam_look_at_hei;
+
+        let dx = x - self.cam_x;
+        let dy = y - self.cam_y;
+        let dz = z - self.cam_z;
+
+        let distance = (f64::sqrt((dx * dx + dz * dz) as f64)) as i32;
+        let mut pitch = ((dy as f64).atan2(distance as f64) * 325.949) as i32 & 0x7ff;
+        let yaw = ((dx as f64).atan2(dz as f64) * -325.949) as i32 & 0x7ff;
+
+        if pitch < 128 {
+            pitch = 128;
+        } else if pitch > 383 {
+            pitch = 383;
+        }
+
+        if self.cam_pitch < pitch {
+            self.cam_pitch += self.cam_look_at_rate + (((pitch - self.cam_pitch) * self.cam_look_at_rate2) / 1000);
+            if self.cam_pitch > pitch {
+                self.cam_pitch = pitch;
+            }
+        }
+
+        if self.cam_pitch > pitch {
+            self.cam_pitch -= self.cam_look_at_rate + (((self.cam_pitch - pitch) * self.cam_look_at_rate2) / 1000);
+            if self.cam_pitch < pitch {
+                self.cam_pitch = pitch;
+            }
+        }
+
+        let mut delta_yaw = yaw - self.cam_yaw;
+        if delta_yaw > 1024 {
+            delta_yaw -= 2048;
+        } else if delta_yaw < -1024 {
+            delta_yaw += 2048;
+        }
+
+        if delta_yaw > 0 {
+            self.cam_yaw += self.cam_look_at_rate + ((delta_yaw * self.cam_look_at_rate2) / 1000);
+            self.cam_yaw &= 0x7ff;
+        }
+
+        if delta_yaw < 0 {
+            self.cam_yaw -= self.cam_look_at_rate + (((-delta_yaw) * self.cam_look_at_rate2) / 1000);
+            self.cam_yaw &= 0x7ff;
+        }
+
+        let mut tmp = yaw - self.cam_yaw;
+        if tmp > 1024 {
+            tmp -= 2048;
+        } else if tmp < -1024 {
+            tmp += 2048;
+        }
+
+        if (tmp < 0 && delta_yaw > 0) || (tmp > 0 && delta_yaw < 0) {
+            self.cam_yaw = yaw;
+        }
+    }
+
     /// `gameLoop` from Java (`Client.java` 9341): count down a pending
     /// logout request, read up to five TCP packets, the side-tab click
     /// pass (TS `iconLoop`), the side/main/chat interface button passes
@@ -9056,10 +9464,18 @@ impl Client {
         // `followCamera`, so the orbit camera and minimap follow the walk.
         self.move_players();
         self.move_npcs();
-        // TS 2346: `followCamera` in the 3D scene — the orbit camera tracks
-        // the local player and the arrow keys rotate yaw/pitch.
+        // TS 2346-2353: `followCamera` in the 3D scene — the orbit camera
+        // tracks the local player and the arrow keys rotate yaw/pitch —
+        // then the cutscene camera when a CAM_* packet has set one, and the
+        // shake cycles tick every loop.
         if self.scene_state == 2 {
             self.follow_camera();
+        }
+        if self.scene_state == 2 && self.cinema_cam {
+            self.cinema_camera();
+        }
+        for i in 0..5 {
+            self.cam_shake_cycle[i] += 1;
         }
         self.timeout_timer += 1;
         if self.timeout_timer > 750 {

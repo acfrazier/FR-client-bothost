@@ -70,4 +70,12 @@ impl JavaRandom {
         let bits = self.next() >> 1;
         (bits % bound as i64) as i32
     }
+
+    /// TS `nextDouble()`: `(p2_27 * next(26) + next(27)) / p2_53`, in [0, 1).
+    /// The Rust `next()` returns the same 32-bit value the TS `_next()` does.
+    pub fn next_double(&mut self) -> f64 {
+        let next26 = self.next() >> 6;
+        let next27 = self.next() >> 5;
+        (next26 * (1 << 27) + next27) as f64 / (1u64 << 53) as f64
+    }
 }
