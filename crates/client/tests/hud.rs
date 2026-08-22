@@ -7,7 +7,7 @@
 use client::client::{Client, ClientConfig, ClientPlayer};
 use client::config::if_type::{ButtonType, ComponentType, IfType};
 use client::config::{ObjType, SeqType, VarpType};
-use client::graphics::{Colour, Pix2D, PixMap};
+use client::graphics::{Colour, Pix2D, Pix8, PixMap};
 use client::io::{ClientProt, JagFile, Packet};
 use client::wordfilter::WordPack;
 
@@ -539,6 +539,143 @@ fn draw_chat_renders_type0_line_and_input() {
     let chat = c.area_chat.as_ref().unwrap();
     assert!(chat.pixels.contains(&Colour::BLACK));
     assert!(chat.pixels.contains(&Colour::BLUE));
+}
+
+// ---- mod_icons: staff crowns in chat (slice 6 Task 4) ----
+
+/// The most common non-zero palette colour in a sprite (its main fill),
+/// used to detect the sprite's pixels in a rendered area. 0 when the sprite
+/// has no drawn pixels.
+fn sprite_fill_colour(sprite: &Pix8) -> i32 {
+    let mut counts: std::collections::HashMap<i32, usize> = std::collections::HashMap::new();
+    for &idx in &sprite.data {
+        if idx != 0 {
+            let rgb = sprite.bpal.get((idx as u8) as usize).copied().unwrap_or(0);
+            if rgb != 0 {
+                *counts.entry(rgb).or_insert(0) += 1;
+            }
+        }
+    }
+    counts.into_iter().max_by_key(|&(_, n)| n).map(|(c, _)| c).unwrap_or(0)
+}
+
+/// A client whose `media` sprites and fonts are loaded (`prepare_game`).
+fn chat_client(cache: &str) -> Client {
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache.into(),
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    c.game_draw();
+    c
+}
+
+/// Draw one chat line and return the `area_chat` pixels.
+fn chat_line_pixels(cache: &str, r#type: i32, sender: &str) -> Vec<i32> {
+    let mut c = chat_client(cache);
+    c.add_chat(r#type, "hello", sender);
+    c.redraw_chat = true;
+    c.game_draw();
+    c.area_chat.as_ref().unwrap().pixels.clone()
+}
+
+#[test]
+fn prepare_game_depacks_mod_icons() {
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("media").is_file() {
+        return;
+    }
+    let c = chat_client(&cache);
+    assert!(
+        c.mod_icons[0].is_some(),
+        "mod_icons[0] (gold @cr1@ crown) must depack from the media jag"
+    );
+    assert!(
+        c.mod_icons[1].is_some(),
+        "mod_icons[1] (silver @cr2@ crown) must depack from the media jag"
+    );
+}
+
+#[test]
+fn draw_chat_plots_cr1_crown() {
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("media").is_file() {
+        return;
+    }
+    let crown_colour = {
+        let c = chat_client(&cache);
+        sprite_fill_colour(c.mod_icons[0].as_ref().expect("mod_icons[0] depacked"))
+    };
+    assert_ne!(crown_colour, 0, "the gold crown sprite must have drawn pixels");
+    // control: the same line without the @cr1@ prefix
+    let control = chat_line_pixels(&cache, 2, "Mod");
+    let rendered = chat_line_pixels(&cache, 2, "@cr1@Mod");
+    let n_control = control.iter().filter(|&&p| p == crown_colour).count();
+    let n_crown = rendered.iter().filter(|&&p| p == crown_colour).count();
+    assert!(
+        n_crown > n_control,
+        "the @cr1@ render must add gold crown pixels ({crown_colour:#06x}) to area_chat \
+         (control {n_control}, crown {n_crown})"
+    );
+}
+
+#[test]
+fn draw_chat_plots_cr2_crown_for_private() {
+    // types 3/7 with split_private_chat 0 draw the private line in the
+    // chatbox: the silver crown plots after the "From" label.
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("media").is_file() {
+        return;
+    }
+    let silver_colour = {
+        let c = chat_client(&cache);
+        sprite_fill_colour(c.mod_icons[1].as_ref().expect("mod_icons[1] depacked"))
+    };
+    assert_ne!(silver_colour, 0, "the silver crown sprite must have drawn pixels");
+    let control = chat_line_pixels(&cache, 7, "Eve");
+    let rendered = chat_line_pixels(&cache, 7, "@cr2@Eve");
+    let n_control = control.iter().filter(|&&p| p == silver_colour).count();
+    let n_crown = rendered.iter().filter(|&&p| p == silver_colour).count();
+    assert!(
+        n_crown > n_control,
+        "the @cr2@ private render must add silver crown pixels ({silver_colour:#06x}) \
+         to area_chat (control {n_control}, crown {n_crown})"
+    );
+}
+
+#[test]
+fn draw_private_messages_plots_cr1_crown() {
+    // split private chat draws into area_game at y = 329 - line*13.
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("media").is_file() {
+        return;
+    }
+    let mut c = chat_client(&cache);
+    c.scene_state = 2; // game_draw_main (and its overlays) run only in-scene
+    c.split_private_chat = 1;
+    let gold_colour = {
+        let c = chat_client(&cache);
+        sprite_fill_colour(c.mod_icons[0].as_ref().expect("mod_icons[0] depacked"))
+    };
+    assert_ne!(gold_colour, 0, "the gold crown sprite must have drawn pixels");
+    c.add_chat(3, "hello", "Eve");
+    c.redraw_chat = true;
+    c.game_draw();
+    let control = c.area_game.as_ref().unwrap().pixels.clone();
+    c.add_chat(3, "hello", "@cr1@Eve");
+    c.redraw_chat = true;
+    c.game_draw();
+    let rendered = c.area_game.as_ref().unwrap().pixels.clone();
+    let n_control = control.iter().filter(|&&p| p == gold_colour).count();
+    let n_crown = rendered.iter().filter(|&&p| p == gold_colour).count();
+    assert!(
+        n_crown > n_control,
+        "the split-PM @cr1@ render must add gold crown pixels ({gold_colour:#06x}) \
+         to area_game (control {n_control}, crown {n_crown})"
+    );
 }
 
 #[test]

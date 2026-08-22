@@ -889,9 +889,9 @@ impl Client {
     /// private-chat overlay, drawn into `area_game` when clientcode 8 set
     /// `split_private_chat`. Incoming (3/7) and sent (5/6) lines stack
     /// bottom-up from y 329 with the double-shadowed cyan text; the
-    /// `modIcons` sprite advance is kept without the sprite (like
-    /// `draw_chat`). An active `rebootTimer` reserves the first line for
-    /// the "System update in" text (TS 4922-4924).
+    /// `modIcons` crown plots ahead of the sender as Java 6215-6221. An
+    /// active `rebootTimer` reserves the first line for the "System update
+    /// in" text (TS 4922-4924).
     fn draw_private_messages(&mut self, surface: &mut Pix2D) {
         if self.split_private_chat == 0 {
             return;
@@ -925,7 +925,17 @@ impl Client {
                     font.draw_string(surface, Some("From"), 4, y - 1, Colour::CYAN);
                     x += font.string_wid(Some("From "));
                 }
-                if modlevel == 1 || modlevel == 2 {
+                // Java 6215-6221: the crown plots after the "From " label.
+                if modlevel == 1 {
+                    if let Some(sprite) = &self.mod_icons[0] {
+                        sprite.plot_sprite(surface, x, y - 12);
+                    }
+                    x += 14;
+                }
+                if modlevel == 2 {
+                    if let Some(sprite) = &self.mod_icons[1] {
+                        sprite.plot_sprite(surface, x, y - 12);
+                    }
                     x += 14;
                 }
                 if let Some(font) = self.p12.as_ref() {
@@ -1644,6 +1654,10 @@ impl Client {
             self.backhmid1 = Pix8::depack(&jag, "backhmid1", 0).ok();
             for i in 0..13 {
                 self.sideicons[i] = Pix8::depack(&jag, "sideicons", i as i32).ok();
+            }
+            // `modIcons` as Java 5353-5355 / TS 1095-1097.
+            for i in 0..2 {
+                self.mod_icons[i] = Pix8::depack(&jag, "mod_icons", i as i32).ok();
             }
             // TS 1056-1058: the click-crosshair frames are Pix32, not Pix8.
             for i in 0..8 {
@@ -2890,7 +2904,6 @@ impl Client {
                 self.pix3d.set_clipping(surface.width, surface.height);
                 self.draw_interface(self.tut_com_id, 0, 0, 0, &mut surface);
             } else {
-                let font = self.p12.as_ref();
                 let mut line = 0;
                 surface.set_clipping(0, 0, 463, 77);
 
@@ -2914,7 +2927,7 @@ impl Client {
 
                     if r#type == 0 {
                         if y > 0 && y < 110 {
-                            if let Some(font) = font {
+                            if let Some(font) = self.p12.as_ref() {
                                 font.draw_string(&mut surface, Some(&message), 4, y, Colour::BLACK);
                             }
                         }
@@ -2926,13 +2939,21 @@ impl Client {
                     {
                         if y > 0 && y < 110 {
                             let mut x = 4;
-                            // TS plots modIcons[0]/[1] here for modlevel 1/2;
-                            // the sprites are not ported, so the 14px advance is
-                            // kept without an icon.
-                            if modlevel == 1 || modlevel == 2 {
+                            // Java 5000-5007: plot the mod_icons crown at
+                            // y - 12, then advance the 14px gutter.
+                            if modlevel == 1 {
+                                if let Some(sprite) = &self.mod_icons[0] {
+                                    sprite.plot_sprite(&mut surface, x, y - 12);
+                                }
                                 x += 14;
                             }
-                            if let Some(font) = font {
+                            if modlevel == 2 {
+                                if let Some(sprite) = &self.mod_icons[1] {
+                                    sprite.plot_sprite(&mut surface, x, y - 12);
+                                }
+                                x += 14;
+                            }
+                            if let Some(font) = self.p12.as_ref() {
                                 font.draw_string(&mut surface, Some(&format!("{sender}:")), x, y, Colour::BLACK);
                                 x += font.string_wid(Some(&sender)) + 8;
                                 font.draw_string(&mut surface, Some(&message), x, y, Colour::BLUE);
@@ -2947,14 +2968,25 @@ impl Client {
                     {
                         if y > 0 && y < 110 {
                             let mut x = 4;
-                            if let Some(font) = font {
+                            if let Some(font) = self.p12.as_ref() {
                                 font.draw_string(&mut surface, Some("From"), x, y, Colour::BLACK);
                                 x += font.string_wid(Some("From "));
                             }
-                            if modlevel == 1 || modlevel == 2 {
+                            // Java 5019-5026: the crown plots after the
+                            // "From " label.
+                            if modlevel == 1 {
+                                if let Some(sprite) = &self.mod_icons[0] {
+                                    sprite.plot_sprite(&mut surface, x, y - 12);
+                                }
                                 x += 14;
                             }
-                            if let Some(font) = font {
+                            if modlevel == 2 {
+                                if let Some(sprite) = &self.mod_icons[1] {
+                                    sprite.plot_sprite(&mut surface, x, y - 12);
+                                }
+                                x += 14;
+                            }
+                            if let Some(font) = self.p12.as_ref() {
                                 font.draw_string(&mut surface, Some(&format!("{sender}:")), x, y, Colour::BLACK);
                                 x += font.string_wid(Some(&sender)) + 8;
                                 font.draw_string(&mut surface, Some(&message), x, y, Colour::DARKRED);
@@ -2963,21 +2995,21 @@ impl Client {
                         line += 1;
                     } else if r#type == 4 && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && self.is_friend(&sender))) {
                         if y > 0 && y < 110 {
-                            if let Some(font) = font {
+                            if let Some(font) = self.p12.as_ref() {
                                 font.draw_string(&mut surface, Some(&format!("{sender} {message}")), 4, y, 0x800080);
                             }
                         }
                         line += 1;
                     } else if r#type == 5 && self.split_private_chat == 0 && self.chat_private_mode < 2 {
                         if y > 0 && y < 110 {
-                            if let Some(font) = font {
+                            if let Some(font) = self.p12.as_ref() {
                                 font.draw_string(&mut surface, Some(&message), 4, y, Colour::DARKRED);
                             }
                         }
                         line += 1;
                     } else if r#type == 6 && self.split_private_chat == 0 && self.chat_private_mode < 2 {
                         if y > 0 && y < 110 {
-                            if let Some(font) = font {
+                            if let Some(font) = self.p12.as_ref() {
                                 font.draw_string(&mut surface, Some(&format!("To {sender}:")), 4, y, Colour::BLACK);
                                 font.draw_string(
                                     &mut surface,
@@ -2991,7 +3023,7 @@ impl Client {
                         line += 1;
                     } else if r#type == 8 && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && self.is_friend(&sender))) {
                         if y > 0 && y < 110 {
-                            if let Some(font) = font {
+                            if let Some(font) = self.p12.as_ref() {
                                 font.draw_string(&mut surface, Some(&format!("{sender} {message}")), 4, y, 0x7e3200);
                             }
                         }

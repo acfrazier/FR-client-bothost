@@ -702,6 +702,11 @@ pub struct Client {
     /// `*h`/`*v`/`*hv` copies are the same sprites hflip/vflip'd. Missing
     /// sprites are `None` (a cache without the `media` pack).
     pub sideicons: [Option<Pix8>; 13],
+    /// `modIcons` from client-ts (267): the gold (@cr1@) and silver (@cr2@)
+    /// staff crowns plotted ahead of chat senders in `draw_chat` and
+    /// `draw_private_messages`. Missing sprites are `None` (a cache without
+    /// the `media` pack); the 14px advance is kept without an icon.
+    pub mod_icons: [Option<Pix8>; 2],
     pub redstone1: Option<Pix8>,
     pub redstone2: Option<Pix8>,
     pub redstone3: Option<Pix8>,
@@ -1165,6 +1170,7 @@ impl Client {
             scrollbar1: None,
             scrollbar2: None,
             sideicons: [const { None }; 13],
+            mod_icons: [const { None }; 2],
             redstone1: None,
             redstone2: None,
             redstone3: None,
