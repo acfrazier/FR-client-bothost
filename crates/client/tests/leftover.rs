@@ -424,6 +424,72 @@ fn walk_consume_sets_cross_mode_1() {
     assert_eq!(c.cross_y, 80);
 }
 
+/// Java `Client.addPlayers` (7576-7584) / TS 4265-4275: when the local
+/// player's tile equals the dest flag, clear it. Without this the flag
+/// stays after arrival and, with a stuck `World.click`, hops every frame.
+#[test]
+fn add_players_clears_minimap_flag_on_arrival() {
+    let mut c = client();
+    c.ingame = true;
+    c.scene_state = 2;
+    let mut p = ClientPlayer::at(10, 10);
+    p.x = 10 * 128 + 64;
+    p.z = 10 * 128 + 64;
+    c.local_player = Some(p);
+    c.minimap_flag_x = 10;
+    c.minimap_flag_z = 10;
+    c.game_draw();
+    assert_eq!(c.minimap_flag_x, 0);
+    assert_eq!(c.minimap_flag_z, 10); // only X is zeroed, matching Java
+}
+
+/// Neighbouring tile must not clear the dest flag.
+#[test]
+fn add_players_keeps_minimap_flag_when_not_arrived() {
+    let mut c = client();
+    c.ingame = true;
+    c.scene_state = 2;
+    let mut p = ClientPlayer::at(10, 10);
+    p.x = 10 * 128 + 64;
+    p.z = 10 * 128 + 64;
+    c.local_player = Some(p);
+    c.minimap_flag_x = 11;
+    c.minimap_flag_z = 10;
+    c.game_draw();
+    assert_eq!(c.minimap_flag_x, 11);
+    assert_eq!(c.minimap_flag_z, 10);
+}
+
+/// `prepare_game` depacks `media/cross` into all 8 frames. A missing pack
+/// is a skip; an empty frame is the live "X doesn't draw" failure.
+#[test]
+fn prepare_game_loads_cross_sprites() {
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("media").is_file() {
+        return;
+    }
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache,
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    c.scene_state = 2;
+    c.game_draw();
+    for i in 0..8 {
+        let s = c.cross[i]
+            .as_ref()
+            .unwrap_or_else(|| panic!("cross[{i}] missing after prepare_game"));
+        assert!(s.wi > 0 && s.hi > 0, "cross[{i}] empty size");
+        assert!(
+            s.data.iter().any(|&p| p != 0),
+            "cross[{i}] has no opaque pixels"
+        );
+    }
+}
+
 /// The click crosshair plots into `area_game` at `(cross_x - 12,
 /// cross_y - 12)` (TS 4840-4843). Real pack only: a missing `media` pack
 /// leaves the sprites `None` and the plot is a no-op.

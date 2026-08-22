@@ -1137,13 +1137,28 @@ impl Client {
     }
 
     /// `addPlayers` from client-ts (4260): add the local player (or every
-    /// player) as a dynamic sprite at its ground height. The minimap-flag
-    /// reset and its `ANTICHEAT_CYCLELOGIC6` send are minimap scope (Task
-    /// 6/7); the tile-occupancy stamp is kept so a second entity on a tile
-    /// defers to the first this cycle.
+    /// player) as a dynamic sprite at its ground height. Java
+    /// `Client.addPlayers` (7576-7584) / TS 4265-4275: arriving on the dest
+    /// tile clears `minimapFlagX` (the draw gate) and ticks
+    /// `ANTICHEAT_CYCLELOGIC6`. The tile-occupancy stamp is kept so a
+    /// second entity on a tile defers to the first this cycle.
     fn add_players(&mut self, add_self: bool) {
         if self.local_player.is_none() {
             return;
+        }
+
+        // Arrival-clear is independent of `isReady` and of `add_self`:
+        // both `addPlayers(true)` and `addPlayers(false)` run it.
+        if let Some(player) = self.local_player.as_ref() {
+            if player.x >> 7 == self.minimap_flag_x && player.z >> 7 == self.minimap_flag_z {
+                self.minimap_flag_x = 0;
+                self.cyclelogic6 += 1;
+                if self.cyclelogic6 > 122 {
+                    self.cyclelogic6 = 0;
+                    self.out.p1_enc(ClientProt::ANTICHEAT_CYCLELOGIC6.id);
+                    self.out.p1(62);
+                }
+            }
         }
 
         let count = if add_self { 1 } else { self.player_count };

@@ -1934,6 +1934,15 @@ impl World {
                 }
             }
         }
+
+        // A successful pick this frame has already written `ground_x`.
+        // Drop `click` so the next frame cannot re-raycast the same
+        // screen coords as the camera follows the player (dest-flag hop).
+        // Incomplete fills that never picked keep `click` so the next
+        // frame retries, matching Java when `fillLeft` never hits 0.
+        if self.ground_x != -1 {
+            self.click = false;
+        }
     }
 
     /// `calcOcclude()` from client-ts: pick the occluders whose tiles are
@@ -2974,7 +2983,7 @@ impl World {
 
         pix.trans = 0;
 
-        if (py1 as i64 - px3 as i64) * (px1 as i64 - py3 as i64) - (pz1 as i64 - py3 as i64) * (pz0 as i64 - px3 as i64) > 0 {
+        if crate::dash3d::wrapping_cross(py1.wrapping_sub(px3), px1.wrapping_sub(py3), pz1.wrapping_sub(py3), pz0.wrapping_sub(px3)) > 0 {
             pix.hclip = py1 < 0 || px3 < 0 || pz0 < 0 || py1 > surface.size_x || px3 > surface.size_x || pz0 > surface.size_x;
 
             if self.click && inside_triangle(self.click_x, self.click_y, pz1, py3, px1, py1, px3, pz0) {
@@ -3030,7 +3039,7 @@ impl World {
             }
         }
 
-        if (px0 as i64 - pz0 as i64) * (py3 as i64 - px1 as i64) - (py0 as i64 - px1 as i64) * (px3 as i64 - pz0 as i64) > 0 {
+        if crate::dash3d::wrapping_cross(px0.wrapping_sub(pz0), py3.wrapping_sub(px1), py0.wrapping_sub(px1), px3.wrapping_sub(pz0)) > 0 {
             pix.hclip = px0 < 0 || pz0 < 0 || px3 < 0 || px0 > surface.size_x || pz0 > surface.size_x || px3 > surface.size_x;
 
             if self.click && inside_triangle(self.click_x, self.click_y, py0, px1, py3, px0, pz0, px3) {
@@ -3150,7 +3159,7 @@ impl World {
                 continue;
             };
 
-            if (x0 as i64 - x1 as i64) * (y2 as i64 - y1 as i64) - (y0 as i64 - y1 as i64) * (x2 as i64 - x1 as i64) > 0 {
+            if crate::dash3d::wrapping_cross(x0.wrapping_sub(x1), y2.wrapping_sub(y1), y0.wrapping_sub(y1), x2.wrapping_sub(x1)) > 0 {
                 pix.hclip = x0 < 0 || x1 < 0 || x2 < 0 || x0 > surface.size_x || x1 > surface.size_x || x2 > surface.size_x;
 
                 if self.click && inside_triangle(self.click_x, self.click_y, y0, y1, y2, x0, x1, x2) {

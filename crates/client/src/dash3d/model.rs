@@ -2092,11 +2092,9 @@ impl Model {
                 let dx_cb = x_c - x_b;
                 let dy_cb = y_c - y_b;
 
-                // Screen coordinates are unbounded by the viewport here
-                // (they can reach ±335k), so the TS double-precision cross
-                // product overflows i32; compute it in i64 to preserve its
-                // sign exactly.
-                if dx_ab as i64 * dy_cb as i64 - dy_ab as i64 * dx_cb as i64 <= 0 {
+                // Java `int` wrap, not i64/TS doubles: near faces overflow
+                // i32 and the wrap is what draws the fence over the hill.
+                if crate::dash3d::wrapping_cross(dx_ab, dy_cb, dy_ab, dx_cb) <= 0 {
                     continue;
                 }
 
@@ -2814,8 +2812,7 @@ impl Model {
         let y1 = pix.model_scratch.clipped_y.get(1).copied().unwrap_or(0);
         let y2 = pix.model_scratch.clipped_y.get(2).copied().unwrap_or(0);
 
-        if (x0 as i64 - x1 as i64) * (y2 as i64 - y1 as i64)
-            - (y0 as i64 - y1 as i64) * (x2 as i64 - x1 as i64)
+        if crate::dash3d::wrapping_cross(x0.wrapping_sub(x1), y2.wrapping_sub(y1), y0.wrapping_sub(y1), x2.wrapping_sub(x1))
             <= 0
         {
             return;

@@ -416,6 +416,10 @@ pub struct Client {
     pub oplogic8: i32,
     pub oplogic9: i32,
     pub cyclelogic2: i32,
+    /// `Client.cyclelogic6` from client-ts (a TS static, instance here):
+    /// anticheat counter sent with `ANTICHEAT_CYCLELOGIC6` from
+    /// `addPlayers` when the dest flag is cleared on arrival.
+    pub cyclelogic6: i32,
     /// `reportAbuseInput`/`reportAbuseMuteOption`/`reportAbuseComId` (TS):
     /// the report-abuse form state set by the `ABUSE_REPORT` doAction arm.
     pub report_abuse_input: String,
@@ -980,6 +984,7 @@ impl Client {
             oplogic8: 0,
             oplogic9: 0,
             cyclelogic2: 0,
+            cyclelogic6: 0,
             report_abuse_input: String::new(),
             report_abuse_mute_option: false,
             report_abuse_com_id: 0,

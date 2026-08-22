@@ -5,6 +5,7 @@
 // (fill → renderQuickGround → gouraud) runs without a pack. A mouse click
 // on the projected ground must come back as `ground_x`/`ground_z`.
 use client::config::Cache;
+use client::dash3d::ground::Ground;
 use client::dash3d::{Model, SceneModel, TerrainOverlayShape, World};
 use client::graphics::{Pix2D, Pix3D, Pix3DDraw, PixMap};
 
@@ -173,6 +174,47 @@ fn viewport(pix: &mut Pix3DDraw, surface: &mut Pix2D) {
     pix.low_mem = true;
 }
 
+/// Overlay-edge tiles (shape ≥ 2) mix underlay and overlay face colours.
+/// Black overlay faces here are the slice-2 "triangles by the bridge" bug.
+#[test]
+fn overlay_edge_ground_keeps_dirt_and_grass_face_colours() {
+    let g = Ground::new(
+        1,
+        1,
+        TerrainOverlayShape::LEFT_SEMI_DIAGONAL_SMALL,
+        0,
+        -1,
+        2000,
+        2000,
+        2000,
+        2000,
+        100,
+        100,
+        100,
+        100,
+        200,
+        200,
+        200,
+        200,
+        0,
+        0,
+    );
+    assert!(
+        g.face_colour_a.iter().any(|&c| c == 100),
+        "underlay faces must keep grass colour, got {:?}",
+        g.face_colour_a
+    );
+    assert!(
+        g.face_colour_a.iter().any(|&c| c == 200),
+        "overlay faces must keep dirt colour (not black), got {:?}",
+        g.face_colour_a
+    );
+    assert!(
+        g.face_colour_a.iter().all(|&c| c != 0),
+        "no overlay-edge face may be colour 0 (black)"
+    );
+}
+
 #[test]
 fn update_mouse_picking_sets_click_and_clears_ground() {
     let mut w = flat_world();
@@ -207,6 +249,21 @@ fn render_all_writes_pixels_and_picks_ground_tile() {
     );
     assert_eq!(world.ground_x, 1);
     assert_eq!(world.ground_z, 2);
+    assert!(
+        !world.click,
+        "a successful pick must drop click so the next frame cannot re-pick as the camera moves"
+    );
+
+    // Second pass without a new click: must not hop the dest tile.
+    world.ground_x = -1;
+    world.ground_z = -1;
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        viewport(&mut pix, &mut surface);
+        world.render_all(&mut pix, &mut surface, &Cache::default(), 0, 192, 0, 192, 0, 0, 512);
+    }
+    assert_eq!(world.ground_x, -1);
+    assert_eq!(world.ground_z, -1);
 }
 
 #[test]
