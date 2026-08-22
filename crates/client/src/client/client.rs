@@ -708,6 +708,19 @@ pub struct Client {
     pub ignore_count: i32,
     pub ignore_userhash: [i64; 100],
     pub chat_disabled: i32,
+    /// Friend list and PM state from client-ts (`friendCount`/
+    /// `friendUserhash[200]`/`friendUsername[200]`/`friendNodeId[200]`/
+    /// `friendServerStatus`/`privateMessageIds[100]`/`privateMessageCount`)
+    /// plus the local `nodeId` (static in TS, default 10) the friend sort
+    /// compares against.
+    pub friend_count: i32,
+    pub friend_userhash: [i64; 200],
+    pub friend_username: [String; 200],
+    pub friend_node_id: [i32; 200],
+    pub friend_server_status: i32,
+    pub private_message_ids: [i32; 100],
+    pub private_message_count: i32,
+    pub node_id: i32,
     /// `chatInterface` from client-ts (480): the synthetic IfType the chat
     /// scrollbar reads/writes (not in the jag), synced to the chat scroll
     /// state by `game_draw`/`draw_chat`.
@@ -1075,6 +1088,14 @@ impl Client {
             ignore_count: 0,
             ignore_userhash: [0; 100],
             chat_disabled: 0,
+            friend_count: 0,
+            friend_userhash: [0; 200],
+            friend_username: [const { String::new() }; 200],
+            friend_node_id: [0; 200],
+            friend_server_status: 0,
+            private_message_ids: [0; 100],
+            private_message_count: 0,
+            node_id: 10,
             chat_interface: IfType::default(),
             scroll_grabbed: false,
             scroll_input_padding: 0,
@@ -3371,20 +3392,337 @@ impl Client {
 
     /// `MESSAGE_GAME` handler (Client.ts 6413): read the jstr message and
     /// route it — a `:tradereq:`/`:duelreq:` suffix adds the trade/duel line
-    /// with the requester's name (TS 6420-6446; the ignore list is not
-    /// ported, so `ignored` stays false and `chatDisabled` stays 0), and
-    /// anything else is public chat type 0 with no sender.
+    /// with the requester's name unless the requester is on the ignore list
+    /// or chat is disabled (TS 6420-6446), and anything else is public chat
+    /// type 0 with no sender.
     pub fn apply_message_game(&mut self, payload: &mut Packet) {
         let message = payload.gjstr();
 
         if message.ends_with(":tradereq:") {
             let player = message[..message.find(':').unwrap_or(0)].to_string();
-            self.add_chat(4, "wishes to trade with you.", &player);
+            let username = JString::to_userhash(&player) as i64;
+            let mut ignored = false;
+            for i in 0..self.ignore_count {
+                if self.ignore_userhash[i as usize] == username {
+                    ignored = true;
+                    break;
+                }
+            }
+            if !ignored && self.chat_disabled == 0 {
+                self.add_chat(4, "wishes to trade with you.", &player);
+            }
         } else if message.ends_with(":duelreq:") {
             let player = message[..message.find(':').unwrap_or(0)].to_string();
-            self.add_chat(8, "wishes to duel with you.", &player);
+            let username = JString::to_userhash(&player) as i64;
+            let mut ignored = false;
+            for i in 0..self.ignore_count {
+                if self.ignore_userhash[i as usize] == username {
+                    ignored = true;
+                    break;
+                }
+            }
+            if !ignored && self.chat_disabled == 0 {
+                self.add_chat(8, "wishes to duel with you.", &player);
+            }
         } else {
             self.add_chat(0, &message, "");
+        }
+    }
+
+    /// `isFriend` from client-ts (11474): case-insensitive match of a chat
+    /// sender against the friend list, then the local player's own name.
+    pub fn is_friend(&self, username: &str) -> bool {
+        if username.is_empty() {
+            return false;
+        }
+        for i in 0..self.friend_count {
+            if username.eq_ignore_ascii_case(&self.friend_username[i as usize]) {
+                return true;
+            }
+        }
+        match &self.local_player {
+            None => false,
+            Some(p) => p
+                .name
+                .as_deref()
+                .is_some_and(|n| username.eq_ignore_ascii_case(n)),
+        }
+    }
+
+    /// `addFriend` from client-ts (11492): check the free/member cap, the
+    /// friend and ignore lists, then add locally and send `FRIENDLIST_ADD`
+    /// with the p8 userhash. A hash of 0 is ignored (TS). The two identical
+    /// cap messages are kept as TS branches them.
+    #[allow(clippy::if_same_then_else)]
+    pub fn add_friend(&mut self, userhash: i64) {
+        if userhash == 0 {
+            return;
+        }
+        if self.friend_count >= 100 && self.members_account != 1 {
+            self.add_chat(
+                0,
+                "Your friendlist is full. Max of 100 for free users, and 200 for members",
+                "",
+            );
+            return;
+        } else if self.friend_count >= 200 {
+            self.add_chat(
+                0,
+                "Your friendlist is full. Max of 100 for free users, and 200 for members",
+                "",
+            );
+            return;
+        }
+        let display_name = JString::to_screen_name(&JString::to_raw_username(userhash));
+        for i in 0..self.friend_count {
+            if self.friend_userhash[i as usize] == userhash {
+                self.add_chat(0, &format!("{display_name} is already on your friend list"), "");
+                return;
+            }
+        }
+        for i in 0..self.ignore_count {
+            if self.ignore_userhash[i as usize] == userhash {
+                self.add_chat(
+                    0,
+                    &format!("Please remove {display_name} from your ignore list first"),
+                    "",
+                );
+                return;
+            }
+        }
+        let Some(local_name) = self.local_player.as_ref().and_then(|p| p.name.clone()) else {
+            return;
+        };
+        if display_name != local_name {
+            self.friend_username[self.friend_count as usize] = display_name;
+            self.friend_userhash[self.friend_count as usize] = userhash;
+            self.friend_node_id[self.friend_count as usize] = 0;
+            self.friend_count += 1;
+            self.redraw_side = true;
+            self.out.p1_enc(ClientProt::FRIENDLIST_ADD.id);
+            self.out.p8(userhash);
+        }
+    }
+
+    /// `addIgnore` from client-ts (11537): cap the ignore list, check both
+    /// lists, then add locally and send `IGNORELIST_ADD` with the p8
+    /// userhash. A hash of 0 is ignored (TS).
+    pub fn add_ignore(&mut self, userhash: i64) {
+        if userhash == 0 {
+            return;
+        }
+        if self.ignore_count >= 100 {
+            self.add_chat(0, "Your ignore list is full. Max of 100 hit", "");
+            return;
+        }
+        let display_name = JString::to_screen_name(&JString::to_raw_username(userhash));
+        for i in 0..self.ignore_count {
+            if self.ignore_userhash[i as usize] == userhash {
+                self.add_chat(0, &format!("{display_name} is already on your ignore list"), "");
+                return;
+            }
+        }
+        for i in 0..self.friend_count {
+            if self.friend_userhash[i as usize] == userhash {
+                self.add_chat(
+                    0,
+                    &format!("Please remove {display_name} from your friend list first"),
+                    "",
+                );
+                return;
+            }
+        }
+        self.ignore_userhash[self.ignore_count as usize] = userhash;
+        self.ignore_count += 1;
+        self.redraw_side = true;
+        self.out.p1_enc(ClientProt::IGNORELIST_ADD.id);
+        self.out.p8(userhash);
+    }
+
+    /// `delFriend` from client-ts (11568): shift the friend arrays down over
+    /// the removed hash and send `FRIENDLIST_DEL` with the p8 userhash. A
+    /// hash of 0 is ignored (TS).
+    pub fn del_friend(&mut self, userhash: i64) {
+        if userhash == 0 {
+            return;
+        }
+        for i in 0..self.friend_count {
+            if self.friend_userhash[i as usize] == userhash {
+                self.friend_count -= 1;
+                self.redraw_side = true;
+                for j in i..self.friend_count {
+                    self.friend_username[j as usize] =
+                        std::mem::take(&mut self.friend_username[(j + 1) as usize]);
+                    self.friend_node_id[j as usize] = self.friend_node_id[(j + 1) as usize];
+                    self.friend_userhash[j as usize] = self.friend_userhash[(j + 1) as usize];
+                }
+                self.out.p1_enc(ClientProt::FRIENDLIST_DEL.id);
+                self.out.p8(userhash);
+                return;
+            }
+        }
+    }
+
+    /// `delIgnore` from client-ts (11592): shift the ignore array down over
+    /// the removed hash and send `IGNORELIST_DEL` with the p8 userhash. A
+    /// hash of 0 is ignored (TS).
+    pub fn del_ignore(&mut self, userhash: i64) {
+        if userhash == 0 {
+            return;
+        }
+        for i in 0..self.ignore_count {
+            if self.ignore_userhash[i as usize] == userhash {
+                self.ignore_count -= 1;
+                self.redraw_side = true;
+                for j in i..self.ignore_count {
+                    self.ignore_userhash[j as usize] = self.ignore_userhash[(j + 1) as usize];
+                }
+                self.out.p1_enc(ClientProt::IGNORELIST_DEL.id);
+                self.out.p8(userhash);
+                return;
+            }
+        }
+    }
+
+    /// `UPDATE_IGNORELIST` handler (Client.ts 6454): the frame is one p8
+    /// userhash per entry; the count is `psize / 8` clamped to the 100-slot
+    /// array (the TS typed array silently drops writes past 100).
+    pub fn apply_update_ignorelist(&mut self, payload: &mut Packet, psize: i32) {
+        self.ignore_count = (psize / 8).min(100);
+        for i in 0..self.ignore_count {
+            self.ignore_userhash[i as usize] = payload.g8();
+        }
+    }
+
+    /// `CHAT_FILTER_SETTINGS` handler (Client.ts 6464): three mode bytes
+    /// then redraw both the mode strip and the chat.
+    pub fn apply_chat_filter_settings(&mut self, payload: &mut Packet) {
+        self.chat_public_mode = payload.g1();
+        self.chat_private_mode = payload.g1();
+        self.chat_trade_mode = payload.g1();
+        self.redraw_chat_mode = true;
+        self.redraw_chat = true;
+    }
+
+    /// `MESSAGE_PRIVATE` handler (Client.ts 6475): dedupe by message id
+    /// (rolling 100-slot window), skip senders on the ignore list unless
+    /// they are staff (level > 1), then WordPack-unpack the `psize - 13`
+    /// byte tail (g8 + g4 + g1) and add a chat line type 3, or type 7 with
+    /// the `@cr*` staff prefix.
+    pub fn apply_message_private(&mut self, payload: &mut Packet, psize: i32) {
+        let from = payload.g8();
+        let message_id = payload.g4();
+        let staff_mod_level = payload.g1();
+
+        let mut ignored = false;
+        for i in 0..100 {
+            if self.private_message_ids[i] == message_id {
+                ignored = true;
+                break;
+            }
+        }
+        if staff_mod_level <= 1 {
+            for i in 0..self.ignore_count {
+                if self.ignore_userhash[i as usize] == from {
+                    ignored = true;
+                    break;
+                }
+            }
+        }
+
+        if !ignored && self.chat_disabled == 0 {
+            self.private_message_ids[self.private_message_count as usize] = message_id;
+            self.private_message_count = (self.private_message_count + 1) % 100;
+
+            let uncompressed = WordPack::unpack(payload, (psize - 13) as usize);
+            let filtered = WordFilter::filter(&uncompressed);
+            let sender = JString::to_screen_name(&JString::to_raw_username(from));
+            if staff_mod_level == 2 || staff_mod_level == 3 {
+                self.add_chat(7, &filtered, &format!("@cr2@{sender}"));
+            } else if staff_mod_level == 1 {
+                self.add_chat(7, &filtered, &format!("@cr1@{sender}"));
+            } else {
+                self.add_chat(3, &filtered, &sender);
+            }
+        }
+    }
+
+    /// `FRIENDLIST_LOADED` handler (Client.ts 6523): the world-list status
+    /// byte (0 = connecting, 1 = connecting slowly, 2 = loaded) and a side
+    /// redraw.
+    pub fn apply_friendlist_loaded(&mut self, payload: &mut Packet) {
+        self.friend_server_status = payload.g1();
+        self.redraw_side = true;
+    }
+
+    /// `UPDATE_FRIENDLIST` handler (Client.ts 6530): a p8 userhash plus the
+    /// p1 world. An existing friend whose world changed gets the login
+    /// (`world > 0`) / logout (`world === 0`) type-5 chat and a side redraw;
+    /// a new friend is appended (200 cap). Then the bubble sort moves
+    /// same-world friends to the front, with offline (world 0) friends last.
+    /// The row swap needs temps: two runtime-indexed array elements cannot
+    /// be mutably borrowed at once.
+    #[allow(clippy::manual_swap)]
+    pub fn apply_update_friendlist(&mut self, payload: &mut Packet) {
+        let username = payload.g8();
+        let world = payload.g1();
+
+        let mut display_name = Some(JString::to_screen_name(&JString::to_raw_username(username)));
+        for i in 0..self.friend_count {
+            if self.friend_userhash[i as usize] == username {
+                if self.friend_node_id[i as usize] != world {
+                    self.friend_node_id[i as usize] = world;
+                    self.redraw_side = true;
+                    if world > 0 {
+                        let name = display_name.as_deref().unwrap_or("");
+                        self.add_chat(5, &format!("{name} has logged in."), "");
+                    }
+                    if world == 0 {
+                        let name = display_name.as_deref().unwrap_or("");
+                        self.add_chat(5, &format!("{name} has logged out."), "");
+                    }
+                }
+                display_name = None;
+                break;
+            }
+        }
+
+        if let Some(display_name) = display_name {
+            if self.friend_count < 200 {
+                self.friend_userhash[self.friend_count as usize] = username;
+                self.friend_username[self.friend_count as usize] = display_name;
+                self.friend_node_id[self.friend_count as usize] = world;
+                self.friend_count += 1;
+                self.redraw_side = true;
+            }
+        }
+
+        let mut sorted = false;
+        while !sorted {
+            sorted = true;
+            for i in 0..self.friend_count - 1 {
+                if (self.friend_node_id[i as usize] != self.node_id
+                    && self.friend_node_id[(i + 1) as usize] == self.node_id)
+                    || (self.friend_node_id[i as usize] == 0
+                        && self.friend_node_id[(i + 1) as usize] != 0)
+                {
+                    let old_world = self.friend_node_id[i as usize];
+                    self.friend_node_id[i as usize] = self.friend_node_id[(i + 1) as usize];
+                    self.friend_node_id[(i + 1) as usize] = old_world;
+
+                    let old_name = std::mem::take(&mut self.friend_username[i as usize]);
+                    self.friend_username[i as usize] =
+                        std::mem::take(&mut self.friend_username[(i + 1) as usize]);
+                    self.friend_username[(i + 1) as usize] = old_name;
+
+                    let old_userhash = self.friend_userhash[i as usize];
+                    self.friend_userhash[i as usize] = self.friend_userhash[(i + 1) as usize];
+                    self.friend_userhash[(i + 1) as usize] = old_userhash;
+
+                    self.redraw_side = true;
+                    sorted = false;
+                }
+            }
         }
     }
 
@@ -3782,8 +4120,7 @@ impl Client {
     /// `addChatOptions` from Client.ts (2658-2740) with the friend/ignore/
     /// accept-trade/accept-duel options skipped (slice 5): only "Report
     /// abuse" for a staff player hovering a public or private chat line.
-    /// `is_friend` is always false in this port (no friend list), matching
-    /// `draw_chat`.
+    /// The `isFriend(sender)` mode-1 gates are live (TS 2685/2702/2721/2730).
     fn add_chat_options(&mut self, _mouse_x: i32, mouse_y: i32) {
         let mut line = 0;
         for i in 0..100 {
@@ -3810,7 +4147,7 @@ impl Client {
             } else if (r#type == 1 || r#type == 2)
                 && (r#type == 1
                     || self.chat_public_mode == 0
-                    || (self.chat_public_mode == 1 && false))
+                    || (self.chat_public_mode == 1 && self.is_friend(&sender)))
             {
                 // TS 2687: `localPlayer && sender !== localPlayer.name`.
                 let not_self = match &self.local_player {
@@ -3830,7 +4167,7 @@ impl Client {
                 // dropped like in draw_chat.
                 && (r#type == 7
                     || self.chat_private_mode == 0
-                    || (self.chat_private_mode == 1 && false))
+                    || (self.chat_private_mode == 1 && self.is_friend(&sender)))
             {
                 if mouse_y > y - 14 && mouse_y <= y {
                     if self.staffmodlevel >= 1 {
@@ -3839,13 +4176,13 @@ impl Client {
                     }
                 }
                 line += 1;
-            } else if r#type == 4 && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && false)) {
+            } else if r#type == 4 && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && self.is_friend(&sender))) {
                 // the accept-trade option is slice 5; the line still counts
                 // so the y positions match draw_chat.
                 line += 1;
             } else if (r#type == 5 || r#type == 6) && self.chat_private_mode < 2 {
                 line += 1;
-            } else if r#type == 8 && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && false)) {
+            } else if r#type == 8 && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && self.is_friend(&sender))) {
                 line += 1;
             }
         }
@@ -4742,12 +5079,28 @@ impl Client {
                 self.ptype = -1;
             }
 
-            // friends and ignore-list state is not ported yet
-            ServerProt::UPDATE_IGNORELIST
-            | ServerProt::CHAT_FILTER_SETTINGS
-            | ServerProt::MESSAGE_PRIVATE
-            | ServerProt::FRIENDLIST_LOADED
-            | ServerProt::UPDATE_FRIENDLIST => {
+            ServerProt::UPDATE_IGNORELIST => {
+                self.apply_update_ignorelist(payload, self.psize);
+                self.ptype = -1;
+            }
+
+            ServerProt::CHAT_FILTER_SETTINGS => {
+                self.apply_chat_filter_settings(payload);
+                self.ptype = -1;
+            }
+
+            ServerProt::MESSAGE_PRIVATE => {
+                self.apply_message_private(payload, self.psize);
+                self.ptype = -1;
+            }
+
+            ServerProt::FRIENDLIST_LOADED => {
+                self.apply_friendlist_loaded(payload);
+                self.ptype = -1;
+            }
+
+            ServerProt::UPDATE_FRIENDLIST => {
+                self.apply_update_friendlist(payload);
                 self.ptype = -1;
             }
 
@@ -6316,6 +6669,8 @@ impl Client {
         self.projectiles.clear();
         self.spotanims.clear();
         self.loc_changes = LinkList::new();
+        self.friend_server_status = 0;
+        self.friend_count = 0;
         for level in 0..BuildArea::LEVELS {
             for x in 0..BuildArea::SIZE {
                 for z in 0..BuildArea::SIZE {

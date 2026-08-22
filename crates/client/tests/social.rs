@@ -107,3 +107,97 @@ fn player_chat_mask_skips_payload_when_disabled() {
     assert_eq!(c.players[0].as_ref().unwrap().chat_message, None);
     assert!(c.chat_text[0].is_empty(), "disabled chat must not add a line");
 }
+
+// ---- Task 4: friends/ignore list state, packets and list ops ----
+
+#[test]
+fn update_friendlist_adds_and_login_chat() {
+    let mut c = client();
+    let hash = JString::to_userhash("bob") as i64;
+    let mut p = Packet::new(vec![0; 32]);
+    p.p8(hash);
+    p.p1(10); // world == node_id default 10
+    p.pos = 0;
+    c.apply_update_friendlist(&mut p);
+    assert_eq!(c.friend_count, 1);
+    assert_eq!(c.friend_username[0], "Bob");
+    assert_eq!(c.friend_node_id[0], 10);
+}
+
+#[test]
+fn add_friend_encodes_p8() {
+    let mut c = client();
+    c.local_player = Some(ClientPlayer::at(5, 5));
+    if let Some(p) = c.local_player.as_mut() {
+        p.name = Some("Test".into());
+    }
+    let hash = JString::to_userhash("bob") as i64;
+    c.add_friend(hash);
+    assert_eq!(c.out.data()[0], ClientProt::FRIENDLIST_ADD.id as u8);
+    assert_eq!(c.friend_count, 1);
+}
+
+#[test]
+fn message_game_trade_skips_ignored() {
+    let mut c = client();
+    let hash = JString::to_userhash("eve") as i64;
+    c.ignore_userhash[0] = hash;
+    c.ignore_count = 1;
+    let mut p = Packet::new(vec![0; 64]);
+    p.pjstr("eve:tradereq:");
+    p.pos = 0;
+    c.apply_message_game(&mut p);
+    assert!(c.chat_text[0].is_empty() || !c.chat_text[0].contains("wishes to trade"));
+}
+
+#[test]
+fn update_ignorelist_fills_userhashes() {
+    let mut c = client();
+    let eve = JString::to_userhash("eve") as i64;
+    let bob = JString::to_userhash("bob") as i64;
+    let mut p = Packet::new(vec![0; 32]);
+    p.p8(eve);
+    p.p8(bob);
+    let psize = p.pos as i32;
+    p.pos = 0;
+    c.apply_update_ignorelist(&mut p, psize);
+    assert_eq!(c.ignore_count, 2);
+    assert_eq!(c.ignore_userhash[0], eve);
+    assert_eq!(c.ignore_userhash[1], bob);
+}
+
+#[test]
+fn message_private_unpacks_and_adds_chat() {
+    let mut c = client();
+    let from = JString::to_userhash("bob") as i64;
+    let mut p = Packet::new(vec![0; 64]);
+    p.p8(from);
+    p.p4(1);
+    p.p1(0); // staff level 0
+    WordPack::pack(&mut p, "hi");
+    let psize = p.pos as i32;
+    p.pos = 0;
+    c.apply_message_private(&mut p, psize);
+    assert_eq!(c.private_message_ids[0], 1);
+    assert_eq!(c.private_message_count, 1);
+    assert_eq!(c.chat_text[0], "Hi"); // WordPack unpack + identity filter
+    assert_eq!(c.chat_username[0], "Bob"); // toScreenName(toRawUsername)
+    assert_eq!(c.chat_type[0], 3);
+}
+
+#[test]
+fn del_friend_removes_and_encodes() {
+    let mut c = client();
+    let bob = JString::to_userhash("bob") as i64;
+    let eve = JString::to_userhash("eve") as i64;
+    c.friend_userhash[0] = bob;
+    c.friend_username[0] = "Bob".into();
+    c.friend_userhash[1] = eve;
+    c.friend_username[1] = "Eve".into();
+    c.friend_count = 2;
+    c.del_friend(bob);
+    assert_eq!(c.friend_count, 1);
+    assert_eq!(c.out.data()[0], ClientProt::FRIENDLIST_DEL.id as u8);
+    assert_eq!(c.friend_userhash[0], eve);
+    assert_eq!(c.friend_username[0], "Eve");
+}
