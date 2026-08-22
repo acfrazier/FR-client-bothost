@@ -1,6 +1,7 @@
 // doAction/tryMove encode: menu arrays → MOVE_GAMECLICK / OPNPC2 through
 // Packet::p1_enc with the client's outbound Isaac.
 use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer, MiniMenuAction};
+use client::config::if_type::{ButtonType, IfType};
 use client::config::ObjType;
 use client::dash3d::{Model, SceneModel};
 use client::io::{ClientProt, Isaac};
@@ -35,6 +36,29 @@ fn walk_menu_arms_mouse_picking() {
     assert_eq!(c.world.click_x, 100);
     assert_eq!(c.world.click_y, 80);
     assert_eq!(c.out.pos, 0);
+}
+
+/// Spellbook tiles are BUTTON_TARGET (`magic.if` wind_strike). Clicking
+/// one must arm target mode, not be a no-op.
+#[test]
+fn tgt_button_arms_spell_target_mode() {
+    let mut c = client();
+    c.cache.ifaces.resize(8, None);
+    c.cache.ifaces[7] = Some(IfType {
+        id: 7,
+        button_type: ButtonType::BUTTON_TARGET,
+        target_verb: "Cast on".into(),
+        target_base: "Wind strike".into(),
+        target_mask: 3,
+        ..IfType::default()
+    });
+    c.menu_action[0] = MiniMenuAction::TGT_BUTTON;
+    c.menu_param_c[0] = 7;
+    c.doAction(0);
+    assert_eq!(c.target_mode, 1);
+    assert_eq!(c.target_com_id, 7);
+    assert_eq!(c.target_mask, 3);
+    assert_eq!(c.use_mode, 0);
 }
 
 #[test]

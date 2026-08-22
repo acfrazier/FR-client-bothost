@@ -85,6 +85,40 @@ fn logout_stops_midi_and_resets_song_state() {
     assert_eq!(c.next_music_delay, 0);
 }
 
+/// Java `gameLoop` calls `soundsDoQueue` (9461 / TS 2193). Without that
+/// call SYNTH_SOUND queues forever and teleports are silent.
+/// `--cache` / maininit must unpack `sounds.dat` into JagFX (TS 1168-1171).
+#[test]
+fn client_new_unpacks_sounds_jag() {
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("sounds").is_file() {
+        return;
+    }
+    let c = client::client::Client::new(client::client::ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache,
+        members: true,
+        lowmem: false,
+    });
+    assert!(
+        c.jagfx.synth.iter().any(|s| s.is_some()),
+        "sounds.dat must populate JagFX"
+    );
+}
+
+#[test]
+fn game_loop_drains_synth_sound_queue() {
+    let mut c = client();
+    c.ingame = true;
+    c.wave_ids[0] = 1;
+    c.wave_loops[0] = 1;
+    c.wave_delay[0] = 0;
+    c.wave_count = 1;
+    c.game_loop();
+    assert_eq!(c.wave_count, 0);
+}
+
 #[test]
 fn synth_sound_queue_drains_through_jagfx() {
     let mut c = client();

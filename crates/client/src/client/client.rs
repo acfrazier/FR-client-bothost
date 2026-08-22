@@ -876,6 +876,7 @@ impl Client {
             Ok(cache) => (cache, false),
             Err(()) => (Cache::default(), true),
         };
+        let jagfx = Self::unpack_jagfx(&config.cache_dir, config.lowmem);
         let groundh: LevelHeightmaps =
             vec![
                 vec![vec![0i32; (BUILD_AREA_SIZE + 1) as usize]; (BUILD_AREA_SIZE + 1) as usize];
@@ -958,7 +959,7 @@ impl Client {
             wave_ids: vec![0; 50],
             wave_loops: vec![0; 50],
             wave_delay: vec![0; 50],
-            jagfx: JagFX::default(),
+            jagfx,
 
             menu_num_entries: 0,
             menu_option: vec![String::new(); MENU_CAPACITY],
@@ -1267,6 +1268,26 @@ impl Client {
         client
     }
 
+    /// TS maininit 1168-1171: unpack `sounds.dat` from the `sounds` jag
+    /// unless lowmem. Missing/corrupt file stays an empty table.
+    fn unpack_jagfx(cache_dir: &str, lowmem: bool) -> JagFX {
+        let mut jagfx = JagFX::default();
+        if lowmem {
+            return jagfx;
+        }
+        let Ok(bytes) = std::fs::read(format!("{cache_dir}/sounds")) else {
+            return jagfx;
+        };
+        let Some(dat) = catch_unwind(AssertUnwindSafe(|| JagFile::new(bytes)))
+            .ok()
+            .and_then(|jag| jag.read("sounds.dat"))
+        else {
+            return jagfx;
+        };
+        jagfx.init(&mut Packet::new(dat));
+        jagfx
+    }
+
     /// Unpack `config` (and `interface` when present) from `cache_dir`. An
     /// empty dir (tests, no pack) yields `Cache::default()`. A real cache
     /// missing the required `config` jag — or one whose bytes are not a
@@ -1464,6 +1485,11 @@ impl Client {
                 self.error_loading = true;
                 self.shell.set_framerate(1);
             }
+        }
+
+        // TS 1168-1171: unpack sounds.dat after the jag is on disk.
+        if !self.config.lowmem {
+            self.jagfx = Self::unpack_jagfx(&self.config.cache_dir, false);
         }
 
         // TS maininit 1236 `WordFilter.unpack(wordenc)`: read the jag the
@@ -9694,6 +9720,8 @@ impl Client {
         // the silence watchdog.
         self.check_minimap();
         self.loc_change_do_queue();
+        // Java 9461 / TS 2193: drain SYNTH_SOUND into the mixer.
+        self.sounds_do_queue();
         // TS 2191-2192: the loc-change pass then the world-update counter;
         // headless loops (no draw) keep it zeroed.
         self.world_update_num += 1;
