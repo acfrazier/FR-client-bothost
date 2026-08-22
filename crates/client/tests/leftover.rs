@@ -661,3 +661,39 @@ fn design_switch_buttons_swap_graphic_names() {
     c.client_component(1);
     assert_eq!(c.cache.ifaces[1].as_ref().unwrap().graphic_name, "male");
 }
+
+/// Java `Client.java` 3682-3686 / Client.ts 1883-1887: the cold-login
+/// reset (`reset_idk_design`) flips back to male, revalidates the kits for
+/// it and zeroes the colours.
+#[test]
+fn cold_login_reset_revalidates_design() {
+    let mut c = client();
+    c.idk_design_gender = false;
+    c.idk_design_colour = [3; 5];
+    c.cache.idks = vec![
+        IdkType {
+            part: 0,
+            ..IdkType::default()
+        },
+        IdkType {
+            part: 7,
+            ..IdkType::default()
+        },
+    ];
+    c.reset_idk_design(); // the cold-login reset path
+    assert!(c.idk_design_gender);
+    assert!(c.idk_design_redraw);
+    assert_eq!(c.idk_design_colour, [0; 5]);
+    assert_eq!(c.idk_design_part[0], 0); // first male head
+    assert_eq!(c.idk_design_part[1], -1); // no male torso in the table
+}
+
+#[test]
+fn cold_login_reset_empty_table_leaves_parts_minus_one() {
+    let mut c = client();
+    c.idk_design_part = [2; 7];
+    c.reset_idk_design(); // default cache: no idks
+    assert!(c.idk_design_gender);
+    assert!(c.idk_design_redraw);
+    assert_eq!(c.idk_design_part, [-1; 7]);
+}

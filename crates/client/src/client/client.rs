@@ -1807,6 +1807,10 @@ impl Client {
             for slot in self.player_appearance_buffer.iter_mut() {
                 *slot = None;
             }
+            // Java `Client.java` 3682-3686 — cold login resets the player
+            // design (TS 1883-1887: male gender, kits revalidated, colours
+            // zeroed).
+            self.reset_idk_design();
             // Client.ts:1889-1892 — cold login clears the player right-click
             // options (the server re-sends SET_PLAYER_OP).
             self.player_op = Default::default();
@@ -4422,6 +4426,16 @@ impl Client {
                 }
             }
         }
+    }
+
+    /// Java `Client.java` 3682-3686 / Client.ts 1883-1887: cold login
+    /// resets the player-design state — male gender, kits revalidated for
+    /// it, all colours back to the default. Public because the leftover
+    /// test drives the exact reset path the login uses.
+    pub fn reset_idk_design(&mut self) {
+        self.idk_design_gender = true;
+        self.validate_idk_design();
+        self.idk_design_colour = [0; 5];
     }
 
     /// TS `clientComponent` CC_DESIGN_PREVIEW build (10777-10819): combine
