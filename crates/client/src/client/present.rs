@@ -239,7 +239,9 @@ mod window {
                     // covers the Mac numpad Return key per the winit docs.
                     NamedKey::Enter => "Enter",
                     NamedKey::Backspace => "Backspace",
+                    NamedKey::Tab => "Tab",
                     NamedKey::Space => " ",
+                    NamedKey::Escape => "Escape",
                     _ => return None,
                 };
                 Some(name.to_string())
