@@ -9400,6 +9400,11 @@ impl Client {
     /// idle `NO_TIMEOUT` and flush `out` through `ClientStream::write`.
     /// Write errors are `lostCon` (Java `catch (IOException)`).
     pub fn game_loop(&mut self) {
+        // TS 2043-2048: the reboot countdown holds at 1 while the logout
+        // request counts down.
+        if self.reboot_timer > 1 {
+            self.reboot_timer -= 1;
+        }
         if self.logout_timer > 0 {
             self.logout_timer -= 1;
         }

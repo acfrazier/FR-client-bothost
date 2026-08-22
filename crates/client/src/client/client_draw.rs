@@ -890,13 +890,14 @@ impl Client {
     /// `split_private_chat`. Incoming (3/7) and sent (5/6) lines stack
     /// bottom-up from y 329 with the double-shadowed cyan text; the
     /// `modIcons` sprite advance is kept without the sprite (like
-    /// `draw_chat`). The `rebootTimer` line offset is 0.
+    /// `draw_chat`). An active `rebootTimer` reserves the first line for
+    /// the "System update in" text (TS 4922-4924).
     fn draw_private_messages(&mut self, surface: &mut Pix2D) {
         if self.split_private_chat == 0 {
             return;
         }
 
-        let mut line_offset = 0;
+        let mut line_offset = if self.reboot_timer != 0 { 1 } else { 0 };
         for i in 0..100 {
             if self.chat_text[i].is_empty() {
                 continue;
@@ -984,6 +985,32 @@ impl Client {
             }
             if self.is_menu_open && self.menu_area == 0 {
                 self.draw_minimenu(&mut surface);
+            }
+            // TS 4901-4911: the reboot countdown line, drawn after the
+            // private-chat overlay (which reserves its row when active).
+            if self.reboot_timer != 0 {
+                let mut seconds = self.reboot_timer / 50;
+                let minutes = seconds / 60;
+                seconds %= 60;
+                if let Some(p12) = self.p12.as_ref() {
+                    if seconds < 10 {
+                        p12.draw_string(
+                            &mut surface,
+                            Some(&format!("System update in: {minutes}:0{seconds}")),
+                            4,
+                            329,
+                            Colour::YELLOW,
+                        );
+                    } else {
+                        p12.draw_string(
+                            &mut surface,
+                            Some(&format!("System update in: {minutes}:{seconds}")),
+                            4,
+                            329,
+                            Colour::YELLOW,
+                        );
+                    }
+                }
             }
         }
         self.area_game = game;
@@ -2688,8 +2715,8 @@ impl Client {
                     register = self.runenergy;
                 }
                 12 => {
-                    // runweight is not ported yet (client.rs)
-                    register = 0;
+                    // runweight
+                    register = self.runweight;
                 }
                 13 => {
                     // testbit {varp} {bit: 0..31}
@@ -2790,8 +2817,9 @@ fn inf(value: i32) -> String {
 
 impl Client {
     /// `drawChat` from client-ts (11125): plot `chatback` into `area_chat`,
-    /// then the social prompt (TS 11133-11135) or the plain chat branch
-    /// (TS 11149-11267): clip (0,0,463,77), the 100 chat lines as
+    /// then the social prompt (TS 11133-11135), the enter-amount prompt
+    /// (TS 11136-11138) or the plain chat branch (TS 11149-11267): clip
+    /// (0,0,463,77), the 100 chat lines as
     /// TS 11152-11244, the `username:` + `chat_input + '*'` input line at
     /// y=90, and the `hline` at 77; blit at (17, 357). Deviations: a chat
     /// modal or tutorial interface (TS 11142-11146) draws into `area_chat`
@@ -2812,6 +2840,13 @@ impl Client {
                 if let Some(b12) = self.b12.as_ref() {
                     b12.centre_string(&mut surface, Some(&self.social_input_header), 239, 40, Colour::BLACK);
                     b12.centre_string(&mut surface, Some(&format!("{}*", self.social_input)), 239, 60, Colour::DARKBLUE);
+                }
+            } else if self.dialog_input_open {
+                // TS 11136-11138: the enter-amount prompt replaces the chat
+                // lines.
+                if let Some(b12) = self.b12.as_ref() {
+                    b12.centre_string(&mut surface, Some("Enter amount:"), 239, 40, Colour::BLACK);
+                    b12.centre_string(&mut surface, Some(&format!("{}*", self.dialog_input)), 239, 60, Colour::DARKBLUE);
                 }
             } else if self.chat_modal_id != -1 {
                 // TS 11142-11146: a chat interface replaces the chat lines

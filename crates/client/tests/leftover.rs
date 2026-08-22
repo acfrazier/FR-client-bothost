@@ -4,6 +4,7 @@
 // packs, so `Client::new` falls back to `Cache::default()` and never touches
 // the network (the /crc fetch on 127.0.0.1 is refused instantly).
 use client::client::{Client, ClientConfig};
+use client::config::if_type::IfType;
 use client::io::{ClientProt, Packet, ServerProt};
 use client::util::JavaRandom;
 
@@ -340,4 +341,33 @@ fn shake_yaw_wraps_11_bit() {
     c.cam_shake_amp[3] = 0;
     let (_, _, _, _, yaw) = c.cam_shake_jitter(0, 0, 0, 128, 2040);
     assert!((0..=2047).contains(&yaw));
+}
+
+#[test]
+fn runweight_reaches_stats_tab_script() {
+    let mut c = client();
+    c.runweight = 42;
+    let com = IfType {
+        scripts: Some(vec![vec![12, 0]]), // opcode 12 runweight, halt
+        ..IfType::default()
+    };
+    assert_eq!(c.get_if_var(&com, 0), Some(42));
+}
+
+#[test]
+fn game_loop_ticks_reboot_timer_down() {
+    let mut c = client();
+    c.ingame = true;
+    c.reboot_timer = 100;
+    c.game_loop();
+    assert_eq!(c.reboot_timer, 99);
+}
+
+#[test]
+fn game_loop_holds_reboot_timer_at_one() {
+    let mut c = client();
+    c.ingame = true;
+    c.reboot_timer = 1;
+    c.game_loop();
+    assert_eq!(c.reboot_timer, 1);
 }

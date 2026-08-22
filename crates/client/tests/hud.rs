@@ -568,6 +568,56 @@ fn draw_chat_social_overlay_draws_header_and_input() {
     assert!(chat.pixels.contains(&Colour::DARKBLUE));
 }
 
+#[test]
+fn draw_chat_dialog_overlay_draws_header_and_input() {
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("title").is_file() {
+        return;
+    }
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache,
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    c.game_draw(); // loads the b12 font from the title jag
+    c.add_chat(0, "hidden by the overlay", "");
+    c.dialog_input_open = true;
+    c.dialog_input = "42".into();
+    c.redraw_chat = true;
+    c.game_draw();
+    // TS 11136-11138: "Enter amount:" black at (239,40), input dark blue
+    // at (239,60) — the plain chat input line would be Colour::BLUE
+    let chat = c.area_chat.as_ref().unwrap();
+    assert!(chat.pixels.contains(&Colour::BLACK));
+    assert!(chat.pixels.contains(&Colour::DARKBLUE));
+}
+
+#[test]
+fn draw_reboot_timer_overlay_draws_system_update() {
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&cache).join("title").is_file() {
+        return;
+    }
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache,
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    c.scene_state = 2; // game_draw_main (and its overlays) run only in-scene
+    c.game_draw(); // loads the p12 font from the title jag
+    c.reboot_timer = 100; // 2 seconds
+    c.game_draw();
+    // TS 4901-4911: "System update in: M:SS" yellow at (4,329) in area_game
+    let game = c.area_game.as_ref().unwrap();
+    assert!(game.pixels.contains(&Colour::YELLOW));
+}
+
 /// draw a single TYPE_TEXT child under a fixed layer; returns the pixmap.
 fn draw_text(c: &mut Client, text: &IfType) -> PixMap {
     let layer = IfType {
