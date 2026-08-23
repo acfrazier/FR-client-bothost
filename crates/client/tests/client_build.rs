@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use client::client::{Client, ClientBuild, ClientConfig};
 use client::config::{Cache, FloType, LocType};
 use client::dash3d::model::ModelProvider;
-use client::dash3d::{BuildArea, CollisionFlag, LocAngle, MapFlag, Model, SceneModel, TerrainOverlayShape};
+use client::dash3d::{BuildArea, CollisionFlag, LocAngle, LocShape, MapFlag, Model, SceneModel, TerrainOverlayShape};
 use client::graphics::Colour;
 use client::io::{OnDemand, Packet};
 
@@ -257,6 +257,47 @@ fn skip_loc_models_places_typecode_without_mesh() {
     assert_ne!(c.collision[0].flags[2][2] & CollisionFlag::WR_GRND, 0);
     let gd = c.world.get_gd(0, 2, 2).expect("ground decor placed");
     assert!(gd.model.is_none());
+}
+
+#[test]
+fn skip_loc_models_places_centrepiece_typecode_without_mesh() {
+    let mut c = client();
+    Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType {
+        model: Some(vec![60000]),
+        active: true,
+        blockwalk: true,
+        ..LocType::default()
+    });
+    let mut build = ClientBuild::new();
+    build.skip_loc_models = true;
+    // deltaId 1 (loc 0); deltaPos 131 -> locPos 130 (x=2, z=2, level=0);
+    // info = shape 10 (CENTREPIECE_STRAIGHT) << 2, rotation 0; end pos; end id
+    let src = [
+        0x01,
+        0x80,
+        0x83,
+        (LocShape::CENTREPIECE_STRAIGHT << 2) as u8,
+        0x00,
+        0x00,
+    ];
+    build.load_locations(
+        &c.cache,
+        &mut c.world,
+        &mut c.collision,
+        &c.groundh,
+        &c.mapl,
+        &src,
+        0,
+        0,
+        0,
+    );
+    // skip_loc_models must still place the centrepiece typecode and block
+    // walking; only the mesh decode is dropped (the 60000 model is never
+    // requested)
+    assert_ne!(c.collision[0].flags[2][2] & CollisionFlag::WALK_SCENERY, 0);
+    let sprite = c.world.get_scene(0, 2, 2).expect("centrepiece sprite placed");
+    assert_eq!(sprite.typecode, 0x4000_0102);
+    assert!(sprite.model.is_none());
 }
 
 #[test]

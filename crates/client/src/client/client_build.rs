@@ -488,52 +488,54 @@ impl ClientBuild {
                 }
             });
 
-            if let Some(model) = model {
-                let mut yaw = 0;
-                if shape == LocShape::CENTREPIECE_DIAGONAL {
-                    yaw += 256;
-                }
+            let mut yaw = 0;
+            if shape == LocShape::CENTREPIECE_DIAGONAL {
+                yaw += 256;
+            }
 
-                let (width, height) = if angle == LocAngle::NORTH || angle == LocAngle::SOUTH {
-                    (loc.length, loc.width)
-                } else {
-                    (loc.width, loc.length)
-                };
+            let (width, height) = if angle == LocAngle::NORTH || angle == LocAngle::SOUTH {
+                (loc.length, loc.width)
+            } else {
+                (loc.width, loc.length)
+            };
 
-                // TS `model2 = model` for plain Models and `getModel` for
-                // animated ones (TS 831-838); only `radius` is read, so the
-                // plain-model case is captured before the move.
-                let radius = match &model {
-                    SceneModel::Model(m) => Some(m.radius),
-                    _ => None,
-                };
+            // TS `model2 = model` for plain Models and `getModel` for
+            // animated ones (TS 831-838); only `radius` is read, so the
+            // plain-model case is captured before the move. The radius
+            // fallback runs only when a mesh exists: `skip_loc_models`
+            // must not trigger a `getModel` decode.
+            let radius = match &model {
+                Some(SceneModel::Model(m)) => Some(m.radius),
+                _ => None,
+            };
+            let has_model = model.is_some();
 
-                if world.add_scenery(level, x, z, y, Some(model), typecode, typecode2, width, height, yaw)
-                    && loc.shadow
-                {
-                    let radius = radius.or_else(|| {
-                        loc.get_model(cache, 10, angle, height_sw, height_se, height_ne, height_nw, -1)
-                            .map(|m| m.radius)
-                    });
+            if world.add_scenery(level, x, z, y, model, typecode, typecode2, width, height, yaw)
+                && loc.shadow
+                && has_model
+            {
+                let radius = radius.or_else(|| {
+                    loc.get_model(cache, 10, angle, height_sw, height_se, height_ne, height_nw, -1)
+                        .map(|m| m.radius)
+                });
 
-                    if let Some(radius) = radius {
-                        let mut shade = radius / 4;
-                        if shade > 30 {
-                            shade = 30;
-                        }
+                if let Some(radius) = radius {
+                    let mut shade = radius / 4;
+                    if shade > 30 {
+                        shade = 30;
+                    }
 
-                        // TS Uint8Array writes out of the 105x105 grid are
-                        // silently dropped; keep that no-op semantics.
-                        for dx in 0..=width {
-                            for dz in 0..=height {
-                                let sx = x + dx;
-                                let sz = z + dz;
-                                if (1..=BuildArea::SIZE).contains(&sx)
-                                    && (1..=BuildArea::SIZE).contains(&sz)
-                                    && shade > self.shadow[level as usize][sx as usize][sz as usize] as i32
-                                {
-                                    self.shadow[level as usize][sx as usize][sz as usize] = shade as u8;
-                                }
+                    // TS Uint8Array writes out of the 105x105 grid are
+                    // silently dropped; keep that no-op semantics.
+                    for dx in 0..=width {
+                        for dz in 0..=height {
+                            let sx = x + dx;
+                            let sz = z + dz;
+                            if (1..=BuildArea::SIZE).contains(&sx)
+                                && (1..=BuildArea::SIZE).contains(&sz)
+                                && shade > self.shadow[level as usize][sx as usize][sz as usize] as i32
+                            {
+                                self.shadow[level as usize][sx as usize][sz as usize] = shade as u8;
                             }
                         }
                     }
@@ -984,20 +986,18 @@ impl ClientBuild {
                 )))
             };
 
-            if let Some(model) = model {
-                let mut yaw = 0;
-                if shape == LocShape::CENTREPIECE_DIAGONAL {
-                    yaw += 256;
-                }
-
-                let (width, height) = if angle == LocAngle::NORTH || angle == LocAngle::SOUTH {
-                    (loc.length, loc.width)
-                } else {
-                    (loc.width, loc.length)
-                };
-
-                world.add_scenery(level, x, z, y, Some(model), typecode, typecode2, width, height, yaw);
+            let mut yaw = 0;
+            if shape == LocShape::CENTREPIECE_DIAGONAL {
+                yaw += 256;
             }
+
+            let (width, height) = if angle == LocAngle::NORTH || angle == LocAngle::SOUTH {
+                (loc.length, loc.width)
+            } else {
+                (loc.width, loc.length)
+            };
+
+            world.add_scenery(level, x, z, y, model, typecode, typecode2, width, height, yaw);
 
             if loc.blockwalk {
                 if let Some(cmap) = cmap.as_deref_mut() {
