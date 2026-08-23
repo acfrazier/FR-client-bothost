@@ -5,13 +5,15 @@ Native **RuneScape revision 274** (~2004) client: a structural **1:1 Rust port**
 | | |
 |--|--|
 | **Public brand** | **Fairy Ring** (client-rust tree) |
-| **Branch** | `rs2-r274` |
+| **Branch** | `r274-bothost` (bot-host fork of Fairy-Ring `rs2-r274`) |
 | **Upstream lineage** | [LostCityRS/Client-TS](https://github.com/LostCityRS/Client-TS) 274 (`webclient`) + [LostCityRS/Client-Java](https://github.com/LostCityRS/Client-Java) |
 | **Companion workspace** | [Fairy Ring workspace](https://github.com/Fairy-Ring/fairy-ring-workspace) |
 
 ## Derived from Lost City — not Lost City
 
 This repository is a **derivation** of open **Lost City / LostCityRS** client work. We build on those trees under their licenses.
+
+**Bot-host fork.** This `r274-bothost` branch is the client used by [acfrazier/274bot](https://github.com/acfrazier/274bot). Fairy-Ring `rs2-r274` is the unmodified 274 client. Viewport opti and read-only instrumentation land here; packet timing and `doAction` stay Java-shaped. Still no bot action API in this crate.
 
 **Derivation does not mean official.** This is **not** official Lost City / LostCityRS and is **not** endorsed by Jagex Ltd. rs2b0t/rs2b2t patterns may be used as tools; this crate is **not** their product layer and does **not** grow a bot API.
 
@@ -73,4 +75,4 @@ See [NOTICE.md](NOTICE.md).
 - Lost City forum: https://lostcity.rs/
 
 **Never push experiment work to `LostCityRS/*` without explicit permission.**  
-Push remote (operator): `fr` → [Fairy-Ring/FR-client-rust](https://github.com/Fairy-Ring/FR-client-rust) `rs2-r274`.
+Push this fork to [acfrazier/FR-client-bothost](https://github.com/acfrazier/FR-client-bothost) `r274-bothost`. Do **not** push Fairy-Ring `rs2-r274`.
