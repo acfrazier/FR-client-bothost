@@ -25,6 +25,9 @@ use crate::io::packet::Packet;
 /// gated) and `DropSocket` resets it so a relogin reconnects immediately.
 const SOCKET_OPEN_GATE: Duration = Duration::from_millis(4000);
 
+/// Worker thread stack: 1 MiB (the Java client thread default).
+const THREAD_STACK: usize = 1024 * 1024;
+
 /// One requested file, Java `OnDemandRequest` / TS `OnDemandRequest`. Implements
 /// `LinkableTrait` so requests sit on the TS `LinkList2` and completed files on
 /// the `LinkList`, using the two independent link chains as in TS.
@@ -320,7 +323,11 @@ impl OnDemand {
             running: worker_running.clone(),
             ingame: ingame.clone(),
         };
-        let handle = thread::spawn(move || worker_main(worker));
+        let handle = thread::Builder::new()
+            .name("ondemand".to_string())
+            .stack_size(THREAD_STACK)
+            .spawn(move || worker_main(worker))
+            .expect("failed to spawn ondemand worker");
 
         let mut arena = Arena::new();
         let requests = LinkList2::new(&mut arena);
