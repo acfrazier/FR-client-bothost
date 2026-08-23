@@ -8984,8 +8984,9 @@ impl Client {
     /// `checkScene` from client-ts (5101): waits on the requested map
     /// squares, then builds the scene. Returns -1/-2 while ground/location
     /// data is still loading, -3 when a loc's models are not all
-    /// available, -4 while player info is pending; on success sets
-    /// `scene_state = 2`, runs `map_build` and emits MAP_BUILD_COMPLETE.
+    /// available (skipped with draw off — the null build has no models),
+    /// -4 while player info is pending; on success sets `scene_state = 2`,
+    /// runs `map_build` and emits MAP_BUILD_COMPLETE.
     pub fn check_scene(&mut self) -> i32 {
         if self.map_build_index.is_empty()
             || self.map_build_ground_data.is_empty()
@@ -9006,14 +9007,18 @@ impl Client {
 
         // Only `lowMem` is consulted while waiting, so use the associated
         // `checkLocations` variant instead of a full `ClientBuild` (four
-        // 4×104×104 grids plus the shadow/mapo scratch) every frame.
+        // 4×104×104 grids plus the shadow/mapo scratch) every frame. With
+        // draw off the build is null (`skip_loc_models`), so there are no
+        // models to wait on — the scene completes on the map data alone.
         let mut ready = true;
-        for i in 0..self.map_build_ground_data.len() {
-            if let Some(data) = &self.map_build_location_data[i] {
-                let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
-                let z = (self.map_build_index[i] & 0xff) * 64 - self.map_build_base_z;
-                if !ClientBuild::check_locations_low_mem(self.config.lowmem, &self.cache, data, x, z) {
-                    ready = false;
+        if self.draw {
+            for i in 0..self.map_build_ground_data.len() {
+                if let Some(data) = &self.map_build_location_data[i] {
+                    let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
+                    let z = (self.map_build_index[i] & 0xff) * 64 - self.map_build_base_z;
+                    if !ClientBuild::check_locations_low_mem(self.config.lowmem, &self.cache, data, x, z) {
+                        ready = false;
+                    }
                 }
             }
         }
@@ -9049,6 +9054,7 @@ impl Client {
 
         let mut build = ClientBuild::new();
         build.low_mem = self.config.lowmem;
+        build.skip_loc_models = !self.draw;
         build.minusedlevel = self.minusedlevel;
 
         // underground pass check (TS 5163-5171): the Lumbridge caves square
@@ -9159,7 +9165,9 @@ impl Client {
             }
         }
 
-        self.pix3d.init_pool(20);
+        if self.draw {
+            self.pix3d.init_pool(20);
+        }
         if let Some(od) = self.on_demand.as_mut() {
             od.clear_prefetches();
         }
@@ -10260,9 +10268,15 @@ impl Client {
     }
 
     /// Set the `draw` CPU-save switch (`mainredraw` skips the frame render
-    /// when false).
+    /// when false). A rising edge on a built scene rebuilds the map: the
+    /// null build (`skip_loc_models`) done while draw was off is replaced
+    /// with real loc meshes. Empty `map_build_index` (no scene yet) skips.
     pub fn set_draw(&mut self, draw: bool) {
+        let rebuild = draw && !self.draw && self.scene_state == 2 && !self.map_build_index.is_empty();
         self.draw = draw;
+        if rebuild {
+            self.map_build();
+        }
     }
 
     /// Drive the 20 ms GameShell machine on the calling thread (spec §3):

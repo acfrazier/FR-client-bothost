@@ -38,3 +38,16 @@ fn set_draw_true_allows_game_draw_without_present() {
         "mainredraw with draw=true runs the game draw"
     );
 }
+
+#[test]
+fn set_draw_rising_edge_sets_draw_true() {
+    let mut c = client();
+    assert!(!c.draw);
+    c.set_draw(true);
+    assert!(c.draw);
+    c.set_draw(false);
+    assert!(!c.draw);
+    // empty map_build_index: the rising edge must not run map_build, and
+    // check_scene still reports the empty guard.
+    assert_eq!(c.check_scene(), -1000);
+}
