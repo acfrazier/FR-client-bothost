@@ -291,6 +291,10 @@ pub struct Client {
     /// render. Independent of the window: `client-play` sets it true after
     /// `Present::open`; headless bots keep it false.
     pub draw: bool,
+    /// Entry count for `game_draw` (incremented as first statement).
+    pub game_draw_enters: u64,
+    /// Entry count for `title_screen_draw` (incremented as first statement).
+    pub title_screen_draw_enters: u64,
     pub scene_state: i32,
     /// `inMultizone` from client-ts (TS 132): set by `SET_MULTIWAY`.
     pub in_multizone: i32,
@@ -969,6 +973,8 @@ impl Client {
 
             ingame: false,
             draw: false,
+            game_draw_enters: 0,
+            title_screen_draw_enters: 0,
             scene_state: 0,
             in_multizone: 0,
             build_minusedlevel: 0,

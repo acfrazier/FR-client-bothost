@@ -98,6 +98,7 @@ impl Client {
     /// `draw_area`; the 2/3/5/6/7/8 regions redraw only while `redraw_frame`
     /// is set.
     pub fn title_screen_draw(&mut self) {
+        self.title_screen_draw_enters = self.title_screen_draw_enters.wrapping_add(1);
         self.prepare_title();
 
         let w = 360;
@@ -556,6 +557,7 @@ impl Client {
     /// before its (550, 4) blit. The chrome strips, side, chat,
     /// icon-strip backgrounds, and chat-mode panels draw 1:1.
     pub fn game_draw(&mut self) {
+        self.game_draw_enters = self.game_draw_enters.wrapping_add(1);
         // TS GameShell ticks `scrollCycle` each mainloop pass while the
         // mouse is held (Client.ts 2341-2343); 0/1 here is enough for the
         // held-arrow scrollbar repeat.
@@ -4228,5 +4230,57 @@ pub(crate) fn draw_detail(
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{Client, ClientConfig};
+    use crate::config::Cache;
+    use std::sync::Arc;
+
+    fn empty_client() -> Client {
+        Client::from_shared(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            Arc::new(Cache::default()),
+            vec![],
+        )
+    }
+
+    #[test]
+    fn mainredraw_draw_false_does_not_enter_draw_fns() {
+        let mut c = empty_client();
+        c.set_draw(false);
+        c.mainredraw();
+        assert_eq!(c.game_draw_enters, 0);
+        assert_eq!(c.title_screen_draw_enters, 0);
+    }
+
+    #[test]
+    fn mainredraw_draw_true_on_title_increments_title_only() {
+        let mut c = empty_client();
+        assert!(!c.ingame);
+        c.set_draw(true);
+        c.mainredraw();
+        assert_eq!(c.game_draw_enters, 0);
+        assert!(c.title_screen_draw_enters >= 1);
+        c.set_draw(false);
+        let n = c.title_screen_draw_enters;
+        c.mainredraw();
+        assert_eq!(c.title_screen_draw_enters, n);
+    }
+
+    #[test]
+    fn game_draw_direct_call_increments() {
+        let mut c = empty_client();
+        c.ingame = true;
+        c.game_draw();
+        assert!(c.game_draw_enters >= 1);
     }
 }
