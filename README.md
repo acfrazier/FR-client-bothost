@@ -13,16 +13,16 @@ Native **RuneScape revision 274** (~2004) client: a structural **1:1 Rust port**
 
 This repository is a **derivation** of open **Lost City / LostCityRS** client work. We build on those trees under their licenses.
 
-**Bot-host fork.** This `r274-bothost` branch is the client used by [acfrazier/274bot](https://github.com/acfrazier/274bot). Fairy-Ring `rs2-r274` is the unmodified 274 client. Viewport opti and read-only instrumentation land here; packet timing and `doAction` stay Java-shaped. Still no bot action API in this crate.
+**Bot-host fork.** This `r274-bothost` branch is the client used by [acfrazier/274bot](https://github.com/acfrazier/274bot). That is why it exists: **skip-paint, read-only instrumentation, and harness counters live here** (`set_draw`, `from_shared`, stream byte counts, draw-entry / loop-vs-raster stamps, unique `login_uid`). Fairy-Ring `rs2-r274` stays the unmodified 274 client — **do not** put those hooks there. Packet timing and `doAction` stay Java-shaped. This crate still has **no bot action API** (no snapshot/query/`doAction` wrapper); that stays in 274bot.
 
-**Derivation does not mean official.** This is **not** official Lost City / LostCityRS and is **not** endorsed by Jagex Ltd. rs2b0t/rs2b2t patterns may be used as tools; this crate is **not** their product layer and does **not** grow a bot API.
+**Derivation does not mean official.** This is **not** official Lost City / LostCityRS and is **not** endorsed by Jagex Ltd. rs2b0t/rs2b2t patterns may be used as tools; this crate is **not** their product layer.
 
 Do **not** present this repo as “Lost City Client,” “LC,” or official LostCityRS.  
 See [NOTICE.md](NOTICE.md).
 
 ## AI use (explicit)
 
-Development of this fork **uses AI tools and coding agents**. Humans own product judgment. **Bot / harness hooks must not be installed in this tree** — a later adapter may read Java-visible fields from a separate repo.
+Development of this fork **uses AI tools and coding agents**. Humans own product judgment. **Bot / harness instrumentation belongs in this tree** (read-only counters, skip-paint, shared cache). **Do not** install it on Fairy-Ring `rs2-r274`. The 274bot host (`acfrazier/274bot`) is the action/API layer.
 
 ## What this tree is
 

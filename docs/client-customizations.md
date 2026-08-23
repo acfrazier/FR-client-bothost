@@ -1,8 +1,9 @@
 # Client customizations for bot-host plumbing
 
 Campaign-1 additions to the `crates/client` port, consumed by the bot host. The
-crate stays a faithful 274 client: no bot API, no snapshot/query surface beyond
-the public fields below.
+crate stays a faithful 274 client: no bot **action** API (snapshot/query/`doAction`
+wrappers live in 274bot). Read-only harness hooks **do** live here — that is
+the point of `r274-bothost`. Public fields below plus skip-paint and counters.
 
 ## Shared cache (`Arc<Cache>`)
 
