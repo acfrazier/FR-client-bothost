@@ -491,7 +491,7 @@ fn loc_anim_wall_decor_uses_tile_xz() {
     p.pos = 0;
     c.handle_packet(ServerProt::LOC_ANIM, &mut p);
     let decor = c.world.get_decor(0, 2, 5).expect("decor present");
-    assert!(matches!(*decor.model, SceneModel::LocAnim(_)));
+    assert!(matches!(decor.model.as_deref(), Some(SceneModel::LocAnim(_))));
 }
 
 /// GROUND scenery (layer 2): shape 11 remaps to 10 before building the

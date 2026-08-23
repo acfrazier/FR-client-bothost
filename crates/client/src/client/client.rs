@@ -7376,10 +7376,10 @@ impl Client {
                             {
                                 let loc_id = (decor.typecode >> 14) & 0x7fff;
                                 // [sic] TS passes heightNE in the SE slot.
-                                decor.model = Box::new(SceneModel::LocAnim(ClientLocAnim::new(
+                                decor.model = Some(Box::new(SceneModel::LocAnim(ClientLocAnim::new(
                                     &self.cache, loc_id, 4, 0, height_sw, height_ne, height_ne,
                                     height_nw, seq as usize, false, loop_cycle,
-                                )));
+                                ))));
                             }
                         }
                         LocLayer::GROUND => {

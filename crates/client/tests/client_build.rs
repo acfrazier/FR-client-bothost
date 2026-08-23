@@ -220,9 +220,11 @@ fn load_locations_ground_decor_blocks_when_active() {
     // active+blockwalk GROUND_DECOR: collision.blockGround even with no model
     // (TS 803-805)
     assert_ne!(c.collision[0].flags[2][2] & CollisionFlag::WR_GRND, 0);
-    // no scenery was placed (model None; low-mem active gate passed)
+    // model None but the ground decor is stored typecode-only so draw=false
+    // clients can read the loc
     assert!(c.world.get_wall(0, 2, 2).is_none());
-    assert!(c.world.get_gd(0, 2, 2).is_none());
+    let gd = c.world.get_gd(0, 2, 2).expect("ground decor placed");
+    assert!(gd.model.is_none());
 }
 
 #[test]
@@ -299,10 +301,11 @@ fn load_locations_wall_blocks_collision_without_model() {
         0,
         0,
     );
-    // setWall no-ops on a missing model, but the wall still blocks walking
-    // (TS 924-928)
+    // the wall is stored typecode-only even without a model so draw=false
+    // clients can read the loc; it still blocks walking (TS 924-928)
     assert_ne!(c.collision[0].flags[2][2] & CollisionFlag::W_W, 0);
-    assert!(c.world.get_wall(0, 2, 2).is_none());
+    let wall = c.world.get_wall(0, 2, 2).expect("wall placed");
+    assert!(wall.model1.is_none());
 }
 
 #[test]

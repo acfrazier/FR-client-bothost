@@ -464,10 +464,6 @@ impl World {
         typecode: i32,
         typecode2: i32,
     ) {
-        if model.is_none() {
-            return;
-        }
-
         if self.squares[tile_level as usize][tile_x as usize][tile_z as usize].is_none() {
             self.squares[tile_level as usize][tile_x as usize][tile_z as usize] =
                 Some(Square::new(tile_level, tile_x, tile_z));
@@ -561,10 +557,6 @@ impl World {
         typecode1: i32,
         typecode2: i32,
     ) {
-        if model1.is_none() && model2.is_none() {
-            return;
-        }
-
         for l in (0..=level).rev() {
             if self.squares[l as usize][tile_x as usize][tile_z as usize].is_none() {
                 self.squares[l as usize][tile_x as usize][tile_z as usize] =
@@ -609,8 +601,6 @@ impl World {
         angle: i32,
         wshape: i32,
     ) {
-        let Some(model) = model else { return };
-
         for l in (0..=level).rev() {
             if self.squares[l as usize][tile_x as usize][tile_z as usize].is_none() {
                 self.squares[l as usize][tile_x as usize][tile_z as usize] =
@@ -626,7 +616,7 @@ impl World {
                 tile_z * 128 + offset_z + 64,
                 wshape,
                 angle,
-                Box::new(model),
+                model.map(Box::new),
                 typecode,
                 info,
             ));
@@ -2396,7 +2386,7 @@ impl World {
                             d.x - cx,
                             d.y - cy,
                             d.z - cz,
-                            d.model.min_y(),
+                            d.model.as_deref().map(SceneModel::min_y).unwrap_or(0),
                         )
                     });
                 if let Some((wshape, angle, typecode, decor_x, decor_y, decor_z, min_y)) = decor_data {
@@ -2404,7 +2394,9 @@ impl World {
                         if (wshape & front_wall_types) != 0 {
                             let tile = tile_at_mut(&mut self.squares, level, tile_x, tile_z);
                             if let Some(decor) = tile.and_then(|t| t.decor.as_mut()) {
-                                decor.model.world_render(cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch, sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode);
+                                if let Some(m) = decor.model.as_mut() {
+                                    m.world_render(cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch, sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode);
+                                }
                             }
                         } else if (wshape & 0x300) != 0 {
                             let nearest_x = if angle == LocAngle::NORTH || angle == LocAngle::EAST {
@@ -2424,7 +2416,9 @@ impl World {
                                 let draw_z = decor_z + DECORZOF.get(angle as usize).copied().unwrap_or(0);
                                 let tile = tile_at_mut(&mut self.squares, level, tile_x, tile_z);
                                 if let Some(decor) = tile.and_then(|t| t.decor.as_mut()) {
-                                    decor.model.world_render(cache, loop_cycle, pix, surface, angle * 512 + 256, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
+                                    if let Some(m) = decor.model.as_mut() {
+                                    m.world_render(cache, loop_cycle, pix, surface, angle * 512 + 256, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
+                                }
                                 }
                             }
 
@@ -2433,7 +2427,9 @@ impl World {
                                 let draw_z = decor_z + DECORZOF2.get(angle as usize).copied().unwrap_or(0);
                                 let tile = tile_at_mut(&mut self.squares, level, tile_x, tile_z);
                                 if let Some(decor) = tile.and_then(|t| t.decor.as_mut()) {
-                                    decor.model.world_render(cache, loop_cycle, pix, surface, (angle * 512 + 1280) & 0x7ff, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
+                                    if let Some(m) = decor.model.as_mut() {
+                                    m.world_render(cache, loop_cycle, pix, surface, (angle * 512 + 1280) & 0x7ff, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
+                                }
                                 }
                             }
                         }
@@ -2839,7 +2835,7 @@ impl World {
                             d.x - cx,
                             d.y - cy,
                             d.z - cz,
-                            d.model.min_y(),
+                            d.model.as_deref().map(SceneModel::min_y).unwrap_or(0),
                         )
                     });
                 if let Some((wshape, angle, typecode, decor_x, decor_y, decor_z, min_y)) = decor_data {
@@ -2847,7 +2843,9 @@ impl World {
                         if (wshape & back_wall_types) != 0 {
                             let tile = tile_at_mut(&mut self.squares, level, tile_x, tile_z);
                             if let Some(decor) = tile.and_then(|t| t.decor.as_mut()) {
-                                decor.model.world_render(cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch, sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode);
+                                if let Some(m) = decor.model.as_mut() {
+                                    m.world_render(cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch, sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode);
+                                }
                             }
                         } else if (wshape & 0x300) != 0 {
                             let nearest_x = if angle == LocAngle::NORTH || angle == LocAngle::EAST {
@@ -2867,7 +2865,9 @@ impl World {
                                 let draw_z = decor_z + DECORZOF.get(angle as usize).copied().unwrap_or(0);
                                 let tile = tile_at_mut(&mut self.squares, level, tile_x, tile_z);
                                 if let Some(decor) = tile.and_then(|t| t.decor.as_mut()) {
-                                    decor.model.world_render(cache, loop_cycle, pix, surface, angle * 512 + 256, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
+                                    if let Some(m) = decor.model.as_mut() {
+                                    m.world_render(cache, loop_cycle, pix, surface, angle * 512 + 256, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
+                                }
                                 }
                             }
 
@@ -2876,7 +2876,9 @@ impl World {
                                 let draw_z = decor_z + DECORZOF2.get(angle as usize).copied().unwrap_or(0);
                                 let tile = tile_at_mut(&mut self.squares, level, tile_x, tile_z);
                                 if let Some(decor) = tile.and_then(|t| t.decor.as_mut()) {
-                                    decor.model.world_render(cache, loop_cycle, pix, surface, (angle * 512 + 1280) & 0x7ff, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
+                                    if let Some(m) = decor.model.as_mut() {
+                                    m.world_render(cache, loop_cycle, pix, surface, (angle * 512 + 1280) & 0x7ff, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
+                                }
                                 }
                             }
                         }
