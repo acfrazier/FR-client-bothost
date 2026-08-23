@@ -300,6 +300,31 @@ fn skip_loc_models_places_centrepiece_typecode_without_mesh() {
     assert!(sprite.model.is_none());
 }
 
+/// `map_build` with `skip_loc_models` (draw off, the null build) must not
+/// pre-fill the base level: loc setters create `Box<Square>` on demand, so
+/// the 104×104 tile grid stays sparse until real ground/locs land.
+#[test]
+fn skip_loc_models_does_not_prefill_base_level() {
+    let mut c = client();
+    c.ingame = true;
+    c.awaiting_player_info = false;
+    c.scene_state = 1;
+    // one region, files -1 so no wait (tutorial skip pattern); draw is off
+    // by default so `map_build` builds with `skip_loc_models`
+    c.map_build_index = vec![0];
+    c.map_build_ground_file = vec![-1];
+    c.map_build_location_file = vec![-1];
+    c.map_build_ground_data = vec![None];
+    c.map_build_location_data = vec![None];
+    assert_eq!(c.check_scene(), 0);
+    assert_eq!(c.scene_state, 2);
+    let occupied = (0..104)
+        .flat_map(|x| (0..104).map(move |z| (x, z)))
+        .filter(|&(x, z)| c.world.square(0, x, z).is_some())
+        .count();
+    assert!(occupied < 104 * 104, "base level must stay sparse, occupied={occupied}");
+}
+
 #[test]
 fn load_locations_low_mem_skips_force_high_detail() {
     let mut c = client();

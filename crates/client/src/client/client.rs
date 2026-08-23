@@ -9087,10 +9087,15 @@ impl Client {
             }
         }
 
-        if build.low_mem {
-            self.world.fill_base_level(self.minusedlevel);
-        } else {
-            self.world.fill_base_level(0);
+        // The null build (draw off, `skip_loc_models`) has no ground or
+        // meshes to fill: loc setters create `Box<Square>` on demand, so
+        // skip the 104×104 pre-fill entirely. `draw=true` still fills.
+        if !build.skip_loc_models {
+            if build.low_mem {
+                self.world.fill_base_level(self.minusedlevel);
+            } else {
+                self.world.fill_base_level(0);
+            }
         }
 
         if !self.map_build_ground_data.is_empty() {
