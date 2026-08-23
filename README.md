@@ -15,12 +15,14 @@ This repository is a **derivation** of open **Lost City / LostCityRS** client wo
 
 **Derivation does not mean official.** This is **not** official Lost City / LostCityRS and is **not** endorsed by Jagex Ltd. rs2b0t/rs2b2t patterns may be used as tools; this crate is **not** their product layer and does **not** grow a bot API.
 
+The 274bot host’s client fork (instrumentation, skip-paint, shared cache) is [`acfrazier/FR-client-bothost`](https://github.com/acfrazier/FR-client-bothost) `r274-bothost`. That fork still has no bot action API; this Fairy Ring tree stays a 274 client and does not grow one.
+
 Do **not** present this repo as “Lost City Client,” “LC,” or official LostCityRS.  
 See [NOTICE.md](NOTICE.md).
 
 ## AI use (explicit)
 
-Development of this fork **uses AI tools and coding agents**. Humans own product judgment. **Bot / harness hooks must not be installed in this tree** — a later adapter may read Java-visible fields from a separate repo.
+Development of this fork **uses AI tools and coding agents**. Humans own product judgment. **Bot / harness hooks must not be installed in this tree** — a later adapter may read Java-visible fields from a separate repo. Host-side client work lives on [`FR-client-bothost`](https://github.com/acfrazier/FR-client-bothost) `r274-bothost`.
 
 ## What this tree is
 
