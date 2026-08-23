@@ -256,7 +256,7 @@ fn change_loc_unchecked_wall_straight_with_anim_sets_wall() {
         0, 2, 2, 0, LocShape::WALL_STRAIGHT, 0, 0, 0,
     );
     assert!(matches!(
-        world.get_wall(0, 2, 2).and_then(|w| w.model1.as_ref()),
+        world.get_wall(0, 2, 2).and_then(|w| w.model1.as_deref()),
         Some(SceneModel::LocAnim(_))
     ));
 }
@@ -405,7 +405,7 @@ fn loc_anim_replaces_wall_model1() {
     c.handle_packet(ServerProt::LOC_ADD_CHANGE, &mut p);
     c.game_loop();
     if let Some(w) = c.world.get_wall_mut(0, 1, 1) {
-        w.model1 = Some(SceneModel::Obj(ClientObj::new(0, 1)));
+        w.model1 = Some(Box::new(SceneModel::Obj(ClientObj::new(0, 1))));
     }
     let mut p = Packet::alloc(0);
     p.p1(0x11);
@@ -414,7 +414,7 @@ fn loc_anim_replaces_wall_model1() {
     p.pos = 0;
     c.handle_packet(ServerProt::LOC_ANIM, &mut p);
     let wall = c.world.get_wall(0, 1, 1).expect("wall present");
-    let SceneModel::LocAnim(anim) = wall.model1.as_ref().expect("model1 set") else {
+    let SceneModel::LocAnim(anim) = wall.model1.as_deref().expect("model1 set") else {
         panic!("model1 should be LocAnim, got Obj");
     };
     assert_eq!(anim.shape, 0);
@@ -437,8 +437,8 @@ fn loc_anim_wall_door_animates_both_models() {
     c.handle_packet(ServerProt::LOC_ADD_CHANGE, &mut p);
     c.game_loop();
     if let Some(w) = c.world.get_wall_mut(0, 1, 1) {
-        w.model1 = Some(SceneModel::Obj(ClientObj::new(0, 1)));
-        w.model2 = Some(SceneModel::Obj(ClientObj::new(0, 1)));
+        w.model1 = Some(Box::new(SceneModel::Obj(ClientObj::new(0, 1))));
+        w.model2 = Some(Box::new(SceneModel::Obj(ClientObj::new(0, 1))));
     }
     let mut p = Packet::alloc(0);
     p.p1(0x11);
@@ -447,10 +447,10 @@ fn loc_anim_wall_door_animates_both_models() {
     p.pos = 0;
     c.handle_packet(ServerProt::LOC_ANIM, &mut p);
     let wall = c.world.get_wall(0, 1, 1).expect("wall present");
-    let SceneModel::LocAnim(m1) = wall.model1.as_ref().expect("model1 set") else {
+    let SceneModel::LocAnim(m1) = wall.model1.as_deref().expect("model1 set") else {
         panic!("model1 should be LocAnim");
     };
-    let SceneModel::LocAnim(m2) = wall.model2.as_ref().expect("model2 set") else {
+    let SceneModel::LocAnim(m2) = wall.model2.as_deref().expect("model2 set") else {
         panic!("model2 should be LocAnim");
     };
     assert_eq!(m1.shape, 2);
@@ -491,7 +491,7 @@ fn loc_anim_wall_decor_uses_tile_xz() {
     p.pos = 0;
     c.handle_packet(ServerProt::LOC_ANIM, &mut p);
     let decor = c.world.get_decor(0, 2, 5).expect("decor present");
-    assert!(matches!(decor.model, SceneModel::LocAnim(_)));
+    assert!(matches!(*decor.model, SceneModel::LocAnim(_)));
 }
 
 /// GROUND scenery (layer 2): shape 11 remaps to 10 before building the
@@ -552,7 +552,7 @@ fn loc_anim_ground_decor_model() {
     p.pos = 0;
     c.handle_packet(ServerProt::LOC_ANIM, &mut p);
     let gd = c.world.get_gd(0, 1, 1).expect("ground decor present");
-    let SceneModel::LocAnim(anim) = gd.model.as_ref().expect("gd model set") else {
+    let SceneModel::LocAnim(anim) = gd.model.as_deref().expect("gd model set") else {
         panic!("gd model should be LocAnim");
     };
     assert_eq!(anim.shape, 22);
@@ -571,7 +571,7 @@ fn loc_anim_out_of_range_shape_does_not_panic() {
     c.handle_packet(ServerProt::LOC_ADD_CHANGE, &mut p);
     c.game_loop();
     if let Some(w) = c.world.get_wall_mut(0, 1, 1) {
-        w.model1 = Some(SceneModel::Obj(ClientObj::new(0, 1)));
+        w.model1 = Some(Box::new(SceneModel::Obj(ClientObj::new(0, 1))));
     }
     let mut p = Packet::alloc(0);
     p.p1(0x11);
@@ -581,7 +581,7 @@ fn loc_anim_out_of_range_shape_does_not_panic() {
     c.handle_packet(ServerProt::LOC_ANIM, &mut p);
     assert!(c.ingame);
     assert!(matches!(
-        c.world.get_wall(0, 1, 1).and_then(|w| w.model1.as_ref()),
+        c.world.get_wall(0, 1, 1).and_then(|w| w.model1.as_deref()),
         Some(SceneModel::Obj(_))
     ));
 }

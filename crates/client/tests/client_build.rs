@@ -534,7 +534,7 @@ fn finish_build_hooks_share_light() {
     build.finish_build(&c.cache, &mut c.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
 
     let wall = c.world.get_wall(0, 2, 2).expect("wall");
-    let SceneModel::Model(m) = wall.model1.as_ref().unwrap() else {
+    let SceneModel::Model(m) = wall.model1.as_deref().unwrap() else {
         panic!("wall model1 must be a Model")
     };
     assert!(m.point_normal.is_none(), "finishBuild must call share_light");

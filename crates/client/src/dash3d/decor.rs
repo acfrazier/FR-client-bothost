@@ -7,7 +7,7 @@ pub struct Decor {
     pub z: i32,
     pub wshape: i32,
     pub angle: i32,
-    pub model: SceneModel,
+    pub model: Box<SceneModel>,
     pub typecode: i32,
     pub typecode2: i32,
 }
@@ -19,7 +19,7 @@ impl Decor {
         z: i32,
         wshape: i32,
         angle: i32,
-        model: SceneModel,
+        model: Box<SceneModel>,
         typecode: i32,
         typecode2: i32,
     ) -> Self {

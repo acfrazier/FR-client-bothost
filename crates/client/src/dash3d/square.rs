@@ -67,3 +67,19 @@ impl Square {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Square;
+    use crate::dash3d::SceneModel;
+
+    #[test]
+    fn empty_square_does_not_embed_scene_models() {
+        let square = std::mem::size_of::<Square>();
+        let scene = std::mem::size_of::<SceneModel>();
+        assert!(
+            square < scene,
+            "Square ({square}) must be smaller than one SceneModel ({scene}); empty tiles must not reserve inline models"
+        );
+    }
+}

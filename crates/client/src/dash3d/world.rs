@@ -479,7 +479,7 @@ impl World {
                 y,
                 tile_x * 128 + 64,
                 tile_z * 128 + 64,
-                model,
+                model.map(Box::new),
                 typecode,
                 typecode2,
             ));
@@ -532,9 +532,9 @@ impl World {
                 y,
                 stx * 128 + 64,
                 stz * 128 + 64,
-                top_obj,
-                middle_obj,
-                bottom_obj,
+                top_obj.map(Box::new),
+                middle_obj.map(Box::new),
+                bottom_obj.map(Box::new),
                 typecode,
                 stack_offset,
             ));
@@ -580,8 +580,8 @@ impl World {
                 tile_z * 128 + 64,
                 angle1,
                 angle2,
-                model1,
-                model2,
+                model1.map(Box::new),
+                model2.map(Box::new),
                 typecode1,
                 typecode2,
             ));
@@ -626,7 +626,7 @@ impl World {
                 tile_z * 128 + offset_z + 64,
                 wshape,
                 angle,
-                model,
+                Box::new(model),
                 typecode,
                 info,
             ));
@@ -985,10 +985,10 @@ impl World {
                     let Some(mut tile) = tile else { continue };
 
                     if let Some(wall) = tile.wall.as_mut() {
-                        if let Some(SceneModel::Model(model1)) = wall.model1.as_mut() {
+                        if let Some(SceneModel::Model(model1)) = wall.model1.as_deref_mut() {
                             if model1.point_normal.is_some() {
                                 self.share_light_loc(level, tile_x, tile_z, 1, 1, model1);
-                                if let Some(SceneModel::Model(model2)) = wall.model2.as_mut() {
+                                if let Some(SceneModel::Model(model2)) = wall.model2.as_deref_mut() {
                                     if model2.point_normal.is_some() {
                                         self.share_light_loc(level, tile_x, tile_z, 1, 1, model2);
                                         self.model_share_light(model1, model2, 0, 0, 0, false);
@@ -1021,7 +1021,7 @@ impl World {
                     }
 
                     if let Some(gd) = tile.ground_decor.as_mut() {
-                        if let Some(SceneModel::Model(model)) = gd.model.as_mut() {
+                        if let Some(SceneModel::Model(model)) = gd.model.as_deref_mut() {
                             if model.point_normal.is_some() {
                                 self.share_light_gd(level, tile_x, tile_z, model);
                                 model.light(ambient, attenuation, light_src_x, light_src_y, light_src_z);
@@ -1047,7 +1047,7 @@ impl World {
             if let Some(tile) = tile.as_mut() {
                 let mut gd = tile.ground_decor.take();
                 if let Some(SceneModel::Model(model_b)) =
-                    gd.as_mut().and_then(|g| g.model.as_mut())
+                    gd.as_mut().and_then(|g| g.model.as_deref_mut())
                 {
                     if model_b.point_normal.is_some() {
                         self.model_share_light(model, model_b, 128, 0, 0, true);
@@ -1063,7 +1063,7 @@ impl World {
             if let Some(tile) = tile.as_mut() {
                 let mut gd = tile.ground_decor.take();
                 if let Some(SceneModel::Model(model_b)) =
-                    gd.as_mut().and_then(|g| g.model.as_mut())
+                    gd.as_mut().and_then(|g| g.model.as_deref_mut())
                 {
                     if model_b.point_normal.is_some() {
                         self.model_share_light(model, model_b, 0, 0, 128, true);
@@ -1079,7 +1079,7 @@ impl World {
             if let Some(tile) = tile.as_mut() {
                 let mut gd = tile.ground_decor.take();
                 if let Some(SceneModel::Model(model_b)) =
-                    gd.as_mut().and_then(|g| g.model.as_mut())
+                    gd.as_mut().and_then(|g| g.model.as_deref_mut())
                 {
                     if model_b.point_normal.is_some() {
                         self.model_share_light(model, model_b, 128, 0, 128, true);
@@ -1095,7 +1095,7 @@ impl World {
             if let Some(tile) = tile.as_mut() {
                 let mut gd = tile.ground_decor.take();
                 if let Some(SceneModel::Model(model_b)) =
-                    gd.as_mut().and_then(|g| g.model.as_mut())
+                    gd.as_mut().and_then(|g| g.model.as_deref_mut())
                 {
                     if model_b.point_normal.is_some() {
                         self.model_share_light(model, model_b, 128, 0, -128, true);
@@ -1192,7 +1192,7 @@ impl World {
                     let Some(mut candidate) = candidate else { continue };
 
                     if let Some(wall) = candidate.wall.as_mut() {
-                        if let Some(SceneModel::Model(model_b)) = wall.model1.as_mut() {
+                        if let Some(SceneModel::Model(model_b)) = wall.model1.as_deref_mut() {
                             if model_b.point_normal.is_some() {
                                 self.model_share_light(
                                     model_a, model_b, offset_x, offset_y, offset_z,
@@ -1200,7 +1200,7 @@ impl World {
                                 );
                             }
                         }
-                        if let Some(SceneModel::Model(model_b)) = wall.model2.as_mut() {
+                        if let Some(SceneModel::Model(model_b)) = wall.model2.as_deref_mut() {
                             if model_b.point_normal.is_some() {
                                 self.model_share_light(
                                     model_a, model_b, offset_x, offset_y, offset_z,

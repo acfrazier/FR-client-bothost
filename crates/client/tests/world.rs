@@ -117,7 +117,7 @@ fn share_light_lights_wall_models_and_consumes_normals() {
     world.share_light(64, 768, -50, -10, -50);
 
     let wall = world.get_wall(0, 1, 1).expect("wall");
-    let SceneModel::Model(model) = wall.model1.as_ref().unwrap() else {
+    let SceneModel::Model(model) = wall.model1.as_deref().unwrap() else {
         panic!("wall model1 must be a Model")
     };
     assert!(model.point_normal.is_none(), "light() must consume point normals");
@@ -162,7 +162,7 @@ fn share_light_lights_ground_decor() {
     world.share_light(64, 768, -50, -10, -50);
 
     let gd = world.get_gd(0, 1, 1).expect("ground decor");
-    let SceneModel::Model(model) = gd.model.as_ref().unwrap() else {
+    let SceneModel::Model(model) = gd.model.as_deref().unwrap() else {
         panic!("gd model must be a Model")
     };
     assert!(model.point_normal.is_none());
@@ -353,7 +353,7 @@ fn share_light_does_not_delete_adjacent_south_walls() {
 
     for x in [1, 2] {
         let wall = world.get_wall(0, x, 2).expect("wall");
-        let SceneModel::Model(model) = wall.model1.as_ref().unwrap() else {
+        let SceneModel::Model(model) = wall.model1.as_deref().unwrap() else {
             panic!("model");
         };
         let killed = model
