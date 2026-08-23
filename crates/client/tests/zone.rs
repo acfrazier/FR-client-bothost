@@ -395,6 +395,7 @@ fn loc_anim_replaces_wall_model1() {
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
     c.ingame = true;
+    c.set_draw(true);
     c.zone_update_x = 0;
     c.zone_update_z = 0;
     c.groundh[0][1][1] = 100;
@@ -433,6 +434,7 @@ fn loc_anim_wall_door_animates_both_models() {
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
     c.ingame = true;
+    c.set_draw(true);
     let mut p = loc_add_payload(0x11, 0x08, 0); // shape 2
     c.handle_packet(ServerProt::LOC_ADD_CHANGE, &mut p);
     c.game_loop();
@@ -469,6 +471,7 @@ fn loc_anim_wall_decor_uses_tile_xz() {
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
     c.ingame = true;
+    c.set_draw(true);
     c.zone_update_x = 0;
     c.zone_update_z = 0;
     c.world.set_decor(
@@ -502,6 +505,7 @@ fn loc_anim_scene_remaps_shape_11_to_10() {
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
     c.ingame = true;
+    c.set_draw(true);
     // typecode bits 29-30 == 2 marks the sprite as a scene (get_scene_mut
     // looks for that bit pattern on the tile's sprites).
     c.world.add_scenery(
@@ -536,6 +540,7 @@ fn loc_anim_ground_decor_model() {
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
     c.ingame = true;
+    c.set_draw(true);
     c.world.set_ground_decor(
         Some(SceneModel::Model(Model::default())),
         0,
@@ -567,6 +572,7 @@ fn loc_anim_out_of_range_shape_does_not_panic() {
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
     c.ingame = true;
+    c.set_draw(true);
     let mut p = loc_add_payload(0x11, 0x00, 0);
     c.handle_packet(ServerProt::LOC_ADD_CHANGE, &mut p);
     c.game_loop();
@@ -600,6 +606,37 @@ fn loc_anim_missing_wall_is_noop() {
     c.handle_packet(ServerProt::LOC_ANIM, &mut p);
     assert!(c.ingame);
     assert!(c.world.get_wall(0, 1, 1).is_none());
+}
+
+/// `draw` off → LOC_ANIM consumes the packet but installs no `LocAnim`:
+/// the wall's existing model stays in place and the typecode is untouched.
+#[test]
+fn loc_anim_draw_off_leaves_wall_model() {
+    let mut c = client();
+    seed_anim_loc(&mut c, 0);
+    c.scene_state = 2;
+    c.ingame = true;
+    let mut p = loc_add_payload(0x11, 0x00, 0);
+    c.handle_packet(ServerProt::LOC_ADD_CHANGE, &mut p);
+    c.game_loop();
+    let typecode = c.world.get_wall(0, 1, 1).expect("wall present").typecode;
+    if let Some(w) = c.world.get_wall_mut(0, 1, 1) {
+        w.model1 = Some(Box::new(SceneModel::Obj(ClientObj::new(0, 1))));
+    }
+    let mut p = Packet::alloc(0);
+    p.p1(0x11);
+    p.p1(0x00); // shape 0
+    p.p2(0); // seq 0
+    p.pos = 0;
+    assert!(!c.draw);
+    c.handle_packet(ServerProt::LOC_ANIM, &mut p);
+    assert_eq!(p.pos, 4); // pos + info + seq still consumed
+    let wall = c.world.get_wall(0, 1, 1).expect("wall present");
+    assert_eq!(wall.typecode, typecode);
+    assert!(matches!(
+        wall.model1.as_deref(),
+        Some(SceneModel::Obj(_))
+    ));
 }
 
 // --- OBJ_ADD / OBJ_DEL / OBJ_COUNT / OBJ_REVEAL + showObject ---

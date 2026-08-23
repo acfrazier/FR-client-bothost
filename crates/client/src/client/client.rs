@@ -7328,11 +7328,15 @@ impl Client {
                 let shape = info >> 2;
                 let rotate = info & 0x3;
 
-                // TS yields `undefined` for shape >= table length; skip the
-                // apply instead of panicking on the index. The +1 height
-                // reads need x+1/z+1 inside groundh (sized SIZE+1), so the
-                // same 0..SIZE bounds guard covers them.
-                if shape < LOC_SHAPE_TO_LAYER.len() as i32
+                // With draw off the payload stays consumed (read above) but
+                // no `LocAnim` mesh is installed: the wall/decor/scene keeps
+                // its existing model and typecode. Otherwise the TS yields
+                // `undefined` for shape >= table length; skip the apply
+                // instead of panicking on the index. The +1 height reads
+                // need x+1/z+1 inside groundh (sized SIZE+1), so the same
+                // 0..SIZE bounds guard covers them.
+                if self.draw
+                    && shape < LOC_SHAPE_TO_LAYER.len() as i32
                     && x >= 0
                     && z >= 0
                     && x < BuildArea::SIZE
