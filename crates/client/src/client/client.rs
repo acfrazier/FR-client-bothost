@@ -9673,6 +9673,7 @@ impl Client {
                 angle,
                 tile_level,
                 self.loop_cycle,
+                !self.draw,
             );
         }
     }

@@ -253,7 +253,7 @@ fn change_loc_unchecked_wall_straight_with_anim_sets_wall() {
     let mut cmap = CollisionMap::new();
     ClientBuild::change_loc_unchecked(
         &cache, &mut world, Some(&mut cmap), &groundh,
-        0, 2, 2, 0, LocShape::WALL_STRAIGHT, 0, 0, 0,
+        0, 2, 2, 0, LocShape::WALL_STRAIGHT, 0, 0, 0, false,
     );
     assert!(matches!(
         world.get_wall(0, 2, 2).and_then(|w| w.model1.as_deref()),

@@ -886,7 +886,9 @@ impl ClientBuild {
     /// `addLoc`). Heights come from `true_level` while the world writes use
     /// `level`; the height variables follow the TS names (`heightNW` is
     /// `[x+1][z+1]`, `heightNE` is `[x][z+1]`, the reverse of `addLoc`).
-    /// `loop_cycle` stands in for the TS `Client.loopCycle`.
+    /// `loop_cycle` stands in for the TS `Client.loopCycle`. With
+    /// `skip_loc_models` every model comes back `None` (host-side placement
+    /// without mesh decode), as in `addLoc`.
     #[allow(clippy::too_many_arguments)]
     pub fn change_loc_unchecked(
         cache: &Cache,
@@ -901,6 +903,7 @@ impl ClientBuild {
         angle: i32,
         true_level: i32,
         loop_cycle: i32,
+        skip_loc_models: bool,
     ) {
         let mut height_sw = groundh[true_level as usize][x as usize][z as usize];
         let mut height_se = groundh[true_level as usize][(x + 1) as usize][z as usize];
@@ -921,7 +924,9 @@ impl ClientBuild {
         let typecode2 = ((angle << 6) + shape).wrapping_shl(24) >> 24;
 
         if shape == LocShape::GROUND_DECOR {
-            let model = if loc.anim == -1 {
+            let model = if skip_loc_models {
+                None
+            } else if loc.anim == -1 {
                 loc.get_model(cache, 22, angle, height_sw, height_se, height_ne, height_nw, -1)
                     .map(SceneModel::Model)
             } else {
@@ -939,7 +944,9 @@ impl ClientBuild {
                 }
             }
         } else if shape == LocShape::CENTREPIECE_STRAIGHT || shape == LocShape::CENTREPIECE_DIAGONAL {
-            let model = if loc.anim == -1 {
+            let model = if skip_loc_models {
+                None
+            } else if loc.anim == -1 {
                 loc.get_model(cache, 10, angle, height_sw, height_se, height_ne, height_nw, -1)
                     .map(SceneModel::Model)
             } else {
@@ -970,7 +977,9 @@ impl ClientBuild {
                 }
             }
         } else if shape >= LocShape::ROOF_STRAIGHT {
-            let model = if loc.anim == -1 {
+            let model = if skip_loc_models {
+                None
+            } else if loc.anim == -1 {
                 loc.get_model(cache, shape, angle, height_sw, height_se, height_ne, height_nw, -1)
                     .map(SceneModel::Model)
             } else {
@@ -988,7 +997,9 @@ impl ClientBuild {
                 }
             }
         } else if shape == LocShape::WALL_STRAIGHT {
-            let model = if loc.anim == -1 {
+            let model = if skip_loc_models {
+                None
+            } else if loc.anim == -1 {
                 loc.get_model(cache, 0, angle, height_sw, height_se, height_ne, height_nw, -1)
                     .map(SceneModel::Model)
             } else {
@@ -1006,7 +1017,9 @@ impl ClientBuild {
                 }
             }
         } else if shape == LocShape::WALL_DIAGONAL_CORNER {
-            let model = if loc.anim == -1 {
+            let model = if skip_loc_models {
+                None
+            } else if loc.anim == -1 {
                 loc.get_model(cache, 1, angle, height_sw, height_se, height_ne, height_nw, -1)
                     .map(SceneModel::Model)
             } else {
@@ -1026,7 +1039,9 @@ impl ClientBuild {
         } else if shape == LocShape::WALL_L {
             let offset = (angle + 1) & 0x3;
 
-            let (model1, model2) = if loc.anim == -1 {
+            let (model1, model2) = if skip_loc_models {
+                (None, None)
+            } else if loc.anim == -1 {
                 (
                     loc.get_model(cache, 2, angle + 4, height_sw, height_se, height_ne, height_nw, -1)
                         .map(SceneModel::Model),
@@ -1065,7 +1080,9 @@ impl ClientBuild {
                 }
             }
         } else if shape == LocShape::WALL_SQUARE_CORNER {
-            let model = if loc.anim == -1 {
+            let model = if skip_loc_models {
+                None
+            } else if loc.anim == -1 {
                 loc.get_model(cache, 3, angle, height_sw, height_se, height_ne, height_nw, -1)
                     .map(SceneModel::Model)
             } else {
@@ -1083,7 +1100,9 @@ impl ClientBuild {
                 }
             }
         } else if shape == LocShape::WALL_DIAGONAL {
-            let model = if loc.anim == -1 {
+            let model = if skip_loc_models {
+                None
+            } else if loc.anim == -1 {
                 loc.get_model(cache, shape, angle, height_sw, height_se, height_ne, height_nw, -1)
                     .map(SceneModel::Model)
             } else {
@@ -1119,7 +1138,9 @@ impl ClientBuild {
             }
 
             if shape == LocShape::WALLDECOR_STRAIGHT_NOOFFSET {
-                let model = if loc.anim == -1 {
+                let model = if skip_loc_models {
+                    None
+                } else if loc.anim == -1 {
                     loc.get_model(cache, 4, 0, height_sw, height_se, height_ne, height_nw, -1)
                         .map(SceneModel::Model)
                 } else {
@@ -1140,7 +1161,9 @@ impl ClientBuild {
                     wallwidth = cache.loc(((wall_typecode >> 14) & 0x7fff) as usize).wallwidth;
                 }
 
-                let model = if loc.anim == -1 {
+                let model = if skip_loc_models {
+                    None
+                } else if loc.anim == -1 {
                     loc.get_model(cache, 4, 0, height_sw, height_se, height_ne, height_nw, -1)
                         .map(SceneModel::Model)
                 } else {
@@ -1164,7 +1187,9 @@ impl ClientBuild {
                     WSHAPE0[angle as usize],
                 );
             } else if shape == LocShape::WALLDECOR_DIAGONAL_OFFSET {
-                let model = if loc.anim == -1 {
+                let model = if skip_loc_models {
+                    None
+                } else if loc.anim == -1 {
                     loc.get_model(cache, 4, 0, height_sw, height_se, height_ne, height_nw, -1)
                         .map(SceneModel::Model)
                 } else {
@@ -1176,7 +1201,9 @@ impl ClientBuild {
 
                 world.set_decor(level, x, z, y, 0, 0, typecode, model, typecode2, angle, 256);
             } else if shape == LocShape::WALLDECOR_DIAGONAL_NOOFFSET {
-                let model = if loc.anim == -1 {
+                let model = if skip_loc_models {
+                    None
+                } else if loc.anim == -1 {
                     loc.get_model(cache, 4, 0, height_sw, height_se, height_ne, height_nw, -1)
                         .map(SceneModel::Model)
                 } else {
@@ -1188,7 +1215,9 @@ impl ClientBuild {
 
                 world.set_decor(level, x, z, y, 0, 0, typecode, model, typecode2, angle, 512);
             } else if shape == LocShape::WALLDECOR_DIAGONAL_BOTH {
-                let model = if loc.anim == -1 {
+                let model = if skip_loc_models {
+                    None
+                } else if loc.anim == -1 {
                     loc.get_model(cache, 4, 0, height_sw, height_se, height_ne, height_nw, -1)
                         .map(SceneModel::Model)
                 } else {
