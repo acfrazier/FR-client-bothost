@@ -295,6 +295,14 @@ pub struct Client {
     pub game_draw_enters: u64,
     /// Entry count for `title_screen_draw` (incremented as first statement).
     pub title_screen_draw_enters: u64,
+    /// Host-stamped: accumulated mainloop ns for this slot.
+    pub loop_ns: u64,
+    /// Host-stamped: accumulated mainredraw ns for this slot.
+    pub raster_ns: u64,
+    /// Host-stamped: paint (mainredraw) count for this slot.
+    pub paint_n: u64,
+    /// Host-stamped: skip-paint count for this slot.
+    pub skip_n: u64,
     pub scene_state: i32,
     /// `inMultizone` from client-ts (TS 132): set by `SET_MULTIWAY`.
     pub in_multizone: i32,
@@ -975,6 +983,10 @@ impl Client {
             draw: false,
             game_draw_enters: 0,
             title_screen_draw_enters: 0,
+            loop_ns: 0,
+            raster_ns: 0,
+            paint_n: 0,
+            skip_n: 0,
             scene_state: 0,
             in_multizone: 0,
             build_minusedlevel: 0,
