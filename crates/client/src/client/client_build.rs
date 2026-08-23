@@ -46,6 +46,10 @@ pub struct ClientBuild {
     /// (`ClientConfig.lowmem = false`); `map_build` copies that here before
     /// `addLoc` / `finishBuild`.
     pub low_mem: bool,
+    /// Skip loc mesh decode in `addLoc`: the typecode, collision and
+    /// shadow/mapo side-effects still run, but every model comes back
+    /// `None` (host-side world reads place typecodes without meshes).
+    pub skip_loc_models: bool,
     /// `ClientBuild.minusedlevel` from client-ts; consumed by `addLoc`.
     pub minusedlevel: i32,
     /// `ClientBuild.hueOff` from client-ts (a TS static, instance here);
@@ -99,6 +103,7 @@ impl ClientBuild {
         };
         ClientBuild {
             low_mem: true,
+            skip_loc_models: false,
             minusedlevel: 0,
             hue_off: ((random_float() * 17.0) as i32) - 8,
             lig_off: ((random_float() * 33.0) as i32) - 16,
@@ -385,6 +390,17 @@ impl ClientBuild {
         }
     }
 
+    /// `skip_loc_models` gate for one loc model: return `None` instead of
+    /// the decoded model so host-side placement keeps the typecode without
+    /// touching the mesh cache.
+    fn take_model(&self, model: Option<SceneModel>) -> Option<SceneModel> {
+        if self.skip_loc_models {
+            None
+        } else {
+            model
+        }
+    }
+
     /// `addLoc(...)` from client-ts (ClientBuild.ts 765-1137): place one loc
     /// into the world (wall/decor/scenery/ground-decor layers) and stamp the
     /// collision map and the `shadow`/`mapo` scratch grids. A missing model
@@ -436,7 +452,7 @@ impl ClientBuild {
 
         if shape == LocShape::GROUND_DECOR {
             if !self.low_mem || loc.active || loc.forcedecor {
-                let model = if loc.anim == -1 {
+                let model = self.take_model(if loc.anim == -1 {
                     loc.get_model(cache, 22, angle, height_sw, height_se, height_ne, height_nw, -1)
                         .map(SceneModel::Model)
                 } else {
@@ -444,7 +460,7 @@ impl ClientBuild {
                         cache, loc_id, 22, shape, height_sw, height_se, height_ne, height_nw,
                         loc.anim as usize, true, loop_cycle,
                     )))
-                };
+                });
 
                 world.set_ground_decor(model, level, x, z, y, typecode, typecode2);
 
@@ -455,7 +471,7 @@ impl ClientBuild {
                 }
             }
         } else if shape == LocShape::CENTREPIECE_STRAIGHT || shape == LocShape::CENTREPIECE_DIAGONAL {
-            let model = if loc.anim == -1 {
+            let model = self.take_model(if loc.anim == -1 {
                 loc.get_model(cache, 10, angle, height_sw, height_se, height_ne, height_nw, -1)
                     .map(SceneModel::Model)
             } else {
@@ -463,7 +479,7 @@ impl ClientBuild {
                     cache, loc_id, 10, angle, height_sw, height_se, height_ne, height_nw,
                     loc.anim as usize, true, loop_cycle,
                 )))
-            };
+            });
 
             if let Some(model) = model {
                 let mut yaw = 0;
@@ -523,7 +539,7 @@ impl ClientBuild {
                 }
             }
         } else if shape >= LocShape::ROOF_STRAIGHT {
-            let model = if loc.anim == -1 {
+            let model = self.take_model(if loc.anim == -1 {
                 loc.get_model(cache, shape, angle, height_sw, height_se, height_ne, height_nw, -1)
                     .map(SceneModel::Model)
             } else {
@@ -531,7 +547,7 @@ impl ClientBuild {
                     cache, loc_id, shape, angle, height_sw, height_se, height_ne, height_nw,
                     loc.anim as usize, true, loop_cycle,
                 )))
-            };
+            });
 
             world.add_scenery(level, x, z, y, model, typecode, typecode2, 1, 1, 0);
 
@@ -548,7 +564,7 @@ impl ClientBuild {
                 }
             }
         } else if shape == LocShape::WALL_STRAIGHT {
-            let model = if loc.anim == -1 {
+            let model = self.take_model(if loc.anim == -1 {
                 loc.get_model(cache, 0, angle, height_sw, height_se, height_ne, height_nw, -1)
                     .map(SceneModel::Model)
             } else {
@@ -556,7 +572,7 @@ impl ClientBuild {
                     cache, loc_id, 0, angle, height_sw, height_se, height_ne, height_nw,
                     loc.anim as usize, true, loop_cycle,
                 )))
-            };
+            });
 
             world.set_wall(level, x, z, y, WSHAPE0[angle as usize], 0, model, None, typecode, typecode2);
 
@@ -608,7 +624,7 @@ impl ClientBuild {
                 world.move_decor(level, x, z, loc.wallwidth);
             }
         } else if shape == LocShape::WALL_DIAGONAL_CORNER {
-            let model = if loc.anim == -1 {
+            let model = self.take_model(if loc.anim == -1 {
                 loc.get_model(cache, 1, angle, height_sw, height_se, height_ne, height_nw, -1)
                     .map(SceneModel::Model)
             } else {
@@ -616,7 +632,7 @@ impl ClientBuild {
                     cache, loc_id, 1, angle, height_sw, height_se, height_ne, height_nw,
                     loc.anim as usize, true, loop_cycle,
                 )))
-            };
+            });
 
             world.set_wall(level, x, z, y, WSHAPE1[angle as usize], 0, model, None, typecode, typecode2);
 
@@ -699,7 +715,7 @@ impl ClientBuild {
                 world.move_decor(level, x, z, loc.wallwidth);
             }
         } else if shape == LocShape::WALL_SQUARE_CORNER {
-            let model = if loc.anim == -1 {
+            let model = self.take_model(if loc.anim == -1 {
                 loc.get_model(cache, 3, angle, height_sw, height_se, height_ne, height_nw, -1)
                     .map(SceneModel::Model)
             } else {
@@ -707,7 +723,7 @@ impl ClientBuild {
                     cache, loc_id, 3, angle, height_sw, height_se, height_ne, height_nw,
                     loc.anim as usize, true, loop_cycle,
                 )))
-            };
+            });
 
             world.set_wall(level, x, z, y, WSHAPE1[angle as usize], 0, model, None, typecode, typecode2);
 
@@ -729,7 +745,7 @@ impl ClientBuild {
                 }
             }
         } else if shape == LocShape::WALL_DIAGONAL {
-            let model = if loc.anim == -1 {
+            let model = self.take_model(if loc.anim == -1 {
                 loc.get_model(cache, shape, angle, height_sw, height_se, height_ne, height_nw, -1)
                     .map(SceneModel::Model)
             } else {
@@ -737,7 +753,7 @@ impl ClientBuild {
                     cache, loc_id, shape, angle, height_sw, height_se, height_ne, height_nw,
                     loc.anim as usize, true, loop_cycle,
                 )))
-            };
+            });
 
             world.add_scenery(level, x, z, y, model, typecode, typecode2, 1, 1, 0);
 
@@ -763,7 +779,7 @@ impl ClientBuild {
             }
 
             if shape == LocShape::WALLDECOR_STRAIGHT_NOOFFSET {
-                let model = if loc.anim == -1 {
+                let model = self.take_model(if loc.anim == -1 {
                     loc.get_model(cache, 4, 0, height_sw, height_se, height_ne, height_nw, -1)
                         .map(SceneModel::Model)
                 } else {
@@ -771,7 +787,7 @@ impl ClientBuild {
                         cache, loc_id, 4, 0, height_sw, height_se, height_ne, height_nw,
                         loc.anim as usize, true, loop_cycle,
                     )))
-                };
+                });
 
                 world.set_decor(
                     level, x, z, y, 0, 0, typecode, model, typecode2, angle * 512,
@@ -784,7 +800,7 @@ impl ClientBuild {
                     wallwidth = cache.loc(((wall_typecode >> 14) & 0x7fff) as usize).wallwidth;
                 }
 
-                let model = if loc.anim == -1 {
+                let model = self.take_model(if loc.anim == -1 {
                     loc.get_model(cache, 4, 0, height_sw, height_se, height_ne, height_nw, -1)
                         .map(SceneModel::Model)
                 } else {
@@ -792,7 +808,7 @@ impl ClientBuild {
                         cache, loc_id, 4, 0, height_sw, height_se, height_ne, height_nw,
                         loc.anim as usize, true, loop_cycle,
                     )))
-                };
+                });
 
                 world.set_decor(
                     level,
@@ -808,7 +824,7 @@ impl ClientBuild {
                     WSHAPE0[angle as usize],
                 );
             } else if shape == LocShape::WALLDECOR_DIAGONAL_OFFSET {
-                let model = if loc.anim == -1 {
+                let model = self.take_model(if loc.anim == -1 {
                     loc.get_model(cache, 4, 0, height_sw, height_se, height_ne, height_nw, -1)
                         .map(SceneModel::Model)
                 } else {
@@ -816,11 +832,11 @@ impl ClientBuild {
                         cache, loc_id, 4, 0, height_sw, height_se, height_ne, height_nw,
                         loc.anim as usize, true, loop_cycle,
                     )))
-                };
+                });
 
                 world.set_decor(level, x, z, y, 0, 0, typecode, model, typecode2, angle, 256);
             } else if shape == LocShape::WALLDECOR_DIAGONAL_NOOFFSET {
-                let model = if loc.anim == -1 {
+                let model = self.take_model(if loc.anim == -1 {
                     loc.get_model(cache, 4, 0, height_sw, height_se, height_ne, height_nw, -1)
                         .map(SceneModel::Model)
                 } else {
@@ -828,11 +844,11 @@ impl ClientBuild {
                         cache, loc_id, 4, 0, height_sw, height_se, height_ne, height_nw,
                         loc.anim as usize, true, loop_cycle,
                     )))
-                };
+                });
 
                 world.set_decor(level, x, z, y, 0, 0, typecode, model, typecode2, angle, 512);
             } else if shape == LocShape::WALLDECOR_DIAGONAL_BOTH {
-                let model = if loc.anim == -1 {
+                let model = self.take_model(if loc.anim == -1 {
                     loc.get_model(cache, 4, 0, height_sw, height_se, height_ne, height_nw, -1)
                         .map(SceneModel::Model)
                 } else {
@@ -840,7 +856,7 @@ impl ClientBuild {
                         cache, loc_id, 4, 0, height_sw, height_se, height_ne, height_nw,
                         loc.anim as usize, true, loop_cycle,
                     )))
-                };
+                });
 
                 world.set_decor(level, x, z, y, 0, 0, typecode, model, typecode2, angle, 768);
             }

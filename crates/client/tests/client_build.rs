@@ -228,6 +228,38 @@ fn load_locations_ground_decor_blocks_when_active() {
 }
 
 #[test]
+fn skip_loc_models_places_typecode_without_mesh() {
+    let mut c = client();
+    Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType {
+        model: Some(vec![60000]),
+        active: true,
+        blockwalk: true,
+        forcedecor: true,
+        ..LocType::default()
+    });
+    let mut build = ClientBuild::new();
+    build.skip_loc_models = true;
+    // same src as the ground-decor tests: loc 0 at (2,2), shape 22
+    let src = [0x01, 0x80, 0x83, 0x58, 0x00, 0x00];
+    build.load_locations(
+        &c.cache,
+        &mut c.world,
+        &mut c.collision,
+        &c.groundh,
+        &c.mapl,
+        &src,
+        0,
+        0,
+        0,
+    );
+    // skip_loc_models must still place the typecode and block walking; only
+    // the mesh decode is dropped (the loc's 60000 model is never requested)
+    assert_ne!(c.collision[0].flags[2][2] & CollisionFlag::WR_GRND, 0);
+    let gd = c.world.get_gd(0, 2, 2).expect("ground decor placed");
+    assert!(gd.model.is_none());
+}
+
+#[test]
 fn load_locations_low_mem_skips_force_high_detail() {
     let mut c = client();
     Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType {
