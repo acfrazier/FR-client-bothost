@@ -82,4 +82,9 @@ mod tests {
             "Square ({square}) must be smaller than one SceneModel ({scene}); empty tiles must not reserve inline models"
         );
     }
+
+    #[test]
+    fn world_empty_tile_slot_is_pointer_sized() {
+        assert_eq!(crate::dash3d::world::empty_tile_slot_size(), std::mem::size_of::<usize>());
+    }
 }
