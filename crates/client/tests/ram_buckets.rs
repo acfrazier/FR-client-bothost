@@ -1,8 +1,16 @@
 // RAM bucket dump: prints the sizes of the big extra-client allocations so
 // the orch can decide whether 4.6e (iface CoW) is needed. No production code.
 use client::dash3d::Square;
-use client::graphics::pix3d::ModelScratch;
+use client::graphics::pix3d::{ModelScratch, Pix3DDraw};
 use client::sound::jagfx::JagFX;
+
+/// Task 3: a fresh `Pix3DDraw` must not own the 1500×512 depth table (or any
+/// of the projection scratch) until the 3D render path runs `ensure()`.
+#[test]
+fn pix3d_default_has_no_depth_table() {
+    let d = Pix3DDraw::default();
+    assert!(d.model_scratch.tmp_depth_faces.is_empty());
+}
 
 #[test]
 fn ram_bucket_sizes() {

@@ -242,6 +242,45 @@ pub struct ModelScratch {
     pub clipped_colour: Vec<i32>,
 }
 
+impl ModelScratch {
+    /// A scratch with no buffers at all: `Pix3DDraw::default` owns nothing
+    /// until the 3D render path runs `ensure()`. `world_render`/`obj_render`
+    /// write through `.get_mut` guards, so an empty scratch is a safe no-op
+    /// if a render call never happens.
+    pub fn empty() -> Self {
+        ModelScratch {
+            vertex_screen_x: Vec::new(),
+            vertex_screen_y: Vec::new(),
+            vertex_screen_z: Vec::new(),
+            vertex_view_space_x: Vec::new(),
+            vertex_view_space_y: Vec::new(),
+            vertex_view_space_z: Vec::new(),
+            face_near_clipped: Vec::new(),
+            face_clipped_x: Vec::new(),
+            tmp_depth_face_count: Vec::new(),
+            tmp_depth_faces: Vec::new(),
+            tmp_priority_face_count: Vec::new(),
+            tmp_priority_faces: Vec::new(),
+            tmp_priority10_face_depth: Vec::new(),
+            tmp_priority11_face_depth: Vec::new(),
+            tmp_priority_depth_sum: Vec::new(),
+            clipped_x: Vec::new(),
+            clipped_y: Vec::new(),
+            clipped_colour: Vec::new(),
+        }
+    }
+
+    /// Allocate the today's-size buffers on first 3D render. Called at the
+    /// top of `Model::world_render`/`obj_render`; a scratch that was already
+    /// filled (the same frame's later models) is left alone.
+    pub fn ensure(&mut self) {
+        if self.tmp_depth_faces.len() == 1500 * 512 {
+            return;
+        }
+        *self = Self::default(); // today's sizes
+    }
+}
+
 impl Default for ModelScratch {
     fn default() -> Self {
         ModelScratch {
@@ -357,7 +396,7 @@ impl Default for Pix3DDraw {
             mouse_y: 0,
             picked_count: 0,
             picked_entity_typecode: vec![0; 1000],
-            model_scratch: ModelScratch::default(),
+            model_scratch: ModelScratch::empty(),
         }
     }
 }
