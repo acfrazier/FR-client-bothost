@@ -294,6 +294,9 @@ fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
     c.logout();
     c.title_screen_draw(); // consumes the game frame (Task 4b)
     assert!(c.area_chat.is_none());
+    // Task 2: login runs `prepare_game` only when drawing is on; a Null
+    // client must `set_draw(true)` before login to get the HUD maps.
+    c.set_draw(true);
     c.login("bob", "pw", false).unwrap();
     assert!(c.ingame);
     assert_eq!(c.active_icon, 3, "response 2 must select the inventory tab");

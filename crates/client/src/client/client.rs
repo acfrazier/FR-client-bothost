@@ -635,7 +635,9 @@ pub struct Client {
     /// the 765×503 CPU framebuffer every frame draws into (`drawArea`), the
     /// `title` jag with the fonts and sprites, the 9 title `PixMap` regions
     /// (0/1 are the flame frames — empty here, `TitleFlames` is out of
-    /// scope), and the login UI fields.
+    /// scope), and the login UI fields. A Null client (`draw=false`) owns a
+    /// 1×1 placeholder instead; `set_draw(true)` swaps in the full applet
+    /// framebuffer.
     pub draw_area: PixMap,
     /// Per-client Pix3D raster state (TS `Pix3D` mutable statics: the
     /// `scanline`, `originX/Y`, `trans`, `cycle`, and the texture pool).
@@ -789,10 +791,12 @@ pub struct Client {
     /// Minimap state (`Client.ts` `minimapDraw` 11279): the composed map
     /// buffer, the compass/mapedge/mapdot/mapmarker sprites, `mapback` (the
     /// ring mask plotted into `area_map`), and the per-row scanline masks
-    /// built from `mapback.data` (TS 1180-1216). `minimap` is allocated as
-    /// TS maininit (868) does and composed by `minimap_build_buffer`
-    /// (5280). `minimap_state`/`minimap_level`/`macro_minimap_*` default as
-    /// TS (506, 243-247); `minimap_loop` (2742) is Task 7.
+    /// built from `mapback.data` (TS 1180-1216). `minimap` is `None` for a
+    /// Null client and allocated as TS maininit (868) does by the first
+    /// `prepare_game` (login / `set_draw(true)`), then composed by
+    /// `minimap_build_buffer` (5280). `minimap_state`/`minimap_level`/
+    /// `macro_minimap_*` default as TS (506, 243-247); `minimap_loop`
+    /// (2742) is Task 7.
     pub minimap: Option<Pix32>,
     pub compass: Option<Pix32>,
     pub mapedge: Option<Pix32>,
@@ -1192,7 +1196,11 @@ impl Client {
             http_port: 80,
             already_started: false,
             fetch_retry_wait: Duration::from_secs(5),
-            draw_area: PixMap::new(APPLET_W, APPLET_H),
+            // Task 2: Null clients (`draw=false`) do not own the 765×503
+            // applet framebuffer — a 1×1 placeholder keeps tick-path
+            // writes (`logout` cls) safe; `set_draw(true)` swaps the full
+            // size in.
+            draw_area: PixMap::new(1, 1),
             pix3d: Pix3DDraw::default(),
             title: None,
             p11: None,
@@ -1289,7 +1297,10 @@ impl Client {
             redraw_chat: false,
             redraw_chat_mode: false,
             graphic_sprites: HashMap::new(),
-            minimap: Some(Pix32::new(512, 512)),
+            // Task 2: `prepare_game` (login / `set_draw(true)`) allocates
+            // the 512×512 minimap buffer as TS maininit 868; Null stays
+            // `None` so it owns no 1 MiB buffer.
+            minimap: None,
             compass: None,
             mapedge: None,
             mapmarker1: None,
@@ -1980,7 +1991,11 @@ impl Client {
             // Java `Client.java` 3700: `prepareGame()` rebuilds the game
             // frame the title draw consumed (Task 4b nulls the game areas,
             // so the `area_chat` gate does not fire after a title frame).
-            self.prepare_game();
+            // Task 2: a Null client never allocates the HUD maps; login
+            // only runs it when drawing is on.
+            if self.draw {
+                self.prepare_game();
+            }
             self.stream = Some(stream);
             return Ok(());
         }
@@ -10275,9 +10290,18 @@ impl Client {
     /// when false). A rising edge on a built scene rebuilds the map: the
     /// null build (`skip_loc_models`) done while draw was off is replaced
     /// with real loc meshes. Empty `map_build_index` (no scene yet) skips.
+    /// A rising edge also allocates the HUD a Null client never owned: the
+    /// 765×503 `draw_area` (1×1 placeholder) and the `prepare_game` maps
+    /// (including the 512×512 minimap).
     pub fn set_draw(&mut self, draw: bool) {
         let rebuild = draw && !self.draw && self.scene_state == 2 && !self.map_build_index.is_empty();
         self.draw = draw;
+        if draw {
+            if self.draw_area.width * self.draw_area.height <= 1 {
+                self.draw_area = PixMap::new(APPLET_W, APPLET_H);
+            }
+            self.prepare_game();
+        }
         if rebuild {
             self.map_build();
         }

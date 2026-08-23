@@ -389,6 +389,8 @@ fn minimap_build_buffer_writes_pixels() {
         members: true,
         lowmem: false,
     });
+    // Task 2: a Null client owns no minimap; `set_draw(true)` allocates it.
+    c.set_draw(true);
     c.world.fill_base_level(0);
     c.world.set_ground(
         0, 1, 1,

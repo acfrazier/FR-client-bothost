@@ -135,7 +135,10 @@ fn main() -> ExitCode {
         ) {
             Ok(present) => {
                 client.present = Some(present);
-                client.draw = true;
+                // Task 2: route through `set_draw` so the rising edge
+                // allocates the 765×503 framebuffer and the HUD maps a
+                // Null client never owned.
+                client.set_draw(true);
             }
             Err(e) => {
                 eprintln!("window: {e}");
