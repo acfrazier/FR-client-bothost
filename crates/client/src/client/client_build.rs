@@ -658,21 +658,25 @@ impl ClientBuild {
 
             let (model1, model2) = if loc.anim == -1 {
                 (
-                    loc.get_model(cache, 2, angle + 4, height_sw, height_se, height_ne, height_nw, -1)
-                        .map(SceneModel::Model),
-                    loc.get_model(cache, 2, offset, height_sw, height_se, height_ne, height_nw, -1)
-                        .map(SceneModel::Model),
+                    self.take_model(
+                        loc.get_model(cache, 2, angle + 4, height_sw, height_se, height_ne, height_nw, -1)
+                            .map(SceneModel::Model),
+                    ),
+                    self.take_model(
+                        loc.get_model(cache, 2, offset, height_sw, height_se, height_ne, height_nw, -1)
+                            .map(SceneModel::Model),
+                    ),
                 )
             } else {
                 (
-                    Some(SceneModel::LocAnim(ClientLocAnim::new(
+                    self.take_model(Some(SceneModel::LocAnim(ClientLocAnim::new(
                         cache, loc_id, 2, angle + 4, height_sw, height_se, height_ne, height_nw,
                         loc.anim as usize, true, loop_cycle,
-                    ))),
-                    Some(SceneModel::LocAnim(ClientLocAnim::new(
+                    )))),
+                    self.take_model(Some(SceneModel::LocAnim(ClientLocAnim::new(
                         cache, loc_id, 2, offset, height_sw, height_se, height_ne, height_nw,
                         loc.anim as usize, true, loop_cycle,
-                    ))),
+                    )))),
                 )
             };
 
