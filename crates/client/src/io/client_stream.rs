@@ -6,6 +6,7 @@
 
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -44,6 +45,8 @@ pub struct ClientStream {
     shared: Arc<Mutex<WriterState>>,
     condvar: Arc<Condvar>,
     writer_thread: Option<JoinHandle<()>>,
+    bytes_in: AtomicU64,
+    bytes_out: AtomicU64,
 }
 
 impl ClientStream {
@@ -59,7 +62,17 @@ impl ClientStream {
             shared: Arc::new(Mutex::new(WriterState::new())),
             condvar: Arc::new(Condvar::new()),
             writer_thread: None,
+            bytes_in: AtomicU64::new(0),
+            bytes_out: AtomicU64::new(0),
         })
+    }
+
+    pub fn bytes_in(&self) -> u64 {
+        self.bytes_in.load(Ordering::Relaxed)
+    }
+
+    pub fn bytes_out(&self) -> u64 {
+        self.bytes_out.load(Ordering::Relaxed)
     }
 
     /// Read one byte: 0 after `close`, -1 at EOF, else the byte value.
@@ -70,7 +83,10 @@ impl ClientStream {
         let mut b = [0u8; 1];
         match self.reader.read(&mut b) {
             Ok(0) => Ok(-1),
-            Ok(_) => Ok(b[0] as i32),
+            Ok(_) => {
+                self.bytes_in.fetch_add(1, Ordering::Relaxed);
+                Ok(b[0] as i32)
+            }
             Err(e) => Err(e),
         }
     }
@@ -90,6 +106,7 @@ impl ClientStream {
             }
             filled += n;
         }
+        self.bytes_in.fetch_add(len as u64, Ordering::Relaxed);
         Ok(())
     }
 
@@ -131,14 +148,18 @@ impl ClientStream {
             st.ioerror = false;
             return Err(io::Error::other("Error in writer thread"));
         }
+        let mut queued = 0u64;
         for &b in &buf[..len] {
             let tnum = st.tnum;
             st.buf[tnum] = b;
             st.tnum = (st.tnum + 1) % BUF_SIZE;
+            queued += 1;
             if st.tnum == (st.tcycl + BUF_SIZE - 100) % BUF_SIZE {
+                self.bytes_out.fetch_add(queued, Ordering::Relaxed);
                 return Err(io::Error::other("buffer overflow"));
             }
         }
+        self.bytes_out.fetch_add(queued, Ordering::Relaxed);
         if !st.writer {
             st.writer = true;
             self.writer_thread = Some(thread::spawn(move || writer_loop(shared, condvar, sock)));
@@ -211,5 +232,41 @@ fn writer_loop(shared: Arc<Mutex<WriterState>>, condvar: Arc<Condvar>, mut sock:
         if st.tnum == st.tcycl && sock.flush().is_err() {
             st.ioerror = true;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::net::{TcpListener, TcpStream};
+    use std::thread;
+
+    fn pair() -> (ClientStream, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let h = thread::spawn(move || listener.accept().unwrap().0);
+        let c = ClientStream::connect("127.0.0.1", addr.port()).unwrap();
+        (c, h.join().unwrap())
+    }
+
+    #[test]
+    fn counters_track_payload_and_stop_after_close() {
+        let (mut c, mut srv) = pair();
+        assert_eq!(c.bytes_in(), 0);
+        assert_eq!(c.bytes_out(), 0);
+        srv.write_all(&[1, 2, 3]).unwrap();
+        assert_eq!(c.read().unwrap(), 1);
+        let mut buf = [0u8; 2];
+        c.read_bytes(&mut buf, 0, 2).unwrap();
+        assert_eq!(&buf, &[2, 3]);
+        assert_eq!(c.bytes_in(), 3);
+        c.write(&[9, 8, 7, 6], 4).unwrap();
+        assert_eq!(c.bytes_out(), 4);
+        c.close();
+        c.write(&[1], 1).unwrap();
+        assert_eq!(c.read().unwrap(), 0);
+        assert_eq!(c.bytes_in(), 3);
+        assert_eq!(c.bytes_out(), 4);
     }
 }
