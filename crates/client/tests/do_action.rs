@@ -173,11 +173,13 @@ fn try_move_flushes_move_gameclick_to_socket() {
 #[test]
 fn do_action_obj_examine_adds_chat() {
     let mut c = client();
+    // Robust to an ambient real config pack: the premise is obj 0 with no
+    // desc (examine falls back to "It's a <name>.").
     if c.cache.objs.is_empty() {
         Arc::get_mut(&mut c.cache).unwrap().objs.resize(1, ObjType::default());
-        Arc::get_mut(&mut c.cache).unwrap().objs[0].name = "Coins".into();
-        Arc::get_mut(&mut c.cache).unwrap().objs[0].desc = String::new();
     }
+    Arc::get_mut(&mut c.cache).unwrap().objs[0].name = "Coins".into();
+    Arc::get_mut(&mut c.cache).unwrap().objs[0].desc = String::new();
     c.menu_num_entries = 1;
     c.menu_action[0] = MiniMenuAction::OP_OBJ6;
     c.menu_param_a[0] = 0;
