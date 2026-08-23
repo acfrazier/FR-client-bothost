@@ -660,11 +660,9 @@ impl World {
         length: i32,
         yaw: i32,
     ) -> bool {
-        let Some(model) = model else { return true };
-
         let scene_x = tile_x * 128 + width * 64;
         let scene_z = tile_z * 128 + length * 64;
-        self.set_sprite(scene_x, scene_z, y, level, tile_x, tile_z, width, length, Some(model), typecode, info, yaw, false)
+        self.set_sprite(scene_x, scene_z, y, level, tile_x, tile_z, width, length, model, typecode, info, yaw, false)
     }
 
     pub fn add_dynamic(
@@ -1469,8 +1467,6 @@ impl World {
         yaw: i32,
         dynamic: bool,
     ) -> bool {
-        let Some(model) = model else { return false };
-
         for tx in tile_x..tile_x + tile_size_x {
             for tz in tile_z..tile_z + tile_size_z {
                 if tx < 0 || tz < 0 || tx >= self.max_tile_x || tz >= self.max_tile_z {
@@ -1490,7 +1486,7 @@ impl World {
             y,
             x,
             z,
-            Some(model),
+            model,
             yaw,
             tile_x,
             tile_x + tile_size_x - 1,

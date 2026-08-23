@@ -113,6 +113,25 @@ fn set_wall_without_models_keeps_typecode() {
     assert!(w.model2.is_none());
 }
 
+/// draw=false clients place scenery without meshes: the typecode must
+/// survive so `loc_typecode` (crates/api) can read it from a stored sprite.
+#[test]
+fn add_scenery_without_model_keeps_typecode() {
+    let max_level: i32 = 1;
+    let max_tile_x: i32 = 3;
+    let max_tile_z: i32 = 3;
+    let groundh = vec![
+        vec![vec![2000i32; max_tile_z as usize + 1]; max_tile_x as usize + 1];
+        max_level as usize
+    ];
+    let mut world = World::new(groundh, max_tile_z, max_level, max_tile_x);
+    let ok = world.add_scenery(0, 1, 1, 2000, None, 0x4000_0000, 0, 1, 1, 0);
+    assert!(ok);
+    let sprite = world.get_scene(0, 1, 1).expect("scenery sprite placed");
+    assert_eq!(sprite.typecode, 0x4000_0000);
+    assert!(sprite.model.is_none());
+}
+
 #[test]
 fn share_light_empty_world_is_noop() {
     // No base level filled: every tile is None, so the whole scan must be a
