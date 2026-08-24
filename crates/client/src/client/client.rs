@@ -919,6 +919,9 @@ pub struct Client {
     /// first login). `lostCon` reestablishes with `reconnect = true`
     /// (wrapper opcode 18); the flag is how the reconnect path is observed.
     pub last_login_reconnect: Option<bool>,
+    /// When true, the next `login(reconnect)` reuses `stream` (lean baton)
+    /// instead of opening a new TCP. Cleared at the start of that login.
+    pub baton: bool,
     /// `logoutTimer` from Java: frames remaining until a requested logout.
     pub logout_timer: i32,
     /// `rebootTimer` from client-ts (140): seconds until the server reboot,
@@ -1378,6 +1381,7 @@ impl Client {
             scroll_input_padding: 0,
             scroll_cycle: 0,
             last_login_reconnect: None,
+            baton: false,
             logout_timer: 0,
             reboot_timer: 0,
             cyclelogic3: 0,
@@ -1861,9 +1865,25 @@ impl Client {
             self.login_mes2 = "Connecting to server...".into();
         }
 
-        let mut stream = match ClientStream::connect(&self.config.host, self.config.port) {
-            Ok(s) => s,
-            Err(_) => return Err(self.fail_title_login(io_error(), reconnect)),
+        // Baton-pass reverse: a parked lean already holds this account's
+        // TCP (`baton`). Reuse it and run the opcode-18 handshake in place
+        // so the server dumps region/player state without a DC. Every other
+        // login (including `lost_con`) still `connect`s a fresh socket.
+        let reuse = self.baton;
+        self.baton = false;
+        let mut stream = if reuse {
+            match self.stream.take() {
+                Some(s) => s,
+                None => match ClientStream::connect(&self.config.host, self.config.port) {
+                    Ok(s) => s,
+                    Err(_) => return Err(self.fail_title_login(io_error(), reconnect)),
+                },
+            }
+        } else {
+            match ClientStream::connect(&self.config.host, self.config.port) {
+                Ok(s) => s,
+                Err(_) => return Err(self.fail_title_login(io_error(), reconnect)),
+            }
         };
 
         let userhash = JString::to_userhash(username);
