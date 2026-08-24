@@ -3798,6 +3798,14 @@ impl Client {
         };
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
 
+        // Task 4 review: `scene_static` filled the whole `area_map` with
+        // snow, and `prepare_game` plots the `mapback` ring only once — so
+        // re-plot the ring here (idempotent) or the frame stays snow after
+        // the scene completes.
+        if let Some(mapback) = &self.mapback {
+            mapback.plot_sprite(&mut surface, 0, 0);
+        }
+
         if self.minimap_state == 2 {
             if let Some(mapback) = &self.mapback {
                 let mask = &mapback.data;

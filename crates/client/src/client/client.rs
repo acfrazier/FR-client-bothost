@@ -51,6 +51,15 @@ const MAX_NPC_COUNT: usize = 16384;
 const MENU_CAPACITY: usize = 500;
 const CLIENT_VERSION: i32 = 274;
 
+/// Wave-queue bound, 20 s at 22050 Hz (the TS `JagFX.waveBytes` scratch):
+/// any one sound fits, and it bounds the queue when no output device is
+/// draining it (`scene_static`'s TV-static SFX feeds the same queue).
+const WAVE_QUEUE_SAMPLES: usize = 22050 * 20;
+
+/// One 20 ms pass of TV-static noise at 22050 Hz — the per-frame SFX feed
+/// `scene_static` pushes while the scene loads.
+const FRAME_SAMPLES: usize = 22050 / 50;
+
 /// Client code of the red "Click here to logout" control; `clientButton`
 /// arms `logoutTimer` (Java `Client.java` 8746).
 const CC_LOGOUT: i32 = 205;
@@ -8988,7 +8997,9 @@ impl Client {
     /// over). `game_draw` calls it each frame so the snow re-randomizes;
     /// `dispatch_packet`/`check_minimap` call it ahead of `check_scene`,
     /// and the (4, 4) / (550, 4) blits show the static even before a
-    /// `redraw_frame`.
+    /// `redraw_frame`. With SFX on (`wave_enabled`, not low-memory) it
+    /// also pushes white-noise PCM onto the `waves` queue, giving the
+    /// loading screen its hiss.
     /// `pub(super)` for the `game_draw` frame path in `client_draw`.
     pub(super) fn scene_static(&mut self) {
         if !self.draw || self.scene_state == 2 {
@@ -9014,6 +9025,25 @@ impl Client {
         }
         if let Some(am) = &self.area_map {
             am.blit_into(&mut self.draw_area, 550, 4);
+        }
+        // Task 4 (operator): TV-static audio while the scene loads, when
+        // SFX is enabled. One 20 ms frame of white noise per pass
+        // (22050 Hz) so the feed roughly matches the output drain rate;
+        // the shared `WAVE_QUEUE_SAMPLES` bound keeps a slow-draining
+        // headless loop from growing the queue. Null (draw off) and
+        // low-memory clients never feed.
+        if self.wave_enabled && !self.config.lowmem {
+            let mut samples = Vec::with_capacity(FRAME_SAMPLES);
+            for _ in 0..FRAME_SAMPLES {
+                rng = rng.wrapping_mul(1664525).wrapping_add(1013904223);
+                samples.push(((rng >> 16) as u16) as i16);
+            }
+            let mut queue = self.waves.lock().unwrap();
+            let room = WAVE_QUEUE_SAMPLES.saturating_sub(queue.len());
+            if samples.len() > room {
+                samples.truncate(room);
+            }
+            queue.extend(samples);
         }
     }
 
@@ -10631,10 +10661,6 @@ impl Client {
                         samples.push(((b as i16) - 128) << 8);
                     }
                     let mut queue = self.waves.lock().unwrap();
-                    // 20 s at 22050 Hz, the TS `JagFX.waveBytes` scratch:
-                    // any one sound fits, and it bounds the queue when no
-                    // output device is draining it.
-                    const WAVE_QUEUE_SAMPLES: usize = 22050 * 20;
                     let room = WAVE_QUEUE_SAMPLES.saturating_sub(queue.len());
                     if samples.len() > room {
                         samples.truncate(room);
