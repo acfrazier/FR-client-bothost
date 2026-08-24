@@ -173,9 +173,11 @@ fn do_action_obj_examine_adds_chat() {
     let mut c = client();
     if c.cache.objs.is_empty() {
         c.cache.objs.resize(1, ObjType::default());
-        c.cache.objs[0].name = "Coins".into();
-        c.cache.objs[0].desc = String::new();
     }
+    // Robust to an ambient real /tmp config pack: pin obj 0 to the synthetic
+    // no-desc Coins so examine falls back to "It's a <name>.".
+    c.cache.objs[0].name = "Coins".into();
+    c.cache.objs[0].desc = String::new();
     c.menu_num_entries = 1;
     c.menu_action[0] = MiniMenuAction::OP_OBJ6;
     c.menu_param_a[0] = 0;

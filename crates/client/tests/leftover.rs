@@ -756,12 +756,24 @@ fn cold_login_reset_revalidates_design() {
 
 #[test]
 fn cold_login_reset_empty_table_leaves_parts_minus_one() {
-    let mut c = client();
+    // Isolate from an ambient /tmp idk pack: a fresh empty cache dir keeps
+    // the "no idks" premise literal.
+    let dir = std::env::temp_dir().join(format!("274-noidk-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: dir.to_string_lossy().into_owned(),
+        members: true,
+        lowmem: false,
+    });
     c.idk_design_part = [2; 7];
-    c.reset_idk_design(); // default cache: no idks
+    c.reset_idk_design(); // empty cache: no idks
     assert!(c.idk_design_gender);
     assert!(c.idk_design_redraw);
     assert_eq!(c.idk_design_part, [-1; 7]);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Java `REBUILD_NORMAL` binds `areaGame` without cls, then plots
