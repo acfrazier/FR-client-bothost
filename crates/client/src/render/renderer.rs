@@ -13,10 +13,17 @@ use std::collections::HashMap;
 use crate::dash3d::BuildArea;
 use crate::graphics::{Pix3D, Pix32, Pix3DDraw, Pix8, PixFont, PixMap};
 use crate::io::JagFile;
+use crate::render::world::RenderWorld;
 use crate::util::JavaRandom;
 
 /// The `Client` render-only field set (see module docs).
 pub struct Renderer {
+    /// The render half of the scene world (Task 3): the 3D-pass machinery
+    /// (`render_all`/`fill`, visibility backing, occluder selection,
+    /// minimap ground pass). The per-tile data it draws lives in
+    /// `Client.world` (the sim half); the render methods take it as a
+    /// parameter.
+    pub world: RenderWorld,
     /// `drawArea` from client-ts: the 765×503 CPU framebuffer every frame
     /// draws into (`client.ts` `titleScreenDraw`/`gameDraw`); blitted to
     /// the window by `Present`.
@@ -197,6 +204,7 @@ impl Renderer {
     /// first shaded triangle of any 3D pass has a table.
     pub fn new(lowmem: bool) -> Self {
         let mut renderer = Renderer {
+            world: RenderWorld::new(),
             draw_area: PixMap::new(crate::client::client::APPLET_W, crate::client::client::APPLET_H),
             pix3d: Pix3DDraw::default(),
             title: None,

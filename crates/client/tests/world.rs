@@ -4,12 +4,15 @@
 // even with an unpopulated `visBacking`, so the whole scene raster path
 // (fill → renderQuickGround → gouraud) runs without a pack. A mouse click
 // on the projected ground must come back as `ground_x`/`ground_z`.
+use client::client::{Client, ClientConfig};
 use client::config::{Cache, LocType};
+use client::core::World;
 use client::dash3d::LocAngle;
 use client::dash3d::ground::Ground;
-use client::dash3d::{Model, SceneModel, TerrainOverlayShape, World};
+use client::dash3d::{Model, SceneModel, TerrainOverlayShape};
 use client::graphics::{Pix2D, Pix3D, Pix3DDraw, PixMap};
 use client::io::JagFile;
+use client::render::RenderWorld;
 
 /// Shade whose colour-table entry is non-zero (same constant as the model
 /// tests: index y=200/x=100).
@@ -211,7 +214,8 @@ fn wall_pixel_count(winding_ccw_from_south: bool) -> usize {
     Pix3D::init_colour_table(0.6);
     let wall_rgb = Pix3D::colour_table()[WALL_SHADE as usize];
     let mut world = flat_world();
-    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let mut rw = RenderWorld::new();
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     // SOUTH wall (WSHAPE0[3] = 8) on tile (1,2), in front of the vis-test camera.
     world.set_wall(
         0,
@@ -230,8 +234,8 @@ fn wall_pixel_count(winding_ccw_from_south: bool) -> usize {
     {
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
         viewport(&mut pix, &mut surface);
-        world.render_all(
-            &mut pix, &mut surface, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128,
+        rw.render_all(
+            &mut world, &mut pix, &mut surface, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128,
         );
     }
     map.pixels.iter().filter(|&&p| p == wall_rgb).count()
@@ -255,7 +259,8 @@ fn wall_pixel_count_at(winding_ccw_from_south: bool, eye_x: i32, eye_y: i32, eye
     Pix3D::init_colour_table(0.6);
     let wall_rgb = Pix3D::colour_table()[WALL_SHADE as usize];
     let mut world = flat_world();
-    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let mut rw = RenderWorld::new();
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     world.set_wall(
         0,
         1,
@@ -273,8 +278,8 @@ fn wall_pixel_count_at(winding_ccw_from_south: bool, eye_x: i32, eye_y: i32, eye
     {
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
         viewport(&mut pix, &mut surface);
-        world.render_all(
-            &mut pix, &mut surface, &Cache::default(), 0, eye_x, eye_y, eye_z, 3, 0, 128,
+        rw.render_all(
+            &mut world, &mut pix, &mut surface, &Cache::default(), 0, eye_x, eye_y, eye_z, 3, 0, 128,
         );
     }
     map.pixels.iter().filter(|&&p| p == wall_rgb).count()
@@ -300,7 +305,8 @@ fn south_wall_not_swallowed_by_its_own_occluder() {
     Pix3D::init_colour_table(0.6);
     let wall_rgb = Pix3D::colour_table()[WALL_SHADE as usize];
     let mut world = flat_world();
-    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let mut rw = RenderWorld::new();
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     world.set_wall(
         0,
         1,
@@ -322,8 +328,8 @@ fn south_wall_not_swallowed_by_its_own_occluder() {
     {
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
         viewport(&mut pix, &mut surface);
-        world.render_all(
-            &mut pix, &mut surface, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128,
+        rw.render_all(
+            &mut world, &mut pix, &mut surface, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128,
         );
     }
     let n = map.pixels.iter().filter(|&&p| p == wall_rgb).count();
@@ -398,12 +404,13 @@ fn textured_pix() -> Pix3DDraw {
     pix
 }
 
-fn count_non_ground(world: &mut World, eye_x: i32, eye_y: i32, eye_z: i32) -> usize {
-    count_non_ground_at(world, eye_x, eye_y, eye_z, 0, 128)
+fn count_non_ground(world: &mut World, rw: &mut RenderWorld, eye_x: i32, eye_y: i32, eye_z: i32) -> usize {
+    count_non_ground_at(world, rw, eye_x, eye_y, eye_z, 0, 128)
 }
 
 fn count_non_ground_at(
     world: &mut World,
+    rw: &mut RenderWorld,
     eye_x: i32,
     eye_y: i32,
     eye_z: i32,
@@ -415,8 +422,8 @@ fn count_non_ground_at(
     {
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
         viewport(&mut pix, &mut surface);
-        world.render_all(
-            &mut pix, &mut surface, &Cache::default(), 0, eye_x, eye_y, eye_z, 3, yaw, pitch,
+        rw.render_all(
+            &mut *world, &mut pix, &mut surface, &Cache::default(), 0, eye_x, eye_y, eye_z, 3, yaw, pitch,
         );
     }
     let ground = Pix3D::colour_table()[SHADE as usize];
@@ -474,12 +481,13 @@ fn painted_house_wall_covers_from_outside_after_share_light() {
         .expect("painted1wall get_model");
     Pix3D::init_colour_table(0.6);
     let mut world = flat_world();
-    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let mut rw = RenderWorld::new();
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     world.set_wall(
         0, 1, 2, 2000, 8, 0, Some(SceneModel::Model(model)), None, 0, 0,
     );
     world.share_light(64, 768, -50, -10, -50);
-    let n = count_non_ground(&mut world, 192, 1950, 64);
+    let n = count_non_ground(&mut world, &mut rw, 192, 1950, 64);
     assert!(
         n > 50,
         "painted1wall shareLight painted {n} outdoor pixels; Draynor stone would be eaten from outside"
@@ -488,7 +496,7 @@ fn painted_house_wall_covers_from_outside_after_share_light() {
     // Live orbit: pitch 128, distance pitch*3+600, looking north at the wall.
     let pitch = 128i32;
     let (ex, ey, ez) = orbit_eye(192, 1950, 256, pitch, 0, pitch * 3 + 600);
-    let n = count_non_ground_at(&mut world, ex, ey, ez, 0, pitch);
+    let n = count_non_ground_at(&mut world, &mut rw, ex, ey, ez, 0, pitch);
     eprintln!("painted1wall orbit eye=({ex},{ey},{ez}) pixels={n}");
     assert!(
         n > 50,
@@ -558,7 +566,8 @@ fn eight_tile_south_occluder_does_not_eat_outside_walls() {
         wall_z * 128,
     );
 
-    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let mut rw = RenderWorld::new();
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     Pix3D::init_colour_table(0.6);
     let mut pix = textured_pix();
     let mut map = PixMap::new(512, 334);
@@ -566,7 +575,8 @@ fn eight_tile_south_occluder_does_not_eat_outside_walls() {
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
         viewport(&mut pix, &mut surface);
         // Camera south of the wall run, 50 units above ground, looking north.
-        world.render_all(
+        rw.render_all(
+            &mut world,
             &mut pix,
             &mut surface,
             &Cache::default(),
@@ -645,14 +655,15 @@ fn house_world_with_interior(scenery: bool) -> World {
 fn count_wall_shade(world: &mut World, eye_x: i32, eye_y: i32, eye_z: i32) -> usize {
     Pix3D::init_colour_table(0.6);
     let wall_rgb = Pix3D::colour_table()[WALL_SHADE as usize];
-    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let mut rw = RenderWorld::new();
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     let mut pix = Pix3DDraw::default();
     let mut map = PixMap::new(512, 334);
     {
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
         viewport(&mut pix, &mut surface);
-        world.render_all(
-            &mut pix, &mut surface, &Cache::default(), 0, eye_x, eye_y, eye_z, 3, 0, 128,
+        rw.render_all(
+            &mut *world, &mut pix, &mut surface, &Cache::default(), 0, eye_x, eye_y, eye_z, 3, 0, 128,
         );
     }
     map.pixels.iter().filter(|&&p| p == wall_rgb).count()
@@ -776,6 +787,7 @@ fn update_mouse_picking_sets_click_and_clears_ground() {
 fn render_all_writes_pixels_and_picks_ground_tile() {
     Pix3D::init_colour_table(0.6);
     let mut world = flat_world();
+    let mut rw = RenderWorld::new();
     let mut pix = Pix3DDraw::default();
     let mut map = PixMap::new(512, 334);
     {
@@ -785,7 +797,7 @@ fn render_all_writes_pixels_and_picks_ground_tile() {
         // at the height-2000 ground. Tile (1,2) projects to screen
         // (240..272, 118..151); (256, 134) is inside its first triangle.
         world.update_mouse_picking(256, 134);
-        world.render_all(&mut pix, &mut surface, &Cache::default(), 0, 192, 0, 192, 0, 0, 512);
+        rw.render_all(&mut world, &mut pix, &mut surface, &Cache::default(), 0, 192, 0, 192, 0, 0, 512);
     }
 
     assert!(
@@ -805,7 +817,7 @@ fn render_all_writes_pixels_and_picks_ground_tile() {
     {
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
         viewport(&mut pix, &mut surface);
-        world.render_all(&mut pix, &mut surface, &Cache::default(), 0, 192, 0, 192, 0, 0, 512);
+        rw.render_all(&mut world, &mut pix, &mut surface, &Cache::default(), 0, 192, 0, 192, 0, 0, 512);
     }
     assert_eq!(world.ground_x, -1);
     assert_eq!(world.ground_z, -1);
@@ -831,13 +843,14 @@ fn render_all_renders_scenery_sprites() {
     );
     assert!(ok);
 
+    let mut rw = RenderWorld::new();
     let mut pix = Pix3DDraw::default();
     let mut map = PixMap::new(512, 334);
     {
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
         viewport(&mut pix, &mut surface);
         world.update_mouse_picking(256, 134);
-        world.render_all(&mut pix, &mut surface, &Cache::default(), 0, 192, 0, 192, 0, 0, 512);
+        rw.render_all(&mut world, &mut pix, &mut surface, &Cache::default(), 0, 192, 0, 192, 0, 0, 512);
     }
 
     // The sprite's model is rendered this cycle (cycle stamped) and the
@@ -869,14 +882,15 @@ fn game_distance_table() -> [i32; 9] {
 fn reset_vis_calc_marks_near_tiles_visible() {
     Pix3D::init_colour_table(0.6);
     let mut world = flat_world();
-    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let mut rw = RenderWorld::new();
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
 
     let mut pix = Pix3DDraw::default();
     let mut map = PixMap::new(512, 334);
     {
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
         viewport(&mut pix, &mut surface);
-        world.render_all(&mut pix, &mut surface, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
+        rw.render_all(&mut world, &mut pix, &mut surface, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
     }
     assert!(
         map.pixels.iter().any(|&p| p != 0),
@@ -946,23 +960,25 @@ fn render_all_non_flat_diagonal_quick_ground_uses_own_corners() {
     Pix3D::init_colour_table(0.6);
 
     let mut flat_world = diagonal_world(false);
+    let mut flat_rw = RenderWorld::new();
     let mut flat_pix = checkerboard_pix();
     let mut flat_map = PixMap::new(512, 334);
     {
         let mut surface = Pix2D::with_pixels(&mut flat_map.pixels, flat_map.width, flat_map.height);
         flat_pix.set_render_clipping(&surface);
         flat_pix.trans = 0;
-        flat_world.render_all(&mut flat_pix, &mut surface, &Cache::default(), 0, 192, 0, 192, 0, 0, 512);
+        flat_rw.render_all(&mut flat_world, &mut flat_pix, &mut surface, &Cache::default(), 0, 192, 0, 192, 0, 0, 512);
     }
 
     let mut nonflat_world = diagonal_world(true);
+    let mut nonflat_rw = RenderWorld::new();
     let mut nonflat_pix = checkerboard_pix();
     let mut nonflat_map = PixMap::new(512, 334);
     {
         let mut surface = Pix2D::with_pixels(&mut nonflat_map.pixels, nonflat_map.width, nonflat_map.height);
         nonflat_pix.set_render_clipping(&surface);
         nonflat_pix.trans = 0;
-        nonflat_world.render_all(&mut nonflat_pix, &mut surface, &Cache::default(), 0, 192, 0, 192, 0, 0, 512);
+        nonflat_rw.render_all(&mut nonflat_world, &mut nonflat_pix, &mut surface, &Cache::default(), 0, 192, 0, 192, 0, 0, 512);
     }
 
     // Both renders must actually draw the textured ground ...
@@ -1001,7 +1017,8 @@ fn render_2d_ground_plain_quick_fills_4x4() {
     );
 
     let mut dst = vec![0i32; 512 * 512];
-    world.render_2d_ground(0, 1, 1, &mut dst, 0, 512);
+    let rw = RenderWorld::new();
+    rw.render_2d_ground(&world, 0, 1, 1, &mut dst, 0, 512);
     assert_ne!(dst[0], 0);
     assert_eq!(dst[0], 0x00aabb);
     // a full 4×4 block, one pixel outside stays untouched
@@ -1101,7 +1118,8 @@ fn render_box_in_world(sharelight_cube: bool, yaw: i32, pitch: i32) -> (usize, u
         0,
         0,
     );
-    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let mut rw = RenderWorld::new();
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     let mut pix = Pix3DDraw::default();
     pix.low_mem = false;
     let mut map = PixMap::new(512, 334);
@@ -1114,8 +1132,8 @@ fn render_box_in_world(sharelight_cube: bool, yaw: i32, pitch: i32) -> (usize, u
         } else {
             (7 * 128, 1950, 11 * 128)
         };
-        world.render_all(
-            &mut pix, &mut surface, &Cache::default(), 0, eye_x, eye_y, eye_z, 3, yaw, pitch,
+        rw.render_all(
+            &mut world, &mut pix, &mut surface, &Cache::default(), 0, eye_x, eye_y, eye_z, 3, yaw, pitch,
         );
     }
     count_shades(&map.pixels, south_rgb, north_rgb)
@@ -1254,7 +1272,8 @@ fn varrock_fountain_facing_side_covers() {
         );
     }
 
-    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let mut rw = RenderWorld::new();
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     let ground = Pix3D::colour_table()[SHADE as usize];
     let mut count_at = |yaw: i32, eye_x: i32, eye_y: i32, eye_z: i32| -> usize {
         let mut pix = textured_pix();
@@ -1262,8 +1281,8 @@ fn varrock_fountain_facing_side_covers() {
         {
             let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
             viewport(&mut pix, &mut surface);
-            world.render_all(
-                &mut pix, &mut surface, &Cache::default(), 0, eye_x, eye_y, eye_z, 3, yaw, 128,
+            rw.render_all(
+                &mut world, &mut pix, &mut surface, &Cache::default(), 0, eye_x, eye_y, eye_z, 3, yaw, 128,
             );
         }
         map.pixels
@@ -1358,7 +1377,8 @@ fn fountain_facing_side_survives_dense_neighbours() {
         }
     }
     world.share_light(64, 768, -50, -10, -50);
-    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let mut rw = RenderWorld::new();
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
 
     let pitch = 128i32;
     let (ex, ey, ez) = orbit_eye(
@@ -1374,8 +1394,8 @@ fn fountain_facing_side_survives_dense_neighbours() {
     {
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
         viewport(&mut pix, &mut surface);
-        world.render_all(
-            &mut pix, &mut surface, &Cache::default(), 0, ex, ey, ez, 3, 0, pitch,
+        rw.render_all(
+            &mut world, &mut pix, &mut surface, &Cache::default(), 0, ex, ey, ez, 3, 0, pitch,
         );
     }
     let ground = Pix3D::colour_table()[SHADE as usize];
@@ -1442,7 +1462,8 @@ fn camera_facing_box_survives_full_vis_window() {
             );
         }
     }
-    world.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let mut rw = RenderWorld::new();
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     let (ex, ey, ez) = orbit_eye(51 * 128, groundh - 50, 52 * 128, pitch, 0, pitch * 3 + 600);
     let mut pix = Pix3DDraw::default();
     pix.low_mem = false;
@@ -1450,8 +1471,8 @@ fn camera_facing_box_survives_full_vis_window() {
     {
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
         viewport(&mut pix, &mut surface);
-        world.render_all(
-            &mut pix, &mut surface, &Cache::default(), 0, ex, ey, ez, 3, 0, pitch,
+        rw.render_all(
+            &mut world, &mut pix, &mut surface, &Cache::default(), 0, ex, ey, ez, 3, 0, pitch,
         );
     }
     let south = map.pixels.iter().filter(|&&p| p == south_rgb).count();
@@ -1460,4 +1481,59 @@ fn camera_facing_box_survives_full_vis_window() {
         south > 50,
         "2×2 south face painted {south} pixels in a 104×104 vis window; live facing fountain/cabinet/wall faces vanish"
     );
+}
+
+// --- Task 3: sim/render world split ---
+
+/// The sim half of the world resolves typecodes with no `Renderer` (and no
+/// render world) constructed — the headless bot path. A scene built through
+/// the `Client` sim API must answer `wall_type`/`type_code2`/`scene_type`
+/// from the per-tile typecodes alone.
+#[test]
+fn core_world_has_typecodes_without_renderer() {
+    use client::core::world::World;
+    let max_level: i32 = 1;
+    let max_tile: i32 = 3;
+    let groundh = vec![vec![vec![2000i32; max_tile as usize + 1]; max_tile as usize + 1]; max_level as usize];
+    let mut world = World::new(groundh, max_tile, max_level, max_tile);
+    world.fill_base_level(0);
+
+    let wall_typecode = 0x4000_0000 + 100;
+    world.set_wall(
+        0, 1, 1, 2000, 8, 0,
+        Some(SceneModel::Model(Model::default())), None,
+        wall_typecode, 0x1f,
+    );
+    assert_eq!(world.wall_type(0, 1, 1), wall_typecode);
+    assert_eq!(world.type_code2(0, 1, 1, wall_typecode), 0x1f);
+    assert_eq!(world.type_code2(0, 1, 1, wall_typecode + 1), -1);
+
+    let scene_typecode = 0x4000_0000 + 200;
+    assert!(world.add_scenery(
+        0, 1, 1, 2000,
+        Some(SceneModel::Model(Model::default())),
+        scene_typecode, 0x7f, 1, 1, 0,
+    ));
+    assert_eq!(world.scene_type(0, 1, 1), scene_typecode);
+    assert_eq!(world.type_code2(0, 1, 1, scene_typecode), 0x7f);
+
+    // The `Client.world` field is the same sim world: a scene placed
+    // through the Client resolves typecodes without constructing a
+    // renderer or a render world.
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    let client_wall_tc = 0x4000_0000 + 300;
+    c.world.set_wall(
+        0, 1, 1, 0, 8, 0,
+        Some(SceneModel::Model(Model::default())), None,
+        client_wall_tc, 0,
+    );
+    assert_eq!(c.world.wall_type(0, 1, 1), client_wall_tc);
+    assert!(c.world.type_code2(0, 1, 1, client_wall_tc) >= 0);
 }

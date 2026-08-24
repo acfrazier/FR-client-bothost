@@ -46,7 +46,6 @@ pub mod sprite;
 pub mod square;
 pub mod terrain_overlay_shape;
 pub mod wall;
-pub mod world;
 
 pub use anim_base::{AnimBase, AnimTransform};
 pub use anim_frame::AnimFrame;
@@ -78,7 +77,6 @@ pub use sprite::Sprite;
 pub use square::Square;
 pub use terrain_overlay_shape::TerrainOverlayShape;
 pub use wall::Wall;
-pub use world::World;
 
 /// Java `int` cross product `a * b - c * d`. Screen-space facing tests
 /// overflow i32 on near, large faces; matching the wrap is what paints

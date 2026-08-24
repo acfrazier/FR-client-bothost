@@ -29,9 +29,10 @@ use crate::client::skill::Skill;
 use crate::client::title_flames::TitleFlames;
 use crate::config::if_type::{ButtonType, ComponentType, IfType};
 use crate::config::{Cache, ObjType};
+use crate::core::world::LevelHeightmaps;
+use crate::core::World;
 use crate::dash3d::client_entity::ClientEntity;
-use crate::dash3d::world::LevelHeightmaps;
-use crate::dash3d::{BuildArea, CollisionFlag, LocAngle, LocShape, MapFlag, SceneModel, World};
+use crate::dash3d::{BuildArea, CollisionFlag, LocAngle, LocShape, MapFlag, SceneModel};
 use crate::graphics::{Colour, Pix2D, Pix3D, Pix32, Pix8, PixFont, PixMap};
 use crate::io::{ClientProt, JagFile};
 use crate::render::Renderer;
@@ -883,7 +884,7 @@ impl Renderer {
                 let sin = Pix3D::sin_table().get(angle as usize).copied().unwrap_or(0);
                 *slot = (offset * sin) >> 16;
             }
-            client.world.reset_vis_calc(&distance, 500, 800, 512, 334);
+            self.world.reset_vis_calc(&distance, 500, 800, 512, 334);
         }
 
         // TS 4238-4242: the model picking state for this frame.
@@ -897,17 +898,17 @@ impl Renderer {
         // the world pass (TS 4238-4245).
         let cache = &client.cache;
         let loop_cycle = client.loop_cycle;
-        let (pix3d, world) = (&mut self.pix3d, &mut client.world);
+        let (pix3d, world) = (&mut self.pix3d, &mut self.world);
         if let Some(game) = self.area_game.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
             surface.cls();
             pix3d.set_clipping(game.width, game.height);
             world.render_all(
-                pix3d, &mut surface, cache, loop_cycle, cam_x, cam_y, cam_z, level, cam_yaw,
-                cam_pitch,
+                &mut client.world, pix3d, &mut surface, cache, loop_cycle, cam_x, cam_y, cam_z,
+                level, cam_yaw, cam_pitch,
             );
         }
-        world.remove_sprites();
+        world.remove_sprites(&mut client.world);
 
         self.entity_overlays(client);
         self.coord_arrow(client);
@@ -4293,7 +4294,7 @@ impl Renderer {
                     & (MapFlag::VIS_BELOW | MapFlag::FORCE_HIGH_DETAIL)
                     == 0
                 {
-                    client.world.render_2d_ground(level, x, z, &mut mm.data, offset, 512);
+                    self.world.render_2d_ground(&client.world, level, x, z, &mut mm.data, offset, 512);
                 }
 
                 if level < 3
@@ -4301,7 +4302,7 @@ impl Renderer {
                         & MapFlag::VIS_BELOW
                         != 0
                 {
-                    client.world.render_2d_ground(level + 1, x, z, &mut mm.data, offset, 512);
+                    self.world.render_2d_ground(&client.world, level + 1, x, z, &mut mm.data, offset, 512);
                 }
 
                 offset += 4;

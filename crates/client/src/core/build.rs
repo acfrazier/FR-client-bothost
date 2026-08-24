@@ -11,10 +11,11 @@
 //! constructor); the per-build floor arrays live on this struct as in TS,
 //! and so do the `shadow`/`mapo` scratch grids (`finishBuild` reads them).
 use crate::config::Cache;
-use crate::dash3d::world::LevelHeightmaps;
+use crate::core::world::LevelHeightmaps;
+use crate::core::World;
 use crate::dash3d::{
     BuildArea, ClientLocAnim, CollisionMap, LocAngle, LocShape, MapFlag, SceneModel,
-    TerrainOverlayShape, World,
+    TerrainOverlayShape,
 };
 use crate::graphics::{Colour, Pix3D};
 use crate::io::{OnDemand, Packet};

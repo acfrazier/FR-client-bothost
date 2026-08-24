@@ -27,12 +27,13 @@ use crate::client::skill::Skill;
 use crate::config::if_type::{ButtonType, ComponentType, IfType};
 use crate::config::seq_type::{RESTART_RESET, RESTART_RESETLOOP};
 use crate::config::{Cache, ObjType};
+use crate::core::world::LevelHeightmaps;
+use crate::core::World;
 use crate::dash3d::client_player::{recol1d, recol2d};
-use crate::dash3d::world::LevelHeightmaps;
 use crate::dash3d::{
     AnimFrame, BuildArea, ClientEntity, ClientLocAnim, ClientObj, ClientProj, CollisionFlag,
     CollisionMap, DirectionFlag, LocAngle, LocChange, LocLayer, LocShape, MapFlag, MapSpotAnim,
-    Model, SceneModel, World, LOC_SHAPE_TO_LAYER,
+    Model, SceneModel, LOC_SHAPE_TO_LAYER,
 };
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
 use crate::datastruct::LinkList;

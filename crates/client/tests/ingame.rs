@@ -1,7 +1,8 @@
 use client::client::{Client, ClientConfig};
+use client::core::World;
 use client::render::Renderer;
 use client::client::{APPLET_H, APPLET_W};
-use client::dash3d::{ClientEntity, ClientPlayer, MapFlag, TerrainOverlayShape, World};
+use client::dash3d::{ClientEntity, ClientPlayer, MapFlag, TerrainOverlayShape};
 use client::graphics::{Colour, PixMap};
 
 fn cache_dir() -> Option<String> {
@@ -47,7 +48,7 @@ let mut r = Renderer::new(false);
     // empty, so the viewport stays black, but the pass must not panic.
     c.scene_state = 2;
     r.game_draw(&mut c);
-    assert_eq!(c.world.render_count(), 1, "gameDrawMain must call render_all");
+    assert_eq!(r.world.render_count(), 1, "gameDrawMain must call render_all");
     // with the media jag present the chrome panels plot non-zero pixels
     assert!(r.draw_area.pixels.iter().any(|&p| p != 0));
     // the icon-strip backgrounds (backhmid1 at (516, 160), backbase2 at
@@ -82,7 +83,7 @@ let mut r = Renderer::new(false);
     assert_eq!(g.height, 334);
     // after a real rebuild this is non-zero; without scene, at least not a
     // panic, and the 3D pass ran rather than the old fill-0 stub.
-    assert_eq!(c.world.render_count(), 1, "gameDrawMain must call render_all");
+    assert_eq!(r.world.render_count(), 1, "gameDrawMain must call render_all");
     assert_eq!(r.scene_cycle, 1);
     assert!(r.vis_calc_done, "resetVisCalc must run before the first pass");
 }

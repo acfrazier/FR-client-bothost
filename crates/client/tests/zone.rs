@@ -22,8 +22,9 @@ let _r = Renderer::new(false);
     assert_eq!(list.head().unwrap().count, 5);
 }
 
-use client::dash3d::world::LevelHeightmaps;
-use client::dash3d::{AnimFrame, BuildArea, ClientEntity, ClientPlayer, ClientProj, CollisionMap, LocShape, MapSpotAnim, Model, SceneModel, World};
+use client::core::world::LevelHeightmaps;
+use client::core::World;
+use client::dash3d::{AnimFrame, BuildArea, ClientEntity, ClientPlayer, ClientProj, CollisionMap, LocShape, MapSpotAnim, Model, SceneModel};
 
 #[test]
 fn rotate_x_axis_90_swaps_y_and_z() {
@@ -777,7 +778,7 @@ let _r = Renderer::new(false);
     // and addDynamic placed it; frame-end removeSprites zeroed the count.
     let proj = c.projectiles.head().unwrap();
     assert!(proj.mobile, "addProjectiles must move the projectile");
-    assert_eq!(c.world.render_count(), 1, "gameDrawMain must run render_all");
+    assert_eq!(r.world.render_count(), 1, "gameDrawMain must run render_all");
 }
 
 /// src tile (101,101) is in `0..104` but the dest `x2 = 101 + 10 = 111`
@@ -901,7 +902,7 @@ let _r = Renderer::new(false);
     r.game_draw(&mut c);
     let spot = c.spotanims.head().expect("spot stays linked");
     assert_eq!(spot.anim_cycle, 1, "add_map_anim must update the spot");
-    assert!(c.world.render_count() > 0, "gameDrawMain must run render_all");
+    assert!(r.world.render_count() > 0, "gameDrawMain must run render_all");
 }
 
 // --- P_LOCMERGE ---
