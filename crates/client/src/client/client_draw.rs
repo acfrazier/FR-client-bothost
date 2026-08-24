@@ -2219,13 +2219,6 @@ impl Client {
         self.area_backbase2 = Some(PixMap::new(269, 37));
         self.area_backhmid1 = Some(PixMap::new(249, 45));
 
-        // TS maininit (868) allocates the minimap buffer unconditionally;
-        // `Client::new` leaves it `None` for Null clients, so the first
-        // `prepare_game` (login / `set_draw(true)`) owns the 1 MiB buffer.
-        if self.minimap.is_none() {
-            self.minimap = Some(Pix32::new(512, 512));
-        }
-
         let path = format!("{}/media", self.config.cache_dir);
         if let Ok(bytes) = std::fs::read(&path) {
             let jag = JagFile::new(bytes);
@@ -2298,8 +2291,8 @@ impl Client {
 
             // Minimap sprites (TS maininit 1006-1063): the `mapback` ring
             // (the scanline mask), the composed-map/compass/edge sprites and
-            // the map dots/markers. `minimap` itself was allocated above as
-            // TS maininit 868.
+            // the map dots/markers. `minimap` itself was allocated in
+            // `Client::new` as TS maininit 868.
             self.mapback = Pix8::depack(&jag, "mapback", 0).ok();
             self.compass = Pix32::depack(&jag, "compass", 0).ok();
             self.mapedge = Pix32::depack(&jag, "mapedge", 0).ok();

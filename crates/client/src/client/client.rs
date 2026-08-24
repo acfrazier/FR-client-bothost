@@ -648,9 +648,7 @@ pub struct Client {
     /// the 765×503 CPU framebuffer every frame draws into (`drawArea`), the
     /// `title` jag with the fonts and sprites, the 9 title `PixMap` regions
     /// (0/1 are the flame frames — empty here, `TitleFlames` is out of
-    /// scope), and the login UI fields. A Null client (`draw=false`) owns a
-    /// 1×1 placeholder instead; `set_draw(true)` swaps in the full applet
-    /// framebuffer.
+    /// scope), and the login UI fields.
     pub draw_area: PixMap,
     /// Per-client Pix3D raster state (TS `Pix3D` mutable statics: the
     /// `scanline`, `originX/Y`, `trans`, `cycle`, and the texture pool).
@@ -804,12 +802,10 @@ pub struct Client {
     /// Minimap state (`Client.ts` `minimapDraw` 11279): the composed map
     /// buffer, the compass/mapedge/mapdot/mapmarker sprites, `mapback` (the
     /// ring mask plotted into `area_map`), and the per-row scanline masks
-    /// built from `mapback.data` (TS 1180-1216). `minimap` is `None` for a
-    /// Null client and allocated as TS maininit (868) does by the first
-    /// `prepare_game` (login / `set_draw(true)`), then composed by
-    /// `minimap_build_buffer` (5280). `minimap_state`/`minimap_level`/
-    /// `macro_minimap_*` default as TS (506, 243-247); `minimap_loop`
-    /// (2742) is Task 7.
+    /// built from `mapback.data` (TS 1180-1216). `minimap` is allocated as
+    /// TS maininit (868) does and composed by `minimap_build_buffer`
+    /// (5280). `minimap_state`/`minimap_level`/`macro_minimap_*` default as
+    /// TS (506, 243-247); `minimap_loop` (2742) is Task 7.
     pub minimap: Option<Pix32>,
     pub compass: Option<Pix32>,
     pub mapedge: Option<Pix32>,
@@ -1213,11 +1209,7 @@ impl Client {
             http_port: 80,
             already_started: false,
             fetch_retry_wait: Duration::from_secs(5),
-            // Task 2: Null clients (`draw=false`) do not own the 765×503
-            // applet framebuffer — a 1×1 placeholder keeps tick-path
-            // writes (`logout` cls) safe; `set_draw(true)` swaps the full
-            // size in.
-            draw_area: PixMap::new(1, 1),
+            draw_area: PixMap::new(APPLET_W, APPLET_H),
             pix3d: Pix3DDraw::default(),
             title: None,
             p11: None,
@@ -1314,10 +1306,7 @@ impl Client {
             redraw_chat: false,
             redraw_chat_mode: false,
             graphic_sprites: HashMap::new(),
-            // Task 2: `prepare_game` (login / `set_draw(true)`) allocates
-            // the 512×512 minimap buffer as TS maininit 868; Null stays
-            // `None` so it owns no 1 MiB buffer.
-            minimap: None,
+            minimap: Some(Pix32::new(512, 512)),
             compass: None,
             mapedge: None,
             mapmarker1: None,
@@ -2025,11 +2014,7 @@ impl Client {
             // Java `Client.java` 3700: `prepareGame()` rebuilds the game
             // frame the title draw consumed (Task 4b nulls the game areas,
             // so the `area_chat` gate does not fire after a title frame).
-            // Task 2: a Null client never allocates the HUD maps; login
-            // only runs it when drawing is on.
-            if self.draw {
-                self.prepare_game();
-            }
+            self.prepare_game();
             self.stream = Some(stream);
             return Ok(());
         }
@@ -7377,15 +7362,11 @@ impl Client {
                 let shape = info >> 2;
                 let rotate = info & 0x3;
 
-                // With draw off the payload stays consumed (read above) but
-                // no `LocAnim` mesh is installed: the wall/decor/scene keeps
-                // its existing model and typecode. Otherwise the TS yields
-                // `undefined` for shape >= table length; skip the apply
-                // instead of panicking on the index. The +1 height reads
-                // need x+1/z+1 inside groundh (sized SIZE+1), so the same
-                // 0..SIZE bounds guard covers them.
-                if self.draw
-                    && shape < LOC_SHAPE_TO_LAYER.len() as i32
+                // TS yields `undefined` for shape >= table length; skip the
+                // apply instead of panicking on the index. The +1 height
+                // reads need x+1/z+1 inside groundh (sized SIZE+1), so the
+                // same 0..SIZE bounds guard covers them.
+                if shape < LOC_SHAPE_TO_LAYER.len() as i32
                     && x >= 0
                     && z >= 0
                     && x < BuildArea::SIZE
@@ -9117,9 +9098,8 @@ impl Client {
     /// `checkScene` from client-ts (5101): waits on the requested map
     /// squares, then builds the scene. Returns -1/-2 while ground/location
     /// data is still loading, -3 when a loc's models are not all
-    /// available (skipped with draw off — the null build has no models),
-    /// -4 while player info is pending; on success sets `scene_state = 2`,
-    /// runs `map_build` and emits MAP_BUILD_COMPLETE.
+    /// available, -4 while player info is pending; on success sets
+    /// `scene_state = 2`, runs `map_build` and emits MAP_BUILD_COMPLETE.
     pub fn check_scene(&mut self) -> i32 {
         if self.map_build_index.is_empty()
             || self.map_build_ground_data.is_empty()
@@ -9140,18 +9120,14 @@ impl Client {
 
         // Only `lowMem` is consulted while waiting, so use the associated
         // `checkLocations` variant instead of a full `ClientBuild` (four
-        // 4×104×104 grids plus the shadow/mapo scratch) every frame. With
-        // draw off the build is null (`skip_loc_models`), so there are no
-        // models to wait on — the scene completes on the map data alone.
+        // 4×104×104 grids plus the shadow/mapo scratch) every frame.
         let mut ready = true;
-        if self.draw {
-            for i in 0..self.map_build_ground_data.len() {
-                if let Some(data) = &self.map_build_location_data[i] {
-                    let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
-                    let z = (self.map_build_index[i] & 0xff) * 64 - self.map_build_base_z;
-                    if !ClientBuild::check_locations_low_mem(self.config.lowmem, &self.cache, data, x, z) {
-                        ready = false;
-                    }
+        for i in 0..self.map_build_ground_data.len() {
+            if let Some(data) = &self.map_build_location_data[i] {
+                let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
+                let z = (self.map_build_index[i] & 0xff) * 64 - self.map_build_base_z;
+                if !ClientBuild::check_locations_low_mem(self.config.lowmem, &self.cache, data, x, z) {
+                    ready = false;
                 }
             }
         }
@@ -9187,7 +9163,6 @@ impl Client {
 
         let mut build = ClientBuild::new();
         build.low_mem = self.config.lowmem;
-        build.skip_loc_models = !self.draw;
         build.minusedlevel = self.minusedlevel;
 
         // underground pass check (TS 5163-5171): the Lumbridge caves square
@@ -9201,15 +9176,10 @@ impl Client {
             }
         }
 
-        // The null build (draw off, `skip_loc_models`) has no ground or
-        // meshes to fill: loc setters create `Box<Square>` on demand, so
-        // skip the 104×104 pre-fill entirely. `draw=true` still fills.
-        if !build.skip_loc_models {
-            if build.low_mem {
-                self.world.fill_base_level(self.minusedlevel);
-            } else {
-                self.world.fill_base_level(0);
-            }
+        if build.low_mem {
+            self.world.fill_base_level(self.minusedlevel);
+        } else {
+            self.world.fill_base_level(0);
         }
 
         if !self.map_build_ground_data.is_empty() {
@@ -9303,9 +9273,7 @@ impl Client {
             }
         }
 
-        if self.draw {
-            self.pix3d.init_pool(20);
-        }
+        self.pix3d.init_pool(20);
         if let Some(od) = self.on_demand.as_mut() {
             od.clear_prefetches();
         }
@@ -10406,24 +10374,9 @@ impl Client {
     }
 
     /// Set the `draw` CPU-save switch (`mainredraw` skips the frame render
-    /// when false). A rising edge on a built scene rebuilds the map: the
-    /// null build (`skip_loc_models`) done while draw was off is replaced
-    /// with real loc meshes. Empty `map_build_index` (no scene yet) skips.
-    /// A rising edge also allocates the HUD a Null client never owned: the
-    /// 765×503 `draw_area` (1×1 placeholder) and the `prepare_game` maps
-    /// (including the 512×512 minimap).
+    /// when false).
     pub fn set_draw(&mut self, draw: bool) {
-        let rebuild = draw && !self.draw && self.scene_state == 2 && !self.map_build_index.is_empty();
         self.draw = draw;
-        if draw {
-            if self.draw_area.width * self.draw_area.height <= 1 {
-                self.draw_area = PixMap::new(APPLET_W, APPLET_H);
-            }
-            self.prepare_game();
-        }
-        if rebuild {
-            self.map_build();
-        }
     }
 
     /// Drive the 20 ms GameShell machine on the calling thread (spec §3):

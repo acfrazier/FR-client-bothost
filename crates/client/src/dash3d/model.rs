@@ -1744,7 +1744,6 @@ impl Model {
         eye_y: i32,
         eye_z: i32,
     ) {
-        pix.model_scratch.ensure();
         let sin_table = Pix3D::sin_table();
         let cos_table = Pix3D::cos_table();
         let sin_pitch = sin_table.get(pitch as usize).copied().unwrap_or(0);
@@ -1851,7 +1850,6 @@ impl Model {
         relative_z: i32,
         typecode: i32,
     ) {
-        pix.model_scratch.ensure();
         let z_prime =
             (relative_z.wrapping_mul(cos_eye_yaw).wrapping_sub(relative_x.wrapping_mul(sin_eye_yaw))) >> 16;
         let mid_z = relative_y

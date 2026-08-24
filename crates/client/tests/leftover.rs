@@ -758,24 +758,12 @@ fn cold_login_reset_revalidates_design() {
 
 #[test]
 fn cold_login_reset_empty_table_leaves_parts_minus_one() {
-    // Isolate from an ambient `/tmp/config`: `client()` would load a real
-    // idk table, so use a fresh empty cache dir for the "no idks" premise.
-    let dir = std::env::temp_dir().join(format!("274-noidk-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut c = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: dir.to_string_lossy().into_owned(),
-        members: true,
-        lowmem: false,
-    });
+    let mut c = client();
     c.idk_design_part = [2; 7];
-    c.reset_idk_design(); // empty cache: no idks
+    c.reset_idk_design(); // default cache: no idks
     assert!(c.idk_design_gender);
     assert!(c.idk_design_redraw);
     assert_eq!(c.idk_design_part, [-1; 7]);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Task 4 (274bot channel head): while the scene loads, the viewport shows

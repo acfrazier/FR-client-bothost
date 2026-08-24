@@ -1,20 +1,17 @@
 // The immutable config type tables live on an `Arc<Cache>` shared by every
 // `Client`, while the mutable interface components (`IfType`, hide/scroll/
-// anim/inv slots) stay per-client in `Client.ifaces`. An isolated empty
-// cache dir has no packs, so `Client::new` falls back to `Cache::default()`
-// (an ambient `/tmp` pack would load real ifaces).
+// anim/inv slots) stay per-client in `Client.ifaces`. The /tmp cache has no
+// packs, so `Client::new` falls back to `Cache::default()`.
 use std::sync::Arc;
 
 use client::client::{Client, ClientConfig};
 use client::config::{Cache, IfType};
 
 fn cfg() -> ClientConfig {
-    let dir = std::env::temp_dir().join(format!("274-cacheshare-{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&dir);
     ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: dir.to_string_lossy().into_owned(),
+        cache_dir: "/tmp".into(),
         members: true,
         lowmem: false,
     }

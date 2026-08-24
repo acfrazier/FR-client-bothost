@@ -28,9 +28,6 @@ fn title_draw_writes_pixels() {
         return;
     };
     let mut c = client(cache);
-    // Task 2: a Null client owns a 1×1 placeholder; `set_draw(true)`
-    // allocates the 765×503 applet framebuffer.
-    c.set_draw(true);
     assert_eq!(c.draw_area.width, 765);
     assert_eq!(c.draw_area.height, 503);
     c.title_screen_draw();
@@ -70,7 +67,6 @@ fn title_background_fills_left_strip() {
         return;
     };
     let mut c = client(cache);
-    c.set_draw(true); // full-size draw_area for the strip check
     c.title_screen_draw();
     let any = (0..265).any(|y| {
         (0..128).any(|x| c.draw_area.pixels[(y * c.draw_area.width + x) as usize] != 0)

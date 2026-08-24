@@ -36,26 +36,14 @@ impl Default for JagFX {
             synth: (0..SYNTH_CAPACITY).map(|_| None).collect(),
             delays: vec![0; SYNTH_CAPACITY],
             // `JagFX.waveBuffer` from TS wraps the shared `waveBytes`; the
-            // packet owns that storage here. Scratch is lazy: `Default` does
-            // not allocate the ~1.3 MiB wave/tone buffers until `generate`.
-            wave_buffer: Packet::new(Vec::new()),
-            tone_buf: Vec::new(),
+            // packet owns that storage here.
+            wave_buffer: Packet::new(vec![0u8; WAVE_BYTES]),
+            tone_buf: vec![0; TONE_BUF],
         }
     }
 }
 
 impl JagFX {
-    /// Grow the shared generation scratch to the TS static sizes on first
-    /// use (Task 4: `Default` no longer owns them until `generate`).
-    fn ensure_scratch(&mut self) {
-        if self.wave_buffer.length() < WAVE_BYTES {
-            self.wave_buffer = Packet::new(vec![0u8; WAVE_BYTES]);
-        }
-        if self.tone_buf.len() < TONE_BUF {
-            self.tone_buf.resize(TONE_BUF, 0);
-        }
-    }
-
     /// `JagFX.init(buf)` from TS: read `sounds.dat` into the synth table.
     pub fn init(&mut self, buf: &mut Packet) {
         loop {
@@ -73,7 +61,6 @@ impl JagFX {
     /// `JagFX.generate(id, loopCount)` from TS: synth the sound as a WAV
     /// packet, or `None` when the id is not in the table.
     pub fn generate(&mut self, id: i32, loop_count: i32) -> Option<&Packet> {
-        self.ensure_scratch();
         let sound = self.synth.get_mut(id as usize)?.as_mut()?;
         let wave = self.wave_buffer.data_mut();
         let length = Self::make_sound(sound, &mut self.tone_buf, wave, loop_count);
@@ -177,11 +164,6 @@ impl JagFX {
 
         total_sample_count
     }
-
-    #[cfg(test)]
-    pub fn wave_scratch_len(&self) -> usize {
-        self.wave_buffer.data().len()
-    }
 }
 
 impl Sound {
@@ -226,18 +208,5 @@ impl Sound {
         }
 
         start
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::JagFX;
-
-    /// Task 4: `Default` must not allocate the 441000-byte wave scratch (or
-    /// the tone buffer) until `generate` first synthesises a sound.
-    #[test]
-    fn jagfx_default_has_no_wave_scratch() {
-        let j = JagFX::default();
-        assert_eq!(j.wave_scratch_len(), 0);
     }
 }

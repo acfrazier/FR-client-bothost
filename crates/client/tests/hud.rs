@@ -2064,7 +2064,6 @@ fn obj_drag_quick_release_fires_last_entry_same_slot_drop_does_not() {
         Arc::get_mut(&mut c.cache).unwrap().objs.resize(5, ObjType::default());
     }
     Arc::get_mut(&mut c.cache).unwrap().objs[4].name = "Rune".into();
-    Arc::get_mut(&mut c.cache).unwrap().objs[4].desc = String::new();
     // grab slot 0 via the full click path: build the menu, then left-click
     // through `mouse_loop`
     c.shell.mouse_x = 553 + 16;

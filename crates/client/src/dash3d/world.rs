@@ -111,7 +111,7 @@ pub struct World {
     /// mirrors `Client.groundh` after the load/fade pass (Java shares the
     /// one array between Client and World).
     pub(crate) groundh: LevelHeightmaps,
-    squares: Vec<Vec<Vec<Option<Box<Square>>>>>,
+    squares: Vec<Vec<Vec<Option<Square>>>>,
     sprites: Vec<Option<Sprite>>,
     dynamic_count: i32,
     dynamic_sprites: Vec<Option<usize>>,
@@ -187,13 +187,6 @@ pub struct World {
     share_tic: i32,
     share_map: Vec<i32>,
     share_map2: Vec<i32>,
-}
-
-/// Size of one tile slot in `World.squares`. `None` (empty) slots are
-/// pointer-sized so a mostly-empty world does not reserve a full `Square`
-/// per tile.
-pub fn empty_tile_slot_size() -> usize {
-    std::mem::size_of::<Option<Box<Square>>>()
 }
 
 impl World {
@@ -302,7 +295,7 @@ impl World {
         for stx in 0..self.max_tile_x {
             for stz in 0..self.max_tile_z {
                 self.squares[level as usize][stx as usize][stz as usize] =
-                    Some(Box::new(Square::new(level, stx, stz)));
+                    Some(Square::new(level, stx, stz));
             }
         }
     }
@@ -334,12 +327,12 @@ impl World {
         }
 
         if self.squares[0][stx as usize][stz as usize].is_none() {
-            self.squares[0][stx as usize][stz as usize] = Some(Box::new(Square::new(0, stx, stz)));
+            self.squares[0][stx as usize][stz as usize] = Some(Square::new(0, stx, stz));
         }
 
         let tile = &mut self.squares[0][stx as usize][stz as usize];
         if let Some(tile) = tile {
-            tile.linked_square = below;
+            tile.linked_square = below.map(Box::new);
         }
 
         self.squares[3][stx as usize][stz as usize] = None;
@@ -409,7 +402,7 @@ impl World {
     ) {
         for l in (0..=level).rev() {
             if self.squares[l as usize][x as usize][z as usize].is_none() {
-                self.squares[l as usize][x as usize][z as usize] = Some(Box::new(Square::new(l, x, z)));
+                self.squares[l as usize][x as usize][z as usize] = Some(Square::new(l, x, z));
             }
         }
 
@@ -473,7 +466,7 @@ impl World {
     ) {
         if self.squares[tile_level as usize][tile_x as usize][tile_z as usize].is_none() {
             self.squares[tile_level as usize][tile_x as usize][tile_z as usize] =
-                Some(Box::new(Square::new(tile_level, tile_x, tile_z)));
+                Some(Square::new(tile_level, tile_x, tile_z));
         }
 
         let tile = &mut self.squares[tile_level as usize][tile_x as usize][tile_z as usize];
@@ -526,7 +519,7 @@ impl World {
             }
         } else {
             self.squares[level as usize][stx as usize][stz as usize] =
-                Some(Box::new(Square::new(level, stx, stz)));
+                Some(Square::new(level, stx, stz));
         }
 
         let tile = &mut self.squares[level as usize][stx as usize][stz as usize];
@@ -567,7 +560,7 @@ impl World {
         for l in (0..=level).rev() {
             if self.squares[l as usize][tile_x as usize][tile_z as usize].is_none() {
                 self.squares[l as usize][tile_x as usize][tile_z as usize] =
-                    Some(Box::new(Square::new(l, tile_x, tile_z)));
+                    Some(Square::new(l, tile_x, tile_z));
             }
         }
 
@@ -611,7 +604,7 @@ impl World {
         for l in (0..=level).rev() {
             if self.squares[l as usize][tile_x as usize][tile_z as usize].is_none() {
                 self.squares[l as usize][tile_x as usize][tile_z as usize] =
-                    Some(Box::new(Square::new(l, tile_x, tile_z)));
+                    Some(Square::new(l, tile_x, tile_z));
             }
         }
 
@@ -660,9 +653,11 @@ impl World {
         length: i32,
         yaw: i32,
     ) -> bool {
+        let Some(model) = model else { return true };
+
         let scene_x = tile_x * 128 + width * 64;
         let scene_z = tile_z * 128 + length * 64;
-        self.set_sprite(scene_x, scene_z, y, level, tile_x, tile_z, width, length, model, typecode, info, yaw, false)
+        self.set_sprite(scene_x, scene_z, y, level, tile_x, tile_z, width, length, Some(model), typecode, info, yaw, false)
     }
 
     pub fn add_dynamic(
@@ -784,7 +779,7 @@ impl World {
     /// Read access to one tile (`squares` is private; the scene tests and
     /// `mapBuild`-adjacent queries read through this).
     pub fn square(&self, level: i32, x: i32, z: i32) -> Option<&Square> {
-        self.squares[level as usize][x as usize][z as usize].as_deref()
+        self.squares[level as usize][x as usize][z as usize].as_ref()
     }
 
     /// `groundh[level][x][z]` read (guarded like `ground_h`; the field is
@@ -1106,7 +1101,7 @@ impl World {
     /// can land outside the grid because the TS guards compare against
     /// `maxTileX` while indexing the `maxTileZ` axis; OOB reads return
     /// `None` like a TS typed-array miss.
-    fn take_square(&mut self, level: i32, x: i32, z: i32) -> Option<Box<Square>> {
+    fn take_square(&mut self, level: i32, x: i32, z: i32) -> Option<Square> {
         self.squares
             .get_mut(level as usize)
             .and_then(|l| l.get_mut(x as usize))
@@ -1114,7 +1109,7 @@ impl World {
             .and_then(Option::take)
     }
 
-    fn put_square(&mut self, level: i32, x: i32, z: i32, square: Option<Box<Square>>) {
+    fn put_square(&mut self, level: i32, x: i32, z: i32, square: Option<Square>) {
         if let Some(slot) = self
             .squares
             .get_mut(level as usize)
@@ -1467,6 +1462,8 @@ impl World {
         yaw: i32,
         dynamic: bool,
     ) -> bool {
+        let Some(model) = model else { return false };
+
         for tx in tile_x..tile_x + tile_size_x {
             for tz in tile_z..tile_z + tile_size_z {
                 if tx < 0 || tz < 0 || tx >= self.max_tile_x || tz >= self.max_tile_z {
@@ -1486,7 +1483,7 @@ impl World {
             y,
             x,
             z,
-            model,
+            Some(model),
             yaw,
             tile_x,
             tile_x + tile_size_x - 1,
@@ -1515,7 +1512,7 @@ impl World {
                 for l in (0..=level).rev() {
                     if self.squares[l as usize][tx as usize][tz as usize].is_none() {
                         self.squares[l as usize][tx as usize][tz as usize] =
-                            Some(Box::new(Square::new(l, tx, tz)));
+                            Some(Square::new(l, tx, tz));
                     }
                 }
 
@@ -3572,7 +3569,7 @@ impl World {
 /// Guarded tile lookup; the free function keeps the borrow scoped to the
 /// `squares` field so the fill loop can touch other `World` fields between
 /// tile accesses (a `&mut self` helper would hold the whole struct).
-fn tile_at(squares: &[Vec<Vec<Option<Box<Square>>>>], level: i32, x: i32, z: i32) -> Option<&Square> {
+fn tile_at(squares: &[Vec<Vec<Option<Square>>>], level: i32, x: i32, z: i32) -> Option<&Square> {
     if level < 0 || x < 0 || z < 0 {
         return None;
     }
@@ -3580,11 +3577,11 @@ fn tile_at(squares: &[Vec<Vec<Option<Box<Square>>>>], level: i32, x: i32, z: i32
         .get(level as usize)?
         .get(x as usize)?
         .get(z as usize)?
-        .as_deref()
+        .as_ref()
 }
 
 fn tile_at_mut(
-    squares: &mut [Vec<Vec<Option<Box<Square>>>>],
+    squares: &mut [Vec<Vec<Option<Square>>>],
     level: i32,
     x: i32,
     z: i32,
@@ -3596,7 +3593,7 @@ fn tile_at_mut(
         .get_mut(level as usize)?
         .get_mut(x as usize)?
         .get_mut(z as usize)?
-        .as_deref_mut()
+        .as_mut()
 }
 
 /// `groundh[level][x][z]` read (guarded; TS typed-array OOB is undefined).
