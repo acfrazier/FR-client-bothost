@@ -573,7 +573,10 @@ impl Client {
         // chrome strips (inventory, chat, icon rail) blit on top every
         // loading frame instead of only the first.
         self.scene_static();
-        if self.draw && self.scene_state != 2 {
+        // Loading static and the live TV both need the 2D chrome (inventory,
+        // chat, icon rail) recomposited every frame. Watch-only 1 fps skips
+        // `mainredraw`; `full_rate` is the tube so HUD actually redraws.
+        if self.draw && (self.scene_state != 2 || self.full_rate) {
             self.redraw_frame = true;
         }
 

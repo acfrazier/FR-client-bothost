@@ -300,6 +300,10 @@ pub struct Client {
     /// render. Independent of the window: `client-play` sets it true after
     /// `Present::open`; headless bots keep it false.
     pub draw: bool,
+    /// Channel-head TV / Game pane: paint every 20 ms and dirty the 2D HUD
+    /// (chrome strips, side, chat, icons) each frame. Watch-only slots stay
+    /// on the 1 fps cadence; this is the tube, not a rail thumbnail.
+    pub full_rate: bool,
     /// Entry count for `game_draw` (incremented as first statement).
     pub game_draw_enters: u64,
     /// Entry count for `title_screen_draw` (incremented as first statement).
@@ -997,6 +1001,7 @@ impl Client {
 
             ingame: false,
             draw: false,
+            full_rate: false,
             game_draw_enters: 0,
             title_screen_draw_enters: 0,
             loop_ns: 0,
