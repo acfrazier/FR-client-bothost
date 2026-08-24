@@ -2185,9 +2185,9 @@ impl Client {
     /// still draws the panels that are present. The title is unloaded and
     /// `image_title2` nulled as Java `prepareGame` (`Client.java` 6919);
     /// `logout` nulls it again so a later `prepare_title` reallocates the
-    /// regions from the `title` jag. `pub(super)` so the cold-login path
+    /// regions from the `title` jag. `pub(crate)` so the cold-login path
     /// (`client.rs` response 2) can call it as Java `login` does.
-    pub(super) fn prepare_game(&mut self) {
+    pub(crate) fn prepare_game(&mut self) {
         if self.area_chat.is_some() {
             return;
         }
@@ -3154,9 +3154,9 @@ impl Client {
     /// `getIfActive` from client-ts (10361): comparator scripts pick the
     /// active colour for a component. Every comparator's script runs
     /// through `get_if_var`; a component without scripts reads inactive.
-    /// `pub(super)` so `client.rs`'s `animate_interface` can select the
+    /// `pub(crate)` so `client.rs`'s `animate_interface` can select the
     /// active model anim.
-    pub(super) fn get_if_active(&self, com: &IfType) -> bool {
+    pub(crate) fn get_if_active(&self, com: &IfType) -> bool {
         let Some(comparator) = &com.script_comparator else {
             return false;
         };

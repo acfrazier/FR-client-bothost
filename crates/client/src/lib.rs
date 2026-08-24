@@ -1,10 +1,12 @@
 pub mod client;
 pub mod config;
+pub mod core;
 pub mod dash3d;
 pub mod datastruct;
 pub mod graphics;
 pub mod io;
 pub mod login_rsa;
+pub mod render;
 pub mod sound;
 pub mod util;
 pub mod wordfilter;
