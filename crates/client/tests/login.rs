@@ -271,7 +271,7 @@ fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
     c.chat_text[0] = "leftover".into();
     c.logout();
     c.title_screen_draw(); // consumes the game frame (Task 4b)
-    assert!(c.area_chat.is_none());
+    assert!(c.renderer.area_chat.is_none());
     c.login("bob", "pw", false).unwrap();
     assert!(c.ingame);
     assert_eq!(c.active_icon, 3, "response 2 must select the inventory tab");
@@ -287,11 +287,11 @@ fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
         "response 2 must clear the chat history"
     );
     assert!(
-        c.area_chat.is_some(),
+        c.renderer.area_chat.is_some(),
         "prepare_game must rebuild the game frame"
     );
     assert!(
-        c.image_title2.is_none(),
+        c.renderer.image_title2.is_none(),
         "prepare_game must unload the title regions"
     );
     assert!(c.redraw_frame && c.redraw_side && c.redraw_icons);

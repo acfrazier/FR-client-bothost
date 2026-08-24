@@ -37,11 +37,12 @@ use crate::dash3d::{
 };
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
 use crate::datastruct::LinkList;
-use crate::graphics::{Colour, Pix2D, Pix3D, Pix32, Pix3DDraw, Pix8, PixFont, PixMap};
+use crate::graphics::{Colour, Pix2D, Pix3D, Pix32, Pix3DDraw, PixMap};
 use crate::io::{
     ClientProt, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt, SERVER_PROT_SIZES,
 };
 use crate::login_rsa::{LOGIN_RSAE, LOGIN_RSAN};
+use crate::render::Renderer;
 use crate::sound::{Fade, JagFX, Midi};
 use crate::util::{JavaRandom, JString};
 use crate::wordfilter::{WordFilter, WordPack};
@@ -316,12 +317,11 @@ pub struct Client {
     pub spotanims: LinkList<MapSpotAnim>,
     /// `selfSlot`/`membersAccount` from `UPDATE_PID`; `worldUpdateNum`
     /// counts `gameLoop` passes while drawing (zeroed when not drawing and
-    /// at the end of `game_draw`); `cycleLogic1` is the loc-change scene
-    /// cycle counter. Slice 2.
+    /// at the end of `game_draw`). `cycleLogic1` (the loc-change scene
+    /// cycle counter) lives on `Renderer`. Slice 2.
     pub self_slot: i32,
     pub members_account: i32,
     pub world_update_num: i32,
-    pub cyclelogic1: i32,
 
     pub stat_base_level: Vec<i32>,
     pub stat_effective_level: Vec<i32>,
@@ -397,37 +397,12 @@ pub struct Client {
     pub target_mask: i32,
     /// `crossX`/`crossY`/`crossMode`/`crossCycle` (TS 373-376): the
     /// crosshair position for the last op click, set by the `doAction` /
-    /// `interactWithLoc` arms (mode 2) and the walk consume (mode 1).
+    /// `interactWithLoc` arms (mode 2) and the walk consume (mode 1). The
+    /// 8 sprite frames plot here live on `Renderer`.
     pub cross_x: i32,
     pub cross_y: i32,
     pub cross_mode: i32,
     pub cross_cycle: i32,
-    /// `cross` (TS 1056-1058): the 8 click-crosshair frames from the
-    /// `media` pack, `Pix32.depack('cross', i)`. Mode 1 walks plot
-    /// `[cross_cycle/100]`, mode 2 ops `[cross_cycle/100 + 4]`; a cache
-    /// without the pack leaves the sprites `None` (no-op plot).
-    pub cross: [Option<Pix32>; 8],
-    /// `projectX`/`projectY` from Java (322-325): the last `getOverlayPos`
-    /// screen projection, consumed by `entity_overlays`; -1 when the point
-    /// is off the playable scene or behind the camera.
-    pub project_x: i32,
-    pub project_y: i32,
-    /// `hitmarks`/`headicons` from Java (256, 328): the damage hitmark and
-    /// overhead prayer sprites from the `media` jag, depacked by
-    /// `prepare_game` (Java 5311-5320). `None` entries skip their plot.
-    pub hitmarks: [Option<Pix32>; 20],
-    pub headicons: [Option<Pix32>; 20],
-    /// Overlay chat stack from Java (`MAX_CHATS` 50, 409-433): the bubbles
-    /// `entityOverlays` collects per frame and draws over the scene.
-    pub chat_count: i32,
-    pub chat_x: [i32; 50],
-    pub chat_y: [i32; 50],
-    pub chat_width: [i32; 50],
-    pub chat_height: [i32; 50],
-    pub chat_colour: [i32; 50],
-    pub chat_effect: [i32; 50],
-    pub chat_timer: [i32; 50],
-    pub chats: [String; 50],
     /// Anticheat oplogic counters (Java `Client.java` static fields),
     /// accumulated inside the `doAction` arms and flushed as the
     /// `ANTICHEAT_OPLOGIC*` packets when they pass their thresholds.
@@ -592,40 +567,20 @@ pub struct Client {
     /// stub HTTP set it small so retry paths do not sleep.
     pub fetch_retry_wait: Duration,
 
-    /// Title screen state (`Client.ts` `prepareTitle`/`titleScreenDraw`):
-    /// the 765×503 CPU framebuffer every frame draws into (`drawArea`), the
-    /// `title` jag with the fonts and sprites, the 9 title `PixMap` regions
-    /// (0/1 are the flame frames — empty here, `TitleFlames` is out of
-    /// scope), and the login UI fields.
-    pub draw_area: PixMap,
-    /// Per-client Pix3D raster state (TS `Pix3D` mutable statics: the
-    /// `scanline`, `originX/Y`, `trans`, `cycle`, and the texture pool).
-    /// `Pix3D::init_colour_table` stays process-wide; the 3D pass binds
-    /// `area_game` to it via `set_clipping` before `World::render_all`.
-    pub pix3d: Pix3DDraw,
-    pub title: Option<JagFile>,
-    pub p11: Option<PixFont>,
-    pub p12: Option<PixFont>,
-    pub b12: Option<PixFont>,
-    pub q8: Option<PixFont>,
-    pub image_title0: Option<PixMap>,
-    pub image_title1: Option<PixMap>,
-    pub image_title2: Option<PixMap>,
-    pub image_title3: Option<PixMap>,
-    pub image_title4: Option<PixMap>,
-    pub image_title5: Option<PixMap>,
-    pub image_title6: Option<PixMap>,
-    pub image_title7: Option<PixMap>,
-    pub image_title8: Option<PixMap>,
-    pub image_titlebox: Option<Pix8>,
-    pub image_titlebutton: Option<Pix8>,
-    /// `imageRunes` from client-ts: the 12 rune sprites the title flames
-    /// animate (loaded with `fl_icon` default 0 → sprites 0..11).
-    pub image_runes: Vec<Pix8>,
-    /// `titleFlames` from client-ts: the torch animation over imageTitle0/1.
-    pub title_flames: Option<crate::client::title_flames::TitleFlames>,
+    /// Render-only state owned by the draw path (see
+    /// `crate::render::renderer::Renderer`): the CPU framebuffer, Pix3D
+    /// raster state, fonts/sprites, and the title/minimap/HUD paint state.
+    /// The sim paths (packet apply, `doAction`, `tryMove`, `login`,
+    /// `mainloop` input) do not touch it.
+    pub renderer: Renderer,
+    /// `loginscreen` from client-ts (1378-1416): the title-screen state
+    /// (0 = login form, 2 = invalid, 3 = connecting); written by
+    /// `title_screen_loop`/`fail_title_login`, read by `title_screen_draw`.
     pub loginscreen: i32,
+    /// `loginSelect` from client-ts: the focused login field (0 user,
+    /// 1 pass).
     pub login_select: i32,
+    /// `redrawFrame` from client-ts: the title frame redraw latch.
     pub redraw_frame: bool,
 
     /// Camera state (`Client.ts` `gameDrawMain`/`camFollow`/`followCamera`,
@@ -646,7 +601,7 @@ pub struct Client {
     /// frame. The payload mapping keeps the TS field names even though it
     /// is shifted: `cam_shake_axis` holds the packet's `ran` byte,
     /// `cam_shake_ran` its `amp` byte and `cam_shake_amp` its `rate` byte.
-    /// `rand` is the `Math.random` source the TS jitter uses.
+    /// The `rand` source the jitter uses lives on `Renderer`.
     pub cinema_cam: bool,
     pub cam_look_at_lx: i32,
     pub cam_look_at_lz: i32,
@@ -663,7 +618,6 @@ pub struct Client {
     pub cam_shake_ran: [i32; 5],
     pub cam_shake_amp: [i32; 5],
     pub cam_shake_cycle: [i32; 5],
-    pub rand: JavaRandom,
     pub orbit_camera_pitch: i32,
     pub orbit_camera_yaw: i32,
     pub orbit_camera_yaw_velocity: i32,
@@ -674,117 +628,20 @@ pub struct Client {
     pub macro_camera_z: i32,
     pub camera_pitch_clamp: i32,
     pub macro_camera_angle: i32,
-    /// `sceneCycle` from client-ts: bumped every `gameDrawMain`; the
-    /// tile-occupancy stamps in `add_players`/`add_npcs` compare against it.
-    pub scene_cycle: i32,
-    /// Last `scene_cycle` that claimed each tile (`tileLastOccupiedCycle`,
-    /// flat `SIZE * SIZE`), so a second entity on a tile defers to the first
-    /// this cycle.
-    pub tile_last_occupied_cycle: Vec<i32>,
-    /// `World.resetVisCalc` has populated `vis_backing` for this client
-    /// (TS loadGame calls it once per game load; `game_draw_main` runs it
-    /// lazily on the first 3D frame).
-    pub vis_calc_done: bool,
-
-    /// In-game draw state (`Client.ts` `prepareGame`/`gameDraw`): the
-    /// viewport/side/chat/chrome `PixMap` areas and the `media` jag sprites
-    /// that plot into them, plus the chat-mode redraw flag and the three
-    /// chat mode settings. Lazy-allocated on the first `game_draw`; a
-    /// missing `media` pack leaves the sprites `None` and the areas black.
-    pub area_game: Option<PixMap>,
-    pub area_map: Option<PixMap>,
-    pub area_side: Option<PixMap>,
-    pub area_chat: Option<PixMap>,
-    pub area_backleft1: Option<PixMap>,
-    pub area_backleft2: Option<PixMap>,
-    pub area_backright1: Option<PixMap>,
-    pub area_backright2: Option<PixMap>,
-    pub area_backtop1: Option<PixMap>,
-    pub area_backvmid1: Option<PixMap>,
-    pub area_backvmid2: Option<PixMap>,
-    pub area_backvmid3: Option<PixMap>,
-    pub area_backhmid2: Option<PixMap>,
-    pub area_backbase1: Option<PixMap>,
-    pub area_backbase2: Option<PixMap>,
-    pub area_backhmid1: Option<PixMap>,
-    pub invback: Option<Pix8>,
-    pub chatback: Option<Pix8>,
-    pub backbase1: Option<Pix8>,
-    pub backbase2: Option<Pix8>,
-    pub backhmid1: Option<Pix8>,
-    /// `scrollbar1`/`scrollbar2` from client-ts (1065-1066): the top and
-    /// bottom cap sprites of an interface/chat scrollbar. Missing sprites
-    /// are `None` (a cache without the `media` pack); `draw_scrollbar`
-    /// still fills the track and grip.
-    pub scrollbar1: Option<Pix8>,
-    pub scrollbar2: Option<Pix8>,
-    /// `sideicons`/`redstone1..2hv` from client-ts (1013, 1068-1093): the
-    /// side-tab sprites and the redstone highlight for `active_icon`. The
-    /// `*h`/`*v`/`*hv` copies are the same sprites hflip/vflip'd. Missing
-    /// sprites are `None` (a cache without the `media` pack).
-    pub sideicons: [Option<Pix8>; 13],
-    /// `modIcons` from client-ts (267): the gold (@cr1@) and silver (@cr2@)
-    /// staff crowns plotted ahead of chat senders in `draw_chat` and
-    /// `draw_private_messages`. Missing sprites are `None` (a cache without
-    /// the `media` pack); the 14px advance is kept without an icon.
-    pub mod_icons: [Option<Pix8>; 2],
-    pub redstone1: Option<Pix8>,
-    pub redstone2: Option<Pix8>,
-    pub redstone3: Option<Pix8>,
-    pub redstone1h: Option<Pix8>,
-    pub redstone2h: Option<Pix8>,
-    pub redstone1v: Option<Pix8>,
-    pub redstone2v: Option<Pix8>,
-    pub redstone3v: Option<Pix8>,
-    pub redstone1hv: Option<Pix8>,
-    pub redstone2hv: Option<Pix8>,
     pub redraw_icons: bool,
     pub redraw_chat: bool,
     pub redraw_chat_mode: bool,
-    /// Depacked `TYPE_GRAPHIC` sprites (`IfType.graphic`/`graphic2` from
-    /// client-ts), keyed by the `"name,index"` of `graphic_name`/
-    /// `graphic2_name`. Filled lazily from `{cache_dir}/media` by
-    /// `draw_interface`; a failed depack caches as `None` so a missing
-    /// sprite does not re-read the jag every draw.
-    pub graphic_sprites: HashMap<(String, i32), Option<Pix32>>,
-    /// Minimap state (`Client.ts` `minimapDraw` 11279): the composed map
-    /// buffer, the compass/mapedge/mapdot/mapmarker sprites, `mapback` (the
-    /// ring mask plotted into `area_map`), and the per-row scanline masks
-    /// built from `mapback.data` (TS 1180-1216). `minimap` is allocated as
-    /// TS maininit (868) does and composed by `minimap_build_buffer`
-    /// (5280). `minimap_state`/`minimap_level`/`macro_minimap_*` default as
-    /// TS (506, 243-247); `minimap_loop` (2742) is Task 7.
-    pub minimap: Option<Pix32>,
-    pub compass: Option<Pix32>,
-    pub mapedge: Option<Pix32>,
-    pub mapmarker1: Option<Pix32>,
-    pub mapmarker2: Option<Pix32>,
-    pub mapdots1: Option<Pix32>,
-    pub mapdots2: Option<Pix32>,
-    pub mapdots3: Option<Pix32>,
-    pub mapdots4: Option<Pix32>,
-    pub mapback: Option<Pix8>,
-    /// `mapscene`/`mapfunction` sprites from client-ts (254-255): the
-    /// minimap wall/scene icons from the `media` jag, depacked by
-    /// `prepare_game`. `None` entries skip the plot in `draw_detail`.
-    pub mapscene: Vec<Option<Pix8>>,
-    pub mapfunction: Vec<Option<Pix32>>,
-    pub compass_mask_line_offsets: Vec<i32>,
-    pub compass_mask_line_lengths: Vec<i32>,
-    pub minimap_mask_line_offsets: Vec<i32>,
-    pub minimap_mask_line_lengths: Vec<i32>,
+    /// Minimap state kept on `Client` because the sim reads/writes it:
+    /// `minimap_state` (the click gate, set by `SET_MINIMAP_STATE`),
+    /// `minimap_level` (the level the minimap buffer was built for, reset
+    /// by `login`/`map_build`), and the macro angle/zoom read by
+    /// `minimap_loop`. The minimap buffers/sprites live on `Renderer`.
     pub minimap_state: i32,
     pub minimap_level: i32,
     pub macro_minimap_angle: i32,
     pub macro_minimap_zoom: i32,
-    /// `activeMapFunctions`/`minimapFlag` from client-ts (508-513): filled
-    /// by `minimapBuildBuffer`/`minimapLoop`; sized 1000 as TS. The hint
-    /// fields (TS 161-165) gate the `minimapDrawArrow` branch (`hintType`
-    /// 0 → skipped).
-    pub active_map_function_count: i32,
-    pub active_map_function_x: Vec<i32>,
-    pub active_map_function_z: Vec<i32>,
-    pub active_map_functions: Vec<Option<Pix32>>,
+    /// The hint fields (TS 161-165) gate the `minimapDrawArrow` branch
+    /// (`hintType` 0 → skipped).
     pub hint_type: i32,
     pub hint_npc: i32,
     pub hint_player: i32,
@@ -850,18 +707,6 @@ pub struct Client {
     pub idk_design_colour: [i32; 5],
     pub idk_design_button1: Option<String>,
     pub idk_design_button2: Option<String>,
-    /// `chatInterface` from client-ts (480): the synthetic IfType the chat
-    /// scrollbar reads/writes (not in the jag), synced to the chat scroll
-    /// state by `game_draw`/`draw_chat`.
-    pub chat_interface: IfType,
-    /// Scrollbar input state (`scrollGrabbed`/`scrollInputPadding`/
-    /// `scrollCycle` from client-ts 338-340): `scroll_grabbed` widens the
-    /// track hit area to 32 px while held, and `scroll_cycle` is the
-    /// mouse-held repeat (set from `shell.mouse_button` at the top of
-    /// `game_draw`, since the TS GameShell already ticks it).
-    pub scroll_grabbed: bool,
-    pub scroll_input_padding: i32,
-    pub scroll_cycle: i32,
 
     /// Reconnect flag of the most recent `login` call (`None` until the
     /// first login). `lostCon` reestablishes with `reconnect = true`
@@ -873,10 +718,6 @@ pub struct Client {
     /// sent by `UPDATE_REBOOT_TIMER` scaled by 30 (the `gameLoop` tick
     /// counts it down in the overlay).
     pub reboot_timer: i32,
-    /// `Client.cyclelogic3` from client-ts (a TS static, instance here):
-    /// anticheat counter sent with `ANTICHEAT_CYCLELOGIC3` every 113
-    /// `minimapBuildBuffer` runs.
-    pub cyclelogic3: i32,
     /// `timeoutTimer` from Java: frames since the last full in-game packet;
     /// `gameLoop` calls `lostCon` past 750 (~15 s at 20 ms).
     pub timeout_timer: i32,
@@ -956,7 +797,6 @@ impl Client {
             self_slot: -1,
             members_account: 0,
             world_update_num: 0,
-            cyclelogic1: 0,
 
             stat_base_level: vec![0; Skill::count],
             stat_effective_level: vec![0; Skill::count],
@@ -1006,20 +846,6 @@ impl Client {
             cross_y: 0,
             cross_mode: 0,
             cross_cycle: 0,
-            cross: [const { None }; 8],
-            project_x: -1,
-            project_y: -1,
-            hitmarks: [const { None }; 20],
-            headicons: [const { None }; 20],
-            chat_count: 0,
-            chat_x: [0; 50],
-            chat_y: [0; 50],
-            chat_width: [0; 50],
-            chat_height: [0; 50],
-            chat_colour: [0; 50],
-            chat_effect: [0; 50],
-            chat_timer: [0; 50],
-            chats: [const { String::new() }; 50],
             oplogic1: 0,
             oplogic2: 0,
             oplogic3: 0,
@@ -1122,26 +948,108 @@ impl Client {
             http_port: 80,
             already_started: false,
             fetch_retry_wait: Duration::from_secs(5),
-            draw_area: PixMap::new(APPLET_W, APPLET_H),
-            pix3d: Pix3DDraw::default(),
-            title: None,
-            p11: None,
-            p12: None,
-            b12: None,
-            q8: None,
-            image_title0: None,
-            image_title1: None,
-            image_title2: None,
-            image_title3: None,
-            image_title4: None,
-            image_title5: None,
-            image_title6: None,
-            image_title7: None,
-            image_title8: None,
-            image_titlebox: None,
-            image_titlebutton: None,
-            image_runes: Vec::new(),
-            title_flames: None,
+            renderer: Renderer {
+                draw_area: PixMap::new(APPLET_W, APPLET_H),
+                pix3d: Pix3DDraw::default(),
+                title: None,
+                p11: None,
+                p12: None,
+                b12: None,
+                q8: None,
+                image_title0: None,
+                image_title1: None,
+                image_title2: None,
+                image_title3: None,
+                image_title4: None,
+                image_title5: None,
+                image_title6: None,
+                image_title7: None,
+                image_title8: None,
+                image_titlebox: None,
+                image_titlebutton: None,
+                image_runes: Vec::new(),
+                title_flames: None,
+                cross: [const { None }; 8],
+                project_x: -1,
+                project_y: -1,
+                hitmarks: [const { None }; 20],
+                headicons: [const { None }; 20],
+                chat_count: 0,
+                chat_x: [0; 50],
+                chat_y: [0; 50],
+                chat_width: [0; 50],
+                chat_height: [0; 50],
+                chat_colour: [0; 50],
+                chat_effect: [0; 50],
+                chat_timer: [0; 50],
+                chats: [const { String::new() }; 50],
+                scene_cycle: 0,
+                tile_last_occupied_cycle: vec![0; BUILD_AREA_TILES],
+                vis_calc_done: false,
+                area_game: None,
+                area_map: None,
+                area_side: None,
+                area_chat: None,
+                area_backleft1: None,
+                area_backleft2: None,
+                area_backright1: None,
+                area_backright2: None,
+                area_backtop1: None,
+                area_backvmid1: None,
+                area_backvmid2: None,
+                area_backvmid3: None,
+                area_backhmid2: None,
+                area_backbase1: None,
+                area_backbase2: None,
+                area_backhmid1: None,
+                invback: None,
+                chatback: None,
+                backbase1: None,
+                backbase2: None,
+                backhmid1: None,
+                scrollbar1: None,
+                scrollbar2: None,
+                sideicons: [const { None }; 13],
+                mod_icons: [const { None }; 2],
+                redstone1: None,
+                redstone2: None,
+                redstone3: None,
+                redstone1h: None,
+                redstone2h: None,
+                redstone1v: None,
+                redstone2v: None,
+                redstone3v: None,
+                redstone1hv: None,
+                redstone2hv: None,
+                graphic_sprites: HashMap::new(),
+                minimap: Some(Pix32::new(512, 512)),
+                compass: None,
+                mapedge: None,
+                mapmarker1: None,
+                mapmarker2: None,
+                mapdots1: None,
+                mapdots2: None,
+                mapdots3: None,
+                mapdots4: None,
+                mapback: None,
+                mapscene: vec![None; 50],
+                mapfunction: vec![None; 50],
+                compass_mask_line_offsets: Vec::new(),
+                compass_mask_line_lengths: Vec::new(),
+                minimap_mask_line_offsets: Vec::new(),
+                minimap_mask_line_lengths: Vec::new(),
+                active_map_function_count: 0,
+                active_map_function_x: vec![0; 1000],
+                active_map_function_z: vec![0; 1000],
+                active_map_functions: vec![None; 1000],
+                chat_interface: IfType::default(),
+                scroll_grabbed: false,
+                scroll_input_padding: 0,
+                scroll_cycle: 0,
+                rand: JavaRandom::now(),
+                cyclelogic1: 0,
+                cyclelogic3: 0,
+            },
             loginscreen: 0,
             login_select: 0,
             redraw_frame: true,
@@ -1166,7 +1074,6 @@ impl Client {
             cam_shake_ran: [0; 5],
             cam_shake_amp: [0; 5],
             cam_shake_cycle: [0; 5],
-            rand: JavaRandom::now(),
             orbit_camera_pitch: 128,
             orbit_camera_yaw: 0,
             orbit_camera_yaw_velocity: 0,
@@ -1177,72 +1084,13 @@ impl Client {
             macro_camera_z: 0,
             camera_pitch_clamp: 0,
             macro_camera_angle: 0,
-            scene_cycle: 0,
-            tile_last_occupied_cycle: vec![0; BUILD_AREA_TILES],
-            vis_calc_done: false,
-            area_game: None,
-            area_map: None,
-            area_side: None,
-            area_chat: None,
-            area_backleft1: None,
-            area_backleft2: None,
-            area_backright1: None,
-            area_backright2: None,
-            area_backtop1: None,
-            area_backvmid1: None,
-            area_backvmid2: None,
-            area_backvmid3: None,
-            area_backhmid2: None,
-            area_backbase1: None,
-            area_backbase2: None,
-            area_backhmid1: None,
-            invback: None,
-            chatback: None,
-            backbase1: None,
-            backbase2: None,
-            backhmid1: None,
-            scrollbar1: None,
-            scrollbar2: None,
-            sideicons: [const { None }; 13],
-            mod_icons: [const { None }; 2],
-            redstone1: None,
-            redstone2: None,
-            redstone3: None,
-            redstone1h: None,
-            redstone2h: None,
-            redstone1v: None,
-            redstone2v: None,
-            redstone3v: None,
-            redstone1hv: None,
-            redstone2hv: None,
-            redraw_icons: false,
-            redraw_chat: false,
-            redraw_chat_mode: false,
-            graphic_sprites: HashMap::new(),
-            minimap: Some(Pix32::new(512, 512)),
-            compass: None,
-            mapedge: None,
-            mapmarker1: None,
-            mapmarker2: None,
-            mapdots1: None,
-            mapdots2: None,
-            mapdots3: None,
-            mapdots4: None,
-            mapback: None,
-            mapscene: vec![None; 50],
-            mapfunction: vec![None; 50],
-            compass_mask_line_offsets: Vec::new(),
-            compass_mask_line_lengths: Vec::new(),
-            minimap_mask_line_offsets: Vec::new(),
-            minimap_mask_line_lengths: Vec::new(),
             minimap_state: 0,
             minimap_level: -1,
             macro_minimap_angle: 0,
             macro_minimap_zoom: 0,
-            active_map_function_count: 0,
-            active_map_function_x: vec![0; 1000],
-            active_map_function_z: vec![0; 1000],
-            active_map_functions: vec![None; 1000],
+            redraw_icons: false,
+            redraw_chat: false,
+            redraw_chat_mode: false,
             hint_type: 0,
             hint_npc: 0,
             hint_player: 0,
@@ -1283,14 +1131,9 @@ impl Client {
             idk_design_colour: [0; 5],
             idk_design_button1: None,
             idk_design_button2: None,
-            chat_interface: IfType::default(),
-            scroll_grabbed: false,
-            scroll_input_padding: 0,
-            scroll_cycle: 0,
             last_login_reconnect: None,
             logout_timer: 0,
             reboot_timer: 0,
-            cyclelogic3: 0,
             timeout_timer: 0,
             no_timeout_timer: 0,
             error_loading,
@@ -1304,7 +1147,7 @@ impl Client {
         // takes (`Client.setLowMem`/`setHighMem`); `World.lowMem` reads
         // this through the `pix` handle in `render_all`.
         Pix3D::init_colour_table(0.8);
-        client.pix3d.low_mem = client.config.lowmem;
+        client.renderer.pix3d.low_mem = client.config.lowmem;
         client
     }
 
@@ -7640,9 +7483,9 @@ impl Client {
         self.midi_song = -1;
         self.next_music_delay = 0;
         self.unload_title();
-        self.image_title2 = None;
+        self.renderer.image_title2 = None;
         self.redraw_frame = true;
-        self.draw_area.fill(0);
+        self.renderer.draw_area.fill(0);
     }
 
     /// `lostCon` from Java (`Client.java` 6147): in-game connection loss. A
@@ -8334,7 +8177,7 @@ impl Client {
     /// both verbatim from TS.
     pub fn open_menu(&mut self) {
         let mut width: i32 = 0;
-        if let Some(b12) = &self.b12 {
+        if let Some(b12) = &self.renderer.b12 {
             width = b12.string_wid(Some("Choose Option"));
             for i in 0..self.menu_num_entries {
                 let max_width = b12.string_wid(Some(&self.menu_option[i as usize]));
@@ -8441,8 +8284,8 @@ impl Client {
         }
 
         let mut last_typecode = -1i32;
-        for picked in 0..self.pix3d.picked_count {
-            let typecode = self.pix3d.picked_entity_typecode[picked as usize];
+        for picked in 0..self.renderer.pix3d.picked_count {
+            let typecode = self.renderer.pix3d.picked_entity_typecode[picked as usize];
             let x = typecode & 0x7f;
             let z = (typecode >> 7) & 0x7f;
             let entity_type = (typecode >> 29) & 0x3;
@@ -8833,16 +8676,16 @@ impl Client {
     /// "Loading - please wait." on top, blit (4, 4). Missing `p12` skips
     /// the string (the frozen pixels still blit). Gated on `draw`.
     fn scene_loading_splash(&mut self) {
-        if let Some(ag) = self.area_game.as_mut() {
+        if let Some(ag) = self.renderer.area_game.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut ag.pixels, ag.width, ag.height);
-            if let Some(p12) = self.p12.as_ref() {
+            if let Some(p12) = self.renderer.p12.as_ref() {
                 p12.centre_string(&mut surface, Some("Loading - please wait."), 257, 151, Colour::BLACK);
                 p12.centre_string(&mut surface, Some("Loading - please wait."), 256, 150, Colour::WHITE);
             }
         }
         if self.draw {
-            if let Some(ag) = &self.area_game {
-                ag.blit_into(&mut self.draw_area, 4, 4);
+            if let Some(ag) = &self.renderer.area_game {
+                ag.blit_into(&mut self.renderer.draw_area, 4, 4);
             }
         }
     }
@@ -8933,7 +8776,7 @@ impl Client {
         self.minimap_level = -1;
         self.spotanims.clear();
         self.projectiles.clear();
-        self.pix3d.clear_texels();
+        self.renderer.pix3d.clear_texels();
         self.world.reset_map();
 
         for level in 0..BuildArea::LEVELS {
@@ -9022,7 +8865,7 @@ impl Client {
 
         build.finish_build(
             &self.cache,
-            &mut self.pix3d,
+            &mut self.renderer.pix3d,
             &mut self.world,
             &mut self.collision,
             &self.groundh,
@@ -9052,7 +8895,7 @@ impl Client {
             }
         }
 
-        self.pix3d.init_pool(20);
+        self.renderer.pix3d.init_pool(20);
         if let Some(od) = self.on_demand.as_mut() {
             od.clear_prefetches();
         }
@@ -9096,7 +8939,7 @@ impl Client {
     /// `draw_detail`), scan the ground decors for the active map-function
     /// dots, and send the anticheat cycle counter.
     pub fn minimap_build_buffer(&mut self, level: i32) {
-        let Some(mm) = self.minimap.as_mut() else {
+        let Some(mm) = self.renderer.minimap.as_mut() else {
             return;
         };
 
@@ -9147,7 +8990,7 @@ impl Client {
                     draw_detail(
                         &self.world,
                         &self.cache,
-                        &self.mapscene,
+                        &self.renderer.mapscene,
                         &mut surface,
                         level,
                         x,
@@ -9165,7 +9008,7 @@ impl Client {
                     draw_detail(
                         &self.world,
                         &self.cache,
-                        &self.mapscene,
+                        &self.renderer.mapscene,
                         &mut surface,
                         level + 1,
                         x,
@@ -9178,7 +9021,7 @@ impl Client {
         }
         drop(surface);
 
-        self.active_map_function_count = 0;
+        self.renderer.active_map_function_count = 0;
 
         for x in 0..BuildArea::SIZE {
             for z in 0..BuildArea::SIZE {
@@ -9250,20 +9093,20 @@ impl Client {
 
                 // TS writes past the 1000-slot `activeMapFunctions` arrays
                 // silently; a Rust panic here is worse, so cap the count.
-                let count = self.active_map_function_count as usize;
-                if count < self.active_map_functions.len() {
-                    self.active_map_functions[count] =
-                        self.mapfunction.get(func as usize).and_then(|s| s.clone());
-                    self.active_map_function_x[count] = stx;
-                    self.active_map_function_z[count] = stz;
-                    self.active_map_function_count += 1;
+                let count = self.renderer.active_map_function_count as usize;
+                if count < self.renderer.active_map_functions.len() {
+                    self.renderer.active_map_functions[count] =
+                        self.renderer.mapfunction.get(func as usize).and_then(|s| s.clone());
+                    self.renderer.active_map_function_x[count] = stx;
+                    self.renderer.active_map_function_z[count] = stz;
+                    self.renderer.active_map_function_count += 1;
                 }
             }
         }
 
-        self.cyclelogic3 += 1;
-        if self.cyclelogic3 > 112 {
-            self.cyclelogic3 = 0;
+        self.renderer.cyclelogic3 += 1;
+        if self.renderer.cyclelogic3 > 112 {
+            self.renderer.cyclelogic3 = 0;
 
             self.out.p1_enc(ClientProt::ANTICHEAT_CYCLELOGIC3.id);
             self.out.p1(50);
@@ -10208,9 +10051,9 @@ impl Client {
             #[cfg(feature = "window")]
             if let Some(present) = self.present.as_mut() {
                 present.blit(
-                    &self.draw_area.pixels,
-                    self.draw_area.width as u32,
-                    self.draw_area.height as u32,
+                    &self.renderer.draw_area.pixels,
+                    self.renderer.draw_area.width as u32,
+                    self.renderer.draw_area.height as u32,
                 );
             }
         }
@@ -10312,7 +10155,7 @@ impl Client {
                 _ => return,
             };
             Pix3D::init_colour_table(brightness);
-            self.pix3d.init_texture_palettes(brightness);
+            self.renderer.pix3d.init_texture_palettes(brightness);
             ObjType::clear_sprite_cache();
             self.redraw_frame = true;
             return;

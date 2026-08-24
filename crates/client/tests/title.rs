@@ -28,10 +28,10 @@ fn title_draw_writes_pixels() {
         return;
     };
     let mut c = client(cache);
-    assert_eq!(c.draw_area.width, 765);
-    assert_eq!(c.draw_area.height, 503);
+    assert_eq!(c.renderer.draw_area.width, 765);
+    assert_eq!(c.renderer.draw_area.height, 503);
     c.title_screen_draw();
-    assert!(c.draw_area.pixels.iter().any(|&p| p != 0));
+    assert!(c.renderer.draw_area.pixels.iter().any(|&p| p != 0));
 }
 
 /// `Client::new` must not start scape_main: the midi request is deferred
@@ -69,7 +69,7 @@ fn title_background_fills_left_strip() {
     let mut c = client(cache);
     c.title_screen_draw();
     let any = (0..265).any(|y| {
-        (0..128).any(|x| c.draw_area.pixels[(y * c.draw_area.width + x) as usize] != 0)
+        (0..128).any(|x| c.renderer.draw_area.pixels[(y * c.renderer.draw_area.width + x) as usize] != 0)
     });
     assert!(any, "left title strip (torch / background) should not be black");
 }
@@ -82,12 +82,12 @@ fn title_flames_tick_mutates_left_strip() {
     };
     let mut c = client(cache);
     c.title_screen_draw();
-    let before = c.image_title0.as_ref().expect("image_title0").pixels.clone();
+    let before = c.renderer.image_title0.as_ref().expect("image_title0").pixels.clone();
     for _ in 0..8 {
         c.loop_cycle += 1;
         c.title_screen_draw();
     }
-    let after = &c.image_title0.as_ref().expect("image_title0").pixels;
+    let after = &c.renderer.image_title0.as_ref().expect("image_title0").pixels;
     assert_ne!(&before, after, "torch flame pixels should change across frames");
 }
 

@@ -78,9 +78,9 @@ fn sideicons_load_from_media() {
     });
     c.ingame = true;
     c.game_draw();
-    assert!(c.sideicons.iter().any(|s| s.is_some()));
-    assert!(c.redstone1.is_some() && c.redstone2.is_some() && c.redstone3.is_some());
-    assert!(c.redstone1h.is_some() && c.redstone2hv.is_some());
+    assert!(c.renderer.sideicons.iter().any(|s| s.is_some()));
+    assert!(c.renderer.redstone1.is_some() && c.renderer.redstone2.is_some() && c.renderer.redstone3.is_some());
+    assert!(c.renderer.redstone1h.is_some() && c.renderer.redstone2hv.is_some());
 }
 
 #[test]
@@ -348,7 +348,7 @@ fn draw_side_text_component_writes_pixels() {
     });
     c.ingame = true;
     c.game_draw();
-    let before = c.area_side.as_ref().unwrap().pixels.clone();
+    let before = c.renderer.area_side.as_ref().unwrap().pixels.clone();
 
     // no server packets have run, so no tab is bound: inject a text tree on
     // the active tab (3) so draw_side has an interface to draw
@@ -376,7 +376,7 @@ fn draw_side_text_component_writes_pixels() {
     c.redraw_side = true;
     c.game_draw();
 
-    let after = c.area_side.as_ref().unwrap();
+    let after = c.renderer.area_side.as_ref().unwrap();
     assert!(
         before.iter().zip(&after.pixels).any(|(a, b)| a != b),
         "draw_side must draw the injected text into area_side"
@@ -536,7 +536,7 @@ fn draw_chat_renders_type0_line_and_input() {
     c.redraw_chat = true;
     c.game_draw();
     // type-0 line is black text; the input line is blue text
-    let chat = c.area_chat.as_ref().unwrap();
+    let chat = c.renderer.area_chat.as_ref().unwrap();
     assert!(chat.pixels.contains(&Colour::BLACK));
     assert!(chat.pixels.contains(&Colour::BLUE));
 }
@@ -579,7 +579,7 @@ fn chat_line_pixels(cache: &str, r#type: i32, sender: &str) -> Vec<i32> {
     c.add_chat(r#type, "hello", sender);
     c.redraw_chat = true;
     c.game_draw();
-    c.area_chat.as_ref().unwrap().pixels.clone()
+    c.renderer.area_chat.as_ref().unwrap().pixels.clone()
 }
 
 #[test]
@@ -590,11 +590,11 @@ fn prepare_game_depacks_mod_icons() {
     }
     let c = chat_client(&cache);
     assert!(
-        c.mod_icons[0].is_some(),
+        c.renderer.mod_icons[0].is_some(),
         "mod_icons[0] (gold @cr1@ crown) must depack from the media jag"
     );
     assert!(
-        c.mod_icons[1].is_some(),
+        c.renderer.mod_icons[1].is_some(),
         "mod_icons[1] (silver @cr2@ crown) must depack from the media jag"
     );
 }
@@ -607,7 +607,7 @@ fn draw_chat_plots_cr1_crown() {
     }
     let crown_colour = {
         let c = chat_client(&cache);
-        sprite_fill_colour(c.mod_icons[0].as_ref().expect("mod_icons[0] depacked"))
+        sprite_fill_colour(c.renderer.mod_icons[0].as_ref().expect("mod_icons[0] depacked"))
     };
     assert_ne!(crown_colour, 0, "the gold crown sprite must have drawn pixels");
     // control: the same line without the @cr1@ prefix
@@ -632,7 +632,7 @@ fn draw_chat_plots_cr2_crown_for_private() {
     }
     let silver_colour = {
         let c = chat_client(&cache);
-        sprite_fill_colour(c.mod_icons[1].as_ref().expect("mod_icons[1] depacked"))
+        sprite_fill_colour(c.renderer.mod_icons[1].as_ref().expect("mod_icons[1] depacked"))
     };
     assert_ne!(silver_colour, 0, "the silver crown sprite must have drawn pixels");
     let control = chat_line_pixels(&cache, 7, "Eve");
@@ -658,17 +658,17 @@ fn draw_private_messages_plots_cr1_crown() {
     c.split_private_chat = 1;
     let gold_colour = {
         let c = chat_client(&cache);
-        sprite_fill_colour(c.mod_icons[0].as_ref().expect("mod_icons[0] depacked"))
+        sprite_fill_colour(c.renderer.mod_icons[0].as_ref().expect("mod_icons[0] depacked"))
     };
     assert_ne!(gold_colour, 0, "the gold crown sprite must have drawn pixels");
     c.add_chat(3, "hello", "Eve");
     c.redraw_chat = true;
     c.game_draw();
-    let control = c.area_game.as_ref().unwrap().pixels.clone();
+    let control = c.renderer.area_game.as_ref().unwrap().pixels.clone();
     c.add_chat(3, "hello", "@cr1@Eve");
     c.redraw_chat = true;
     c.game_draw();
-    let rendered = c.area_game.as_ref().unwrap().pixels.clone();
+    let rendered = c.renderer.area_game.as_ref().unwrap().pixels.clone();
     let n_control = control.iter().filter(|&&p| p == gold_colour).count();
     let n_crown = rendered.iter().filter(|&&p| p == gold_colour).count();
     assert!(
@@ -700,7 +700,7 @@ fn draw_chat_social_overlay_draws_header_and_input() {
     c.redraw_chat = true;
     c.game_draw();
     // TS 11133-11135: header black at (239,40), input dark blue at (239,60)
-    let chat = c.area_chat.as_ref().unwrap();
+    let chat = c.renderer.area_chat.as_ref().unwrap();
     assert!(chat.pixels.contains(&Colour::BLACK));
     assert!(chat.pixels.contains(&Colour::DARKBLUE));
 }
@@ -727,7 +727,7 @@ fn draw_chat_dialog_overlay_draws_header_and_input() {
     c.game_draw();
     // TS 11136-11138: "Enter amount:" black at (239,40), input dark blue
     // at (239,60) — the plain chat input line would be Colour::BLUE
-    let chat = c.area_chat.as_ref().unwrap();
+    let chat = c.renderer.area_chat.as_ref().unwrap();
     assert!(chat.pixels.contains(&Colour::BLACK));
     assert!(chat.pixels.contains(&Colour::DARKBLUE));
 }
@@ -751,7 +751,7 @@ fn draw_reboot_timer_overlay_draws_system_update() {
     c.reboot_timer = 100; // 2 seconds
     c.game_draw();
     // TS 4901-4911: "System update in: M:SS" yellow at (4,329) in area_game
-    let game = c.area_game.as_ref().unwrap();
+    let game = c.renderer.area_game.as_ref().unwrap();
     assert!(game.pixels.contains(&Colour::YELLOW));
 }
 
@@ -1283,7 +1283,7 @@ fn draw_scrollbar_fills_track() {
 #[test]
 fn do_scrollbar_up_arrow_decreases_pos() {
     let mut c = client();
-    c.scroll_cycle = 1;
+    c.renderer.scroll_cycle = 1;
     let mut com = IfType::default();
     com.r#type = ComponentType::TYPE_LAYER;
     com.scroll_height = 200;
@@ -1398,7 +1398,7 @@ fn draw_chat_uses_chat_modal_instead_of_lines() {
     c.cache.ifaces[2] = Some(rect);
     c.redraw_chat = true;
     c.game_draw();
-    let chat = c.area_chat.as_ref().expect("prepare_game allocates area_chat");
+    let chat = c.renderer.area_chat.as_ref().expect("prepare_game allocates area_chat");
     assert!(
         chat.pixels.iter().any(|&p| p & 0xffffff == 0x00ff00),
         "chat modal TYPE_RECT must plot into area_chat"
@@ -1425,7 +1425,7 @@ fn draw_chat_modal_clears_stale_chat_lines() {
     c.game_draw(); // chatback + fonts
     c.add_chat(0, "hello", ""); // a black type-0 line (redraw_chat set)
     c.game_draw();
-    let chat = c.area_chat.as_ref().unwrap();
+    let chat = c.renderer.area_chat.as_ref().unwrap();
     let black_spots: Vec<usize> = chat
         .pixels
         .iter()
@@ -1454,7 +1454,7 @@ fn draw_chat_modal_clears_stale_chat_lines() {
     c.cache.ifaces[2] = Some(rect);
     c.redraw_chat = true;
     c.game_draw();
-    let chat = c.area_chat.as_ref().unwrap();
+    let chat = c.renderer.area_chat.as_ref().unwrap();
     for i in black_spots {
         assert_ne!(
             chat.pixels[i] & 0xffffff,
@@ -1644,12 +1644,12 @@ fn draw_icons_blinks_flashing_tab() {
     c.loop_cycle = 5;
     c.redraw_icons = true;
     c.game_draw();
-    let on = c.area_backhmid1.as_ref().unwrap().pixels.clone();
+    let on = c.renderer.area_backhmid1.as_ref().unwrap().pixels.clone();
     // blink off half-cycle (loopCycle % 20 >= 10): the tab is hidden
     c.loop_cycle = 15;
     c.redraw_icons = true;
     c.game_draw();
-    let off = c.area_backhmid1.as_ref().unwrap().pixels.clone();
+    let off = c.renderer.area_backhmid1.as_ref().unwrap().pixels.clone();
     assert_ne!(on, off, "the flashing tab must blink with loop_cycle");
 }
 
@@ -1832,7 +1832,7 @@ fn hover_walk_steps_scrollable_layer_scrollbar() {
     c.cache.ifaces[3] = Some(button);
     // the scroller's scrollbar sits at left = 553 + 100 = 653, top =
     // 205 + 30 = 235; its down arrow is x 653..669, y 319..335.
-    c.scroll_cycle = 1;
+    c.renderer.scroll_cycle = 1;
     c.shell.mouse_x = 660;
     c.shell.mouse_y = 327;
     c.update_if_pointer();

@@ -21,11 +21,11 @@ fn client_tmp() -> Client {
 fn draw_progress_headless_sets_fields_without_touching_pixels() {
     let mut c = client_tmp();
     assert!(!c.draw);
-    let before = c.draw_area.pixels.clone();
+    let before = c.renderer.draw_area.pixels.clone();
     c.draw_progress("Unpacking media", 80);
     assert_eq!(c.last_progress_percent, 80);
     assert_eq!(c.last_progress_message, "Unpacking media");
-    assert_eq!(c.draw_area.pixels, before);
+    assert_eq!(c.renderer.draw_area.pixels, before);
 }
 
 #[test]
@@ -35,13 +35,13 @@ fn draw_progress_headed_paints_red_bar() {
     c.draw_progress("Loading...", 10);
     assert_eq!(c.last_progress_percent, 10);
     // TS GameShell: fillRect(width/2 - 150, midY+2, progress*3, 30, 0x8c1111)
-    let w = c.draw_area.width;
-    let h = c.draw_area.height;
+    let w = c.renderer.draw_area.width;
+    let h = c.renderer.draw_area.height;
     let mid_y = (h / 2) - 18;
     let x = (w / 2) - 150;
     let y = mid_y + 2;
     let idx = (x + y * w) as usize;
-    assert_eq!(c.draw_area.pixels[idx], 0x8c1111);
+    assert_eq!(c.renderer.draw_area.pixels[idx], 0x8c1111);
 }
 
 /// Java `Client.messageBox` calls `prepareTitle()` then draws the stage
@@ -65,9 +65,9 @@ fn draw_progress_headed_paints_stage_text_once_title_jag_exists() {
     });
     c.set_draw(true);
     c.draw_progress("Loading models - 50%", 70);
-    assert!(c.b12.is_some(), "messageBox prepareTitle loads b12 from title jag");
+    assert!(c.renderer.b12.is_some(), "messageBox prepareTitle loads b12 from title jag");
     assert!(
-        c.draw_area.pixels.iter().any(|&p| p == 0xffffff),
+        c.renderer.draw_area.pixels.iter().any(|&p| p == 0xffffff),
         "stage text must be plotted in white (Java b12.centreString)"
     );
 }
@@ -93,9 +93,9 @@ fn draw_progress_headed_paints_torch_columns() {
     });
     c.set_draw(true);
     c.draw_progress("Loading models - 50%", 70);
-    let w = c.draw_area.width;
+    let w = c.renderer.draw_area.width;
     let any = (0..265).any(|y| {
-        (0..128).any(|x| c.draw_area.pixels[(y * w + x) as usize] != 0)
+        (0..128).any(|x| c.renderer.draw_area.pixels[(y * w + x) as usize] != 0)
     });
     assert!(any, "left torch column must not be black during the loading bar");
 }

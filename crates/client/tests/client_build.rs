@@ -403,7 +403,7 @@ fn finish_build_sets_quick_ground_after_load_ground() {
     let src = ground_src(&[(0, 2, 2, &[82])]);
     build.load_ground(&mut c.groundh, &mut c.mapl, &src, 0, 0, 0, 0);
     c.world.fill_base_level(0);
-    build.finish_build(&c.cache, &mut c.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    build.finish_build(&c.cache, &mut c.renderer.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
 
     // the floor tile gets a PLAIN quick ground (t2 == 0 path, TS 254-273)
     let sq = c.world.square(0, 2, 2).expect("floor tile square");
@@ -429,7 +429,7 @@ fn finish_build_blocks_map_flag_block_tiles() {
     let mut c = client();
     c.mapl[0][2][2] = MapFlag::BLOCK as u8;
     let mut build = ClientBuild::new();
-    build.finish_build(&c.cache, &mut c.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    build.finish_build(&c.cache, &mut c.renderer.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
     assert_ne!(c.collision[0].flags[2][2] & CollisionFlag::WR_GRND, 0);
 }
 
@@ -440,7 +440,7 @@ fn finish_build_link_below_blocks_lower_level() {
     // (TS 79-87: trueLevel = level - 1)
     c.mapl[1][2][2] = (MapFlag::BLOCK | MapFlag::LINK_BELOW) as u8;
     let mut build = ClientBuild::new();
-    build.finish_build(&c.cache, &mut c.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    build.finish_build(&c.cache, &mut c.renderer.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
     assert_ne!(c.collision[0].flags[2][2] & CollisionFlag::WR_GRND, 0);
     assert_eq!(c.collision[1].flags[2][2] & CollisionFlag::WR_GRND, 0);
 }
@@ -452,7 +452,7 @@ fn finish_build_clamps_hue_and_lig_off() {
     assert!((-8..=8).contains(&build.hue_off), "hue_off {}", build.hue_off);
     assert!((-16..=16).contains(&build.lig_off), "lig_off {}", build.lig_off);
     for _ in 0..200 {
-        build.finish_build(&c.cache, &mut c.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+        build.finish_build(&c.cache, &mut c.renderer.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
     }
     assert!((-8..=8).contains(&build.hue_off), "hue_off {}", build.hue_off);
     assert!((-16..=16).contains(&build.lig_off), "lig_off {}", build.lig_off);
@@ -488,7 +488,7 @@ fn finish_build_push_down_link_below() {
     );
     c.mapl[1][2][2] = MapFlag::LINK_BELOW as u8;
     let mut build = ClientBuild::new();
-    build.finish_build(&c.cache, &mut c.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    build.finish_build(&c.cache, &mut c.renderer.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
     let sq = c.world.square(0, 2, 2).expect("pushed-down tile");
     assert_eq!(sq.level, 0);
     assert!(sq.quick_ground.is_some());
@@ -503,7 +503,7 @@ fn finish_build_clears_flat_floor_occluder_bits() {
     for z in 8..=12 {
         build.mapo[0][10][z] |= 0x4;
     }
-    build.finish_build(&c.cache, &mut c.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    build.finish_build(&c.cache, &mut c.renderer.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
     for z in 8..=12 {
         assert_eq!(build.mapo[0][10][z] & 0x4, 0, "floor bit cleared at z={z}");
     }
@@ -531,7 +531,7 @@ fn finish_build_hooks_share_light() {
     c.world.set_wall(0, 2, 2, 0, 0, 0, Some(SceneModel::Model(model)), None, 0, 0);
 
     let mut build = ClientBuild::new();
-    build.finish_build(&c.cache, &mut c.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    build.finish_build(&c.cache, &mut c.renderer.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
 
     let wall = c.world.get_wall(0, 2, 2).expect("wall");
     let SceneModel::Model(m) = wall.model1.as_ref().unwrap() else {
@@ -552,7 +552,7 @@ fn finish_build_clears_wall_occluder_bits() {
     for z in 2..=9 {
         build.mapo[0][10][z] |= 0x1;
     }
-    build.finish_build(&c.cache, &mut c.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    build.finish_build(&c.cache, &mut c.renderer.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
     for z in 2..=9 {
         assert_eq!(build.mapo[0][10][z] & 0x1, 0, "wall bit cleared at z={z}");
     }
@@ -571,7 +571,7 @@ fn finish_build_magenta_overlay_floor() {
     let src = ground_src(&[(0, 2, 2, &[2, 1])]);
     build.load_ground(&mut c.groundh, &mut c.mapl, &src, 0, 0, 0, 0);
     c.world.fill_base_level(0);
-    build.finish_build(&c.cache, &mut c.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    build.finish_build(&c.cache, &mut c.renderer.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
     let sq = c.world.square(0, 2, 2).expect("overlay tile square");
     assert!(sq.quick_ground.is_some());
 }

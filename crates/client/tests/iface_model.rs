@@ -41,7 +41,7 @@ fn draw_interface_type_model_missing_does_not_panic() {
     c.cache.ifaces[2] = Some(model);
     let mut pixels = vec![0i32; 50 * 50];
     let mut surface = client::graphics::Pix2D::with_pixels(&mut pixels, 50, 50);
-    c.pix3d.set_clipping(50, 50);
+    c.renderer.pix3d.set_clipping(50, 50);
     c.draw_interface(1, 0, 0, 0, &mut surface);
 }
 

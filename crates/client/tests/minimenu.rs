@@ -108,8 +108,8 @@ fn add_world_options_loc_examine_from_pick() {
     let x = 10i32;
     let z = 12i32;
     let typecode = (2 << 29) | ((type_id & 0x7fff) << 14) | ((z & 0x7f) << 7) | (x & 0x7f);
-    c.pix3d.picked_count = 1;
-    c.pix3d.picked_entity_typecode[0] = typecode;
+    c.renderer.pix3d.picked_count = 1;
+    c.renderer.pix3d.picked_entity_typecode[0] = typecode;
     if c.cache.locs.len() <= 1 {
         c.cache.locs.push(LocType::default());
         c.cache.locs.push(LocType::default());
@@ -152,8 +152,8 @@ fn add_world_options_npc_ops_from_pick() {
     let x = 8i32;
     let z = 9i32;
     let typecode = (1 << 29) | ((npc_slot & 0x7fff) << 14) | ((z & 0x7f) << 7) | (x & 0x7f);
-    c.pix3d.picked_count = 1;
-    c.pix3d.picked_entity_typecode[0] = typecode;
+    c.renderer.pix3d.picked_count = 1;
+    c.renderer.pix3d.picked_entity_typecode[0] = typecode;
     if c.cache.npcs.len() <= 2 {
         c.cache.npcs.push(NpcType::default());
         c.cache.npcs.push(NpcType::default());
@@ -200,8 +200,8 @@ fn add_world_options_player_ops_from_pick() {
     let x = 6i32;
     let z = 7i32;
     let typecode = (0 << 29) | ((player_slot & 0x7fff) << 14) | ((z & 0x7f) << 7) | (x & 0x7f);
-    c.pix3d.picked_count = 1;
-    c.pix3d.picked_entity_typecode[0] = typecode;
+    c.renderer.pix3d.picked_count = 1;
+    c.renderer.pix3d.picked_entity_typecode[0] = typecode;
     let mut local = ClientPlayer::default();
     local.combat_level = 10;
     c.local_player = Some(local);
@@ -242,8 +242,8 @@ fn add_world_options_obj_take_and_examine_from_pick() {
     let x = 4i32;
     let z = 5i32;
     let typecode = (3 << 29) | ((9 & 0x7fff) << 14) | ((z & 0x7f) << 7) | (x & 0x7f);
-    c.pix3d.picked_count = 1;
-    c.pix3d.picked_entity_typecode[0] = typecode;
+    c.renderer.pix3d.picked_count = 1;
+    c.renderer.pix3d.picked_entity_typecode[0] = typecode;
     if c.cache.objs.len() <= 7 {
         while c.cache.objs.len() < 8 {
             c.cache.objs.push(ObjType::default());
@@ -276,9 +276,9 @@ fn add_world_options_skips_duplicate_typecodes() {
     let mut c = client();
     c.menu_num_entries = 1;
     let typecode = (3 << 29) | ((9 & 0x7fff) << 14) | ((5 & 0x7f) << 7) | (4 & 0x7f);
-    c.pix3d.picked_count = 2;
-    c.pix3d.picked_entity_typecode[0] = typecode;
-    c.pix3d.picked_entity_typecode[1] = typecode;
+    c.renderer.pix3d.picked_count = 2;
+    c.renderer.pix3d.picked_entity_typecode[0] = typecode;
+    c.renderer.pix3d.picked_entity_typecode[1] = typecode;
     if c.cache.objs.len() <= 7 {
         while c.cache.objs.len() < 8 {
             c.cache.objs.push(ObjType::default());

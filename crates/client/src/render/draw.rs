@@ -102,10 +102,10 @@ impl Client {
 
         let w = 360;
         let h = 200;
-        if let Some(map4) = self.image_title4.as_mut() {
+        if let Some(map4) = self.renderer.image_title4.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut map4.pixels, w, h);
 
-            if let Some(titlebox) = &self.image_titlebox {
+            if let Some(titlebox) = &self.renderer.image_titlebox {
                 titlebox.plot_sprite(&mut surface, 0, 0);
             }
 
@@ -115,34 +115,34 @@ impl Client {
 
                 if self.on_demand.is_some() {
                     let message = self.on_demand.as_ref().unwrap().message.clone();
-                    if let Some(p11) = self.p11.as_mut() {
+                    if let Some(p11) = self.renderer.p11.as_mut() {
                         p11.centre_string_tag(&mut surface, &message, w / 2, extra_y, 0x75a9a9, true);
                     }
                 }
 
-                if let Some(b12) = self.b12.as_mut() {
+                if let Some(b12) = self.renderer.b12.as_mut() {
                     b12.centre_string_tag(&mut surface, "Welcome to RuneScape", w / 2, y, Colour::YELLOW, true);
                 }
 
                 let mut x = (w / 2) - 80;
                 y = (h / 2) + 20;
-                if let Some(button) = &self.image_titlebutton {
+                if let Some(button) = &self.renderer.image_titlebutton {
                     button.plot_sprite(&mut surface, x - 73, y - 20);
                 }
-                if let Some(b12) = self.b12.as_mut() {
+                if let Some(b12) = self.renderer.b12.as_mut() {
                     b12.centre_string_tag(&mut surface, "New User", x, y + 5, Colour::WHITE, true);
                 }
 
                 x = (w / 2) + 80;
-                if let Some(button) = &self.image_titlebutton {
+                if let Some(button) = &self.renderer.image_titlebutton {
                     button.plot_sprite(&mut surface, x - 73, y - 20);
                 }
-                if let Some(b12) = self.b12.as_mut() {
+                if let Some(b12) = self.renderer.b12.as_mut() {
                     b12.centre_string_tag(&mut surface, "Existing User", x, y + 5, Colour::WHITE, true);
                 }
             } else if self.loginscreen == 2 {
                 let mut y = (h / 2) - 40;
-                if let Some(b12) = self.b12.as_mut() {
+                if let Some(b12) = self.renderer.b12.as_mut() {
                     if self.login_mes1.is_empty() {
                         b12.centre_string_tag(&mut surface, &self.login_mes2, w / 2, y - 7, Colour::YELLOW, true);
                     } else {
@@ -169,24 +169,24 @@ impl Client {
 
                 let x = (w / 2) - 80;
                 let y = (h / 2) + 50;
-                if let Some(button) = &self.image_titlebutton {
+                if let Some(button) = &self.renderer.image_titlebutton {
                     button.plot_sprite(&mut surface, x - 73, y - 20);
                 }
-                if let Some(b12) = self.b12.as_mut() {
+                if let Some(b12) = self.renderer.b12.as_mut() {
                     b12.centre_string_tag(&mut surface, "Login", x, y + 5, Colour::WHITE, true);
                 }
 
                 let x = (w / 2) + 80;
-                if let Some(button) = &self.image_titlebutton {
+                if let Some(button) = &self.renderer.image_titlebutton {
                     button.plot_sprite(&mut surface, x - 73, y - 20);
                 }
-                if let Some(b12) = self.b12.as_mut() {
+                if let Some(b12) = self.renderer.b12.as_mut() {
                     b12.centre_string_tag(&mut surface, "Cancel", x, y + 5, Colour::WHITE, true);
                 }
             } else if self.loginscreen == 3 {
                 let x = w / 2;
                 let mut y = (h / 2) - 60;
-                if let Some(b12) = self.b12.as_mut() {
+                if let Some(b12) = self.renderer.b12.as_mut() {
                     b12.centre_string_tag(&mut surface, "Create a free account", x, y, Colour::YELLOW, true);
 
                     y = (h / 2) - 35;
@@ -201,38 +201,38 @@ impl Client {
 
                 let x = w / 2;
                 let y = (h / 2) + 50;
-                if let Some(button) = &self.image_titlebutton {
+                if let Some(button) = &self.renderer.image_titlebutton {
                     button.plot_sprite(&mut surface, x - 73, y - 20);
                 }
-                if let Some(b12) = self.b12.as_mut() {
+                if let Some(b12) = self.renderer.b12.as_mut() {
                     b12.centre_string_tag(&mut surface, "Cancel", x, y + 5, Colour::WHITE, true);
                 }
             }
         }
 
-        if let Some(t4) = &self.image_title4 {
-            t4.blit_into(&mut self.draw_area, 202, 171);
+        if let Some(t4) = &self.renderer.image_title4 {
+            t4.blit_into(&mut self.renderer.draw_area, 202, 171);
         }
 
         if self.redraw_frame {
             self.redraw_frame = false;
-            if let Some(t2) = &self.image_title2 {
-                t2.blit_into(&mut self.draw_area, 128, 0);
+            if let Some(t2) = &self.renderer.image_title2 {
+                t2.blit_into(&mut self.renderer.draw_area, 128, 0);
             }
-            if let Some(t3) = &self.image_title3 {
-                t3.blit_into(&mut self.draw_area, 202, 371);
+            if let Some(t3) = &self.renderer.image_title3 {
+                t3.blit_into(&mut self.renderer.draw_area, 202, 371);
             }
-            if let Some(t5) = &self.image_title5 {
-                t5.blit_into(&mut self.draw_area, 0, 265);
+            if let Some(t5) = &self.renderer.image_title5 {
+                t5.blit_into(&mut self.renderer.draw_area, 0, 265);
             }
-            if let Some(t6) = &self.image_title6 {
-                t6.blit_into(&mut self.draw_area, 562, 265);
+            if let Some(t6) = &self.renderer.image_title6 {
+                t6.blit_into(&mut self.renderer.draw_area, 562, 265);
             }
-            if let Some(t7) = &self.image_title7 {
-                t7.blit_into(&mut self.draw_area, 128, 171);
+            if let Some(t7) = &self.renderer.image_title7 {
+                t7.blit_into(&mut self.renderer.draw_area, 128, 171);
             }
-            if let Some(t8) = &self.image_title8 {
-                t8.blit_into(&mut self.draw_area, 562, 171);
+            if let Some(t8) = &self.renderer.image_title8 {
+                t8.blit_into(&mut self.renderer.draw_area, 562, 171);
             }
         }
 
@@ -240,11 +240,11 @@ impl Client {
         // (TS PixMap.draw onto the canvas). Inactive flames still blit the
         // JPEG background that loadTitleBackground plotted into 0/1.
         self.tick_title_flames();
-        if let Some(t0) = &self.image_title0 {
-            t0.blit_into(&mut self.draw_area, 0, 0);
+        if let Some(t0) = &self.renderer.image_title0 {
+            t0.blit_into(&mut self.renderer.draw_area, 0, 0);
         }
-        if let Some(t1) = &self.image_title1 {
-            t1.blit_into(&mut self.draw_area, 637, 0);
+        if let Some(t1) = &self.renderer.image_title1 {
+            t1.blit_into(&mut self.renderer.draw_area, 637, 0);
         }
     }
 
@@ -271,12 +271,12 @@ impl Client {
         // (no fonts) after the title jag is already on disk.
         self.prepare_title();
 
-        if self.image_title4.is_none() {
-            let width = self.draw_area.width;
-            let height = self.draw_area.height;
+        if self.renderer.image_title4.is_none() {
+            let width = self.renderer.draw_area.width;
+            let height = self.renderer.draw_area.height;
             let y = (height / 2) - 18;
             let mid_x = width / 2;
-            let mut surface = Pix2D::with_pixels(&mut self.draw_area.pixels, width, height);
+            let mut surface = Pix2D::with_pixels(&mut self.renderer.draw_area.pixels, width, height);
             surface.draw_rect(mid_x - 152, y, 304, 34, 0x8c1111);
             surface.fill_rect(mid_x - 150, y + 2, progress * 3, 30, 0x8c1111);
             surface.fill_rect(
@@ -286,7 +286,7 @@ impl Client {
                 30,
                 Colour::BLACK,
             );
-            if let Some(b12) = self.b12.as_ref() {
+            if let Some(b12) = self.renderer.b12.as_ref() {
                 b12.centre_string(&mut surface, Some(message), mid_x, y + 22, Colour::WHITE);
             }
             self.present_progress();
@@ -297,9 +297,9 @@ impl Client {
         let w = 360;
         let h = 200;
         let offset_y = 20;
-        if let Some(map4) = self.image_title4.as_mut() {
+        if let Some(map4) = self.renderer.image_title4.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut map4.pixels, w, h);
-            if let Some(b12) = self.b12.as_ref() {
+            if let Some(b12) = self.renderer.b12.as_ref() {
                 b12.centre_string(
                     &mut surface,
                     Some("RuneScape is loading - please wait..."),
@@ -319,7 +319,7 @@ impl Client {
                 30,
                 Colour::BLACK,
             );
-            if let Some(b12) = self.b12.as_ref() {
+            if let Some(b12) = self.renderer.b12.as_ref() {
                 b12.centre_string(
                     &mut surface,
                     Some(message),
@@ -335,37 +335,37 @@ impl Client {
         // while loading; we must not `tick_title_flames` here (same thread
         // as OnDemand wait → visible lag). Blit the JPEG already in 0/1
         // from loadTitleBackground; animation starts in title_screen_draw.
-        if let Some(t4) = &self.image_title4 {
-            t4.blit_into(&mut self.draw_area, 202, 171);
+        if let Some(t4) = &self.renderer.image_title4 {
+            t4.blit_into(&mut self.renderer.draw_area, 202, 171);
         }
 
         if self.redraw_frame {
             self.redraw_frame = false;
-            if let Some(t2) = &self.image_title2 {
-                t2.blit_into(&mut self.draw_area, 128, 0);
+            if let Some(t2) = &self.renderer.image_title2 {
+                t2.blit_into(&mut self.renderer.draw_area, 128, 0);
             }
-            if let Some(t3) = &self.image_title3 {
-                t3.blit_into(&mut self.draw_area, 202, 371);
+            if let Some(t3) = &self.renderer.image_title3 {
+                t3.blit_into(&mut self.renderer.draw_area, 202, 371);
             }
-            if let Some(t5) = &self.image_title5 {
-                t5.blit_into(&mut self.draw_area, 0, 265);
+            if let Some(t5) = &self.renderer.image_title5 {
+                t5.blit_into(&mut self.renderer.draw_area, 0, 265);
             }
-            if let Some(t6) = &self.image_title6 {
-                t6.blit_into(&mut self.draw_area, 562, 265);
+            if let Some(t6) = &self.renderer.image_title6 {
+                t6.blit_into(&mut self.renderer.draw_area, 562, 265);
             }
-            if let Some(t7) = &self.image_title7 {
-                t7.blit_into(&mut self.draw_area, 128, 171);
+            if let Some(t7) = &self.renderer.image_title7 {
+                t7.blit_into(&mut self.renderer.draw_area, 128, 171);
             }
-            if let Some(t8) = &self.image_title8 {
-                t8.blit_into(&mut self.draw_area, 562, 171);
+            if let Some(t8) = &self.renderer.image_title8 {
+                t8.blit_into(&mut self.renderer.draw_area, 562, 171);
             }
         }
 
-        if let Some(t0) = &self.image_title0 {
-            t0.blit_into(&mut self.draw_area, 0, 0);
+        if let Some(t0) = &self.renderer.image_title0 {
+            t0.blit_into(&mut self.renderer.draw_area, 0, 0);
         }
-        if let Some(t1) = &self.image_title1 {
-            t1.blit_into(&mut self.draw_area, 637, 0);
+        if let Some(t1) = &self.renderer.image_title1 {
+            t1.blit_into(&mut self.renderer.draw_area, 637, 0);
         }
 
         self.present_progress();
@@ -382,21 +382,21 @@ impl Client {
         #[cfg(feature = "window")]
         if let Some(present) = self.present.as_mut() {
             present.blit(
-                &self.draw_area.pixels,
-                self.draw_area.width as u32,
-                self.draw_area.height as u32,
+                &self.renderer.draw_area.pixels,
+                self.renderer.draw_area.width as u32,
+                self.renderer.draw_area.height as u32,
             );
         }
     }
 
     fn tick_title_flames(&mut self) {
-        let Some(flames) = self.title_flames.as_mut() else {
+        let Some(flames) = self.renderer.title_flames.as_mut() else {
             return;
         };
         if !flames.active {
             return;
         }
-        let (Some(left), Some(right)) = (self.image_title0.as_mut(), self.image_title1.as_mut()) else {
+        let (Some(left), Some(right)) = (self.renderer.image_title0.as_mut(), self.renderer.image_title1.as_mut()) else {
             return;
         };
         flames.render_flames(left, right, self.loop_cycle);
@@ -409,7 +409,7 @@ impl Client {
     /// draw reallocates the regions like Java `prepareTitle` after
     /// `prepareGame` dropped them.
     fn prepare_title(&mut self) {
-        if self.image_title2.is_some() {
+        if self.renderer.image_title2.is_some() {
             return;
         }
 
@@ -418,35 +418,35 @@ impl Client {
         // re-runs `prepareGame` instead of early-returning on a surviving
         // `areaChatback`. `draw_area` stays: Rust keeps one compositor
         // PixMap and `logout` cls it.
-        self.area_chat = None;
-        self.area_map = None;
-        self.area_side = None;
-        self.area_game = None;
-        self.area_backbase1 = None;
-        self.area_backbase2 = None;
-        self.area_backhmid1 = None;
+        self.renderer.area_chat = None;
+        self.renderer.area_map = None;
+        self.renderer.area_side = None;
+        self.renderer.area_game = None;
+        self.renderer.area_backbase1 = None;
+        self.renderer.area_backbase2 = None;
+        self.renderer.area_backhmid1 = None;
 
-        self.image_title0 = Some(PixMap::new(128, 265));
-        self.image_title1 = Some(PixMap::new(128, 265));
-        self.image_title2 = Some(PixMap::new(509, 171));
-        self.image_title3 = Some(PixMap::new(360, 132));
-        self.image_title4 = Some(PixMap::new(360, 200));
-        self.image_title5 = Some(PixMap::new(202, 238));
-        self.image_title6 = Some(PixMap::new(203, 238));
-        self.image_title7 = Some(PixMap::new(74, 94));
-        self.image_title8 = Some(PixMap::new(75, 94));
+        self.renderer.image_title0 = Some(PixMap::new(128, 265));
+        self.renderer.image_title1 = Some(PixMap::new(128, 265));
+        self.renderer.image_title2 = Some(PixMap::new(509, 171));
+        self.renderer.image_title3 = Some(PixMap::new(360, 132));
+        self.renderer.image_title4 = Some(PixMap::new(360, 200));
+        self.renderer.image_title5 = Some(PixMap::new(202, 238));
+        self.renderer.image_title6 = Some(PixMap::new(203, 238));
+        self.renderer.image_title7 = Some(PixMap::new(74, 94));
+        self.renderer.image_title8 = Some(PixMap::new(75, 94));
 
-        if self.title.is_none() {
-            self.title = try_title_jag(&self.config.cache_dir);
+        if self.renderer.title.is_none() {
+            self.renderer.title = try_title_jag(&self.config.cache_dir);
         }
 
         // `take` so the jag outlives the `&mut self` loads (TS loads it in
         // `maininit` and passes it around freely).
         self.load_fonts();
-        if let Some(jag) = self.title.take() {
+        if let Some(jag) = self.renderer.title.take() {
             self.load_title_background(&jag);
             self.load_title_images(&jag);
-            self.title = Some(jag);
+            self.renderer.title = Some(jag);
         }
 
         self.redraw_frame = true;
@@ -457,18 +457,18 @@ impl Client {
     /// cache when `prepare_title` has not run yet, so an in-game client that
     /// never drew the title still has `p12` for the chat-mode labels.
     fn load_fonts(&mut self) {
-        if self.p11.is_some() {
+        if self.renderer.p11.is_some() {
             return;
         }
-        if self.title.is_none() {
-            self.title = try_title_jag(&self.config.cache_dir);
+        if self.renderer.title.is_none() {
+            self.renderer.title = try_title_jag(&self.config.cache_dir);
         }
-        if let Some(jag) = self.title.take() {
-            self.p11 = PixFont::depack(&jag, "p11_full", false).ok();
-            self.p12 = PixFont::depack(&jag, "p12_full", false).ok();
-            self.b12 = PixFont::depack(&jag, "b12_full", false).ok();
-            self.q8 = PixFont::depack(&jag, "q8_full", true).ok();
-            self.title = Some(jag);
+        if let Some(jag) = self.renderer.title.take() {
+            self.renderer.p11 = PixFont::depack(&jag, "p11_full", false).ok();
+            self.renderer.p12 = PixFont::depack(&jag, "p12_full", false).ok();
+            self.renderer.b12 = PixFont::depack(&jag, "b12_full", false).ok();
+            self.renderer.q8 = PixFont::depack(&jag, "q8_full", true).ok();
+            self.renderer.title = Some(jag);
         }
     }
 
@@ -476,31 +476,31 @@ impl Client {
     /// across the 9 title regions, mirrored, then the `logo` sprite.
     fn load_title_background(&mut self, jag: &JagFile) {
         if let Ok(mut background) = Pix32::from_jpeg(jag, "title.dat") {
-            plot_title_bg(&mut self.image_title0, &background, 0, 0);
-            plot_title_bg(&mut self.image_title1, &background, -637, 0);
-            plot_title_bg(&mut self.image_title2, &background, -128, 0);
-            plot_title_bg(&mut self.image_title3, &background, -202, -371);
-            plot_title_bg(&mut self.image_title4, &background, -202, -171);
-            plot_title_bg(&mut self.image_title5, &background, 0, -265);
-            plot_title_bg(&mut self.image_title6, &background, -562, -265);
-            plot_title_bg(&mut self.image_title7, &background, -128, -171);
-            plot_title_bg(&mut self.image_title8, &background, -562, -171);
+            plot_title_bg(&mut self.renderer.image_title0, &background, 0, 0);
+            plot_title_bg(&mut self.renderer.image_title1, &background, -637, 0);
+            plot_title_bg(&mut self.renderer.image_title2, &background, -128, 0);
+            plot_title_bg(&mut self.renderer.image_title3, &background, -202, -371);
+            plot_title_bg(&mut self.renderer.image_title4, &background, -202, -171);
+            plot_title_bg(&mut self.renderer.image_title5, &background, 0, -265);
+            plot_title_bg(&mut self.renderer.image_title6, &background, -562, -265);
+            plot_title_bg(&mut self.renderer.image_title7, &background, -128, -171);
+            plot_title_bg(&mut self.renderer.image_title8, &background, -562, -171);
 
             background.hflip();
 
-            plot_title_bg(&mut self.image_title0, &background, 382, 0);
-            plot_title_bg(&mut self.image_title1, &background, -255, 0);
-            plot_title_bg(&mut self.image_title2, &background, 254, 0);
-            plot_title_bg(&mut self.image_title3, &background, 180, -371);
-            plot_title_bg(&mut self.image_title4, &background, 180, -171);
-            plot_title_bg(&mut self.image_title5, &background, 382, -265);
-            plot_title_bg(&mut self.image_title6, &background, -180, -265);
-            plot_title_bg(&mut self.image_title7, &background, 254, -171);
-            plot_title_bg(&mut self.image_title8, &background, -180, -171);
+            plot_title_bg(&mut self.renderer.image_title0, &background, 382, 0);
+            plot_title_bg(&mut self.renderer.image_title1, &background, -255, 0);
+            plot_title_bg(&mut self.renderer.image_title2, &background, 254, 0);
+            plot_title_bg(&mut self.renderer.image_title3, &background, 180, -371);
+            plot_title_bg(&mut self.renderer.image_title4, &background, 180, -171);
+            plot_title_bg(&mut self.renderer.image_title5, &background, 382, -265);
+            plot_title_bg(&mut self.renderer.image_title6, &background, -180, -265);
+            plot_title_bg(&mut self.renderer.image_title7, &background, 254, -171);
+            plot_title_bg(&mut self.renderer.image_title8, &background, -180, -171);
         }
 
         if let Ok(logo) = Pix32::depack(jag, "logo", 0) {
-            if let Some(map2) = self.image_title2.as_mut() {
+            if let Some(map2) = self.renderer.image_title2.as_mut() {
                 let w = map2.width;
                 let h = map2.height;
                 let mut surface = Pix2D::with_pixels(&mut map2.pixels, w, h);
@@ -517,23 +517,23 @@ impl Client {
     /// `titlebutton` sprites plus the 12 `runes` sprites (`fl_icon` param
     /// default 0 → sprites 0..11).
     fn load_title_images(&mut self, jag: &JagFile) {
-        self.image_titlebox = Pix8::depack(jag, "titlebox", 0).ok();
-        self.image_titlebutton = Pix8::depack(jag, "titlebutton", 0).ok();
+        self.renderer.image_titlebox = Pix8::depack(jag, "titlebox", 0).ok();
+        self.renderer.image_titlebutton = Pix8::depack(jag, "titlebutton", 0).ok();
 
         // TS: `flameIcon = this.getIntParam('fl_icon')` — no param plumbing,
         // the fallback 0 means sprites 0..11.
-        self.image_runes.clear();
+        self.renderer.image_runes.clear();
         for i in 0..12 {
             if let Ok(rune) = Pix8::depack(jag, "runes", i) {
-                self.image_runes.push(rune);
+                self.renderer.image_runes.push(rune);
             }
         }
-        if self.title_flames.is_none() {
-            if let (Some(left), Some(right)) = (&self.image_title0, &self.image_title1) {
-                let mut flames = TitleFlames::new(self.image_runes.clone());
+        if self.renderer.title_flames.is_none() {
+            if let (Some(left), Some(right)) = (&self.renderer.image_title0, &self.renderer.image_title1) {
+                let mut flames = TitleFlames::new(self.renderer.image_runes.clone());
                 flames.setup_fire(left, right);
                 flames.start();
-                self.title_flames = Some(flames);
+                self.renderer.title_flames = Some(flames);
             }
         }
     }
@@ -541,13 +541,13 @@ impl Client {
     /// `unloadTitle` from client-ts (1992): drop the title sprites and stop
     /// the torch flames. TS calls this from `prepareGame`/`mainquit`.
     pub fn unload_title(&mut self) {
-        if let Some(flames) = self.title_flames.as_mut() {
+        if let Some(flames) = self.renderer.title_flames.as_mut() {
             flames.close();
         }
-        self.title_flames = None;
-        self.image_titlebox = None;
-        self.image_titlebutton = None;
-        self.image_runes.clear();
+        self.renderer.title_flames = None;
+        self.renderer.image_titlebox = None;
+        self.renderer.image_titlebutton = None;
+        self.renderer.image_runes.clear();
     }
 
     /// `gameDraw` from client-ts (3890): the in-game frame. `gameDrawMain`
@@ -559,7 +559,7 @@ impl Client {
         // TS GameShell ticks `scrollCycle` each mainloop pass while the
         // mouse is held (Client.ts 2341-2343); 0/1 here is enough for the
         // held-arrow scrollbar repeat.
-        self.scroll_cycle = if self.shell.mouse_button != 0 { 1 } else { 0 };
+        self.renderer.scroll_cycle = if self.shell.mouse_button != 0 { 1 } else { 0 };
         // TS `buildMinimenu` (hover walk + menu options) runs from
         // `other_overlays` when no menu is open (Client.ts 4865-4867),
         // ahead of this frame's side/chat draws.
@@ -568,32 +568,32 @@ impl Client {
         if self.redraw_frame {
             self.redraw_frame = false;
 
-            if let Some(b) = &self.area_backleft1 {
-                b.blit_into(&mut self.draw_area, 0, 4);
+            if let Some(b) = &self.renderer.area_backleft1 {
+                b.blit_into(&mut self.renderer.draw_area, 0, 4);
             }
-            if let Some(b) = &self.area_backleft2 {
-                b.blit_into(&mut self.draw_area, 0, 357);
+            if let Some(b) = &self.renderer.area_backleft2 {
+                b.blit_into(&mut self.renderer.draw_area, 0, 357);
             }
-            if let Some(b) = &self.area_backright1 {
-                b.blit_into(&mut self.draw_area, 722, 4);
+            if let Some(b) = &self.renderer.area_backright1 {
+                b.blit_into(&mut self.renderer.draw_area, 722, 4);
             }
-            if let Some(b) = &self.area_backright2 {
-                b.blit_into(&mut self.draw_area, 743, 205);
+            if let Some(b) = &self.renderer.area_backright2 {
+                b.blit_into(&mut self.renderer.draw_area, 743, 205);
             }
-            if let Some(b) = &self.area_backtop1 {
-                b.blit_into(&mut self.draw_area, 0, 0);
+            if let Some(b) = &self.renderer.area_backtop1 {
+                b.blit_into(&mut self.renderer.draw_area, 0, 0);
             }
-            if let Some(b) = &self.area_backvmid1 {
-                b.blit_into(&mut self.draw_area, 516, 4);
+            if let Some(b) = &self.renderer.area_backvmid1 {
+                b.blit_into(&mut self.renderer.draw_area, 516, 4);
             }
-            if let Some(b) = &self.area_backvmid2 {
-                b.blit_into(&mut self.draw_area, 516, 205);
+            if let Some(b) = &self.renderer.area_backvmid2 {
+                b.blit_into(&mut self.renderer.draw_area, 516, 205);
             }
-            if let Some(b) = &self.area_backvmid3 {
-                b.blit_into(&mut self.draw_area, 496, 357);
+            if let Some(b) = &self.renderer.area_backvmid3 {
+                b.blit_into(&mut self.renderer.draw_area, 496, 357);
             }
-            if let Some(b) = &self.area_backhmid2 {
-                b.blit_into(&mut self.draw_area, 0, 338);
+            if let Some(b) = &self.renderer.area_backhmid2 {
+                b.blit_into(&mut self.renderer.draw_area, 0, 338);
             }
 
             self.redraw_icons = true;
@@ -602,18 +602,18 @@ impl Client {
             self.redraw_chat_mode = true;
 
             if self.scene_state != 2 {
-                if let Some(g) = &self.area_game {
-                    g.blit_into(&mut self.draw_area, 4, 4);
+                if let Some(g) = &self.renderer.area_game {
+                    g.blit_into(&mut self.renderer.draw_area, 4, 4);
                 }
-                if let Some(m) = &self.area_map {
-                    m.blit_into(&mut self.draw_area, 550, 4);
+                if let Some(m) = &self.renderer.area_map {
+                    m.blit_into(&mut self.renderer.draw_area, 550, 4);
                 }
                 // Map under chrome: `area_backvmid1` (34×156 at (516, 4))
                 // borders the 172×156 rect. In the 274 layout the strips do
                 // not overlap it, so this re-blit is a no-op guard that
                 // keeps an opaque `area_map` from covering the chrome.
-                if let Some(b) = &self.area_backvmid1 {
-                    b.blit_into(&mut self.draw_area, 516, 4);
+                if let Some(b) = &self.renderer.area_backvmid1 {
+                    b.blit_into(&mut self.renderer.draw_area, 516, 4);
                 }
             }
         }
@@ -655,8 +655,8 @@ impl Client {
         // held-arrow step goes through `chat_interface` (a synthetic IfType,
         // `com_id` -1), then `chat_scroll_pos` is re-derived from it.
         if self.chat_modal_id == -1 {
-            self.chat_interface.scroll_pos = self.chat_scroll_height - self.chat_scroll_pos - 77;
-            self.chat_interface.scroll_height = self.chat_scroll_height;
+            self.renderer.chat_interface.scroll_pos = self.chat_scroll_height - self.chat_scroll_pos - 77;
+            self.renderer.chat_interface.scroll_height = self.chat_scroll_height;
             if self.shell.mouse_x > 448 && self.shell.mouse_x < 560 && self.shell.mouse_y > 332 {
                 self.do_scrollbar(
                     self.shell.mouse_x - 17,
@@ -669,7 +669,7 @@ impl Client {
                     -1,
                 );
             }
-            let mut offset = self.chat_scroll_height - self.chat_interface.scroll_pos - 77;
+            let mut offset = self.chat_scroll_height - self.renderer.chat_interface.scroll_pos - 77;
             if offset < 0 {
                 offset = 0;
             }
@@ -713,11 +713,11 @@ impl Client {
         // `redraw_frame` path above).
         if self.scene_state == 2 {
             self.minimap_draw();
-            if let Some(m) = &self.area_map {
-                m.blit_into(&mut self.draw_area, 550, 4);
+            if let Some(m) = &self.renderer.area_map {
+                m.blit_into(&mut self.renderer.draw_area, 550, 4);
             }
-            if let Some(b) = &self.area_backvmid1 {
-                b.blit_into(&mut self.draw_area, 516, 4);
+            if let Some(b) = &self.renderer.area_backvmid1 {
+                b.blit_into(&mut self.renderer.draw_area, 516, 4);
             }
         }
 
@@ -735,14 +735,14 @@ impl Client {
             self.redraw_chat_mode = false;
             // TS (4122): the chat mode buttons on `backbase1`, blitted at
             // (0, 453).
-            if let Some(base) = self.area_backbase1.as_mut() {
+            if let Some(base) = self.renderer.area_backbase1.as_mut() {
                 let w = base.width;
                 let h = base.height;
                 let mut surface = Pix2D::with_pixels(&mut base.pixels, w, h);
-                if let Some(backbase1) = &self.backbase1 {
+                if let Some(backbase1) = &self.renderer.backbase1 {
                     backbase1.plot_sprite(&mut surface, 0, 0);
                 }
-                if let Some(p12) = self.p12.as_mut() {
+                if let Some(p12) = self.renderer.p12.as_mut() {
                     p12.centre_string_tag(&mut surface, "Public chat", 55, 28, Colour::WHITE, true);
                     let (label, rgb) = match self.chat_public_mode {
                         1 => ("Friends", Colour::YELLOW),
@@ -768,8 +768,8 @@ impl Client {
                     p12.centre_string_tag(&mut surface, "Report abuse", 458, 33, Colour::WHITE, true);
                 }
             }
-            if let Some(base) = &self.area_backbase1 {
-                base.blit_into(&mut self.draw_area, 0, 453);
+            if let Some(base) = &self.renderer.area_backbase1 {
+                base.blit_into(&mut self.renderer.draw_area, 0, 453);
             }
         }
 
@@ -789,7 +789,7 @@ impl Client {
     /// is not ported either. `otherOverlays` (the main overlay and modal,
     /// TS 4250) draws into `area_game` before the blit.
     fn game_draw_main(&mut self) {
-        self.scene_cycle += 1;
+        self.renderer.scene_cycle += 1;
 
         self.add_players(true);
         self.add_npcs(true);
@@ -845,8 +845,8 @@ impl Client {
         // `World.resetVisCalc` (Client.ts loadGame 1222-1235): once per
         // game, so `vis_backing` is populated before `render_all` binds its
         // pitch/yaw row.
-        if !self.vis_calc_done {
-            self.vis_calc_done = true;
+        if !self.renderer.vis_calc_done {
+            self.renderer.vis_calc_done = true;
             let mut distance = [0i32; 9];
             for (x, slot) in distance.iter_mut().enumerate() {
                 let angle = x as i32 * 32 + 128 + 15;
@@ -858,18 +858,18 @@ impl Client {
         }
 
         // TS 4238-4242: the model picking state for this frame.
-        let cycle = self.pix3d.cycle;
-        self.pix3d.mouse_check = true;
-        self.pix3d.picked_count = 0;
-        self.pix3d.mouse_x = self.shell.mouse_x - 4;
-        self.pix3d.mouse_y = self.shell.mouse_y - 4;
+        let cycle = self.renderer.pix3d.cycle;
+        self.renderer.pix3d.mouse_check = true;
+        self.renderer.pix3d.picked_count = 0;
+        self.renderer.pix3d.mouse_x = self.shell.mouse_x - 4;
+        self.renderer.pix3d.mouse_y = self.shell.mouse_y - 4;
 
         // `Pix2D.cls()` on area_game, `Pix3D.setClipping(512, 334)`, then
         // the world pass (TS 4238-4245).
         let cache = &self.cache;
         let loop_cycle = self.loop_cycle;
-        let (pix3d, world) = (&mut self.pix3d, &mut self.world);
-        if let Some(game) = self.area_game.as_mut() {
+        let (pix3d, world) = (&mut self.renderer.pix3d, &mut self.world);
+        if let Some(game) = self.renderer.area_game.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
             surface.cls();
             pix3d.set_clipping(game.width, game.height);
@@ -892,8 +892,8 @@ impl Client {
         self.cam_pitch = eye_pitch;
         self.cam_yaw = eye_yaw;
 
-        if let Some(game) = &self.area_game {
-            game.blit_into(&mut self.draw_area, 4, 4);
+        if let Some(game) = &self.renderer.area_game {
+            game.blit_into(&mut self.renderer.draw_area, 4, 4);
         }
     }
 
@@ -932,25 +932,25 @@ impl Client {
             {
                 let y = 329 - line_offset * 13;
                 let mut x = 4;
-                if let Some(font) = self.p12.as_ref() {
+                if let Some(font) = self.renderer.p12.as_ref() {
                     font.draw_string(surface, Some("From"), 4, y, Colour::BLACK);
                     font.draw_string(surface, Some("From"), 4, y - 1, Colour::CYAN);
                     x += font.string_wid(Some("From "));
                 }
                 // Java 6215-6221: the crown plots after the "From " label.
                 if modlevel == 1 {
-                    if let Some(sprite) = &self.mod_icons[0] {
+                    if let Some(sprite) = &self.renderer.mod_icons[0] {
                         sprite.plot_sprite(surface, x, y - 12);
                     }
                     x += 14;
                 }
                 if modlevel == 2 {
-                    if let Some(sprite) = &self.mod_icons[1] {
+                    if let Some(sprite) = &self.renderer.mod_icons[1] {
                         sprite.plot_sprite(surface, x, y - 12);
                     }
                     x += 14;
                 }
-                if let Some(font) = self.p12.as_ref() {
+                if let Some(font) = self.renderer.p12.as_ref() {
                     font.draw_string(surface, Some(&format!("{sender}: {}", self.chat_text[i])), x, y, Colour::BLACK);
                     font.draw_string(surface, Some(&format!("{sender}: {}", self.chat_text[i])), x, y - 1, Colour::CYAN);
                 }
@@ -960,7 +960,7 @@ impl Client {
                 }
             } else if r#type == 5 && self.chat_private_mode < 2 {
                 let y = 329 - line_offset * 13;
-                if let Some(font) = self.p12.as_ref() {
+                if let Some(font) = self.renderer.p12.as_ref() {
                     font.draw_string(surface, Some(&self.chat_text[i]), 4, y, Colour::BLACK);
                     font.draw_string(surface, Some(&self.chat_text[i]), 4, y - 1, Colour::CYAN);
                 }
@@ -970,7 +970,7 @@ impl Client {
                 }
             } else if r#type == 6 && self.chat_private_mode < 2 {
                 let y = 329 - line_offset * 13;
-                if let Some(font) = self.p12.as_ref() {
+                if let Some(font) = self.renderer.p12.as_ref() {
                     font.draw_string(surface, Some(&format!("To {sender}: {}", self.chat_text[i])), 4, y, Colour::BLACK);
                     font.draw_string(surface, Some(&format!("To {sender}: {}", self.chat_text[i])), 4, y - 1, Colour::CYAN);
                 }
@@ -989,12 +989,12 @@ impl Client {
     /// the option strings) before `draw_feedback` (TS 4865-4867), and the
     /// open minimenu (area 0) draws after the modal (TS 4868-4870).
     fn other_overlays(&mut self) {
-        let mut game = self.area_game.take();
+        let mut game = self.renderer.area_game.take();
         if let Some(game) = game.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
             // `draw_interface`'s TYPE_MODEL arm rasters into this surface:
             // bind `pix3d` clipping to it once before drawing.
-            self.pix3d.set_clipping(surface.width, surface.height);
+            self.renderer.pix3d.set_clipping(surface.width, surface.height);
             // TS 4838: the split private-chat overlay draws first.
             self.draw_private_messages(&mut surface);
             // TS 4840-4843: the click crosshair plots the fade frame
@@ -1002,12 +1002,12 @@ impl Client {
             // `cross_cycle/100` picks the sprite, missing media is a no-op.
             if self.cross_mode == 1 {
                 let idx = (self.cross_cycle / 100) as usize;
-                if let Some(s) = self.cross.get(idx).and_then(|o| o.as_ref()) {
+                if let Some(s) = self.renderer.cross.get(idx).and_then(|o| o.as_ref()) {
                     s.plot_sprite(&mut surface, self.cross_x - 8 - 4, self.cross_y - 8 - 4);
                 }
             } else if self.cross_mode == 2 {
                 let idx = (self.cross_cycle / 100) as usize + 4;
-                if let Some(s) = self.cross.get(idx).and_then(|o| o.as_ref()) {
+                if let Some(s) = self.renderer.cross.get(idx).and_then(|o| o.as_ref()) {
                     s.plot_sprite(&mut surface, self.cross_x - 8 - 4, self.cross_y - 8 - 4);
                 }
             }
@@ -1028,7 +1028,7 @@ impl Client {
                 let mut seconds = self.reboot_timer / 50;
                 let minutes = seconds / 60;
                 seconds %= 60;
-                if let Some(p12) = self.p12.as_ref() {
+                if let Some(p12) = self.renderer.p12.as_ref() {
                     if seconds < 10 {
                         p12.draw_string(
                             &mut surface,
@@ -1049,7 +1049,7 @@ impl Client {
                 }
             }
         }
-        self.area_game = game;
+        self.renderer.area_game = game;
 
         if !self.is_menu_open {
             self.build_minimenu();
@@ -1087,7 +1087,7 @@ impl Client {
             mouse_y -= 357;
         }
 
-        if let Some(b12) = &mut self.b12 {
+        if let Some(b12) = &mut self.renderer.b12 {
             b12.draw_string(surface, Some("Choose Option"), x + 3, y + 14, background);
 
             for i in 0..self.menu_num_entries {
@@ -1140,10 +1140,10 @@ impl Client {
             tooltip
         };
 
-        let mut game = self.area_game.take();
+        let mut game = self.renderer.area_game.take();
         if let Some(game) = game.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
-            if let Some(b12) = &mut self.b12 {
+            if let Some(b12) = &mut self.renderer.b12 {
                 b12.draw_string_anti_macro(
                     &mut surface,
                     &tooltip,
@@ -1155,7 +1155,7 @@ impl Client {
                 );
             }
         }
-        self.area_game = game;
+        self.renderer.area_game = game;
     }
 
     /// `addPlayers` from client-ts (4260): add the local player (or every
@@ -1230,10 +1230,10 @@ impl Client {
             {
                 if (player.x & 0x7f) == 64 && (player.z & 0x7f) == 64 {
                     let tile = (stx * BuildArea::SIZE + stz) as usize;
-                    if self.tile_last_occupied_cycle[tile] == self.scene_cycle {
+                    if self.renderer.tile_last_occupied_cycle[tile] == self.renderer.scene_cycle {
                         continue;
                     }
-                    self.tile_last_occupied_cycle[tile] = self.scene_cycle;
+                    self.renderer.tile_last_occupied_cycle[tile] = self.renderer.scene_cycle;
                 }
 
                 player.y = y;
@@ -1292,10 +1292,10 @@ impl Client {
 
             if npc.size == 1 && (npc.x & 0x7f) == 64 && (npc.z & 0x7f) == 64 {
                 let tile = (stx * BuildArea::SIZE + stz) as usize;
-                if self.tile_last_occupied_cycle[tile] == self.scene_cycle {
+                if self.renderer.tile_last_occupied_cycle[tile] == self.renderer.scene_cycle {
                     continue;
                 }
-                self.tile_last_occupied_cycle[tile] = self.scene_cycle;
+                self.renderer.tile_last_occupied_cycle[tile] = self.renderer.scene_cycle;
             }
 
             let y = get_av_h(&self.groundh, &self.mapl, npc.x, npc.z, self.minusedlevel);
@@ -1378,9 +1378,9 @@ impl Client {
         }
 
         // TS 4387-4413: `cyclelogic1` anticheat every 1175 cycles.
-        self.cyclelogic1 += 1;
-        if self.cyclelogic1 > 1174 {
-            self.cyclelogic1 = 0;
+        self.renderer.cyclelogic1 += 1;
+        if self.renderer.cyclelogic1 > 1174 {
+            self.renderer.cyclelogic1 = 0;
 
             self.out.p1_enc(ClientProt::ANTICHEAT_CYCLELOGIC1.id);
             self.out.p1(0);
@@ -1505,7 +1505,7 @@ impl Client {
                 continue;
             }
 
-            let jitter = (self.rand.next_double()
+            let jitter = (self.renderer.rand.next_double()
                 * (self.cam_shake_axis[axis] * 2 + 1) as f64
                 - self.cam_shake_axis[axis] as f64
                 + (self.cam_shake_cycle[axis] as f64 * (self.cam_shake_amp[axis] as f64 / 100.0))
@@ -1744,8 +1744,8 @@ impl Client {
     /// is off the playable scene or behind the camera (`z' < 50`).
     pub fn get_overlay_pos(&mut self, x: i32, z: i32, height: i32) {
         let (px, py) = self.project_overlay(x, z, height);
-        self.project_x = px;
-        self.project_y = py;
+        self.renderer.project_x = px;
+        self.renderer.project_y = py;
     }
 
     /// The `getOverlayPos` math (Java 2031-2056) as a pure read, so
@@ -1782,8 +1782,8 @@ impl Client {
             >> 16;
         if var17 >= 50 {
             (
-                self.pix3d.origin_x + (var13 << 9) / var17,
-                self.pix3d.origin_y + (var16 << 9) / var17,
+                self.renderer.pix3d.origin_x + (var13 << 9) / var17,
+                self.renderer.pix3d.origin_y + (var16 << 9) / var17,
             )
         } else {
             (-1, -1)
@@ -1798,15 +1798,15 @@ impl Client {
     /// and are pushed up past each other before drawing. `coord_arrow` is a
     /// separate stub.
     pub fn entity_overlays(&mut self) {
-        self.chat_count = 0;
-        let mut game = self.area_game.take();
+        self.renderer.chat_count = 0;
+        let mut game = self.renderer.area_game.take();
         if let Some(game) = game.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
             // `Pix3D.setClipping(512, 334)` (TS 4238-4245): the projection
             // origin reads the 3D target even when only this pass draws.
-            self.pix3d.set_clipping(surface.width, surface.height);
+            self.renderer.pix3d.set_clipping(surface.width, surface.height);
             let loop_cycle = self.loop_cycle;
-            let scene_cycle = self.scene_cycle;
+            let scene_cycle = self.renderer.scene_cycle;
             let player_count = self.player_count;
             let npc_count = self.npc_count;
             let chat_effects = self.chat_effects;
@@ -1854,10 +1854,10 @@ impl Client {
                             let headicon = self.cache.npc(npc_type).headicon;
                             if (0..20).contains(&headicon) {
                                 let (px, py) = self.project_overlay(entity.x, entity.z, entity.height + 15);
-                                self.project_x = px;
-                                self.project_y = py;
-                                if self.project_x > -1 {
-                                    if let Some(sprite) = self
+                                self.renderer.project_x = px;
+                                self.renderer.project_y = py;
+                                if self.renderer.project_x > -1 {
+                                    if let Some(sprite) = self.renderer
                                         .headicons
                                         .get(headicon as usize)
                                         .and_then(|o| o.as_ref())
@@ -1870,10 +1870,10 @@ impl Client {
                     }
                     if hint_type == 1 && hint_npc == npc_id && loop_cycle % 20 < 10 {
                         let (px, py) = self.project_overlay(entity.x, entity.z, entity.height + 15);
-                        self.project_x = px;
-                        self.project_y = py;
-                        if self.project_x > -1 {
-                            if let Some(sprite) = self.headicons.get(2).and_then(|o| o.as_ref()) {
+                        self.renderer.project_x = px;
+                        self.renderer.project_y = py;
+                        if self.renderer.project_x > -1 {
+                            if let Some(sprite) = self.renderer.headicons.get(2).and_then(|o| o.as_ref()) {
                                 sprite.plot_sprite(&mut surface, px - 12, py - 28);
                             }
                         }
@@ -1885,12 +1885,12 @@ impl Client {
                     let mut y = 30;
                     if player_headicons != 0 {
                         let (px, py) = self.project_overlay(entity.x, entity.z, entity.height + 15);
-                        self.project_x = px;
-                        self.project_y = py;
-                        if self.project_x > -1 {
+                        self.renderer.project_x = px;
+                        self.renderer.project_y = py;
+                        if self.renderer.project_x > -1 {
                             for icon in 0..8 {
                                 if (player_headicons & (1 << icon)) != 0 {
-                                    if let Some(sprite) = self
+                                    if let Some(sprite) = self.renderer
                                         .headicons
                                         .get(icon as usize)
                                         .and_then(|o| o.as_ref())
@@ -1904,10 +1904,10 @@ impl Client {
                     }
                     if index >= 0 && hint_type == 10 && hint_player == self.player_ids[index as usize] {
                         let (px, py) = self.project_overlay(entity.x, entity.z, entity.height + 15);
-                        self.project_x = px;
-                        self.project_y = py;
-                        if self.project_x > -1 {
-                            if let Some(sprite) = self.headicons.get(7).and_then(|o| o.as_ref()) {
+                        self.renderer.project_x = px;
+                        self.renderer.project_y = py;
+                        if self.renderer.project_x > -1 {
+                            if let Some(sprite) = self.renderer.headicons.get(7).and_then(|o| o.as_ref()) {
                                 sprite.plot_sprite(&mut surface, px - 12, py - y);
                             }
                         }
@@ -1925,33 +1925,33 @@ impl Client {
                             && self.is_friend(player_chat_name.unwrap_or(""))))
                 {
                     let (px, py) = self.project_overlay(entity.x, entity.z, entity.height);
-                    self.project_x = px;
-                    self.project_y = py;
+                    self.renderer.project_x = px;
+                    self.renderer.project_y = py;
                     // Java NPEs without the b12 font; the Option guard skips
                     // the collect instead.
-                    if self.project_x > -1 && self.chat_count < 50 {
-                        if let Some(b12) = &self.b12 {
+                    if self.renderer.project_x > -1 && self.renderer.chat_count < 50 {
+                        if let Some(b12) = &self.renderer.b12 {
                             let message = entity.chat_message.as_deref().unwrap_or("");
-                            let idx = self.chat_count as usize;
-                            self.chat_width[idx] = b12.string_wid(Some(message)) / 2;
-                            self.chat_height[idx] = b12.height;
-                            self.chat_x[idx] = px;
-                            self.chat_y[idx] = py;
-                            self.chat_colour[idx] = entity.chat_colour;
-                            self.chat_effect[idx] = entity.chat_effect;
-                            self.chat_timer[idx] = entity.chat_timer;
-                            self.chats[idx] = message.to_string();
-                            self.chat_count += 1;
+                            let idx = self.renderer.chat_count as usize;
+                            self.renderer.chat_width[idx] = b12.string_wid(Some(message)) / 2;
+                            self.renderer.chat_height[idx] = b12.height;
+                            self.renderer.chat_x[idx] = px;
+                            self.renderer.chat_y[idx] = py;
+                            self.renderer.chat_colour[idx] = entity.chat_colour;
+                            self.renderer.chat_effect[idx] = entity.chat_effect;
+                            self.renderer.chat_timer[idx] = entity.chat_timer;
+                            self.renderer.chats[idx] = message.to_string();
+                            self.renderer.chat_count += 1;
                             // Java 8928-8933: the effect 1/2 sizing writes
                             // index the slot AFTER the `++` (one past the
                             // bubble just stored — kept verbatim; a full
                             // stack would overflow the 50-slot arrays).
-                            if chat_effects == 0 && entity.chat_effect == 1 && self.chat_count < 50 {
-                                self.chat_height[self.chat_count as usize] += 10;
-                                self.chat_y[self.chat_count as usize] += 5;
+                            if chat_effects == 0 && entity.chat_effect == 1 && self.renderer.chat_count < 50 {
+                                self.renderer.chat_height[self.renderer.chat_count as usize] += 10;
+                                self.renderer.chat_y[self.renderer.chat_count as usize] += 5;
                             }
-                            if chat_effects == 0 && entity.chat_effect == 2 && self.chat_count < 50 {
-                                self.chat_width[self.chat_count as usize] = 60;
+                            if chat_effects == 0 && entity.chat_effect == 2 && self.renderer.chat_count < 50 {
+                                self.renderer.chat_width[self.renderer.chat_count as usize] = 60;
                             }
                         }
                     }
@@ -1961,9 +1961,9 @@ impl Client {
                 // (not the TS `+ 100`), green fill then the red remainder.
                 if entity.combat_cycle > loop_cycle {
                     let (px, py) = self.project_overlay(entity.x, entity.z, entity.height + 15);
-                    self.project_x = px;
-                    self.project_y = py;
-                    if self.project_x > -1 {
+                    self.renderer.project_x = px;
+                    self.renderer.project_y = py;
+                    if self.renderer.project_x > -1 {
                         let mut w = entity.health * 30 / entity.total_health;
                         if w > 30 {
                             w = 30;
@@ -1978,9 +1978,9 @@ impl Client {
                 for i in 0..4 {
                     if entity.damage_cycles[i] > loop_cycle {
                         let (mut px, mut py) = self.project_overlay(entity.x, entity.z, entity.height / 2);
-                        self.project_x = px;
-                        self.project_y = py;
-                        if self.project_x > -1 {
+                        self.renderer.project_x = px;
+                        self.renderer.project_y = py;
+                        if self.renderer.project_x > -1 {
                             if i == 1 {
                                 py -= 20;
                             }
@@ -1992,14 +1992,14 @@ impl Client {
                                 px += 15;
                                 py -= 10;
                             }
-                            if let Some(sprite) = self
+                            if let Some(sprite) = self.renderer
                                 .hitmarks
                                 .get(entity.damage_types[i] as usize)
                                 .and_then(|o| o.as_ref())
                             {
                                 sprite.plot_sprite(&mut surface, px - 12, py - 12);
                             }
-                            if let Some(p11) = &self.p11 {
+                            if let Some(p11) = &self.renderer.p11 {
                                 let text = format!("{}", entity.damage_values[i]);
                                 p11.centre_string(&mut surface, Some(&text), px, py + 4, Colour::BLACK);
                                 p11.centre_string(&mut surface, Some(&text), px - 1, py + 3, Colour::WHITE);
@@ -2011,65 +2011,65 @@ impl Client {
 
             // The collected bubbles: push overlapping bubbles up, then draw
             // (Java 8971-end).
-            for i in 0..self.chat_count as usize {
-                let x = self.chat_x[i];
-                let mut y = self.chat_y[i];
-                let pad = self.chat_width[i];
-                let hgt = self.chat_height[i];
+            for i in 0..self.renderer.chat_count as usize {
+                let x = self.renderer.chat_x[i];
+                let mut y = self.renderer.chat_y[i];
+                let pad = self.renderer.chat_width[i];
+                let hgt = self.renderer.chat_height[i];
                 let mut sorting = true;
                 while sorting {
                     sorting = false;
                     for j in 0..i {
-                        if y + 2 > self.chat_y[j] - self.chat_height[j]
-                            && y - hgt < self.chat_y[j] + 2
-                            && x - pad < self.chat_x[j] + self.chat_width[j]
-                            && x + pad > self.chat_x[j] - self.chat_width[j]
-                            && self.chat_y[j] - self.chat_height[j] < y
+                        if y + 2 > self.renderer.chat_y[j] - self.renderer.chat_height[j]
+                            && y - hgt < self.renderer.chat_y[j] + 2
+                            && x - pad < self.renderer.chat_x[j] + self.renderer.chat_width[j]
+                            && x + pad > self.renderer.chat_x[j] - self.renderer.chat_width[j]
+                            && self.renderer.chat_y[j] - self.renderer.chat_height[j] < y
                         {
-                            y = self.chat_y[j] - self.chat_height[j];
+                            y = self.renderer.chat_y[j] - self.renderer.chat_height[j];
                             sorting = true;
                         }
                     }
                 }
-                self.project_x = self.chat_x[i];
-                self.chat_y[i] = y;
-                self.project_y = y;
-                let message = self.chats[i].clone();
+                self.renderer.project_x = self.renderer.chat_x[i];
+                self.renderer.chat_y[i] = y;
+                self.renderer.project_y = y;
+                let message = self.renderer.chats[i].clone();
                 if chat_effects != 0 {
                     // TS 4721-4723: global wave effects force the yellow
                     // fallback.
-                    if let Some(b12) = &self.b12 {
+                    if let Some(b12) = &self.renderer.b12 {
                         b12.centre_string(
                             &mut surface,
                             Some(&message),
-                            self.project_x,
-                            self.project_y + 1,
+                            self.renderer.project_x,
+                            self.renderer.project_y + 1,
                             Colour::BLACK,
                         );
                         b12.centre_string(
                             &mut surface,
                             Some(&message),
-                            self.project_x,
-                            self.project_y,
+                            self.renderer.project_x,
+                            self.renderer.project_y,
                             Colour::YELLOW,
                         );
                     }
                 } else {
                     let mut colour = Colour::YELLOW;
-                    if (0..6).contains(&self.chat_colour[i]) {
-                        colour = CHAT_COLOURS[self.chat_colour[i] as usize];
+                    if (0..6).contains(&self.renderer.chat_colour[i]) {
+                        colour = CHAT_COLOURS[self.renderer.chat_colour[i] as usize];
                     }
-                    if self.chat_colour[i] == 6 {
+                    if self.renderer.chat_colour[i] == 6 {
                         colour = if scene_cycle % 20 < 10 { Colour::RED } else { Colour::YELLOW };
                     }
-                    if self.chat_colour[i] == 7 {
+                    if self.renderer.chat_colour[i] == 7 {
                         colour = if scene_cycle % 20 < 10 { Colour::BLUE } else { Colour::CYAN };
                     }
-                    if self.chat_colour[i] == 8 {
+                    if self.renderer.chat_colour[i] == 8 {
                         colour = if scene_cycle % 20 < 10 { 0xb000 } else { 0x80ff80 };
                     }
-                    if self.chat_colour[i] == 9 {
-                        let delta = 150 - self.chat_timer[i];
+                    if self.renderer.chat_colour[i] == 9 {
+                        let delta = 150 - self.renderer.chat_timer[i];
                         if delta < 50 {
                             colour = delta * 1280 + Colour::RED;
                         } else if delta < 100 {
@@ -2078,8 +2078,8 @@ impl Client {
                             colour = (delta - 100) * 5 + Colour::GREEN;
                         }
                     }
-                    if self.chat_colour[i] == 10 {
-                        let delta = 150 - self.chat_timer[i];
+                    if self.renderer.chat_colour[i] == 10 {
+                        let delta = 150 - self.renderer.chat_timer[i];
                         if delta < 50 {
                             colour = delta * 5 + Colour::RED;
                         } else if delta < 100 {
@@ -2088,8 +2088,8 @@ impl Client {
                             colour = (delta - 100) * 327680 + Colour::BLUE - (delta - 100) * 5;
                         }
                     }
-                    if self.chat_colour[i] == 11 {
-                        let delta = 150 - self.chat_timer[i];
+                    if self.renderer.chat_colour[i] == 11 {
+                        let delta = 150 - self.renderer.chat_timer[i];
                         if delta < 50 {
                             colour = Colour::WHITE - delta * 327685;
                         } else if delta < 100 {
@@ -2098,44 +2098,44 @@ impl Client {
                             colour = Colour::WHITE - (delta - 100) * 327680;
                         }
                     }
-                    if let Some(b12) = &self.b12 {
-                        match self.chat_effect[i] {
+                    if let Some(b12) = &self.renderer.b12 {
+                        match self.renderer.chat_effect[i] {
                             1 => {
                                 b12.centre_string_wave(
                                     &mut surface,
                                     Some(&message),
-                                    self.project_x,
-                                    self.project_y + 1,
+                                    self.renderer.project_x,
+                                    self.renderer.project_y + 1,
                                     Colour::BLACK,
                                     scene_cycle,
                                 );
                                 b12.centre_string_wave(
                                     &mut surface,
                                     Some(&message),
-                                    self.project_x,
-                                    self.project_y,
+                                    self.renderer.project_x,
+                                    self.renderer.project_y,
                                     colour,
                                     scene_cycle,
                                 );
                             }
                             2 => {
                                 let w = b12.string_wid(Some(&message));
-                                let offset_x = (150 - self.chat_timer[i]) * (w + 100) / 150;
+                                let offset_x = (150 - self.renderer.chat_timer[i]) * (w + 100) / 150;
                                 // Java 9042-9047 clips to `projectX ± 50`
                                 // for the slide-in text.
-                                surface.set_clipping(self.project_x - 50, 0, self.project_x + 50, 334);
+                                surface.set_clipping(self.renderer.project_x - 50, 0, self.renderer.project_x + 50, 334);
                                 b12.draw_string(
                                     &mut surface,
                                     Some(&message),
-                                    self.project_x + 50 - offset_x,
-                                    self.project_y + 1,
+                                    self.renderer.project_x + 50 - offset_x,
+                                    self.renderer.project_y + 1,
                                     Colour::BLACK,
                                 );
                                 b12.draw_string(
                                     &mut surface,
                                     Some(&message),
-                                    self.project_x + 50 - offset_x,
-                                    self.project_y,
+                                    self.renderer.project_x + 50 - offset_x,
+                                    self.renderer.project_y,
                                     colour,
                                 );
                                 surface.reset_clipping();
@@ -2144,15 +2144,15 @@ impl Client {
                                 b12.centre_string(
                                     &mut surface,
                                     Some(&message),
-                                    self.project_x,
-                                    self.project_y + 1,
+                                    self.renderer.project_x,
+                                    self.renderer.project_y + 1,
                                     Colour::BLACK,
                                 );
                                 b12.centre_string(
                                     &mut surface,
                                     Some(&message),
-                                    self.project_x,
-                                    self.project_y,
+                                    self.renderer.project_x,
+                                    self.renderer.project_y,
                                     colour,
                                 );
                             }
@@ -2161,7 +2161,7 @@ impl Client {
                 }
             }
         }
-        self.area_game = game;
+        self.renderer.area_game = game;
     }
 
     /// `coordArrow` from client-ts (4781): a no-op while `hintType`/
@@ -2188,133 +2188,133 @@ impl Client {
     /// regions from the `title` jag. `pub(crate)` so the cold-login path
     /// (`client.rs` response 2) can call it as Java `login` does.
     pub(crate) fn prepare_game(&mut self) {
-        if self.area_chat.is_some() {
+        if self.renderer.area_chat.is_some() {
             return;
         }
 
         self.unload_title();
-        self.image_title2 = None;
+        self.renderer.image_title2 = None;
         self.load_fonts();
 
-        self.area_game = Some(PixMap::new(512, 334));
-        self.area_map = Some(PixMap::new(172, 156));
-        self.area_side = Some(PixMap::new(190, 261));
-        self.area_chat = Some(PixMap::new(479, 96));
-        self.area_backbase1 = Some(PixMap::new(496, 50));
-        self.area_backbase2 = Some(PixMap::new(269, 37));
-        self.area_backhmid1 = Some(PixMap::new(249, 45));
+        self.renderer.area_game = Some(PixMap::new(512, 334));
+        self.renderer.area_map = Some(PixMap::new(172, 156));
+        self.renderer.area_side = Some(PixMap::new(190, 261));
+        self.renderer.area_chat = Some(PixMap::new(479, 96));
+        self.renderer.area_backbase1 = Some(PixMap::new(496, 50));
+        self.renderer.area_backbase2 = Some(PixMap::new(269, 37));
+        self.renderer.area_backhmid1 = Some(PixMap::new(249, 45));
 
         let path = format!("{}/media", self.config.cache_dir);
         if let Ok(bytes) = std::fs::read(&path) {
             let jag = JagFile::new(bytes);
-            self.invback = Pix8::depack(&jag, "invback", 0).ok();
-            self.scrollbar1 = Pix8::depack(&jag, "scrollbar", 0).ok();
-            self.scrollbar2 = Pix8::depack(&jag, "scrollbar", 1).ok();
-            self.chatback = Pix8::depack(&jag, "chatback", 0).ok();
-            self.backbase1 = Pix8::depack(&jag, "backbase1", 0).ok();
-            self.backbase2 = Pix8::depack(&jag, "backbase2", 0).ok();
-            self.backhmid1 = Pix8::depack(&jag, "backhmid1", 0).ok();
+            self.renderer.invback = Pix8::depack(&jag, "invback", 0).ok();
+            self.renderer.scrollbar1 = Pix8::depack(&jag, "scrollbar", 0).ok();
+            self.renderer.scrollbar2 = Pix8::depack(&jag, "scrollbar", 1).ok();
+            self.renderer.chatback = Pix8::depack(&jag, "chatback", 0).ok();
+            self.renderer.backbase1 = Pix8::depack(&jag, "backbase1", 0).ok();
+            self.renderer.backbase2 = Pix8::depack(&jag, "backbase2", 0).ok();
+            self.renderer.backhmid1 = Pix8::depack(&jag, "backhmid1", 0).ok();
             for i in 0..13 {
-                self.sideicons[i] = Pix8::depack(&jag, "sideicons", i as i32).ok();
+                self.renderer.sideicons[i] = Pix8::depack(&jag, "sideicons", i as i32).ok();
             }
             // `modIcons` as Java 5353-5355 / TS 1095-1097.
             for i in 0..2 {
-                self.mod_icons[i] = Pix8::depack(&jag, "mod_icons", i as i32).ok();
+                self.renderer.mod_icons[i] = Pix8::depack(&jag, "mod_icons", i as i32).ok();
             }
             // TS 1056-1058: the click-crosshair frames are Pix32, not Pix8.
             for i in 0..8 {
-                self.cross[i] = Pix32::depack(&jag, "cross", i as i32).ok();
+                self.renderer.cross[i] = Pix32::depack(&jag, "cross", i as i32).ok();
             }
             // redstone1..2hv as Client.ts 1068-1093: the flipped copies are
             // fresh depacks of the base sprite, hflip/vflip'd in place.
-            self.redstone1 = Pix8::depack(&jag, "redstone1", 0).ok();
-            self.redstone2 = Pix8::depack(&jag, "redstone2", 0).ok();
-            self.redstone3 = Pix8::depack(&jag, "redstone3", 0).ok();
-            self.redstone1h = self.redstone1.clone();
-            if let Some(s) = self.redstone1h.as_mut() {
+            self.renderer.redstone1 = Pix8::depack(&jag, "redstone1", 0).ok();
+            self.renderer.redstone2 = Pix8::depack(&jag, "redstone2", 0).ok();
+            self.renderer.redstone3 = Pix8::depack(&jag, "redstone3", 0).ok();
+            self.renderer.redstone1h = self.renderer.redstone1.clone();
+            if let Some(s) = self.renderer.redstone1h.as_mut() {
                 s.hflip();
             }
-            self.redstone2h = self.redstone2.clone();
-            if let Some(s) = self.redstone2h.as_mut() {
+            self.renderer.redstone2h = self.renderer.redstone2.clone();
+            if let Some(s) = self.renderer.redstone2h.as_mut() {
                 s.hflip();
             }
-            self.redstone1v = self.redstone1.clone();
-            if let Some(s) = self.redstone1v.as_mut() {
+            self.renderer.redstone1v = self.renderer.redstone1.clone();
+            if let Some(s) = self.renderer.redstone1v.as_mut() {
                 s.vflip();
             }
-            self.redstone2v = self.redstone2.clone();
-            if let Some(s) = self.redstone2v.as_mut() {
+            self.renderer.redstone2v = self.renderer.redstone2.clone();
+            if let Some(s) = self.renderer.redstone2v.as_mut() {
                 s.vflip();
             }
-            self.redstone3v = self.redstone3.clone();
-            if let Some(s) = self.redstone3v.as_mut() {
+            self.renderer.redstone3v = self.renderer.redstone3.clone();
+            if let Some(s) = self.renderer.redstone3v.as_mut() {
                 s.vflip();
             }
-            self.redstone1hv = self.redstone1.clone();
-            if let Some(s) = self.redstone1hv.as_mut() {
+            self.renderer.redstone1hv = self.renderer.redstone1.clone();
+            if let Some(s) = self.renderer.redstone1hv.as_mut() {
                 s.hflip();
             }
-            if let Some(s) = self.redstone1hv.as_mut() {
+            if let Some(s) = self.renderer.redstone1hv.as_mut() {
                 s.vflip();
             }
-            self.redstone2hv = self.redstone2.clone();
-            if let Some(s) = self.redstone2hv.as_mut() {
+            self.renderer.redstone2hv = self.renderer.redstone2.clone();
+            if let Some(s) = self.renderer.redstone2hv.as_mut() {
                 s.hflip();
             }
-            if let Some(s) = self.redstone2hv.as_mut() {
+            if let Some(s) = self.renderer.redstone2hv.as_mut() {
                 s.vflip();
             }
-            self.area_backleft1 = Self::chrome_area(&jag, "backleft1");
-            self.area_backleft2 = Self::chrome_area(&jag, "backleft2");
-            self.area_backright1 = Self::chrome_area(&jag, "backright1");
-            self.area_backright2 = Self::chrome_area(&jag, "backright2");
-            self.area_backtop1 = Self::chrome_area(&jag, "backtop1");
-            self.area_backvmid1 = Self::chrome_area(&jag, "backvmid1");
-            self.area_backvmid2 = Self::chrome_area(&jag, "backvmid2");
-            self.area_backvmid3 = Self::chrome_area(&jag, "backvmid3");
-            self.area_backhmid2 = Self::chrome_area(&jag, "backhmid2");
+            self.renderer.area_backleft1 = Self::chrome_area(&jag, "backleft1");
+            self.renderer.area_backleft2 = Self::chrome_area(&jag, "backleft2");
+            self.renderer.area_backright1 = Self::chrome_area(&jag, "backright1");
+            self.renderer.area_backright2 = Self::chrome_area(&jag, "backright2");
+            self.renderer.area_backtop1 = Self::chrome_area(&jag, "backtop1");
+            self.renderer.area_backvmid1 = Self::chrome_area(&jag, "backvmid1");
+            self.renderer.area_backvmid2 = Self::chrome_area(&jag, "backvmid2");
+            self.renderer.area_backvmid3 = Self::chrome_area(&jag, "backvmid3");
+            self.renderer.area_backhmid2 = Self::chrome_area(&jag, "backhmid2");
 
             // Minimap sprites (TS maininit 1006-1063): the `mapback` ring
             // (the scanline mask), the composed-map/compass/edge sprites and
             // the map dots/markers. `minimap` itself was allocated in
             // `Client::new` as TS maininit 868.
-            self.mapback = Pix8::depack(&jag, "mapback", 0).ok();
-            self.compass = Pix32::depack(&jag, "compass", 0).ok();
-            self.mapedge = Pix32::depack(&jag, "mapedge", 0).ok();
-            if let Some(edge) = self.mapedge.as_mut() {
+            self.renderer.mapback = Pix8::depack(&jag, "mapback", 0).ok();
+            self.renderer.compass = Pix32::depack(&jag, "compass", 0).ok();
+            self.renderer.mapedge = Pix32::depack(&jag, "mapedge", 0).ok();
+            if let Some(edge) = self.renderer.mapedge.as_mut() {
                 edge.trim();
             }
-            self.mapmarker1 = Pix32::depack(&jag, "mapmarker", 0).ok();
-            self.mapmarker2 = Pix32::depack(&jag, "mapmarker", 1).ok();
-            self.mapdots1 = Pix32::depack(&jag, "mapdots", 0).ok();
-            self.mapdots2 = Pix32::depack(&jag, "mapdots", 1).ok();
-            self.mapdots3 = Pix32::depack(&jag, "mapdots", 2).ok();
-            self.mapdots4 = Pix32::depack(&jag, "mapdots", 3).ok();
+            self.renderer.mapmarker1 = Pix32::depack(&jag, "mapmarker", 0).ok();
+            self.renderer.mapmarker2 = Pix32::depack(&jag, "mapmarker", 1).ok();
+            self.renderer.mapdots1 = Pix32::depack(&jag, "mapdots", 0).ok();
+            self.renderer.mapdots2 = Pix32::depack(&jag, "mapdots", 1).ok();
+            self.renderer.mapdots3 = Pix32::depack(&jag, "mapdots", 2).ok();
+            self.renderer.mapdots4 = Pix32::depack(&jag, "mapdots", 3).ok();
 
             // TS maininit 1020-1035: the minimap wall/scene icons; a sprite
             // the jag lacks stays `None` and `draw_detail` skips its plot.
             for i in 0..50 {
-                self.mapscene[i] = Pix8::depack(&jag, "mapscene", i as i32).ok();
+                self.renderer.mapscene[i] = Pix8::depack(&jag, "mapscene", i as i32).ok();
             }
             for i in 0..50 {
-                self.mapfunction[i] = Pix32::depack(&jag, "mapfunction", i as i32).ok();
+                self.renderer.mapfunction[i] = Pix32::depack(&jag, "mapfunction", i as i32).ok();
             }
 
             // `hitmarks`/`headicons` as Java 5311-5320: try 20 each; a
             // missing sprite is skipped per-entry (Java catches the loop).
             for i in 0..20 {
-                self.hitmarks[i] = Pix32::depack(&jag, "hitmarks", i as i32).ok();
+                self.renderer.hitmarks[i] = Pix32::depack(&jag, "hitmarks", i as i32).ok();
             }
             for i in 0..20 {
-                self.headicons[i] = Pix32::depack(&jag, "headicons", i as i32).ok();
+                self.renderer.headicons[i] = Pix32::depack(&jag, "headicons", i as i32).ok();
             }
 
             // TS prepareGame 2022-2023: `area_map` starts as the `mapback`
             // ring (a fresh `PixMap` is already zeroed, so the `cls()` is a
             // no-op here). `minimapDraw` rotates the map inside the ring.
-            if let Some(map) = self.area_map.as_mut() {
+            if let Some(map) = self.renderer.area_map.as_mut() {
                 let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
-                if let Some(mapback) = &self.mapback {
+                if let Some(mapback) = &self.renderer.mapback {
                     mapback.plot_sprite(&mut surface, 0, 0);
                 }
             }
@@ -2334,10 +2334,10 @@ impl Client {
         let textures_path = format!("{}/textures", self.config.cache_dir);
         if let Ok(bytes) = std::fs::read(&textures_path) {
             let jag = JagFile::new(bytes);
-            self.pix3d.unpack_textures(&jag);
+            self.renderer.pix3d.unpack_textures(&jag);
         }
-        self.pix3d.init_pool(20);
-        self.pix3d.init_texture_palettes(0.8);
+        self.renderer.pix3d.init_pool(20);
+        self.renderer.pix3d.init_texture_palettes(0.8);
 
         self.redraw_frame = true;
     }
@@ -2363,11 +2363,11 @@ impl Client {
     /// (33/151), so the rotate-plots are no-ops instead of indexing an empty
     /// slice — a missing `media` pack must not panic `minimap_draw`.
     fn build_minimap_masks(&mut self) {
-        self.compass_mask_line_offsets = vec![0; 33];
-        self.compass_mask_line_lengths = vec![0; 33];
-        self.minimap_mask_line_offsets = vec![0; 151];
-        self.minimap_mask_line_lengths = vec![0; 151];
-        let Some(mapback) = &self.mapback else {
+        self.renderer.compass_mask_line_offsets = vec![0; 33];
+        self.renderer.compass_mask_line_lengths = vec![0; 33];
+        self.renderer.minimap_mask_line_offsets = vec![0; 151];
+        self.renderer.minimap_mask_line_lengths = vec![0; 151];
+        let Some(mapback) = &self.renderer.mapback else {
             return;
         };
         for y in 0..33 {
@@ -2383,8 +2383,8 @@ impl Client {
                     break;
                 }
             }
-            self.compass_mask_line_offsets[y as usize] = left;
-            self.compass_mask_line_lengths[y as usize] = right - left;
+            self.renderer.compass_mask_line_offsets[y as usize] = left;
+            self.renderer.compass_mask_line_lengths[y as usize] = right - left;
         }
         for y in 5..156 {
             let mut left = 999;
@@ -2399,8 +2399,8 @@ impl Client {
                     break;
                 }
             }
-            self.minimap_mask_line_offsets[(y - 5) as usize] = left - 25;
-            self.minimap_mask_line_lengths[(y - 5) as usize] = right - left;
+            self.renderer.minimap_mask_line_offsets[(y - 5) as usize] = left - 25;
+            self.renderer.minimap_mask_line_lengths[(y - 5) as usize] = right - left;
         }
     }
 
@@ -2410,13 +2410,13 @@ impl Client {
     /// minimenu (TS 11113), and blit at (553, 205). The trailing
     /// `areaGame.setPixels()` (no global Pix2D target) is not ported.
     fn draw_side(&mut self) {
-        let mut side = self.area_side.take();
+        let mut side = self.renderer.area_side.take();
         if let Some(side) = side.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut side.pixels, side.width, side.height);
             // `draw_interface`'s TYPE_MODEL arm rasters into this surface:
             // bind `pix3d` clipping to it once before drawing.
-            self.pix3d.set_clipping(surface.width, surface.height);
-            if let Some(invback) = &self.invback {
+            self.renderer.pix3d.set_clipping(surface.width, surface.height);
+            if let Some(invback) = &self.renderer.invback {
                 invback.plot_sprite(&mut surface, 0, 0);
             }
             if self.side_modal_id != -1 {
@@ -2429,9 +2429,9 @@ impl Client {
             }
         }
         if let Some(side) = &side {
-            side.blit_into(&mut self.draw_area, 553, 205);
+            side.blit_into(&mut self.renderer.draw_area, 553, 205);
         }
-        self.area_side = side;
+        self.renderer.area_side = side;
     }
 
     /// `Client.invNumber` from the Java oracle (Client.java 1394-1401):
@@ -2663,10 +2663,10 @@ impl Client {
                     }
 
                     let font = match child.font {
-                        1 => self.p12.as_mut(),
-                        2 => self.b12.as_mut(),
-                        3 => self.q8.as_mut(),
-                        _ => self.p11.as_mut(),
+                        1 => self.renderer.p12.as_mut(),
+                        2 => self.renderer.b12.as_mut(),
+                        3 => self.renderer.q8.as_mut(),
+                        _ => self.renderer.p11.as_mut(),
                     };
                     let Some(font) = font else {
                         continue;
@@ -2699,7 +2699,7 @@ impl Client {
                     if let Some((name, index)) = graphic_name.rsplit_once(',') {
                         if let Ok(index) = index.trim().parse::<i32>() {
                             if let Some(sprite) = Self::graphic_sprite(
-                                &mut self.graphic_sprites,
+                                &mut self.renderer.graphic_sprites,
                                 &self.config.cache_dir,
                                 name,
                                 index,
@@ -2764,7 +2764,7 @@ impl Client {
                                     };
                                     if let Some(sprite) = ObjType::get_sprite(
                                         &self.cache,
-                                        &mut self.pix3d,
+                                        &mut self.renderer.pix3d,
                                         id,
                                         outline,
                                         count,
@@ -2847,7 +2847,7 @@ impl Client {
                                         // follows the icon (TS 10027-10029).
                                         if sprite.owi == 33 || count != 1 {
                                             let text = self.inv_number(count);
-                                            if let Some(p11) = self.p11.as_mut() {
+                                            if let Some(p11) = self.renderer.p11.as_mut() {
                                                 p11.draw_string_tag(
                                                     surface,
                                                     &text,
@@ -2877,7 +2877,7 @@ impl Client {
                                         if let Some((name, index)) = name.rsplit_once(',') {
                                             if let Ok(index) = index.trim().parse::<i32>() {
                                                 if let Some(sprite) = Self::graphic_sprite(
-                                                    &mut self.graphic_sprites,
+                                                    &mut self.renderer.graphic_sprites,
                                                     &self.config.cache_dir,
                                                     name,
                                                     index,
@@ -2921,10 +2921,10 @@ impl Client {
                                 let text_x = child_x + col * (child.margin_x + 115);
                                 let text_y = child_y + row * (child.margin_y + 12);
                                 let font = match child.font {
-                                    1 => self.p12.as_mut(),
-                                    2 => self.b12.as_mut(),
-                                    3 => self.q8.as_mut(),
-                                    _ => self.p11.as_mut(),
+                                    1 => self.renderer.p12.as_mut(),
+                                    2 => self.renderer.b12.as_mut(),
+                                    3 => self.renderer.q8.as_mut(),
+                                    _ => self.renderer.p11.as_mut(),
                                 };
                                 if let Some(font) = font {
                                     if child.centre {
@@ -2957,10 +2957,10 @@ impl Client {
                     // model centred on the component. Save/restore the
                     // raster origin; a missing/unloaded model skips.
                     let child = child.clone();
-                    let saved_origin_x = self.pix3d.origin_x;
-                    let saved_origin_y = self.pix3d.origin_y;
-                    self.pix3d.origin_x = child_x + child.width / 2;
-                    self.pix3d.origin_y = child_y + child.height / 2;
+                    let saved_origin_x = self.renderer.pix3d.origin_x;
+                    let saved_origin_y = self.renderer.pix3d.origin_y;
+                    self.renderer.pix3d.origin_x = child_x + child.width / 2;
+                    self.renderer.pix3d.origin_y = child_y + child.height / 2;
 
                     let sin_xan = Pix3D::sin_table()
                         .get(child.model_xan as usize)
@@ -3000,7 +3000,7 @@ impl Client {
                     };
                     if let Some(model) = model {
                         model.obj_render(
-                            &mut self.pix3d,
+                            &mut self.renderer.pix3d,
                             surface,
                             0,
                             child.model_yan,
@@ -3011,8 +3011,8 @@ impl Client {
                             eye_z,
                         );
                     }
-                    self.pix3d.origin_x = saved_origin_x;
-                    self.pix3d.origin_y = saved_origin_y;
+                    self.renderer.pix3d.origin_x = saved_origin_x;
+                    self.renderer.pix3d.origin_y = saved_origin_y;
                 }
                 _ => {}
             }
@@ -3042,10 +3042,10 @@ impl Client {
         scroll_height: i32,
         height: i32,
     ) {
-        if let Some(sprite) = &self.scrollbar1 {
+        if let Some(sprite) = &self.renderer.scrollbar1 {
             sprite.plot_sprite(surface, x, y);
         }
-        if let Some(sprite) = &self.scrollbar2 {
+        if let Some(sprite) = &self.renderer.scrollbar2 {
             sprite.plot_sprite(surface, x, y + height - 16);
         }
         surface.fill_rect(x, y + 16, 16, height - 32, 0x23201b);
@@ -3082,15 +3082,15 @@ impl Client {
         top: i32,
         com_id: i32,
     ) {
-        if self.scroll_grabbed {
-            self.scroll_input_padding = 32;
+        if self.renderer.scroll_grabbed {
+            self.renderer.scroll_input_padding = 32;
         } else {
-            self.scroll_input_padding = 0;
+            self.renderer.scroll_input_padding = 0;
         }
-        self.scroll_grabbed = false;
+        self.renderer.scroll_grabbed = false;
 
         let com = if com_id < 0 {
-            Some(&mut self.chat_interface)
+            Some(&mut self.renderer.chat_interface)
         } else {
             self.cache
                 .ifaces
@@ -3102,20 +3102,20 @@ impl Client {
         };
 
         if x >= left && x < left + 16 && y >= top && y < top + 16 {
-            com.scroll_pos -= self.scroll_cycle * 4;
+            com.scroll_pos -= self.renderer.scroll_cycle * 4;
             if redraw {
                 self.redraw_side = true;
             }
         } else if x >= left && x < left + 16 && y >= top + height - 16 && y < top + height {
-            com.scroll_pos += self.scroll_cycle * 4;
+            com.scroll_pos += self.renderer.scroll_cycle * 4;
             if redraw {
                 self.redraw_side = true;
             }
-        } else if x >= left - self.scroll_input_padding
-            && x < left + self.scroll_input_padding + 16
+        } else if x >= left - self.renderer.scroll_input_padding
+            && x < left + self.renderer.scroll_input_padding + 16
             && y >= top + 16
             && y < top + height - 16
-            && self.scroll_cycle > 0
+            && self.renderer.scroll_cycle > 0
         {
             let mut grip_size = ((height - 32) * height) / scrollable_height;
             if grip_size < 8 {
@@ -3127,7 +3127,7 @@ impl Client {
             if redraw {
                 self.redraw_side = true;
             }
-            self.scroll_grabbed = true;
+            self.renderer.scroll_grabbed = true;
         }
     }
 
@@ -3445,34 +3445,34 @@ impl Client {
     /// load with Task 14, and the trailing `areaGame.setPixels()` is a
     /// no-op here (no global Pix2D target).
     fn draw_chat(&mut self) {
-        let mut chat = self.area_chat.take();
+        let mut chat = self.renderer.area_chat.take();
         if let Some(chat) = chat.as_mut() {
             let w = chat.width;
             let h = chat.height;
             let mut surface = Pix2D::with_pixels(&mut chat.pixels, w, h);
-            if let Some(chatback) = &self.chatback {
+            if let Some(chatback) = &self.renderer.chatback {
                 chatback.plot_sprite(&mut surface, 0, 0);
             }
             if self.social_input_open {
                 // TS 11133-11135: the social prompt replaces the chat lines.
-                if let Some(b12) = self.b12.as_ref() {
+                if let Some(b12) = self.renderer.b12.as_ref() {
                     b12.centre_string(&mut surface, Some(&self.social_input_header), 239, 40, Colour::BLACK);
                     b12.centre_string(&mut surface, Some(&format!("{}*", self.social_input)), 239, 60, Colour::DARKBLUE);
                 }
             } else if self.dialog_input_open {
                 // TS 11136-11138: the enter-amount prompt replaces the chat
                 // lines.
-                if let Some(b12) = self.b12.as_ref() {
+                if let Some(b12) = self.renderer.b12.as_ref() {
                     b12.centre_string(&mut surface, Some("Enter amount:"), 239, 40, Colour::BLACK);
                     b12.centre_string(&mut surface, Some(&format!("{}*", self.dialog_input)), 239, 60, Colour::DARKBLUE);
                 }
             } else if self.chat_modal_id != -1 {
                 // TS 11142-11146: a chat interface replaces the chat lines
                 // (the chatback frame still plots underneath it).
-                self.pix3d.set_clipping(surface.width, surface.height);
+                self.renderer.pix3d.set_clipping(surface.width, surface.height);
                 self.draw_interface(self.chat_modal_id, 0, 0, 0, &mut surface);
             } else if self.tut_com_id != -1 {
-                self.pix3d.set_clipping(surface.width, surface.height);
+                self.renderer.pix3d.set_clipping(surface.width, surface.height);
                 self.draw_interface(self.tut_com_id, 0, 0, 0, &mut surface);
             } else {
                 let mut line = 0;
@@ -3498,7 +3498,7 @@ impl Client {
 
                     if r#type == 0 {
                         if y > 0 && y < 110 {
-                            if let Some(font) = self.p12.as_ref() {
+                            if let Some(font) = self.renderer.p12.as_ref() {
                                 font.draw_string(&mut surface, Some(&message), 4, y, Colour::BLACK);
                             }
                         }
@@ -3513,18 +3513,18 @@ impl Client {
                             // Java 5000-5007: plot the mod_icons crown at
                             // y - 12, then advance the 14px gutter.
                             if modlevel == 1 {
-                                if let Some(sprite) = &self.mod_icons[0] {
+                                if let Some(sprite) = &self.renderer.mod_icons[0] {
                                     sprite.plot_sprite(&mut surface, x, y - 12);
                                 }
                                 x += 14;
                             }
                             if modlevel == 2 {
-                                if let Some(sprite) = &self.mod_icons[1] {
+                                if let Some(sprite) = &self.renderer.mod_icons[1] {
                                     sprite.plot_sprite(&mut surface, x, y - 12);
                                 }
                                 x += 14;
                             }
-                            if let Some(font) = self.p12.as_ref() {
+                            if let Some(font) = self.renderer.p12.as_ref() {
                                 font.draw_string(&mut surface, Some(&format!("{sender}:")), x, y, Colour::BLACK);
                                 x += font.string_wid(Some(&sender)) + 8;
                                 font.draw_string(&mut surface, Some(&message), x, y, Colour::BLUE);
@@ -3539,25 +3539,25 @@ impl Client {
                     {
                         if y > 0 && y < 110 {
                             let mut x = 4;
-                            if let Some(font) = self.p12.as_ref() {
+                            if let Some(font) = self.renderer.p12.as_ref() {
                                 font.draw_string(&mut surface, Some("From"), x, y, Colour::BLACK);
                                 x += font.string_wid(Some("From "));
                             }
                             // Java 5019-5026: the crown plots after the
                             // "From " label.
                             if modlevel == 1 {
-                                if let Some(sprite) = &self.mod_icons[0] {
+                                if let Some(sprite) = &self.renderer.mod_icons[0] {
                                     sprite.plot_sprite(&mut surface, x, y - 12);
                                 }
                                 x += 14;
                             }
                             if modlevel == 2 {
-                                if let Some(sprite) = &self.mod_icons[1] {
+                                if let Some(sprite) = &self.renderer.mod_icons[1] {
                                     sprite.plot_sprite(&mut surface, x, y - 12);
                                 }
                                 x += 14;
                             }
-                            if let Some(font) = self.p12.as_ref() {
+                            if let Some(font) = self.renderer.p12.as_ref() {
                                 font.draw_string(&mut surface, Some(&format!("{sender}:")), x, y, Colour::BLACK);
                                 x += font.string_wid(Some(&sender)) + 8;
                                 font.draw_string(&mut surface, Some(&message), x, y, Colour::DARKRED);
@@ -3566,21 +3566,21 @@ impl Client {
                         line += 1;
                     } else if r#type == 4 && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && self.is_friend(&sender))) {
                         if y > 0 && y < 110 {
-                            if let Some(font) = self.p12.as_ref() {
+                            if let Some(font) = self.renderer.p12.as_ref() {
                                 font.draw_string(&mut surface, Some(&format!("{sender} {message}")), 4, y, 0x800080);
                             }
                         }
                         line += 1;
                     } else if r#type == 5 && self.split_private_chat == 0 && self.chat_private_mode < 2 {
                         if y > 0 && y < 110 {
-                            if let Some(font) = self.p12.as_ref() {
+                            if let Some(font) = self.renderer.p12.as_ref() {
                                 font.draw_string(&mut surface, Some(&message), 4, y, Colour::DARKRED);
                             }
                         }
                         line += 1;
                     } else if r#type == 6 && self.split_private_chat == 0 && self.chat_private_mode < 2 {
                         if y > 0 && y < 110 {
-                            if let Some(font) = self.p12.as_ref() {
+                            if let Some(font) = self.renderer.p12.as_ref() {
                                 font.draw_string(&mut surface, Some(&format!("To {sender}:")), 4, y, Colour::BLACK);
                                 font.draw_string(
                                     &mut surface,
@@ -3594,7 +3594,7 @@ impl Client {
                         line += 1;
                     } else if r#type == 8 && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && self.is_friend(&sender))) {
                         if y > 0 && y < 110 {
-                            if let Some(font) = self.p12.as_ref() {
+                            if let Some(font) = self.renderer.p12.as_ref() {
                                 font.draw_string(&mut surface, Some(&format!("{sender} {message}")), 4, y, 0x7e3200);
                             }
                         }
@@ -3624,7 +3624,7 @@ impl Client {
                     None => JString::to_screen_name(&self.login_user),
                 };
 
-                if let Some(font) = self.p12.as_ref() {
+                if let Some(font) = self.renderer.p12.as_ref() {
                     font.draw_string(&mut surface, Some(&format!("{username}:")), 4, 90, Colour::BLACK);
                     let input_x = font.string_wid(Some(&format!("{username}: "))) + 6;
                     font.draw_string(&mut surface, Some(&format!("{}*", self.chat_input)), input_x, 90, Colour::BLUE);
@@ -3639,9 +3639,9 @@ impl Client {
         }
 
         if let Some(chat) = &chat {
-            chat.blit_into(&mut self.draw_area, 17, 357);
+            chat.blit_into(&mut self.renderer.draw_area, 17, 357);
         }
-        self.area_chat = chat;
+        self.renderer.area_chat = chat;
     }
 
     /// `redrawIcons` from client-ts (4005), 1:1: when the flashing tab is the
@@ -3663,8 +3663,8 @@ impl Client {
             self.out.p1_enc(ClientProt::TUT_CLICKSIDE.id);
             self.out.p1(self.active_icon);
         }
-        if let Some(area) = self.area_backhmid1.as_mut() {
-            if let Some(backhmid1) = &self.backhmid1 {
+        if let Some(area) = self.renderer.area_backhmid1.as_mut() {
+            if let Some(backhmid1) = &self.renderer.backhmid1 {
                 let w = area.width;
                 let h = area.height;
                 let mut surface = Pix2D::with_pixels(&mut area.pixels, w, h);
@@ -3676,13 +3676,13 @@ impl Client {
                         // redstone for the top row, tabs 0-6 (4018-4034);
                         // tabs 7-13 plot on `area_backbase2` below.
                         let (redstone, x, y) = match self.active_icon {
-                            0 => (&self.redstone1, 22, 10),
-                            1 => (&self.redstone2, 54, 8),
-                            2 => (&self.redstone2, 82, 8),
-                            3 => (&self.redstone3, 110, 8),
-                            4 => (&self.redstone2h, 153, 8),
-                            5 => (&self.redstone2h, 181, 8),
-                            6 => (&self.redstone1h, 209, 9),
+                            0 => (&self.renderer.redstone1, 22, 10),
+                            1 => (&self.renderer.redstone2, 54, 8),
+                            2 => (&self.renderer.redstone2, 82, 8),
+                            3 => (&self.renderer.redstone3, 110, 8),
+                            4 => (&self.renderer.redstone2h, 153, 8),
+                            5 => (&self.renderer.redstone2h, 181, 8),
+                            6 => (&self.renderer.redstone1h, 209, 9),
                             _ => (&None, 0, 0),
                         };
                         if let Some(s) = redstone {
@@ -3703,7 +3703,7 @@ impl Client {
                         if self.side_icon[icon] != -1
                             && (self.tut_flash_icon != icon as i32 || self.loop_cycle % 20 < 10)
                         {
-                            if let Some(s) = &self.sideicons[icon] {
+                            if let Some(s) = &self.renderer.sideicons[icon] {
                                 s.plot_sprite(&mut surface, x, y);
                             }
                         }
@@ -3711,12 +3711,12 @@ impl Client {
                 }
             }
         }
-        if let Some(area) = &self.area_backhmid1 {
-            area.blit_into(&mut self.draw_area, 516, 160);
+        if let Some(area) = &self.renderer.area_backhmid1 {
+            area.blit_into(&mut self.renderer.draw_area, 516, 160);
         }
 
-        if let Some(area) = self.area_backbase2.as_mut() {
-            if let Some(backbase2) = &self.backbase2 {
+        if let Some(area) = self.renderer.area_backbase2.as_mut() {
+            if let Some(backbase2) = &self.renderer.backbase2 {
                 let w = area.width;
                 let h = area.height;
                 let mut surface = Pix2D::with_pixels(&mut area.pixels, w, h);
@@ -3725,13 +3725,13 @@ impl Client {
                     // redstone for the bottom row, tabs 7-13 (4072-4088).
                     if self.side_icon.get(self.active_icon as usize).copied() != Some(-1) {
                         let (redstone, x, y) = match self.active_icon {
-                            7 => (&self.redstone1v, 42, 0),
-                            8 => (&self.redstone2v, 74, 0),
-                            9 => (&self.redstone2v, 102, 0),
-                            10 => (&self.redstone3v, 130, 1),
-                            11 => (&self.redstone2hv, 173, 0),
-                            12 => (&self.redstone2hv, 201, 0),
-                            13 => (&self.redstone1hv, 229, 0),
+                            7 => (&self.renderer.redstone1v, 42, 0),
+                            8 => (&self.renderer.redstone2v, 74, 0),
+                            9 => (&self.renderer.redstone2v, 102, 0),
+                            10 => (&self.renderer.redstone3v, 130, 1),
+                            11 => (&self.renderer.redstone2hv, 173, 0),
+                            12 => (&self.renderer.redstone2hv, 201, 0),
+                            13 => (&self.renderer.redstone1hv, 229, 0),
                             _ => (&None, 0, 0),
                         };
                         if let Some(s) = redstone {
@@ -3752,7 +3752,7 @@ impl Client {
                         if self.side_icon[guard] != -1
                             && (self.tut_flash_icon != guard as i32 || self.loop_cycle % 20 < 10)
                         {
-                            if let Some(s) = &self.sideicons[sprite] {
+                            if let Some(s) = &self.renderer.sideicons[sprite] {
                                 s.plot_sprite(&mut surface, x, y);
                             }
                         }
@@ -3760,8 +3760,8 @@ impl Client {
                 }
             }
         }
-        if let Some(area) = &self.area_backbase2 {
-            area.blit_into(&mut self.draw_area, 496, 466);
+        if let Some(area) = &self.renderer.area_backbase2 {
+            area.blit_into(&mut self.renderer.draw_area, 496, 466);
         }
     }
 
@@ -3780,13 +3780,13 @@ impl Client {
         };
         let player_x = player.x;
         let player_z = player.z;
-        let Some(map) = self.area_map.as_mut() else {
+        let Some(map) = self.renderer.area_map.as_mut() else {
             return;
         };
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
 
         if self.minimap_state == 2 {
-            if let Some(mapback) = &self.mapback {
+            if let Some(mapback) = &self.renderer.mapback {
                 let mask = &mapback.data;
                 let pixels = &mut surface.pixels;
                 // `min` keeps a mismatched mask from writing past the map
@@ -3797,7 +3797,7 @@ impl Client {
                     }
                 }
             }
-            if let Some(compass) = &self.compass {
+            if let Some(compass) = &self.renderer.compass {
                 compass.scanline_rotate_plot_sprite(
                     &mut surface,
                     0,
@@ -3808,8 +3808,8 @@ impl Client {
                     25,
                     self.orbit_camera_yaw as f64,
                     256,
-                    &self.compass_mask_line_offsets,
-                    &self.compass_mask_line_lengths,
+                    &self.renderer.compass_mask_line_offsets,
+                    &self.renderer.compass_mask_line_lengths,
                 );
             }
             return;
@@ -3819,7 +3819,7 @@ impl Client {
         let anchor_x = (player_x / 32) + 48;
         let anchor_y = 464 - (player_z / 32);
 
-        if let Some(minimap) = &self.minimap {
+        if let Some(minimap) = &self.renderer.minimap {
             minimap.scanline_rotate_plot_sprite(
                 &mut surface,
                 25,
@@ -3830,11 +3830,11 @@ impl Client {
                 anchor_y,
                 angle as f64,
                 self.macro_minimap_zoom + 256,
-                &self.minimap_mask_line_offsets,
-                &self.minimap_mask_line_lengths,
+                &self.renderer.minimap_mask_line_offsets,
+                &self.renderer.minimap_mask_line_lengths,
             );
         }
-        if let Some(compass) = &self.compass {
+        if let Some(compass) = &self.renderer.compass {
             compass.scanline_rotate_plot_sprite(
                 &mut surface,
                 0,
@@ -3845,27 +3845,27 @@ impl Client {
                 25,
                 self.orbit_camera_yaw as f64,
                 256,
-                &self.compass_mask_line_offsets,
-                &self.compass_mask_line_lengths,
+                &self.renderer.compass_mask_line_offsets,
+                &self.renderer.compass_mask_line_lengths,
             );
         }
 
         let dot_angle = angle;
         let dot_zoom = self.macro_minimap_zoom + 256;
-        let mapback = self.mapback.as_ref();
-        let mapdots1 = self.mapdots1.as_ref();
-        let mapdots2 = self.mapdots2.as_ref();
-        let mapdots3 = self.mapdots3.as_ref();
+        let mapback = self.renderer.mapback.as_ref();
+        let mapdots1 = self.renderer.mapdots1.as_ref();
+        let mapdots2 = self.renderer.mapdots2.as_ref();
+        let mapdots3 = self.renderer.mapdots3.as_ref();
 
         // TS 11310-11316: map functions (filled by `minimap_build_buffer`;
         // a `mapfunction` entry that is `None` skips the dot).
-        for i in 0..self.active_map_function_count as usize {
-            let dot_x = self.active_map_function_x[i] * 4 + 2 - (player_x / 32);
-            let dot_y = self.active_map_function_z[i] * 4 + 2 - (player_z / 32);
+        for i in 0..self.renderer.active_map_function_count as usize {
+            let dot_x = self.renderer.active_map_function_x[i] * 4 + 2 - (player_x / 32);
+            let dot_y = self.renderer.active_map_function_z[i] * 4 + 2 - (player_z / 32);
             minimap_draw_dot(
                 &mut surface,
                 dot_y,
-                self.active_map_functions[i].as_ref(),
+                self.renderer.active_map_functions[i].as_ref(),
                 dot_x,
                 mapback,
                 dot_angle,
@@ -3928,9 +3928,9 @@ impl Client {
                         &mut surface,
                         arrow_x,
                         arrow_y,
-                        self.mapmarker2.as_ref(),
+                        self.renderer.mapmarker2.as_ref(),
                         mapback,
-                        self.mapedge.as_ref(),
+                        self.renderer.mapedge.as_ref(),
                         dot_angle,
                         dot_zoom,
                     );
@@ -3942,9 +3942,9 @@ impl Client {
                     &mut surface,
                     arrow_x,
                     arrow_y,
-                    self.mapmarker2.as_ref(),
+                    self.renderer.mapmarker2.as_ref(),
                     mapback,
-                    self.mapedge.as_ref(),
+                    self.renderer.mapedge.as_ref(),
                     dot_angle,
                     dot_zoom,
                 );
@@ -3959,9 +3959,9 @@ impl Client {
                         &mut surface,
                         arrow_x,
                         arrow_y,
-                        self.mapmarker2.as_ref(),
+                        self.renderer.mapmarker2.as_ref(),
                         mapback,
-                        self.mapedge.as_ref(),
+                        self.renderer.mapedge.as_ref(),
                         dot_angle,
                         dot_zoom,
                     );
@@ -3976,7 +3976,7 @@ impl Client {
             minimap_draw_dot(
                 &mut surface,
                 dot_y,
-                self.mapmarker1.as_ref(),
+                self.renderer.mapmarker1.as_ref(),
                 dot_x,
                 mapback,
                 dot_angle,

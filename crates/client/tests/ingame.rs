@@ -36,7 +36,7 @@ fn game_draw_headless_does_not_panic() {
         lowmem: false,
     });
     c.ingame = true;
-    c.draw_area = PixMap::new(APPLET_W, APPLET_H);
+    c.renderer.draw_area = PixMap::new(APPLET_W, APPLET_H);
     c.game_draw();
     // second frame: redraw_frame is now false, exercises the per-frame path
     c.game_draw();
@@ -47,11 +47,11 @@ fn game_draw_headless_does_not_panic() {
     c.game_draw();
     assert_eq!(c.world.render_count(), 1, "gameDrawMain must call render_all");
     // with the media jag present the chrome panels plot non-zero pixels
-    assert!(c.draw_area.pixels.iter().any(|&p| p != 0));
+    assert!(c.renderer.draw_area.pixels.iter().any(|&p| p != 0));
     // the icon-strip backgrounds (backhmid1 at (516, 160), backbase2 at
     // (496, 466)) blit non-zero pixels
     let region_nonzero = |x0: i32, y0: i32, x1: i32, y1: i32| {
-        (y0..y1).any(|y| (x0..x1).any(|x| c.draw_area.pixels[(y * c.draw_area.width + x) as usize] != 0))
+        (y0..y1).any(|y| (x0..x1).any(|x| c.renderer.draw_area.pixels[(y * c.renderer.draw_area.width + x) as usize] != 0))
     };
     assert!(region_nonzero(516, 160, 765, 205), "backhmid1 strip");
     assert!(region_nonzero(496, 466, 765, 503), "backbase2 strip");
@@ -74,14 +74,14 @@ fn game_draw_main_writes_viewport_pixels() {
     c.scene_state = 2;
     // if local_player/world empty after new, still must not panic
     c.game_draw();
-    let g = c.area_game.as_ref().unwrap();
+    let g = c.renderer.area_game.as_ref().unwrap();
     assert_eq!(g.width, 512);
     assert_eq!(g.height, 334);
     // after a real rebuild this is non-zero; without scene, at least not a
     // panic, and the 3D pass ran rather than the old fill-0 stub.
     assert_eq!(c.world.render_count(), 1, "gameDrawMain must call render_all");
-    assert_eq!(c.scene_cycle, 1);
-    assert!(c.vis_calc_done, "resetVisCalc must run before the first pass");
+    assert_eq!(c.renderer.scene_cycle, 1);
+    assert!(c.renderer.vis_calc_done, "resetVisCalc must run before the first pass");
 }
 
 /// `minimapDraw` (TS 11279) fills `area_map` and the map is blitted at
@@ -107,16 +107,16 @@ fn minimap_is_under_chrome_not_a_black_square_on_top() {
     c.redraw_frame = true;
     c.game_draw();
 
-    assert!(c.area_map.is_some());
-    let map = c.area_map.as_ref().unwrap();
+    assert!(c.renderer.area_map.is_some());
+    let map = c.renderer.area_map.as_ref().unwrap();
     assert_eq!((map.width, map.height), (172, 156));
 
     // (520, 8) is inside backvmid1's strip (516..549 × 4..159). The map
     // blit at (550, 4) must not have covered it with an opaque rectangle.
-    let i = (8 * c.draw_area.width + 520) as usize;
-    let chrome = c.draw_area.pixels[i];
+    let i = (8 * c.renderer.draw_area.width + 520) as usize;
+    let chrome = c.renderer.draw_area.pixels[i];
     assert_ne!(chrome, 0, "chrome ring must sit on top of area_map, not a black square");
-    if let Some(backvmid1) = &c.area_backvmid1 {
+    if let Some(backvmid1) = &c.renderer.area_backvmid1 {
         let expected = backvmid1.pixels[(4 * backvmid1.width + 4) as usize];
         assert_eq!(chrome, expected, "backvmid1 pixel must survive the area_map blit");
     }
@@ -133,8 +133,8 @@ fn minimap_is_under_chrome_not_a_black_square_on_top() {
         Colour::WHITE,
         "minimapDraw must draw the local-player square"
     );
-    let ring = (104 * c.draw_area.width + 560) as usize;
-    assert_ne!(c.draw_area.pixels[ring], 0, "mapback ring must be blitted at (550, 4)");
+    let ring = (104 * c.renderer.draw_area.width + 560) as usize;
+    assert_ne!(c.renderer.draw_area.pixels[ring], 0, "mapback ring must be blitted at (550, 4)");
 }
 
 /// `minimapDraw` must not panic when the `media` pack (and so `mapback`) is
@@ -158,7 +158,7 @@ fn minimap_draw_without_media_does_not_panic() {
     c.scene_state = 2;
     c.redraw_frame = true;
     c.game_draw();
-    let map = c.area_map.as_ref().unwrap();
+    let map = c.renderer.area_map.as_ref().unwrap();
     assert_eq!((map.width, map.height), (172, 156));
     // Without mapback/compass/dots the only content minimapDraw paints is
     // the white local-player square at (97..99, 78..80).
@@ -243,7 +243,7 @@ fn game_draw_renders_scene_without_manual_pix3d_init() {
     c.cam_pitch = 512;
     c.cam_yaw = 0;
     c.game_draw(); // must not panic: colour table inited by Client::new
-    let g = c.area_game.as_ref().unwrap();
+    let g = c.renderer.area_game.as_ref().unwrap();
     assert!(
         g.pixels.iter().any(|&p| p != 0),
         "synthetic flat world must rasterise through game_draw"
@@ -321,7 +321,7 @@ fn get_av_h_link_below_reads_level_above() {
 #[test]
 fn pix3d_low_mem_follows_config() {
     let c = client("/tmp".into());
-    assert!(!c.pix3d.low_mem, "default config lowmem=false");
+    assert!(!c.renderer.pix3d.low_mem, "default config lowmem=false");
     let mut low = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
@@ -329,7 +329,7 @@ fn pix3d_low_mem_follows_config() {
         members: true,
         lowmem: true,
     });
-    assert!(low.pix3d.low_mem, "lowmem config must reach Pix3DDraw.low_mem");
+    assert!(low.renderer.pix3d.low_mem, "lowmem config must reach Pix3DDraw.low_mem");
     low.ingame = true;
     low.scene_state = 2;
     low.world = flat_world();
@@ -360,15 +360,15 @@ fn production_init_wires_textures_and_pool() {
     c.scene_state = 2;
     c.game_draw(); // must not panic; prepare_game wires Pix3D
     assert!(
-        c.pix3d.num_textures > 0,
+        c.renderer.pix3d.num_textures > 0,
         "prepare_game must depack the textures jag"
     );
     assert!(
-        c.pix3d.texel_pool.is_some(),
+        c.renderer.pix3d.texel_pool.is_some(),
         "prepare_game must init the texel pool (initPool(20))"
     );
     assert!(
-        c.pix3d
+        c.renderer.pix3d
             .tex_pal
             .iter()
             .any(|pal| pal.as_ref().is_some_and(|p| !p.is_empty())),
@@ -400,7 +400,7 @@ fn minimap_build_buffer_writes_pixels() {
     );
     c.mapl = vec![vec![vec![0u8; 104]; 104]; 4];
     c.minimap_build_buffer(0);
-    let mm = c.minimap.as_ref().unwrap();
+    let mm = c.renderer.minimap.as_ref().unwrap();
     assert!(mm.data.iter().any(|&p| p != 0), "minimap buffer must be non-black");
 }
 

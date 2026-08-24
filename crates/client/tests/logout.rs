@@ -142,18 +142,18 @@ fn logout_restores_title_frame() {
     c.ingame = true;
     c.loginscreen = 2;
     c.redraw_frame = false;
-    c.draw_area = PixMap::new(APPLET_W, APPLET_H);
-    c.draw_area.fill(0x00ff00);
+    c.renderer.draw_area = PixMap::new(APPLET_W, APPLET_H);
+    c.renderer.draw_area.fill(0x00ff00);
     c.logout();
     assert!(!c.ingame, "logout must leave the game state");
     assert_eq!(c.loginscreen, 0, "logout returns to the welcome screen");
     assert!(c.redraw_frame, "logout must force a full title redraw");
     assert!(
-        c.image_title2.is_none(),
+        c.renderer.image_title2.is_none(),
         "logout must drop image_title2 so prepare_title reallocates"
     );
     assert!(
-        c.draw_area.pixels.iter().all(|&p| p == 0),
+        c.renderer.draw_area.pixels.iter().all(|&p| p == 0),
         "logout must clear draw_area so no game-frame pixel survives"
     );
 }
@@ -164,16 +164,16 @@ fn logout_then_title_draw_reallocates_regions() {
     c.ingame = true;
     c.loginscreen = 2;
     c.redraw_frame = false;
-    c.draw_area = PixMap::new(APPLET_W, APPLET_H);
-    c.draw_area.fill(0x00ff00);
+    c.renderer.draw_area = PixMap::new(APPLET_W, APPLET_H);
+    c.renderer.draw_area.fill(0x00ff00);
     c.logout();
-    assert!(c.image_title2.is_none());
+    assert!(c.renderer.image_title2.is_none());
     c.title_screen_draw();
     assert!(
-        c.image_title2.is_some(),
+        c.renderer.image_title2.is_some(),
         "the next title draw must reallocate the title regions"
     );
-    assert!(c.image_title0.is_some() && c.image_title1.is_some());
+    assert!(c.renderer.image_title0.is_some() && c.renderer.image_title1.is_some());
 }
 
 // --- Task 4b: `prepare_title` drops the game-frame areas ---
@@ -189,40 +189,40 @@ fn title_draw_drops_game_areas_so_relogin_rebuilds() {
     c.ingame = true;
     c.loginscreen = 2;
     // A logged-in frame: all game areas alive, title regions gone.
-    c.area_chat = Some(PixMap::new(479, 96));
-    c.area_game = Some(PixMap::new(512, 334));
-    c.area_map = Some(PixMap::new(172, 156));
-    c.area_side = Some(PixMap::new(190, 261));
-    c.area_backbase1 = Some(PixMap::new(496, 50));
-    c.area_backbase2 = Some(PixMap::new(269, 37));
-    c.area_backhmid1 = Some(PixMap::new(249, 45));
+    c.renderer.area_chat = Some(PixMap::new(479, 96));
+    c.renderer.area_game = Some(PixMap::new(512, 334));
+    c.renderer.area_map = Some(PixMap::new(172, 156));
+    c.renderer.area_side = Some(PixMap::new(190, 261));
+    c.renderer.area_backbase1 = Some(PixMap::new(496, 50));
+    c.renderer.area_backbase2 = Some(PixMap::new(269, 37));
+    c.renderer.area_backhmid1 = Some(PixMap::new(249, 45));
     c.logout();
     c.title_screen_draw();
     assert!(
-        c.area_chat.is_none(),
+        c.renderer.area_chat.is_none(),
         "prepare_title must drop the game chat area (Java 1482)"
     );
     assert!(
-        c.area_game.is_none(),
+        c.renderer.area_game.is_none(),
         "prepare_title must drop the game viewport area"
     );
     assert!(
-        c.area_map.is_none() && c.area_side.is_none(),
+        c.renderer.area_map.is_none() && c.renderer.area_side.is_none(),
         "prepare_title must drop the map/side areas"
     );
     assert!(
-        c.image_title2.is_some(),
+        c.renderer.image_title2.is_some(),
         "title regions must be reallocated"
     );
     // Second login: the next game draw rebuilds the frame and unloads the
     // title, instead of early-returning on the surviving `area_chat`.
     c.game_draw();
     assert!(
-        c.area_chat.is_some(),
+        c.renderer.area_chat.is_some(),
         "prepare_game must rebuild the game areas after a relogin"
     );
     assert!(
-        c.image_title2.is_none(),
+        c.renderer.image_title2.is_none(),
         "prepare_game must unload the title regions"
     );
 }

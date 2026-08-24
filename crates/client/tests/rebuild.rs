@@ -221,19 +221,19 @@ fn rebuild_normal_paints_loading_splash_when_draw() {
     c.set_draw(true);
     // fonts may be missing without a title jag; the splash keeps the frozen
     // frame and only overlays "Loading - please wait." when a font exists.
-    if c.area_game.is_none() {
-        c.area_game = Some(PixMap::new(512, 334));
+    if c.renderer.area_game.is_none() {
+        c.renderer.area_game = Some(PixMap::new(512, 334));
     }
     // pre-fill so the frozen frame (no cls) and any text overlay can be seen
-    c.area_game.as_mut().unwrap().fill(0x123456);
+    c.renderer.area_game.as_mut().unwrap().fill(0x123456);
     let mut payload = Packet::alloc(0);
     payload.p2(50);
     payload.p2(50);
     payload.pos = 0;
     c.handle_packet(ServerProt::REBUILD_NORMAL, &mut payload);
     assert_eq!(c.scene_state, 1);
-    let ag = c.area_game.as_ref().expect("area_game");
-    if c.p12.is_none() {
+    let ag = c.renderer.area_game.as_ref().expect("area_game");
+    if c.renderer.p12.is_none() {
         // no font: the frame stays frozen — no cls, no text overlay
         assert!(ag.pixels.iter().all(|&p| p == 0x123456), "area_game not frozen");
     } else {

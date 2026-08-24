@@ -61,31 +61,31 @@ fn look_down_z(c: &mut Client) {
 fn get_overlay_pos_out_of_range_is_neg1() {
     let mut c = client();
     c.get_overlay_pos(0, 64, 0); // x < 128
-    assert_eq!((c.project_x, c.project_y), (-1, -1));
+    assert_eq!((c.renderer.project_x, c.renderer.project_y), (-1, -1));
     c.get_overlay_pos(13057, 64, 0); // x > 13056
-    assert_eq!((c.project_x, c.project_y), (-1, -1));
+    assert_eq!((c.renderer.project_x, c.renderer.project_y), (-1, -1));
     c.get_overlay_pos(64, 0, 0); // z < 128
-    assert_eq!((c.project_x, c.project_y), (-1, -1));
+    assert_eq!((c.renderer.project_x, c.renderer.project_y), (-1, -1));
     c.get_overlay_pos(64, 13057, 0); // z > 13056
-    assert_eq!((c.project_x, c.project_y), (-1, -1));
+    assert_eq!((c.renderer.project_x, c.renderer.project_y), (-1, -1));
 }
 
 #[test]
 fn get_overlay_pos_projects_in_front_of_camera() {
     let mut c = client();
-    c.pix3d.origin_x = 256;
-    c.pix3d.origin_y = 167;
+    c.renderer.pix3d.origin_x = 256;
+    c.renderer.pix3d.origin_y = 167;
     look_down_z(&mut c);
     // dz = 1280 - 0 >= 50; pitch/yaw 0 reduces the rotate to dx/dz.
     c.get_overlay_pos(640, 1280, 0);
-    assert_eq!(c.project_x, 256 + (640 * 512) / 1280);
-    assert_eq!(c.project_y, 167);
+    assert_eq!(c.renderer.project_x, 256 + (640 * 512) / 1280);
+    assert_eq!(c.renderer.project_y, 167);
     // A point at the same height as the camera projects onto the y origin.
     c.get_overlay_pos(384, 1280, 0);
-    assert!(c.project_x > -1 && c.project_y > -1);
+    assert!(c.renderer.project_x > -1 && c.renderer.project_y > -1);
     // Behind the camera (z' < 50) is -1.
     c.get_overlay_pos(384, 40, 0);
-    assert_eq!((c.project_x, c.project_y), (-1, -1));
+    assert_eq!((c.renderer.project_x, c.renderer.project_y), (-1, -1));
 }
 
 #[test]
@@ -95,10 +95,10 @@ fn prepare_game_depacks_headicons() {
         return;
     }
     let c = overlay_client(&cache);
-    assert!(c.headicons[3].is_some(), "protect-melee headicon must depack");
-    assert!(c.headicons[4].is_some(), "protect-missiles headicon must depack");
-    assert!(c.headicons[5].is_some(), "protect-magic headicon must depack");
-    assert!(c.hitmarks.iter().take(4).any(|s| s.is_some()));
+    assert!(c.renderer.headicons[3].is_some(), "protect-melee headicon must depack");
+    assert!(c.renderer.headicons[4].is_some(), "protect-missiles headicon must depack");
+    assert!(c.renderer.headicons[5].is_some(), "protect-magic headicon must depack");
+    assert!(c.renderer.hitmarks.iter().take(4).any(|s| s.is_some()));
 }
 
 #[test]
@@ -108,7 +108,7 @@ fn entity_overlays_plots_prayer_headicon() {
         return;
     }
     let mut c = overlay_client(&cache);
-    let melee = sprite_fill_colour(c.headicons[3].as_ref().expect("headicons[3] depacked"));
+    let melee = sprite_fill_colour(c.renderer.headicons[3].as_ref().expect("headicons[3] depacked"));
     assert_ne!(melee, 0, "the protect-melee headicon must have drawn pixels");
     look_down_z(&mut c);
     let mut player = ClientPlayer::default();
@@ -118,10 +118,10 @@ fn entity_overlays_plots_prayer_headicon() {
     player.entity.height = 100;
     c.local_player = Some(player);
     c.entity_overlays();
-    let control = c.area_game.as_ref().unwrap().pixels.clone();
+    let control = c.renderer.area_game.as_ref().unwrap().pixels.clone();
     c.local_player.as_mut().unwrap().headicons = 1 << 3; // protect-melee bit
     c.entity_overlays();
-    let rendered = c.area_game.as_ref().unwrap().pixels.clone();
+    let rendered = c.renderer.area_game.as_ref().unwrap().pixels.clone();
     let n_control = control.iter().filter(|&&p| p == melee).count();
     let n_rendered = rendered.iter().filter(|&&p| p == melee).count();
     assert!(
@@ -147,10 +147,10 @@ fn entity_overlays_collects_chat_bubble() {
     player.entity.chat_message = Some("hi".into());
     c.local_player = Some(player);
     c.entity_overlays();
-    assert!(c.chat_count >= 1, "the chat bubble must be collected");
-    assert_eq!(c.chats[0], "hi");
+    assert!(c.renderer.chat_count >= 1, "the chat bubble must be collected");
+    assert_eq!(c.renderer.chats[0], "hi");
     // The bubble draws centred black-then-yellow text in area_game.
-    let game = c.area_game.as_ref().unwrap();
+    let game = c.renderer.area_game.as_ref().unwrap();
     assert!(
         game.pixels.contains(&Colour::YELLOW),
         "the bubble text must draw yellow pixels into area_game"

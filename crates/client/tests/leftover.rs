@@ -304,7 +304,7 @@ fn shake_jitter_follows_seeded_random() {
     c.cam_shake_ran[2] = 0; // amp byte: sin amplitude
     c.cam_shake_amp[2] = 0; // rate byte: sin frequency
     let mut rng = JavaRandom::new(42);
-    c.rand = JavaRandom::new(42);
+    c.renderer.rand = JavaRandom::new(42);
     let expected = (rng.next_double() * 3.0 - 1.0) as i32;
     let (_, _, jz, _, _) = c.cam_shake_jitter(0, 0, 100, 128, 0);
     assert_eq!(jz, 100 + expected);
@@ -479,7 +479,7 @@ fn prepare_game_loads_cross_sprites() {
     c.scene_state = 2;
     c.game_draw();
     for i in 0..8 {
-        let s = c.cross[i]
+        let s = c.renderer.cross[i]
             .as_ref()
             .unwrap_or_else(|| panic!("cross[{i}] missing after prepare_game"));
         assert!(s.wi > 0 && s.hi > 0, "cross[{i}] empty size");
@@ -511,13 +511,13 @@ fn cross_plot_mode1_into_area_game() {
     c.game_draw(); // prepare_game loads the media sprites
     let mut s = Pix32::new(16, 16);
     s.data[0] = 0x123456; // known top-left pixel: verifies the plot origin
-    c.cross[0] = Some(s);
+    c.renderer.cross[0] = Some(s);
     c.cross_x = 100;
     c.cross_y = 80;
     c.cross_mode = 1;
     c.cross_cycle = 0;
     c.game_draw();
-    let game = c.area_game.as_ref().unwrap();
+    let game = c.renderer.area_game.as_ref().unwrap();
     assert_eq!(game.pixels[68 * 512 + 88], 0x123456);
 }
 
@@ -541,13 +541,13 @@ fn cross_plot_mode2_uses_second_half() {
     c.game_draw();
     let mut s = Pix32::new(16, 16);
     s.data[0] = 0x654321;
-    c.cross[4] = Some(s); // mode 2, cycle 0 -> index 4
+    c.renderer.cross[4] = Some(s); // mode 2, cycle 0 -> index 4
     c.cross_x = 100;
     c.cross_y = 80;
     c.cross_mode = 2;
     c.cross_cycle = 0;
     c.game_draw();
-    let game = c.area_game.as_ref().unwrap();
+    let game = c.renderer.area_game.as_ref().unwrap();
     assert_eq!(game.pixels[68 * 512 + 88], 0x654321);
 }
 
@@ -786,11 +786,11 @@ fn scene_loading_splash_keeps_last_frame() {
     c.draw = true;
     c.scene_state = 1;
     c.game_draw();
-    let game = c.area_game.as_mut().expect("prepare_game allocates area_game");
+    let game = c.renderer.area_game.as_mut().expect("prepare_game allocates area_game");
     game.pixels[100] = 0x00ff00;
     c.game_loop();
     assert_eq!(
-        c.area_game.as_ref().unwrap().pixels[100],
+        c.renderer.area_game.as_ref().unwrap().pixels[100],
         0x00ff00,
         "splash must not cls the frozen viewport"
     );
