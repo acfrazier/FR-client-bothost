@@ -569,9 +569,13 @@ impl Client {
 
         // Task 4: TV static while the scene is loading (`scene_state` not
         // 2). Draw-gated so a Null client never fills; re-randomized every
-        // frame. Once the scene is ready `game_draw_main`/`minimap_draw`
-        // repaint both buffers.
+        // frame. Snow covers the whole CRT; keep `redraw_frame` so the 2D
+        // chrome strips (inventory, chat, icon rail) blit on top every
+        // loading frame instead of only the first.
         self.scene_static();
+        if self.draw && self.scene_state != 2 {
+            self.redraw_frame = true;
+        }
 
         if self.redraw_frame {
             self.redraw_frame = false;

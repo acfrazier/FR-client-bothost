@@ -70,6 +70,36 @@ fn set_draw_rising_edge_sets_draw_true() {
     assert_eq!(c.check_scene(), -1000);
 }
 
+/// Loading snow fills the whole CRT; 2D chrome (the backtop strip) blits
+/// on top every loading frame, not only the first `redraw_frame`.
+#[test]
+fn static_sits_under_2d_chrome() {
+    let mut c = client();
+    c.set_draw(true);
+    c.scene_state = 1;
+    c.game_draw();
+    let mut chrome = client::graphics::PixMap::new(20, 4);
+    for p in chrome.pixels.iter_mut() {
+        *p = 0x00aa_5500;
+    }
+    c.area_backtop1 = Some(chrome);
+    c.game_draw();
+    let da = &c.draw_area;
+    assert_eq!(
+        da.pixels[0], 0x00aa_5500,
+        "backtop chrome must sit on top of snow at (0,0)"
+    );
+    let view = da.pixels[(4 * da.width + 4) as usize];
+    assert_ne!(view, 0x00aa_5500, "viewport (4,4) stays snow, under chrome");
+    let uniq = da
+        .pixels
+        .iter()
+        .copied()
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    assert!(uniq > 16, "CRT snow under the 2D chrome");
+}
+
 /// Task 4: a channel tune leaves `scene_state != 2`; a drawn frame must
 /// show TV static in the viewport (and minimap) instead of the stock
 /// "Loading - please wait." splash or a flat fill.
