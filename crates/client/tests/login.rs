@@ -248,6 +248,53 @@ fn reconnect_response_15_keeps_game_and_local_player() {
     server.join().unwrap();
 }
 
+/// 274bot channel tune: response 15 keeps the previous session's state for
+/// a same-session `lost_con`, so a channel change (a different account's
+/// scene) calls `wipe_scene` to wipe like response 2: `scene_state = 0`,
+/// fresh `localPlayer`, cleared player/npc tables. Stock response 15 never
+/// calls it (`reconnect_response_15_keeps_game_and_local_player` pins the
+/// keep-state path).
+#[test]
+fn tune_wipe_scene_replaces_previous_channel_state() {
+    let mut c = Client::new(cfg());
+    c.ingame = true;
+    c.scene_state = 1;
+    c.npc_count = 3;
+    c.npc[1] = Some(ClientNpc::default());
+    c.player_count = 2;
+    c.players[5] = Some(ClientPlayer::default());
+    let mut local = ClientPlayer::default();
+    local.y = 77; // marker: the previous channel's local player
+    c.players[2047] = Some(local.clone());
+    c.local_player = Some(local);
+
+    c.wipe_scene();
+
+    assert_eq!(c.scene_state, 0, "wipe must reset the scene");
+    assert_eq!(c.npc_count, 0, "wipe must zero npc_count");
+    assert!(c.npc[1].is_none(), "wipe must null leftover npc slots");
+    assert_eq!(c.player_count, 0, "wipe must zero player_count");
+    assert!(
+        c.players[5].is_none(),
+        "wipe must null leftover player slots"
+    );
+    assert_eq!(
+        c.local_player.as_ref().unwrap().y, 0,
+        "wipe must re-seed a fresh local player, not keep the old one"
+    );
+    assert_eq!(
+        c.players[2047].as_ref().unwrap().y, 0,
+        "the re-seeded players[2047] must be fresh too"
+    );
+    assert!(
+        c.players
+            .iter()
+            .enumerate()
+            .all(|(i, p)| (i == 2047usize) == p.is_some()),
+        "only the local player slot survives the wipe"
+    );
+}
+
 #[test]
 fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
     // Task 4c: a cold login after logout must restore the Java response-2

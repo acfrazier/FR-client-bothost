@@ -7793,6 +7793,31 @@ impl Client {
         }
     }
 
+    /// Channel-tune wipe after a response-15 grant (274bot channel head):
+    /// response 15 keeps `localPlayer`/players/world for a same-session
+    /// `lost_con` reconnect; a tune is a **different** account's scene, so
+    /// the head wipes like response 2 (`scene_state = 0`, fresh
+    /// `localPlayer`, cleared player/npc tables) and waits for the
+    /// server's `REBUILD_NORMAL`. Stock response 15 (`lost_con`) never
+    /// calls this.
+    pub fn wipe_scene(&mut self) {
+        self.scene_state = 0;
+        self.player_count = 0;
+        self.npc_count = 0;
+        for slot in self.players.iter_mut() {
+            *slot = None;
+        }
+        for slot in self.npc.iter_mut() {
+            *slot = None;
+        }
+        for slot in self.player_appearance_buffer.iter_mut() {
+            *slot = None;
+        }
+        let player = ClientPlayer::default();
+        self.players[LOCAL_PLAYER_INDEX as usize] = Some(player.clone());
+        self.local_player = Some(player);
+    }
+
     /// `mainloop` from Java (`Client.java` 1823): one 20 ms pass. An
     /// `errorLoading` flag (missing required jag / failed map) returns
     /// immediately like TS. In-game runs `gameLoop`; on the title screen
