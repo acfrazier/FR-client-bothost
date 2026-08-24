@@ -24,7 +24,6 @@ fn client() -> Client {
 #[test]
 fn open_menu_in_viewport_sets_area_0_and_geometry() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 3;
     c.menu_option[0] = "Cancel".into();
@@ -42,7 +41,6 @@ let _r = Renderer::new(false);
 #[test]
 fn open_menu_in_side_sets_area_1() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 2;
     c.menu_option[0] = "Cancel".into();
@@ -57,7 +55,6 @@ let _r = Renderer::new(false);
 #[test]
 fn open_menu_in_chat_sets_area_2() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 2;
     c.menu_option[0] = "Cancel".into();
@@ -72,7 +69,6 @@ let _r = Renderer::new(false);
 #[test]
 fn open_menu_clamps_viewport_menu_inside_512x334() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 3;
     c.menu_option[0] = "Cancel".into();
@@ -95,7 +91,6 @@ let _r = Renderer::new(false);
 #[test]
 fn add_world_options_walk_when_idle() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 1; // Cancel already
     c.shell.mouse_x = 50;
@@ -113,7 +108,6 @@ let _r = Renderer::new(false);
 #[test]
 fn add_world_options_loc_examine_from_pick() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 1;
     // typecode: entity 2, typeId 1, x=10, z=12
@@ -159,7 +153,6 @@ let _r = Renderer::new(false);
 #[test]
 fn add_world_options_npc_ops_from_pick() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 1;
     // typecode: entity 1, npc slot 5, x=8, z=9
@@ -207,7 +200,6 @@ let _r = Renderer::new(false);
 #[test]
 fn add_world_options_player_ops_from_pick() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 1;
     c.shell.mouse_x = 50;
@@ -254,7 +246,6 @@ let _r = Renderer::new(false);
 #[test]
 fn add_world_options_obj_take_and_examine_from_pick() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 1;
     // typecode: entity 3, typeId 9 (idle), x=4, z=5
@@ -293,7 +284,6 @@ let _r = Renderer::new(false);
 #[test]
 fn add_world_options_skips_duplicate_typecodes() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 1;
     let typecode = (3 << 29) | ((9 & 0x7fff) << 14) | ((5 & 0x7f) << 7) | (4 & 0x7f);
@@ -321,7 +311,6 @@ let _r = Renderer::new(false);
 #[test]
 fn add_npc_options_and_add_player_options_callable_directly() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 1;
     if c.cache.npcs.len() <= 2 {
@@ -383,7 +372,6 @@ fn side_inv_fixture(c: &mut Client) {
 #[test]
 fn build_minimenu_starts_with_cancel() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.build_minimenu();
     assert_eq!(c.menu_num_entries, 1);
@@ -393,7 +381,6 @@ let _r = Renderer::new(false);
 #[test]
 fn inv_slot_adds_drop_and_examine() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     side_inv_fixture(&mut c);
     c.build_minimenu();
@@ -409,7 +396,6 @@ let _r = Renderer::new(false);
 #[test]
 fn build_minimenu_sorts_1000_plus_below_actions() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     side_inv_fixture(&mut c);
     c.build_minimenu();
@@ -423,7 +409,6 @@ let _r = Renderer::new(false);
 #[test]
 fn inv_slot_obj_iop_and_component_iop_options() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     side_inv_fixture(&mut c);
     let inv = c.cache.ifaces[2].as_mut().unwrap();
@@ -455,7 +440,6 @@ let _r = Renderer::new(false);
 #[test]
 fn inv_slot_use_and_target_replace_ops() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     side_inv_fixture(&mut c);
     c.use_mode = 1;
@@ -492,7 +476,6 @@ let _r = Renderer::new(false);
 #[test]
 fn non_inv_buttons_push_button_actions() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = -1;
     c.side_icon[3] = 1;
@@ -556,7 +539,6 @@ let _r = Renderer::new(false);
 #[test]
 fn empty_ok_button_still_fires_if_button() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = -1;
     c.side_icon[13] = 1;
@@ -595,7 +577,6 @@ let _r = Renderer::new(false);
 #[test]
 fn paused_and_targeting_suppress_continue_and_target_buttons() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = -1;
     c.side_icon[3] = 1;
@@ -641,7 +622,6 @@ let _r = Renderer::new(false);
 #[test]
 fn build_minimenu_returns_while_obj_drag_active() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.obj_drag_area = 2;
     c.menu_num_entries = 0;
@@ -655,7 +635,6 @@ let _r = Renderer::new(false);
 #[test]
 fn chat_region_adds_report_abuse_for_staff() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut local = ClientPlayer::default();
     local.name = Some("Me".into());
@@ -685,7 +664,6 @@ let _r = Renderer::new(false);
 #[test]
 fn right_click_viewport_opens_menu() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.shell.mouse_x = 100;
     c.shell.mouse_y = 100;
@@ -703,7 +681,6 @@ let _r = Renderer::new(false);
 #[test]
 fn left_click_fires_last_entry_walk() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.shell.mouse_x = 100;
     c.shell.mouse_y = 100;
@@ -723,7 +700,6 @@ let _r = Renderer::new(false);
 #[test]
 fn left_click_on_open_menu_row_fires_option_and_closes() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.shell.mouse_x = 100;
     c.shell.mouse_y = 100;
@@ -749,7 +725,6 @@ let _r = Renderer::new(false);
 #[test]
 fn chat_line_adds_friend_and_ignore_for_friend() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut local = ClientPlayer::default();
     local.name = Some("Me".into());
@@ -795,7 +770,6 @@ let _r = Renderer::new(false);
 #[test]
 fn social_component_ok_override_pushes_remove_and_message() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.friend_count = 1;
     c.friend_username[0] = "Bob".into();
@@ -840,7 +814,6 @@ let _r = Renderer::new(false);
 #[test]
 fn left_click_add_friend_last_entry_opens_menu() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut local = ClientPlayer::default();
     local.name = Some("Me".into());

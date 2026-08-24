@@ -198,7 +198,6 @@ fn client() -> Client {
 #[test]
 fn update_pid_sets_self_slot_and_members() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::alloc(0);
     p.p2(7);
@@ -213,7 +212,6 @@ let _r = Renderer::new(false);
 #[test]
 fn world_update_num_increments_when_draw_then_zeros_headless() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     assert_eq!(c.world_update_num, 0);
     c.ingame = true;
@@ -227,7 +225,6 @@ let _r = Renderer::new(false);
 #[test]
 fn logout_clears_zone_lists() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.projectiles.push(client::dash3d::ClientProj::new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
     c.logout();
@@ -300,7 +297,6 @@ fn loc_add_payload(pos: u8, info: u8, id: u16) -> Packet {
 #[test]
 fn loc_add_change_applies_on_do_queue() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
@@ -316,7 +312,6 @@ let _r = Renderer::new(false);
 #[test]
 fn loc_add_change_waits_when_model_not_ready() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     if c.cache.locs.is_empty() {
         c.cache.locs.push(LocType::default());
@@ -340,7 +335,6 @@ let _r = Renderer::new(false);
 #[test]
 fn loc_del_wall_decor_uses_tile_xz_not_swapped() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
@@ -375,7 +369,6 @@ let _r = Renderer::new(false);
 #[test]
 fn loc_del_removes_wall() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
@@ -397,7 +390,6 @@ let _r = Renderer::new(false);
 #[test]
 fn loc_add_change_out_of_range_shape_does_not_panic() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
@@ -419,7 +411,6 @@ let _r = Renderer::new(false);
 #[test]
 fn loc_anim_replaces_wall_model1() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
@@ -459,7 +450,6 @@ let _r = Renderer::new(false);
 #[test]
 fn loc_anim_wall_door_animates_both_models() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
@@ -497,7 +487,6 @@ let _r = Renderer::new(false);
 #[test]
 fn loc_anim_wall_decor_uses_tile_xz() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
@@ -532,7 +521,6 @@ let _r = Renderer::new(false);
 #[test]
 fn loc_anim_scene_remaps_shape_11_to_10() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
@@ -568,7 +556,6 @@ let _r = Renderer::new(false);
 #[test]
 fn loc_anim_ground_decor_model() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
@@ -601,7 +588,6 @@ let _r = Renderer::new(false);
 #[test]
 fn loc_anim_out_of_range_shape_does_not_panic() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
@@ -629,7 +615,6 @@ let _r = Renderer::new(false);
 #[test]
 fn loc_anim_missing_wall_is_noop() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.ingame = true;
@@ -665,7 +650,6 @@ fn obj_add(c: &mut Client, pos: i32, id: i32, count: i32) {
 #[test]
 fn obj_add_sets_ground_object() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     seed_obj(&mut c, 3, 10);
     obj_add(&mut c, 0x11, 3, 1);
@@ -677,7 +661,6 @@ let _r = Renderer::new(false);
 #[test]
 fn obj_del_clears_empty_cell() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     seed_obj(&mut c, 3, 10);
     obj_add(&mut c, 0x11, 3, 1);
@@ -693,7 +676,6 @@ let _r = Renderer::new(false);
 #[test]
 fn obj_count_rewrites_matching_stack() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     seed_obj(&mut c, 3, 10);
     obj_add(&mut c, 0x11, 3, 2);
@@ -710,7 +692,6 @@ let _r = Renderer::new(false);
 #[test]
 fn obj_reveal_skips_self_slot() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     seed_obj(&mut c, 3, 10);
     c.self_slot = 5;
@@ -727,7 +708,6 @@ let _r = Renderer::new(false);
 #[test]
 fn obj_reveal_adds_for_other_pid() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     seed_obj(&mut c, 3, 10);
     c.self_slot = 5;
@@ -744,7 +724,6 @@ let _r = Renderer::new(false);
 #[test]
 fn obj_add_headless_still_sets_world() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     assert!(!c.draw);
     seed_obj(&mut c, 3, 10);
@@ -806,7 +785,6 @@ let _r = Renderer::new(false);
 #[test]
 fn map_projanim_out_of_range_dest_is_dropped() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.zone_update_x = 100;
     c.zone_update_z = 100;
@@ -934,7 +912,6 @@ let _r = Renderer::new(false);
 #[test]
 fn p_locmerge_consumes_and_noops_without_model() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0); // get_model is still None without pack bytes
     c.self_slot = 3;
@@ -966,7 +943,6 @@ let _r = Renderer::new(false);
 #[test]
 fn p_locmerge_no_player_stops_before_apply() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.self_slot = 5;
     c.ingame = true;
@@ -992,7 +968,6 @@ let _r = Renderer::new(false);
 #[test]
 fn full_follows_clears_8x8_ground_obj_and_expires_locs() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     seed_obj(&mut c, 1, 1);
     c.minusedlevel = 0;
@@ -1023,7 +998,6 @@ let _r = Renderer::new(false);
 #[test]
 fn rebuild_normal_shifts_ground_obj_by_base_delta() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     seed_obj(&mut c, 1, 1);
     c.map_build_centre_zone_x = 10;
@@ -1061,7 +1035,6 @@ let _r = Renderer::new(false);
 #[test]
 fn rebuild_normal_zero_delta_preserves_ground_obj() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     seed_obj(&mut c, 1, 1);
     c.map_build_centre_zone_x = 10;
@@ -1090,7 +1063,6 @@ let _r = Renderer::new(false);
 #[test]
 fn rebuild_normal_negative_dx_shifts_descending() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     seed_obj(&mut c, 1, 1);
     c.map_build_centre_zone_x = 10;

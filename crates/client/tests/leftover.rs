@@ -25,7 +25,6 @@ fn client() -> Client {
 #[test]
 fn cam_reset_clears_cinema() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.cinema_cam = true;
     c.cam_shake[0] = true;
@@ -38,7 +37,6 @@ let _r = Renderer::new(false);
 #[test]
 fn p_countdialog_opens_amount() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.apply_p_countdialog();
     assert!(c.dialog_input_open);
@@ -50,7 +48,6 @@ let _r = Renderer::new(false);
 #[test]
 fn dialog_enter_sends_resume_p_countdialog() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.dialog_input_open = true;
     c.dialog_input = "42".into();
@@ -64,7 +61,6 @@ let _r = Renderer::new(false);
 #[test]
 fn dialog_keys_append_digits_and_backspace() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.dialog_input_open = true;
     c.shell.apply_key(true, 0, '4' as i32);
@@ -78,7 +74,6 @@ let _r = Renderer::new(false);
 #[test]
 fn dialog_digits_capped_at_10() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.dialog_input_open = true;
     c.dialog_input = "1234567890".into();
@@ -90,7 +85,6 @@ let _r = Renderer::new(false);
 #[test]
 fn dialog_letters_are_ignored() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.dialog_input_open = true;
     c.shell.apply_key(true, 0, 'x' as i32);
@@ -101,7 +95,6 @@ let _r = Renderer::new(false);
 #[test]
 fn cam_lookat_rate2_over_100_aims_immediately() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     // payload: lx, lz, hei(g2), rate, rate2
     let mut p = Packet::new(vec![10, 10, 0, 50, 7, 100]);
@@ -123,7 +116,6 @@ let _r = Renderer::new(false);
 #[test]
 fn cam_lookat_rate2_under_100_does_not_aim() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![10, 20, 0, 50, 7, 99]);
     c.apply_cam_lookat(&mut p);
@@ -135,7 +127,6 @@ let _r = Renderer::new(false);
 #[test]
 fn cam_shake_marks_axis_and_fields() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     // axis 2, ran 3, amp 4, rate 5
     let mut p = Packet::new(vec![2, 3, 4, 5]);
@@ -150,7 +141,6 @@ let _r = Renderer::new(false);
 #[test]
 fn cam_moveto_rate2_over_100_jumps_camera() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![3, 4, 0, 60, 9, 100]);
     c.apply_cam_moveto(&mut p);
@@ -167,7 +157,6 @@ let _r = Renderer::new(false);
 #[test]
 fn hint_arrow_type_1_reads_npc() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![1, 0, 7]);
     c.apply_hint_arrow(&mut p);
@@ -179,7 +168,6 @@ let _r = Renderer::new(false);
 #[test]
 fn hint_arrow_type_2_to_6_reads_tile() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![4, 0, 10, 0, 20, 30]);
     c.apply_hint_arrow(&mut p);
@@ -195,7 +183,6 @@ let _r = Renderer::new(false);
 #[test]
 fn hint_arrow_type_10_reads_player() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![10, 0, 9]);
     c.apply_hint_arrow(&mut p);
@@ -207,7 +194,6 @@ let _r = Renderer::new(false);
 #[test]
 fn update_runweight_sets_value_and_redraws_stats_tab() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.active_icon = 12;
     let mut p = Packet::new(vec![0xff, 0xfe]); // g2b signed -2
@@ -219,7 +205,6 @@ let _r = Renderer::new(false);
 #[test]
 fn update_runweight_other_tab_does_not_redraw() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.active_icon = 3;
     let mut p = Packet::new(vec![0, 5]);
@@ -231,7 +216,6 @@ let _r = Renderer::new(false);
 #[test]
 fn reboot_timer_scales_by_30() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![0, 60]);
     c.apply_update_reboot_timer(&mut p);
@@ -241,7 +225,6 @@ let _r = Renderer::new(false);
 #[test]
 fn set_multiway_reads_zone() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![1]);
     c.apply_set_multiway(&mut p);
@@ -251,7 +234,6 @@ let _r = Renderer::new(false);
 #[test]
 fn minimap_toggle_reads_state() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![2]);
     c.apply_minimap_toggle(&mut p);
@@ -261,7 +243,6 @@ let _r = Renderer::new(false);
 #[test]
 fn dispatch_cam_reset_resets_ptype() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.cinema_cam = true;
     c.cam_shake[3] = true;
@@ -274,7 +255,6 @@ let _r = Renderer::new(false);
 #[test]
 fn cinema_camera_eases_toward_move_target() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.cinema_cam = true;
     c.cam_move_to_lx = 4; // x target 4*128+64 = 576
@@ -297,7 +277,6 @@ let _r = Renderer::new(false);
 #[test]
 fn game_loop_ticks_shake_cycles_and_runs_cinema() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.scene_state = 2;
@@ -321,7 +300,6 @@ let _r = Renderer::new(false);
 #[test]
 fn game_loop_without_cinema_skips_cinema_camera() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.scene_state = 2;
@@ -415,7 +393,6 @@ let _r = Renderer::new(false);
 #[test]
 fn game_loop_ticks_reboot_timer_down() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.reboot_timer = 100;
@@ -426,7 +403,6 @@ let _r = Renderer::new(false);
 #[test]
 fn game_loop_holds_reboot_timer_at_one() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.reboot_timer = 1;
@@ -437,7 +413,6 @@ let _r = Renderer::new(false);
 #[test]
 fn pm_options_shift_below_reboot_line() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.split_private_chat = 1;
     c.chat_text[0] = "hello".into();
@@ -459,7 +434,6 @@ let _r = Renderer::new(false);
 #[test]
 fn cross_tick_clears_after_400() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.cross_mode = 1;
@@ -474,7 +448,6 @@ let _r = Renderer::new(false);
 #[test]
 fn walk_consume_sets_cross_mode_1() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.local_player = Some(ClientPlayer::at(5, 5));
@@ -629,7 +602,6 @@ let mut r = Renderer::new(false);
 #[test]
 fn cc_logout_still_returns_true() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let com = IfType {
         client_code: 205,
@@ -641,7 +613,6 @@ let _r = Renderer::new(false);
 #[test]
 fn design_switch_male_female_toggles() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.idk_design_gender = true;
     let com = IfType {
@@ -668,7 +639,6 @@ let _r = Renderer::new(false);
 #[test]
 fn design_kit_cycle_wraps_and_respects_gender() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     // idk table: [0] male head, [1] disabled, [2]+[3] female heads.
     c.cache.idks = vec![
@@ -728,7 +698,6 @@ let _r = Renderer::new(false);
 #[test]
 fn design_colour_cycle_wraps_hair_table() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.idk_design_colour[0] = 0;
     let com = IfType {
@@ -751,7 +720,6 @@ let _r = Renderer::new(false);
 #[test]
 fn design_accept_encodes_idk_savedesign() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.idk_design_gender = false;
     c.idk_design_part = [0, 1, 2, 3, 4, 5, 6];
@@ -771,7 +739,6 @@ let _r = Renderer::new(false);
 #[test]
 fn design_preview_sets_rotation_and_caches_temp_model() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.cache.ifaces.resize(328, None);
     c.cache.ifaces[327] = Some(IfType {
@@ -795,7 +762,6 @@ let _r = Renderer::new(false);
 #[test]
 fn design_switch_buttons_swap_graphic_names() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.cache.ifaces.resize(2, None);
     c.cache.ifaces[1] = Some(IfType {
@@ -820,7 +786,6 @@ let _r = Renderer::new(false);
 #[test]
 fn cold_login_reset_revalidates_design() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.idk_design_gender = false;
     c.idk_design_colour = [3; 5];
@@ -904,7 +869,6 @@ let _r = Renderer::new(false);
 #[test]
 fn clientcode_options_panel_fields() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.apply_clientcode(5, 1);
     assert_eq!(c.one_mouse_button, 1);

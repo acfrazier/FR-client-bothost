@@ -181,7 +181,6 @@ fn client() -> Client {
 #[test]
 fn load_locations_empty_is_noop() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut build = ClientBuild::new();
     // gsmart 0 ends the loc-id loop immediately
@@ -208,7 +207,6 @@ let _r = Renderer::new(false);
 #[test]
 fn load_locations_ground_decor_blocks_when_active() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.cache.locs.push(LocType {
         active: true,
@@ -242,7 +240,6 @@ let _r = Renderer::new(false);
 #[test]
 fn load_locations_low_mem_skips_force_high_detail() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.cache.locs.push(LocType {
         active: true,
@@ -271,7 +268,6 @@ let _r = Renderer::new(false);
 #[test]
 fn load_locations_low_mem_skips_wrong_vis_below() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.cache.locs.push(LocType {
         active: true,
@@ -299,7 +295,6 @@ let _r = Renderer::new(false);
 #[test]
 fn load_locations_wall_blocks_collision_without_model() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.cache.locs.push(LocType {
         blockwalk: true,
@@ -328,7 +323,6 @@ let _r = Renderer::new(false);
 #[test]
 fn load_locations_skips_out_of_area_tiles() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.cache.locs.push(LocType {
         blockwalk: true,
@@ -357,7 +351,6 @@ let _r = Renderer::new(false);
 #[test]
 fn load_locations_places_at_offset_tiles() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.cache.locs.push(LocType {
         blockwalk: true,
@@ -416,7 +409,7 @@ fn ground_src(tiles: &[(i32, i32, i32, &[u8])]) -> Vec<u8> {
 #[test]
 fn finish_build_sets_quick_ground_after_load_ground() {
 let _r = Renderer::new(false);
-    let mut r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.cache.flos.push(FloType {
         chroma: 10,
@@ -429,7 +422,7 @@ let _r = Renderer::new(false);
     let src = ground_src(&[(0, 2, 2, &[82])]);
     build.load_ground(&mut c.groundh, &mut c.mapl, &src, 0, 0, 0, 0);
     c.world.fill_base_level(0);
-    build.finish_build(&c.cache, &mut r.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    build.finish_build(&c.cache, &c.tex_average, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
 
     // the floor tile gets a PLAIN quick ground (t2 == 0 path, TS 254-273)
     let sq = c.world.square(0, 2, 2).expect("floor tile square");
@@ -453,24 +446,24 @@ let _r = Renderer::new(false);
 #[test]
 fn finish_build_blocks_map_flag_block_tiles() {
 let _r = Renderer::new(false);
-    let mut r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.mapl[0][2][2] = MapFlag::BLOCK as u8;
     let mut build = ClientBuild::new();
-    build.finish_build(&c.cache, &mut r.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    build.finish_build(&c.cache, &c.tex_average, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
     assert_ne!(c.collision[0].flags[2][2] & CollisionFlag::WR_GRND, 0);
 }
 
 #[test]
 fn finish_build_link_below_blocks_lower_level() {
 let _r = Renderer::new(false);
-    let mut r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     // a level-1 Block with LinkBelow lands on level 0's collision grid
     // (TS 79-87: trueLevel = level - 1)
     c.mapl[1][2][2] = (MapFlag::BLOCK | MapFlag::LINK_BELOW) as u8;
     let mut build = ClientBuild::new();
-    build.finish_build(&c.cache, &mut r.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    build.finish_build(&c.cache, &c.tex_average, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
     assert_ne!(c.collision[0].flags[2][2] & CollisionFlag::WR_GRND, 0);
     assert_eq!(c.collision[1].flags[2][2] & CollisionFlag::WR_GRND, 0);
 }
@@ -478,13 +471,13 @@ let _r = Renderer::new(false);
 #[test]
 fn finish_build_clamps_hue_and_lig_off() {
 let _r = Renderer::new(false);
-    let mut r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut build = ClientBuild::new();
     assert!((-8..=8).contains(&build.hue_off), "hue_off {}", build.hue_off);
     assert!((-16..=16).contains(&build.lig_off), "lig_off {}", build.lig_off);
     for _ in 0..200 {
-        build.finish_build(&c.cache, &mut r.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+        build.finish_build(&c.cache, &c.tex_average, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
     }
     assert!((-8..=8).contains(&build.hue_off), "hue_off {}", build.hue_off);
     assert!((-16..=16).contains(&build.lig_off), "lig_off {}", build.lig_off);
@@ -493,7 +486,7 @@ let _r = Renderer::new(false);
 #[test]
 fn finish_build_push_down_link_below() {
 let _r = Renderer::new(false);
-    let mut r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.world.fill_base_level(0);
     // a level-1 PLAIN tile at (2,2); LinkBelow pushes it down to level 0
@@ -522,7 +515,7 @@ let _r = Renderer::new(false);
     );
     c.mapl[1][2][2] = MapFlag::LINK_BELOW as u8;
     let mut build = ClientBuild::new();
-    build.finish_build(&c.cache, &mut r.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    build.finish_build(&c.cache, &c.tex_average, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
     let sq = c.world.square(0, 2, 2).expect("pushed-down tile");
     assert_eq!(sq.level, 0);
     assert!(sq.quick_ground.is_some());
@@ -531,7 +524,7 @@ let _r = Renderer::new(false);
 #[test]
 fn finish_build_clears_flat_floor_occluder_bits() {
 let _r = Renderer::new(false);
-    let mut r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut build = ClientBuild::new();
     // a 1x5 flat-floor run (bit 0x4) at level 0: area 5 >= 4 so it becomes
@@ -539,7 +532,7 @@ let _r = Renderer::new(false);
     for z in 8..=12 {
         build.mapo[0][10][z] |= 0x4;
     }
-    build.finish_build(&c.cache, &mut r.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    build.finish_build(&c.cache, &c.tex_average, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
     for z in 8..=12 {
         assert_eq!(build.mapo[0][10][z] & 0x4, 0, "floor bit cleared at z={z}");
     }
@@ -552,7 +545,7 @@ let _r = Renderer::new(false);
     // must be lit by the TS 331 hook: `finishBuild` calls
     // `world.shareLight(64, 768, -50, -10, -50)`, so after the pass the
     // model's normals are consumed and its vertices carry lit colours.
-    let mut r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut model = Model::default();
     model.num_points = 3;
@@ -569,7 +562,7 @@ let _r = Renderer::new(false);
     c.world.set_wall(0, 2, 2, 0, 0, 0, Some(SceneModel::Model(model)), None, 0, 0);
 
     let mut build = ClientBuild::new();
-    build.finish_build(&c.cache, &mut r.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    build.finish_build(&c.cache, &c.tex_average, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
 
     let wall = c.world.get_wall(0, 2, 2).expect("wall");
     let SceneModel::Model(m) = wall.model1.as_ref().unwrap() else {
@@ -584,7 +577,7 @@ let _r = Renderer::new(false);
 #[test]
 fn finish_build_clears_wall_occluder_bits() {
 let _r = Renderer::new(false);
-    let mut r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut build = ClientBuild::new();
     // an 8-tile wall0 run (bit 0x1) along z at level 0: area 8 >= 8 so it
@@ -592,7 +585,7 @@ let _r = Renderer::new(false);
     for z in 2..=9 {
         build.mapo[0][10][z] |= 0x1;
     }
-    build.finish_build(&c.cache, &mut r.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    build.finish_build(&c.cache, &c.tex_average, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
     for z in 2..=9 {
         assert_eq!(build.mapo[0][10][z] & 0x1, 0, "wall bit cleared at z={z}");
     }
@@ -601,7 +594,7 @@ let _r = Renderer::new(false);
 #[test]
 fn finish_build_magenta_overlay_floor() {
 let _r = Renderer::new(false);
-    let mut r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.cache.flos.push(FloType {
         colour: Colour::MAGENTA,
@@ -613,7 +606,7 @@ let _r = Renderer::new(false);
     let src = ground_src(&[(0, 2, 2, &[2, 1])]);
     build.load_ground(&mut c.groundh, &mut c.mapl, &src, 0, 0, 0, 0);
     c.world.fill_base_level(0);
-    build.finish_build(&c.cache, &mut r.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+    build.finish_build(&c.cache, &c.tex_average, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
     let sq = c.world.square(0, 2, 2).expect("overlay tile square");
     assert!(sq.quick_ground.is_some());
 }
@@ -623,7 +616,6 @@ let _r = Renderer::new(false);
 #[test]
 fn ground_tile_visible_gates_force_high_detail_in_low_mem() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     // low-mem: a ForceHighDetail tile's ground is culled by the finishBuild
     // gate; high-mem ignores the flag (Java `(mapl[...] & 0x10) == 0`).
@@ -635,7 +627,6 @@ let _r = Renderer::new(false);
 #[test]
 fn ground_tile_visible_requires_matching_vis_below_level() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let c = client();
     // tile (2,2) on level 0 has no map flags: getVisBelowLevel is 0, so the
     // low-mem gate only opens when minusedlevel == 0.
@@ -646,7 +637,6 @@ let _r = Renderer::new(false);
 #[test]
 fn fade_adjacent_level0_seam() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.groundh[0][64][5] = 100;
     c.groundh[0][65][5] = 50;

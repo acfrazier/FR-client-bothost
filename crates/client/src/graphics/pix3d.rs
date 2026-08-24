@@ -300,7 +300,9 @@ pub struct Pix3DDraw {
     /// (0) texel; drives the non-opaque texture raster.
     tex_trans: [bool; 50],
     /// `texAverage` from TS (private): cached `getTextureAverage` results.
-    tex_average: [i32; 50],
+    /// `pub` so the renderer can mirror it onto `Client` for the sim's
+    /// `finish_build` overlay read.
+    pub tex_average: [i32; 50],
     /// `activeTexels` from TS: the current unpacked texel rows per texture.
     pub active_texels: Vec<Option<Vec<i32>>>,
     /// `texCycle` from TS: last `cycle` stamp per texture (LRU eviction).
@@ -469,6 +471,15 @@ impl Pix3DDraw {
         }
         self.tex_average[id] = rgb;
         rgb
+    }
+
+    /// Force-compute every `getTextureAverage` into `tex_average`, for the
+    /// sim's scene build (`finish_build` reads the overlay through the
+    /// `Client` mirror the renderer copies to).
+    pub fn refresh_texture_averages(&mut self) {
+        for id in 0..50 {
+            self.get_texture_average(id);
+        }
     }
 
     /// TS `pushTexture`: return `id`'s active texel row to the pool.

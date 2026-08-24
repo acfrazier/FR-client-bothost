@@ -22,17 +22,16 @@
 
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::time::Instant;
 
 use crate::client::client::{level_experience, Client};
-use crate::client::client_build::{random_float, ClientBuild};
+use crate::client::client_build::random_float;
 use crate::client::skill::Skill;
 use crate::client::title_flames::TitleFlames;
 use crate::config::if_type::{ButtonType, ComponentType, IfType};
 use crate::config::{Cache, ObjType};
 use crate::dash3d::client_entity::ClientEntity;
 use crate::dash3d::world::LevelHeightmaps;
-use crate::dash3d::{BuildArea, CollisionFlag, LocAngle, LocShape, MapFlag, Model, SceneModel, World};
+use crate::dash3d::{BuildArea, CollisionFlag, LocAngle, LocShape, MapFlag, SceneModel, World};
 use crate::graphics::{Colour, Pix2D, Pix3D, Pix32, Pix8, PixFont, PixMap};
 use crate::io::{ClientProt, JagFile};
 use crate::render::Renderer;
@@ -115,7 +114,7 @@ impl Renderer {
     /// the title draw while ingame.
     pub fn title_screen_draw(&mut self, client: &mut Client) {
         if !client.ingame && client.redraw_frame {
-            self.unload_title(client);
+            self.unload_title();
             self.image_title2 = None;
             self.draw_area.fill(0);
         }
@@ -466,8 +465,8 @@ impl Renderer {
         // `maininit` and passes it around freely).
         self.load_fonts(client);
         if let Some(jag) = self.title.take() {
-            self.load_title_background(client, &jag);
-            self.load_title_images(client, &jag);
+            self.load_title_background(&jag);
+            self.load_title_images(&jag);
             self.title = Some(jag);
         }
 
@@ -496,7 +495,7 @@ impl Renderer {
 
     /// `loadTitleBackground` from client-ts (1627): JPEG `title.dat` tiled
     /// across the 9 title regions, mirrored, then the `logo` sprite.
-    fn load_title_background(&mut self, _client: &mut Client, jag: &JagFile) {
+    fn load_title_background(&mut self, jag: &JagFile) {
         if let Ok(mut background) = Pix32::from_jpeg(jag, "title.dat") {
             plot_title_bg(&mut self.image_title0, &background, 0, 0);
             plot_title_bg(&mut self.image_title1, &background, -637, 0);
@@ -538,7 +537,7 @@ impl Renderer {
     /// `loadTitleImages` from client-ts (1697): the `titlebox` and
     /// `titlebutton` sprites plus the 12 `runes` sprites (`fl_icon` param
     /// default 0 → sprites 0..11).
-    fn load_title_images(&mut self, _client: &mut Client, jag: &JagFile) {
+    fn load_title_images(&mut self, jag: &JagFile) {
         self.image_titlebox = Pix8::depack(jag, "titlebox", 0).ok();
         self.image_titlebutton = Pix8::depack(jag, "titlebutton", 0).ok();
 
@@ -562,7 +561,7 @@ impl Renderer {
 
     /// `unloadTitle` from client-ts (1992): drop the title sprites and stop
     /// the torch flames. TS calls this from `prepareGame`/`mainquit`.
-    pub fn unload_title(&mut self, _client: &mut Client) {
+    pub fn unload_title(&mut self) {
         if let Some(flames) = self.title_flames.as_mut() {
             flames.close();
         }
@@ -583,9 +582,12 @@ impl Renderer {
         // held-arrow scrollbar repeat.
         client.scroll_cycle = if client.shell.mouse_button != 0 { 1 } else { 0 };
         // `apply_clientcode` (sim) defers the brightness re-gamma to the
-        // renderer's texel state (task-2b bridge).
+        // renderer's texel state (task-2b bridge); the texture averages the
+        // sim's `finish_build` reads are refreshed with it.
         if let Some(brightness) = client.pending_brightness.take() {
             self.pix3d.init_texture_palettes(brightness);
+            self.pix3d.refresh_texture_averages();
+            client.tex_average = self.pix3d.tex_average;
         }
         // TS `buildMinimenu` (hover walk + menu options) runs from
         // `other_overlays` when no menu is open (Client.ts 4865-4867),
@@ -910,6 +912,15 @@ impl Renderer {
         self.entity_overlays(client);
         self.coord_arrow(client);
         self.texture_run_anims(client, cycle);
+
+        // Mirror this frame's 3D pick list onto `Client` BEFORE the menu
+        // build: `other_overlays` → `build_minimenu` → `add_world_options`
+        // consumes the picks in the same pass (task-2b fix round 1; the old
+        // end-of-frame copy was one frame stale).
+        client.pick_count = self.pix3d.picked_count;
+        client
+            .pick_typecodes
+            .copy_from_slice(&self.pix3d.picked_entity_typecode);
         self.other_overlays(client);
 
         // TS 4252-4257: restore the pre-jitter eye.
@@ -922,14 +933,6 @@ impl Renderer {
         if let Some(game) = &self.area_game {
             game.blit_into(&mut self.draw_area, 4, 4);
         }
-
-        // Mirror this frame's 3D pick list onto `Client` so the next
-        // `game_loop`'s menu build (`add_world_options`) can read it
-        // without holding the renderer (task-2b bridge).
-        client.pick_count = self.pix3d.picked_count;
-        client
-            .pick_typecodes
-            .copy_from_slice(&self.pix3d.picked_entity_typecode);
     }
 
     /// `drawPrivateMessages` from Client.ts (4915-4986): the split
@@ -2253,7 +2256,7 @@ impl Renderer {
             return;
         }
 
-        self.unload_title(client);
+        self.unload_title();
         self.image_title2 = None;
         self.load_fonts(client);
 
@@ -2399,6 +2402,11 @@ impl Renderer {
         }
         self.pix3d.init_pool(20);
         self.pix3d.init_texture_palettes(0.8);
+        // Mirror the texture averages onto `Client` so the sim's
+        // `map_build` → `finish_build` ground overlays read them without
+        // holding the renderer.
+        self.pix3d.refresh_texture_averages();
+        client.tex_average = self.pix3d.tex_average;
 
         client.redraw_frame = true;
     }
@@ -4244,246 +4252,22 @@ impl Renderer {
         }
     }
 
-    /// `checkMinimap` from client-ts (5076): a low-memory level change
-    /// re-enters the loading state (`scene_state = 1`), and while loading
-    /// the splash is redrawn each frame ahead of `check_scene`. `minimap_level`
-    /// tracks the level the minimap buffer was built for.
+    /// Render half of TS `checkMinimap` (5076) — the draw-only parts, run
+    /// from `mainredraw` each frame (task-2b fix round 1): while the scene
+    /// is loading (`scene_state == 1`) the splash is redrawn, and once the
+    /// scene is built the minimap *image* is composed when `minimap_level`
+    /// (reset by `login`/`map_build`) lags `minusedlevel`. The SIM half of
+    /// `checkMinimap` — the low-mem level transition and `check_scene` →
+    /// `map_build` — lives on `Client` and runs from `game_loop`
+    /// independent of `draw` (a headless client still builds the scene).
     fn check_minimap(&mut self, client: &mut Client) {
-        if client.config.lowmem
-            && client.scene_state == 2
-            && client.build_minusedlevel != client.minusedlevel
-        {
-            client.scene_state = 1;
-            client.scene_load_start_time = Instant::now();
-        }
-
         if client.scene_state == 1 {
-            // splash is redrawn every frame the scene is loading
             self.scene_loading_splash(client);
-            // TS logs a "glcfb" hang line when checkScene stalls past
-            // 360 s; the console write is not ported.
-            let _status = self.check_scene(client);
         }
 
         if client.scene_state == 2 && client.minusedlevel != client.minimap_level {
             client.minimap_level = client.minusedlevel;
             self.minimap_build_buffer(client, client.minusedlevel);
-        }
-    }
-
-    /// `checkScene` from client-ts (5101): waits on the requested map
-    /// squares, then builds the scene. Returns -1/-2 while ground/location
-    /// data is still loading, -3 when a loc's models are not all
-    /// available, -4 while player info is pending; on success sets
-    /// `scene_state = 2`, runs `map_build` and emits MAP_BUILD_COMPLETE.
-    pub fn check_scene(&mut self, client: &mut Client) -> i32 {
-        if client.map_build_index.is_empty()
-            || client.map_build_ground_data.is_empty()
-            || client.map_build_location_data.is_empty()
-        {
-            return -1000; // custom
-        }
-
-        for i in 0..client.map_build_ground_data.len() {
-            if client.map_build_ground_data[i].is_none() && client.map_build_ground_file[i] != -1 {
-                return -1;
-            }
-
-            if client.map_build_location_data[i].is_none() && client.map_build_location_file[i] != -1 {
-                return -2;
-            }
-        }
-
-        // Only `lowMem` is consulted while waiting, so use the associated
-        // `checkLocations` variant instead of a full `ClientBuild` (four
-        // 4×104×104 grids plus the shadow/mapo scratch) every frame.
-        let mut ready = true;
-        for i in 0..client.map_build_ground_data.len() {
-            if let Some(data) = &client.map_build_location_data[i] {
-                let x = (client.map_build_index[i] >> 8) * 64 - client.map_build_base_x;
-                let z = (client.map_build_index[i] & 0xff) * 64 - client.map_build_base_z;
-                if !ClientBuild::check_locations_low_mem(client.config.lowmem, &client.cache, data, x, z) {
-                    ready = false;
-                }
-            }
-        }
-
-        if !ready {
-            return -3;
-        } else if client.awaiting_player_info {
-            return -4;
-        }
-
-        client.scene_state = 2;
-        self.map_build(client);
-        client.out.p1_enc(ClientProt::MAP_BUILD_COMPLETE.id);
-        0
-    }
-
-    /// `mapBuild` from client-ts (5141): reset the scene grids, decode the
-    /// requested map squares (`load_ground`/`fade_adjacent`/`load_locations`),
-    /// run `finish_build`, then re-init the texture pool and prefetch the
-    /// edge map files. The `showObject`/`locChangePostBuildCorrect` passes
-    /// are slice-2 stubs; the TS entity/clear-cache lines around them are
-    /// not ported.
-    fn map_build(&mut self, client: &mut Client) {
-        client.minimap_level = -1;
-        client.spotanims.clear();
-        client.projectiles.clear();
-        self.pix3d.clear_texels();
-        client.world.reset_map();
-
-        for level in 0..BuildArea::LEVELS {
-            client.collision[level as usize].reset();
-        }
-
-        let mut build = ClientBuild::new();
-        build.low_mem = client.config.lowmem;
-        build.minusedlevel = client.minusedlevel;
-
-        // underground pass check (TS 5163-5171): the Lumbridge caves square
-        // forces high detail.
-        for &index in &client.map_build_index {
-            let x = index >> 8;
-            let z = index & 0xff;
-            if x == 33 && (71..=73).contains(&z) {
-                build.low_mem = false;
-                break;
-            }
-        }
-
-        if build.low_mem {
-            client.world.fill_base_level(client.minusedlevel);
-        } else {
-            client.world.fill_base_level(0);
-        }
-
-        if !client.map_build_ground_data.is_empty() {
-            client.out.p1_enc(ClientProt::NO_TIMEOUT.id);
-
-            for i in 0..client.map_build_ground_data.len() {
-                let x = (client.map_build_index[i] >> 8) * 64 - client.map_build_base_x;
-                let z = (client.map_build_index[i] & 0xff) * 64 - client.map_build_base_z;
-                if let Some(data) = &client.map_build_ground_data[i] {
-                    build.load_ground(
-                        &mut client.groundh,
-                        &mut client.mapl,
-                        data,
-                        (client.map_build_centre_zone_x - 6) * 8,
-                        (client.map_build_centre_zone_z - 6) * 8,
-                        x,
-                        z,
-                    );
-                }
-            }
-
-            // missing land squares fade into the neighbouring heights, but
-            // only outside the deep underground (TS 5187-5193).
-            for i in 0..client.map_build_ground_data.len() {
-                let x = (client.map_build_index[i] >> 8) * 64 - client.map_build_base_x;
-                let z = (client.map_build_index[i] & 0xff) * 64 - client.map_build_base_z;
-                if client.map_build_ground_data[i].is_none() && client.map_build_centre_zone_z < 800 {
-                    build.fade_adjacent(&mut client.groundh, z, x, 64, 64);
-                }
-            }
-        }
-
-        // Java hands `World` the one `groundh` array Client writes; mirror
-        // the decoded heights so the render pass (`render_quick_ground`)
-        // reads the same ground the camera's `get_av_h` does.
-        client.world.groundh.clone_from(&client.groundh);
-
-        if !client.map_build_location_data.is_empty() {
-            client.out.p1_enc(ClientProt::NO_TIMEOUT.id);
-
-            for i in 0..client.map_build_location_data.len() {
-                if let Some(data) = &client.map_build_location_data[i] {
-                    let x = (client.map_build_index[i] >> 8) * 64 - client.map_build_base_x;
-                    let z = (client.map_build_index[i] & 0xff) * 64 - client.map_build_base_z;
-                    build.load_locations(
-                        &client.cache,
-                        &mut client.world,
-                        &mut client.collision,
-                        &client.groundh,
-                        &client.mapl,
-                        data,
-                        x,
-                        z,
-                        client.loop_cycle,
-                    );
-                }
-            }
-        }
-
-        client.out.p1_enc(ClientProt::NO_TIMEOUT.id);
-
-        build.finish_build(
-            &client.cache,
-            &mut self.pix3d,
-            &mut client.world,
-            &mut client.collision,
-            &client.groundh,
-            &client.mapl,
-        );
-
-        client.out.p1_enc(ClientProt::NO_TIMEOUT.id);
-
-        for x in 0..BuildArea::SIZE {
-            for z in 0..BuildArea::SIZE {
-                client.show_object(x, z);
-            }
-        }
-
-        client.loc_change_post_build();
-        client.build_minusedlevel = client.minusedlevel;
-
-        // TS 5254-5261: low-memory model unload for models the render
-        // never uses (flags 0x79 = all render uses).
-        if client.config.lowmem && client.on_demand.is_some() {
-            let model_count = client.on_demand.as_ref().map(|od| od.get_file_count(0)).unwrap_or(0);
-            for i in 0..model_count {
-                let flags = client.on_demand.as_ref().map(|od| od.get_model_use(i)).unwrap_or(0);
-                if flags & 0x79 == 0 {
-                    Model::unload(i);
-                }
-            }
-        }
-
-        self.pix3d.init_pool(20);
-        if let Some(od) = client.on_demand.as_mut() {
-            od.clear_prefetches();
-        }
-
-        // TS 5264-5290: prefetch the map files one zone beyond the build
-        // area's edge (the tutorial island pins a fixed 2x2 window). The
-        // TS `| 0` truncations are identity on i32 here.
-        let mut left = ((client.map_build_centre_zone_x - 6) / 8) - 1;
-        let mut right = ((client.map_build_centre_zone_x + 6) / 8) + 1;
-        let mut bottom = ((client.map_build_centre_zone_z - 6) / 8) - 1;
-        let mut top = ((client.map_build_centre_zone_z + 6) / 8) + 1;
-
-        if client.within_tutorial_island {
-            left = 49;
-            right = 50;
-            bottom = 49;
-            top = 50;
-        }
-
-        if let Some(od) = client.on_demand.as_mut() {
-            for x in left..=right {
-                for z in bottom..=top {
-                    if left == x || right == x || bottom == z || top == z {
-                        let land = od.get_map_file(x, z, 0);
-                        if land != -1 {
-                            od.prefetch(3, land);
-                        }
-                        let loc = od.get_map_file(x, z, 1);
-                        if loc != -1 {
-                            od.prefetch(3, loc);
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -4672,10 +4456,10 @@ impl Renderer {
     /// `draw` is the CPU-save switch: false skips the render entirely, so a
     /// headless bot burns no pixels while the network machine keeps running.
     ///
-    /// Re-homed onto `Renderer` (task 2b): it also runs the renderer-side
-    /// sim-adjacent passes `game_loop` used to — `check_minimap` (the scene
-    /// loading splash, `check_scene`/`map_build`, and the minimap build)
-    /// and `follow_camera` — so the sim loop stays renderer-free.
+    /// Re-homed onto `Renderer` (task 2b): it also runs the draw-only halves
+    /// the sim loop used to touch — `check_minimap`'s render half (the
+    /// loading splash and the minimap *image* build; `Client::check_minimap`
+    /// runs the scene build on the sim loop) and `follow_camera`.
     pub fn mainredraw(&mut self, client: &mut Client) {
         if !client.draw {
             return;

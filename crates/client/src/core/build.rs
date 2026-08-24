@@ -16,7 +16,7 @@ use crate::dash3d::{
     BuildArea, ClientLocAnim, CollisionMap, LocAngle, LocShape, MapFlag, SceneModel,
     TerrainOverlayShape, World,
 };
-use crate::graphics::{Colour, Pix3D, Pix3DDraw};
+use crate::graphics::{Colour, Pix3D};
 use crate::io::{OnDemand, Packet};
 
 /// `ClientBuild.WSHAPE0` from client-ts.
@@ -1186,16 +1186,17 @@ impl ClientBuild {
     /// `finishBuild(world, collision)` from client-ts (ClientBuild.ts
     /// 75-497): the ground-colour/light pass, the layer pass, `pushDown`
     /// for `LinkBelow` tiles, and the occluder pass. `cache` supplies the
-    /// flo table, `pix3d` the texture averages (TS `Pix3D.getTextureAverage`
-    /// is a per-client `Pix3DDraw` here), `groundh`/`mapl` are the
-    /// `Client`'s scene grids read through the TS constructor references.
-    /// Ends with the `World.shareLight` call (TS 331) so loc/wall/decor
-    /// models are lit as the TS `finishBuild` does.
+    /// flo table, `texture_averages` the per-texture average brightness
+    /// (TS `Pix3D.getTextureAverage`; the `Client`-side mirror the renderer
+    /// refreshes, since the scene build runs on the sim loop),
+    /// `groundh`/`mapl` are the `Client`'s scene grids read through the TS
+    /// constructor references. Ends with the `World.shareLight` call (TS
+    /// 331) so loc/wall/decor models are lit as the TS `finishBuild` does.
     #[allow(clippy::too_many_arguments)]
     pub fn finish_build(
         &mut self,
         cache: &Cache,
-        pix3d: &mut Pix3DDraw,
+        texture_averages: &[i32; 50],
         world: &mut World,
         collisions: &mut [CollisionMap; 4],
         groundh: &LevelHeightmaps,
@@ -1436,7 +1437,10 @@ impl ClientBuild {
                                     let t2_colour;
                                     let overlay;
                                     if texture >= 0 {
-                                        overlay = pix3d.get_texture_average(texture);
+                                        overlay = texture_averages
+                                            .get(texture as usize)
+                                            .copied()
+                                            .unwrap_or(0);
                                         t2_colour = -1;
                                     } else if flo.colour == Colour::MAGENTA {
                                         overlay = 0;

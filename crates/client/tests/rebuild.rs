@@ -20,7 +20,6 @@ fn client() -> Client {
 #[test]
 fn rebuild_normal_sets_base() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     // zoneX=50, zoneZ=50 -> base = (zone - 6) * 8. Client.ts REBUILD_NORMAL:
@@ -45,7 +44,6 @@ let _r = Renderer::new(false);
 #[test]
 fn rebuild_normal_shifts_local_player() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.map_build_prev_base_x = 0;
@@ -69,7 +67,6 @@ let _r = Renderer::new(false);
 #[test]
 fn rebuild_normal_same_zone_scene_2_is_ignored() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.scene_state = 2;
     c.map_build_centre_zone_x = 50;
@@ -93,7 +90,6 @@ let _r = Renderer::new(false);
 #[test]
 fn load_ground_opcode_zero_uses_perlin_terrain() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut map = Packet::alloc(2);
     for _level in 0..4 {
@@ -119,7 +115,6 @@ let _r = Renderer::new(false);
 #[test]
 fn load_ground_opcode_one_sets_explicit_height() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut map = Packet::alloc(2);
     for _level in 0..4 {
@@ -148,7 +143,6 @@ let _r = Renderer::new(false);
 #[test]
 fn load_ground_writes_client_mapl_flags() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     // opcode 49+1 = 50 → mapl bit (opcode-49) on tile (0,0) level 0 after
     // offsets; a 64×64×4 stream of opcode 0 still leaves mapl[0][x][z]==0
@@ -267,8 +261,6 @@ let _r = Renderer::new(false);
 /// `out.random`).
 #[test]
 fn check_scene_ready_sets_state_2_and_map_build_complete() {
-let _r = Renderer::new(false);
-    let mut r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.awaiting_player_info = false;
@@ -279,9 +271,33 @@ let _r = Renderer::new(false);
     c.map_build_location_file = vec![-1];
     c.map_build_ground_data = vec![None];
     c.map_build_location_data = vec![None];
-    let status = r.check_scene(&mut c);
+    let status = c.check_scene();
     assert_eq!(status, 0);
     assert_eq!(c.scene_state, 2);
+    assert_eq!(
+        c.out.data()[c.out.pos - 1],
+        ClientProt::MAP_BUILD_COMPLETE.id as u8
+    );
+}
+
+/// The headless scene build (task-2b fix round 1): `game_loop` runs the
+/// sim half of `checkMinimap` unconditionally — `draw=false` must not
+/// skip `check_scene` → `map_build`, so a headless slot still emits
+/// `MAP_BUILD_COMPLETE` and reaches `scene_state == 2`.
+#[test]
+fn game_loop_builds_scene_headless_with_draw_off() {
+    let mut c = client();
+    c.ingame = true;
+    c.awaiting_player_info = false;
+    c.scene_state = 1;
+    assert!(!c.draw, "headless default");
+    c.map_build_index = vec![0];
+    c.map_build_ground_file = vec![-1];
+    c.map_build_location_file = vec![-1];
+    c.map_build_ground_data = vec![None];
+    c.map_build_location_data = vec![None];
+    c.game_loop();
+    assert_eq!(c.scene_state, 2, "game_loop must build the scene with draw=false");
     assert_eq!(
         c.out.data()[c.out.pos - 1],
         ClientProt::MAP_BUILD_COMPLETE.id as u8
@@ -295,8 +311,6 @@ let _r = Renderer::new(false);
 /// copy the world reads zeros and the outdoor ground renders a checkerboard.
 #[test]
 fn world_groundh_matches_client_after_load_ground() {
-let _r = Renderer::new(false);
-    let mut r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.awaiting_player_info = false;
@@ -322,7 +336,7 @@ let _r = Renderer::new(false);
     c.map_build_base_x = 0;
     c.map_build_base_z = 0;
 
-    let status = r.check_scene(&mut c);
+    let status = c.check_scene();
     assert_eq!(status, 0);
 
     // the perlin terrain gives interior level-0 heights well away from 0;

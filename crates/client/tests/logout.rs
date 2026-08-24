@@ -22,7 +22,6 @@ fn client() -> Client {
 #[test]
 fn cc_logout_arms_logout_timer() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let com = IfType {
         client_code: 205,
@@ -41,7 +40,6 @@ let _r = Renderer::new(false);
 #[test]
 fn cc_add_friend_opens_social_input_without_if_button() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.friend_server_status = 2;
     let com = IfType {
@@ -57,7 +55,6 @@ let _r = Renderer::new(false);
 #[test]
 fn cc_add_ignore_opens_social_input_without_friend_server() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let com = IfType {
         client_code: 501, // CC_ADD_IGNORE
@@ -71,7 +68,6 @@ let _r = Renderer::new(false);
 #[test]
 fn cc_logout_hook_ignores_non_ok_buttons() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     // Java execute calls clientButton only from the var5 == 231 (BUTTON_OK)
     // arm; a BUTTON_TOGGLE with client code 205 must not arm the timer.

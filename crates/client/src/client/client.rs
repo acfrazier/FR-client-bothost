@@ -577,6 +577,12 @@ pub struct Client {
     pub pick_count: i32,
     pub pick_typecodes: Vec<i32>,
     pub pending_brightness: Option<f64>,
+    /// Shared texture-average cache: `finish_build` (sim, scene build)
+    /// reads the per-texture average brightness for the ground overlays;
+    /// the renderer refreshes it whenever it re-gammas the texture palettes
+    /// (`prepare_game`, brightness changes). Zeroed before any renderer ran,
+    /// which matches `Pix3DDraw::get_texture_average` for missing palettes.
+    pub tex_average: [i32; 50],
     /// `chatInterface` from client-ts (480): the synthetic IfType the chat
     /// scrollbar reads/writes (not in the jag), synced to the chat scroll
     /// state by `game_draw`/`draw_chat`.
@@ -967,6 +973,7 @@ impl Client {
             pick_count: 0,
             pick_typecodes: vec![0; 1000],
             pending_brightness: None,
+            tex_average: [0; 50],
             chat_interface: IfType::default(),
             scroll_grabbed: false,
             scroll_input_padding: 0,
@@ -8589,6 +8596,243 @@ impl Client {
         }
     }
 
+    /// SIM half of `checkMinimap` from client-ts (5076): a low-memory
+    /// level change re-enters the loading state (`scene_state = 1`), and
+    /// while loading `check_scene` → `map_build` is polled each loop —
+    /// independent of `draw`, so a headless client still builds the scene,
+    /// emits `MAP_BUILD_COMPLETE` and reaches `scene_state == 2`. The
+    /// draw-only halves (the loading splash and the minimap *image* build)
+    /// run from `Renderer::mainredraw`.
+    fn check_minimap(&mut self) {
+        if self.config.lowmem
+            && self.scene_state == 2
+            && self.build_minusedlevel != self.minusedlevel
+        {
+            self.scene_state = 1;
+            self.scene_load_start_time = Instant::now();
+        }
+
+        if self.scene_state == 1 {
+            // TS logs a "glcfb" hang line when checkScene stalls past
+            // 360 s; the console write is not ported.
+            let _status = self.check_scene();
+        }
+    }
+
+    /// `checkScene` from client-ts (5101): waits on the requested map
+    /// squares, then builds the scene. Returns -1/-2 while ground/location
+    /// data is still loading, -3 when a loc's models are not all
+    /// available, -4 while player info is pending; on success sets
+    /// `scene_state = 2`, runs `map_build` and emits MAP_BUILD_COMPLETE.
+    pub fn check_scene(&mut self) -> i32 {
+        if self.map_build_index.is_empty()
+            || self.map_build_ground_data.is_empty()
+            || self.map_build_location_data.is_empty()
+        {
+            return -1000; // custom
+        }
+
+        for i in 0..self.map_build_ground_data.len() {
+            if self.map_build_ground_data[i].is_none() && self.map_build_ground_file[i] != -1 {
+                return -1;
+            }
+
+            if self.map_build_location_data[i].is_none() && self.map_build_location_file[i] != -1 {
+                return -2;
+            }
+        }
+
+        // Only `lowMem` is consulted while waiting, so use the associated
+        // `checkLocations` variant instead of a full `ClientBuild` (four
+        // 4×104×104 grids plus the shadow/mapo scratch) every frame.
+        let mut ready = true;
+        for i in 0..self.map_build_ground_data.len() {
+            if let Some(data) = &self.map_build_location_data[i] {
+                let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
+                let z = (self.map_build_index[i] & 0xff) * 64 - self.map_build_base_z;
+                if !ClientBuild::check_locations_low_mem(self.config.lowmem, &self.cache, data, x, z) {
+                    ready = false;
+                }
+            }
+        }
+
+        if !ready {
+            return -3;
+        } else if self.awaiting_player_info {
+            return -4;
+        }
+
+        self.scene_state = 2;
+        self.map_build();
+        self.out.p1_enc(ClientProt::MAP_BUILD_COMPLETE.id);
+        0
+    }
+
+    /// `mapBuild` from client-ts (5141): reset the scene grids, decode the
+    /// requested map squares (`load_ground`/`fade_adjacent`/`load_locations`),
+    /// run `finish_build`, then re-init the texture pool and prefetch the
+    /// edge map files. The `showObject`/`locChangePostBuildCorrect` passes
+    /// are slice-2 stubs; the TS entity/clear-cache lines around them are
+    /// not ported.
+    fn map_build(&mut self) {
+        self.minimap_level = -1;
+        self.spotanims.clear();
+        self.projectiles.clear();
+        self.world.reset_map();
+
+        for level in 0..BuildArea::LEVELS {
+            self.collision[level as usize].reset();
+        }
+
+        let mut build = ClientBuild::new();
+        build.low_mem = self.config.lowmem;
+        build.minusedlevel = self.minusedlevel;
+
+        // underground pass check (TS 5163-5171): the Lumbridge caves square
+        // forces high detail.
+        for &index in &self.map_build_index {
+            let x = index >> 8;
+            let z = index & 0xff;
+            if x == 33 && (71..=73).contains(&z) {
+                build.low_mem = false;
+                break;
+            }
+        }
+
+        if build.low_mem {
+            self.world.fill_base_level(self.minusedlevel);
+        } else {
+            self.world.fill_base_level(0);
+        }
+
+        if !self.map_build_ground_data.is_empty() {
+            self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
+
+            for i in 0..self.map_build_ground_data.len() {
+                let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
+                let z = (self.map_build_index[i] & 0xff) * 64 - self.map_build_base_z;
+                if let Some(data) = &self.map_build_ground_data[i] {
+                    build.load_ground(
+                        &mut self.groundh,
+                        &mut self.mapl,
+                        data,
+                        (self.map_build_centre_zone_x - 6) * 8,
+                        (self.map_build_centre_zone_z - 6) * 8,
+                        x,
+                        z,
+                    );
+                }
+            }
+
+            // missing land squares fade into the neighbouring heights, but
+            // only outside the deep underground (TS 5187-5193).
+            for i in 0..self.map_build_ground_data.len() {
+                let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
+                let z = (self.map_build_index[i] & 0xff) * 64 - self.map_build_base_z;
+                if self.map_build_ground_data[i].is_none() && self.map_build_centre_zone_z < 800 {
+                    build.fade_adjacent(&mut self.groundh, z, x, 64, 64);
+                }
+            }
+        }
+
+        // Java hands `World` the one `groundh` array Client writes; mirror
+        // the decoded heights so the render pass (`render_quick_ground`)
+        // reads the same ground the camera's `get_av_h` does.
+        self.world.groundh.clone_from(&self.groundh);
+
+        if !self.map_build_location_data.is_empty() {
+            self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
+
+            for i in 0..self.map_build_location_data.len() {
+                if let Some(data) = &self.map_build_location_data[i] {
+                    let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
+                    let z = (self.map_build_index[i] & 0xff) * 64 - self.map_build_base_z;
+                    build.load_locations(
+                        &self.cache,
+                        &mut self.world,
+                        &mut self.collision,
+                        &self.groundh,
+                        &self.mapl,
+                        data,
+                        x,
+                        z,
+                        self.loop_cycle,
+                    );
+                }
+            }
+        }
+
+        self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
+
+        build.finish_build(
+            &self.cache,
+            &self.tex_average,
+            &mut self.world,
+            &mut self.collision,
+            &self.groundh,
+            &self.mapl,
+        );
+
+        self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
+
+        for x in 0..BuildArea::SIZE {
+            for z in 0..BuildArea::SIZE {
+                self.show_object(x, z);
+            }
+        }
+
+        self.loc_change_post_build();
+        self.build_minusedlevel = self.minusedlevel;
+
+        // TS 5254-5261: low-memory model unload for models the render
+        // never uses (flags 0x79 = all render uses).
+        if self.config.lowmem && self.on_demand.is_some() {
+            let model_count = self.on_demand.as_ref().map(|od| od.get_file_count(0)).unwrap_or(0);
+            for i in 0..model_count {
+                let flags = self.on_demand.as_ref().map(|od| od.get_model_use(i)).unwrap_or(0);
+                if flags & 0x79 == 0 {
+                    Model::unload(i);
+                }
+            }
+        }
+
+        if let Some(od) = self.on_demand.as_mut() {
+            od.clear_prefetches();
+        }
+
+        // TS 5264-5290: prefetch the map files one zone beyond the build
+        // area's edge (the tutorial island pins a fixed 2x2 window). The
+        // TS `| 0` truncations are identity on i32 here.
+        let mut left = ((self.map_build_centre_zone_x - 6) / 8) - 1;
+        let mut right = ((self.map_build_centre_zone_x + 6) / 8) + 1;
+        let mut bottom = ((self.map_build_centre_zone_z - 6) / 8) - 1;
+        let mut top = ((self.map_build_centre_zone_z + 6) / 8) + 1;
+
+        if self.within_tutorial_island {
+            left = 49;
+            right = 50;
+            bottom = 49;
+            top = 50;
+        }
+
+        if let Some(od) = self.on_demand.as_mut() {
+            for x in left..=right {
+                for z in bottom..=top {
+                    if left == x || right == x || bottom == z || top == z {
+                        let land = od.get_map_file(x, z, 0);
+                        if land != -1 {
+                            od.prefetch(3, land);
+                        }
+                        let loc = od.get_map_file(x, z, 1);
+                        if loc != -1 {
+                            od.prefetch(3, loc);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub(crate) fn show_object(&mut self, x: i32, z: i32) {
         let level = self.minusedlevel as usize;
         if self.ground_obj[level][x as usize][z as usize].is_none() {
@@ -9084,8 +9328,12 @@ impl Client {
             return;
         }
         // TS 2191-2192: the scene/minimap pass after the inbound reads.
-        // `check_minimap` moved to the renderer (its splash/build touch the
-        // draw state); `Renderer::mainredraw` runs it ahead of `game_draw`.
+        // The SIM half runs here unconditionally — `check_scene` →
+        // `map_build` (ground, collision, `MAP_BUILD_COMPLETE`,
+        // `scene_state = 2`) — independent of `draw`, so a headless client
+        // still builds the scene. The draw-only halves (the loading splash
+        // and the minimap *image* build) run from `Renderer::mainredraw`.
+        self.check_minimap();
         self.loc_change_do_queue();
         // Java 9461 / TS 2193: drain SYNTH_SOUND into the mixer.
         self.sounds_do_queue();

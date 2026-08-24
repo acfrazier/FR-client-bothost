@@ -25,7 +25,6 @@ fn client() -> Client {
 #[test]
 fn icon_state_defaults() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let c = client();
     assert_eq!(c.active_icon, 3);
     assert!(c.side_icon.iter().all(|&id| id == -1));
@@ -36,7 +35,6 @@ let _r = Renderer::new(false);
 #[test]
 fn if_seticon_writes_side_icon_slot() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![0, 50, 3]); // com 50, tab 3
     c.apply_if_seticon(&mut p);
@@ -47,7 +45,6 @@ let _r = Renderer::new(false);
 #[test]
 fn if_seticon_65535_clears_slot() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![0xff, 0xff, 0]); // com 65535 -> -1, tab 0
     c.apply_if_seticon(&mut p);
@@ -57,7 +54,6 @@ let _r = Renderer::new(false);
 #[test]
 fn if_seticon_out_of_range_icon_is_ignored() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![0, 50, 14]); // tab 14 is outside 0..14
     c.apply_if_seticon(&mut p);
@@ -67,7 +63,6 @@ let _r = Renderer::new(false);
 #[test]
 fn if_showicon_sets_active_icon() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.apply_if_showicon(7);
     assert_eq!(c.active_icon, 7);
@@ -98,7 +93,6 @@ let mut r = Renderer::new(false);
 #[test]
 fn click_combat_tab_sets_active_icon_0() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.side_icon[0] = 1; // tab present
@@ -111,7 +105,6 @@ let _r = Renderer::new(false);
 #[test]
 fn if_openside_sets_side_modal_id() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![0, 50]); // com 50
     c.apply_if_openside(&mut p);
@@ -122,7 +115,6 @@ let _r = Renderer::new(false);
 #[test]
 fn if_close_clears_side_and_chat_modals() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = 50;
     c.chat_modal_id = 7;
@@ -135,7 +127,6 @@ let _r = Renderer::new(false);
 #[test]
 fn if_openchat_sets_chat_and_closes_side() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = 9;
     c.main_modal_id = 3;
@@ -151,7 +142,6 @@ let _r = Renderer::new(false);
 #[test]
 fn if_openmain_sets_main_and_closes_side_chat() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = 9;
     c.chat_modal_id = 8;
@@ -167,7 +157,6 @@ let _r = Renderer::new(false);
 #[test]
 fn if_openmain_side_sets_both() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.chat_modal_id = 8;
     let mut p = Packet::new(vec![0, 10, 0, 20]);
@@ -180,7 +169,6 @@ let _r = Renderer::new(false);
 #[test]
 fn if_openoverlay_g2b_negative_clears() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.main_overlay_id = 5;
     let mut p = Packet::new(vec![0xff, 0xff]); // g2b -1
@@ -191,7 +179,6 @@ let _r = Renderer::new(false);
 #[test]
 fn if_openoverlay_g2b_positive_sets() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![0, 12]);
     c.apply_if_openoverlay(&mut p);
@@ -201,7 +188,6 @@ let _r = Renderer::new(false);
 #[test]
 fn tut_flash_bounces_active_icon_when_same() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.active_icon = 3;
     c.apply_tut_flash(3);
@@ -213,7 +199,6 @@ let _r = Renderer::new(false);
 #[test]
 fn tut_open_sets_tut_com_id() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![0, 99]);
     c.apply_tut_open(&mut p);
@@ -224,7 +209,6 @@ let _r = Renderer::new(false);
 #[test]
 fn if_openside_clears_main_modal() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.main_modal_id = 3;
     c.chat_modal_id = 8;
@@ -238,7 +222,6 @@ let _r = Renderer::new(false);
 #[test]
 fn if_close_also_clears_main_modal() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = 50;
     c.chat_modal_id = 7;
@@ -426,7 +409,6 @@ let mut r = Renderer::new(false);
 #[test]
 fn add_chat_shifts_and_redraws() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.add_chat(0, "hello", "");
     assert_eq!(c.chat_text[0], "hello");
@@ -439,7 +421,6 @@ let _r = Renderer::new(false);
 #[test]
 fn message_game_plain_is_type_0() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new({
         let mut v = Vec::new();
@@ -455,7 +436,6 @@ let _r = Renderer::new(false);
 #[test]
 fn message_game_tradereq_is_type_4() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new({
         let mut v = Vec::new();
@@ -471,7 +451,6 @@ let _r = Renderer::new(false);
 #[test]
 fn message_game_duelreq_is_type_8() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new({
         let mut v = Vec::new();
@@ -487,7 +466,6 @@ let _r = Renderer::new(false);
 #[test]
 fn chat_enter_clears_input_and_echoes_without_player_name() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.chat_input = "hello".into();
@@ -501,7 +479,6 @@ let _r = Renderer::new(false);
 #[test]
 fn chat_input_appends_prints_and_backspaces() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.shell.apply_key(true, 0, 'h' as i32);
@@ -516,7 +493,6 @@ let _r = Renderer::new(false);
 #[test]
 fn chat_input_command_sends_client_cheat() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     for ch in b"::ping" {
@@ -536,7 +512,6 @@ let _r = Renderer::new(false);
 #[test]
 fn chat_input_public_sends_message_public() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     let mut player = ClientPlayer::at(1, 1);
@@ -1026,7 +1001,6 @@ fn side_button(
 #[test]
 fn side_click_ok_button_writes_if_button() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     // the panel is blitted at (553, 205); a click at (560, 210) is local (7, 5)
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 20);
@@ -1040,7 +1014,6 @@ let _r = Renderer::new(false);
 #[test]
 fn side_click_close_button_sends_close_modal() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
     let button = side_button(2, ButtonType::BUTTON_CLOSE, "", 0, 0, 190, 20);
@@ -1054,7 +1027,6 @@ let _r = Renderer::new(false);
 #[test]
 fn close_modal_clears_resumed_pause_button() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
     let button = side_button(2, ButtonType::BUTTON_CLOSE, "", 0, 0, 190, 20);
@@ -1068,7 +1040,6 @@ let _r = Renderer::new(false);
 #[test]
 fn side_click_toggle_flips_var_and_redraws() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
     let toggle = IfType {
@@ -1092,7 +1063,6 @@ let _r = Renderer::new(false);
 #[test]
 fn side_click_toggle_without_script_keeps_var() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
     let toggle = side_button(2, ButtonType::BUTTON_TOGGLE, "Toggle", 0, 0, 190, 20);
@@ -1109,7 +1079,6 @@ let _r = Renderer::new(false);
 #[test]
 fn side_click_toggle_applies_varp_clientcode() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     // varp 0 carries the music clientcode (3): flipping the toggle must
     // change the volume through clientVar, not just var/redraw_side
@@ -1138,7 +1107,6 @@ let _r = Renderer::new(false);
 #[test]
 fn side_click_select_sets_var_when_different() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
     let select = IfType {
@@ -1173,7 +1141,6 @@ let _r = Renderer::new(false);
 #[test]
 fn side_click_requires_left_button_in_panel() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
     let button = side_button(2, ButtonType::BUTTON_OK, "OK", 0, 0, 190, 20);
@@ -1199,7 +1166,6 @@ let _r = Renderer::new(false);
 #[test]
 fn side_click_skips_non_button_first_child() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let root = side_layer(1, vec![2, 3], vec![0, 0], vec![0, 0], 190, 261);
     let text = IfType {
@@ -1218,7 +1184,6 @@ let _r = Renderer::new(false);
 #[test]
 fn side_click_uses_side_modal_when_open() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let tab_root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
     let tab_button = side_button(2, ButtonType::BUTTON_OK, "OK", 0, 0, 190, 20);
@@ -1243,7 +1208,6 @@ let _r = Renderer::new(false);
 #[test]
 fn side_click_layer_recurse_with_scrolled_child() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
     // a scroller at scroll_pos 20 puts the child at local y 30-20 = 10,
@@ -1384,7 +1348,6 @@ let _r = Renderer::new(false);
 #[test]
 fn do_scrollbar_up_arrow_decreases_pos() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.scroll_cycle = 1;
     let mut com = IfType::default();
@@ -1584,7 +1547,6 @@ let mut r = Renderer::new(false);
 #[test]
 fn main_modal_click_sends_if_button() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.main_modal_id = 1;
     let mut layer = IfType::default();
@@ -1621,7 +1583,6 @@ let _r = Renderer::new(false);
 #[test]
 fn mouse_loop_skips_walk_when_main_modal_open() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.main_modal_id = 1;
     c.shell.apply_mouse_down(1, 100, 100);
@@ -1667,7 +1628,6 @@ let _r = Renderer::new(false);
 #[test]
 fn if_anim_reset_zeros_nested_layer_child() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     let mut root = IfType::default();
     root.r#type = ComponentType::TYPE_LAYER;
@@ -1798,7 +1758,6 @@ fn hover_layer(id: i32, width: i32, height: i32, children: Vec<i32>, child_x: Ve
 #[test]
 fn update_if_pointer_sets_over_side_and_redraws() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = 1;
     let mut layer = IfType::default();
@@ -1858,7 +1817,6 @@ let _r = Renderer::new(false);
 #[test]
 fn update_if_pointer_sets_over_main() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.main_modal_id = 1;
     let layer = hover_layer(1, 512, 334, vec![2], vec![0], vec![0]);
@@ -1880,7 +1838,6 @@ let _r = Renderer::new(false);
 #[test]
 fn update_if_pointer_sets_over_chat_and_redraws_chat() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.chat_modal_id = 1;
     let layer = hover_layer(1, 479, 96, vec![2], vec![0], vec![0]);
@@ -1903,7 +1860,6 @@ let _r = Renderer::new(false);
 #[test]
 fn update_if_pointer_resets_over_side_when_pointer_leaves() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.over_side_com_id = 2;
     c.redraw_side = false;
@@ -1947,7 +1903,6 @@ let _r = Renderer::new(false);
 #[test]
 fn hover_walk_steps_scrollable_layer_scrollbar() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = 1;
     // the scroller sits at local (0, 30) of the side panel (553, 205)
@@ -1983,7 +1938,6 @@ let _r = Renderer::new(false);
 #[test]
 fn type_inv_hover_sets_hovered_slot_on_empty_slot() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = 1;
     let root = hover_layer(1, 190, 261, vec![2], vec![0], vec![0]);
@@ -2101,7 +2055,6 @@ let _r = Renderer::new(false);
 #[test]
 fn obj_drag_release_sends_inv_buttond() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = 1;
     let layer = IfType {
@@ -2179,7 +2132,6 @@ let _r = Renderer::new(false);
 #[test]
 fn obj_drag_quick_release_fires_last_entry_same_slot_drop_does_not() {
 let _r = Renderer::new(false);
-    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = 1;
     let layer = IfType {
