@@ -778,11 +778,13 @@ fn cold_login_reset_empty_table_leaves_parts_minus_one() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Java `REBUILD_NORMAL` binds `areaGame` without cls, then plots
-/// "Loading - please wait." on the frozen last 3D frame. Filling black
-/// is the live "viewport goes completely black between chunks" bug.
+/// Task 4 (274bot channel head): while the scene loads, the viewport shows
+/// TV static — the static fill overwrites the frozen last 3D frame and the
+/// stock "Loading - please wait." splash text is gone. (The stock splash
+/// kept the frozen frame under its text; static is a deliberate full
+/// overwrite.)
 #[test]
-fn scene_loading_splash_keeps_last_frame() {
+fn scene_static_overwrites_frozen_viewport() {
     let mut c = client();
     c.ingame = true;
     c.draw = true;
@@ -790,11 +792,11 @@ fn scene_loading_splash_keeps_last_frame() {
     c.game_draw();
     let game = c.area_game.as_mut().expect("prepare_game allocates area_game");
     game.pixels[100] = 0x00ff00;
-    c.game_loop();
-    assert_eq!(
+    c.game_loop(); // check_minimap redraws the loading fill each frame
+    assert_ne!(
         c.area_game.as_ref().unwrap().pixels[100],
         0x00ff00,
-        "splash must not cls the frozen viewport"
+        "static must overwrite the frozen viewport"
     );
 }
 

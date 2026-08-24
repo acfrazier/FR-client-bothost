@@ -37,7 +37,7 @@ use crate::dash3d::{
 };
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
 use crate::datastruct::LinkList;
-use crate::graphics::{Colour, Pix2D, Pix3D, Pix32, Pix3DDraw, Pix8, PixFont, PixMap};
+use crate::graphics::{Pix2D, Pix3D, Pix32, Pix3DDraw, Pix8, PixFont, PixMap};
 use crate::io::{
     ClientProt, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt, SERVER_PROT_SIZES,
 };
@@ -5627,7 +5627,7 @@ impl Client {
                 self.scene_state = 1;
                 self.scene_load_start_time = Instant::now();
 
-                self.scene_loading_splash();
+                self.scene_static();
 
                 let start_x = (self.map_build_centre_zone_x - 6) / 8;
                 let end_x = (self.map_build_centre_zone_x + 6) / 8;
@@ -8979,29 +8979,60 @@ impl Client {
         }
     }
 
-    /// Java `REBUILD_NORMAL` / `checkMinimap` (Client.java / TS 6832-6835):
-    /// bind `area_game` without cls so the last 3D frame stays frozen, plot
-    /// "Loading - please wait." on top, blit (4, 4). Missing `p12` skips
-    /// the string (the frozen pixels still blit). Gated on `draw`.
-    fn scene_loading_splash(&mut self) {
+    /// Task 4 (274bot channel head): TV static while the scene is loading.
+    /// Fills the viewport (`area_game`) and the minimap (`area_map`) with
+    /// fresh grayscale snow, replacing the stock "Loading - please wait."
+    /// splash text. Gated on `draw` — a Null `draw=false` client never
+    /// fills (4.6d) — and skipped once the scene is ready
+    /// (`scene_state == 2`, when `game_draw_main`/`minimap_draw` take
+    /// over). `game_draw` calls it each frame so the snow re-randomizes;
+    /// `dispatch_packet`/`check_minimap` call it ahead of `check_scene`,
+    /// and the (4, 4) / (550, 4) blits show the static even before a
+    /// `redraw_frame`.
+    /// `pub(super)` for the `game_draw` frame path in `client_draw`.
+    pub(super) fn scene_static(&mut self) {
+        if !self.draw || self.scene_state == 2 {
+            return;
+        }
+        let mut rng = Self::scene_static_seed();
         if let Some(ag) = self.area_game.as_mut() {
-            let mut surface = Pix2D::with_pixels(&mut ag.pixels, ag.width, ag.height);
-            if let Some(p12) = self.p12.as_ref() {
-                p12.centre_string(&mut surface, Some("Loading - please wait."), 257, 151, Colour::BLACK);
-                p12.centre_string(&mut surface, Some("Loading - please wait."), 256, 150, Colour::WHITE);
+            for p in ag.pixels.iter_mut() {
+                rng = rng.wrapping_mul(1664525).wrapping_add(1013904223);
+                let v = ((rng >> 24) & 0xff) as i32;
+                *p = v * 0x010101;
             }
         }
-        if self.draw {
-            if let Some(ag) = &self.area_game {
-                ag.blit_into(&mut self.draw_area, 4, 4);
+        if let Some(am) = self.area_map.as_mut() {
+            for p in am.pixels.iter_mut() {
+                rng = rng.wrapping_mul(1664525).wrapping_add(1013904223);
+                let v = ((rng >> 24) & 0xff) as i32;
+                *p = v * 0x010101;
             }
         }
+        if let Some(ag) = &self.area_game {
+            ag.blit_into(&mut self.draw_area, 4, 4);
+        }
+        if let Some(am) = &self.area_map {
+            am.blit_into(&mut self.draw_area, 550, 4);
+        }
+    }
+
+    /// Per-frame seed for `scene_static`: clock nanos mixed with an atomic
+    /// counter (like `login_random`) so consecutive frames' snow differs
+    /// even inside one clock tick.
+    fn scene_static_seed() -> u32 {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        (now ^ COUNTER.fetch_add(0x9e37_79b9_7f4a_7c15, Ordering::Relaxed)) as u32
     }
 
     /// `checkMinimap` from client-ts (5076): a low-memory level change
     /// re-enters the loading state (`scene_state = 1`), and while loading
-    /// the splash is redrawn each frame ahead of `check_scene`. `minimap_level`
-    /// tracks the level the minimap buffer was built for.
+    /// the TV static is redrawn each frame ahead of `check_scene`.
+    /// `minimap_level` tracks the level the minimap buffer was built for.
     fn check_minimap(&mut self) {
         if self.config.lowmem
             && self.scene_state == 2
@@ -9012,8 +9043,8 @@ impl Client {
         }
 
         if self.scene_state == 1 {
-            // splash is redrawn every frame the scene is loading
-            self.scene_loading_splash();
+            // static is redrawn every frame the scene is loading
+            self.scene_static();
             // TS logs a "glcfb" hang line when checkScene stalls past
             // 360 s; the console write is not ported.
             let _status = self.check_scene();

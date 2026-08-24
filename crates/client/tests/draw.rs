@@ -69,3 +69,41 @@ fn set_draw_rising_edge_sets_draw_true() {
     // check_scene still reports the empty guard.
     assert_eq!(c.check_scene(), -1000);
 }
+
+/// Task 4: a channel tune leaves `scene_state != 2`; a drawn frame must
+/// show TV static in the viewport (and minimap) instead of the stock
+/// "Loading - please wait." splash or a flat fill.
+#[test]
+fn channel_change_draws_static_not_splash() {
+    let mut c = client();
+    c.set_draw(true);
+    c.scene_state = 1;
+    c.game_draw(); // paints the loading fill
+    let g = c.area_game.as_ref().unwrap();
+    let uniq = g.pixels.iter().copied().collect::<std::collections::HashSet<_>>().len();
+    assert!(uniq > 16, "expected noise, not a flat splash");
+    let m = c.area_map.as_ref().unwrap();
+    let muniq = m.pixels.iter().copied().collect::<std::collections::HashSet<_>>().len();
+    assert!(muniq > 16, "expected noise on the minimap too");
+}
+
+/// Task 4 + 4.6d: `draw=false` must not fill — a headless pass with the
+/// scene loading leaves the viewport untouched and the minimap with only
+/// `prepare_game`'s `mapback` ring (no static).
+#[test]
+fn draw_off_loading_leaves_no_static() {
+    let mut c = client();
+    c.scene_state = 1;
+    c.game_draw(); // prepare_game allocates, but the fill is draw-gated
+    assert!(!c.draw);
+    let g = c.area_game.as_ref().unwrap();
+    assert!(
+        g.pixels.iter().all(|&p| p == 0),
+        "draw=false must not fill area_game with static"
+    );
+    // The `mapback` ring is a fixed sprite (≤ 16 colours); the >16-colour
+    // static must be absent with draw off.
+    let m = c.area_map.as_ref().unwrap();
+    let uniq = m.pixels.iter().copied().collect::<std::collections::HashSet<_>>().len();
+    assert!(uniq <= 16, "draw=false must not fill the minimap with static");
+}

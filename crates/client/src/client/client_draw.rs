@@ -567,6 +567,12 @@ impl Client {
         // ahead of this frame's side/chat draws.
         self.prepare_game();
 
+        // Task 4: TV static while the scene is loading (`scene_state` not
+        // 2). Draw-gated so a Null client never fills; re-randomized every
+        // frame. Once the scene is ready `game_draw_main`/`minimap_draw`
+        // repaint both buffers.
+        self.scene_static();
+
         if self.redraw_frame {
             self.redraw_frame = false;
 
