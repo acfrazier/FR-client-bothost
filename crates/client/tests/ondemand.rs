@@ -5,6 +5,7 @@
 //! `remaining` counts it, exactly as Java/TS track `requests`. The socket
 //! test drives the full worker pump against a mock engine ondemand socket.
 use std::io::Write;
+use client::render::Renderer;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::thread;
@@ -14,6 +15,7 @@ use client::io::{JagFile, OnDemand};
 
 #[test]
 fn request_increments_remaining() {
+let _r = Renderer::new(false);
     let mut od = OnDemand::new_unconnected();
     assert_eq!(od.remaining(), 0);
     od.request(2, 0);
@@ -22,6 +24,7 @@ fn request_increments_remaining() {
 
 #[test]
 fn duplicate_request_is_deduplicated() {
+let _r = Renderer::new(false);
     let mut od = OnDemand::new_unconnected();
     od.request(2, 0);
     od.request(2, 0);
@@ -30,6 +33,7 @@ fn duplicate_request_is_deduplicated() {
 
 #[test]
 fn different_files_both_queue() {
+let _r = Renderer::new(false);
     let mut od = OnDemand::new_unconnected();
     od.request(2, 0);
     od.request(3, 100);
@@ -41,6 +45,7 @@ fn different_files_both_queue() {
 /// gzip + 2-byte version trailer, which the client gunzips on `loop_request`.
 #[test]
 fn worker_downloads_and_gunzips_from_ondemand_socket() {
+let _r = Renderer::new(false);
     use std::io::Read;
     use std::net::TcpListener;
 
@@ -111,6 +116,7 @@ fn worker_downloads_and_gunzips_from_ondemand_socket() {
 /// (a reconnect) is served right after.
 #[test]
 fn worker_reopens_socket_immediately_after_drop_socket() {
+let _r = Renderer::new(false);
     use std::io::Read;
     use std::net::TcpListener;
 
@@ -197,6 +203,7 @@ fn worker_reopens_socket_immediately_after_drop_socket() {
 /// login `get_temp_model` would still network-fetch.
 #[test]
 fn prefetched_archive0_model_posts_to_completed() {
+let _r = Renderer::new(false);
     use std::io::Read;
     use std::net::TcpListener;
 
@@ -274,6 +281,7 @@ fn prefetched_archive0_model_posts_to_completed() {
 /// `prefetchPriority` and do not count in `remaining()`.
 #[test]
 fn bar_urgent_models_are_in_use_bit_only() {
+let _r = Renderer::new(false);
     let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
     let path = format!("{cache}/versionlist");
     if !std::path::Path::new(&path).is_file() {
@@ -313,6 +321,7 @@ fn bar_urgent_models_are_in_use_bit_only() {
 /// `pack/client`.
 #[test]
 fn prefetch_cache_hit_posts_extra_model_for_unpack() {
+let _r = Renderer::new(false);
     let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
     let path = format!("{cache}/versionlist");
     if !std::path::Path::new(&path).is_file() {

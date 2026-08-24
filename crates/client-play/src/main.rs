@@ -17,6 +17,7 @@ use std::env;
 use std::process::ExitCode;
 
 use client::client::{Client, ClientConfig};
+use client::render::Renderer;
 
 #[cfg(feature = "window")]
 use client::client::present::Present;
@@ -123,6 +124,9 @@ fn main() -> ExitCode {
         lowmem,
     };
     let mut client = Client::new(config);
+    // Render state is separate (task 2b): the driver holds the `Renderer`
+    // beside the sim `Client` and hands it to `maininit`/`run`.
+    let mut renderer = Renderer::new(lowmem);
 
     // The 765×503 applet (engine canvas / title.dat). Open failure is fatal
     // (`--window` asked for a control plane); audio failure is not.
@@ -166,7 +170,7 @@ fn main() -> ExitCode {
     // Jag fetch (`maininit`) runs before login no matter what: the optional
     // `--user/--pass` only skip the title *form* (the username/password
     // fields), not `maininit`. `run`'s guard is then a no-op.
-    client.maininit();
+    client.maininit(&mut renderer);
 
     // `--user/--pass` skip title login; without them, run straight to the
     // title screen — it is the control plane (no usage exit).
@@ -189,7 +193,7 @@ fn main() -> ExitCode {
     // player info arrives (after REBUILD_NORMAL). `local_player` survives
     // logout Java-shape, so gate on `ingame` — the title screen is not a
     // tile.
-    client.run(|c| {
+    client.run(&mut renderer, |c| {
         if c.loop_cycle % 50 == 0 && c.ingame {
             if let Some(p) = &c.local_player {
                 println!(

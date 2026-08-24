@@ -4,6 +4,7 @@
 // it false). The /tmp cache has no packs, so `Client::new` falls back to
 // `Cache::default()` and never touches the network (see hud.rs).
 use client::client::{Client, ClientConfig};
+use client::render::Renderer;
 
 fn client() -> Client {
     Client::new(ClientConfig {
@@ -17,24 +18,28 @@ fn client() -> Client {
 
 #[test]
 fn headless_new_starts_with_draw_off() {
+let _r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let mut c = client();
     assert!(!c.draw);
-    let before = c.renderer.draw_area.pixels.clone();
+    let before = r.draw_area.pixels.clone();
     c.ingame = true;
-    c.mainredraw();
-    assert_eq!(c.renderer.draw_area.pixels, before);
+    r.mainredraw(&mut c);
+    assert_eq!(r.draw_area.pixels, before);
     // draw=false skips the frame render entirely: prepare_game never ran
-    assert!(c.renderer.area_game.is_none(), "mainredraw must skip with draw=false");
+    assert!(r.area_game.is_none(), "mainredraw must skip with draw=false");
 }
 
 #[test]
 fn set_draw_true_allows_game_draw_without_present() {
+let _r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let mut c = client();
     c.set_draw(true);
     c.ingame = true;
-    c.mainredraw(); // must not panic; prepare_game may run
+    r.mainredraw(&mut c); // must not panic; prepare_game may run
     assert!(
-        c.renderer.area_game.is_some(),
+        r.area_game.is_some(),
         "mainredraw with draw=true runs the game draw"
     );
 }

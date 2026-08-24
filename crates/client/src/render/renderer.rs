@@ -1,18 +1,17 @@
-//! Render-only state, owned by `Client` as `renderer: Renderer`.
-//!
-//! Everything the draw path (`render/draw.rs`, `scene_loading_splash`,
-//! `mainredraw`, present/blit) writes or reads to paint a frame: the CPU
-//! framebuffer, the Pix3D raster state, the fonts/sprites, and the
-//! title/minimap/HUD paint state. The sim paths (packet apply,
-//! `doAction`, `tryMove`, `login`, `mainloop` input) do not touch these
-//! fields; fields they share with the draw (crosshair click position,
-//! minimenu arrays, `world`/`collision`/`local_player`/`ifaces`/`vars`/
-//! `stats`) stay on `Client` until the shared-state step.
+//! Render-only state, held by the driver beside its `Client` (task 2b: the
+//! draw path in `render/draw.rs`, `scene_loading_splash`, `mainredraw`,
+//! present/blit) writes or reads to paint a frame: the CPU framebuffer, the
+//! Pix3D raster state, the fonts/sprites, and the title/minimap/HUD paint
+//! state. The sim paths (packet apply, `doAction`, `tryMove`, `login`,
+//! `mainloop` input) do not touch these fields; fields they share with the
+//! draw (crosshair click position, minimenu arrays, the scrollbar input
+//! state, `world`/`collision`/`local_player`/`ifaces`/`vars`/`stats`) stay
+//! on `Client` until the shared-state step.
 
 use std::collections::HashMap;
 
-use crate::config::if_type::IfType;
-use crate::graphics::{Pix32, Pix3DDraw, Pix8, PixFont, PixMap};
+use crate::dash3d::BuildArea;
+use crate::graphics::{Pix3D, Pix32, Pix3DDraw, Pix8, PixFont, PixMap};
 use crate::io::JagFile;
 use crate::util::JavaRandom;
 
@@ -178,18 +177,6 @@ pub struct Renderer {
     pub active_map_function_x: Vec<i32>,
     pub active_map_function_z: Vec<i32>,
     pub active_map_functions: Vec<Option<Pix32>>,
-    /// `chatInterface` from client-ts (480): the synthetic IfType the chat
-    /// scrollbar reads/writes (not in the jag), synced to the chat scroll
-    /// state by `game_draw`/`draw_chat`.
-    pub chat_interface: IfType,
-    /// Scrollbar input state (`scrollGrabbed`/`scrollInputPadding`/
-    /// `scrollCycle` from client-ts 338-340): `scroll_grabbed` widens the
-    /// track hit area to 32 px while held, and `scroll_cycle` is the
-    /// mouse-held repeat (set from `shell.mouse_button` at the top of
-    /// `game_draw`, since the TS GameShell already ticks it).
-    pub scroll_grabbed: bool,
-    pub scroll_input_padding: i32,
-    pub scroll_cycle: i32,
     /// `rand` from client-ts: the `Math.random` source the camera-shake
     /// jitter uses (`cam_follow`).
     pub rand: JavaRandom,
@@ -200,4 +187,115 @@ pub struct Renderer {
     /// anticheat counter sent with `ANTICHEAT_CYCLELOGIC3` every 113
     /// `minimapBuildBuffer` runs.
     pub cyclelogic3: i32,
+}
+
+impl Renderer {
+    /// Construct the renderer the driver holds beside its `Client` (the
+    /// task-2b shape: `client.mainloop()` / `renderer.redraw(&mut client)`).
+    /// `lowmem` mirrors the config the way `Client::new` used to; the
+    /// process-wide `Pix3D::init_colour_table(0.8)` also moves here so the
+    /// first shaded triangle of any 3D pass has a table.
+    pub fn new(lowmem: bool) -> Self {
+        let mut renderer = Renderer {
+            draw_area: PixMap::new(crate::client::client::APPLET_W, crate::client::client::APPLET_H),
+            pix3d: Pix3DDraw::default(),
+            title: None,
+            p11: None,
+            p12: None,
+            b12: None,
+            q8: None,
+            image_title0: None,
+            image_title1: None,
+            image_title2: None,
+            image_title3: None,
+            image_title4: None,
+            image_title5: None,
+            image_title6: None,
+            image_title7: None,
+            image_title8: None,
+            image_titlebox: None,
+            image_titlebutton: None,
+            image_runes: Vec::new(),
+            title_flames: None,
+            cross: [const { None }; 8],
+            project_x: -1,
+            project_y: -1,
+            hitmarks: [const { None }; 20],
+            headicons: [const { None }; 20],
+            chat_count: 0,
+            chat_x: [0; 50],
+            chat_y: [0; 50],
+            chat_width: [0; 50],
+            chat_height: [0; 50],
+            chat_colour: [0; 50],
+            chat_effect: [0; 50],
+            chat_timer: [0; 50],
+            chats: [const { String::new() }; 50],
+            scene_cycle: 0,
+            tile_last_occupied_cycle: vec![0; (BuildArea::SIZE * BuildArea::SIZE) as usize],
+            vis_calc_done: false,
+            area_game: None,
+            area_map: None,
+            area_side: None,
+            area_chat: None,
+            area_backleft1: None,
+            area_backleft2: None,
+            area_backright1: None,
+            area_backright2: None,
+            area_backtop1: None,
+            area_backvmid1: None,
+            area_backvmid2: None,
+            area_backvmid3: None,
+            area_backhmid2: None,
+            area_backbase1: None,
+            area_backbase2: None,
+            area_backhmid1: None,
+            invback: None,
+            chatback: None,
+            backbase1: None,
+            backbase2: None,
+            backhmid1: None,
+            scrollbar1: None,
+            scrollbar2: None,
+            sideicons: [const { None }; 13],
+            mod_icons: [const { None }; 2],
+            redstone1: None,
+            redstone2: None,
+            redstone3: None,
+            redstone1h: None,
+            redstone2h: None,
+            redstone1v: None,
+            redstone2v: None,
+            redstone3v: None,
+            redstone1hv: None,
+            redstone2hv: None,
+            graphic_sprites: HashMap::new(),
+            minimap: Some(Pix32::new(512, 512)),
+            compass: None,
+            mapedge: None,
+            mapmarker1: None,
+            mapmarker2: None,
+            mapdots1: None,
+            mapdots2: None,
+            mapdots3: None,
+            mapdots4: None,
+            mapback: None,
+            mapscene: vec![None; 50],
+            mapfunction: vec![None; 50],
+            compass_mask_line_offsets: Vec::new(),
+            compass_mask_line_lengths: Vec::new(),
+            minimap_mask_line_offsets: Vec::new(),
+            minimap_mask_line_lengths: Vec::new(),
+            active_map_function_count: 0,
+            active_map_function_x: vec![0; 1000],
+            active_map_function_z: vec![0; 1000],
+            active_map_functions: vec![None; 1000],
+            rand: JavaRandom::now(),
+            cyclelogic1: 0,
+            cyclelogic3: 0,
+        };
+        Pix3D::init_colour_table(0.8);
+        renderer.pix3d.low_mem = lowmem;
+        renderer
+    }
 }

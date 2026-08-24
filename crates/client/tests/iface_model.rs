@@ -3,17 +3,20 @@
 // The /tmp cache has no packs, so `Client::new` falls back to
 // `Cache::default()` and `Model::load` of a missing id is None.
 use client::config::npc_type::NpcType;
+use client::render::Renderer;
 use client::config::obj_type::ObjType;
 use client::dash3d::Model;
 
 #[test]
 fn npc_get_head_none_without_head_ids() {
+let _r = Renderer::new(false);
     let npc = NpcType::default();
     assert!(npc.get_head().is_none());
 }
 
 #[test]
 fn obj_get_model_unlit_none_without_model() {
+let _r = Renderer::new(false);
     let obj = ObjType::default();
     let cache = client::config::Cache::default();
     assert!(obj.get_model_unlit(&cache, 50).is_none());
@@ -21,6 +24,7 @@ fn obj_get_model_unlit_none_without_model() {
 
 #[test]
 fn draw_interface_type_model_missing_does_not_panic() {
+let mut r = Renderer::new(false);
     let mut c = hud_client();
     let mut layer = client::config::if_type::IfType::default();
     layer.r#type = client::config::if_type::ComponentType::TYPE_LAYER;
@@ -41,12 +45,13 @@ fn draw_interface_type_model_missing_does_not_panic() {
     c.cache.ifaces[2] = Some(model);
     let mut pixels = vec![0i32; 50 * 50];
     let mut surface = client::graphics::Pix2D::with_pixels(&mut pixels, 50, 50);
-    c.renderer.pix3d.set_clipping(50, 50);
-    c.draw_interface(1, 0, 0, 0, &mut surface);
+    r.pix3d.set_clipping(50, 50);
+    r.draw_interface(&mut c, 1, 0, 0, 0, &mut surface);
 }
 
 #[test]
 fn npc_get_head_queues_every_missing_head_id() {
+let _r = Renderer::new(false);
     use client::dash3d::model::ModelProvider;
     use std::sync::{Arc, Mutex};
 

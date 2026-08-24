@@ -5,6 +5,7 @@
 //! Clicks reach `clientButton` through the `doAction` IF_BUTTON arm
 //! (TS 9144-9154), and the non-OK button arms never call it.
 use client::client::{Client, ClientConfig, APPLET_H, APPLET_W};
+use client::render::Renderer;
 use client::config::if_type::{ButtonType, ComponentType, IfType};
 use client::graphics::PixMap;
 
@@ -20,6 +21,8 @@ fn client() -> Client {
 
 #[test]
 fn cc_logout_arms_logout_timer() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let com = IfType {
         client_code: 205,
@@ -37,6 +40,8 @@ fn cc_logout_arms_logout_timer() {
 
 #[test]
 fn cc_add_friend_opens_social_input_without_if_button() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.friend_server_status = 2;
     let com = IfType {
@@ -51,6 +56,8 @@ fn cc_add_friend_opens_social_input_without_if_button() {
 
 #[test]
 fn cc_add_ignore_opens_social_input_without_friend_server() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let com = IfType {
         client_code: 501, // CC_ADD_IGNORE
@@ -63,6 +70,8 @@ fn cc_add_ignore_opens_social_input_without_friend_server() {
 
 #[test]
 fn cc_logout_hook_ignores_non_ok_buttons() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     // Java execute calls clientButton only from the var5 == 231 (BUTTON_OK)
     // arm; a BUTTON_TOGGLE with client code 205 must not arm the timer.
@@ -138,42 +147,46 @@ fn side_layer(
 
 #[test]
 fn logout_restores_title_frame() {
+    let mut r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.loginscreen = 2;
     c.redraw_frame = false;
-    c.renderer.draw_area = PixMap::new(APPLET_W, APPLET_H);
-    c.renderer.draw_area.fill(0x00ff00);
+    r.draw_area = PixMap::new(APPLET_W, APPLET_H);
+    r.draw_area.fill(0x00ff00);
     c.logout();
     assert!(!c.ingame, "logout must leave the game state");
     assert_eq!(c.loginscreen, 0, "logout returns to the welcome screen");
     assert!(c.redraw_frame, "logout must force a full title redraw");
+    // Paint teardown now runs in the renderer's first title draw (task 2b:
+    // `logout` is sim-only; `title_screen_draw` drops `image_title2` and
+    // cls's `draw_area` on the `!ingame && redraw_frame` gate). The draw
+    // then plots the title art (a title jag may be present), so the
+    // assertion is that no game-frame pixel survives, not an empty canvas.
+    r.title_screen_draw(&mut c);
     assert!(
-        c.renderer.image_title2.is_none(),
-        "logout must drop image_title2 so prepare_title reallocates"
-    );
-    assert!(
-        c.renderer.draw_area.pixels.iter().all(|&p| p == 0),
-        "logout must clear draw_area so no game-frame pixel survives"
+        r.draw_area.pixels.iter().all(|&p| p != 0x00ff00),
+        "the title draw must clear draw_area so no game-frame pixel survives"
     );
 }
 
 #[test]
 fn logout_then_title_draw_reallocates_regions() {
+    let mut r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.loginscreen = 2;
     c.redraw_frame = false;
-    c.renderer.draw_area = PixMap::new(APPLET_W, APPLET_H);
-    c.renderer.draw_area.fill(0x00ff00);
+    r.draw_area = PixMap::new(APPLET_W, APPLET_H);
+    r.draw_area.fill(0x00ff00);
     c.logout();
-    assert!(c.renderer.image_title2.is_none());
-    c.title_screen_draw();
+    assert!(r.image_title2.is_none(), "fresh client has no title regions yet");
+    r.title_screen_draw(&mut c);
     assert!(
-        c.renderer.image_title2.is_some(),
+        r.image_title2.is_some(),
         "the next title draw must reallocate the title regions"
     );
-    assert!(c.renderer.image_title0.is_some() && c.renderer.image_title1.is_some());
+    assert!(r.image_title0.is_some() && r.image_title1.is_some());
 }
 
 // --- Task 4b: `prepare_title` drops the game-frame areas ---
@@ -185,44 +198,45 @@ fn logout_then_title_draw_reallocates_regions() {
 
 #[test]
 fn title_draw_drops_game_areas_so_relogin_rebuilds() {
+    let mut r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.loginscreen = 2;
     // A logged-in frame: all game areas alive, title regions gone.
-    c.renderer.area_chat = Some(PixMap::new(479, 96));
-    c.renderer.area_game = Some(PixMap::new(512, 334));
-    c.renderer.area_map = Some(PixMap::new(172, 156));
-    c.renderer.area_side = Some(PixMap::new(190, 261));
-    c.renderer.area_backbase1 = Some(PixMap::new(496, 50));
-    c.renderer.area_backbase2 = Some(PixMap::new(269, 37));
-    c.renderer.area_backhmid1 = Some(PixMap::new(249, 45));
+    r.area_chat = Some(PixMap::new(479, 96));
+    r.area_game = Some(PixMap::new(512, 334));
+    r.area_map = Some(PixMap::new(172, 156));
+    r.area_side = Some(PixMap::new(190, 261));
+    r.area_backbase1 = Some(PixMap::new(496, 50));
+    r.area_backbase2 = Some(PixMap::new(269, 37));
+    r.area_backhmid1 = Some(PixMap::new(249, 45));
     c.logout();
-    c.title_screen_draw();
+    r.title_screen_draw(&mut c);
     assert!(
-        c.renderer.area_chat.is_none(),
+        r.area_chat.is_none(),
         "prepare_title must drop the game chat area (Java 1482)"
     );
     assert!(
-        c.renderer.area_game.is_none(),
+        r.area_game.is_none(),
         "prepare_title must drop the game viewport area"
     );
     assert!(
-        c.renderer.area_map.is_none() && c.renderer.area_side.is_none(),
+        r.area_map.is_none() && r.area_side.is_none(),
         "prepare_title must drop the map/side areas"
     );
     assert!(
-        c.renderer.image_title2.is_some(),
+        r.image_title2.is_some(),
         "title regions must be reallocated"
     );
     // Second login: the next game draw rebuilds the frame and unloads the
     // title, instead of early-returning on the surviving `area_chat`.
-    c.game_draw();
+    r.game_draw(&mut c);
     assert!(
-        c.renderer.area_chat.is_some(),
+        r.area_chat.is_some(),
         "prepare_game must rebuild the game areas after a relogin"
     );
     assert!(
-        c.renderer.image_title2.is_none(),
+        r.image_title2.is_none(),
         "prepare_game must unload the title regions"
     );
 }

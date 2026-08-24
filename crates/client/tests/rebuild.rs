@@ -3,6 +3,7 @@
 //! `handle_packet` is the inner `ptype` switch, callable from tests without a
 //! socket; `ClientBuild::load_ground` decodes a map square into `groundh`.
 use client::client::{Client, ClientBuild, ClientConfig, ClientPlayer};
+use client::render::Renderer;
 use client::graphics::PixMap;
 use client::io::{ClientProt, Packet, ServerProt};
 
@@ -18,6 +19,8 @@ fn client() -> Client {
 
 #[test]
 fn rebuild_normal_sets_base() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     // zoneX=50, zoneZ=50 -> base = (zone - 6) * 8. Client.ts REBUILD_NORMAL:
@@ -41,6 +44,8 @@ fn rebuild_normal_sets_base() {
 /// relative to an unshifted (0,0) local.
 #[test]
 fn rebuild_normal_shifts_local_player() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.map_build_prev_base_x = 0;
@@ -63,6 +68,8 @@ fn rebuild_normal_shifts_local_player() {
 
 #[test]
 fn rebuild_normal_same_zone_scene_2_is_ignored() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.scene_state = 2;
     c.map_build_centre_zone_x = 50;
@@ -85,6 +92,8 @@ fn rebuild_normal_same_zone_scene_2_is_ignored() {
 /// cos table).
 #[test]
 fn load_ground_opcode_zero_uses_perlin_terrain() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut map = Packet::alloc(2);
     for _level in 0..4 {
@@ -109,6 +118,8 @@ fn load_ground_opcode_zero_uses_perlin_terrain() {
 /// `-height * 8`, deeper levels step down `-height * 8` from the level below.
 #[test]
 fn load_ground_opcode_one_sets_explicit_height() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut map = Packet::alloc(2);
     for _level in 0..4 {
@@ -136,6 +147,8 @@ fn load_ground_opcode_one_sets_explicit_height() {
 /// flags, value `opcode - 49`) write the flag bit.
 #[test]
 fn load_ground_writes_client_mapl_flags() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     // opcode 49+1 = 50 → mapl bit (opcode-49) on tile (0,0) level 0 after
     // offsets; a 64×64×4 stream of opcode 0 still leaves mapl[0][x][z]==0
@@ -160,6 +173,7 @@ fn load_ground_writes_client_mapl_flags() {
 /// then read the framed packet off the socket and assert bases.
 #[test]
 fn tcp_in_rebuild_normal_over_socket() {
+let _r = Renderer::new(false);
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::mpsc;
@@ -187,6 +201,8 @@ fn tcp_in_rebuild_normal_over_socket() {
         // hold the socket until the client has read
         thread::sleep(Duration::from_millis(200));
     });
+
+    let _r = Renderer::new(false);
 
     let mut c = client();
     c.config.host = addr.ip().to_string();
@@ -217,23 +233,25 @@ fn tcp_in_rebuild_normal_over_socket() {
 /// pre-filled `area_game` black and only the text pixels are absent.
 #[test]
 fn rebuild_normal_paints_loading_splash_when_draw() {
+let _r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let mut c = client();
     c.set_draw(true);
     // fonts may be missing without a title jag; the splash keeps the frozen
     // frame and only overlays "Loading - please wait." when a font exists.
-    if c.renderer.area_game.is_none() {
-        c.renderer.area_game = Some(PixMap::new(512, 334));
+    if r.area_game.is_none() {
+        r.area_game = Some(PixMap::new(512, 334));
     }
     // pre-fill so the frozen frame (no cls) and any text overlay can be seen
-    c.renderer.area_game.as_mut().unwrap().fill(0x123456);
+    r.area_game.as_mut().unwrap().fill(0x123456);
     let mut payload = Packet::alloc(0);
     payload.p2(50);
     payload.p2(50);
     payload.pos = 0;
     c.handle_packet(ServerProt::REBUILD_NORMAL, &mut payload);
     assert_eq!(c.scene_state, 1);
-    let ag = c.renderer.area_game.as_ref().expect("area_game");
-    if c.renderer.p12.is_none() {
+    let ag = r.area_game.as_ref().expect("area_game");
+    if r.p12.is_none() {
         // no font: the frame stays frozen — no cls, no text overlay
         assert!(ag.pixels.iter().all(|&p| p == 0x123456), "area_game not frozen");
     } else {
@@ -249,6 +267,8 @@ fn rebuild_normal_paints_loading_splash_when_draw() {
 /// `out.random`).
 #[test]
 fn check_scene_ready_sets_state_2_and_map_build_complete() {
+let _r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.awaiting_player_info = false;
@@ -259,7 +279,7 @@ fn check_scene_ready_sets_state_2_and_map_build_complete() {
     c.map_build_location_file = vec![-1];
     c.map_build_ground_data = vec![None];
     c.map_build_location_data = vec![None];
-    let status = c.check_scene();
+    let status = r.check_scene(&mut c);
     assert_eq!(status, 0);
     assert_eq!(c.scene_state, 2);
     assert_eq!(
@@ -275,6 +295,8 @@ fn check_scene_ready_sets_state_2_and_map_build_complete() {
 /// copy the world reads zeros and the outdoor ground renders a checkerboard.
 #[test]
 fn world_groundh_matches_client_after_load_ground() {
+let _r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.awaiting_player_info = false;
@@ -300,7 +322,7 @@ fn world_groundh_matches_client_after_load_ground() {
     c.map_build_base_x = 0;
     c.map_build_base_z = 0;
 
-    let status = c.check_scene();
+    let status = r.check_scene(&mut c);
     assert_eq!(status, 0);
 
     // the perlin terrain gives interior level-0 heights well away from 0;

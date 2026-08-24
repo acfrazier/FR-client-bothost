@@ -1,4 +1,5 @@
 use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer};
+use client::render::Renderer;
 use client::io::Packet;
 use client::util::JString;
 use std::io::{Read, Write};
@@ -7,6 +8,7 @@ use std::thread;
 
 #[test]
 fn to_userhash_matches_client_ts() {
+let _r = Renderer::new(false);
     // values generated with webclient JString.ts toUserhash
     assert_eq!(JString::to_userhash("bob"), 3295);
     assert_eq!(JString::to_userhash("admin"), 2094917);
@@ -23,6 +25,7 @@ fn to_userhash_matches_client_ts() {
 
 #[test]
 fn cold_login_opcode_16_success() {
+let _r = Renderer::new(false);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
@@ -79,6 +82,7 @@ fn cold_login_opcode_16_success() {
 /// local player is then re-seeded fresh at `players[2047]` (ready = false).
 #[test]
 fn cold_login_clears_entity_tables() {
+let _r = Renderer::new(false);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
@@ -143,6 +147,7 @@ fn cold_login_clears_entity_tables() {
 
 #[test]
 fn reconnect_uses_opcode_18() {
+let _r = Renderer::new(false);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
@@ -173,6 +178,7 @@ fn reconnect_uses_opcode_18() {
 
 #[test]
 fn reconnect_response_15_keeps_game_and_local_player() {
+let _r = Renderer::new(false);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
@@ -228,6 +234,7 @@ fn reconnect_response_15_keeps_game_and_local_player() {
 
 #[test]
 fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
+let mut r = Renderer::new(false);
     // Task 4c: a cold login after logout must restore the Java response-2
     // defaults (`sideTab = 3`, closed modals, empty chat, no minimap flag)
     // and call `prepareGame` so the game frame the title draw consumed is
@@ -270,8 +277,8 @@ fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
     c.minimap_flag_z = 2;
     c.chat_text[0] = "leftover".into();
     c.logout();
-    c.title_screen_draw(); // consumes the game frame (Task 4b)
-    assert!(c.renderer.area_chat.is_none());
+    r.title_screen_draw(&mut c); // consumes the game frame (Task 4b)
+    assert!(r.area_chat.is_none());
     c.login("bob", "pw", false).unwrap();
     assert!(c.ingame);
     assert_eq!(c.active_icon, 3, "response 2 must select the inventory tab");
@@ -286,20 +293,24 @@ fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
         c.chat_text.iter().all(|t| t.is_empty()),
         "response 2 must clear the chat history"
     );
+    assert!(c.redraw_frame && c.redraw_side && c.redraw_icons);
+    // `login` no longer runs `prepare_game` eagerly (task 2b: the renderer
+    // owns the game areas); the first `game_draw` rebuilds the frame.
+    r.game_draw(&mut c);
     assert!(
-        c.renderer.area_chat.is_some(),
+        r.area_chat.is_some(),
         "prepare_game must rebuild the game frame"
     );
     assert!(
-        c.renderer.image_title2.is_none(),
+        r.image_title2.is_none(),
         "prepare_game must unload the title regions"
     );
-    assert!(c.redraw_frame && c.redraw_side && c.redraw_icons);
     server.join().unwrap();
 }
 
 #[test]
 fn login_code_6_is_error() {
+let _r = Renderer::new(false);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     thread::spawn(move || {
@@ -329,6 +340,7 @@ fn login_code_6_is_error() {
 /// `login` on the same `Client` can succeed (bot-host retry).
 #[test]
 fn already_logged_in_leaves_title_ready_to_retry() {
+let _r = Renderer::new(false);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
@@ -366,6 +378,7 @@ fn already_logged_in_leaves_title_ready_to_retry() {
 
 #[test]
 fn failed_login_can_be_retried_on_the_same_client() {
+let _r = Renderer::new(false);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
@@ -404,6 +417,7 @@ fn failed_login_can_be_retried_on_the_same_client() {
 
 #[test]
 fn lowmem_login_writes_info_byte_one() {
+let _r = Renderer::new(false);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {

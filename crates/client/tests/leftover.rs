@@ -5,6 +5,7 @@
 // falls back to `Cache::default()` and never touches the network (the /crc
 // fetch on 127.0.0.1 is refused instantly).
 use client::client::{Client, ClientConfig, ClientPlayer};
+use client::render::Renderer;
 use client::config::idk_type::IdkType;
 use client::config::if_type::IfType;
 use client::graphics::{Pix3D, Pix32};
@@ -23,6 +24,8 @@ fn client() -> Client {
 
 #[test]
 fn cam_reset_clears_cinema() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.cinema_cam = true;
     c.cam_shake[0] = true;
@@ -34,6 +37,8 @@ fn cam_reset_clears_cinema() {
 
 #[test]
 fn p_countdialog_opens_amount() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.apply_p_countdialog();
     assert!(c.dialog_input_open);
@@ -44,6 +49,8 @@ fn p_countdialog_opens_amount() {
 
 #[test]
 fn dialog_enter_sends_resume_p_countdialog() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.dialog_input_open = true;
     c.dialog_input = "42".into();
@@ -56,6 +63,8 @@ fn dialog_enter_sends_resume_p_countdialog() {
 
 #[test]
 fn dialog_keys_append_digits_and_backspace() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.dialog_input_open = true;
     c.shell.apply_key(true, 0, '4' as i32);
@@ -68,6 +77,8 @@ fn dialog_keys_append_digits_and_backspace() {
 
 #[test]
 fn dialog_digits_capped_at_10() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.dialog_input_open = true;
     c.dialog_input = "1234567890".into();
@@ -78,6 +89,8 @@ fn dialog_digits_capped_at_10() {
 
 #[test]
 fn dialog_letters_are_ignored() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.dialog_input_open = true;
     c.shell.apply_key(true, 0, 'x' as i32);
@@ -87,6 +100,8 @@ fn dialog_letters_are_ignored() {
 
 #[test]
 fn cam_lookat_rate2_over_100_aims_immediately() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     // payload: lx, lz, hei(g2), rate, rate2
     let mut p = Packet::new(vec![10, 10, 0, 50, 7, 100]);
@@ -107,6 +122,8 @@ fn cam_lookat_rate2_over_100_aims_immediately() {
 
 #[test]
 fn cam_lookat_rate2_under_100_does_not_aim() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![10, 20, 0, 50, 7, 99]);
     c.apply_cam_lookat(&mut p);
@@ -117,6 +134,8 @@ fn cam_lookat_rate2_under_100_does_not_aim() {
 
 #[test]
 fn cam_shake_marks_axis_and_fields() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     // axis 2, ran 3, amp 4, rate 5
     let mut p = Packet::new(vec![2, 3, 4, 5]);
@@ -130,6 +149,8 @@ fn cam_shake_marks_axis_and_fields() {
 
 #[test]
 fn cam_moveto_rate2_over_100_jumps_camera() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![3, 4, 0, 60, 9, 100]);
     c.apply_cam_moveto(&mut p);
@@ -145,6 +166,8 @@ fn cam_moveto_rate2_over_100_jumps_camera() {
 
 #[test]
 fn hint_arrow_type_1_reads_npc() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![1, 0, 7]);
     c.apply_hint_arrow(&mut p);
@@ -155,6 +178,8 @@ fn hint_arrow_type_1_reads_npc() {
 
 #[test]
 fn hint_arrow_type_2_to_6_reads_tile() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![4, 0, 10, 0, 20, 30]);
     c.apply_hint_arrow(&mut p);
@@ -169,6 +194,8 @@ fn hint_arrow_type_2_to_6_reads_tile() {
 
 #[test]
 fn hint_arrow_type_10_reads_player() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![10, 0, 9]);
     c.apply_hint_arrow(&mut p);
@@ -179,6 +206,8 @@ fn hint_arrow_type_10_reads_player() {
 
 #[test]
 fn update_runweight_sets_value_and_redraws_stats_tab() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.active_icon = 12;
     let mut p = Packet::new(vec![0xff, 0xfe]); // g2b signed -2
@@ -189,6 +218,8 @@ fn update_runweight_sets_value_and_redraws_stats_tab() {
 
 #[test]
 fn update_runweight_other_tab_does_not_redraw() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.active_icon = 3;
     let mut p = Packet::new(vec![0, 5]);
@@ -199,6 +230,8 @@ fn update_runweight_other_tab_does_not_redraw() {
 
 #[test]
 fn reboot_timer_scales_by_30() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![0, 60]);
     c.apply_update_reboot_timer(&mut p);
@@ -207,6 +240,8 @@ fn reboot_timer_scales_by_30() {
 
 #[test]
 fn set_multiway_reads_zone() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![1]);
     c.apply_set_multiway(&mut p);
@@ -215,6 +250,8 @@ fn set_multiway_reads_zone() {
 
 #[test]
 fn minimap_toggle_reads_state() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![2]);
     c.apply_minimap_toggle(&mut p);
@@ -223,6 +260,8 @@ fn minimap_toggle_reads_state() {
 
 #[test]
 fn dispatch_cam_reset_resets_ptype() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.cinema_cam = true;
     c.cam_shake[3] = true;
@@ -234,6 +273,8 @@ fn dispatch_cam_reset_resets_ptype() {
 
 #[test]
 fn cinema_camera_eases_toward_move_target() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.cinema_cam = true;
     c.cam_move_to_lx = 4; // x target 4*128+64 = 576
@@ -255,6 +296,8 @@ fn cinema_camera_eases_toward_move_target() {
 
 #[test]
 fn game_loop_ticks_shake_cycles_and_runs_cinema() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.scene_state = 2;
@@ -277,6 +320,8 @@ fn game_loop_ticks_shake_cycles_and_runs_cinema() {
 
 #[test]
 fn game_loop_without_cinema_skips_cinema_camera() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.scene_state = 2;
@@ -298,67 +343,79 @@ fn game_loop_without_cinema_skips_cinema_camera() {
 
 #[test]
 fn shake_jitter_follows_seeded_random() {
+let _r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let mut c = client();
     c.cam_shake[2] = true;
     c.cam_shake_axis[2] = 1; // ran byte: random range
     c.cam_shake_ran[2] = 0; // amp byte: sin amplitude
     c.cam_shake_amp[2] = 0; // rate byte: sin frequency
     let mut rng = JavaRandom::new(42);
-    c.renderer.rand = JavaRandom::new(42);
+    r.rand = JavaRandom::new(42);
     let expected = (rng.next_double() * 3.0 - 1.0) as i32;
-    let (_, _, jz, _, _) = c.cam_shake_jitter(0, 0, 100, 128, 0);
+    let (_, _, jz, _, _) = r.cam_shake_jitter(&mut c, 0, 0, 100, 128, 0);
     assert_eq!(jz, 100 + expected);
 }
 
 #[test]
 fn shake_zero_jitter_leaves_eye_unchanged() {
+let _r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let mut c = client();
     c.cam_shake[0] = true;
     c.cam_shake_axis[0] = 0; // random * 1 - 0 truncates to 0 in [0, 1)
     c.cam_shake_ran[0] = 0;
     c.cam_shake_amp[0] = 100;
     c.cam_shake_cycle[0] = 0; // sin(0) = 0
-    let (jx, jy, jz, jp, jw) = c.cam_shake_jitter(10, 20, 30, 128, 40);
+    let (jx, jy, jz, jp, jw) = r.cam_shake_jitter(&mut c, 10, 20, 30, 128, 40);
     assert_eq!((jx, jy, jz, jp, jw), (10, 20, 30, 128, 40));
 }
 
 #[test]
 fn shake_pitch_clamps_to_128_and_383() {
+let _r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let mut c = client();
     c.cam_shake[4] = true;
     c.cam_shake_axis[4] = 0;
     c.cam_shake_ran[4] = 0;
     c.cam_shake_amp[4] = 0;
-    let (_, _, _, p1, _) = c.cam_shake_jitter(0, 0, 0, 127, 0);
+    let (_, _, _, p1, _) = r.cam_shake_jitter(&mut c, 0, 0, 0, 127, 0);
     assert_eq!(p1, 128);
-    let (_, _, _, p2, _) = c.cam_shake_jitter(0, 0, 0, 400, 0);
+    let (_, _, _, p2, _) = r.cam_shake_jitter(&mut c, 0, 0, 0, 400, 0);
     assert_eq!(p2, 383);
 }
 
 #[test]
 fn shake_yaw_wraps_11_bit() {
+let _r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let mut c = client();
     c.cam_shake[3] = true;
     c.cam_shake_axis[3] = 200; // random in [-200, 201): yaw stays wrapped
     c.cam_shake_ran[3] = 0;
     c.cam_shake_amp[3] = 0;
-    let (_, _, _, _, yaw) = c.cam_shake_jitter(0, 0, 0, 128, 2040);
+    let (_, _, _, _, yaw) = r.cam_shake_jitter(&mut c, 0, 0, 0, 128, 2040);
     assert!((0..=2047).contains(&yaw));
 }
 
 #[test]
 fn runweight_reaches_stats_tab_script() {
+let _r = Renderer::new(false);
+    let r = Renderer::new(false);
     let mut c = client();
     c.runweight = 42;
     let com = IfType {
         scripts: Some(vec![vec![12, 0]]), // opcode 12 runweight, halt
         ..IfType::default()
     };
-    assert_eq!(c.get_if_var(&com, 0), Some(42));
+    assert_eq!(r.get_if_var(&c, &com, 0), Some(42));
 }
 
 #[test]
 fn game_loop_ticks_reboot_timer_down() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.reboot_timer = 100;
@@ -368,6 +425,8 @@ fn game_loop_ticks_reboot_timer_down() {
 
 #[test]
 fn game_loop_holds_reboot_timer_at_one() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.reboot_timer = 1;
@@ -377,6 +436,8 @@ fn game_loop_holds_reboot_timer_at_one() {
 
 #[test]
 fn pm_options_shift_below_reboot_line() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.split_private_chat = 1;
     c.chat_text[0] = "hello".into();
@@ -397,6 +458,8 @@ fn pm_options_shift_below_reboot_line() {
 /// `cross_mode` once it passes 400 (TS 2206-2211).
 #[test]
 fn cross_tick_clears_after_400() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.cross_mode = 1;
@@ -410,6 +473,8 @@ fn cross_tick_clears_after_400() {
 /// (mode 1, cycle 0) as TS 2317-2322.
 #[test]
 fn walk_consume_sets_cross_mode_1() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.local_player = Some(ClientPlayer::at(5, 5));
@@ -429,6 +494,8 @@ fn walk_consume_sets_cross_mode_1() {
 /// stays after arrival and, with a stuck `World.click`, hops every frame.
 #[test]
 fn add_players_clears_minimap_flag_on_arrival() {
+let _r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.scene_state = 2;
@@ -438,7 +505,7 @@ fn add_players_clears_minimap_flag_on_arrival() {
     c.local_player = Some(p);
     c.minimap_flag_x = 10;
     c.minimap_flag_z = 10;
-    c.game_draw();
+    r.game_draw(&mut c);
     assert_eq!(c.minimap_flag_x, 0);
     assert_eq!(c.minimap_flag_z, 10); // only X is zeroed, matching Java
 }
@@ -446,6 +513,8 @@ fn add_players_clears_minimap_flag_on_arrival() {
 /// Neighbouring tile must not clear the dest flag.
 #[test]
 fn add_players_keeps_minimap_flag_when_not_arrived() {
+let _r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.scene_state = 2;
@@ -455,7 +524,7 @@ fn add_players_keeps_minimap_flag_when_not_arrived() {
     c.local_player = Some(p);
     c.minimap_flag_x = 11;
     c.minimap_flag_z = 10;
-    c.game_draw();
+    r.game_draw(&mut c);
     assert_eq!(c.minimap_flag_x, 11);
     assert_eq!(c.minimap_flag_z, 10);
 }
@@ -464,6 +533,7 @@ fn add_players_keeps_minimap_flag_when_not_arrived() {
 /// is a skip; an empty frame is the live "X doesn't draw" failure.
 #[test]
 fn prepare_game_loads_cross_sprites() {
+let mut r = Renderer::new(false);
     let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
@@ -477,9 +547,9 @@ fn prepare_game_loads_cross_sprites() {
     });
     c.ingame = true;
     c.scene_state = 2;
-    c.game_draw();
+    r.game_draw(&mut c);
     for i in 0..8 {
-        let s = c.renderer.cross[i]
+        let s = r.cross[i]
             .as_ref()
             .unwrap_or_else(|| panic!("cross[{i}] missing after prepare_game"));
         assert!(s.wi > 0 && s.hi > 0, "cross[{i}] empty size");
@@ -495,6 +565,7 @@ fn prepare_game_loads_cross_sprites() {
 /// leaves the sprites `None` and the plot is a no-op.
 #[test]
 fn cross_plot_mode1_into_area_game() {
+let mut r = Renderer::new(false);
     let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
@@ -508,16 +579,16 @@ fn cross_plot_mode1_into_area_game() {
     });
     c.ingame = true;
     c.scene_state = 2; // game_draw_main (and its overlays) run only in-scene
-    c.game_draw(); // prepare_game loads the media sprites
+    r.game_draw(&mut c); // prepare_game loads the media sprites
     let mut s = Pix32::new(16, 16);
     s.data[0] = 0x123456; // known top-left pixel: verifies the plot origin
-    c.renderer.cross[0] = Some(s);
+    r.cross[0] = Some(s);
     c.cross_x = 100;
     c.cross_y = 80;
     c.cross_mode = 1;
     c.cross_cycle = 0;
-    c.game_draw();
-    let game = c.renderer.area_game.as_ref().unwrap();
+    r.game_draw(&mut c);
+    let game = r.area_game.as_ref().unwrap();
     assert_eq!(game.pixels[68 * 512 + 88], 0x123456);
 }
 
@@ -525,6 +596,7 @@ fn cross_plot_mode1_into_area_game() {
 /// second half of the array (TS 4842).
 #[test]
 fn cross_plot_mode2_uses_second_half() {
+let mut r = Renderer::new(false);
     let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
@@ -538,16 +610,16 @@ fn cross_plot_mode2_uses_second_half() {
     });
     c.ingame = true;
     c.scene_state = 2;
-    c.game_draw();
+    r.game_draw(&mut c);
     let mut s = Pix32::new(16, 16);
     s.data[0] = 0x654321;
-    c.renderer.cross[4] = Some(s); // mode 2, cycle 0 -> index 4
+    r.cross[4] = Some(s); // mode 2, cycle 0 -> index 4
     c.cross_x = 100;
     c.cross_y = 80;
     c.cross_mode = 2;
     c.cross_cycle = 0;
-    c.game_draw();
-    let game = c.renderer.area_game.as_ref().unwrap();
+    r.game_draw(&mut c);
+    let game = r.area_game.as_ref().unwrap();
     assert_eq!(game.pixels[68 * 512 + 88], 0x654321);
 }
 
@@ -556,6 +628,8 @@ fn cross_plot_mode2_uses_second_half() {
 
 #[test]
 fn cc_logout_still_returns_true() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let com = IfType {
         client_code: 205,
@@ -566,6 +640,8 @@ fn cc_logout_still_returns_true() {
 
 #[test]
 fn design_switch_male_female_toggles() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.idk_design_gender = true;
     let com = IfType {
@@ -591,6 +667,8 @@ fn design_switch_male_female_toggles() {
 
 #[test]
 fn design_kit_cycle_wraps_and_respects_gender() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     // idk table: [0] male head, [1] disabled, [2]+[3] female heads.
     c.cache.idks = vec![
@@ -649,6 +727,8 @@ fn design_kit_cycle_wraps_and_respects_gender() {
 
 #[test]
 fn design_colour_cycle_wraps_hair_table() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.idk_design_colour[0] = 0;
     let com = IfType {
@@ -670,6 +750,8 @@ fn design_colour_cycle_wraps_hair_table() {
 
 #[test]
 fn design_accept_encodes_idk_savedesign() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.idk_design_gender = false;
     c.idk_design_part = [0, 1, 2, 3, 4, 5, 6];
@@ -688,6 +770,8 @@ fn design_accept_encodes_idk_savedesign() {
 
 #[test]
 fn design_preview_sets_rotation_and_caches_temp_model() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.cache.ifaces.resize(328, None);
     c.cache.ifaces[327] = Some(IfType {
@@ -710,6 +794,8 @@ fn design_preview_sets_rotation_and_caches_temp_model() {
 
 #[test]
 fn design_switch_buttons_swap_graphic_names() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.cache.ifaces.resize(2, None);
     c.cache.ifaces[1] = Some(IfType {
@@ -733,6 +819,8 @@ fn design_switch_buttons_swap_graphic_names() {
 /// it and zeroes the colours.
 #[test]
 fn cold_login_reset_revalidates_design() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.idk_design_gender = false;
     c.idk_design_colour = [3; 5];
@@ -756,6 +844,7 @@ fn cold_login_reset_revalidates_design() {
 
 #[test]
 fn cold_login_reset_empty_table_leaves_parts_minus_one() {
+let _r = Renderer::new(false);
     // Isolate from an ambient /tmp idk pack: a fresh empty cache dir keeps
     // the "no idks" premise literal.
     let dir = std::env::temp_dir().join(format!("274-noidk-{}", std::process::id()));
@@ -781,16 +870,20 @@ fn cold_login_reset_empty_table_leaves_parts_minus_one() {
 /// is the live "viewport goes completely black between chunks" bug.
 #[test]
 fn scene_loading_splash_keeps_last_frame() {
+    let mut r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.draw = true;
     c.scene_state = 1;
-    c.game_draw();
-    let game = c.renderer.area_game.as_mut().expect("prepare_game allocates area_game");
+    r.game_draw(&mut c);
+    let game = r.area_game.as_mut().expect("prepare_game allocates area_game");
     game.pixels[100] = 0x00ff00;
     c.game_loop();
+    // `check_minimap` moved to the renderer (task 2b); `mainredraw` paints
+    // the splash while the scene loads — it must not cls the frozen viewport.
+    r.mainredraw(&mut c);
     assert_eq!(
-        c.renderer.area_game.as_ref().unwrap().pixels[100],
+        r.area_game.as_ref().unwrap().pixels[100],
         0x00ff00,
         "splash must not cls the frozen viewport"
     );
@@ -800,6 +893,7 @@ fn scene_loading_splash_keeps_last_frame() {
 /// the HSL table (OnceLock-first-wins was why the slider did nothing).
 #[test]
 fn clientcode_1_rebuilds_colour_table() {
+let _r = Renderer::new(false);
     Pix3D::init_colour_table(0.8);
     let mid = Pix3D::colour_table()[200 * 128 + 64];
     Pix3D::init_colour_table(0.6);
@@ -809,6 +903,8 @@ fn clientcode_1_rebuilds_colour_table() {
 
 #[test]
 fn clientcode_options_panel_fields() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.apply_clientcode(5, 1);
     assert_eq!(c.one_mouse_button, 1);

@@ -1,7 +1,9 @@
 use client::client::{Client, ClientConfig, LoginError};
+use client::render::Renderer;
 
 #[test]
 fn config_has_no_rsa_fields() {
+let _r = Renderer::new(false);
     let cfg = ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
@@ -14,12 +16,14 @@ fn config_has_no_rsa_fields() {
 
 #[test]
 fn login_error_carries_code_and_messages() {
+let _r = Renderer::new(false);
     let e = LoginError { code: 6, mes1: "invalid".into(), mes2: "rsa".into() };
     assert_eq!(e.code, 6);
 }
 
 #[test]
 fn new_client_starts_logged_out() {
+let _r = Renderer::new(false);
     let c = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
@@ -33,6 +37,7 @@ fn new_client_starts_logged_out() {
 
 #[test]
 fn run_drives_mainloop_and_hook_until_stopped() {
+let mut r = Renderer::new(false);
     let mut c = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
@@ -44,7 +49,7 @@ fn run_drives_mainloop_and_hook_until_stopped() {
     // skip `maininit` so it stays hermetic (no web fetch into /tmp).
     c.already_started = true;
     let mut calls = 0;
-    c.run(|c| {
+    c.run(&mut r, |c| {
         calls += 1;
         if calls >= 3 {
             c.shell.state = -1;

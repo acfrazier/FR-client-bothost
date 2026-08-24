@@ -4,6 +4,7 @@
 // the walk instead of only the debug tile line.
 use client::client::{Client, ClientConfig};
 use client::dash3d::{ClientEntity, ClientNpc, ClientPlayer};
+use client::render::Renderer;
 
 fn client() -> Client {
     Client::new(ClientConfig {
@@ -40,9 +41,12 @@ fn route_move_advances_x_toward_queued_tile() {
 /// orbit camera snaps to it, so the 3D view pans with the player. The
 /// player sits at tile (20,20) — inside the 1536..11776 local bounds — so
 /// `move_entity` walks instead of snapping back to the route head.
+/// `follow_camera` now lives on the renderer (`mainredraw` runs it ahead
+/// of `game_draw`), so the test calls it explicitly.
 #[test]
 fn game_loop_walk_moves_local_player_and_orbit_camera() {
     let mut c = client();
+    let mut r = Renderer::new(false);
     c.ingame = true;
     c.scene_state = 2;
     let mut player = ClientPlayer {
@@ -55,6 +59,7 @@ fn game_loop_walk_moves_local_player_and_orbit_camera() {
     c.local_player = Some(player);
     c.loop_cycle = 1; // > 0 so the default exact-move fields fall to route_move
     c.game_loop();
+    r.follow_camera(&mut c);
     let p = c.local_player.as_ref().unwrap();
     assert!(p.x > 20 * 128 + 64, "walk must advance x from 2624");
     assert!(p.x <= 21 * 128 + 64);

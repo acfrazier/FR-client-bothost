@@ -6,7 +6,6 @@
 //! 16 cold / 18 reconnect) over Java-style TCP `ClientStream`.
 //! There is no snapshot/query API.
 
-use std::collections::HashMap;
 use std::io;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
@@ -19,7 +18,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use num_bigint::BigUint;
 
 use crate::client::client_build::ClientBuild;
-use crate::client::client_draw::{draw_detail, get_av_h};
+use crate::client::client_draw::get_av_h;
 use crate::client::config::ClientConfig;
 use crate::client::game_shell::GameShell;
 use crate::client::login_error::LoginError;
@@ -37,14 +36,14 @@ use crate::dash3d::{
 };
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
 use crate::datastruct::LinkList;
-use crate::graphics::{Colour, Pix2D, Pix3D, Pix32, Pix3DDraw, PixMap};
+use crate::graphics::Pix3D;
 use crate::io::{
     ClientProt, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt, SERVER_PROT_SIZES,
 };
 use crate::login_rsa::{LOGIN_RSAE, LOGIN_RSAN};
 use crate::render::Renderer;
 use crate::sound::{Fade, JagFX, Midi};
-use crate::util::{JavaRandom, JString};
+use crate::util::JString;
 use crate::wordfilter::{WordFilter, WordPack};
 
 const MAX_PLAYER_COUNT: usize = 2048;
@@ -567,12 +566,29 @@ pub struct Client {
     /// stub HTTP set it small so retry paths do not sleep.
     pub fetch_retry_wait: Duration,
 
-    /// Render-only state owned by the draw path (see
-    /// `crate::render::renderer::Renderer`): the CPU framebuffer, Pix3D
-    /// raster state, fonts/sprites, and the title/minimap/HUD paint state.
-    /// The sim paths (packet apply, `doAction`, `tryMove`, `login`,
-    /// `mainloop` input) do not touch it.
-    pub renderer: Renderer,
+    /// Render-adjacent bridges to the separate `Renderer` (task 2b): the
+    /// 3D pick list `game_draw_main` mirrors onto `Client` so the sim's
+    /// `build_minimenu`/`add_world_options` can read it without a renderer
+    /// handle, the brightness change `apply_clientcode` defers for the
+    /// renderer to gamma-correct the texture palettes at the next draw, and
+    /// the scrollbar input state (`chat_interface`/`scroll_grabbed`/
+    /// `scroll_input_padding`/`scroll_cycle`) that the sim's menu walk
+    /// (`add_component_options` → `do_scrollbar`) reads/writes.
+    pub pick_count: i32,
+    pub pick_typecodes: Vec<i32>,
+    pub pending_brightness: Option<f64>,
+    /// `chatInterface` from client-ts (480): the synthetic IfType the chat
+    /// scrollbar reads/writes (not in the jag), synced to the chat scroll
+    /// state by `game_draw`/`draw_chat`.
+    pub chat_interface: IfType,
+    /// Scrollbar input state (`scrollGrabbed`/`scrollInputPadding`/
+    /// `scrollCycle` from client-ts 338-340): `scroll_grabbed` widens the
+    /// track hit area to 32 px while held, and `scroll_cycle` is the
+    /// mouse-held repeat (set from `shell.mouse_button` at the top of
+    /// `game_draw`, since the TS GameShell already ticks it).
+    pub scroll_grabbed: bool,
+    pub scroll_input_padding: i32,
+    pub scroll_cycle: i32,
     /// `loginscreen` from client-ts (1378-1416): the title-screen state
     /// (0 = login form, 2 = invalid, 3 = connecting); written by
     /// `title_screen_loop`/`fail_title_login`, read by `title_screen_draw`.
@@ -948,108 +964,13 @@ impl Client {
             http_port: 80,
             already_started: false,
             fetch_retry_wait: Duration::from_secs(5),
-            renderer: Renderer {
-                draw_area: PixMap::new(APPLET_W, APPLET_H),
-                pix3d: Pix3DDraw::default(),
-                title: None,
-                p11: None,
-                p12: None,
-                b12: None,
-                q8: None,
-                image_title0: None,
-                image_title1: None,
-                image_title2: None,
-                image_title3: None,
-                image_title4: None,
-                image_title5: None,
-                image_title6: None,
-                image_title7: None,
-                image_title8: None,
-                image_titlebox: None,
-                image_titlebutton: None,
-                image_runes: Vec::new(),
-                title_flames: None,
-                cross: [const { None }; 8],
-                project_x: -1,
-                project_y: -1,
-                hitmarks: [const { None }; 20],
-                headicons: [const { None }; 20],
-                chat_count: 0,
-                chat_x: [0; 50],
-                chat_y: [0; 50],
-                chat_width: [0; 50],
-                chat_height: [0; 50],
-                chat_colour: [0; 50],
-                chat_effect: [0; 50],
-                chat_timer: [0; 50],
-                chats: [const { String::new() }; 50],
-                scene_cycle: 0,
-                tile_last_occupied_cycle: vec![0; BUILD_AREA_TILES],
-                vis_calc_done: false,
-                area_game: None,
-                area_map: None,
-                area_side: None,
-                area_chat: None,
-                area_backleft1: None,
-                area_backleft2: None,
-                area_backright1: None,
-                area_backright2: None,
-                area_backtop1: None,
-                area_backvmid1: None,
-                area_backvmid2: None,
-                area_backvmid3: None,
-                area_backhmid2: None,
-                area_backbase1: None,
-                area_backbase2: None,
-                area_backhmid1: None,
-                invback: None,
-                chatback: None,
-                backbase1: None,
-                backbase2: None,
-                backhmid1: None,
-                scrollbar1: None,
-                scrollbar2: None,
-                sideicons: [const { None }; 13],
-                mod_icons: [const { None }; 2],
-                redstone1: None,
-                redstone2: None,
-                redstone3: None,
-                redstone1h: None,
-                redstone2h: None,
-                redstone1v: None,
-                redstone2v: None,
-                redstone3v: None,
-                redstone1hv: None,
-                redstone2hv: None,
-                graphic_sprites: HashMap::new(),
-                minimap: Some(Pix32::new(512, 512)),
-                compass: None,
-                mapedge: None,
-                mapmarker1: None,
-                mapmarker2: None,
-                mapdots1: None,
-                mapdots2: None,
-                mapdots3: None,
-                mapdots4: None,
-                mapback: None,
-                mapscene: vec![None; 50],
-                mapfunction: vec![None; 50],
-                compass_mask_line_offsets: Vec::new(),
-                compass_mask_line_lengths: Vec::new(),
-                minimap_mask_line_offsets: Vec::new(),
-                minimap_mask_line_lengths: Vec::new(),
-                active_map_function_count: 0,
-                active_map_function_x: vec![0; 1000],
-                active_map_function_z: vec![0; 1000],
-                active_map_functions: vec![None; 1000],
-                chat_interface: IfType::default(),
-                scroll_grabbed: false,
-                scroll_input_padding: 0,
-                scroll_cycle: 0,
-                rand: JavaRandom::now(),
-                cyclelogic1: 0,
-                cyclelogic3: 0,
-            },
+            pick_count: 0,
+            pick_typecodes: vec![0; 1000],
+            pending_brightness: None,
+            chat_interface: IfType::default(),
+            scroll_grabbed: false,
+            scroll_input_padding: 0,
+            scroll_cycle: 0,
             loginscreen: 0,
             login_select: 0,
             redraw_frame: true,
@@ -1141,13 +1062,6 @@ impl Client {
         if client.error_loading {
             client.shell.set_framerate(1);
         }
-        // TS maininit 1153 `Pix3D.initColourTable(0.8)`: process-wide, so
-        // the first shaded/gouraud triangle of any 3D pass has a table.
-        // `Pix3D.lowMem` comes from the same config the TS constructor
-        // takes (`Client.setLowMem`/`setHighMem`); `World.lowMem` reads
-        // this through the `pix` handle in `render_all`.
-        Pix3D::init_colour_table(0.8);
-        client.renderer.pix3d.low_mem = client.config.lowmem;
         client
     }
 
@@ -1309,7 +1223,7 @@ impl Client {
     /// 100 only when the `/crc` fetch succeeds — the checksum-fail path
     /// returns early with `error_loading` and `last_progress_percent` left
     /// at 10.
-    pub fn maininit(&mut self) {
+    pub fn maininit(&mut self, renderer: &mut Renderer) {
         if self.already_started {
             return;
         }
@@ -1320,13 +1234,13 @@ impl Client {
         self.error_loading = false;
         self.shell.set_framerate(50);
 
-        self.draw_progress("Loading...", 0);
+        renderer.draw_progress(self, "Loading...", 0);
 
         // TS `getJagChecksums` (694-748): `/crc` retried with a 5 s wait
         // doubling to 60 s, forever. Capped at 10 retries so a dead web
         // server cannot hang the caller; tests plant a listener so the
         // first attempt succeeds.
-        let checksums = match self.fetch_jag_checksums() {
+        let checksums = match self.fetch_jag_checksums(renderer) {
             Some(c) => c,
             None => {
                 self.error_loading = true;
@@ -1352,7 +1266,7 @@ impl Client {
         ];
         for (display, filename, index, progress) in JAG_FETCH {
             if self
-                .fetch_jag_file(display, progress, filename, index, &checksums)
+                .fetch_jag_file(renderer, display, progress, filename, index, &checksums)
                 .is_none()
             {
                 self.error_loading = true;
@@ -1424,7 +1338,7 @@ impl Client {
         // lists empty. Skipped when OnDemand is `None` (no versionlist —
         // the dummy-file tests).
         if self.on_demand.is_some() {
-            self.draw_progress("Requesting animations", 65);
+            renderer.draw_progress(self, "Requesting animations", 65);
             let anim_count = self.on_demand.as_ref().unwrap().get_file_count(1);
             for i in 0..anim_count {
                 self.on_demand.as_mut().unwrap().request(1, i);
@@ -1432,7 +1346,8 @@ impl Client {
             while self.on_demand.as_ref().unwrap().remaining() > 0 {
                 let progress = anim_count - self.on_demand.as_ref().unwrap().remaining() as i32;
                 if progress > 0 {
-                    self.draw_progress(
+                    renderer.draw_progress(
+                        self,
                         &format!("Loading animations - {}%", (progress * 100) / anim_count),
                         65,
                     );
@@ -1441,7 +1356,7 @@ impl Client {
                 thread::sleep(Duration::from_millis(100));
             }
 
-            self.draw_progress("Requesting models", 70);
+            renderer.draw_progress(self, "Requesting models", 70);
             // Java 5206-5210: remaining()==0 only for `getModelUse & 1`.
             // Other use bits + maps + midi jingles are prefetchPriority
             // after the bar (5251-5285). Title `titleScreenDraw` plots
@@ -1455,7 +1370,8 @@ impl Client {
             while self.on_demand.as_ref().unwrap().remaining() > 0 {
                 let progress = model_total - self.on_demand.as_ref().unwrap().remaining() as i32;
                 if progress > 0 && model_total > 0 {
-                    self.draw_progress(
+                    renderer.draw_progress(
+                        self,
                         &format!("Loading models - {}%", (progress * 100) / model_total),
                         70,
                     );
@@ -1466,7 +1382,7 @@ impl Client {
 
             // Java `Client.java:5224-5250`: urgent Lumbridge starter maps,
             // waited on the loading bar (`remaining() == 0`) before title.
-            self.draw_progress("Requesting maps", 75);
+            renderer.draw_progress(self, "Requesting maps", 75);
             const LUMBRIDGE_SQUARES: [(i32, i32); 6] =
                 [(47, 48), (48, 48), (49, 48), (47, 47), (48, 47), (48, 148)];
             for (x, z) in LUMBRIDGE_SQUARES {
@@ -1481,7 +1397,8 @@ impl Client {
             while self.on_demand.as_ref().unwrap().remaining() > 0 {
                 let progress = map_total - self.on_demand.as_ref().unwrap().remaining() as i32;
                 if progress > 0 && map_total > 0 {
-                    self.draw_progress(
+                    renderer.draw_progress(
+                        self,
                         &format!("Loading maps - {}%", (progress * 100) / map_total),
                         75,
                     );
@@ -1516,7 +1433,7 @@ impl Client {
             }
         }
 
-        self.draw_progress("Preparing game engine", 100);
+        renderer.draw_progress(self, "Preparing game engine", 100);
     }
 
     /// TS `getJagChecksums` retry policy (694-748): attempt `/crc`, then
@@ -1525,11 +1442,11 @@ impl Client {
     /// updated" message at `retries >= 10`); `None` lets `maininit` fail
     /// with `errorLoading` instead of hanging. The per-second countdown
     /// messages are not ported.
-    fn fetch_jag_checksums(&mut self) -> Option<[i32; 9]> {
+    fn fetch_jag_checksums(&mut self, renderer: &mut Renderer) -> Option<[i32; 9]> {
         let mut wait = self.fetch_retry_wait;
         let mut retries = 0;
         loop {
-            self.draw_progress("Connecting to web server", 10);
+            renderer.draw_progress(self, "Connecting to web server", 10);
             if let Some(checksums) = Self::get_jag_checksums(&self.config.host, self.http_port) {
                 return Some(checksums);
             }
@@ -1552,6 +1469,7 @@ impl Client {
     /// not ported.
     fn fetch_jag_file(
         &mut self,
+        renderer: &mut Renderer,
         display: &str,
         progress: i32,
         filename: &str,
@@ -1561,7 +1479,7 @@ impl Client {
         let mut wait = self.fetch_retry_wait;
         let mut retries = 0;
         loop {
-            self.draw_progress(&format!("Requesting {display}"), progress);
+            renderer.draw_progress(self, &format!("Requesting {display}"), progress);
             if let Some(bytes) = Self::get_jag_file(
                 &self.config.cache_dir,
                 &self.config.host,
@@ -1742,7 +1660,9 @@ impl Client {
             // Java `Client.java` 3700: `prepareGame()` rebuilds the game
             // frame the title draw consumed (Task 4b nulls the game areas,
             // so the `area_chat` gate does not fire after a title frame).
-            self.prepare_game();
+            // The renderer owns `prepare_game` (its areas are renderer
+            // state); `game_draw` runs it on the first in-game frame, so
+            // the sim-side eager call is not needed.
             self.stream = Some(stream);
             return Ok(());
         }
@@ -3462,77 +3382,6 @@ impl Client {
     /// (`get_if_active` picks `model_anim2` else `model_anim`), adds `delta`
     /// to `anim_cycle`, and steps `anim_frame` while the cycle exceeds the
     /// frame delay, wrapping with `loops` (TS 10571-10589). Missing children
-    /// or a missing seq skip. Returns whether any child frame advanced.
-    pub fn animate_interface(&mut self, id: i32, delta: i32) -> bool {
-        let Some(children) = self
-            .cache
-            .ifaces
-            .get(id as usize)
-            .and_then(|o| o.as_ref())
-            .and_then(|com| com.children.clone())
-        else {
-            return false;
-        };
-
-        let mut updated = false;
-
-        for child_id in children {
-            if child_id == -1 {
-                break;
-            }
-            let Some(child) = self
-                .cache
-                .ifaces
-                .get(child_id as usize)
-                .and_then(|o| o.as_ref())
-            else {
-                break;
-            };
-            let child = child.clone();
-            if child.r#type == ComponentType::TYPE_LAYER {
-                updated |= self.animate_interface(child.id, delta);
-            }
-
-            if child.r#type == ComponentType::TYPE_MODEL
-                && (child.model_anim != -1 || child.model_anim2 != -1)
-            {
-                let active = self.get_if_active(&child);
-                let seq_id = if active { child.model_anim2 } else { child.model_anim };
-                if seq_id != -1 && (seq_id as usize) < self.cache.seqs.len() {
-                    let seq = &self.cache.seqs[seq_id as usize];
-                    // TS 10569: `animCycle += delta` accumulates even when
-                    // no frame advances; the cycle/frame write-back below is
-                    // the in-place mutation of the TS `child`.
-                    let mut anim_cycle = child.anim_cycle + delta;
-                    let mut anim_frame = child.anim_frame;
-                    let mut advanced = false;
-                    while anim_cycle > seq.get_delay(anim_frame) {
-                        anim_cycle -= seq.get_delay(anim_frame) + 1;
-                        anim_frame += 1;
-                        if anim_frame >= seq.num_frames {
-                            anim_frame -= seq.loops;
-                            if anim_frame < 0 || anim_frame >= seq.num_frames {
-                                anim_frame = 0;
-                            }
-                        }
-                        advanced = true;
-                    }
-                    if let Some(com) = self
-                        .cache
-                        .ifaces
-                        .get_mut(child_id as usize)
-                        .and_then(|o| o.as_mut())
-                    {
-                        com.anim_cycle = anim_cycle;
-                        com.anim_frame = anim_frame;
-                    }
-                    updated |= advanced;
-                }
-            }
-        }
-
-        updated
-    }
 
     /// `IF_OPENCHAT` handler (Client.ts 5925): open `com_id` as the chat
     /// modal, closing any open side modal and the main modal (TS 5926-5938).
@@ -5338,7 +5187,8 @@ impl Client {
                 self.scene_state = 1;
                 self.scene_load_start_time = Instant::now();
 
-                self.scene_loading_splash();
+                // The loading splash is drawn by the renderer: `check_minimap`
+                // paints it (and builds the scene) on the next `mainredraw`.
 
                 let start_x = (self.map_build_centre_zone_x - 6) / 8;
                 let end_x = (self.map_build_centre_zone_x + 6) / 8;
@@ -7437,14 +7287,90 @@ impl Client {
         }
     }
 
+    /// `doScrollbar` from client-ts (10291-10329): the up/down arrows step
+    /// `scroll_pos` by `scroll_cycle*4`, and a press in the track/grip
+    /// jumps to the grip position (grabbing it widens the track hit area to
+    /// 32 px next call). The target is `cache.ifaces[com_id]`, or
+    /// `chat_interface` for a negative `com_id` (the chat scrollbar is a
+    /// synthetic interface, TS `chatInterface`, not in the jag).
+    ///
+    /// Stays on `Client` (task 2b): the sim's menu walk
+    /// (`add_component_options`) applies the scrollbar input each frame;
+    /// the renderer's `draw_side` calls it for the chat scrollbar.
+    pub fn do_scrollbar(
+        &mut self,
+        x: i32,
+        y: i32,
+        scrollable_height: i32,
+        height: i32,
+        redraw: bool,
+        left: i32,
+        top: i32,
+        com_id: i32,
+    ) {
+        if self.scroll_grabbed {
+            self.scroll_input_padding = 32;
+        } else {
+            self.scroll_input_padding = 0;
+        }
+        self.scroll_grabbed = false;
+
+        let com = if com_id < 0 {
+            Some(&mut self.chat_interface)
+        } else {
+            self.cache
+                .ifaces
+                .get_mut(com_id as usize)
+                .and_then(|o| o.as_mut())
+        };
+        let Some(com) = com else {
+            return;
+        };
+
+        if x >= left && x < left + 16 && y >= top && y < top + 16 {
+            com.scroll_pos -= self.scroll_cycle * 4;
+            if redraw {
+                self.redraw_side = true;
+            }
+        } else if x >= left && x < left + 16 && y >= top + height - 16 && y < top + height {
+            com.scroll_pos += self.scroll_cycle * 4;
+            if redraw {
+                self.redraw_side = true;
+            }
+        } else if x >= left - self.scroll_input_padding
+            && x < left + self.scroll_input_padding + 16
+            && y >= top + 16
+            && y < top + height - 16
+            && self.scroll_cycle > 0
+        {
+            let mut grip_size = ((height - 32) * height) / scrollable_height;
+            if grip_size < 8 {
+                grip_size = 8;
+            }
+            let grip_y = y - top - (grip_size / 2) - 16;
+            let max_y = height - grip_size - 32;
+            com.scroll_pos = ((scrollable_height - height) * grip_y) / max_y;
+            if redraw {
+                self.redraw_side = true;
+            }
+            self.scroll_grabbed = true;
+        }
+    }
+
+    /// `IfType.getSprite` from client-ts (IfType.ts 232): depack a `Pix32`
+    /// from the `media` jag on demand, cached per `(name, index)` so the
+    /// jag is only read on a miss. A failed depack caches as `None`, so a
+    /// sprite missing from the pack does not re-read the jag every draw.
+
     /// `logout()` from client-ts: close the stream and return to the login
     /// screen. Java also stops the midi and clears the music state, and
     /// drops back to the welcome screen (`loginscreen = 0`). The title
-    /// rebuild mirrors Java `prepareGame`+`prepareTitle`: `unload_title`
-    /// and a nulled `image_title2` make the next `prepare_title` reallocate
-    /// the 9 regions from the `title` jag, `redraw_frame` forces the full
-    /// recomposite, and a one-shot `draw_area` cls guarantees no game-frame
-    /// viewport/chat/side pixel survives.
+    /// rebuild mirrors Java `prepareGame`+`prepareTitle`: `redraw_frame`
+    /// forces the full recomposite, and the renderer's `title_screen_draw`
+    /// performs the paint teardown (`unload_title`, a nulled `image_title2`
+    /// so the next `prepare_title` reallocates the 9 regions, and a
+    /// one-shot `draw_area` cls so no game-frame viewport/chat/side pixel
+    /// survives).
     pub fn logout(&mut self) {
         if let Some(mut stream) = self.stream.take() {
             stream.close();
@@ -7482,10 +7408,7 @@ impl Client {
         self.next_midi_song = -1;
         self.midi_song = -1;
         self.next_music_delay = 0;
-        self.unload_title();
-        self.renderer.image_title2 = None;
         self.redraw_frame = true;
-        self.renderer.draw_area.fill(0);
     }
 
     /// `lostCon` from Java (`Client.java` 6147): in-game connection loss. A
@@ -8175,18 +8098,13 @@ impl Client {
     /// (190×261), chat 2 (479×96). The `menu_num_entries * 15 + 21` local
     /// fits the y-clamp; the stored `menu_height` is `entries * 15 + 22`,
     /// both verbatim from TS.
+    ///
+    /// The `b12` font lives on the separate `Renderer`, so the sim measures
+    /// without it (width 8); `draw_minimenu` re-measures from the font and
+    /// re-clamps `menu_x`/`menu_width` on the first draw, which always
+    /// precedes a click on an open menu.
     pub fn open_menu(&mut self) {
-        let mut width: i32 = 0;
-        if let Some(b12) = &self.renderer.b12 {
-            width = b12.string_wid(Some("Choose Option"));
-            for i in 0..self.menu_num_entries {
-                let max_width = b12.string_wid(Some(&self.menu_option[i as usize]));
-                if max_width > width {
-                    width = max_width;
-                }
-            }
-        }
-        width += 8;
+        let width: i32 = 8;
 
         let height: i32 = self.menu_num_entries * 15 + 21;
 
@@ -8284,8 +8202,8 @@ impl Client {
         }
 
         let mut last_typecode = -1i32;
-        for picked in 0..self.renderer.pix3d.picked_count {
-            let typecode = self.renderer.pix3d.picked_entity_typecode[picked as usize];
+        for picked in 0..self.pick_count {
+            let typecode = self.pick_typecodes[picked as usize];
             let x = typecode & 0x7f;
             let z = (typecode >> 7) & 0x7f;
             let entity_type = (typecode >> 29) & 0x3;
@@ -8671,455 +8589,7 @@ impl Client {
         }
     }
 
-    /// Java `REBUILD_NORMAL` / `checkMinimap` (Client.java / TS 6832-6835):
-    /// bind `area_game` without cls so the last 3D frame stays frozen, plot
-    /// "Loading - please wait." on top, blit (4, 4). Missing `p12` skips
-    /// the string (the frozen pixels still blit). Gated on `draw`.
-    fn scene_loading_splash(&mut self) {
-        if let Some(ag) = self.renderer.area_game.as_mut() {
-            let mut surface = Pix2D::with_pixels(&mut ag.pixels, ag.width, ag.height);
-            if let Some(p12) = self.renderer.p12.as_ref() {
-                p12.centre_string(&mut surface, Some("Loading - please wait."), 257, 151, Colour::BLACK);
-                p12.centre_string(&mut surface, Some("Loading - please wait."), 256, 150, Colour::WHITE);
-            }
-        }
-        if self.draw {
-            if let Some(ag) = &self.renderer.area_game {
-                ag.blit_into(&mut self.renderer.draw_area, 4, 4);
-            }
-        }
-    }
-
-    /// `checkMinimap` from client-ts (5076): a low-memory level change
-    /// re-enters the loading state (`scene_state = 1`), and while loading
-    /// the splash is redrawn each frame ahead of `check_scene`. `minimap_level`
-    /// tracks the level the minimap buffer was built for.
-    fn check_minimap(&mut self) {
-        if self.config.lowmem
-            && self.scene_state == 2
-            && self.build_minusedlevel != self.minusedlevel
-        {
-            self.scene_state = 1;
-            self.scene_load_start_time = Instant::now();
-        }
-
-        if self.scene_state == 1 {
-            // splash is redrawn every frame the scene is loading
-            self.scene_loading_splash();
-            // TS logs a "glcfb" hang line when checkScene stalls past
-            // 360 s; the console write is not ported.
-            let _status = self.check_scene();
-        }
-
-        if self.scene_state == 2 && self.minusedlevel != self.minimap_level {
-            self.minimap_level = self.minusedlevel;
-            self.minimap_build_buffer(self.minusedlevel);
-        }
-    }
-
-    /// `checkScene` from client-ts (5101): waits on the requested map
-    /// squares, then builds the scene. Returns -1/-2 while ground/location
-    /// data is still loading, -3 when a loc's models are not all
-    /// available, -4 while player info is pending; on success sets
-    /// `scene_state = 2`, runs `map_build` and emits MAP_BUILD_COMPLETE.
-    pub fn check_scene(&mut self) -> i32 {
-        if self.map_build_index.is_empty()
-            || self.map_build_ground_data.is_empty()
-            || self.map_build_location_data.is_empty()
-        {
-            return -1000; // custom
-        }
-
-        for i in 0..self.map_build_ground_data.len() {
-            if self.map_build_ground_data[i].is_none() && self.map_build_ground_file[i] != -1 {
-                return -1;
-            }
-
-            if self.map_build_location_data[i].is_none() && self.map_build_location_file[i] != -1 {
-                return -2;
-            }
-        }
-
-        // Only `lowMem` is consulted while waiting, so use the associated
-        // `checkLocations` variant instead of a full `ClientBuild` (four
-        // 4×104×104 grids plus the shadow/mapo scratch) every frame.
-        let mut ready = true;
-        for i in 0..self.map_build_ground_data.len() {
-            if let Some(data) = &self.map_build_location_data[i] {
-                let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
-                let z = (self.map_build_index[i] & 0xff) * 64 - self.map_build_base_z;
-                if !ClientBuild::check_locations_low_mem(self.config.lowmem, &self.cache, data, x, z) {
-                    ready = false;
-                }
-            }
-        }
-
-        if !ready {
-            return -3;
-        } else if self.awaiting_player_info {
-            return -4;
-        }
-
-        self.scene_state = 2;
-        self.map_build();
-        self.out.p1_enc(ClientProt::MAP_BUILD_COMPLETE.id);
-        0
-    }
-
-    /// `mapBuild` from client-ts (5141): reset the scene grids, decode the
-    /// requested map squares (`load_ground`/`fade_adjacent`/`load_locations`),
-    /// run `finish_build`, then re-init the texture pool and prefetch the
-    /// edge map files. The `showObject`/`locChangePostBuildCorrect` passes
-    /// are slice-2 stubs; the TS entity/clear-cache lines around them are
-    /// not ported.
-    fn map_build(&mut self) {
-        self.minimap_level = -1;
-        self.spotanims.clear();
-        self.projectiles.clear();
-        self.renderer.pix3d.clear_texels();
-        self.world.reset_map();
-
-        for level in 0..BuildArea::LEVELS {
-            self.collision[level as usize].reset();
-        }
-
-        let mut build = ClientBuild::new();
-        build.low_mem = self.config.lowmem;
-        build.minusedlevel = self.minusedlevel;
-
-        // underground pass check (TS 5163-5171): the Lumbridge caves square
-        // forces high detail.
-        for &index in &self.map_build_index {
-            let x = index >> 8;
-            let z = index & 0xff;
-            if x == 33 && (71..=73).contains(&z) {
-                build.low_mem = false;
-                break;
-            }
-        }
-
-        if build.low_mem {
-            self.world.fill_base_level(self.minusedlevel);
-        } else {
-            self.world.fill_base_level(0);
-        }
-
-        if !self.map_build_ground_data.is_empty() {
-            self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
-
-            for i in 0..self.map_build_ground_data.len() {
-                let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
-                let z = (self.map_build_index[i] & 0xff) * 64 - self.map_build_base_z;
-                if let Some(data) = &self.map_build_ground_data[i] {
-                    build.load_ground(
-                        &mut self.groundh,
-                        &mut self.mapl,
-                        data,
-                        (self.map_build_centre_zone_x - 6) * 8,
-                        (self.map_build_centre_zone_z - 6) * 8,
-                        x,
-                        z,
-                    );
-                }
-            }
-
-            // missing land squares fade into the neighbouring heights, but
-            // only outside the deep underground (TS 5187-5193).
-            for i in 0..self.map_build_ground_data.len() {
-                let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
-                let z = (self.map_build_index[i] & 0xff) * 64 - self.map_build_base_z;
-                if self.map_build_ground_data[i].is_none() && self.map_build_centre_zone_z < 800 {
-                    build.fade_adjacent(&mut self.groundh, z, x, 64, 64);
-                }
-            }
-        }
-
-        // Java hands `World` the one `groundh` array Client writes; mirror
-        // the decoded heights so the render pass (`render_quick_ground`)
-        // reads the same ground the camera's `get_av_h` does.
-        self.world.groundh.clone_from(&self.groundh);
-
-        if !self.map_build_location_data.is_empty() {
-            self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
-
-            for i in 0..self.map_build_location_data.len() {
-                if let Some(data) = &self.map_build_location_data[i] {
-                    let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
-                    let z = (self.map_build_index[i] & 0xff) * 64 - self.map_build_base_z;
-                    build.load_locations(
-                        &self.cache,
-                        &mut self.world,
-                        &mut self.collision,
-                        &self.groundh,
-                        &self.mapl,
-                        data,
-                        x,
-                        z,
-                        self.loop_cycle,
-                    );
-                }
-            }
-        }
-
-        self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
-
-        build.finish_build(
-            &self.cache,
-            &mut self.renderer.pix3d,
-            &mut self.world,
-            &mut self.collision,
-            &self.groundh,
-            &self.mapl,
-        );
-
-        self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
-
-        for x in 0..BuildArea::SIZE {
-            for z in 0..BuildArea::SIZE {
-                self.show_object(x, z);
-            }
-        }
-
-        self.loc_change_post_build();
-        self.build_minusedlevel = self.minusedlevel;
-
-        // TS 5254-5261: low-memory model unload for models the render
-        // never uses (flags 0x79 = all render uses).
-        if self.config.lowmem && self.on_demand.is_some() {
-            let model_count = self.on_demand.as_ref().map(|od| od.get_file_count(0)).unwrap_or(0);
-            for i in 0..model_count {
-                let flags = self.on_demand.as_ref().map(|od| od.get_model_use(i)).unwrap_or(0);
-                if flags & 0x79 == 0 {
-                    Model::unload(i);
-                }
-            }
-        }
-
-        self.renderer.pix3d.init_pool(20);
-        if let Some(od) = self.on_demand.as_mut() {
-            od.clear_prefetches();
-        }
-
-        // TS 5264-5290: prefetch the map files one zone beyond the build
-        // area's edge (the tutorial island pins a fixed 2x2 window). The
-        // TS `| 0` truncations are identity on i32 here.
-        let mut left = ((self.map_build_centre_zone_x - 6) / 8) - 1;
-        let mut right = ((self.map_build_centre_zone_x + 6) / 8) + 1;
-        let mut bottom = ((self.map_build_centre_zone_z - 6) / 8) - 1;
-        let mut top = ((self.map_build_centre_zone_z + 6) / 8) + 1;
-
-        if self.within_tutorial_island {
-            left = 49;
-            right = 50;
-            bottom = 49;
-            top = 50;
-        }
-
-        if let Some(od) = self.on_demand.as_mut() {
-            for x in left..=right {
-                for z in bottom..=top {
-                    if left == x || right == x || bottom == z || top == z {
-                        let land = od.get_map_file(x, z, 0);
-                        if land != -1 {
-                            od.prefetch(3, land);
-                        }
-                        let loc = od.get_map_file(x, z, 1);
-                        if loc != -1 {
-                            od.prefetch(3, loc);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// `minimapBuildBuffer(level)` from client-ts (5280-5387): compose the
-    /// 512×512 minimap buffer from `mapl` (the ground pass through
-    /// `render_2d_ground`, then the loc wall/scene lines and icons through
-    /// `draw_detail`), scan the ground decors for the active map-function
-    /// dots, and send the anticheat cycle counter.
-    pub fn minimap_build_buffer(&mut self, level: i32) {
-        let Some(mm) = self.renderer.minimap.as_mut() else {
-            return;
-        };
-
-        for p in mm.data.iter_mut() {
-            *p = 0;
-        }
-
-        for z in 1..BuildArea::SIZE - 1 {
-            let mut offset = (BuildArea::SIZE - 1 - z) * 512 * 4 + 24628;
-
-            for x in 1..BuildArea::SIZE - 1 {
-                if self.mapl[level as usize][x as usize][z as usize] as i32
-                    & (MapFlag::VIS_BELOW | MapFlag::FORCE_HIGH_DETAIL)
-                    == 0
-                {
-                    self.world.render_2d_ground(level, x, z, &mut mm.data, offset, 512);
-                }
-
-                if level < 3
-                    && self.mapl[level as usize + 1][x as usize][z as usize] as i32
-                        & MapFlag::VIS_BELOW
-                        != 0
-                {
-                    self.world.render_2d_ground(level + 1, x, z, &mut mm.data, offset, 512);
-                }
-
-                offset += 4;
-            }
-        }
-
-        let inactive_rgb = ((((random_float() * 20.0) as i32) + 238 - 10) << 16)
-            + ((((random_float() * 20.0) as i32) + 238 - 10) << 8)
-            + ((random_float() * 20.0) as i32)
-            + 238
-            - 10;
-        let active_rgb = (((random_float() * 20.0) as i32) + 238 - 10) << 16;
-
-        // TS `this.minimap.setPixels()`: bind the buffer for `draw_detail`'s
-        // plots. The `areaGame.setPixels()` rebinding is a no-op here — every
-        // draw helper in this port takes its surface explicitly.
-        let mut surface = Pix2D::with_pixels(&mut mm.data, 512, 512);
-        for z in 1..BuildArea::SIZE - 1 {
-            for x in 1..BuildArea::SIZE - 1 {
-                if self.mapl[level as usize][x as usize][z as usize] as i32
-                    & (MapFlag::VIS_BELOW | MapFlag::FORCE_HIGH_DETAIL)
-                    == 0
-                {
-                    draw_detail(
-                        &self.world,
-                        &self.cache,
-                        &self.renderer.mapscene,
-                        &mut surface,
-                        level,
-                        x,
-                        z,
-                        inactive_rgb,
-                        active_rgb,
-                    );
-                }
-
-                if level < 3
-                    && self.mapl[level as usize + 1][x as usize][z as usize] as i32
-                        & MapFlag::VIS_BELOW
-                        != 0
-                {
-                    draw_detail(
-                        &self.world,
-                        &self.cache,
-                        &self.renderer.mapscene,
-                        &mut surface,
-                        level + 1,
-                        x,
-                        z,
-                        inactive_rgb,
-                        active_rgb,
-                    );
-                }
-            }
-        }
-        drop(surface);
-
-        self.renderer.active_map_function_count = 0;
-
-        for x in 0..BuildArea::SIZE {
-            for z in 0..BuildArea::SIZE {
-                let typecode = self.world.gd_type(self.minusedlevel, x, z);
-                if typecode == 0 {
-                    continue;
-                }
-
-                let loc_id = (typecode >> 14) & 0x7fff;
-                let func = self.cache.loc(loc_id as usize).mapfunction;
-                if func < 0 {
-                    continue;
-                }
-
-                let mut stx = x;
-                let mut stz = z;
-
-                if func != 22
-                    && func != 29
-                    && func != 34
-                    && func != 36
-                    && func != 46
-                    && func != 47
-                    && func != 48
-                {
-                    let max_x = BuildArea::SIZE;
-                    let max_z = BuildArea::SIZE;
-                    let flags = &self.collision[self.minusedlevel as usize].flags;
-
-                    for _ in 0..10 {
-                        let rand = (random_float() * 4.0) as i32;
-                        if rand == 0
-                            && stx > 0
-                            && stx > x - 3
-                            && (flags[(stx - 1) as usize][stz as usize] & CollisionFlag::PL_WALK_E)
-                                == CollisionFlag::_OPEN
-                        {
-                            stx -= 1;
-                        }
-
-                        if rand == 1
-                            && stx < max_x - 1
-                            && stx < x + 3
-                            && (flags[(stx + 1) as usize][stz as usize] & CollisionFlag::PL_WALK_W)
-                                == CollisionFlag::_OPEN
-                        {
-                            stx += 1;
-                        }
-
-                        if rand == 2
-                            && stz > 0
-                            && stz > z - 3
-                            && (flags[stx as usize][(stz - 1) as usize] & CollisionFlag::PL_WALK_N)
-                                == CollisionFlag::_OPEN
-                        {
-                            stz -= 1;
-                        }
-
-                        if rand == 3
-                            && stz < max_z - 1
-                            && stz < z + 3
-                            && (flags[stx as usize][(stz + 1) as usize] & CollisionFlag::PL_WALK_S)
-                                == CollisionFlag::_OPEN
-                        {
-                            stz += 1;
-                        }
-                    }
-                }
-
-                // TS writes past the 1000-slot `activeMapFunctions` arrays
-                // silently; a Rust panic here is worse, so cap the count.
-                let count = self.renderer.active_map_function_count as usize;
-                if count < self.renderer.active_map_functions.len() {
-                    self.renderer.active_map_functions[count] =
-                        self.renderer.mapfunction.get(func as usize).and_then(|s| s.clone());
-                    self.renderer.active_map_function_x[count] = stx;
-                    self.renderer.active_map_function_z[count] = stz;
-                    self.renderer.active_map_function_count += 1;
-                }
-            }
-        }
-
-        self.renderer.cyclelogic3 += 1;
-        if self.renderer.cyclelogic3 > 112 {
-            self.renderer.cyclelogic3 = 0;
-
-            self.out.p1_enc(ClientProt::ANTICHEAT_CYCLELOGIC3.id);
-            self.out.p1(50);
-        }
-    }
-
-    /// `showObject(x, z)` from client-ts (7569): rebuild one tile's stacked
-    /// objects after the scene build. An empty cell clears the World object;
-    /// otherwise the top-cost object becomes the list head and the
-    /// top/middle/bottom of the stack are cloned into the scene. The walks
-    /// stay inside a block so the `ground_obj` borrow ends before the World
-    /// writes.
-    fn show_object(&mut self, x: i32, z: i32) {
+    pub(crate) fn show_object(&mut self, x: i32, z: i32) {
         let level = self.minusedlevel as usize;
         if self.ground_obj[level][x as usize][z as usize].is_none() {
             self.world.del_obj(self.minusedlevel, x, z);
@@ -9213,7 +8683,7 @@ impl Client {
     /// pending loc-change queue with the fresh scene. Permanent changes
     /// (`end_time == -1`) re-snapshot the old appearance and become due
     /// next tick; timed ones are dropped.
-    fn loc_change_post_build(&mut self) {
+    pub(crate) fn loc_change_post_build(&mut self) {
         let mut node = self.loc_changes.head();
         while let Some(loc) = node {
             if loc.end_time == -1 {
@@ -9613,9 +9083,9 @@ impl Client {
         if !self.ingame {
             return;
         }
-        // TS 2191-2192: scene/minimap pass after the inbound reads, before
-        // the silence watchdog.
-        self.check_minimap();
+        // TS 2191-2192: the scene/minimap pass after the inbound reads.
+        // `check_minimap` moved to the renderer (its splash/build touch the
+        // draw state); `Renderer::mainredraw` runs it ahead of `game_draw`.
         self.loc_change_do_queue();
         // Java 9461 / TS 2193: drain SYNTH_SOUND into the mixer.
         self.sounds_do_queue();
@@ -9680,19 +9150,16 @@ impl Client {
         self.mouse_loop();
         self.minimap_loop();
         // Java 9466-9467 then 9580: the entity movement pass runs before
-        // `followCamera`, so the orbit camera and minimap follow the walk.
+        // the camera pass, so the orbit camera and minimap follow the walk.
         self.move_players();
         self.move_npcs();
         // Java 9468 / TS 2202: `timeoutChat` after move, so overhead bubbles
         // expire (`chatTimer` 150 → 0 then `chatMessage = null`).
         self.timeout_chat();
-        // TS 2346-2353: `followCamera` in the 3D scene — the orbit camera
-        // tracks the local player and the arrow keys rotate yaw/pitch —
-        // then the cutscene camera when a CAM_* packet has set one, and the
-        // shake cycles tick every loop.
-        if self.scene_state == 2 {
-            self.follow_camera();
-        }
+        // TS 2346-2353: `followCamera` (renderer-owned now; `mainredraw`
+        // runs it ahead of `game_draw`) eases the orbit camera to the local
+        // player, then the cutscene camera when a CAM_* packet has set one,
+        // and the shake cycles tick every loop.
         if self.scene_state == 2 && self.cinema_cam {
             self.cinema_camera();
         }
@@ -9983,19 +9450,7 @@ impl Client {
     /// in-game draw into `draw_area` (which the `window` feature presents).
     /// `draw` is the CPU-save switch: false skips the render entirely, so a
     /// headless bot burns no pixels while the network machine keeps running.
-    pub fn mainredraw(&mut self) {
-        if !self.draw {
-            return;
-        }
-        if self.ingame {
-            self.game_draw();
-        } else {
-            self.title_screen_draw();
-        }
-    }
-
-    /// Set the `draw` CPU-save switch (`mainredraw` skips the frame render
-    /// when false).
+    /// Re-homed onto `Renderer` (task 2b); kept here as the doc anchor.
     pub fn set_draw(&mut self, draw: bool) {
         self.draw = draw;
     }
@@ -10006,14 +9461,17 @@ impl Client {
     /// driver (client-play) can read Java-public state — e.g. print the
     /// local-player tile for live proof — without a snapshot API.
     ///
+    /// The driver holds the `Renderer` beside the client and hands it in:
+    /// `run` drives both the sim pass and the render pass.
+    ///
     /// With `window` the `Present` drives the frame: events are pumped into
     /// the shell before the mainloop pass (via `latch_click`, GameShell.ts
     /// 186-190), and `draw_area` blits after the redraw. Closing the window
     /// (`poll` false) sets `shell.state = -1`, which stops the machine on
     /// the next iteration like Java `GameShell.run`.
-    pub fn run<F: FnMut(&mut Self)>(&mut self, mut on_loop: F) {
+    pub fn run<F: FnMut(&mut Self)>(&mut self, renderer: &mut Renderer, mut on_loop: F) {
         if !self.already_started {
-            self.maininit();
+            self.maininit(renderer);
         }
         while self.shell.state >= 0 {
             if self.shell.state > 0 {
@@ -10046,14 +9504,14 @@ impl Client {
             self.shell.count &= 0xff;
             self.shell.end_frame();
 
-            self.mainredraw();
+            renderer.mainredraw(self);
 
             #[cfg(feature = "window")]
             if let Some(present) = self.present.as_mut() {
                 present.blit(
-                    &self.renderer.draw_area.pixels,
-                    self.renderer.draw_area.width as u32,
-                    self.renderer.draw_area.height as u32,
+                    &renderer.draw_area.pixels,
+                    renderer.draw_area.width as u32,
+                    renderer.draw_area.height as u32,
                 );
             }
         }
@@ -10155,7 +9613,10 @@ impl Client {
                 _ => return,
             };
             Pix3D::init_colour_table(brightness);
-            self.renderer.pix3d.init_texture_palettes(brightness);
+            // The texture-palette half of the brightness change runs on the
+            // renderer (the texels are its state); defer it to the next
+            // `game_draw` via `pending_brightness`.
+            self.pending_brightness = Some(brightness);
             ObjType::clear_sprite_cache();
             self.redraw_frame = true;
             return;
@@ -10466,17 +9927,6 @@ fn login_random() -> i32 {
     x ^= x >> 27;
     let r = x.wrapping_mul(0x2545_f491_4f6c_dd1d);
     ((r >> 32) % 99_999_999) as i32
-}
-
-/// Stand-in for JS `Math.random()` (returns `[0, 1)`), time-seeded like
-/// `client_build`'s; `minimapBuildBuffer`'s colour and dot jitter is not
-/// reproducible in TS either.
-fn random_float() -> f64 {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    ((nanos >> 20) % 1_000_000) as f64 / 1_000_000.0
 }
 
 #[cfg(test)]

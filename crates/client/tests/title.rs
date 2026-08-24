@@ -1,4 +1,5 @@
 use client::client::Client;
+use client::render::Renderer;
 use client::client::ClientConfig;
 use client::graphics::Pix32;
 use client::io::JagFile;
@@ -24,14 +25,15 @@ fn client(cache: String) -> Client {
 
 #[test]
 fn title_draw_writes_pixels() {
+let mut r = Renderer::new(false);
     let Some(cache) = cache_dir() else {
         return;
     };
     let mut c = client(cache);
-    assert_eq!(c.renderer.draw_area.width, 765);
-    assert_eq!(c.renderer.draw_area.height, 503);
-    c.title_screen_draw();
-    assert!(c.renderer.draw_area.pixels.iter().any(|&p| p != 0));
+    assert_eq!(r.draw_area.width, 765);
+    assert_eq!(r.draw_area.height, 503);
+    r.title_screen_draw(&mut c);
+    assert!(r.draw_area.pixels.iter().any(|&p| p != 0));
 }
 
 /// `Client::new` must not start scape_main: the midi request is deferred
@@ -39,6 +41,7 @@ fn title_draw_writes_pixels() {
 /// first, then midiSong = 0 + onDemand.request(2, 0)).
 #[test]
 fn title_requests_scape_main() {
+let _r = Renderer::new(false);
     let Some(cache) = cache_dir() else {
         return;
     };
@@ -51,25 +54,27 @@ fn title_requests_scape_main() {
 /// title draw before that must leave `midi_song == -1`.
 #[test]
 fn prepare_title_does_not_request_scape_main() {
+let mut r = Renderer::new(false);
     let Some(cache) = cache_dir() else {
         return;
     };
     let mut c = client(cache);
     assert_eq!(c.midi_song, -1);
-    c.title_screen_draw();
+    r.title_screen_draw(&mut c);
     assert_eq!(c.midi_song, -1);
 }
 
 /// title.dat JPEG is tiled into the left torch column (imageTitle0 at 0,0).
 #[test]
 fn title_background_fills_left_strip() {
+let mut r = Renderer::new(false);
     let Some(cache) = cache_dir() else {
         return;
     };
     let mut c = client(cache);
-    c.title_screen_draw();
+    r.title_screen_draw(&mut c);
     let any = (0..265).any(|y| {
-        (0..128).any(|x| c.renderer.draw_area.pixels[(y * c.renderer.draw_area.width + x) as usize] != 0)
+        (0..128).any(|x| r.draw_area.pixels[(y * r.draw_area.width + x) as usize] != 0)
     });
     assert!(any, "left title strip (torch / background) should not be black");
 }
@@ -77,23 +82,25 @@ fn title_background_fills_left_strip() {
 /// TitleFlames.renderFlames mutates imageTitle0 across ticks.
 #[test]
 fn title_flames_tick_mutates_left_strip() {
+let mut r = Renderer::new(false);
     let Some(cache) = cache_dir() else {
         return;
     };
     let mut c = client(cache);
-    c.title_screen_draw();
-    let before = c.renderer.image_title0.as_ref().expect("image_title0").pixels.clone();
+    r.title_screen_draw(&mut c);
+    let before = r.image_title0.as_ref().expect("image_title0").pixels.clone();
     for _ in 0..8 {
         c.loop_cycle += 1;
-        c.title_screen_draw();
+        r.title_screen_draw(&mut c);
     }
-    let after = &c.renderer.image_title0.as_ref().expect("image_title0").pixels;
+    let after = &r.image_title0.as_ref().expect("image_title0").pixels;
     assert_ne!(&before, after, "torch flame pixels should change across frames");
 }
 
 #[cfg(feature = "audio")]
 #[test]
 fn title_loads_engine_soundfont() {
+let mut r = Renderer::new(false);
     let Some(cache) = cache_dir() else {
         return;
     };
@@ -106,6 +113,7 @@ fn title_loads_engine_soundfont() {
 
 #[test]
 fn from_jpeg_decodes_title_dat() {
+let _r = Renderer::new(false);
     let Some(cache) = cache_dir() else {
         return;
     };

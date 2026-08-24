@@ -1,4 +1,5 @@
 use std::io::{Read, Write};
+use client::render::Renderer;
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -19,29 +20,31 @@ fn client_tmp() -> Client {
 
 #[test]
 fn draw_progress_headless_sets_fields_without_touching_pixels() {
+let mut r = Renderer::new(false);
     let mut c = client_tmp();
     assert!(!c.draw);
-    let before = c.renderer.draw_area.pixels.clone();
-    c.draw_progress("Unpacking media", 80);
+    let before = r.draw_area.pixels.clone();
+    r.draw_progress(&mut c, "Unpacking media", 80);
     assert_eq!(c.last_progress_percent, 80);
     assert_eq!(c.last_progress_message, "Unpacking media");
-    assert_eq!(c.renderer.draw_area.pixels, before);
+    assert_eq!(r.draw_area.pixels, before);
 }
 
 #[test]
 fn draw_progress_headed_paints_red_bar() {
+let mut r = Renderer::new(false);
     let mut c = client_tmp();
     c.set_draw(true);
-    c.draw_progress("Loading...", 10);
+    r.draw_progress(&mut c, "Loading...", 10);
     assert_eq!(c.last_progress_percent, 10);
     // TS GameShell: fillRect(width/2 - 150, midY+2, progress*3, 30, 0x8c1111)
-    let w = c.renderer.draw_area.width;
-    let h = c.renderer.draw_area.height;
+    let w = r.draw_area.width;
+    let h = r.draw_area.height;
     let mid_y = (h / 2) - 18;
     let x = (w / 2) - 150;
     let y = mid_y + 2;
     let idx = (x + y * w) as usize;
-    assert_eq!(c.renderer.draw_area.pixels[idx], 0x8c1111);
+    assert_eq!(r.draw_area.pixels[idx], 0x8c1111);
 }
 
 /// Java `Client.messageBox` calls `prepareTitle()` then draws the stage
@@ -49,6 +52,7 @@ fn draw_progress_headed_paints_red_bar() {
 /// fallback bar (no fonts) and the operator sees a mute red bar.
 #[test]
 fn draw_progress_headed_paints_stage_text_once_title_jag_exists() {
+let mut r = Renderer::new(false);
     let cache = format!(
         "{}/experiments/Server/engine/data/pack/client",
         std::env::var("HOME").unwrap()
@@ -64,10 +68,10 @@ fn draw_progress_headed_paints_stage_text_once_title_jag_exists() {
         lowmem: false,
     });
     c.set_draw(true);
-    c.draw_progress("Loading models - 50%", 70);
-    assert!(c.renderer.b12.is_some(), "messageBox prepareTitle loads b12 from title jag");
+    r.draw_progress(&mut c, "Loading models - 50%", 70);
+    assert!(r.b12.is_some(), "messageBox prepareTitle loads b12 from title jag");
     assert!(
-        c.renderer.draw_area.pixels.iter().any(|&p| p == 0xffffff),
+        r.draw_area.pixels.iter().any(|&p| p == 0xffffff),
         "stage text must be plotted in white (Java b12.centreString)"
     );
 }
@@ -77,6 +81,7 @@ fn draw_progress_headed_paints_stage_text_once_title_jag_exists() {
 /// Java's flame thread, not inside messageBox.
 #[test]
 fn draw_progress_headed_paints_torch_columns() {
+let mut r = Renderer::new(false);
     let cache = format!(
         "{}/experiments/Server/engine/data/pack/client",
         std::env::var("HOME").unwrap()
@@ -92,10 +97,10 @@ fn draw_progress_headed_paints_torch_columns() {
         lowmem: false,
     });
     c.set_draw(true);
-    c.draw_progress("Loading models - 50%", 70);
-    let w = c.renderer.draw_area.width;
+    r.draw_progress(&mut c, "Loading models - 50%", 70);
+    let w = r.draw_area.width;
     let any = (0..265).any(|y| {
-        (0..128).any(|x| c.renderer.draw_area.pixels[(y * w + x) as usize] != 0)
+        (0..128).any(|x| r.draw_area.pixels[(y * w + x) as usize] != 0)
     });
     assert!(any, "left torch column must not be black during the loading bar");
 }
@@ -200,6 +205,7 @@ fn crc_body(checksums: &[i32; 9]) -> Vec<u8> {
 
 #[test]
 fn maininit_is_oneshot_and_sets_progress_100_on_crc_hit() {
+let mut r = Renderer::new(false);
     let dir = std::env::temp_dir().join("274-maininit");
     let _ = std::fs::create_dir_all(&dir);
     let mut checksums = [0i32; 9];
@@ -228,7 +234,7 @@ fn maininit_is_oneshot_and_sets_progress_100_on_crc_hit() {
         lowmem: false,
     });
     c.http_port = port;
-    c.maininit();
+    c.maininit(&mut r);
     th.join().ok();
     assert!(c.already_started);
     assert_eq!(c.last_progress_percent, 100);
@@ -238,12 +244,13 @@ fn maininit_is_oneshot_and_sets_progress_100_on_crc_hit() {
         assert_eq!(bytes, format!("{name}-seed").into_bytes());
         assert_eq!(Packet::getcrc(&bytes, 0, bytes.len()), checksums[i + 1]);
     }
-    c.maininit(); // oneshot
+    c.maininit(&mut r); // oneshot
     assert_eq!(c.last_progress_percent, 100);
 }
 
 #[test]
 fn maininit_empty_cache_fetches_all_eight_jags_over_http() {
+let mut r = Renderer::new(false);
     let dir = std::env::temp_dir().join("274-maininit-empty");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -286,7 +293,7 @@ fn maininit_empty_cache_fetches_all_eight_jags_over_http() {
     });
     c.http_port = port;
     c.fetch_retry_wait = Duration::from_millis(1);
-    c.maininit();
+    c.maininit(&mut r);
     th.join().ok();
     assert!(c.already_started);
     assert!(!c.error_loading);
@@ -314,6 +321,7 @@ fn maininit_empty_cache_fetches_all_eight_jags_over_http() {
 
 #[test]
 fn maininit_retries_jag_get_after_crc_mismatch() {
+let mut r = Renderer::new(false);
     let dir = std::env::temp_dir().join("274-maininit-retry");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -361,7 +369,7 @@ fn maininit_retries_jag_get_after_crc_mismatch() {
     });
     c.http_port = port;
     c.fetch_retry_wait = Duration::from_millis(1);
-    c.maininit();
+    c.maininit(&mut r);
     th.join().ok();
     let title_gets = seen
         .lock()
@@ -378,6 +386,7 @@ fn maininit_retries_jag_get_after_crc_mismatch() {
 
 #[test]
 fn maininit_clears_error_loading_from_new_unpack() {
+let mut r = Renderer::new(false);
     let dir = std::env::temp_dir().join("274-maininit-recover");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -419,7 +428,7 @@ fn maininit_clears_error_loading_from_new_unpack() {
     let (port, th, _seen) = serve_in_order(vec![crc_body(&checksums), valid_config.clone()]);
     c.http_port = port;
     c.fetch_retry_wait = Duration::from_millis(1);
-    c.maininit();
+    c.maininit(&mut r);
     th.join().ok();
     assert!(
         !c.error_loading,
@@ -432,6 +441,7 @@ fn maininit_clears_error_loading_from_new_unpack() {
 
 #[test]
 fn get_jag_file_crc_hit_skips_http() {
+let _r = Renderer::new(false);
     let dir = std::env::temp_dir().join("274-jag-hit");
     let _ = std::fs::create_dir_all(&dir);
     let bytes = b"not-a-real-jag-but-stable".to_vec();
@@ -446,6 +456,7 @@ fn get_jag_file_crc_hit_skips_http() {
 
 #[test]
 fn get_jag_file_http_persists() {
+let _r = Renderer::new(false);
     let dir = std::env::temp_dir().join("274-jag-http");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();

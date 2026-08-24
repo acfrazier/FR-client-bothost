@@ -5,6 +5,7 @@
 // `Cache::default()` and never touches the network (the /crc fetch on
 // 127.0.0.1 is refused instantly).
 use client::client::{Client, ClientConfig, MiniMenuAction};
+use client::render::Renderer;
 use client::config::if_type::{ButtonType, ComponentType, IfType};
 use client::config::{LocType, NpcType, ObjType};
 use client::dash3d::{ClientNpc, ClientObj, ClientPlayer, Model, SceneModel};
@@ -22,6 +23,8 @@ fn client() -> Client {
 
 #[test]
 fn open_menu_in_viewport_sets_area_0_and_geometry() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 3;
     c.menu_option[0] = "Cancel".into();
@@ -38,6 +41,8 @@ fn open_menu_in_viewport_sets_area_0_and_geometry() {
 
 #[test]
 fn open_menu_in_side_sets_area_1() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 2;
     c.menu_option[0] = "Cancel".into();
@@ -51,6 +56,8 @@ fn open_menu_in_side_sets_area_1() {
 
 #[test]
 fn open_menu_in_chat_sets_area_2() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 2;
     c.menu_option[0] = "Cancel".into();
@@ -64,6 +71,8 @@ fn open_menu_in_chat_sets_area_2() {
 
 #[test]
 fn open_menu_clamps_viewport_menu_inside_512x334() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 3;
     c.menu_option[0] = "Cancel".into();
@@ -85,6 +94,8 @@ fn open_menu_clamps_viewport_menu_inside_512x334() {
 /// no use/target armed, the only entry added on top of Cancel is Walk here.
 #[test]
 fn add_world_options_walk_when_idle() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 1; // Cancel already
     c.shell.mouse_x = 50;
@@ -101,6 +112,8 @@ fn add_world_options_walk_when_idle() {
 /// so the real `World::type_code2` answers >= 0 (no loc fixture needed).
 #[test]
 fn add_world_options_loc_examine_from_pick() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 1;
     // typecode: entity 2, typeId 1, x=10, z=12
@@ -108,8 +121,8 @@ fn add_world_options_loc_examine_from_pick() {
     let x = 10i32;
     let z = 12i32;
     let typecode = (2 << 29) | ((type_id & 0x7fff) << 14) | ((z & 0x7f) << 7) | (x & 0x7f);
-    c.renderer.pix3d.picked_count = 1;
-    c.renderer.pix3d.picked_entity_typecode[0] = typecode;
+    c.pick_count = 1;
+    c.pick_typecodes[0] = typecode;
     if c.cache.locs.len() <= 1 {
         c.cache.locs.push(LocType::default());
         c.cache.locs.push(LocType::default());
@@ -145,6 +158,8 @@ fn add_world_options_loc_examine_from_pick() {
 /// visible level appends the combat-colour level to the name.
 #[test]
 fn add_world_options_npc_ops_from_pick() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 1;
     // typecode: entity 1, npc slot 5, x=8, z=9
@@ -152,8 +167,8 @@ fn add_world_options_npc_ops_from_pick() {
     let x = 8i32;
     let z = 9i32;
     let typecode = (1 << 29) | ((npc_slot & 0x7fff) << 14) | ((z & 0x7f) << 7) | (x & 0x7f);
-    c.renderer.pix3d.picked_count = 1;
-    c.renderer.pix3d.picked_entity_typecode[0] = typecode;
+    c.pick_count = 1;
+    c.pick_typecodes[0] = typecode;
     if c.cache.npcs.len() <= 2 {
         c.cache.npcs.push(NpcType::default());
         c.cache.npcs.push(NpcType::default());
@@ -191,6 +206,8 @@ fn add_world_options_npc_ops_from_pick() {
 /// on priority ops, and renames the Walk here entry with the player name.
 #[test]
 fn add_world_options_player_ops_from_pick() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 1;
     c.shell.mouse_x = 50;
@@ -200,8 +217,8 @@ fn add_world_options_player_ops_from_pick() {
     let x = 6i32;
     let z = 7i32;
     let typecode = (0 << 29) | ((player_slot & 0x7fff) << 14) | ((z & 0x7f) << 7) | (x & 0x7f);
-    c.renderer.pix3d.picked_count = 1;
-    c.renderer.pix3d.picked_entity_typecode[0] = typecode;
+    c.pick_count = 1;
+    c.pick_typecodes[0] = typecode;
     let mut local = ClientPlayer::default();
     local.combat_level = 10;
     c.local_player = Some(local);
@@ -236,14 +253,16 @@ fn add_world_options_player_ops_from_pick() {
 /// Take as the default op[2] fallback and Examine last per object.
 #[test]
 fn add_world_options_obj_take_and_examine_from_pick() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 1;
     // typecode: entity 3, typeId 9 (idle), x=4, z=5
     let x = 4i32;
     let z = 5i32;
     let typecode = (3 << 29) | ((9 & 0x7fff) << 14) | ((z & 0x7f) << 7) | (x & 0x7f);
-    c.renderer.pix3d.picked_count = 1;
-    c.renderer.pix3d.picked_entity_typecode[0] = typecode;
+    c.pick_count = 1;
+    c.pick_typecodes[0] = typecode;
     if c.cache.objs.len() <= 7 {
         while c.cache.objs.len() < 8 {
             c.cache.objs.push(ObjType::default());
@@ -273,12 +292,14 @@ fn add_world_options_obj_take_and_examine_from_pick() {
 /// Duplicate picked typecodes add their options only once.
 #[test]
 fn add_world_options_skips_duplicate_typecodes() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 1;
     let typecode = (3 << 29) | ((9 & 0x7fff) << 14) | ((5 & 0x7f) << 7) | (4 & 0x7f);
-    c.renderer.pix3d.picked_count = 2;
-    c.renderer.pix3d.picked_entity_typecode[0] = typecode;
-    c.renderer.pix3d.picked_entity_typecode[1] = typecode;
+    c.pick_count = 2;
+    c.pick_typecodes[0] = typecode;
+    c.pick_typecodes[1] = typecode;
     if c.cache.objs.len() <= 7 {
         while c.cache.objs.len() < 8 {
             c.cache.objs.push(ObjType::default());
@@ -299,6 +320,8 @@ fn add_world_options_skips_duplicate_typecodes() {
 /// call them directly (they are also reachable through `add_world_options`).
 #[test]
 fn add_npc_options_and_add_player_options_callable_directly() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.menu_num_entries = 1;
     if c.cache.npcs.len() <= 2 {
@@ -359,6 +382,8 @@ fn side_inv_fixture(c: &mut Client) {
 
 #[test]
 fn build_minimenu_starts_with_cancel() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.build_minimenu();
     assert_eq!(c.menu_num_entries, 1);
@@ -367,6 +392,8 @@ fn build_minimenu_starts_with_cancel() {
 
 #[test]
 fn inv_slot_adds_drop_and_examine() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     side_inv_fixture(&mut c);
     c.build_minimenu();
@@ -381,6 +408,8 @@ fn inv_slot_adds_drop_and_examine() {
 /// lands below Drop (100).
 #[test]
 fn build_minimenu_sorts_1000_plus_below_actions() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     side_inv_fixture(&mut c);
     c.build_minimenu();
@@ -393,6 +422,8 @@ fn build_minimenu_sorts_1000_plus_below_actions() {
 /// (TS 9737-9781). All carry the obj id, slot and component id params.
 #[test]
 fn inv_slot_obj_iop_and_component_iop_options() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     side_inv_fixture(&mut c);
     let inv = c.cache.ifaces[2].as_mut().unwrap();
@@ -423,6 +454,8 @@ fn inv_slot_obj_iop_and_component_iop_options() {
 /// TGT_HELD (TS 9684-9701).
 #[test]
 fn inv_slot_use_and_target_replace_ops() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     side_inv_fixture(&mut c);
     c.use_mode = 1;
@@ -458,6 +491,8 @@ fn inv_slot_use_and_target_replace_ops() {
 /// (TS 9795-9839).
 #[test]
 fn non_inv_buttons_push_button_actions() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = -1;
     c.side_icon[3] = 1;
@@ -520,6 +555,8 @@ fn non_inv_buttons_push_button_actions() {
 /// text; skipping them was a live no-op.
 #[test]
 fn empty_ok_button_still_fires_if_button() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = -1;
     c.side_icon[13] = 1;
@@ -557,6 +594,8 @@ fn empty_ok_button_still_fires_if_button() {
 /// suppresses the TARGET option (TS 9831-9839).
 #[test]
 fn paused_and_targeting_suppress_continue_and_target_buttons() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = -1;
     c.side_icon[3] = 1;
@@ -601,6 +640,8 @@ fn paused_and_targeting_suppress_continue_and_target_buttons() {
 /// An in-flight inventory drag returns before seeding Cancel (TS 2515).
 #[test]
 fn build_minimenu_returns_while_obj_drag_active() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.obj_drag_area = 2;
     c.menu_num_entries = 0;
@@ -613,6 +654,8 @@ fn build_minimenu_returns_while_obj_drag_active() {
 /// nothing (friends/ignore options are slice 5).
 #[test]
 fn chat_region_adds_report_abuse_for_staff() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut local = ClientPlayer::default();
     local.name = Some("Me".into());
@@ -641,6 +684,8 @@ fn chat_region_adds_report_abuse_for_staff() {
 /// (`menu_area` 0) via `open_menu` (TS 8379-8380).
 #[test]
 fn right_click_viewport_opens_menu() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.shell.mouse_x = 100;
     c.shell.mouse_y = 100;
@@ -657,6 +702,8 @@ fn right_click_viewport_opens_menu() {
 /// and does not write `out`.
 #[test]
 fn left_click_fires_last_entry_walk() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.shell.mouse_x = 100;
     c.shell.mouse_y = 100;
@@ -675,6 +722,8 @@ fn left_click_fires_last_entry_walk() {
 /// row 1 (Walk here) sits at `menu_y + 31`, so a click there arms picking.
 #[test]
 fn left_click_on_open_menu_row_fires_option_and_closes() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.shell.mouse_x = 100;
     c.shell.mouse_y = 100;
@@ -699,6 +748,8 @@ fn left_click_on_open_menu_row_fires_option_and_closes() {
 /// Report abuse (TS 2687-2698).
 #[test]
 fn chat_line_adds_friend_and_ignore_for_friend() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut local = ClientPlayer::default();
     local.name = Some("Me".into());
@@ -721,6 +772,7 @@ fn chat_line_adds_friend_and_ignore_for_friend() {
     assert_eq!(c.menu_option[add], "Add friend @whi@Bob");
 
     // a non-friend's type-2 line in chatPublicMode 1 counts/hovers nothing
+    let _r = Renderer::new(false);
     let mut c2 = client();
     let mut local = ClientPlayer::default();
     local.name = Some("Me".into());
@@ -742,6 +794,8 @@ fn chat_line_adds_friend_and_ignore_for_friend() {
 /// (TS 9799-9807); the ignore range pushes Remove only (TS 9866-9872).
 #[test]
 fn social_component_ok_override_pushes_remove_and_message() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.friend_count = 1;
     c.friend_username[0] = "Bob".into();
@@ -785,6 +839,8 @@ fn social_component_ok_override_pushes_remove_and_message() {
 /// multi-entry menu instead of firing (TS 8370-8372).
 #[test]
 fn left_click_add_friend_last_entry_opens_menu() {
+let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut local = ClientPlayer::default();
     local.name = Some("Me".into());
