@@ -219,11 +219,12 @@ fn tcp_in_rebuild_normal_over_socket() {
 fn rebuild_normal_paints_loading_splash_when_draw() {
     let mut c = client();
     c.set_draw(true);
-    // fonts may be missing without a title jag; splash must still cls area_game
+    // fonts may be missing without a title jag; the splash keeps the frozen
+    // frame and only overlays "Loading - please wait." when a font exists.
     if c.area_game.is_none() {
         c.area_game = Some(PixMap::new(512, 334));
     }
-    // pre-fill so the cls (and only the cls) can be observed
+    // pre-fill so the frozen frame (no cls) and any text overlay can be seen
     c.area_game.as_mut().unwrap().fill(0x123456);
     let mut payload = Packet::alloc(0);
     payload.p2(50);
@@ -233,11 +234,11 @@ fn rebuild_normal_paints_loading_splash_when_draw() {
     assert_eq!(c.scene_state, 1);
     let ag = c.area_game.as_ref().expect("area_game");
     if c.p12.is_none() {
-        // no font: the splash is the black cls of the pre-filled surface
-        assert!(ag.pixels.iter().all(|&p| p == 0), "area_game not cls'd");
+        // no font: the frame stays frozen — no cls, no text overlay
+        assert!(ag.pixels.iter().all(|&p| p == 0x123456), "area_game not frozen");
     } else {
-        // font present: the text pixels overwrite the black cls
-        assert!(ag.pixels.iter().any(|&p| p != 0), "no splash pixels");
+        // font present: the text overwrites the frozen frame
+        assert!(ag.pixels.iter().any(|&p| p != 0x123456), "no splash pixels");
     }
 }
 
