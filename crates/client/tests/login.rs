@@ -372,13 +372,18 @@ fn login_code_6_is_error() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     thread::spawn(move || {
-        let (mut s, _) = listener.accept().unwrap();
-        let mut hdr = [0u8; 2];
-        let _ = s.read_exact(&mut hdr);
-        for _ in 0..8 {
-            let _ = s.write_all(&[0]);
+        // Task 11: code 6 refreshes the modulus (fetch to port 80 fails
+        // here) and retries the handshake once, so two code-6 responses
+        // are needed before the error surfaces.
+        for _ in 0..2 {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut hdr = [0u8; 2];
+            let _ = s.read_exact(&mut hdr);
+            for _ in 0..8 {
+                let _ = s.write_all(&[0]);
+            }
+            let _ = s.write_all(&[6]);
         }
-        let _ = s.write_all(&[6]);
     });
     let mut c = Client::new(ClientConfig {
         host: addr.ip().to_string(),
@@ -387,6 +392,10 @@ fn login_code_6_is_error() {
         members: true,
         lowmem: false,
     });
+    // The code-6 refresh would fetch the local web origin (port 80); point
+    // it at a dead port so the refresh fails fast instead of depending on
+    // the real engine during tests.
+    c.http_port = 1;
     let e = c.login("bob", "pw", false).unwrap_err();
     assert_eq!(e.code, 6);
     assert!(!c.ingame);

@@ -41,7 +41,7 @@ use crate::graphics::{Pix2D, Pix3D, Pix32, Pix3DDraw, Pix8, PixFont, PixMap};
 use crate::io::{
     ClientProt, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt, SERVER_PROT_SIZES,
 };
-use crate::login_rsa::{LOGIN_RSAE, LOGIN_RSAN};
+use crate::login_rsa::{login_modulus, LOGIN_RSAE};
 use crate::sound::{Fade, JagFX, Midi};
 use crate::util::{JavaRandom, JString};
 use crate::wordfilter::{WordFilter, WordPack};
@@ -1849,6 +1849,20 @@ impl Client {
         password: &str,
         reconnect: bool,
     ) -> Result<(), LoginError> {
+        self.login_impl(username, password, reconnect, 1)
+    }
+
+    /// One login handshake attempt, retrying once on RSA code 6 ("RuneScape
+    /// has been updated!") after a key refresh; `rsa_retries` counts the
+    /// code-6 retries left. Response 1 ("try again") still recurses
+    /// forever like Java.
+    fn login_impl(
+        &mut self,
+        username: &str,
+        password: &str,
+        reconnect: bool,
+        rsa_retries: usize,
+    ) -> Result<(), LoginError> {
         // Headless has no title UI; persist here so `lostCon` reconnects
         // with the same credentials (TS writes these from the title fields).
         self.login_user = username.to_string();
@@ -1915,7 +1929,7 @@ impl Client {
             self.out.p4(self.login_uid);
             self.out.pjstr(username);
             self.out.pjstr(password);
-            let n = BigUint::from_str(LOGIN_RSAN).unwrap();
+            let n = BigUint::from_str(&login_modulus()).unwrap();
             let e = BigUint::from_str(LOGIN_RSAE).unwrap();
             self.out.rsaenc(&n, &e);
 
@@ -1949,7 +1963,7 @@ impl Client {
         if response == 1 {
             thread::sleep(Duration::from_millis(2000));
             // old stream is dropped (closed); each attempt opens a fresh one
-            return self.login(username, password, reconnect);
+            return self.login_impl(username, password, reconnect, rsa_retries);
         }
 
         if response == 2 {
@@ -2036,6 +2050,21 @@ impl Client {
             self.scene_load_start_time = Instant::now();
             self.stream = Some(stream);
             return Ok(());
+        }
+
+        if response == 6 {
+            if rsa_retries > 0 {
+                // rs2b0t `loginKey.ts`: refresh the modulus from the web
+                // origin (`/loginkey`, else a `client.js` scrape) and retry
+                // the handshake once on a fresh connection.
+                let (scheme, port) =
+                    crate::login_rsa::login_key_origin(&self.config.host, self.http_port);
+                if let Some(n) = crate::login_rsa::fetch_login_modulus(&self.config.host, port, scheme)
+                {
+                    let _ = crate::login_rsa::set_login_modulus(&n);
+                }
+                return self.login_impl(username, password, reconnect, rsa_retries - 1);
+            }
         }
 
         let (mes1, mes2): (String, String) = match response {
