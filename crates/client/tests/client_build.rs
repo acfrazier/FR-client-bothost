@@ -220,43 +220,9 @@ fn load_locations_ground_decor_blocks_when_active() {
     // active+blockwalk GROUND_DECOR: collision.blockGround even with no model
     // (TS 803-805)
     assert_ne!(c.collision[0].flags[2][2] & CollisionFlag::WR_GRND, 0);
-    // model None but the ground decor is stored typecode-only so draw=false
-    // clients can read the loc
+    // no scenery was placed (model None; low-mem active gate passed)
     assert!(c.world.get_wall(0, 2, 2).is_none());
-    let gd = c.world.get_gd(0, 2, 2).expect("ground decor placed");
-    assert!(gd.model.is_none());
-}
-
-#[test]
-fn skip_loc_models_places_typecode_without_mesh() {
-    let mut c = client();
-    Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType {
-        model: Some(vec![60000]),
-        active: true,
-        blockwalk: true,
-        forcedecor: true,
-        ..LocType::default()
-    });
-    let mut build = ClientBuild::new();
-    build.skip_loc_models = true;
-    // same src as the ground-decor tests: loc 0 at (2,2), shape 22
-    let src = [0x01, 0x80, 0x83, 0x58, 0x00, 0x00];
-    build.load_locations(
-        &c.cache,
-        &mut c.world,
-        &mut c.collision,
-        &c.groundh,
-        &c.mapl,
-        &src,
-        0,
-        0,
-        0,
-    );
-    // skip_loc_models must still place the typecode and block walking; only
-    // the mesh decode is dropped (the loc's 60000 model is never requested)
-    assert_ne!(c.collision[0].flags[2][2] & CollisionFlag::WR_GRND, 0);
-    let gd = c.world.get_gd(0, 2, 2).expect("ground decor placed");
-    assert!(gd.model.is_none());
+    assert!(c.world.get_gd(0, 2, 2).is_none());
 }
 
 #[test]
@@ -333,11 +299,10 @@ fn load_locations_wall_blocks_collision_without_model() {
         0,
         0,
     );
-    // the wall is stored typecode-only even without a model so draw=false
-    // clients can read the loc; it still blocks walking (TS 924-928)
+    // setWall no-ops on a missing model, but the wall still blocks walking
+    // (TS 924-928)
     assert_ne!(c.collision[0].flags[2][2] & CollisionFlag::W_W, 0);
-    let wall = c.world.get_wall(0, 2, 2).expect("wall placed");
-    assert!(wall.model1.is_none());
+    assert!(c.world.get_wall(0, 2, 2).is_none());
 }
 
 #[test]
@@ -569,7 +534,7 @@ fn finish_build_hooks_share_light() {
     build.finish_build(&c.cache, &mut c.pix3d, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
 
     let wall = c.world.get_wall(0, 2, 2).expect("wall");
-    let SceneModel::Model(m) = wall.model1.as_deref().unwrap() else {
+    let SceneModel::Model(m) = wall.model1.as_ref().unwrap() else {
         panic!("wall model1 must be a Model")
     };
     assert!(m.point_normal.is_none(), "finishBuild must call share_light");

@@ -94,25 +94,6 @@ fn normals_model() -> Model {
 
 // --- World.shareLight (World.ts 589-796) ---
 
-/// draw=false clients place walls without meshes: the typecode must survive
-/// so `loc_typecode` (crates/api) can read it from a stored wall.
-#[test]
-fn set_wall_without_models_keeps_typecode() {
-    let max_level: i32 = 1;
-    let max_tile_x: i32 = 3;
-    let max_tile_z: i32 = 3;
-    let groundh = vec![
-        vec![vec![2000i32; max_tile_z as usize + 1]; max_tile_x as usize + 1];
-        max_level as usize
-    ];
-    let mut world = World::new(groundh, max_tile_z, max_level, max_tile_x);
-    world.set_wall(0, 1, 1, 0, 0, 0, None, None, 0x4000_0001, 0);
-    let w = world.get_wall(0, 1, 1).expect("wall placed");
-    assert_eq!(w.typecode, 0x4000_0001);
-    assert!(w.model1.is_none());
-    assert!(w.model2.is_none());
-}
-
 #[test]
 fn share_light_empty_world_is_noop() {
     // No base level filled: every tile is None, so the whole scan must be a
@@ -136,7 +117,7 @@ fn share_light_lights_wall_models_and_consumes_normals() {
     world.share_light(64, 768, -50, -10, -50);
 
     let wall = world.get_wall(0, 1, 1).expect("wall");
-    let SceneModel::Model(model) = wall.model1.as_deref().unwrap() else {
+    let SceneModel::Model(model) = wall.model1.as_ref().unwrap() else {
         panic!("wall model1 must be a Model")
     };
     assert!(model.point_normal.is_none(), "light() must consume point normals");
@@ -181,7 +162,7 @@ fn share_light_lights_ground_decor() {
     world.share_light(64, 768, -50, -10, -50);
 
     let gd = world.get_gd(0, 1, 1).expect("ground decor");
-    let SceneModel::Model(model) = gd.model.as_deref().unwrap() else {
+    let SceneModel::Model(model) = gd.model.as_ref().unwrap() else {
         panic!("gd model must be a Model")
     };
     assert!(model.point_normal.is_none());
@@ -372,7 +353,7 @@ fn share_light_does_not_delete_adjacent_south_walls() {
 
     for x in [1, 2] {
         let wall = world.get_wall(0, x, 2).expect("wall");
-        let SceneModel::Model(model) = wall.model1.as_deref().unwrap() else {
+        let SceneModel::Model(model) = wall.model1.as_ref().unwrap() else {
             panic!("model");
         };
         let killed = model

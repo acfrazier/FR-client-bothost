@@ -464,6 +464,10 @@ impl World {
         typecode: i32,
         typecode2: i32,
     ) {
+        if model.is_none() {
+            return;
+        }
+
         if self.squares[tile_level as usize][tile_x as usize][tile_z as usize].is_none() {
             self.squares[tile_level as usize][tile_x as usize][tile_z as usize] =
                 Some(Square::new(tile_level, tile_x, tile_z));
@@ -475,7 +479,7 @@ impl World {
                 y,
                 tile_x * 128 + 64,
                 tile_z * 128 + 64,
-                model.map(Box::new),
+                model,
                 typecode,
                 typecode2,
             ));
@@ -528,9 +532,9 @@ impl World {
                 y,
                 stx * 128 + 64,
                 stz * 128 + 64,
-                top_obj.map(Box::new),
-                middle_obj.map(Box::new),
-                bottom_obj.map(Box::new),
+                top_obj,
+                middle_obj,
+                bottom_obj,
                 typecode,
                 stack_offset,
             ));
@@ -557,6 +561,10 @@ impl World {
         typecode1: i32,
         typecode2: i32,
     ) {
+        if model1.is_none() && model2.is_none() {
+            return;
+        }
+
         for l in (0..=level).rev() {
             if self.squares[l as usize][tile_x as usize][tile_z as usize].is_none() {
                 self.squares[l as usize][tile_x as usize][tile_z as usize] =
@@ -572,8 +580,8 @@ impl World {
                 tile_z * 128 + 64,
                 angle1,
                 angle2,
-                model1.map(Box::new),
-                model2.map(Box::new),
+                model1,
+                model2,
                 typecode1,
                 typecode2,
             ));
@@ -601,6 +609,8 @@ impl World {
         angle: i32,
         wshape: i32,
     ) {
+        let Some(model) = model else { return };
+
         for l in (0..=level).rev() {
             if self.squares[l as usize][tile_x as usize][tile_z as usize].is_none() {
                 self.squares[l as usize][tile_x as usize][tile_z as usize] =
@@ -616,7 +626,7 @@ impl World {
                 tile_z * 128 + offset_z + 64,
                 wshape,
                 angle,
-                model.map(Box::new),
+                model,
                 typecode,
                 info,
             ));
@@ -975,10 +985,10 @@ impl World {
                     let Some(mut tile) = tile else { continue };
 
                     if let Some(wall) = tile.wall.as_mut() {
-                        if let Some(SceneModel::Model(model1)) = wall.model1.as_deref_mut() {
+                        if let Some(SceneModel::Model(model1)) = wall.model1.as_mut() {
                             if model1.point_normal.is_some() {
                                 self.share_light_loc(level, tile_x, tile_z, 1, 1, model1);
-                                if let Some(SceneModel::Model(model2)) = wall.model2.as_deref_mut() {
+                                if let Some(SceneModel::Model(model2)) = wall.model2.as_mut() {
                                     if model2.point_normal.is_some() {
                                         self.share_light_loc(level, tile_x, tile_z, 1, 1, model2);
                                         self.model_share_light(model1, model2, 0, 0, 0, false);
@@ -1011,7 +1021,7 @@ impl World {
                     }
 
                     if let Some(gd) = tile.ground_decor.as_mut() {
-                        if let Some(SceneModel::Model(model)) = gd.model.as_deref_mut() {
+                        if let Some(SceneModel::Model(model)) = gd.model.as_mut() {
                             if model.point_normal.is_some() {
                                 self.share_light_gd(level, tile_x, tile_z, model);
                                 model.light(ambient, attenuation, light_src_x, light_src_y, light_src_z);
@@ -1037,7 +1047,7 @@ impl World {
             if let Some(tile) = tile.as_mut() {
                 let mut gd = tile.ground_decor.take();
                 if let Some(SceneModel::Model(model_b)) =
-                    gd.as_mut().and_then(|g| g.model.as_deref_mut())
+                    gd.as_mut().and_then(|g| g.model.as_mut())
                 {
                     if model_b.point_normal.is_some() {
                         self.model_share_light(model, model_b, 128, 0, 0, true);
@@ -1053,7 +1063,7 @@ impl World {
             if let Some(tile) = tile.as_mut() {
                 let mut gd = tile.ground_decor.take();
                 if let Some(SceneModel::Model(model_b)) =
-                    gd.as_mut().and_then(|g| g.model.as_deref_mut())
+                    gd.as_mut().and_then(|g| g.model.as_mut())
                 {
                     if model_b.point_normal.is_some() {
                         self.model_share_light(model, model_b, 0, 0, 128, true);
@@ -1069,7 +1079,7 @@ impl World {
             if let Some(tile) = tile.as_mut() {
                 let mut gd = tile.ground_decor.take();
                 if let Some(SceneModel::Model(model_b)) =
-                    gd.as_mut().and_then(|g| g.model.as_deref_mut())
+                    gd.as_mut().and_then(|g| g.model.as_mut())
                 {
                     if model_b.point_normal.is_some() {
                         self.model_share_light(model, model_b, 128, 0, 128, true);
@@ -1085,7 +1095,7 @@ impl World {
             if let Some(tile) = tile.as_mut() {
                 let mut gd = tile.ground_decor.take();
                 if let Some(SceneModel::Model(model_b)) =
-                    gd.as_mut().and_then(|g| g.model.as_deref_mut())
+                    gd.as_mut().and_then(|g| g.model.as_mut())
                 {
                     if model_b.point_normal.is_some() {
                         self.model_share_light(model, model_b, 128, 0, -128, true);
@@ -1182,7 +1192,7 @@ impl World {
                     let Some(mut candidate) = candidate else { continue };
 
                     if let Some(wall) = candidate.wall.as_mut() {
-                        if let Some(SceneModel::Model(model_b)) = wall.model1.as_deref_mut() {
+                        if let Some(SceneModel::Model(model_b)) = wall.model1.as_mut() {
                             if model_b.point_normal.is_some() {
                                 self.model_share_light(
                                     model_a, model_b, offset_x, offset_y, offset_z,
@@ -1190,7 +1200,7 @@ impl World {
                                 );
                             }
                         }
-                        if let Some(SceneModel::Model(model_b)) = wall.model2.as_deref_mut() {
+                        if let Some(SceneModel::Model(model_b)) = wall.model2.as_mut() {
                             if model_b.point_normal.is_some() {
                                 self.model_share_light(
                                     model_a, model_b, offset_x, offset_y, offset_z,
@@ -2386,7 +2396,7 @@ impl World {
                             d.x - cx,
                             d.y - cy,
                             d.z - cz,
-                            d.model.as_deref().map(SceneModel::min_y).unwrap_or(0),
+                            d.model.min_y(),
                         )
                     });
                 if let Some((wshape, angle, typecode, decor_x, decor_y, decor_z, min_y)) = decor_data {
@@ -2394,9 +2404,7 @@ impl World {
                         if (wshape & front_wall_types) != 0 {
                             let tile = tile_at_mut(&mut self.squares, level, tile_x, tile_z);
                             if let Some(decor) = tile.and_then(|t| t.decor.as_mut()) {
-                                if let Some(m) = decor.model.as_mut() {
-                                    m.world_render(cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch, sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode);
-                                }
+                                decor.model.world_render(cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch, sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode);
                             }
                         } else if (wshape & 0x300) != 0 {
                             let nearest_x = if angle == LocAngle::NORTH || angle == LocAngle::EAST {
@@ -2416,9 +2424,7 @@ impl World {
                                 let draw_z = decor_z + DECORZOF.get(angle as usize).copied().unwrap_or(0);
                                 let tile = tile_at_mut(&mut self.squares, level, tile_x, tile_z);
                                 if let Some(decor) = tile.and_then(|t| t.decor.as_mut()) {
-                                    if let Some(m) = decor.model.as_mut() {
-                                    m.world_render(cache, loop_cycle, pix, surface, angle * 512 + 256, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
-                                }
+                                    decor.model.world_render(cache, loop_cycle, pix, surface, angle * 512 + 256, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
                                 }
                             }
 
@@ -2427,9 +2433,7 @@ impl World {
                                 let draw_z = decor_z + DECORZOF2.get(angle as usize).copied().unwrap_or(0);
                                 let tile = tile_at_mut(&mut self.squares, level, tile_x, tile_z);
                                 if let Some(decor) = tile.and_then(|t| t.decor.as_mut()) {
-                                    if let Some(m) = decor.model.as_mut() {
-                                    m.world_render(cache, loop_cycle, pix, surface, (angle * 512 + 1280) & 0x7ff, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
-                                }
+                                    decor.model.world_render(cache, loop_cycle, pix, surface, (angle * 512 + 1280) & 0x7ff, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
                                 }
                             }
                         }
@@ -2835,7 +2839,7 @@ impl World {
                             d.x - cx,
                             d.y - cy,
                             d.z - cz,
-                            d.model.as_deref().map(SceneModel::min_y).unwrap_or(0),
+                            d.model.min_y(),
                         )
                     });
                 if let Some((wshape, angle, typecode, decor_x, decor_y, decor_z, min_y)) = decor_data {
@@ -2843,9 +2847,7 @@ impl World {
                         if (wshape & back_wall_types) != 0 {
                             let tile = tile_at_mut(&mut self.squares, level, tile_x, tile_z);
                             if let Some(decor) = tile.and_then(|t| t.decor.as_mut()) {
-                                if let Some(m) = decor.model.as_mut() {
-                                    m.world_render(cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch, sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode);
-                                }
+                                decor.model.world_render(cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch, sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode);
                             }
                         } else if (wshape & 0x300) != 0 {
                             let nearest_x = if angle == LocAngle::NORTH || angle == LocAngle::EAST {
@@ -2865,9 +2867,7 @@ impl World {
                                 let draw_z = decor_z + DECORZOF.get(angle as usize).copied().unwrap_or(0);
                                 let tile = tile_at_mut(&mut self.squares, level, tile_x, tile_z);
                                 if let Some(decor) = tile.and_then(|t| t.decor.as_mut()) {
-                                    if let Some(m) = decor.model.as_mut() {
-                                    m.world_render(cache, loop_cycle, pix, surface, angle * 512 + 256, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
-                                }
+                                    decor.model.world_render(cache, loop_cycle, pix, surface, angle * 512 + 256, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
                                 }
                             }
 
@@ -2876,9 +2876,7 @@ impl World {
                                 let draw_z = decor_z + DECORZOF2.get(angle as usize).copied().unwrap_or(0);
                                 let tile = tile_at_mut(&mut self.squares, level, tile_x, tile_z);
                                 if let Some(decor) = tile.and_then(|t| t.decor.as_mut()) {
-                                    if let Some(m) = decor.model.as_mut() {
-                                    m.world_render(cache, loop_cycle, pix, surface, (angle * 512 + 1280) & 0x7ff, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
-                                }
+                                    decor.model.world_render(cache, loop_cycle, pix, surface, (angle * 512 + 1280) & 0x7ff, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
                                 }
                             }
                         }

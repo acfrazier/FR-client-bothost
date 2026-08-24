@@ -7385,20 +7385,20 @@ impl Client {
                             if let Some(wall) = self.world.get_wall_mut(self.minusedlevel, x, z) {
                                 let loc_id = (wall.typecode >> 14) & 0x7fff;
                                 if shape == 2 {
-                                    wall.model1 = Some(Box::new(SceneModel::LocAnim(ClientLocAnim::new(
+                                    wall.model1 = Some(SceneModel::LocAnim(ClientLocAnim::new(
                                         &self.cache, loc_id, 2, rotate + 4, height_sw, height_se,
                                         height_ne, height_nw, seq as usize, false, loop_cycle,
-                                    ))));
-                                    wall.model2 = Some(Box::new(SceneModel::LocAnim(ClientLocAnim::new(
+                                    )));
+                                    wall.model2 = Some(SceneModel::LocAnim(ClientLocAnim::new(
                                         &self.cache, loc_id, 2, (rotate + 1) & 0x3, height_sw,
                                         height_se, height_ne, height_nw, seq as usize, false,
                                         loop_cycle,
-                                    ))));
+                                    )));
                                 } else {
-                                    wall.model1 = Some(Box::new(SceneModel::LocAnim(ClientLocAnim::new(
+                                    wall.model1 = Some(SceneModel::LocAnim(ClientLocAnim::new(
                                         &self.cache, loc_id, shape, rotate, height_sw, height_se,
                                         height_ne, height_nw, seq as usize, false, loop_cycle,
-                                    ))));
+                                    )));
                                 }
                             }
                         }
@@ -7410,10 +7410,10 @@ impl Client {
                             {
                                 let loc_id = (decor.typecode >> 14) & 0x7fff;
                                 // [sic] TS passes heightNE in the SE slot.
-                                decor.model = Some(Box::new(SceneModel::LocAnim(ClientLocAnim::new(
+                                decor.model = SceneModel::LocAnim(ClientLocAnim::new(
                                     &self.cache, loc_id, 4, 0, height_sw, height_ne, height_ne,
                                     height_nw, seq as usize, false, loop_cycle,
-                                ))));
+                                ));
                             }
                         }
                         LocLayer::GROUND => {
@@ -7430,11 +7430,11 @@ impl Client {
                         LocLayer::GROUND_DECOR => {
                             if let Some(decor) = self.world.get_gd_mut(self.minusedlevel, x, z) {
                                 let loc_id = (decor.typecode >> 14) & 0x7fff;
-                                decor.model = Some(Box::new(SceneModel::LocAnim(ClientLocAnim::new(
+                                decor.model = Some(SceneModel::LocAnim(ClientLocAnim::new(
                                     &self.cache, loc_id, LocShape::GROUND_DECOR, rotate, height_sw,
                                     height_se, height_ne, height_nw, seq as usize, false,
                                     loop_cycle,
-                                ))));
+                                )));
                             }
                         }
                         _ => {}
@@ -9787,7 +9787,6 @@ impl Client {
                 angle,
                 tile_level,
                 self.loop_cycle,
-                !self.draw,
             );
         }
     }

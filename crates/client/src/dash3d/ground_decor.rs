@@ -5,7 +5,7 @@ pub struct GroundDecor {
     pub y: i32,
     pub x: i32,
     pub z: i32,
-    pub model: Option<Box<SceneModel>>,
+    pub model: Option<SceneModel>,
     pub typecode: i32,
     pub typecode2: i32,
 }
@@ -15,7 +15,7 @@ impl GroundDecor {
         y: i32,
         x: i32,
         z: i32,
-        model: Option<Box<SceneModel>>,
+        model: Option<SceneModel>,
         typecode: i32,
         typecode2: i32,
     ) -> Self {

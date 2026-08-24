@@ -7,8 +7,8 @@ pub struct Wall {
     pub z: i32,
     pub angle1: i32,
     pub angle2: i32,
-    pub model1: Option<Box<SceneModel>>,
-    pub model2: Option<Box<SceneModel>>,
+    pub model1: Option<SceneModel>,
+    pub model2: Option<SceneModel>,
     pub typecode: i32,
     pub typecode2: i32,
 }
@@ -20,8 +20,8 @@ impl Wall {
         z: i32,
         angle1: i32,
         angle2: i32,
-        model1: Option<Box<SceneModel>>,
-        model2: Option<Box<SceneModel>>,
+        model1: Option<SceneModel>,
+        model2: Option<SceneModel>,
         typecode: i32,
         typecode2: i32,
     ) -> Self {
