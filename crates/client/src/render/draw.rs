@@ -1306,21 +1306,22 @@ impl Renderer {
                 }
 
                 player.y = y;
-                client.world.add_dynamic(
+                if let Some(index) = client.world.add_dynamic(
                     client.minusedlevel,
                     player.x,
                     player.y,
                     player.z,
-                    model,
                     id,
                     player.yaw,
                     60,
                     player.needs_forward_draw_padding,
-                );
+                ) {
+                    self.world.set_sprite_model(&client.world, index, model);
+                }
             } else {
                 player.low_memory = false;
                 player.y = y;
-                client.world.add_dynamic2(
+                if let Some(index) = client.world.add_dynamic2(
                     client.minusedlevel,
                     player.x,
                     player.y,
@@ -1329,10 +1330,11 @@ impl Renderer {
                     player.min_tile_z,
                     player.max_tile_x,
                     player.max_tile_z,
-                    model,
                     id,
                     player.yaw,
-                );
+                ) {
+                    self.world.set_sprite_model(&client.world, index, model);
+                }
             }
         }
     }
@@ -1371,17 +1373,19 @@ impl Renderer {
             // Same clone-vs-live split as add_players: stamp the live NPC's
             // height so `entity_overlays` sees the Java value.
             npc.get_temp_model(&client.cache, client.loop_cycle);
-            client.world.add_dynamic(
+            let model = Some(SceneModel::Npc(npc.clone()));
+            if let Some(index) = client.world.add_dynamic(
                 client.minusedlevel,
                 npc.x,
                 y,
                 npc.z,
-                Some(SceneModel::Npc(npc.clone())),
                 typecode,
                 npc.yaw,
                 (npc.size - 1) * 64 + 60,
                 npc.needs_forward_draw_padding,
-            );
+            ) {
+                self.world.set_sprite_model(&client.world, index, model);
+            }
         }
     }
 
@@ -1431,17 +1435,19 @@ impl Renderer {
                 // TS 4382-4383: `proj.x | 0` (Rust `as i32`), typecode -1,
                 // padding 60, no forward padding.
                 let (x, y, z, yaw) = (proj.x as i32, proj.y as i32, proj.z as i32, proj.yaw);
-                client.world.add_dynamic(
+                let model = Some(SceneModel::Proj(proj.clone()));
+                if let Some(index) = client.world.add_dynamic(
                     client.minusedlevel,
                     x,
                     y,
                     z,
-                    Some(SceneModel::Proj(proj.clone())),
                     -1,
                     yaw,
                     60,
                     false,
-                );
+                ) {
+                    self.world.set_sprite_model(&client.world, index, model);
+                }
             }
             node = client.projectiles.next();
         }
@@ -1491,17 +1497,19 @@ impl Renderer {
                     client.spotanims.unlink_last();
                 } else {
                     let (level, x, y, z) = (spot.level, spot.x, spot.y, spot.z);
-                    client.world.add_dynamic(
+                    let model = Some(SceneModel::SpotAnim(spot.clone()));
+                    if let Some(index) = client.world.add_dynamic(
                         level,
                         x,
                         y,
                         z,
-                        Some(SceneModel::SpotAnim(spot.clone())),
                         -1,
                         0,
                         60,
                         false,
-                    );
+                    ) {
+                        self.world.set_sprite_model(&client.world, index, model);
+                    }
                 }
             }
             node = client.spotanims.next();

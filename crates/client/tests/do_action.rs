@@ -3,7 +3,6 @@
 use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer, MiniMenuAction};
 use client::config::if_type::{ButtonType, IfType};
 use client::config::ObjType;
-use client::dash3d::{Model, SceneModel};
 use client::io::{ClientProt, Isaac};
 
 fn client() -> Client {
@@ -224,7 +223,7 @@ fn do_action_op_loc_encodes_loc_id_not_shape() {
     let x = 10i32;
     let z = 12i32;
     let typecode = (2 << 29) | ((type_id & 0x7fff) << 14) | ((z & 0x7f) << 7) | (x & 0x7f);
-    c.world.add_scenery(0, x, z, 0, Some(SceneModel::Model(Model::default())), typecode, 0, 1, 1, 0);
+    c.world.add_scenery(0, x, z, 0, typecode, 0, 1, 1, 0, 0, 0, 0, 0);
     assert!(c.world.type_code2(0, x, z, typecode) >= 0);
     c.menu_action[0] = MiniMenuAction::OP_LOC1;
     c.menu_param_a[0] = typecode;

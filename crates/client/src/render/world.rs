@@ -28,7 +28,10 @@ use crate::config::Cache;
 use crate::core::world::{
     ground_h, tile_at, tile_at_mut, World, MAX_ACTIVE_OCCLUDERS, MAX_OCCLUDERS, OCCLUDER_LEVELS,
 };
-use crate::dash3d::{wrapping_cross, Ground, LocAngle, QuickGround};
+use crate::dash3d::{
+    wrapping_cross, ClientLocAnim, ClientObj, Ground, LocAngle, LocShape, Model, QuickGround,
+    SceneModel,
+};
 use crate::graphics::{Pix2D, Pix3D, Pix3DDraw};
 
 const MAX_SPRITE_BUFFER: usize = 100;
@@ -164,6 +167,50 @@ pub struct RenderWorld {
     ground_draw_texture_vertex_x: [i32; 6],
     ground_draw_texture_vertex_y: [i32; 6],
     ground_draw_texture_vertex_z: [i32; 6],
+    /// Task 3b lazy model cache. The sim world keeps only typecodes and
+    /// placement; the meshes/sprites are decoded from the config `Cache`
+    /// on first draw, keyed by tile (walls/decor/ground-decor/objects) or
+    /// by sprite-arena index, and re-decoded when the tile's `model_stamp`
+    /// (or a scene sprite's `model_stamp`) changes. Cleared whenever the
+    /// sim world's `build_generation` changes, so a headless client that
+    /// never draws never decodes a model.
+    tile_models: Vec<Option<Box<TileModels>>>,
+    /// The same cache for `Square.linked_square` walls (pushed-down
+    /// level-0 content); never mutated after the build, so each slot
+    /// resolves once.
+    linked_models: Vec<Option<Box<TileModels>>>,
+    /// Parallel to the sim `World.sprites` arena: each sprite's resolved
+    /// `SceneModel`. Scene sprites decode from their typecode; dynamic
+    /// sprites (players/npcs/projectiles/spot-anims) get their model
+    /// attached by the entity passes in `render/draw.rs`.
+    sprite_models: Vec<Option<SceneModel>>,
+    /// Parallel to the sim arena: the `Sprite.model_stamp` each
+    /// `sprite_models` entry was resolved for (`i32::MIN` = unresolved).
+    sprite_stamps: Vec<i32>,
+    /// TS `World.shareTic`/`shareMap`/`shareMap2` (World.ts 145-147):
+    /// the share-light merge scratch (moved here with the pass).
+    share_tic: i32,
+    share_map: Vec<i32>,
+    share_map2: Vec<i32>,
+    /// The sim `World.build_generation` the caches were last cleared for.
+    last_build_generation: u64,
+}
+
+/// The lazily-resolved per-tile models (Task 3b), held by `RenderWorld`
+/// keyed by the sim tile grid coordinates. `model_stamp` records the tile
+/// `Square.model_stamp` the fields were resolved for (`i32::MIN` = never
+/// resolved), so LOC_ANIM / loc-change / `show_object` mutations on the
+/// sim side invalidate the cache through the tile stamp.
+#[derive(Default)]
+struct TileModels {
+    model_stamp: i32,
+    wall_model1: Option<SceneModel>,
+    wall_model2: Option<SceneModel>,
+    decor_model: Option<SceneModel>,
+    gd_model: Option<SceneModel>,
+    obj_bottom: Option<SceneModel>,
+    obj_middle: Option<SceneModel>,
+    obj_top: Option<SceneModel>,
 }
 
 impl RenderWorld {
@@ -203,6 +250,14 @@ impl RenderWorld {
             ground_draw_texture_vertex_x: [0; 6],
             ground_draw_texture_vertex_y: [0; 6],
             ground_draw_texture_vertex_z: [0; 6],
+            tile_models: Vec::new(),
+            linked_models: Vec::new(),
+            sprite_models: Vec::new(),
+            sprite_stamps: Vec::new(),
+            share_tic: 0,
+            share_map: Vec::new(),
+            share_map2: Vec::new(),
+            last_build_generation: 0,
         }
     }
 
@@ -419,11 +474,1091 @@ impl RenderWorld {
             .collect();
         for index in dynamic {
             world.del_sprite(index);
+            if let Some(slot) = self.sprite_models.get_mut(index) {
+                *slot = None;
+            }
         }
         for slot in world.dynamic_sprites.iter_mut() {
             *slot = None;
         }
         world.dynamic_count = 0;
+    }
+
+    // --- Task 3b: lazy per-tile model resolution ---
+    //
+    // The sim world stores only typecodes, placement and the small decode
+    // ints; every mesh/sprite is decoded here from the config `Cache` on
+    // first draw and cached for the life of the build. `resolve_*` mirrors
+    // the `ClientBuild.addLoc` model branches exactly (shape/angle decode
+    // mapping, the animated-loc `ClientLocAnim` construction and the
+    // packet-time heights the sim recorded). The draw tests inject models
+    // with `set_wall_model`/`set_sprite_model`; those slots carry the
+    // tile's current `model_stamp`, so resolution skips them.
+
+    /// Flat index into `tile_models`/`linked_models` for a tile.
+    fn tile_index(&self, world: &World, level: i32, x: i32, z: i32) -> usize {
+        ((level * world.max_tile_x + x) * world.max_tile_z + z) as usize
+    }
+
+    fn grow_tile_models(&mut self, index: usize) {
+        while self.tile_models.len() <= index {
+            self.tile_models.push(None);
+        }
+    }
+
+    fn grow_linked_models(&mut self, index: usize) {
+        while self.linked_models.len() <= index {
+            self.linked_models.push(None);
+        }
+    }
+
+    fn grow_sprite_arrays(&mut self, index: usize) {
+        while self.sprite_models.len() <= index {
+            self.sprite_models.push(None);
+        }
+        while self.sprite_stamps.len() <= index {
+            self.sprite_stamps.push(i32::MIN);
+        }
+    }
+
+    fn slot(&mut self, world: &World, level: i32, x: i32, z: i32) -> &mut TileModels {
+        let index = self.tile_index(world, level, x, z);
+        self.grow_tile_models(index);
+        self.tile_models[index].get_or_insert_with(Default::default)
+    }
+
+    fn loc_at(cache: &Cache, id: i32) -> Option<&crate::config::LocType> {
+        if id < 0 || id as usize >= cache.locs.len() {
+            return None;
+        }
+        Some(&cache.locs[id as usize])
+    }
+
+    /// Mirror of the `addLoc` model branches for one wall/decor/scenery
+    /// slot: the base model, or a `ClientLocAnim` when the loc is
+    /// animated. `loc == None` (id outside the cache) decodes nothing.
+    #[allow(clippy::too_many_arguments)]
+    fn decode_loc_model(
+        loc_id: i32,
+        loc: Option<&crate::config::LocType>,
+        cache: &Cache,
+        shape: i32,
+        angle: i32,
+        h_sw: i32,
+        h_se: i32,
+        h_ne: i32,
+        h_nw: i32,
+        loop_cycle: i32,
+    ) -> Option<SceneModel> {
+        let loc = loc?;
+        if loc.anim == -1 {
+            loc.get_model(cache, shape, angle, h_sw, h_se, h_ne, h_nw, -1)
+                .map(SceneModel::Model)
+        } else {
+            Some(SceneModel::LocAnim(ClientLocAnim::new(
+                cache, loc_id, shape, angle, h_sw, h_se, h_ne, h_nw, loc.anim as usize, true,
+                loop_cycle,
+            )))
+        }
+    }
+
+    /// Resolve (and cache) every model the sim tile's typecodes decode to.
+    /// The tests drive this to inspect the lazily-materialised models.
+    pub fn resolve_tile(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        level: i32,
+        x: i32,
+        z: i32,
+    ) {
+        self.resolve_wall_models(world, cache, loop_cycle, level, x, z);
+        self.resolve_decor_model(world, cache, loop_cycle, level, x, z);
+        self.resolve_gd_model(world, cache, loop_cycle, level, x, z);
+        self.resolve_objs(world, level, x, z);
+        self.slot(world, level, x, z).model_stamp = world.tile_model_stamp(level, x, z);
+    }
+
+    /// Re-resolve the tile's cached models only when its sim-side
+    /// `model_stamp` changed since the slot was filled.
+    fn ensure_tile_resolved(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        level: i32,
+        x: i32,
+        z: i32,
+    ) {
+        let stamp = world.tile_model_stamp(level, x, z);
+        let stale = self.slot(world, level, x, z).model_stamp != stamp;
+        if stale {
+            self.resolve_tile(world, cache, loop_cycle, level, x, z);
+        }
+    }
+
+    fn resolve_wall_models(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        level: i32,
+        x: i32,
+        z: i32,
+    ) {
+        let Some(wall) = tile_at(&world.squares, level, x, z).and_then(|t| t.wall.as_ref()) else {
+            return;
+        };
+        let loc_id = (wall.typecode >> 14) & 0x7fff;
+        let info = wall.typecode2 & 0xff;
+        let angle = info >> 6;
+        let shape = info & 0x1f;
+        let (h_sw, h_se, h_ne, h_nw) = (wall.h_sw, wall.h_se, wall.h_ne, wall.h_nw);
+
+        let (model1, model2) = if wall.anim_seq != -1 {
+            // LOC_ANIM override: shape-2 walls animate both models with the
+            // packet rotate, everything else replaces model1.
+            if shape == LocShape::WALL_L {
+                (
+                    Some(SceneModel::LocAnim(ClientLocAnim::new(
+                        cache, loc_id, 2, wall.anim_angle + 4, h_sw, h_se, h_ne, h_nw,
+                        wall.anim_seq as usize, false, loop_cycle,
+                    ))),
+                    Some(SceneModel::LocAnim(ClientLocAnim::new(
+                        cache, loc_id, 2, (wall.anim_angle + 1) & 0x3, h_sw, h_se, h_ne, h_nw,
+                        wall.anim_seq as usize, false, loop_cycle,
+                    ))),
+                )
+            } else {
+                (
+                    Some(SceneModel::LocAnim(ClientLocAnim::new(
+                        cache, loc_id, wall.anim_shape, wall.anim_angle, h_sw, h_se, h_ne, h_nw,
+                        wall.anim_seq as usize, false, loop_cycle,
+                    ))),
+                    None,
+                )
+            }
+        } else {
+            let loc = Self::loc_at(cache, loc_id);
+            match shape {
+                LocShape::WALL_L => {
+                    let offset = (angle + 1) & 0x3;
+                    (
+                        Self::decode_loc_model(
+                            loc_id, loc, cache, 2, angle + 4, h_sw, h_se, h_ne, h_nw, loop_cycle,
+                        ),
+                        Self::decode_loc_model(
+                            loc_id, loc, cache, 2, offset, h_sw, h_se, h_ne, h_nw, loop_cycle,
+                        ),
+                    )
+                }
+                LocShape::WALL_STRAIGHT
+                | LocShape::WALL_DIAGONAL_CORNER
+                | LocShape::WALL_SQUARE_CORNER => (
+                    Self::decode_loc_model(
+                        loc_id, loc, cache, shape, angle, h_sw, h_se, h_ne, h_nw, loop_cycle,
+                    ),
+                    None,
+                ),
+                _ => (None, None),
+            }
+        };
+
+        let slot = self.slot(world, level, x, z);
+        slot.wall_model1 = model1;
+        slot.wall_model2 = model2;
+    }
+
+    fn resolve_decor_model(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        level: i32,
+        x: i32,
+        z: i32,
+    ) {
+        let Some(decor) = tile_at(&world.squares, level, x, z).and_then(|t| t.decor.as_ref())
+        else {
+            return;
+        };
+        let loc_id = (decor.typecode >> 14) & 0x7fff;
+        let model = if decor.anim_seq != -1 {
+            // LOC_ANIM: shape 4, angle 0; the [sic] NE-in-SE height
+            // transpose was applied when the sim recorded the heights.
+            Some(SceneModel::LocAnim(ClientLocAnim::new(
+                cache,
+                loc_id,
+                4,
+                0,
+                decor.h_sw,
+                decor.h_se,
+                decor.h_ne,
+                decor.h_nw,
+                decor.anim_seq as usize,
+                false,
+                loop_cycle,
+            )))
+        } else {
+            let loc = Self::loc_at(cache, loc_id);
+            Self::decode_loc_model(
+                loc_id, loc, cache, 4, 0, decor.h_sw, decor.h_se, decor.h_ne, decor.h_nw,
+                loop_cycle,
+            )
+        };
+        self.slot(world, level, x, z).decor_model = model;
+    }
+
+    fn resolve_gd_model(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        level: i32,
+        x: i32,
+        z: i32,
+    ) {
+        let Some(gd) = tile_at(&world.squares, level, x, z).and_then(|t| t.ground_decor.as_ref())
+        else {
+            return;
+        };
+        let loc_id = (gd.typecode >> 14) & 0x7fff;
+        let info = gd.typecode2 & 0xff;
+        let angle = info >> 6;
+        let model = if gd.anim_seq != -1 {
+            Some(SceneModel::LocAnim(ClientLocAnim::new(
+                cache, loc_id, LocShape::GROUND_DECOR, gd.anim_angle, gd.h_sw, gd.h_se, gd.h_ne,
+                gd.h_nw, gd.anim_seq as usize, false, loop_cycle,
+            )))
+        } else if let Some(loc) = Self::loc_at(cache, loc_id) {
+            if loc.anim == -1 {
+                loc.get_model(
+                    cache,
+                    LocShape::GROUND_DECOR,
+                    angle,
+                    gd.h_sw,
+                    gd.h_se,
+                    gd.h_ne,
+                    gd.h_nw,
+                    -1,
+                )
+                .map(SceneModel::Model)
+            } else {
+                // [sic] `addLoc` passes the shape as the `ClientLocAnim`
+                // angle for animated ground decor.
+                Some(SceneModel::LocAnim(ClientLocAnim::new(
+                    cache, loc_id, LocShape::GROUND_DECOR, LocShape::GROUND_DECOR, gd.h_sw, gd.h_se,
+                    gd.h_ne, gd.h_nw, loc.anim as usize, true, loop_cycle,
+                )))
+            }
+        } else {
+            None
+        };
+        self.slot(world, level, x, z).gd_model = model;
+    }
+
+    /// Materialise the ground-object stack's `ClientObj` models from the
+    /// `(id, count)` descriptors `showObject` stored on the sim tile.
+    fn resolve_objs(&mut self, world: &World, level: i32, x: i32, z: i32) {
+        let Some(go) = tile_at(&world.squares, level, x, z).and_then(|t| t.ground_object.as_ref())
+        else {
+            return;
+        };
+        let bottom = go.bottom.map(|(id, count)| SceneModel::Obj(ClientObj::new(id, count)));
+        let middle = go.middle.map(|(id, count)| SceneModel::Obj(ClientObj::new(id, count)));
+        let top = go.top.map(|(id, count)| SceneModel::Obj(ClientObj::new(id, count)));
+        let slot = self.slot(world, level, x, z);
+        slot.obj_bottom = bottom;
+        slot.obj_middle = middle;
+        slot.obj_top = top;
+    }
+
+    fn resolve_sprite(&mut self, world: &World, cache: &Cache, loop_cycle: i32, index: usize) {
+        // Only scene sprites (bit 30) decode from a loc typecode; dynamic
+        // sprites (players/npcs/projectiles/spot-anims) get their models
+        // attached by the entity passes in `render/draw.rs`.
+        let Some(sprite) = world.sprites.get(index).and_then(|s| s.as_ref()) else {
+            return;
+        };
+        if (sprite.typecode >> 29) & 0x3 != 2 {
+            return;
+        }
+        let loc_id = (sprite.typecode >> 14) & 0x7fff;
+        let info = sprite.typecode2 & 0xff;
+        let mut shape = info & 0x1f;
+        if shape == LocShape::CENTREPIECE_DIAGONAL {
+            shape = LocShape::CENTREPIECE_STRAIGHT;
+        }
+        let angle = info >> 6;
+        let model = if sprite.anim_seq != -1 {
+            Some(SceneModel::LocAnim(ClientLocAnim::new(
+                cache, loc_id, sprite.anim_shape, sprite.anim_angle, sprite.h_sw, sprite.h_se,
+                sprite.h_ne, sprite.h_nw, sprite.anim_seq as usize, false, loop_cycle,
+            )))
+        } else {
+            let loc = Self::loc_at(cache, loc_id);
+            Self::decode_loc_model(
+                loc_id,
+                loc,
+                cache,
+                shape,
+                angle,
+                sprite.h_sw,
+                sprite.h_se,
+                sprite.h_ne,
+                sprite.h_nw,
+                loop_cycle,
+            )
+        };
+        self.grow_sprite_arrays(index);
+        self.sprite_models[index] = model;
+        if self.sprite_stamps.len() <= index {
+            self.sprite_stamps.resize(index + 1, i32::MIN);
+        }
+        self.sprite_stamps[index] = sprite.model_stamp;
+    }
+
+    fn resolve_linked_wall(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        level: i32,
+        x: i32,
+        z: i32,
+    ) {
+        let Some(wall) = tile_at(&world.squares, level, x, z)
+            .and_then(|t| t.linked_square.as_ref())
+            .and_then(|ls| ls.wall.as_ref())
+        else {
+            return;
+        };
+        let loc_id = (wall.typecode >> 14) & 0x7fff;
+        let info = wall.typecode2 & 0xff;
+        let angle = info >> 6;
+        let shape = info & 0x1f;
+        let (h_sw, h_se, h_ne, h_nw) = (wall.h_sw, wall.h_se, wall.h_ne, wall.h_nw);
+        let loc = Self::loc_at(cache, loc_id);
+        let (model1, model2) = match shape {
+            LocShape::WALL_L => {
+                let offset = (angle + 1) & 0x3;
+                (
+                    Self::decode_loc_model(
+                        loc_id, loc, cache, 2, angle + 4, h_sw, h_se, h_ne, h_nw, loop_cycle,
+                    ),
+                    Self::decode_loc_model(
+                        loc_id, loc, cache, 2, offset, h_sw, h_se, h_ne, h_nw, loop_cycle,
+                    ),
+                )
+            }
+            LocShape::WALL_STRAIGHT
+            | LocShape::WALL_DIAGONAL_CORNER
+            | LocShape::WALL_SQUARE_CORNER => (
+                Self::decode_loc_model(
+                    loc_id, loc, cache, shape, angle, h_sw, h_se, h_ne, h_nw, loop_cycle,
+                ),
+                None,
+            ),
+            _ => (None, None),
+        };
+        let index = self.tile_index(world, level, x, z);
+        self.grow_linked_models(index);
+        let slot = self.linked_models[index].get_or_insert_with(Default::default);
+        slot.model_stamp = 0;
+        slot.wall_model1 = model1;
+        slot.wall_model2 = model2;
+    }
+
+    /// The resolved wall models of a tile (resolving from the sim typecodes
+    /// on first draw, re-resolving when the tile's model stamp changes).
+    fn wall_models_mut(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        level: i32,
+        x: i32,
+        z: i32,
+    ) -> (&mut Option<SceneModel>, &mut Option<SceneModel>) {
+        self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
+        let slot = self.slot(world, level, x, z);
+        (&mut slot.wall_model1, &mut slot.wall_model2)
+    }
+
+    fn decor_model_mut(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        level: i32,
+        x: i32,
+        z: i32,
+    ) -> &mut Option<SceneModel> {
+        self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
+        &mut self.slot(world, level, x, z).decor_model
+    }
+
+    fn gd_model_mut(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        level: i32,
+        x: i32,
+        z: i32,
+    ) -> &mut Option<SceneModel> {
+        self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
+        &mut self.slot(world, level, x, z).gd_model
+    }
+
+    fn obj_models_mut(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        level: i32,
+        x: i32,
+        z: i32,
+    ) -> (&mut Option<SceneModel>, &mut Option<SceneModel>, &mut Option<SceneModel>) {
+        self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
+        let slot = self.slot(world, level, x, z);
+        (&mut slot.obj_bottom, &mut slot.obj_middle, &mut slot.obj_top)
+    }
+
+    /// The linked square's wall models (resolved once — a linked square is
+    /// never mutated after `push_down`).
+    fn linked_wall_models_mut(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        level: i32,
+        x: i32,
+        z: i32,
+    ) -> (&mut Option<SceneModel>, &mut Option<SceneModel>) {
+        let index = self.tile_index(world, level, x, z);
+        self.grow_linked_models(index);
+        let stale = self.linked_models[index]
+            .as_ref()
+            .is_none_or(|s| s.model_stamp == i32::MIN);
+        if stale {
+            self.resolve_linked_wall(world, cache, loop_cycle, level, x, z);
+        }
+        let slot = self.linked_models[index].get_or_insert_with(Default::default);
+        (&mut slot.wall_model1, &mut slot.wall_model2)
+    }
+
+    /// The resolved model of a sprite-arena slot (scene sprites decode on
+    /// first draw; dynamic sprites were attached with `set_sprite_model`).
+    fn sprite_model_mut(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        index: usize,
+    ) -> &mut Option<SceneModel> {
+        self.grow_sprite_arrays(index);
+        let stamp = world
+            .sprites
+            .get(index)
+            .and_then(|s| s.as_ref())
+            .map(|s| s.model_stamp)
+            .unwrap_or(i32::MIN);
+        if self.sprite_stamps[index] != stamp {
+            self.resolve_sprite(world, cache, loop_cycle, index);
+        }
+        &mut self.sprite_models[index]
+    }
+
+    /// The ground-object stack offset. The sim used to read it from the
+    /// tile's sprite models at `setObj` time; now it is computed at draw
+    /// time from the same lazily-resolved sprite models (`obj_raise` is
+    /// non-zero only for locs with `raiseobject == 1`). The value is
+    /// frozen per draw rather than per `setObj`; the common table-sprite
+    /// case is identical.
+    fn ground_object_height(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        level: i32,
+        x: i32,
+        z: i32,
+    ) -> i32 {
+        let mut stack_offset = 0;
+        let Some(tile) = tile_at(&world.squares, level, x, z) else {
+            return 0;
+        };
+        for i in 0..tile.sprite_count as usize {
+            let Some(index) = tile.sprites[i] else { continue };
+            if let Some(SceneModel::Model(model)) =
+                self.sprite_model_mut(world, cache, loop_cycle, index).as_ref()
+            {
+                if model.obj_raise > stack_offset {
+                    stack_offset = model.obj_raise;
+                }
+            }
+        }
+        stack_offset
+    }
+
+    /// Attach a sprite model to the render-side arena (the entity passes
+    /// and tests use this; scene sprites decode on first draw instead).
+    pub fn set_sprite_model(&mut self, world: &World, index: usize, model: Option<SceneModel>) {
+        self.grow_sprite_arrays(index);
+        let stamp = world
+            .sprites
+            .get(index)
+            .and_then(|s| s.as_ref())
+            .map(|s| s.model_stamp)
+            .unwrap_or(i32::MIN);
+        self.sprite_stamps[index] = stamp;
+        self.sprite_models[index] = model;
+    }
+
+    /// Inject a wall's models on the render side (tests place synthetic
+    /// models this way; production resolves from the sim typecodes).
+    pub fn set_wall_model(
+        &mut self,
+        world: &World,
+        level: i32,
+        x: i32,
+        z: i32,
+        model1: Option<SceneModel>,
+        model2: Option<SceneModel>,
+    ) {
+        let slot = self.slot(world, level, x, z);
+        slot.model_stamp = world.tile_model_stamp(level, x, z);
+        slot.wall_model1 = model1;
+        slot.wall_model2 = model2;
+    }
+
+    /// Inject a decor's model on the render side (tests only).
+    pub fn set_decor_model(&mut self, world: &World, level: i32, x: i32, z: i32, model: SceneModel) {
+        let slot = self.slot(world, level, x, z);
+        slot.model_stamp = world.tile_model_stamp(level, x, z);
+        slot.decor_model = Some(model);
+    }
+
+    /// Inject a ground-decor's model on the render side (tests only).
+    pub fn set_gd_model(
+        &mut self,
+        world: &World,
+        level: i32,
+        x: i32,
+        z: i32,
+        model: Option<SceneModel>,
+    ) {
+        let slot = self.slot(world, level, x, z);
+        slot.model_stamp = world.tile_model_stamp(level, x, z);
+        slot.gd_model = model;
+    }
+
+    /// Read accessors (the draw tests assert on the resolved models after
+    /// `share_light`).
+    pub fn wall_model1(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        level: i32,
+        x: i32,
+        z: i32,
+    ) -> Option<&SceneModel> {
+        self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
+        self.slot(world, level, x, z).wall_model1.as_ref()
+    }
+
+    pub fn wall_model2(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        level: i32,
+        x: i32,
+        z: i32,
+    ) -> Option<&SceneModel> {
+        self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
+        self.slot(world, level, x, z).wall_model2.as_ref()
+    }
+
+    pub fn gd_model(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        level: i32,
+        x: i32,
+        z: i32,
+    ) -> Option<&SceneModel> {
+        self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
+        self.slot(world, level, x, z).gd_model.as_ref()
+    }
+
+    pub fn decor_model(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        level: i32,
+        x: i32,
+        z: i32,
+    ) -> Option<&SceneModel> {
+        self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
+        self.slot(world, level, x, z).decor_model.as_ref()
+    }
+
+    pub fn sprite_model(&mut self, world: &World, cache: &Cache, loop_cycle: i32, index: usize) -> Option<&SceneModel> {
+        self.sprite_model_mut(world, cache, loop_cycle, index).as_ref()
+    }
+
+    /// `shareLight(ambient, contrast, lightSrcX, lightSrcY, lightSrcZ)`
+    /// from World.ts 589-628, moved here with the models (Task 3b): resolve
+    /// every tile's models, merge touching vertices' normals across
+    /// walls/sprites/ground-decor and then run `Model.light` over every
+    /// placed model. The sim's `finishBuild` flags the pass and the first
+    /// `render_all` after a build runs it; the draw tests call it directly
+    /// with their injected models.
+    pub fn share_light(
+        &mut self,
+        world: &mut World,
+        ambient: i32,
+        contrast: i32,
+        light_src_x: i32,
+        light_src_y: i32,
+        light_src_z: i32,
+    ) {
+        self.run_share_light(world, &Cache::default(), 0);
+        self.apply_share_light(world, ambient, contrast, light_src_x, light_src_y, light_src_z);
+    }
+
+    /// Resolve every tile's models (and the linked-square walls) ahead of
+    /// the share-light merge. `render_all` runs this once per build; the
+    /// tests' injected models are already current and are left untouched.
+    fn run_share_light(&mut self, world: &World, cache: &Cache, loop_cycle: i32) {
+        for level in 0..world.max_tile_level {
+            for x in 0..world.max_tile_x {
+                for z in 0..world.max_tile_z {
+                    if tile_at(&world.squares, level, x, z).is_some() {
+                        self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
+                    }
+                }
+            }
+        }
+        for x in 0..world.max_tile_x {
+            for z in 0..world.max_tile_z {
+                if tile_at(&world.squares, 0, x, z)
+                    .and_then(|t| t.linked_square.as_ref())
+                    .is_some()
+                {
+                    let index = self.tile_index(world, 0, x, z);
+                    self.grow_linked_models(index);
+                    if self.linked_models[index]
+                        .as_ref()
+                        .is_none_or(|s| s.model_stamp == i32::MIN)
+                    {
+                        self.resolve_linked_wall(world, cache, loop_cycle, 0, x, z);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The merge + light pass over the resolved tile/sprite models. Each
+    /// tile is taken out of the cache for the duration of its own pass
+    /// because the helpers need `&mut self` (share scratch, other tiles)
+    /// and `&mut Model` simultaneously; `share_light_loc` never revisits
+    /// the current tile (its own tile is inside the `allowFaceRemoval`
+    /// skip or on another level), so the hole is never observed.
+    fn apply_share_light(
+        &mut self,
+        world: &World,
+        ambient: i32,
+        contrast: i32,
+        light_src_x: i32,
+        light_src_y: i32,
+        light_src_z: i32,
+    ) {
+        let light_magnitude = ((light_src_x * light_src_x
+            + light_src_y * light_src_y
+            + light_src_z * light_src_z) as f64)
+            .sqrt() as i32;
+        let attenuation = (contrast * light_magnitude) >> 8;
+
+        for level in 0..world.max_tile_level {
+            for tile_x in 0..world.max_tile_x {
+                for tile_z in 0..world.max_tile_z {
+                    let index = self.tile_index(world, level, tile_x, tile_z);
+                    let mut tile = self.tile_models.get_mut(index).and_then(|t| t.take());
+
+                    if let Some(tile) = tile.as_mut() {
+                        if let Some(SceneModel::Model(model1)) = tile.wall_model1.as_mut() {
+                            if model1.point_normal.is_some() {
+                                self.share_light_loc(world, level, tile_x, tile_z, 1, 1, model1);
+                                if let Some(SceneModel::Model(model2)) = tile.wall_model2.as_mut() {
+                                    if model2.point_normal.is_some() {
+                                        self.share_light_loc(world, level, tile_x, tile_z, 1, 1, model2);
+                                        self.model_share_light(model1, model2, 0, 0, 0, false);
+                                        model2.light(ambient, attenuation, light_src_x, light_src_y, light_src_z);
+                                    }
+                                }
+                                model1.light(ambient, attenuation, light_src_x, light_src_y, light_src_z);
+                            }
+                        }
+
+                        if let Some(SceneModel::Model(model)) = tile.gd_model.as_mut() {
+                            if model.point_normal.is_some() {
+                                self.share_light_gd(world, level, tile_x, tile_z, model);
+                                model.light(ambient, attenuation, light_src_x, light_src_y, light_src_z);
+                            }
+                        }
+                    }
+                    if let Some(tile) = tile {
+                        self.tile_models[index] = Some(tile);
+                    }
+
+                    // The tile's scene sprites (shared across the tiles a
+                    // multi-tile sprite spans, so a large loc merges from
+                    // each of its footprint tiles as the TS does).
+                    if let Some(t) = tile_at(&world.squares, level, tile_x, tile_z) {
+                        for i in 0..t.sprite_count as usize {
+                            let Some(sprite_index) = t.sprites[i] else { continue };
+                            let mut sprite = self
+                                .sprite_models
+                                .get_mut(sprite_index)
+                                .and_then(|s| s.take());
+                            if let Some(SceneModel::Model(model)) = sprite.as_mut() {
+                                if model.point_normal.is_some() {
+                                    if let Some(s) = world.sprites.get(sprite_index).and_then(|s| s.as_ref()) {
+                                        let size_x = s.max_tile_x + 1 - s.min_tile_x;
+                                        let size_z = s.max_tile_z + 1 - s.min_tile_z;
+                                        self.share_light_loc(world, level, tile_x, tile_z, size_x, size_z, model);
+                                    }
+                                    model.light(ambient, attenuation, light_src_x, light_src_y, light_src_z);
+                                }
+                            }
+                            self.grow_sprite_arrays(sprite_index);
+                            self.sprite_models[sprite_index] = sprite;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// `shareLightGd(level, tileX, tileZ, model)` from World.ts 630-658:
+    /// merge the ground-decor model with the four diagonal/east/south
+    /// neighbours' ground-decor models. The neighbour bounds checks are
+    /// replicated verbatim (including the TS `tileZ < maxTileX` quirk at
+    /// 638); the world is square so they coincide.
+    fn share_light_gd(&mut self, world: &World, level: i32, tile_x: i32, tile_z: i32, model: &mut Model) {
+        if tile_x < world.max_tile_x {
+            let index = self.tile_index(world, level, tile_x + 1, tile_z);
+            let mut tile = self.tile_models.get_mut(index).and_then(|t| t.take());
+            if let Some(SceneModel::Model(model_b)) = tile.as_mut().and_then(|t| t.gd_model.as_mut()) {
+                if model_b.point_normal.is_some() {
+                    self.model_share_light(model, model_b, 128, 0, 0, true);
+                }
+            }
+            if let Some(tile) = tile {
+                self.tile_models[index] = Some(tile);
+            }
+        }
+
+        if tile_z < world.max_tile_x {
+            let index = self.tile_index(world, level, tile_x, tile_z + 1);
+            let mut tile = self.tile_models.get_mut(index).and_then(|t| t.take());
+            if let Some(SceneModel::Model(model_b)) = tile.as_mut().and_then(|t| t.gd_model.as_mut()) {
+                if model_b.point_normal.is_some() {
+                    self.model_share_light(model, model_b, 0, 0, 128, true);
+                }
+            }
+            if let Some(tile) = tile {
+                self.tile_models[index] = Some(tile);
+            }
+        }
+
+        if tile_x < world.max_tile_x && tile_z < world.max_tile_z {
+            let index = self.tile_index(world, level, tile_x + 1, tile_z + 1);
+            let mut tile = self.tile_models.get_mut(index).and_then(|t| t.take());
+            if let Some(SceneModel::Model(model_b)) = tile.as_mut().and_then(|t| t.gd_model.as_mut()) {
+                if model_b.point_normal.is_some() {
+                    self.model_share_light(model, model_b, 128, 0, 128, true);
+                }
+            }
+            if let Some(tile) = tile {
+                self.tile_models[index] = Some(tile);
+            }
+        }
+
+        if tile_x < world.max_tile_x && tile_z > 0 {
+            let index = self.tile_index(world, level, tile_x + 1, tile_z - 1);
+            let mut tile = self.tile_models.get_mut(index).and_then(|t| t.take());
+            if let Some(SceneModel::Model(model_b)) = tile.as_mut().and_then(|t| t.gd_model.as_mut()) {
+                if model_b.point_normal.is_some() {
+                    self.model_share_light(model, model_b, 128, 0, -128, true);
+                }
+            }
+            if let Some(tile) = tile {
+                self.tile_models[index] = Some(tile);
+            }
+        }
+    }
+
+    /// `shareLightLoc(level, tileX, tileZ, tileSizeX, tileSizeZ, model)`
+    /// from World.ts 660-719: merge `model`'s normals with every wall and
+    /// sprite model in the 3×3(+1) neighbourhood (the current tile itself
+    /// is always skipped by the `allowFaceRemoval` gate, and the second
+    /// pass runs on `level + 1`). Candidate tiles and arena sprites are
+    /// taken out for the duration of their own merge, mirroring the TS
+    /// object aliasing with disjoint borrows.
+    fn share_light_loc(
+        &mut self,
+        world: &World,
+        level: i32,
+        tile_x: i32,
+        tile_z: i32,
+        tile_size_x: i32,
+        tile_size_z: i32,
+        model_a: &mut Model,
+    ) {
+        let mut allow_face_removal = true;
+
+        let mut min_tile_x = tile_x;
+        let max_tile_x = tile_x + tile_size_x;
+        let min_tile_z = tile_z - 1;
+        let max_tile_z = tile_z + tile_size_z;
+
+        for l in level..=level + 1 {
+            if l == world.max_tile_level {
+                continue;
+            }
+
+            for x in min_tile_x..=max_tile_x {
+                if x < 0 || x >= world.max_tile_x {
+                    continue;
+                }
+
+                for z in min_tile_z..=max_tile_z {
+                    if z < 0
+                        || z >= world.max_tile_z
+                        || (allow_face_removal
+                            && x < max_tile_x
+                            && z < max_tile_z
+                            && (z >= tile_z || x == tile_x))
+                    {
+                        continue;
+                    }
+
+                    let offset_x = (x - tile_x) * 128 + (1 - tile_size_x) * 64;
+                    let offset_z = (z - tile_z) * 128 + (1 - tile_size_z) * 64;
+                    let offset_y = ((ground_h(world, l, x, z)
+                        + ground_h(world, l, x + 1, z)
+                        + ground_h(world, l, x, z + 1)
+                        + ground_h(world, l, x + 1, z + 1))
+                        / 4)
+                        - ((ground_h(world, level, tile_x, tile_z)
+                            + ground_h(world, level, tile_x + 1, tile_z)
+                            + ground_h(world, level, tile_x, tile_z + 1)
+                            + ground_h(world, level, tile_x + 1, tile_z + 1))
+                            / 4);
+
+                    let candidate_index = self.tile_index(world, l, x, z);
+                    let mut candidate = self.tile_models.get_mut(candidate_index).and_then(|t| t.take());
+
+                    if let Some(candidate) = candidate.as_mut() {
+                        if let Some(SceneModel::Model(model_b)) = candidate.wall_model1.as_mut() {
+                            if model_b.point_normal.is_some() {
+                                self.model_share_light(
+                                    model_a, model_b, offset_x, offset_y, offset_z,
+                                    allow_face_removal,
+                                );
+                            }
+                        }
+                        if let Some(SceneModel::Model(model_b)) = candidate.wall_model2.as_mut() {
+                            if model_b.point_normal.is_some() {
+                                self.model_share_light(
+                                    model_a, model_b, offset_x, offset_y, offset_z,
+                                    allow_face_removal,
+                                );
+                            }
+                        }
+                    }
+                    if let Some(candidate) = candidate {
+                        self.tile_models[candidate_index] = Some(candidate);
+                    }
+
+                    if let Some(t) = tile_at(&world.squares, l, x, z) {
+                        for i in 0..t.sprite_count as usize {
+                            let Some(sprite_index) = t.sprites[i] else { continue };
+                            let mut sprite = self
+                                .sprite_models
+                                .get_mut(sprite_index)
+                                .and_then(|s| s.take());
+                            if let Some(SceneModel::Model(model_b)) = sprite.as_mut() {
+                                if model_b.point_normal.is_some() {
+                                    let (min_sx, min_sz, size_x, size_z) =
+                                        if let Some(s) = world.sprites.get(sprite_index).and_then(|s| s.as_ref()) {
+                                            (
+                                                s.min_tile_x,
+                                                s.min_tile_z,
+                                                s.max_tile_x + 1 - s.min_tile_x,
+                                                s.max_tile_z + 1 - s.min_tile_z,
+                                            )
+                                        } else {
+                                            (0, 0, 1, 1)
+                                        };
+                                    let sx = (min_sx - tile_x) * 128 + (size_x - tile_size_x) * 64;
+                                    let sz = (min_sz - tile_z) * 128 + (size_z - tile_size_z) * 64;
+                                    self.model_share_light(
+                                        model_a, model_b, sx, offset_y, sz, allow_face_removal,
+                                    );
+                                }
+                            }
+                            self.grow_sprite_arrays(sprite_index);
+                            self.sprite_models[sprite_index] = sprite;
+                        }
+                    }
+                }
+            }
+
+            min_tile_x -= 1;
+            allow_face_removal = false;
+        }
+    }
+
+    /// `modelShareLight(modelA, modelB, offsetX, offsetY, offsetZ,
+    /// allowFaceRemoval)` from World.ts 722-794: merge the normals of
+    /// coincident vertices of the two models, then hide the faces whose
+    /// vertices all merged (3+ merges, unless face removal is disabled).
+    fn model_share_light(
+        &mut self,
+        model_a: &mut Model,
+        model_b: &mut Model,
+        offset_x: i32,
+        offset_y: i32,
+        offset_z: i32,
+        allow_face_removal: bool,
+    ) {
+        self.share_tic += 1;
+
+        let mut merged = 0;
+        let vertex_count_b = model_b.num_points;
+
+        if self.share_map.len() < model_a.num_points as usize {
+            self.share_map.resize(model_a.num_points as usize, 0);
+        }
+        if self.share_map2.len() < vertex_count_b as usize {
+            self.share_map2.resize(vertex_count_b as usize, 0);
+        }
+
+        if model_a.point_normal.is_some() && model_a.shared_point_normal.is_some() {
+            let point_normal_a = model_a.point_normal.as_mut().unwrap();
+            let shared_normal_a = model_a.shared_point_normal.as_ref().unwrap();
+            let point_x_a = model_a.point_x.as_ref().unwrap();
+            let point_y_a = model_a.point_y.as_ref().unwrap();
+            let point_z_a = model_a.point_z.as_ref().unwrap();
+            let max_y_b = model_b.max_y;
+            let min_x_b = model_b.min_x;
+            let max_x_b = model_b.max_x;
+            let min_z_b = model_b.min_z;
+            let max_z_b = model_b.max_z;
+
+            for vertex_a in 0..model_a.num_points as usize {
+                let mut normal_a = point_normal_a[vertex_a].as_mut();
+                let Some(original_normal_a) = shared_normal_a[vertex_a].as_ref() else {
+                    continue;
+                };
+                if original_normal_a.w != 0 {
+                    let y = point_y_a[vertex_a] - offset_y;
+                    if y > max_y_b {
+                        continue;
+                    }
+
+                    let x = point_x_a[vertex_a] - offset_x;
+                    if x < min_x_b || x > max_x_b {
+                        continue;
+                    }
+
+                    let z = point_z_a[vertex_a] - offset_z;
+                    if z < min_z_b || z > max_z_b {
+                        continue;
+                    }
+
+                    if model_b.point_normal.is_some() && model_b.shared_point_normal.is_some() {
+                        let point_normal_b = model_b.point_normal.as_mut().unwrap();
+                        let shared_normal_b = model_b.shared_point_normal.as_ref().unwrap();
+                        let point_x_b = model_b.point_x.as_ref().unwrap();
+                        let point_y_b = model_b.point_y.as_ref().unwrap();
+                        let point_z_b = model_b.point_z.as_ref().unwrap();
+
+                        for vertex_b in 0..vertex_count_b as usize {
+                            let mut normal_b = point_normal_b[vertex_b].as_mut();
+                            let original_normal_b = shared_normal_b[vertex_b].as_ref();
+                            if x != point_x_b[vertex_b]
+                                || z != point_z_b[vertex_b]
+                                || y != point_y_b[vertex_b]
+                                || original_normal_b.map_or(false, |n| n.w == 0)
+                            {
+                                continue;
+                            }
+
+                            if let (Some(normal_a), Some(normal_b), Some(original_normal_b)) = (
+                                normal_a.as_deref_mut(),
+                                normal_b.as_deref_mut(),
+                                original_normal_b,
+                            ) {
+                                normal_a.x += original_normal_b.x;
+                                normal_a.y += original_normal_b.y;
+                                normal_a.z += original_normal_b.z;
+                                normal_a.w += original_normal_b.w;
+                                normal_b.x += original_normal_a.x;
+                                normal_b.y += original_normal_a.y;
+                                normal_b.z += original_normal_a.z;
+                                normal_b.w += original_normal_a.w;
+                                merged += 1;
+                            }
+
+                            self.share_map[vertex_a] = self.share_tic;
+                            self.share_map2[vertex_b] = self.share_tic;
+                        }
+                    }
+                }
+            }
+        }
+
+        if merged < 3 || !allow_face_removal {
+            return;
+        }
+
+        if let Some(face_render_type) = model_a.face_render_type.as_mut() {
+            let face_vertex_a = model_a.face_vertex_a.as_ref().unwrap();
+            let face_vertex_b = model_a.face_vertex_b.as_ref().unwrap();
+            let face_vertex_c = model_a.face_vertex_c.as_ref().unwrap();
+            for i in 0..model_a.num_faces as usize {
+                if self.share_map[face_vertex_a[i] as usize] == self.share_tic
+                    && self.share_map[face_vertex_b[i] as usize] == self.share_tic
+                    && self.share_map[face_vertex_c[i] as usize] == self.share_tic
+                {
+                    face_render_type[i] = -1;
+                }
+            }
+        }
+
+        if let Some(face_render_type) = model_b.face_render_type.as_mut() {
+            let face_vertex_a = model_b.face_vertex_a.as_ref().unwrap();
+            let face_vertex_b = model_b.face_vertex_b.as_ref().unwrap();
+            let face_vertex_c = model_b.face_vertex_c.as_ref().unwrap();
+            for i in 0..model_b.num_faces as usize {
+                if self.share_map2[face_vertex_a[i] as usize] == self.share_tic
+                    && self.share_map2[face_vertex_b[i] as usize] == self.share_tic
+                    && self.share_map2[face_vertex_c[i] as usize] == self.share_tic
+                {
+                    face_render_type[i] = -1;
+                }
+            }
+        }
     }
 
     /// `renderAll(eyeX, eyeY, eyeZ, maxLevel, eyeYaw, eyePitch)` from
@@ -448,6 +1583,20 @@ impl RenderWorld {
         eye_yaw: i32,
         eye_pitch: i32,
     ) {
+        // Task 3b: drop the previous build's lazily-resolved models when
+        // the sim world was reset, and run the `finishBuild` share-light
+        // pass (flagged by the sim) over the freshly-resolved models once.
+        if world.build_generation != self.last_build_generation {
+            self.tile_models.clear();
+            self.linked_models.clear();
+            self.sprite_models.clear();
+            self.sprite_stamps.clear();
+            self.last_build_generation = world.build_generation;
+        }
+        if world.take_share_light_pending() {
+            self.run_share_light(world, cache, loop_cycle);
+        }
+
         if eye_x < 0 {
             eye_x = 0;
         } else if eye_x >= world.max_tile_x * 128 {
@@ -987,10 +2136,17 @@ impl RenderWorld {
                 }
 
                 {
-                    let tile = tile_at_mut(&mut world.squares, level, tile_x, tile_z);
-                    if let Some(wall) = tile.and_then(|t| t.linked_square.as_mut()).and_then(|ls| ls.wall.as_mut()) {
-                        if let Some(model) = wall.model1.as_mut() {
-                            model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, wall.x - cx, wall.y - cy, wall.z - cz, wall.typecode);
+                    let linked = tile_at(&world.squares, level, tile_x, tile_z)
+                        .and_then(|t| t.linked_square.as_ref())
+                        .and_then(|ls| ls.wall.as_ref())
+                        .map(|w| (w.typecode, w.x - cx, w.y - cy, w.z - cz));
+                    if let Some((typecode, wall_x, wall_y, wall_z)) = linked {
+                        if let Some(model) = self
+                            .linked_wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                            .0
+                            .as_mut()
+                        {
+                            model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode);
                         }
                     }
                 }
@@ -1002,9 +2158,11 @@ impl RenderWorld {
                     })
                     .unwrap_or_default();
                 for index in linked_sprites {
-                    if let Some(sprite) = world.sprites.get_mut(index).and_then(|s| s.as_mut()) {
-                        if let Some(model) = sprite.model.as_mut() {
-                            model.world_render(cache, loop_cycle, pix, surface, sprite.yaw, sin_pitch, cos_pitch, sin_yaw, cos_yaw, sprite.x - cx, sprite.y - cy, sprite.z - cz, sprite.typecode);
+                    if let Some(sprite) = world.sprites.get(index).and_then(|s| s.as_ref()) {
+                        let (yaw, typecode, x, y, z) =
+                            (sprite.yaw, sprite.typecode, sprite.x, sprite.y, sprite.z);
+                        if let Some(model) = self.sprite_model_mut(&*world, cache, loop_cycle, index).as_mut() {
+                            model.world_render(cache, loop_cycle, pix, surface, yaw, sin_pitch, cos_pitch, sin_yaw, cos_yaw, x - cx, y - cy, z - cz, typecode);
                         }
                     }
                 }
@@ -1082,15 +2240,13 @@ impl RenderWorld {
                     }
 
                     if (angle1 & front_wall_types) != 0 && !self.wall_occluded(world, original_level, tile_x, tile_z, angle1) {
-                        let tile = tile_at_mut(&mut world.squares, level, tile_x, tile_z);
-                        if let Some(model) = tile.and_then(|t| t.wall.as_mut()).and_then(|w| w.model1.as_mut()) {
+                        if let Some(model) = self.wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).0.as_mut() {
                             model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode);
                         }
                     }
 
                     if (angle2 & front_wall_types) != 0 && !self.wall_occluded(world, original_level, tile_x, tile_z, angle2) {
-                        let tile = tile_at_mut(&mut world.squares, level, tile_x, tile_z);
-                        if let Some(model) = tile.and_then(|t| t.wall.as_mut()).and_then(|w| w.model2.as_mut()) {
+                        if let Some(model) = self.wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).1.as_mut() {
                             model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode);
                         }
                     }
@@ -1107,15 +2263,18 @@ impl RenderWorld {
                             d.x - cx,
                             d.y - cy,
                             d.z - cz,
-                            d.model.min_y(),
                         )
                     });
-                if let Some((wshape, angle, typecode, decor_x, decor_y, decor_z, min_y)) = decor_data {
+                if let Some((wshape, angle, typecode, decor_x, decor_y, decor_z)) = decor_data {
+                    let min_y = self
+                        .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                        .as_ref()
+                        .map(|m| m.min_y())
+                        .unwrap_or(1000);
                     if !self.sprite_occluded(world, original_level, tile_x, tile_z, min_y) {
                         if (wshape & front_wall_types) != 0 {
-                            let tile = tile_at_mut(&mut world.squares, level, tile_x, tile_z);
-                            if let Some(decor) = tile.and_then(|t| t.decor.as_mut()) {
-                                decor.model.world_render(cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch, sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode);
+                            if let Some(decor) = self.decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).as_mut() {
+                                decor.world_render(cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch, sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode);
                             }
                         } else if (wshape & 0x300) != 0 {
                             let nearest_x = if angle == LocAngle::NORTH || angle == LocAngle::EAST {
@@ -1133,18 +2292,16 @@ impl RenderWorld {
                             if (wshape & 0x100) != 0 && nearest_z < nearest_x {
                                 let draw_x = decor_x + DECORXOF.get(angle as usize).copied().unwrap_or(0);
                                 let draw_z = decor_z + DECORZOF.get(angle as usize).copied().unwrap_or(0);
-                                let tile = tile_at_mut(&mut world.squares, level, tile_x, tile_z);
-                                if let Some(decor) = tile.and_then(|t| t.decor.as_mut()) {
-                                    decor.model.world_render(cache, loop_cycle, pix, surface, angle * 512 + 256, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
+                                if let Some(decor) = self.decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).as_mut() {
+                                    decor.world_render(cache, loop_cycle, pix, surface, angle * 512 + 256, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
                                 }
                             }
 
                             if (wshape & 0x200) != 0 && nearest_z > nearest_x {
                                 let draw_x = decor_x + DECORXOF2.get(angle as usize).copied().unwrap_or(0);
                                 let draw_z = decor_z + DECORZOF2.get(angle as usize).copied().unwrap_or(0);
-                                let tile = tile_at_mut(&mut world.squares, level, tile_x, tile_z);
-                                if let Some(decor) = tile.and_then(|t| t.decor.as_mut()) {
-                                    decor.model.world_render(cache, loop_cycle, pix, surface, (angle * 512 + 1280) & 0x7ff, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
+                                if let Some(decor) = self.decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).as_mut() {
+                                    decor.world_render(cache, loop_cycle, pix, surface, (angle * 512 + 1280) & 0x7ff, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
                                 }
                             }
                         }
@@ -1157,30 +2314,29 @@ impl RenderWorld {
                         .and_then(|t| t.ground_decor.as_ref())
                         .map(|gd| (gd.typecode, gd.x - cx, gd.y - cy, gd.z - cz));
                     if let Some((typecode, gd_x, gd_y, gd_z)) = ground_decor_data {
-                        let tile = tile_at_mut(&mut world.squares, level, tile_x, tile_z);
-                        if let Some(model) = tile.and_then(|t| t.ground_decor.as_mut()).and_then(|gd| gd.model.as_mut()) {
+                        if let Some(model) = self.gd_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).as_mut() {
                             model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, gd_x, gd_y, gd_z, typecode);
                         }
                     }
 
                     let ground_object_data = tile_at(&world.squares, level, tile_x, tile_z)
                         .and_then(|t| t.ground_object.as_ref())
-                        .map(|o| (o.height, o.typecode, o.x - cx, o.y - cy, o.z - cz));
-                    if let Some((height, typecode, ox, oy, oz)) = ground_object_data {
+                        .map(|o| (o.typecode, o.x - cx, o.y - cy, o.z - cz));
+                    if let Some((typecode, ox, oy, oz)) = ground_object_data {
+                        let height = self.ground_object_height(&*world, cache, loop_cycle, level, tile_x, tile_z);
                         if height == 0 {
-                            let tile = tile_at_mut(&mut world.squares, level, tile_x, tile_z);
-                            if let Some(objs) = tile.and_then(|t| t.ground_object.as_mut()) {
-                                if let Some(model) = objs.bottom_obj.as_mut() {
-                                    model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, ox, oy, oz, typecode);
-                                }
+                            let (bottom, middle, top) =
+                                self.obj_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z);
+                            if let Some(model) = bottom.as_mut() {
+                                model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, ox, oy, oz, typecode);
+                            }
 
-                                if let Some(model) = objs.middle_obj.as_mut() {
-                                    model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, ox, oy, oz, typecode);
-                                }
+                            if let Some(model) = middle.as_mut() {
+                                model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, ox, oy, oz, typecode);
+                            }
 
-                                if let Some(model) = objs.top_obj.as_mut() {
-                                    model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, ox, oy, oz, typecode);
-                                }
+                            if let Some(model) = top.as_mut() {
+                                model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, ox, oy, oz, typecode);
                             }
                         }
                     }
@@ -1257,8 +2413,7 @@ impl RenderWorld {
                         .map(|w| (w.angle1, w.typecode, w.x - cx, w.y - cy, w.z - cz));
                     if let Some((angle1, typecode, wall_x, wall_y, wall_z)) = wall_data {
                         if !self.wall_occluded(world, original_level, tile_x, tile_z, angle1) {
-                            let tile = tile_at_mut(&mut world.squares, level, tile_x, tile_z);
-                            if let Some(model) = tile.and_then(|t| t.wall.as_mut()).and_then(|w| w.model1.as_mut()) {
+                            if let Some(model) = self.wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).0.as_mut() {
                                 model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode);
                             }
                         }
@@ -1400,20 +2555,32 @@ impl RenderWorld {
                         sprite.cycle = cycle_no;
                     }
 
-                    let Some(sprite) = world.sprites.get(farthest).and_then(|s| s.as_ref()) else {
-                        continue;
+                    let (min_x, max_x, min_z, max_z, yaw, typecode, sx, sy, sz) = {
+                        let Some(sprite) = world.sprites.get(farthest).and_then(|s| s.as_ref())
+                        else {
+                            continue;
+                        };
+                        (
+                            sprite.min_tile_x,
+                            sprite.max_tile_x,
+                            sprite.min_tile_z,
+                            sprite.max_tile_z,
+                            sprite.yaw,
+                            sprite.typecode,
+                            sprite.x,
+                            sprite.y,
+                            sprite.z,
+                        )
                     };
-                    let min_x = sprite.min_tile_x;
-                    let max_x = sprite.max_tile_x;
-                    let min_z = sprite.min_tile_z;
-                    let max_z = sprite.max_tile_z;
-                    let model_min_y = sprite.model.as_ref().map(|m| m.min_y()).unwrap_or(0);
+                    let model_min_y = self
+                        .sprite_model_mut(&*world, cache, loop_cycle, farthest)
+                        .as_ref()
+                        .map(|m| m.min_y())
+                        .unwrap_or(0);
 
                     if !self.sprite_occluded2(world, original_level, min_x, max_x, min_z, max_z, model_min_y) {
-                        if let Some(sprite) = world.sprites.get_mut(farthest).and_then(|s| s.as_mut()) {
-                            if let Some(model) = sprite.model.as_mut() {
-                                model.world_render(cache, loop_cycle, pix, surface, sprite.yaw, sin_pitch, cos_pitch, sin_yaw, cos_yaw, sprite.x - cx, sprite.y - cy, sprite.z - cz, sprite.typecode);
-                            }
+                        if let Some(model) = self.sprite_model_mut(&*world, cache, loop_cycle, farthest).as_mut() {
+                            model.world_render(cache, loop_cycle, pix, surface, yaw, sin_pitch, cos_pitch, sin_yaw, cos_yaw, sx - cx, sy - cy, sz - cz, typecode);
                         }
                     }
 
@@ -1515,22 +2682,22 @@ impl RenderWorld {
             // behind them is done.
             let ground_object_data = tile_at(&world.squares, level, tile_x, tile_z)
                 .and_then(|t| t.ground_object.as_ref())
-                .map(|o| (o.height, o.typecode, o.x - cx, o.y - cy, o.z - cz));
-            if let Some((height, typecode, ox, oy, oz)) = ground_object_data {
+                .map(|o| (o.typecode, o.x - cx, o.y - cy, o.z - cz));
+            if let Some((typecode, ox, oy, oz)) = ground_object_data {
+                let height = self.ground_object_height(&*world, cache, loop_cycle, level, tile_x, tile_z);
                 if height != 0 {
-                    let tile = tile_at_mut(&mut world.squares, level, tile_x, tile_z);
-                    if let Some(objs) = tile.and_then(|t| t.ground_object.as_mut()) {
-                        if let Some(model) = objs.bottom_obj.as_mut() {
-                            model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, ox, oy - height, oz, typecode);
-                        }
+                    let (bottom, middle, top) =
+                        self.obj_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z);
+                    if let Some(model) = bottom.as_mut() {
+                        model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, ox, oy - height, oz, typecode);
+                    }
 
-                        if let Some(model) = objs.middle_obj.as_mut() {
-                            model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, ox, oy - height, oz, typecode);
-                        }
+                    if let Some(model) = middle.as_mut() {
+                        model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, ox, oy - height, oz, typecode);
+                    }
 
-                        if let Some(model) = objs.top_obj.as_mut() {
-                            model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, ox, oy - height, oz, typecode);
-                        }
+                    if let Some(model) = top.as_mut() {
+                        model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, ox, oy - height, oz, typecode);
                     }
                 }
             }
@@ -1550,15 +2717,18 @@ impl RenderWorld {
                             d.x - cx,
                             d.y - cy,
                             d.z - cz,
-                            d.model.min_y(),
                         )
                     });
-                if let Some((wshape, angle, typecode, decor_x, decor_y, decor_z, min_y)) = decor_data {
+                if let Some((wshape, angle, typecode, decor_x, decor_y, decor_z)) = decor_data {
+                    let min_y = self
+                        .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                        .as_ref()
+                        .map(|m| m.min_y())
+                        .unwrap_or(1000);
                     if !self.sprite_occluded(world, original_level, tile_x, tile_z, min_y) {
                         if (wshape & back_wall_types) != 0 {
-                            let tile = tile_at_mut(&mut world.squares, level, tile_x, tile_z);
-                            if let Some(decor) = tile.and_then(|t| t.decor.as_mut()) {
-                                decor.model.world_render(cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch, sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode);
+                            if let Some(decor) = self.decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).as_mut() {
+                                decor.world_render(cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch, sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode);
                             }
                         } else if (wshape & 0x300) != 0 {
                             let nearest_x = if angle == LocAngle::NORTH || angle == LocAngle::EAST {
@@ -1576,18 +2746,16 @@ impl RenderWorld {
                             if (wshape & 0x100) != 0 && nearest_z >= nearest_x {
                                 let draw_x = decor_x + DECORXOF.get(angle as usize).copied().unwrap_or(0);
                                 let draw_z = decor_z + DECORZOF.get(angle as usize).copied().unwrap_or(0);
-                                let tile = tile_at_mut(&mut world.squares, level, tile_x, tile_z);
-                                if let Some(decor) = tile.and_then(|t| t.decor.as_mut()) {
-                                    decor.model.world_render(cache, loop_cycle, pix, surface, angle * 512 + 256, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
+                                if let Some(decor) = self.decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).as_mut() {
+                                    decor.world_render(cache, loop_cycle, pix, surface, angle * 512 + 256, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
                                 }
                             }
 
                             if (wshape & 0x200) != 0 && nearest_z <= nearest_x {
                                 let draw_x = decor_x + DECORXOF2.get(angle as usize).copied().unwrap_or(0);
                                 let draw_z = decor_z + DECORZOF2.get(angle as usize).copied().unwrap_or(0);
-                                let tile = tile_at_mut(&mut world.squares, level, tile_x, tile_z);
-                                if let Some(decor) = tile.and_then(|t| t.decor.as_mut()) {
-                                    decor.model.world_render(cache, loop_cycle, pix, surface, (angle * 512 + 1280) & 0x7ff, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
+                                if let Some(decor) = self.decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).as_mut() {
+                                    decor.world_render(cache, loop_cycle, pix, surface, (angle * 512 + 1280) & 0x7ff, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
                                 }
                             }
                         }
@@ -1599,15 +2767,13 @@ impl RenderWorld {
                     .map(|w| (w.angle1, w.angle2, w.typecode, w.x - cx, w.y - cy, w.z - cz));
                 if let Some((angle1, angle2, typecode, wall_x, wall_y, wall_z)) = wall_data {
                     if (angle2 & back_wall_types) != 0 && !self.wall_occluded(world, original_level, tile_x, tile_z, angle2) {
-                        let tile = tile_at_mut(&mut world.squares, level, tile_x, tile_z);
-                        if let Some(model) = tile.and_then(|t| t.wall.as_mut()).and_then(|w| w.model2.as_mut()) {
+                        if let Some(model) = self.wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).1.as_mut() {
                             model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode);
                         }
                     }
 
                     if (angle1 & back_wall_types) != 0 && !self.wall_occluded(world, original_level, tile_x, tile_z, angle1) {
-                        let tile = tile_at_mut(&mut world.squares, level, tile_x, tile_z);
-                        if let Some(model) = tile.and_then(|t| t.wall.as_mut()).and_then(|w| w.model1.as_mut()) {
+                        if let Some(model) = self.wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).0.as_mut() {
                             model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode);
                         }
                     }

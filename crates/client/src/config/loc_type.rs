@@ -249,6 +249,60 @@ impl LocType {
         }
     }
 
+    /// `getModel`-availability gate without decoding (Task 3b): the sim
+    /// build still skips a loc whose model `getModel` would return `None`
+    /// for — no model table, a shape the table does not cover, a `-1`
+    /// model id, or model data not yet downloaded — exactly as the TS
+    /// null-model placement paths do, but without building the geometry
+    /// (the render side decodes lazily). Mirrors `buildModel`'s control
+    /// flow; `angle` only flips the mirror model id, which requests the
+    /// same file, so it is not consulted.
+    pub fn get_model_available(&self, shape: i32, _angle: i32) -> bool {
+        // Animated locs place unconditionally: `addLoc` records a
+        // `ClientLocAnim` descriptor (the geometry materialises at render
+        // time), so no model table is consulted for them.
+        if self.anim != -1 {
+            return true;
+        }
+        if let Some(shapes) = &self.shape {
+            let mut index = -1;
+            for (i, &s) in shapes.iter().enumerate() {
+                if s == shape {
+                    index = i as i64;
+                    break;
+                }
+            }
+            if index == -1 {
+                return false;
+            }
+            let Some(model_ids) = &self.model else {
+                return false;
+            };
+            if index as usize >= model_ids.len() {
+                return false;
+            }
+            let model_id = model_ids[index as usize];
+            if model_id == -1 {
+                return false;
+            }
+            Model::request_download(model_id & 0xffff)
+        } else {
+            if shape != CENTREPIECE_STRAIGHT {
+                return false;
+            }
+            let Some(model_ids) = &self.model else {
+                return false;
+            };
+            let mut ready = true;
+            for &model_id in model_ids {
+                if !Model::request_download(model_id & 0xffff) {
+                    ready = false;
+                }
+            }
+            ready
+        }
+    }
+
     /// `checkModel(shape)` from client-ts (LocType.ts 270-294): whether the
     /// model for one shape is downloaded. No `shape` remap — that lives in
     /// `ClientBuild.changeLocAvailable`. A loc with no model table is ready;

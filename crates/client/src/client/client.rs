@@ -31,9 +31,9 @@ use crate::core::world::LevelHeightmaps;
 use crate::core::World;
 use crate::dash3d::client_player::{recol1d, recol2d};
 use crate::dash3d::{
-    AnimFrame, BuildArea, ClientEntity, ClientLocAnim, ClientObj, ClientProj, CollisionFlag,
-    CollisionMap, DirectionFlag, LocAngle, LocChange, LocLayer, LocShape, MapFlag, MapSpotAnim,
-    Model, SceneModel, LOC_SHAPE_TO_LAYER,
+    AnimFrame, BuildArea, ClientEntity, ClientObj, ClientProj, CollisionFlag, CollisionMap,
+    DirectionFlag, LocAngle, LocChange, LocLayer, LocShape, MapFlag, MapSpotAnim, Model,
+    LOC_SHAPE_TO_LAYER,
 };
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
 use crate::datastruct::LinkList;
@@ -6941,28 +6941,23 @@ impl Client {
                     let height_se = self.groundh[level][x as usize + 1][z as usize];
                     let height_ne = self.groundh[level][x as usize + 1][z as usize + 1];
                     let height_nw = self.groundh[level][x as usize][z as usize + 1];
-                    let loop_cycle = self.loop_cycle;
 
+                    // Task 3b: the ClientLocAnim itself is materialised by
+                    // the render side on its next draw of the tile; the sim
+                    // records the anim seq/shape/angle and the packet-time
+                    // heights on the tile (and bumps the model stamp so the
+                    // renderer's lazy cache re-resolves).
                     match layer {
                         LocLayer::WALL => {
                             if let Some(wall) = self.world.get_wall_mut(self.minusedlevel, x, z) {
-                                let loc_id = (wall.typecode >> 14) & 0x7fff;
-                                if shape == 2 {
-                                    wall.model1 = Some(SceneModel::LocAnim(ClientLocAnim::new(
-                                        &self.cache, loc_id, 2, rotate + 4, height_sw, height_se,
-                                        height_ne, height_nw, seq as usize, false, loop_cycle,
-                                    )));
-                                    wall.model2 = Some(SceneModel::LocAnim(ClientLocAnim::new(
-                                        &self.cache, loc_id, 2, (rotate + 1) & 0x3, height_sw,
-                                        height_se, height_ne, height_nw, seq as usize, false,
-                                        loop_cycle,
-                                    )));
-                                } else {
-                                    wall.model1 = Some(SceneModel::LocAnim(ClientLocAnim::new(
-                                        &self.cache, loc_id, shape, rotate, height_sw, height_se,
-                                        height_ne, height_nw, seq as usize, false, loop_cycle,
-                                    )));
-                                }
+                                wall.anim_seq = seq;
+                                wall.anim_shape = shape;
+                                wall.anim_angle = rotate;
+                                wall.h_sw = height_sw;
+                                wall.h_se = height_se;
+                                wall.h_ne = height_ne;
+                                wall.h_nw = height_nw;
+                                self.world.bump_tile_stamp(self.minusedlevel, x, z);
                             }
                         }
                         LocLayer::WALL_DECOR => {
@@ -6971,33 +6966,41 @@ impl Client {
                             if let Some(decor) =
                                 self.world.get_decor_mut(self.minusedlevel, x, z)
                             {
-                                let loc_id = (decor.typecode >> 14) & 0x7fff;
+                                decor.anim_seq = seq;
+                                decor.anim_shape = 4;
+                                decor.anim_angle = 0;
                                 // [sic] TS passes heightNE in the SE slot.
-                                decor.model = SceneModel::LocAnim(ClientLocAnim::new(
-                                    &self.cache, loc_id, 4, 0, height_sw, height_ne, height_ne,
-                                    height_nw, seq as usize, false, loop_cycle,
-                                ));
+                                decor.h_sw = height_sw;
+                                decor.h_se = height_ne;
+                                decor.h_ne = height_ne;
+                                decor.h_nw = height_nw;
+                                self.world.bump_tile_stamp(self.minusedlevel, x, z);
                             }
                         }
                         LocLayer::GROUND => {
                             let shape = if shape == 11 { 10 } else { shape };
                             if let Some(sprite) = self.world.get_scene_mut(self.minusedlevel, x, z)
                             {
-                                let loc_id = (sprite.typecode >> 14) & 0x7fff;
-                                sprite.model = Some(SceneModel::LocAnim(ClientLocAnim::new(
-                                    &self.cache, loc_id, shape, rotate, height_sw, height_se,
-                                    height_ne, height_nw, seq as usize, false, loop_cycle,
-                                )));
+                                sprite.anim_seq = seq;
+                                sprite.anim_shape = shape;
+                                sprite.anim_angle = rotate;
+                                sprite.h_sw = height_sw;
+                                sprite.h_se = height_se;
+                                sprite.h_ne = height_ne;
+                                sprite.h_nw = height_nw;
+                                sprite.model_stamp = sprite.model_stamp.wrapping_add(1);
                             }
                         }
                         LocLayer::GROUND_DECOR => {
                             if let Some(decor) = self.world.get_gd_mut(self.minusedlevel, x, z) {
-                                let loc_id = (decor.typecode >> 14) & 0x7fff;
-                                decor.model = Some(SceneModel::LocAnim(ClientLocAnim::new(
-                                    &self.cache, loc_id, LocShape::GROUND_DECOR, rotate, height_sw,
-                                    height_se, height_ne, height_nw, seq as usize, false,
-                                    loop_cycle,
-                                )));
+                                decor.anim_seq = seq;
+                                decor.anim_shape = LocShape::GROUND_DECOR;
+                                decor.anim_angle = rotate;
+                                decor.h_sw = height_sw;
+                                decor.h_se = height_se;
+                                decor.h_ne = height_ne;
+                                decor.h_nw = height_nw;
+                                self.world.bump_tile_stamp(self.minusedlevel, x, z);
                             }
                         }
                         _ => {}
@@ -8918,9 +8921,9 @@ impl Client {
             h,
             self.minusedlevel,
             typecode,
-            Some(SceneModel::Obj(top)),
-            middle.map(SceneModel::Obj),
-            bottom.map(SceneModel::Obj),
+            Some((top.id, top.count)),
+            middle.map(|o| (o.id, o.count)),
+            bottom.map(|o| (o.id, o.count)),
         );
     }
 

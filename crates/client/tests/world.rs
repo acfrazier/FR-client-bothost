@@ -75,6 +75,47 @@ fn flat_world() -> World {
     world
 }
 
+
+
+/// Task 3b: the sim world holds typecodes/placement only; the tests inject
+/// the synthetic models into the render side's lazy cache.
+fn place_wall(
+    rw: &mut RenderWorld,
+    world: &mut World,
+    level: i32,
+    x: i32,
+    z: i32,
+    y: i32,
+    angle1: i32,
+    angle2: i32,
+    model1: Option<SceneModel>,
+    model2: Option<SceneModel>,
+    typecode: i32,
+    typecode2: i32,
+) {
+    world.set_wall(level, x, z, y, angle1, angle2, typecode, typecode2, 0, 0, 0, 0);
+    rw.set_wall_model(world, level, x, z, model1, model2);
+}
+
+fn place_scenery(
+    rw: &mut RenderWorld,
+    world: &mut World,
+    level: i32,
+    x: i32,
+    z: i32,
+    y: i32,
+    model: SceneModel,
+    typecode: i32,
+    typecode2: i32,
+    width: i32,
+    length: i32,
+    yaw: i32,
+) {
+    world.add_scenery(level, x, z, y, typecode, typecode2, width, length, yaw, 0, 0, 0, 0);
+    let index = world.last_sprite_index().expect("sprite pushed");
+    rw.set_sprite_model(world, index, Some(model));
+}
+
 /// A one-face model with computed point normals, as a placed loc would be
 /// after `calculate_normals(..., doNotShareLight: false)` (LocType
 /// `sharelight` path): `shared_point_normal` is retained for the
@@ -109,18 +150,18 @@ fn share_light_empty_world_is_noop() {
         max_level as usize
     ];
     let mut world = World::new(groundh, max_tile_z, max_level, max_tile_x);
-    world.share_light(64, 768, -50, -10, -50);
+    RenderWorld::new().share_light(&mut world, 64, 768, -50, -10, -50);
 }
 
 #[test]
 fn share_light_lights_wall_models_and_consumes_normals() {
     let mut world = flat_world();
-    world.set_wall(0, 1, 1, 0, 0, 0, Some(SceneModel::Model(normals_model())), None, 0, 0);
+    let mut rw = RenderWorld::new();
+    place_wall(&mut rw, &mut world, 0, 1, 1, 0, 0, 0, Some(SceneModel::Model(normals_model())), None, 0, 0);
 
-    world.share_light(64, 768, -50, -10, -50);
+    rw.share_light(&mut world, 64, 768, -50, -10, -50);
 
-    let wall = world.get_wall(0, 1, 1).expect("wall");
-    let SceneModel::Model(model) = wall.model1.as_ref().unwrap() else {
+    let SceneModel::Model(model) = rw.wall_model1(&world, &Cache::default(), 0, 0, 1, 1).expect("wall model1") else {
         panic!("wall model1 must be a Model")
     };
     assert!(model.point_normal.is_none(), "light() must consume point normals");
@@ -132,25 +173,14 @@ fn share_light_lights_wall_models_and_consumes_normals() {
 #[test]
 fn share_light_lights_scenery_sprites() {
     let mut world = flat_world();
+    let mut rw = RenderWorld::new();
     // typecode bit 30 set so `get_scene` finds the sprite after the pass.
-    let ok = world.add_scenery(
-        0,
-        1,
-        1,
-        2000,
-        Some(SceneModel::Model(normals_model())),
-        0x40000000,
-        0,
-        1,
-        1,
-        0,
-    );
-    assert!(ok);
+    place_scenery(&mut rw, &mut world, 0, 1, 1, 2000, SceneModel::Model(normals_model()), 0x40000000, 0, 1, 1, 0);
 
-    world.share_light(64, 768, -50, -10, -50);
+    rw.share_light(&mut world, 64, 768, -50, -10, -50);
 
-    let sprite = world.get_scene(0, 1, 1).expect("sprite");
-    let SceneModel::Model(model) = sprite.model.as_ref().unwrap() else {
+    let index = world.scene_sprite_index(0, 1, 1).expect("sprite index");
+    let SceneModel::Model(model) = rw.sprite_model(&world, &Cache::default(), 0, index).expect("sprite model") else {
         panic!("sprite model must be a Model")
     };
     assert!(model.point_normal.is_none());
@@ -160,12 +190,13 @@ fn share_light_lights_scenery_sprites() {
 #[test]
 fn share_light_lights_ground_decor() {
     let mut world = flat_world();
-    world.set_ground_decor(Some(SceneModel::Model(normals_model())), 0, 1, 1, 2000, 0, 0);
+    let mut rw = RenderWorld::new();
+    world.set_ground_decor(0, 1, 1, 2000, 0, 0, 0, 0, 0, 0);
+    rw.set_gd_model(&world, 0, 1, 1, Some(SceneModel::Model(normals_model())));
 
-    world.share_light(64, 768, -50, -10, -50);
+    rw.share_light(&mut world, 64, 768, -50, -10, -50);
 
-    let gd = world.get_gd(0, 1, 1).expect("ground decor");
-    let SceneModel::Model(model) = gd.model.as_ref().unwrap() else {
+    let SceneModel::Model(model) = rw.gd_model(&world, &Cache::default(), 0, 0, 1, 1).expect("ground decor") else {
         panic!("gd model must be a Model")
     };
     assert!(model.point_normal.is_none());
@@ -217,18 +248,7 @@ fn wall_pixel_count(winding_ccw_from_south: bool) -> usize {
     let mut rw = RenderWorld::new();
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     // SOUTH wall (WSHAPE0[3] = 8) on tile (1,2), in front of the vis-test camera.
-    world.set_wall(
-        0,
-        1,
-        2,
-        2000,
-        8,
-        0,
-        Some(SceneModel::Model(south_wall_model(winding_ccw_from_south))),
-        None,
-        0,
-        0,
-    );
+    place_wall(&mut rw, &mut world, 0, 1, 2, 2000, 8, 0, Some(SceneModel::Model(south_wall_model(winding_ccw_from_south))), None, 0, 0);
     let mut pix = Pix3DDraw::default();
     let mut map = PixMap::new(512, 334);
     {
@@ -261,18 +281,7 @@ fn wall_pixel_count_at(winding_ccw_from_south: bool, eye_x: i32, eye_y: i32, eye
     let mut world = flat_world();
     let mut rw = RenderWorld::new();
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
-    world.set_wall(
-        0,
-        1,
-        2,
-        2000,
-        8,
-        0,
-        Some(SceneModel::Model(south_wall_model(winding_ccw_from_south))),
-        None,
-        0,
-        0,
-    );
+    place_wall(&mut rw, &mut world, 0, 1, 2, 2000, 8, 0, Some(SceneModel::Model(south_wall_model(winding_ccw_from_south))), None, 0, 0);
     let mut pix = Pix3DDraw::default();
     let mut map = PixMap::new(512, 334);
     {
@@ -307,18 +316,7 @@ fn south_wall_not_swallowed_by_its_own_occluder() {
     let mut world = flat_world();
     let mut rw = RenderWorld::new();
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
-    world.set_wall(
-        0,
-        1,
-        2,
-        2000,
-        8,
-        0,
-        Some(SceneModel::Model(south_wall_model(true))),
-        None,
-        0,
-        0,
-    );
+    place_wall(&mut rw, &mut world, 0, 1, 2, 2000, 8, 0, Some(SceneModel::Model(south_wall_model(true))), None, 0, 0);
     // finishBuild wall1 occluder: plane at tile_z*128, type 2, stored on
     // outdoor max_level 3.
     world.set_occlude(3, 2, 0, 2000 - 240, 2 * 128, 3 * 128, 2000, 2 * 128);
@@ -347,19 +345,19 @@ fn south_wall_not_swallowed_by_its_own_occluder() {
 #[test]
 fn share_light_does_not_delete_adjacent_south_walls() {
     let mut world = flat_world();
+    let mut rw = RenderWorld::new();
     let mut wall_a = south_wall_model(true);
     wall_a.face_colour = Some(vec![WALL_SHADE, WALL_SHADE]);
     wall_a.calculate_normals(64, 768, -50, -10, -50, false);
     let mut wall_b = south_wall_model(true);
     wall_b.face_colour = Some(vec![WALL_SHADE, WALL_SHADE]);
     wall_b.calculate_normals(64, 768, -50, -10, -50, false);
-    world.set_wall(0, 1, 2, 2000, 8, 0, Some(SceneModel::Model(wall_a)), None, 0, 0);
-    world.set_wall(0, 2, 2, 2000, 8, 0, Some(SceneModel::Model(wall_b)), None, 0, 0);
-    world.share_light(64, 768, -50, -10, -50);
+    place_wall(&mut rw, &mut world, 0, 1, 2, 2000, 8, 0, Some(SceneModel::Model(wall_a)), None, 0, 0);
+    place_wall(&mut rw, &mut world, 0, 2, 2, 2000, 8, 0, Some(SceneModel::Model(wall_b)), None, 0, 0);
+    rw.share_light(&mut world, 64, 768, -50, -10, -50);
 
     for x in [1, 2] {
-        let wall = world.get_wall(0, x, 2).expect("wall");
-        let SceneModel::Model(model) = wall.model1.as_ref().unwrap() else {
+        let SceneModel::Model(model) = rw.wall_model1(&world, &Cache::default(), 0, 0, x, 2).expect("wall") else {
             panic!("model");
         };
         let killed = model
@@ -483,10 +481,8 @@ fn painted_house_wall_covers_from_outside_after_share_light() {
     let mut world = flat_world();
     let mut rw = RenderWorld::new();
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
-    world.set_wall(
-        0, 1, 2, 2000, 8, 0, Some(SceneModel::Model(model)), None, 0, 0,
-    );
-    world.share_light(64, 768, -50, -10, -50);
+    place_wall(&mut rw, &mut world, 0, 1, 2, 2000, 8, 0, Some(SceneModel::Model(model)), None, 0, 0);
+    rw.share_light(&mut world, 64, 768, -50, -10, -50);
     let n = count_non_ground(&mut world, &mut rw, 192, 1950, 64);
     assert!(
         n > 50,
@@ -544,15 +540,14 @@ fn eight_tile_south_occluder_does_not_eat_outside_walls() {
     }
 
     let wall_z = 8i32;
+    let mut rw = RenderWorld::new();
     for x in 4..12 {
         let model = loc
             .get_model(&Cache::default(), 0, LocAngle::SOUTH, groundh, groundh, groundh, groundh, -1)
             .expect("wall");
-        world.set_wall(
-            0, x, wall_z, groundh, 8, 0, Some(SceneModel::Model(model)), None, 0, 0,
-        );
+        place_wall(&mut rw, &mut world, 0, x, wall_z, groundh, 8, 0, Some(SceneModel::Model(model)), None, 0, 0);
     }
-    world.share_light(64, 768, -50, -10, -50);
+    rw.share_light(&mut world, 64, 768, -50, -10, -50);
     // finishBuild type-2 box for the 8-tile SOUTH run, stored on outdoor
     // max_level 3.
     world.set_occlude(
@@ -566,7 +561,6 @@ fn eight_tile_south_occluder_does_not_eat_outside_walls() {
         wall_z * 128,
     );
 
-    let mut rw = RenderWorld::new();
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     Pix3D::init_colour_table(0.6);
     let mut pix = textured_pix();
@@ -606,7 +600,7 @@ fn eight_tile_south_occluder_does_not_eat_outside_walls() {
 /// scenery sprite sits on the tile behind it. Live Draynor: furniture shows
 /// through eaten stone — if fill defers the wall's back-pass until that
 /// sprite tile drops and never comes back, the stone vanishes.
-fn house_world_with_interior(scenery: bool) -> World {
+fn house_world_with_interior(rw: &mut RenderWorld, scenery: bool) -> World {
     let max_level = 1;
     let max_tile = 16i32;
     let groundh = vec![vec![vec![2000i32; max_tile as usize + 1]; max_tile as usize + 1]; max_level];
@@ -622,40 +616,17 @@ fn house_world_with_interior(scenery: bool) -> World {
     }
     let wall_z = 8i32;
     for x in 7..9 {
-        world.set_wall(
-            0,
-            x,
-            wall_z,
-            2000,
-            8,
-            0,
-            Some(SceneModel::Model(south_wall_model(true))),
-            None,
-            0,
-            0,
-        );
+        place_wall(&mut *rw, &mut world, 0, x, wall_z, 2000, 8, 0, Some(SceneModel::Model(south_wall_model(true))), None, 0, 0);
     }
     if scenery {
-        world.add_scenery(
-            0,
-            7,
-            9,
-            2000,
-            Some(SceneModel::Model(one_face_model())),
-            0,
-            0,
-            1,
-            1,
-            0,
-        );
+        place_scenery(&mut *rw, &mut world, 0, 7, 9, 2000, SceneModel::Model(one_face_model()), 0, 0, 1, 1, 0);
     }
     world
 }
 
-fn count_wall_shade(world: &mut World, eye_x: i32, eye_y: i32, eye_z: i32) -> usize {
+fn count_wall_shade(rw: &mut RenderWorld, world: &mut World, eye_x: i32, eye_y: i32, eye_z: i32) -> usize {
     Pix3D::init_colour_table(0.6);
     let wall_rgb = Pix3D::colour_table()[WALL_SHADE as usize];
-    let mut rw = RenderWorld::new();
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     let mut pix = Pix3DDraw::default();
     let mut map = PixMap::new(512, 334);
@@ -671,10 +642,12 @@ fn count_wall_shade(world: &mut World, eye_x: i32, eye_y: i32, eye_z: i32) -> us
 
 #[test]
 fn interior_scenery_does_not_eat_south_wall_from_outside() {
-    let mut empty = house_world_with_interior(false);
-    let without = count_wall_shade(&mut empty, 8 * 128, 1950, 6 * 128);
-    let mut furnished = house_world_with_interior(true);
-    let with = count_wall_shade(&mut furnished, 8 * 128, 1950, 6 * 128);
+    let mut rw_empty = RenderWorld::new();
+    let mut empty = house_world_with_interior(&mut rw_empty, false);
+    let without = count_wall_shade(&mut rw_empty, &mut empty, 8 * 128, 1950, 6 * 128);
+    let mut rw_furnished = RenderWorld::new();
+    let mut furnished = house_world_with_interior(&mut rw_furnished, true);
+    let with = count_wall_shade(&mut rw_furnished, &mut furnished, 8 * 128, 1950, 6 * 128);
     eprintln!("south wall pixels without interior={without} with interior={with}");
     assert!(
         without > 50,
@@ -704,21 +677,11 @@ fn south_wall_covers_when_camera_is_southeast() {
             );
         }
     }
-    world.set_wall(
-        0,
-        8,
-        8,
-        2000,
-        8,
-        0,
-        Some(SceneModel::Model(south_wall_model(true))),
-        None,
-        0,
-        0,
-    );
-    let aligned = count_wall_shade(&mut world, 8 * 128, 1950, 6 * 128);
+    let mut rw = RenderWorld::new();
+    place_wall(&mut rw, &mut world, 0, 8, 8, 2000, 8, 0, Some(SceneModel::Model(south_wall_model(true))), None, 0, 0);
+    let aligned = count_wall_shade(&mut rw, &mut world, 8 * 128, 1950, 6 * 128);
     // One tile west: gx=7, tile_x=8 → direction 2, SOUTH bit hits MIDTAB.
-    let offset = count_wall_shade(&mut world, 7 * 128, 1950, 6 * 128);
+    let offset = count_wall_shade(&mut rw, &mut world, 7 * 128, 1950, 6 * 128);
     eprintln!("SOUTH wall pixels aligned_cam={aligned} southeast_cam={offset}");
     assert!(
         aligned > 50,
@@ -829,21 +792,8 @@ fn render_all_renders_scenery_sprites() {
     let mut world = flat_world();
     // A scenery sprite on tile (1,2), in front of the camera. The typecode
     // is a real loc typecode (bits 29-30 = 2, so get_scene finds it).
-    let ok = world.add_scenery(
-        0,
-        1,
-        2,
-        2000,
-        Some(SceneModel::Model(one_face_model())),
-        0x40000000 + (5 << 14),
-        0,
-        1,
-        1,
-        0,
-    );
-    assert!(ok);
-
     let mut rw = RenderWorld::new();
+    place_scenery(&mut rw, &mut world, 0, 1, 2, 2000, SceneModel::Model(one_face_model()), 0x40000000 + (5 << 14), 0, 1, 1, 0);
     let mut pix = Pix3DDraw::default();
     let mut map = PixMap::new(512, 334);
     {
@@ -1089,36 +1039,13 @@ fn render_box_in_world(sharelight_cube: bool, yaw: i32, pitch: i32) -> (usize, u
             );
         }
     }
-    let ok = world.add_scenery(
-        0,
-        6,
-        8,
-        2000,
-        Some(SceneModel::Model(ns_box_model(sharelight_cube))),
-        0,
-        0,
-        2,
-        2,
-        0,
-    );
-    assert!(ok, "2x2 scenery must place");
+    let mut rw = RenderWorld::new();
+    place_scenery(&mut rw, &mut world, 0, 6, 8, 2000, SceneModel::Model(ns_box_model(sharelight_cube)), 0, 0, 2, 2, 0);
     // Corner wall on a footprint tile: Java defers the sprite until this
     // wall's corner-sides handshake completes (`(spans & cornerSides) ==
     // sidesAfterCorner`). Without that defer the loc draws too early and
     // later tiles eat the facing side.
-    world.set_wall(
-        0,
-        7,
-        9,
-        2000,
-        16,
-        0,
-        Some(SceneModel::Model(south_wall_model(true))),
-        None,
-        0,
-        0,
-    );
-    let mut rw = RenderWorld::new();
+    place_wall(&mut rw, &mut world, 0, 7, 9, 2000, 16, 0, Some(SceneModel::Model(south_wall_model(true))), None, 0, 0);
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     let mut pix = Pix3DDraw::default();
     pix.low_mem = false;
@@ -1250,20 +1177,9 @@ fn varrock_fountain_facing_side_covers() {
             );
         }
     }
-    let placed = world.add_scenery(
-        0,
-        6,
-        8,
-        groundh,
-        Some(SceneModel::Model(model)),
-        0,
-        0,
-        width,
-        length,
-        0,
-    );
-    assert!(placed, "fountain 2x2 must place");
-    world.share_light(64, 768, -50, -10, -50);
+    let mut rw = RenderWorld::new();
+    place_scenery(&mut rw, &mut world, 0, 6, 8, groundh, SceneModel::Model(model), 0, 0, width, length, 0);
+    rw.share_light(&mut world, 64, 768, -50, -10, -50);
 
     if let Some(l879) = cache.locs.get(879) {
         eprintln!(
@@ -1272,7 +1188,6 @@ fn varrock_fountain_facing_side_covers() {
         );
     }
 
-    let mut rw = RenderWorld::new();
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     let ground = Pix3D::colour_table()[SHADE as usize];
     let mut count_at = |yaw: i32, eye_x: i32, eye_y: i32, eye_z: i32| -> usize {
@@ -1356,28 +1271,18 @@ fn fountain_facing_side_survives_dense_neighbours() {
     }
     let fx = 14i32;
     let fz = 16i32;
-    assert!(world.add_scenery(
-        0, fx, fz, groundh, Some(SceneModel::Model(model)), 0, 0, 2, 2, 0,
-    ));
+    let mut rw = RenderWorld::new();
+    place_scenery(&mut rw, &mut world, 0, fx, fz, groundh, SceneModel::Model(model), 0, 0, 2, 2, 0);
     for x in 8..22 {
         for z in 10..24 {
             if x >= fx && x < fx + 2 && z >= fz && z < fz + 2 {
                 continue;
             }
-            world.set_wall(
-                0, x, z, groundh, 8, 0,
-                Some(SceneModel::Model(south_wall_model(true))),
-                None, 0, 0,
-            );
-            world.add_scenery(
-                0, x, z, groundh,
-                Some(SceneModel::Model(one_face_model())),
-                0, 0, 1, 1, 0,
-            );
+            place_wall(&mut rw, &mut world, 0, x, z, groundh, 8, 0, Some(SceneModel::Model(south_wall_model(true))), None, 0, 0);
+            place_scenery(&mut rw, &mut world, 0, x, z, groundh, SceneModel::Model(one_face_model()), 0, 0, 1, 1, 0);
         }
     }
-    world.share_light(64, 768, -50, -10, -50);
-    let mut rw = RenderWorld::new();
+    rw.share_light(&mut world, 64, 768, -50, -10, -50);
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
 
     let pitch = 128i32;
@@ -1445,24 +1350,16 @@ fn camera_facing_box_survives_full_vis_window() {
         }
     }
     box_model.calc_bounding_cylinder();
-    assert!(world.add_scenery(
-        0, 50, 52, groundh,
-        Some(SceneModel::Model(box_model)),
-        0, 0, 2, 2, 0,
-    ));
+    let mut rw = RenderWorld::new();
+    place_scenery(&mut rw, &mut world, 0, 50, 52, groundh, SceneModel::Model(box_model), 0, 0, 2, 2, 0);
     for x in 40..60 {
         for z in 42..62 {
             if x >= 50 && x < 52 && z >= 52 && z < 54 {
                 continue;
             }
-            world.add_scenery(
-                0, x, z, groundh,
-                Some(SceneModel::Model(one_face_model())),
-                0, 0, 1, 1, 0,
-            );
+            place_scenery(&mut rw, &mut world, 0, x, z, groundh, SceneModel::Model(one_face_model()), 0, 0, 1, 1, 0);
         }
     }
-    let mut rw = RenderWorld::new();
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     let (ex, ey, ez) = orbit_eye(51 * 128, groundh - 50, 52 * 128, pitch, 0, pitch * 3 + 600);
     let mut pix = Pix3DDraw::default();
@@ -1499,21 +1396,13 @@ fn core_world_has_typecodes_without_renderer() {
     world.fill_base_level(0);
 
     let wall_typecode = 0x4000_0000 + 100;
-    world.set_wall(
-        0, 1, 1, 2000, 8, 0,
-        Some(SceneModel::Model(Model::default())), None,
-        wall_typecode, 0x1f,
-    );
+    world.set_wall(0, 1, 1, 2000, 8, 0, wall_typecode, 0x1f, 0, 0, 0, 0);
     assert_eq!(world.wall_type(0, 1, 1), wall_typecode);
     assert_eq!(world.type_code2(0, 1, 1, wall_typecode), 0x1f);
     assert_eq!(world.type_code2(0, 1, 1, wall_typecode + 1), -1);
 
     let scene_typecode = 0x4000_0000 + 200;
-    assert!(world.add_scenery(
-        0, 1, 1, 2000,
-        Some(SceneModel::Model(Model::default())),
-        scene_typecode, 0x7f, 1, 1, 0,
-    ));
+    assert!(world.add_scenery(0, 1, 1, 2000, scene_typecode, 0x7f, 1, 1, 0, 0, 0, 0, 0));
     assert_eq!(world.scene_type(0, 1, 1), scene_typecode);
     assert_eq!(world.type_code2(0, 1, 1, scene_typecode), 0x7f);
 
@@ -1529,11 +1418,7 @@ fn core_world_has_typecodes_without_renderer() {
     });
     c.ingame = true;
     let client_wall_tc = 0x4000_0000 + 300;
-    c.world.set_wall(
-        0, 1, 1, 0, 8, 0,
-        Some(SceneModel::Model(Model::default())), None,
-        client_wall_tc, 0,
-    );
+    c.world.set_wall(0, 1, 1, 0, 8, 0, client_wall_tc, 0, 0, 0, 0, 0);
     assert_eq!(c.world.wall_type(0, 1, 1), client_wall_tc);
     assert!(c.world.type_code2(0, 1, 1, client_wall_tc) >= 0);
 }

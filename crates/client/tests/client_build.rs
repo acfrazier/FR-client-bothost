@@ -11,7 +11,7 @@
 // carry opcode-0 tiles (perlin fallback heights) plus one planted floor
 // tile, so the blend pass has something to lay down.
 use std::sync::{Arc, Mutex};
-use client::render::Renderer;
+use client::render::{RenderWorld, Renderer};
 
 use client::client::{Client, ClientBuild, ClientConfig};
 use client::config::{Cache, FloType, LocType};
@@ -541,12 +541,19 @@ let _r = Renderer::new(false);
 #[test]
 fn finish_build_hooks_share_light() {
 let _r = Renderer::new(false);
-    // A wall model with computed point normals (as `addLoc` leaves one)
-    // must be lit by the TS 331 hook: `finishBuild` calls
-    // `world.shareLight(64, 768, -50, -10, -50)`, so after the pass the
-    // model's normals are consumed and its vertices carry lit colours.
-    let _r = Renderer::new(false);
+    // Task 3b: the models live on the render side, so `finishBuild` only
+    // flags the share-light pass (`World.shareLight(64, 768, -50, -10, -50)`
+    // from the TS 331 hook) instead of running it over sim-side models.
+    // The render-side pass consumes a model's point normals and lights its
+    // vertices exactly as the old `finishBuild` hook did.
     let mut c = client();
+    c.world.set_wall(0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+
+    let mut build = ClientBuild::new();
+    build.finish_build(&c.cache, &c.tex_average, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
+
+    assert!(c.world.take_share_light_pending(), "finishBuild must flag the render-side share_light");
+
     let mut model = Model::default();
     model.num_points = 3;
     model.point_x = Some(vec![-50, 50, 50]);
@@ -559,19 +566,18 @@ let _r = Renderer::new(false);
     model.face_colour = Some(vec![Colour::CYAN]);
     model.calc_bounding_cylinder();
     model.calculate_normals(64, 768, -50, -10, -50, false);
-    c.world.set_wall(0, 2, 2, 0, 0, 0, Some(SceneModel::Model(model)), None, 0, 0);
+    let mut rw = RenderWorld::new();
+    rw.set_wall_model(&c.world, 0, 2, 2, Some(SceneModel::Model(model)), None);
+    rw.share_light(&mut c.world, 64, 768, -50, -10, -50);
 
-    let mut build = ClientBuild::new();
-    build.finish_build(&c.cache, &c.tex_average, &mut c.world, &mut c.collision, &c.groundh, &c.mapl);
-
-    let wall = c.world.get_wall(0, 2, 2).expect("wall");
-    let SceneModel::Model(m) = wall.model1.as_ref().unwrap() else {
+    let SceneModel::Model(m) = rw.wall_model1(&c.world, &c.cache, 0, 0, 2, 2).expect("wall model1")
+    else {
         panic!("wall model1 must be a Model")
     };
-    assert!(m.point_normal.is_none(), "finishBuild must call share_light");
-    assert!(m.shared_point_normal.is_none(), "finishBuild must call share_light");
+    assert!(m.point_normal.is_none(), "share_light must consume point normals");
+    assert!(m.shared_point_normal.is_none(), "share_light must consume shared normals");
     let lit = m.face_colour_a.as_ref().expect("lit colour")[0];
-    assert_ne!(lit, 0, "finishBuild's share_light must light wall vertices");
+    assert_ne!(lit, 0, "share_light must light wall vertices");
 }
 
 #[test]

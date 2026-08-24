@@ -8,7 +8,7 @@ use client::client::{Client, ClientConfig, MiniMenuAction};
 use client::render::Renderer;
 use client::config::if_type::{ButtonType, ComponentType, IfType};
 use client::config::{LocType, NpcType, ObjType};
-use client::dash3d::{ClientNpc, ClientObj, ClientPlayer, Model, SceneModel};
+use client::dash3d::{ClientNpc, ClientObj, ClientPlayer};
 use client::datastruct::LinkList;
 
 fn client() -> Client {
@@ -128,11 +128,14 @@ let _r = Renderer::new(false);
         x,
         z,
         0,
-        Some(SceneModel::Model(Model::default())),
         typecode,
         0,
         1,
         1,
+        0,
+        0,
+        0,
+        0,
         0,
     );
     assert!(c.world.type_code2(0, x, z, typecode) >= 0);
