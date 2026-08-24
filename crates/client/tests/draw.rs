@@ -120,6 +120,35 @@ fn draw_off_loading_leaves_no_static() {
     assert!(uniq <= 16, "draw=false must not fill the minimap with static");
 }
 
+/// Loading static must not fill the CRT chat strip (single-bot 1 fps
+/// leftover snow). Viewport (`area_game`) is snow; a chat-row pixel that
+/// chrome does not overwrite must not become a unique snow field.
+#[test]
+fn scene_static_does_not_snow_chat_chrome() {
+    let mut c = client();
+    c.set_draw(true);
+    c.ingame = true;
+    c.scene_state = 1;
+    c.game_draw();
+    let w = c.draw_area.width as usize;
+    let chat_y = 400usize;
+    assert!(chat_y < c.draw_area.height as usize);
+    let row = &c.draw_area.pixels[chat_y * w..(chat_y + 1) * w];
+    let uniq: std::collections::HashSet<_> = row.iter().copied().collect();
+    assert!(
+        uniq.len() < 64,
+        "chat row must not be CRT snow (uniq={})",
+        uniq.len()
+    );
+    let g = c.area_game.as_ref().expect("prepare_game allocates area_game");
+    let g_uniq: std::collections::HashSet<_> = g.pixels.iter().copied().collect();
+    assert!(
+        g_uniq.len() > 16,
+        "viewport must still be snow (uniq={})",
+        g_uniq.len()
+    );
+}
+
 /// Task 4 review: `scene_static` overwrites the whole minimap (ring
 /// included), and `prepare_game` plots the `mapback` ring only once — so a
 /// finished scene's `minimap_draw` must re-plot the ring, or the frame

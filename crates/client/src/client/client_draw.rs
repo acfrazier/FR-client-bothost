@@ -568,10 +568,8 @@ impl Client {
         self.prepare_game();
 
         // Task 4: TV static while the scene is loading (`scene_state` not
-        // 2). Draw-gated so a Null client never fills; re-randomized every
-        // frame. Snow covers the whole CRT; keep `redraw_frame` so the 2D
-        // chrome strips (inventory, chat, icon rail) blit on top every
-        // loading frame instead of only the first.
+        // 2). Viewport + minimap only — 2D chrome is never snowed. Keep
+        // `redraw_frame` so inventory/chat blit every loading frame.
         self.scene_static();
         // Loading static and the live TV both need the 2D chrome (inventory,
         // chat, icon rail) recomposited every frame. Watch-only 1 fps skips

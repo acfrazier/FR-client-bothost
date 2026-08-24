@@ -9024,26 +9024,17 @@ impl Client {
     }
 
     /// Task 4 (274bot channel head): TV static while the scene is loading.
-    /// Fills the whole CRT (`draw_area`) first, then the viewport
-    /// (`area_game`) and the minimap (`area_map`) with fresh grayscale snow,
-    /// replacing the stock "Loading - please wait." splash text. 2D chrome
-    /// (side, chat, icon strip, back* frames) paints on top. Gated on
-    /// `draw` — a Null `draw=false` client never fills (4.6d) — and skipped
-    /// once the scene is ready (`scene_state == 2`). `game_draw` calls it
-    /// each frame so the snow re-randomizes; `dispatch_packet`/`check_minimap`
-    /// call it ahead of `check_scene`. With SFX on (`wave_enabled`, not
-    /// low-memory) it also pushes white-noise PCM onto the `waves` queue.
+    /// Fills only the 3D viewport (`area_game`) and minimap (`area_map`)
+    /// with grayscale snow — **under** the 2D chrome. Do **not** fill the
+    /// whole CRT (`draw_area`): that snowed the chat/inventory strips, and
+    /// a 1 fps watch after `scene_state == 2` never re-blits them. Gated on
+    /// `draw` (Null never fills) and skipped once `scene_state == 2`.
     /// `pub(super)` for the `game_draw` frame path in `client_draw`.
     pub(super) fn scene_static(&mut self) {
         if !self.draw || self.scene_state == 2 {
             return;
         }
         let mut rng = Self::scene_static_seed();
-        for p in self.draw_area.pixels.iter_mut() {
-            rng = rng.wrapping_mul(1664525).wrapping_add(1013904223);
-            let v = ((rng >> 24) & 0xff) as i32;
-            *p = v * 0x010101;
-        }
         if let Some(ag) = self.area_game.as_mut() {
             for p in ag.pixels.iter_mut() {
                 rng = rng.wrapping_mul(1664525).wrapping_add(1013904223);
