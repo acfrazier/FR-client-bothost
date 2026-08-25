@@ -1,12 +1,13 @@
 //! The wgpu backend (task 7): the 3D scene is rasterized on the GPU into
-//! a texture, then composited into `draw_area` at the (4, 4) blit point
-//! under the CPU 2D chrome. The scene mesh (`RenderWorld::build_scene_mesh`)
-//! transforms the marked tiles' ground, walls, decor, objects and
-//! sprites to camera space with the exact CPU fixed-point math and shades
-//! them from the same colour table; the vertex shader does the perspective
+//! a texture and the 2D chrome draws on top as GPU quads (task 5 of the
+//! GPU-chrome campaign) — the whole frame is composited on the GPU and
+//! handed to the host as a full-frame texture, with no scene readback. The
+//! scene mesh (`RenderWorld::build_scene_mesh`) transforms the marked
+//! tiles' ground, walls, decor, objects and sprites to camera space with
+//! the exact CPU fixed-point math; the vertex shader does the perspective
 //! divide (near-clipping at z = 50 for free) and the depth buffer replaces
-//! the CPU painter's priority merge. The chrome, the overlays and the
-//! title screen stay `CpuBackend` this slice.
+//! the CPU painter's priority merge. The `CpuBackend` stays the
+//! pixel-faithful oracle/fallback.
 //!
 //! One device/queue per process: the first `GpuBackend::try_new`
 //! initialises a shared `GpuContext` (`CONTEXT`, a `OnceLock`) and every
@@ -16,16 +17,16 @@
 //! the selection test.
 //!
 //! Known divergences from the CPU path (documented in `render/world.rs`):
-//! textured faces render flat-shaded from their per-vertex shade (no
-//! texture sampling), mouse picks are AABB-only, and the occluder tests
-//! are skipped (the depth buffer occludes).
+//! textured faces sample the model atlas (see `gpu_atlas.rs`), mouse picks
+//! are AABB-only, the occluder tests are skipped (the depth buffer
+//! occludes), and the chrome draws as GPU quads (rects/sprites/glyphs)
+//! with the rotated minimap composited from a CPU staging upload.
 
-use std::sync::{mpsc, Arc, OnceLock};
-use std::time::Duration;
+use std::sync::{Arc, OnceLock};
 
 use crate::client::client::Client;
-use crate::graphics::{Pix2D, Pix3D, PixMap};
-use crate::render::backend::{BackendKind, CpuBackend, FrameKind, FrameOutput, RenderBackend};
+use crate::graphics::{Pix2D, Pix3D};
+use crate::render::backend::{BackendKind, CpuBackend, FrameKind, FrameOutput, RenderBackend, TextureHandle};
 use crate::render::world::{GpuVertex, SceneMesh};
 use crate::render::Renderer;
 use crate::render::draw::get_av_h;
@@ -33,6 +34,10 @@ use crate::render::draw::get_av_h;
 /// The wgpu scene texture size: `area_game` is 512×334, blitted at (4, 4).
 const SCENE_W: u32 = 512;
 const SCENE_H: u32 = 334;
+
+/// The full-frame size: the 765×503 applet `draw_area`.
+const FRAME_W: u32 = crate::client::client::APPLET_W as u32;
+const FRAME_H: u32 = crate::client::client::APPLET_H as u32;
 
 /// The shared wgpu device/queue home (one per process). `Result` so a
 /// failed init is cached: the fallback log fires once and later renderers
@@ -130,28 +135,29 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
 /// The wgpu scene backend (see the module docs). `begin`/`chrome` delegate
 /// to the inner `CpuBackend` (the 2D chrome stays CPU this slice); `scene`
-/// rasterizes the 3D world into `scene_texture` and reads it back into
-/// `scene_pix`; `composite_scene` merges the `area_game` overlay content
-/// over the read-back and blits the result at (4, 4).
+/// rasterizes the 3D world into `scene_texture`; `composite_scene` copies
+/// the scene into the full-frame texture at (4, 4); `finish` hands the
+/// full-frame texture to the host.
 pub struct GpuBackend {
     context: Arc<GpuContext>,
     scene_texture: wgpu::Texture,
     scene_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
+    /// The full-frame 765×503 composite (scene at (4, 4) + chrome), the
+    /// texture `finish` returns.
+    frame_texture: wgpu::Texture,
+    frame_view: wgpu::TextureView,
     pipeline_opaque: wgpu::RenderPipeline,
     pipeline_translucent: wgpu::RenderPipeline,
     /// Streaming vertex buffer (grows on demand; the mesh is re-uploaded
     /// every frame, the RuneLite plugin shape).
     vertex_buf: wgpu::Buffer,
     vertex_buf_capacity: usize,
-    readback_buf: wgpu::Buffer,
-    /// The CPU copy of the read-back scene, composited into `draw_area`.
-    scene_pix: PixMap,
     /// The 2D chrome/title half.
     cpu: CpuBackend,
-    /// A scene was rendered and read back this frame (a title frame, or an
-    /// in-game frame with no built scene, leaves `composite_scene` a no-op
-    /// like the CPU path's frozen-frame blit).
+    /// A scene was rendered this frame (a title frame, or an in-game frame
+    /// with no built scene, leaves `composite_scene` a no-op like the CPU
+    /// path's frozen-frame blit).
     scene_ready: bool,
 }
 
@@ -169,8 +175,7 @@ impl GpuBackend {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            // Not sRGB: the colour-table values are already display-encoded
-            // and are read straight back into the CPU `draw_area`.
+            // Not sRGB: the colour-table values are already display-encoded.
             format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
@@ -187,6 +192,20 @@ impl GpuBackend {
             view_formats: &[],
         });
         let depth_view = depth_texture.create_view(&Default::default());
+
+        let frame_texture = context.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("r274 frame"),
+            size: wgpu::Extent3d { width: FRAME_W, height: FRAME_H, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let frame_view = frame_texture.create_view(&Default::default());
 
         let shader = context
             .device
@@ -210,26 +229,18 @@ impl GpuBackend {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        // The read-back: 512×334 RGBA, `bytes_per_row` 2048 (a multiple of
-        // the 256-byte COPY_BYTES_PER_ROW_ALIGNMENT).
-        let readback_buf = context.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("r274 scene readback"),
-            size: (SCENE_W * SCENE_H * 4) as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
 
         Ok(GpuBackend {
             context,
             scene_texture,
             scene_view,
             depth_view,
+            frame_texture,
+            frame_view,
             pipeline_opaque,
             pipeline_translucent,
             vertex_buf,
             vertex_buf_capacity,
-            readback_buf,
-            scene_pix: PixMap::new(SCENE_W as i32, SCENE_H as i32),
             cpu: CpuBackend,
             scene_ready: false,
         })
@@ -241,10 +252,10 @@ impl GpuBackend {
         GPU_BACKEND_TRIED.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Upload the mesh, rasterize it into `scene_texture` (opaque faces
-    /// first with depth writes, then the translucent faces alpha-blended)
-    /// and read the result back into `scene_pix` synchronously (the
-    /// composite step needs the pixels on the CPU).
+    /// Upload the mesh and rasterize it into `scene_texture` (opaque faces
+    /// first with depth writes, then the translucent faces alpha-blended).
+    /// No readback: the composite step copies the texture into the
+    /// full-frame on the GPU.
     fn render_scene(&mut self, mesh: SceneMesh) {
         let opaque_len = mesh.opaque_len();
         let vertices = mesh.vertices();
@@ -306,51 +317,8 @@ impl GpuBackend {
                 pass.draw(opaque_len as u32..vertices.len() as u32, 0..1);
             }
         }
-        encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.scene_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyBufferInfo {
-                buffer: &self.readback_buf,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(SCENE_W * 4),
-                    rows_per_image: Some(SCENE_H),
-                },
-            },
-            wgpu::Extent3d { width: SCENE_W, height: SCENE_H, depth_or_array_layers: 1 },
-        );
         self.context.queue.submit([encoder.finish()]);
-
-        // Synchronous read-back: poll the device until the map completes
-        // and copy the RGBA bytes into `scene_pix` (0x00RRGGBB pixels).
-        let slice = self.readback_buf.slice(..);
-        let (tx, rx) = mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |result| {
-            let _ = tx.send(result);
-        });
-        // wgpu 29: `get_mapped_range` is infallible, so only touch the
-        // buffer once the map actually succeeded.
-        let map_result = loop {
-            let _ = self.context.device.poll(wgpu::PollType::wait_indefinitely());
-            if let Ok(result) = rx.recv_timeout(Duration::from_millis(1)) {
-                break result;
-            }
-        };
-        if map_result.is_ok() {
-            let data = slice.get_mapped_range();
-            for (dst, src) in self.scene_pix.pixels.iter_mut().zip(data.chunks_exact(4)) {
-                *dst = ((src[0] as i32) << 16) | ((src[1] as i32) << 8) | (src[2] as i32);
-            }
-            drop(data);
-            self.readback_buf.unmap();
-            self.scene_ready = true;
-        } else {
-            self.scene_ready = false;
-        }
+        self.scene_ready = true;
     }
 }
 
@@ -433,10 +401,10 @@ impl RenderBackend for GpuBackend {
 
     /// `gameDrawMain`'s 3D pass on the GPU: the same entity/camera/prep
     /// steps as the CPU backend, then `prepare_scene` (draw-front marking,
-    /// share-light) + the scene mesh rasterized into the wgpu texture and
-    /// read back into `scene_pix`. The overlays (chat bubbles, modal, the
-    /// minimenu) still draw into `area_game` as on the CPU path; the
-    /// composite merges them over the read-back scene.
+    /// share-light) + the scene mesh rasterized into the wgpu scene
+    /// texture. The overlays (chat bubbles, modal, the minimenu) still
+    /// draw into `area_game` as on the CPU path; the composite merges the
+    /// scene texture into the full-frame at (4, 4).
     fn scene(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
         if kind != FrameKind::Game || core.scene_state != 2 {
             self.scene_ready = false;
@@ -552,22 +520,37 @@ impl RenderBackend for GpuBackend {
         core.cam_yaw = eye_yaw;
     }
 
-    /// The composite seam: merge the `area_game` overlay content (chat
-    /// bubbles, the modal, the minimenu — drawn over a cleared `area_game`
-    /// on this path, so non-black is the coverage key) over the read-back
-    /// scene pixels and blit the result at the (4, 4) point, under the
-    /// 2D chrome.
+    /// The composite seam: copy the GPU scene texture into the full-frame
+    /// texture at the (4, 4) point, below the 2D chrome. The frame texture
+    /// is cleared first so the areas outside the scene stay black.
     fn composite_scene(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
+        let mut encoder = self
+            .context
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("r274 frame encoder"),
+            });
         if kind == FrameKind::Game && core.scene_state == 2 && self.scene_ready {
-            if let Some(game) = &r.area_game {
-                for (dst, src) in self.scene_pix.pixels.iter_mut().zip(game.pixels.iter()) {
-                    if *src != 0 {
-                        *dst = *src;
-                    }
-                }
-            }
-            self.scene_pix.blit_into(&mut r.draw_area, 4, 4);
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.scene_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.frame_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x: 4, y: 4, z: 0 },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d { width: SCENE_W, height: SCENE_H, depth_or_array_layers: 1 },
+            );
         }
+        self.context.queue.submit([encoder.finish()]);
+        // The renderer's CPU `draw_area` stays the oracle the CPU path
+        // writes; the GPU frame is the full-frame texture, not draw_area.
+        let _ = r;
     }
 
     /// 2D chrome: the `CpuBackend` body, unchanged (the chrome stays CPU
@@ -576,12 +559,16 @@ impl RenderBackend for GpuBackend {
         self.cpu.chrome(core, r, kind);
     }
 
-    /// This slice's GPU path composites into the CPU `draw_area`, so the
-    /// owned `PixMap` frame is returned exactly like the CPU path (the
-    /// window present path stays untouched). `FrameOutput::Texture` remains
-    /// the host-owned texture-handoff arm for the slice-2 present work.
-    fn finish(&mut self, r: &mut Renderer) -> FrameOutput {
-        FrameOutput::PixMap(r.draw_area.clone())
+    /// The GPU frame is the full-frame texture (scene composited on the
+    /// GPU, no readback); `CpuBackend` frames stay `PixMap`.
+    fn finish(&mut self, _r: &mut Renderer) -> FrameOutput {
+        FrameOutput::Texture(TextureHandle {
+            device: self.context.device.clone(),
+            queue: self.context.queue.clone(),
+            view: self.frame_view.clone(),
+            width: FRAME_W,
+            height: FRAME_H,
+        })
     }
 
     fn kind(&self) -> BackendKind {

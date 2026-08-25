@@ -21,22 +21,105 @@ pub enum BackendKind {
     Gpu,
 }
 
-/// A wgpu texture handle the GPU backend can return. The seam accepts a GPU
-/// output (`FrameOutput::Texture`); this slice's `GpuBackend` composites
-/// its scene texture back into the CPU `draw_area` so the window present
-/// path stays untouched, so the handle stays an opaque marker for the
-/// host-owned texture handoff (slice 2).
-pub struct TextureHandle;
+/// A real wgpu texture the GPU backend returns: the full-frame 765×503
+/// texture view (scene + chrome composited on the GPU) plus the owning
+/// device/queue, so a consumer that must read the pixels back (the
+/// `window` present path, which has no wgpu surface) can copy and map it.
+/// The host-owned `Textures` path binds the view directly.
+pub struct TextureHandle {
+    /// The device the view was created on (a consumer read-back needs it).
+    pub device: wgpu::Device,
+    /// The queue the backend submits on (same reason).
+    pub queue: wgpu::Queue,
+    /// The composited frame texture view.
+    pub view: wgpu::TextureView,
+    /// Texture width in pixels (the 765×503 applet frame).
+    pub width: u32,
+    /// Texture height in pixels.
+    pub height: u32,
+}
+
+impl TextureHandle {
+    /// Copy the frame texture back to the CPU as `0x00RRGGBB` pixels (the
+    /// `window` present path and the pixel-assertion tests; the host
+    /// texture path never reads back). Synchronous: poll until the map
+    /// completes.
+    pub fn read_back(&self) -> Vec<i32> {
+        // `COPY_BYTES_PER_ROW_ALIGNMENT` 256: pad the row stride.
+        let bytes_per_row = ((self.width * 4 + 255) / 256) * 256;
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("r274 frame readback"),
+            size: (bytes_per_row as u64) * (self.height as u64),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("r274 frame readback encoder"),
+            });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: self.view.texture(),
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row),
+                    rows_per_image: Some(self.height),
+                },
+            },
+            wgpu::Extent3d {
+                width: self.width,
+                height: self.height,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.queue.submit([encoder.finish()]);
+
+        let slice = buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+        let map_result = loop {
+            let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+            if let Ok(result) = rx.recv_timeout(std::time::Duration::from_millis(1)) {
+                break result;
+            }
+        };
+        if map_result.is_err() {
+            return Vec::new();
+        }
+        let data = slice.get_mapped_range();
+        let mut pixels = Vec::with_capacity((self.width as usize) * (self.height as usize));
+        for row in 0..self.height as usize {
+            let row_start = row * bytes_per_row as usize;
+            for x in 0..self.width as usize {
+                let i = row_start + x * 4;
+                pixels.push(((data[i] as i32) << 16) | ((data[i + 1] as i32) << 8) | (data[i + 2] as i32));
+            }
+        }
+        drop(data);
+        buffer.unmap();
+        pixels
+    }
+}
 
 /// The output of a rendered frame, owned by the backend that produced it.
 /// `CpuBackend` returns the composited `draw_area` as an owned `PixMap`
-/// (the pixel-faithful path); the wgpu backend (task 7) can return a
-/// texture handle instead. `finish` must be able to return either, so the
-/// seam does not assume the renderer owns the framebuffer.
+/// (the pixel-faithful path); the wgpu backend returns a `Texture` (the
+/// full-frame GPU composite). `finish` must be able to return either, so
+/// the seam does not assume the renderer owns the framebuffer.
 pub enum FrameOutput {
     /// CpuBackend: the composited 765×503 frame.
     PixMap(PixMap),
-    /// GpuBackend: a wgpu texture handle (task 7).
+    /// GpuBackend: the full-frame wgpu texture (scene + chrome composited
+    /// on the GPU; no readback).
     Texture(TextureHandle),
 }
 

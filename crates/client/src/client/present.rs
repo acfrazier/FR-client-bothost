@@ -97,10 +97,19 @@ impl PresentTarget for WindowTarget {
         self.frames += 1;
         #[cfg(feature = "window")]
         if let Some(window) = self.present.as_mut() {
-            if let FrameOutput::PixMap(frame) = _frame {
-                window.blit(&frame.pixels, frame.width as u32, frame.height as u32);
+            match _frame {
+                FrameOutput::PixMap(frame) => {
+                    window.blit(&frame.pixels, frame.width as u32, frame.height as u32);
+                }
+                FrameOutput::Texture(handle) => {
+                    // No wgpu surface here (softbuffer owns the window):
+                    // copy the GPU frame back and blit it. The GPU backend
+                    // never reads back; this is the window consumer's own
+                    // copy.
+                    let pixels = handle.read_back();
+                    window.blit(&pixels, handle.width, handle.height);
+                }
             }
-            // `FrameOutput::Texture` has no window consumer yet (task 7).
         }
     }
 }

@@ -8,7 +8,8 @@ use client::render::backend::{BackendKind, FrameOutput};
 use client::render::Renderer;
 
 /// On a machine with an adapter the renderer selects `GpuBackend` and both
-/// a title frame and an in-game frame come back as owned frames; on a
+/// a title frame and an in-game frame come back as owned full-frame
+/// textures (no readback — `finish` returns `FrameOutput::Texture`); on a
 /// machine without one it degrades to the CPU backend — the same graceful
 /// fallback the force-failure test pins.
 #[test]
@@ -24,14 +25,17 @@ fn gpu_backend_selected_when_adapter_available() {
     let mut c = client();
     c.set_draw(true);
     let title = r.title_screen_draw(&mut c);
-    assert!(matches!(title, FrameOutput::PixMap(_)), "the GPU title frame must present");
+    let FrameOutput::Texture(title_handle) = title else {
+        panic!("the GPU title frame must be a full-frame texture");
+    };
+    assert_eq!((title_handle.width, title_handle.height), (765, 503));
 
     c.ingame = true;
     let game = r.game_draw(&mut c);
-    assert!(
-        matches!(game, FrameOutput::PixMap(_)),
-        "the GPU in-game frame must present (composited scene + CPU chrome)"
-    );
+    let FrameOutput::Texture(game_handle) = game else {
+        panic!("the GPU in-game frame must be a full-frame texture (no scene readback)");
+    };
+    assert_eq!((game_handle.width, game_handle.height), (765, 503));
 
     Renderer::set_prefer_gpu(false);
 }

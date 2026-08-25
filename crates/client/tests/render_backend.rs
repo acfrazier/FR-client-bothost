@@ -97,29 +97,78 @@ fn cpu_backend_returns_owned_pixmap_frame() {
 }
 
 /// Test-only GPU-shaped backend: produces a texture without writing into a
-/// renderer-owned PixMap, proving the seam accepts a GPU output.
-struct TextureBackend;
+/// renderer-owned PixMap, proving the seam accepts a GPU output. The
+/// handle needs a real wgpu device; the test skips on machines without an
+/// adapter.
+struct TextureBackend {
+    handle: Option<TextureHandle>,
+}
+
+impl TextureBackend {
+    fn new() -> Self {
+        TextureBackend {
+            handle: dummy_handle(),
+        }
+    }
+}
+
+/// A real 1×1 frame handle on this machine's adapter (None = no adapter).
+fn dummy_handle() -> Option<TextureHandle> {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let adapter =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).ok()?;
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&Default::default())).ok()?;
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("r274 seam-test frame"),
+        size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    Some(TextureHandle {
+        device,
+        queue,
+        view: texture.create_view(&Default::default()),
+        width: 1,
+        height: 1,
+    })
+}
 
 impl RenderBackend for TextureBackend {
     fn begin(&mut self, _core: &mut Client, _r: &mut Renderer, _kind: FrameKind) {}
     fn scene(&mut self, _core: &mut Client, _r: &mut Renderer, _kind: FrameKind) {}
     fn chrome(&mut self, _core: &mut Client, _r: &mut Renderer, _kind: FrameKind) {}
     fn finish(&mut self, _r: &mut Renderer) -> FrameOutput {
-        FrameOutput::Texture(TextureHandle)
+        FrameOutput::Texture(self.handle.take().expect("adapter-gated test"))
     }
 }
 
 #[test]
 fn texture_backend_surfaces_owned_texture() {
-    let mut r = Renderer::with_backend(Box::new(TextureBackend), false);
+    let backend = TextureBackend::new();
+    if backend.handle.is_none() {
+        eprintln!("no adapter on this machine; the texture seam test skips");
+        return;
+    }
+    let mut r = Renderer::with_backend(Box::new(backend), false);
     let mut c = client();
     c.set_draw(true);
     c.ingame = true;
     let output = r.game_draw(&mut c);
     assert!(
-        matches!(output, FrameOutput::Texture(TextureHandle)),
+        matches!(output, FrameOutput::Texture(_)),
         "a texture backend must surface its output through FrameOutput::Texture"
     );
+    let FrameOutput::Texture(handle) = output else {
+        unreachable!()
+    };
+    assert_eq!(handle.width, 1);
+    assert_eq!(handle.height, 1);
+    assert_eq!(handle.read_back(), vec![0]);
 }
 
 /// Test-only backend whose `scene` panics on the first frame only.
