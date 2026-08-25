@@ -760,6 +760,11 @@ pub struct Client {
     /// first login). `lostCon` reestablishes with `reconnect = true`
     /// (wrapper opcode 18); the flag is how the reconnect path is observed.
     pub last_login_reconnect: Option<bool>,
+    /// Socket-adopt flag: when true, the next `login(reconnect = true)`
+    /// reuses `stream` (`Client::adopt_from`) instead of opening a new TCP
+    /// — the opcode-18 handshake runs in place so a channel-head tune swaps
+    /// net+sim without a TCP drop. Cleared at the start of that login.
+    pub baton: bool,
     /// `logoutTimer` from Java: frames remaining until a requested logout.
     pub logout_timer: i32,
     /// `rebootTimer` from client-ts (140): seconds until the server reboot,
@@ -789,12 +794,35 @@ impl Client {
         // to files for tests without a web server.
         let jag_checksum = Self::get_jag_checksums(&config.host, 80)
             .unwrap_or_else(|| Self::read_jag_checksums(&config.cache_dir));
-        let on_demand = Self::load_on_demand(&config);
-        let midi = midi_backend(&config.cache_dir);
         let (cache, ifaces, error_loading) = match Self::load_cache(&config.cache_dir) {
             Ok((cache, ifaces)) => (cache, ifaces, false),
             Err(()) => (Cache::default(), Vec::new(), true),
         };
+        Self::construct(config, Arc::new(cache), ifaces, error_loading, jag_checksum)
+    }
+
+    /// Host construct: inject a process-wide `Arc<Cache>` and a cloned
+    /// iface template. Skips `load_cache` and the `/crc` probe; the host
+    /// unpacks once per `cache_dir`. `error_loading` is false so `mainloop`
+    /// is not a no-op after a successful inject.
+    pub fn from_shared(
+        config: ClientConfig,
+        cache: Arc<Cache>,
+        ifaces: Vec<Option<IfType>>,
+    ) -> Self {
+        let jag_checksum = Self::read_jag_checksums(&config.cache_dir);
+        Self::construct(config, cache, ifaces, false, jag_checksum)
+    }
+
+    fn construct(
+        config: ClientConfig,
+        cache: Arc<Cache>,
+        ifaces: Vec<Option<IfType>>,
+        error_loading: bool,
+        jag_checksum: [i32; 9],
+    ) -> Self {
+        let on_demand = Self::load_on_demand(&config);
+        let midi = midi_backend(&config.cache_dir);
         let jagfx = Self::unpack_jagfx(&config.cache_dir, config.lowmem);
         let groundh: LevelHeightmaps =
             vec![
@@ -805,7 +833,7 @@ impl Client {
             shell: GameShell::new(),
             present: None,
             config,
-            cache: Arc::new(cache),
+            cache,
             ifaces,
 
             ingame: false,
@@ -1090,6 +1118,7 @@ impl Client {
             idk_design_button1: None,
             idk_design_button2: None,
             last_login_reconnect: None,
+            baton: false,
             logout_timer: 0,
             reboot_timer: 0,
             timeout_timer: 0,
@@ -1548,6 +1577,29 @@ impl Client {
         }
     }
 
+    /// Adopt another `Client`'s live game socket and ISAAC cursors (bothost
+    /// `Lean::from_client` semantics, Client→Client): `other`'s `stream`,
+    /// `random_in`, outbound cursor (`out`), inbound buffer, and
+    /// partial-frame state (`ptype`/`psize`) move here. `other` must not
+    /// touch the game stream afterwards (drop it or reuse it for another
+    /// account); no TCP is closed. Arms `baton`, so the next
+    /// `login(..., reconnect = true)` runs the opcode-18 handshake over the
+    /// adopted socket instead of a fresh TCP. Returns `None` when `other`
+    /// has no live stream.
+    pub fn adopt_from(&mut self, other: &mut Client) -> Option<()> {
+        self.stream = Some(other.stream.take()?);
+        self.random_in = other.random_in.take();
+        self.out = std::mem::replace(&mut other.out, Packet::alloc(1));
+        self.r#in = std::mem::replace(&mut other.r#in, Packet::alloc(1));
+        self.ptype = std::mem::replace(&mut other.ptype, 0);
+        self.ptype0 = std::mem::replace(&mut other.ptype0, 0);
+        self.ptype1 = std::mem::replace(&mut other.ptype1, 0);
+        self.ptype2 = std::mem::replace(&mut other.ptype2, 0);
+        self.psize = std::mem::replace(&mut other.psize, 0);
+        self.baton = true;
+        Some(())
+    }
+
     /// Login handshake, 1:1 of `Client.ts` `login` (1719-1867) / Java
     /// `Client.login`: probe, seed, RSA blob, opcode 16/18 wrapper. Response 1
     /// waits 2 s and retries the same attempt; response 2 enters the game;
@@ -1570,9 +1622,26 @@ impl Client {
             self.login_mes2 = "Connecting to server...".into();
         }
 
-        let mut stream = match ClientStream::connect(&self.config.host, self.config.port) {
-            Ok(s) => s,
-            Err(_) => return Err(self.fail_title_login(io_error(), reconnect)),
+        // Socket-adopt reverse (channel-head tune): an adopted live socket
+        // already holds this account's TCP (`baton`). Reuse it and run the
+        // opcode-18 handshake in place so the server dumps region/player
+        // state without a DC. Every other login (including `lost_con`)
+        // still `connect`s a fresh socket.
+        let reuse = self.baton;
+        self.baton = false;
+        let mut stream = if reuse {
+            match self.stream.take() {
+                Some(s) => s,
+                None => match ClientStream::connect(&self.config.host, self.config.port) {
+                    Ok(s) => s,
+                    Err(_) => return Err(self.fail_title_login(io_error(), reconnect)),
+                },
+            }
+        } else {
+            match ClientStream::connect(&self.config.host, self.config.port) {
+                Ok(s) => s,
+                Err(_) => return Err(self.fail_title_login(io_error(), reconnect)),
+            }
         };
 
         let userhash = JString::to_userhash(username);
