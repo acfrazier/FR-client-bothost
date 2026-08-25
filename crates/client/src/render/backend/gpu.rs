@@ -502,9 +502,6 @@ impl RenderBackend for GpuBackend {
     fn begin(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
         let _guard = self.chrome.guard();
         self.chrome.frame_begin(&r.draw_area);
-        self.chrome.mark_staged(r.area_map.as_ref());
-        self.chrome.mark_staged(r.image_title0.as_ref());
-        self.chrome.mark_staged(r.image_title1.as_ref());
         if kind == FrameKind::Title {
             if !core.ingame && core.redraw_frame {
                 r.unload_title();
@@ -525,7 +522,15 @@ impl RenderBackend for GpuBackend {
                 core.tex_average = r.pix3d.tex_average;
             }
             r.prepare_game(core);
+        }
+        // The staged maps exist only after the prep above allocated them;
+        // mark them now (the first frame's prep happens under this frame's
+        // recorder, and their blits must stage, not cache, from the start).
+        self.chrome.mark_staged(r.area_map.as_ref());
+        self.chrome.mark_staged(r.image_title0.as_ref());
+        self.chrome.mark_staged(r.image_title1.as_ref());
 
+        if kind == FrameKind::Game {
             // The chrome-frame strips (the CPU path blits them once per
             // `redraw_frame`; the GPU path re-records them every frame).
             if let Some(b) = &r.area_backleft1 {
