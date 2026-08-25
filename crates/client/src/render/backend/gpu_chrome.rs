@@ -515,7 +515,13 @@ impl GpuChrome {
     /// vertex-buffer upload, then one draw call per contiguous same-layer
     /// run (the quads keep the CPU's exact draw order).
     pub fn flush(&mut self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
-        let quads = std::mem::take(&mut self.buffers[0].quads);
+        // No root buffer (a finish without the frame stages, e.g. the
+        // scene-composite test) flushes nothing.
+        let quads = if let Some(root) = self.buffers.first_mut() {
+            std::mem::take(&mut root.quads)
+        } else {
+            Vec::new()
+        };
         self.quad_count = quads.len();
         LAST_QUAD_COUNT.store(quads.len(), std::sync::atomic::Ordering::Relaxed);
         if quads.is_empty() {

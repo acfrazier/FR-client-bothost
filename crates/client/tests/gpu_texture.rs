@@ -12,9 +12,9 @@ use client::config::Cache;
 use client::core::World;
 use client::dash3d::{SceneModel, TerrainOverlayShape};
 use client::graphics::{Pix3D, Pix3DDraw, Pix8};
-use client::render::backend::GpuBackend;
+use client::render::backend::{FrameOutput, GpuBackend, RenderBackend};
 use client::render::world::GpuVertex;
-use client::render::RenderWorld;
+use client::render::{RenderWorld, Renderer};
 
 const SHADE: i32 = 200 * 128 + 100;
 const TEXTURE_RED: i32 = 7;
@@ -197,8 +197,6 @@ fn gpu_render_samples_multi_texture_model() {
     };
     let mut pix = textured_pix();
     let (_rw, _world, mesh) = textured_wall_mesh(&mut pix);
-    let mesh_opaque = mesh.opaque_len();
-    let vertices = mesh.clone().vertices();
     let scene = backend.render_scene_for_test(mesh, &pix);
 
     // The shade (SHADE = 0x6464) selects brightness level 1 (~7/8), so the
@@ -216,20 +214,6 @@ fn gpu_render_samples_multi_texture_model() {
             found_blue += 1;
         }
     }
-    eprintln!("dbg: red={found_red} blue={found_blue} total_nonblack={}",
-        scene.iter().filter(|&&p| p != 0).count());
-    eprintln!("dbg: first 20 non-black: {:?}", scene.iter().filter(|&&p| p != 0).take(20).collect::<Vec<_>>());
-    for v in vertices.iter().filter(|v| v.tex_id == TEXTURE_BLUE as u32).take(6) {
-        eprintln!("dbg: blue v pos=({}, {}, {}) uv=({}/{}, {}/{})", v.x, v.y, v.z, v.u_num, v.u_den, v.v_num, v.v_den);
-    }
-    for v in vertices.iter().filter(|v| v.tex_id == TEXTURE_RED as u32).take(6) {
-        eprintln!("dbg: red v pos=({}, {}, {}) uv=({}/{}, {}/{})", v.x, v.y, v.z, v.u_num, v.u_den, v.v_num, v.v_den);
-    }
-    eprintln!("dbg: opaque_len={} total={}", mesh_opaque, vertices.len());
-    // count by tex_id
-    for id in [TEXTURE_RED as u32, TEXTURE_BLUE as u32, u32::MAX] {
-        eprintln!("dbg: tex_id {id}: {} vertices", vertices.iter().filter(|v| v.tex_id == id).count());
-    }
     assert!(
         found_red > 0,
         "the red-textured wall face must render red texels, not flat-shaded white"
@@ -240,6 +224,48 @@ fn gpu_render_samples_multi_texture_model() {
     );
     // Sanity: the wall occupies real screen space (not a one-pixel sliver).
     assert!(found_red + found_blue > 500, "the textured wall must cover screen area");
+}
+
+/// The composite: after a scene render, `finish` returns one full-frame
+/// 765×503 texture carrying the scene at its (4, 4) point — the scene and
+/// the (empty, here) chrome quads land in the same texture, no readback.
+#[test]
+fn composite_lands_the_scene_in_the_full_frame() {
+    Pix3D::init_colour_table(0.6);
+    let Ok(mut backend) = GpuBackend::try_new() else {
+        eprintln!("no adapter on this machine; the composite test skips");
+        return;
+    };
+    let mut pix = textured_pix();
+    let (_rw, _world, mesh) = textured_wall_mesh(&mut pix);
+    backend.render_scene_for_test(mesh, &pix);
+
+    let mut r = Renderer::new(false);
+    let FrameOutput::Texture(handle) = backend.finish(&mut r) else {
+        panic!("finish must return the full-frame texture");
+    };
+    assert_eq!((handle.width, handle.height), (765, 503));
+    let pixels = handle.read_back();
+    // The textured wall renders inside the (4, 4) scene region (not the
+    // raw 512×334 scene texture — the full frame).
+    let mut scene_red = 0usize;
+    for y in 4..338 {
+        for x in 4..516 {
+            let rgb = pixels[y * 765 + x];
+            let r = (rgb >> 16) & 0xff;
+            let g = (rgb >> 8) & 0xff;
+            let b = rgb & 0xff;
+            if r > 128 && g < 64 && b < 64 {
+                scene_red += 1;
+            }
+        }
+    }
+    assert!(
+        scene_red > 500,
+        "the composited full-frame must carry the scene at (4, 4) (got {scene_red} red px)"
+    );
+    // Nothing outside the frame's own bounds.
+    assert_eq!(pixels.len(), 765 * 503);
 }
 
 /// The `GpuVertex` layout stays `bytemuck`-clean for the raw upload (the

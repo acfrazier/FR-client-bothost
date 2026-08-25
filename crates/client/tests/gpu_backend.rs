@@ -160,6 +160,7 @@ fn composite_produces_one_full_frame_texture() {
     let mut c = client();
     c.set_draw(true);
     c.ingame = true;
+    c.scene_state = 2; // the full game frame: scene stage + overlays + chrome
     let game = r.game_draw(&mut c);
     let FrameOutput::Texture(handle) = game else {
         panic!("the GPU in-game frame must be a texture");
