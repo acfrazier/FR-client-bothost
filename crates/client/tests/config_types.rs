@@ -1,5 +1,7 @@
 // Config types unpacked from the engine's `config` JAG archive (1:1 of the
 // client-ts `config/` decode loops). Skipped when the engine pack is absent.
+use std::sync::Arc;
+
 use client::client::{Client, ClientConfig};
 use client::config::if_type::IfType;
 use client::config::{Cache, ObjType};
@@ -87,7 +89,7 @@ fn client_owns_an_empty_cache_until_unpacked() {
     let Some(jag) = engine_config_jag() else {
         return;
     };
-    c.cache = Cache::unpack(&jag);
+    c.cache = Arc::new(Cache::unpack(&jag));
     assert!(c
         .cache
         .objs

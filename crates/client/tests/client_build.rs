@@ -208,7 +208,7 @@ let _r = Renderer::new(false);
 fn load_locations_ground_decor_blocks_when_active() {
 let _r = Renderer::new(false);
     let mut c = client();
-    c.cache.locs.push(LocType {
+    Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType {
         active: true,
         blockwalk: true,
         forcedecor: true,
@@ -241,7 +241,7 @@ let _r = Renderer::new(false);
 fn load_locations_low_mem_skips_force_high_detail() {
 let _r = Renderer::new(false);
     let mut c = client();
-    c.cache.locs.push(LocType {
+    Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType {
         active: true,
         blockwalk: true,
         ..LocType::default()
@@ -269,7 +269,7 @@ let _r = Renderer::new(false);
 fn load_locations_low_mem_skips_wrong_vis_below() {
 let _r = Renderer::new(false);
     let mut c = client();
-    c.cache.locs.push(LocType {
+    Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType {
         active: true,
         blockwalk: true,
         ..LocType::default()
@@ -296,7 +296,7 @@ let _r = Renderer::new(false);
 fn load_locations_wall_blocks_collision_without_model() {
 let _r = Renderer::new(false);
     let mut c = client();
-    c.cache.locs.push(LocType {
+    Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType {
         blockwalk: true,
         ..LocType::default()
     });
@@ -324,7 +324,7 @@ let _r = Renderer::new(false);
 fn load_locations_skips_out_of_area_tiles() {
 let _r = Renderer::new(false);
     let mut c = client();
-    c.cache.locs.push(LocType {
+    Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType {
         blockwalk: true,
         ..LocType::default()
     });
@@ -352,7 +352,7 @@ let _r = Renderer::new(false);
 fn load_locations_places_at_offset_tiles() {
 let _r = Renderer::new(false);
     let mut c = client();
-    c.cache.locs.push(LocType {
+    Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType {
         blockwalk: true,
         ..LocType::default()
     });
@@ -411,7 +411,7 @@ fn finish_build_sets_quick_ground_after_load_ground() {
 let _r = Renderer::new(false);
     let _r = Renderer::new(false);
     let mut c = client();
-    c.cache.flos.push(FloType {
+    Arc::get_mut(&mut c.cache).unwrap().flos.push(FloType {
         chroma: 10,
         underlay_hue: 5,
         saturation: 100,
@@ -602,7 +602,7 @@ fn finish_build_magenta_overlay_floor() {
 let _r = Renderer::new(false);
     let _r = Renderer::new(false);
     let mut c = client();
-    c.cache.flos.push(FloType {
+    Arc::get_mut(&mut c.cache).unwrap().flos.push(FloType {
         colour: Colour::MAGENTA,
         ..FloType::default()
     });

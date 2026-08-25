@@ -8,6 +8,7 @@ use client::config::IdkType;
 use client::dash3d::Model;
 use client::graphics::{Colour, Pix32};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 fn client() -> Client {
     Client::new(ClientConfig {
@@ -193,9 +194,9 @@ let _r = Renderer::new(false);
     let mut r = Renderer::new(false);
     let mut c = client();
     while c.cache.idks.len() <= 0 {
-        c.cache.idks.push(IdkType::default());
+        Arc::get_mut(&mut c.cache).unwrap().idks.push(IdkType::default());
     }
-    c.cache.idks[0].model = Some(vec![4096]);
+    Arc::get_mut(&mut c.cache).unwrap().idks[0].model = Some(vec![4096]);
     let mut player = ClientPlayer::default();
     player.ready = true;
     player.entity.x = 384;

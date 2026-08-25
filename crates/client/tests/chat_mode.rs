@@ -53,8 +53,8 @@ fn trade_button_cycles_trade_mode() {
 #[test]
 fn report_abuse_sends_close_modal_and_records_main_modal_id() {
     let mut c = client();
-    c.cache.ifaces.resize(601, None);
-    c.cache.ifaces[600] = Some(IfType {
+    c.ifaces.resize(601, None);
+    c.ifaces[600] = Some(IfType {
         client_code: 600,
         layer_id: 7,
         ..IfType::default()
