@@ -24,8 +24,7 @@ use std::sync::{mpsc, Arc, OnceLock};
 use std::time::Duration;
 
 use crate::client::client::Client;
-use crate::graphics::Pix3D;
-use crate::graphics::PixMap;
+use crate::graphics::{Pix2D, Pix3D, PixMap};
 use crate::render::backend::{BackendKind, CpuBackend, FrameKind, FrameOutput, RenderBackend};
 use crate::render::world::{GpuVertex, SceneMesh};
 use crate::render::Renderer;
@@ -524,6 +523,16 @@ impl RenderBackend for GpuBackend {
             .world
             .build_scene_mesh(&mut core.world, cache, loop_cycle, &mut r.pix3d);
         self.render_scene(mesh);
+
+        // The overlays (chat bubbles, modal, minimenu, crosshair) draw into
+        // `area_game`, which is composited over the read-back scene by
+        // "non-black wins". Clear it exactly like the CPU path's
+        // `surface.cls()` before the world pass, so no stale overlay pixels
+        // ghost frame-to-frame.
+        if let Some(game) = r.area_game.as_mut() {
+            let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
+            surface.cls();
+        }
 
         r.world.remove_sprites(&mut core.world);
         r.entity_overlays(core);
