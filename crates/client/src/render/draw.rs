@@ -41,6 +41,7 @@ use crate::dash3d::client_entity::ClientEntity;
 use crate::dash3d::{BuildArea, CollisionFlag, LocAngle, LocShape, MapFlag, SceneModel};
 use crate::graphics::{Colour, Pix2D, Pix3D, Pix32, Pix8, PixFont, PixMap};
 use crate::io::{ClientProt, JagFile};
+use crate::render::backend::FrameOutput;
 use crate::render::Renderer;
 use crate::util::JString;
 
@@ -3939,23 +3940,26 @@ impl Renderer {
     /// in-game draw into `draw_area` (which the `window` feature presents).
     /// `draw` is the CPU-save switch: false skips the render entirely, so a
     /// headless bot burns no pixels while the network machine keeps running.
+    /// Returns the composited frame (the backend-owned output, task-4
+    /// fix round 1), so the `window` path can blit it without re-reading
+    /// `draw_area`.
     ///
     /// Re-homed onto `Renderer` (task 2b): it also runs the draw-only halves
     /// the sim loop used to touch — `check_minimap`'s render half (the
     /// loading splash and the minimap *image* build; `Client::check_minimap`
     /// runs the scene build on the sim loop) and `follow_camera`.
-    pub fn mainredraw(&mut self, client: &mut Client) {
+    pub fn mainredraw(&mut self, client: &mut Client) -> FrameOutput {
         if !client.draw {
-            return;
+            return FrameOutput::PixMap(self.draw_area.clone());
         }
         if client.ingame {
             self.check_minimap(client);
             if client.scene_state == 2 {
                 self.follow_camera(client);
             }
-            self.game_draw(client);
+            self.game_draw(client)
         } else {
-            self.title_screen_draw(client);
+            self.title_screen_draw(client)
         }
     }
 

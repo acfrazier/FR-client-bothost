@@ -19,7 +19,7 @@ use crate::client::client::Client;
 use crate::dash3d::BuildArea;
 use crate::graphics::{Pix3D, Pix32, Pix3DDraw, Pix8, PixFont, PixMap};
 use crate::io::JagFile;
-use crate::render::backend::{CpuBackend, FrameKind, RenderBackend};
+use crate::render::backend::{CpuBackend, FrameKind, FrameOutput, RenderBackend};
 use crate::render::world::RenderWorld;
 use crate::util::JavaRandom;
 
@@ -201,13 +201,37 @@ pub struct Renderer {
     /// anticheat counter sent with `ANTICHEAT_CYCLELOGIC3` every 113
     /// `minimapBuildBuffer` runs.
     pub cyclelogic3: i32,
-    /// The rasterizer this renderer routes frames through (task 4). An
-    /// `Option` so a frame can temporarily take the backend out: the stage
-    /// methods borrow the renderer's own state (`&mut Renderer`), which a
-    /// live borrow of `self.backend` would conflict with. `render_frame`
-    /// puts it back at the end of every frame; the `expect` is that
-    /// invariant.
+    /// The rasterizer this renderer routes frames through (task 4). Held
+    /// in an `Option` so a frame can temporarily take the backend out (see
+    /// `FrameBackend`): the stage methods borrow the renderer's own state,
+    /// which a live borrow of `self.backend` would conflict with. The
+    /// guard puts it back on drop, so a stage panic cannot leave it `None`.
     backend: Option<Box<dyn RenderBackend>>,
+}
+
+/// Takes `Renderer::backend` out of the struct for the duration of a frame
+/// and holds the renderer so the stage methods can borrow it; re-installs
+/// the backend on drop. If a stage panics, the unwind runs this `Drop`
+/// before leaving `render_frame`, so `Renderer::backend` is never left
+/// `None` by a caught panic.
+struct FrameBackend<'a> {
+    renderer: &'a mut Renderer,
+    backend: Option<Box<dyn RenderBackend>>,
+}
+
+impl<'a> FrameBackend<'a> {
+    fn new(renderer: &'a mut Renderer) -> FrameBackend<'a> {
+        FrameBackend {
+            backend: renderer.backend.take(),
+            renderer,
+        }
+    }
+}
+
+impl Drop for FrameBackend<'_> {
+    fn drop(&mut self) {
+        self.renderer.backend = self.backend.take();
+    }
 }
 
 impl Renderer {
@@ -333,28 +357,31 @@ impl Renderer {
     }
 
     /// Run one frame through the backend: `begin` → `scene` → `chrome` →
-    /// `finish`. The backend is taken out of `self` for the frame so its
-    /// stages can borrow the renderer's own state (`&mut Renderer`); it is
-    /// put back before this returns.
-    fn render_frame(&mut self, client: &mut Client, kind: FrameKind) {
-        let mut backend = self.backend.take().expect("render backend present");
-        backend.begin(client, self, kind);
-        backend.scene(client, self, kind);
-        backend.chrome(client, self, kind);
-        let _ = backend.finish(self);
-        self.backend = Some(backend);
+    /// `finish`, and return the backend-owned output. `FrameBackend` holds
+    /// the renderer's own state for the stage calls and re-installs the
+    /// backend on drop (normal or unwinding).
+    fn render_frame(&mut self, client: &mut Client, kind: FrameKind) -> FrameOutput {
+        let mut guard = FrameBackend::new(self);
+        let backend = guard.backend.as_mut().expect("render backend present");
+        let renderer = &mut *guard.renderer;
+        backend.begin(client, renderer, kind);
+        backend.scene(client, renderer, kind);
+        backend.chrome(client, renderer, kind);
+        let output = backend.finish(renderer);
+        drop(guard);
+        output
     }
 
     /// `gameDraw` from client-ts (3890): the in-game frame. Delegates the
     /// frame stages to the render backend (task 4); the bodies live in
     /// `render/backend/cpu.rs`.
-    pub fn game_draw(&mut self, client: &mut Client) {
-        self.render_frame(client, FrameKind::Game);
+    pub fn game_draw(&mut self, client: &mut Client) -> FrameOutput {
+        self.render_frame(client, FrameKind::Game)
     }
 
     /// `titleScreenDraw` from client-ts (1489): the login frame. Delegates
     /// to the render backend (task 4).
-    pub fn title_screen_draw(&mut self, client: &mut Client) {
-        self.render_frame(client, FrameKind::Title);
+    pub fn title_screen_draw(&mut self, client: &mut Client) -> FrameOutput {
+        self.render_frame(client, FrameKind::Title)
     }
 }

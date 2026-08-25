@@ -42,6 +42,8 @@ use crate::io::{
     ClientProt, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt, SERVER_PROT_SIZES,
 };
 use crate::login_rsa::{LOGIN_RSAE, LOGIN_RSAN};
+#[cfg(feature = "window")]
+use crate::render::backend::FrameOutput;
 use crate::render::Renderer;
 use crate::sound::{Fade, JagFX, Midi};
 use crate::util::JString;
@@ -9756,15 +9758,18 @@ impl Client {
             self.shell.count &= 0xff;
             self.shell.end_frame();
 
-            renderer.mainredraw(self);
+            #[cfg_attr(not(feature = "window"), allow(unused_variables))]
+            let output = renderer.mainredraw(self);
 
             #[cfg(feature = "window")]
             if let Some(present) = self.present.as_mut() {
-                present.blit(
-                    &renderer.draw_area.pixels,
-                    renderer.draw_area.width as u32,
-                    renderer.draw_area.height as u32,
-                );
+                if let FrameOutput::PixMap(frame) = output {
+                    present.blit(
+                        &frame.pixels,
+                        frame.width as u32,
+                        frame.height as u32,
+                    );
+                }
             }
         }
 

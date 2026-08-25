@@ -9,11 +9,21 @@ use crate::client::client::Client;
 use crate::graphics::PixMap;
 use crate::render::Renderer;
 
-/// The output of a rendered frame. The CPU backend hands back its
-/// composited `draw_area` PixMap (the pixel-faithful path); the wgpu
-/// backend will hand back a texture instead.
-pub enum FrameOutput<'a> {
-    Pix(&'a PixMap),
+/// A wgpu texture handle the GPU backend will return (task 7 fills in the
+/// real type; the variant and ownership shape exist now so the seam
+/// accepts a GPU path).
+pub struct TextureHandle;
+
+/// The output of a rendered frame, owned by the backend that produced it.
+/// `CpuBackend` returns the composited `draw_area` as an owned `PixMap`
+/// (the pixel-faithful path); the wgpu backend (task 7) returns a texture
+/// handle instead. `finish` must be able to return either, so the seam
+/// does not assume the renderer owns the framebuffer.
+pub enum FrameOutput {
+    /// CpuBackend: the composited 765×503 frame.
+    PixMap(PixMap),
+    /// GpuBackend: a wgpu texture handle (task 7).
+    Texture(TextureHandle),
 }
 
 /// Which frame the renderer is drawing. The old `mainredraw` in-game /
@@ -33,9 +43,15 @@ pub enum FrameKind {
 /// and no renderer argument; the actual call flow (the moved
 /// `game_draw`/`title_screen_draw` bodies) mutates both the client (redraw
 /// flags, scroll, camera) and the renderer's own draw state, so the stages
-/// take `&mut Client` plus the renderer. `Renderer` holds the backend as
-/// `Option<Box<dyn RenderBackend>>` and takes it out for the duration of a
-/// frame so the stages can borrow the renderer's state.
+/// take `&mut Client` plus the renderer. `Renderer` takes the backend out
+/// of the struct for the duration of a frame (`FrameBackend`, see
+/// `renderer.rs`) so the stages can borrow the renderer's state.
+///
+/// Output is backend-owned: `finish` returns a `FrameOutput` the backend
+/// produced, never a borrow of the renderer's framebuffer. A GPU backend
+/// rasterizes into its own texture during `scene` and returns
+/// `FrameOutput::Texture`; `r` is the draw state the CPU path composites
+/// from and is unused by a texture backend.
 pub trait RenderBackend {
     /// Frame start: the pre-draw setup of the current `game_draw`/
     /// `title_screen_draw` structure — scroll/brightness/`prepare_game`
@@ -49,8 +65,9 @@ pub trait RenderBackend {
     /// 2D chrome over the scene: ifaces/HUD, side/chat/icons, minimap and
     /// the in-game redraw-frame compositing, or the title compositing.
     fn chrome(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind);
-    /// The composited frame, handed to `Present` (task 6).
-    fn finish<'a>(&mut self, r: &'a mut Renderer) -> FrameOutput<'a>;
+    /// The composited frame, owned by the backend: `FrameOutput::PixMap`
+    /// for `CpuBackend`, `FrameOutput::Texture` for the wgpu backend.
+    fn finish(&mut self, r: &mut Renderer) -> FrameOutput;
 }
 
 pub use cpu::CpuBackend;

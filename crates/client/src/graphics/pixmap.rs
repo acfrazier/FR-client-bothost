@@ -6,6 +6,7 @@
 
 use super::pix2d::Pix2D;
 
+#[derive(Clone)]
 pub struct PixMap {
     pub width: i32,
     pub height: i32,

@@ -557,9 +557,11 @@ impl RenderBackend for CpuBackend {
         }
     }
 
-    /// The composited frame. The CPU path hands back `draw_area` (765×503)
-    /// itself; `Present` blits it (feature `window`) exactly as before.
-    fn finish<'a>(&mut self, r: &'a mut Renderer) -> FrameOutput<'a> {
-        FrameOutput::Pix(&r.draw_area)
+    /// The composited frame, owned by the backend. `CpuBackend` keeps
+    /// compositing into the renderer's `draw_area` (the tests and the
+    /// `window` blit read it there) and hands back an owned copy; a
+    /// `GpuBackend` (task 7) returns `FrameOutput::Texture` instead.
+    fn finish(&mut self, r: &mut Renderer) -> FrameOutput {
+        FrameOutput::PixMap(r.draw_area.clone())
     }
 }
