@@ -21,7 +21,7 @@
 //! per-frame exception, not the rule).
 
 use crate::graphics::{Pix32, Pix8, PixMap};
-use crate::render::backend::gpu_atlas::{GpuAssets, Region};
+use crate::render::backend::gpu_atlas::{GpuAssets, Region, MAX_SPRITE_LAYERS};
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -30,12 +30,15 @@ use std::sync::{Arc, Mutex};
 pub const FRAME_W: u32 = 765;
 pub const FRAME_H: u32 = 503;
 
+/// The shader layer for the font atlas (sprite layers are 1..=8).
+const FONT_LAYER: u32 = MAX_SPRITE_LAYERS as u32 + 1;
+
 /// One recorded chrome quad (in surface-local pixels until a blit
 /// translates it into the frame). Layer selects the fragment source:
-/// 0 = plain colour, 1 = sprite atlas, 2 = font atlas. `region` is the
-/// quad's atlas region in atlas pixels; the `u/v` fields are the clipped
-/// sub-rect relative to the region (0..1), resolved to atlas UVs at flush
-/// against the current atlas size.
+/// 0 = plain colour, 1..8 = the sprite atlas layers, 9 = the font atlas.
+/// `region` is the quad's atlas region in atlas pixels; the `u/v` fields
+/// are the clipped sub-rect relative to the region (0..1), resolved to
+/// atlas UVs at flush against the current layer size.
 struct ChromeQuad {
     x: f32,
     y: f32,
@@ -81,11 +84,19 @@ struct ChromeBuffer {
 }
 
 /// The chrome quad shader: a 2D passthrough (draw_area pixels → NDC) with
-/// per-vertex colour and atlas layer.
+/// per-vertex colour and atlas layer (0 = plain colour, 1..8 = the sprite
+/// atlas layers, 9 = the font atlas).
 const CHROME_SHADER: &str = r#"
-@group(0) @binding(0) var sprite_atlas: texture_2d<f32>;
-@group(0) @binding(1) var font_atlas: texture_2d<f32>;
-@group(0) @binding(2) var chrome_sampler: sampler;
+@group(0) @binding(0) var sprite0: texture_2d<f32>;
+@group(0) @binding(1) var sprite1: texture_2d<f32>;
+@group(0) @binding(2) var sprite2: texture_2d<f32>;
+@group(0) @binding(3) var sprite3: texture_2d<f32>;
+@group(0) @binding(4) var sprite4: texture_2d<f32>;
+@group(0) @binding(5) var sprite5: texture_2d<f32>;
+@group(0) @binding(6) var sprite6: texture_2d<f32>;
+@group(0) @binding(7) var sprite7: texture_2d<f32>;
+@group(0) @binding(8) var font_atlas: texture_2d<f32>;
+@group(0) @binding(9) var chrome_sampler: sampler;
 
 struct VsIn {
     @location(0) pos: vec2<f32>,
@@ -122,10 +133,24 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         return in.color;
     }
     var t: vec4<f32>;
-    if (in.layer == 1u) {
-        t = textureSample(sprite_atlas, chrome_sampler, in.uv);
-    } else {
+    if (in.layer == 9u) {
         t = textureSample(font_atlas, chrome_sampler, in.uv);
+    } else if (in.layer == 1u) {
+        t = textureSample(sprite0, chrome_sampler, in.uv);
+    } else if (in.layer == 2u) {
+        t = textureSample(sprite1, chrome_sampler, in.uv);
+    } else if (in.layer == 3u) {
+        t = textureSample(sprite2, chrome_sampler, in.uv);
+    } else if (in.layer == 4u) {
+        t = textureSample(sprite3, chrome_sampler, in.uv);
+    } else if (in.layer == 5u) {
+        t = textureSample(sprite4, chrome_sampler, in.uv);
+    } else if (in.layer == 6u) {
+        t = textureSample(sprite5, chrome_sampler, in.uv);
+    } else if (in.layer == 7u) {
+        t = textureSample(sprite6, chrome_sampler, in.uv);
+    } else {
+        t = textureSample(sprite7, chrome_sampler, in.uv);
     }
     return vec4<f32>(in.color.rgb * t.rgb, in.color.a * t.a);
 }
@@ -159,6 +184,9 @@ pub struct GpuChrome {
     pipeline: wgpu::RenderPipeline,
     /// Quads recorded in the current frame (the chrome-as-quads test).
     quad_count: usize,
+    /// The current frame epoch (uploaded into the shared caches; evicted
+    /// regions are only reused from the next frame on).
+    epoch: u64,
 }
 
 impl GpuChrome {
@@ -250,6 +278,7 @@ impl GpuChrome {
             vertex_buf_capacity,
             pipeline,
             quad_count: 0,
+            epoch: 0,
         }
     }
 
@@ -259,8 +288,12 @@ impl GpuChrome {
     }
 
     /// Reset for a new frame: the surface stack empties and the root
-    /// (draw_area-space) buffer opens. `draw_area` is the root tag.
+    /// (draw_area-space) buffer opens. `draw_area` is the root tag. The
+    /// shared assets' frame epoch bumps, so evicted regions become
+    /// reusable from this frame on (the previous frame is flushed).
     pub fn frame_begin(&mut self, draw_area: &PixMap) {
+        let epoch = self.assets.lock().unwrap().bump_epoch();
+        self.epoch = epoch;
         self.buffers.clear();
         self.staged.clear();
         self.buffers.push(ChromeBuffer {
@@ -356,20 +389,26 @@ impl GpuChrome {
             b: (rgb & 0xff) as f32 / 255.0,
             a: alpha.clamp(0, 256) as f32 / 256.0,
             layer: 0,
-            region: Region { x: 0, y: 0, w: 1, h: 1 },
+            region: Region { x: 0, y: 0, w: 1, h: 1, layer: 0 },
         });
     }
 
     /// A sprite plot (`Pix8::plot_sprite`): upload once into the sprite
     /// atlas and record a textured quad. `alpha` is 256-scale.
     pub fn sprite_pix8(&mut self, sprite: &Pix8, x: i32, y: i32, alpha: i32) {
-        let region = self.assets.lock().unwrap().sprite_region_pix8(sprite);
+        let Some(region) = self.assets.lock().unwrap().sprite_region_pix8(sprite, self.epoch)
+        else {
+            return; // every atlas layer full: skip the quad this frame
+        };
         self.sprite_quad(x + sprite.xof, y + sprite.yof, sprite.wi, sprite.hi, region, alpha);
     }
 
     /// A `Pix32` sprite plot.
     pub fn sprite_pix32(&mut self, sprite: &Pix32, x: i32, y: i32, alpha: i32) {
-        let region = self.assets.lock().unwrap().sprite_region_pix32(sprite);
+        let Some(region) = self.assets.lock().unwrap().sprite_region_pix32(sprite, self.epoch)
+        else {
+            return;
+        };
         self.sprite_quad(x + sprite.xof, y + sprite.yof, sprite.wi, sprite.hi, region, alpha);
     }
 
@@ -380,9 +419,9 @@ impl GpuChrome {
     pub fn map_blit(&mut self, src: &PixMap, x: i32, y: i32) {
         let tag = src.pixels.as_ptr() as usize;
         if self.staged.contains(&tag) {
-            let region = {
-                let mut assets = self.assets.lock().unwrap();
-                assets.staged_upload(tag, src)
+            let Some(region) = self.assets.lock().unwrap().staged_upload(tag, src, self.epoch)
+            else {
+                return;
             };
             self.sprite_quad(x, y, src.width, src.height, region, 256);
             self.buffers.retain(|b| b.tag != tag);
@@ -407,7 +446,9 @@ impl GpuChrome {
         }
         // No open surface: a static map (the chrome strips) draws its
         // cached atlas region.
-        let region = self.assets.lock().unwrap().map_region(src);
+        let Some(region) = self.assets.lock().unwrap().map_region(src, self.epoch) else {
+            return;
+        };
         self.sprite_quad(x, y, src.width, src.height, region, 256);
     }
 
@@ -432,7 +473,14 @@ impl GpuChrome {
         if w <= 0 || h <= 0 {
             return;
         }
-        let region = self.assets.lock().unwrap().glyph_region(mask, w as u32, h as u32);
+        let Some(region) = self
+            .assets
+            .lock()
+            .unwrap()
+            .glyph_region(mask, w as u32, h as u32, self.epoch)
+        else {
+            return; // the font atlas is full: skip the glyph this frame
+        };
         let Some((bx, by, bw, bh)) = self.clip_rect(x, y, w, h) else {
             return;
         };
@@ -453,7 +501,7 @@ impl GpuChrome {
             g: ((rgb >> 8) & 0xff) as f32 / 255.0,
             b: (rgb & 0xff) as f32 / 255.0,
             a: alpha.clamp(0, 256) as f32 / 256.0,
-            layer: 2,
+            layer: FONT_LAYER,
             region,
         });
     }
@@ -472,7 +520,7 @@ impl GpuChrome {
     }
 
     /// A textured quad from `region` of the sprite atlas (the UV sub-rect
-    /// follows the clip).
+    /// follows the clip). The shader layer is the region's sprite layer.
     fn sprite_quad(&mut self, x: i32, y: i32, w: i32, h: i32, region: Region, alpha: i32) {
         let Some((bx, by, bw, bh)) = self.clip_rect(x, y, w, h) else {
             return;
@@ -494,7 +542,7 @@ impl GpuChrome {
             g: 1.0,
             b: 1.0,
             a: alpha.clamp(0, 256) as f32 / 256.0,
-            layer: 1,
+            layer: 1 + region.layer,
             region,
         });
     }
@@ -538,17 +586,21 @@ impl GpuChrome {
             });
         }
         // Resolve each quad's region to atlas UVs against the current
-        // atlas size (the atlases may have grown).
-        let (sprite_size, font_size) = {
+        // layer sizes (the atlases may have grown).
+        let (layer_sizes, font_size) = {
             let assets = self.assets.lock().unwrap();
-            (assets.sprite_atlas_size(), assets.font_atlas_size())
+            (assets.sprite_layer_sizes(), assets.font_atlas_size())
         };
         let mut vertices = Vec::with_capacity(quads.len() * 6);
         for q in &quads {
-            let (au, ah) = if q.layer == 1 {
-                (sprite_size.0 as f32, sprite_size.1 as f32)
-            } else {
+            let (au, ah) = if q.layer == FONT_LAYER {
                 (font_size.0 as f32, font_size.1 as f32)
+            } else {
+                let (w, h) = layer_sizes
+                    .get(q.region.layer as usize)
+                    .copied()
+                    .unwrap_or((1, 1));
+                (w as f32, h as f32)
             };
             let u0 = (q.region.x as f32 + q.u_off * q.region.w as f32) / au;
             let v0 = (q.region.y as f32 + q.v_off * q.region.h as f32) / ah;
