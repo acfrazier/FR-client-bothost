@@ -12,6 +12,8 @@
 //! from the packed source). This file is its own test binary, so no other
 //! test in this process can construct a renderer and trip the assertions.
 
+use std::sync::Arc;
+
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::mpsc;
@@ -144,12 +146,12 @@ fn headless_client_core_runs_sim_without_renderer() {
     c.map_build_ground_data = vec![Some(perlin_ground())];
     c.map_build_location_data = vec![Some(loc_stream())];
     c.awaiting_player_info = false;
-    c.cache.locs.push(LocType {
+    Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType {
         active: true,
         anim: 0,
         ..LocType::default()
     });
-    c.cache.locs.push(LocType {
+    Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType {
         active: true,
         anim: 0,
         shadow: false, // the documented sim-side radius decode stays off
@@ -177,8 +179,8 @@ fn headless_client_core_runs_sim_without_renderer() {
     assert_eq!(c.world.wall_type(0, 45, 45), 0, "empty tile stays empty");
 
     // Packet apply: UPDATE_INV_FULL resolves into the iface's inv arrays.
-    c.cache.ifaces.resize(11, None);
-    c.cache.ifaces[10] = Some(IfType {
+    c.ifaces.resize(11, None);
+    c.ifaces[10] = Some(IfType {
         width: 4,
         height: 4,
         link_obj_type: Some(vec![0; 16]),
@@ -194,7 +196,7 @@ fn headless_client_core_runs_sim_without_renderer() {
     inv.p1(1); // slot 1: count
     inv.pos = 0;
     c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut inv);
-    let iface = c.cache.ifaces[10].as_ref().unwrap();
+    let iface = c.ifaces[10].as_ref().unwrap();
     let types = iface.link_obj_type.as_ref().unwrap();
     let counts = iface.link_obj_number.as_ref().unwrap();
     assert_eq!(types[0], 415);

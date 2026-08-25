@@ -1,7 +1,8 @@
 //! Config type tables, 1:1 of `~/experiments/Server/webclient/src/config/`.
 //! Every `*Type::unpack` decodes one `config` jag into a table; the tables
-//! live on the `Client`'s `Cache` (the spec keeps loaded `*Type`s per client,
-//! not process-wide). The per-request model/sprite methods (`getModel`,
+//! live on an `Arc<Cache>` shared by every `Client` (immutable once
+//! unpacked). The mutable interface components (`IfType`) stay per-client in
+//! `Client.ifaces`. The per-request model/sprite methods (`getModel`,
 //! `getSprite`, ...) need `dash3d`/`graphics` and land with Tasks 14/15.
 
 pub mod flo_type;
@@ -41,7 +42,6 @@ pub struct Cache {
     pub spots: Vec<SpotType>,
     pub varbits: Vec<VarBitType>,
     pub varps: Vec<VarpType>,
-    pub ifaces: Vec<Option<IfType>>,
 }
 
 impl Cache {
@@ -64,7 +64,6 @@ impl Cache {
             spots,
             varbits: VarBitType::unpack(jag),
             varps: VarpType::unpack(jag),
-            ifaces: IfType::unpack(jag),
         }
     }
 
@@ -102,9 +101,5 @@ impl Cache {
 
     pub fn varp(&self, id: usize) -> &VarpType {
         &self.varps[id]
-    }
-
-    pub fn if_(&self, id: usize) -> Option<&IfType> {
-        self.ifaces.get(id).and_then(|o| o.as_ref())
     }
 }

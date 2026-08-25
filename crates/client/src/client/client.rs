@@ -267,8 +267,18 @@ pub struct Client {
     pub present: Option<Box<dyn crate::client::present::PresentTarget>>,
     pub config: ClientConfig,
     /// Config type tables (`obj`, `npc`, `loc`, ...), unpacked from the
-    /// `config` jag by `Cache::unpack`; empty until loaded.
-    pub cache: Cache,
+    /// `config` jag by `Cache::unpack`; empty until loaded. Shared with
+    /// every client via `Arc` (the tables are immutable once unpacked);
+    /// the per-client mutable state lives in `ifaces`.
+    pub cache: Arc<Cache>,
+    /// Interface components (`IfType`, hide/scroll/anim/inv slots),
+    /// unpacked from the `interface` jag; per-client mutable.
+    pub ifaces: Vec<Option<IfType>>,
+    /// True when the cache was injected already-unpacked via `from_shared`
+    /// (host-side `load_cache`). `maininit` skips its `load_cache` re-unpack
+    /// so the shared `Arc<Cache>` survives; `Client::new` stays false and
+    /// still re-unpacks after its fresh jag fetch.
+    pub cache_from_shared: bool,
 
     pub ingame: bool,
     /// `draw`: CPU-save switch — when false, `mainredraw` skips the frame
@@ -766,12 +776,38 @@ impl Client {
         // to files for tests without a web server.
         let jag_checksum = Self::get_jag_checksums(&config.host, 80)
             .unwrap_or_else(|| Self::read_jag_checksums(&config.cache_dir));
+        let (cache, ifaces, error_loading) = match Self::load_cache(&config.cache_dir) {
+            Ok((cache, ifaces)) => (cache, ifaces, false),
+            Err(()) => (Cache::default(), Vec::new(), true),
+        };
+        Self::construct(config, Arc::new(cache), ifaces, error_loading, jag_checksum)
+    }
+
+    /// Host construct: inject a process-wide `Arc<Cache>` and a cloned
+    /// iface template. Skips `load_cache` and the `/crc` probe; the host
+    /// unpacks once per `cache_dir` and every client short-circuits the
+    /// `maininit` re-unpack via `cache_from_shared`. `error_loading` is
+    /// false so `mainloop` is not a no-op after a successful inject.
+    pub fn from_shared(
+        config: ClientConfig,
+        cache: Arc<Cache>,
+        ifaces: Vec<Option<IfType>>,
+    ) -> Self {
+        let jag_checksum = Self::read_jag_checksums(&config.cache_dir);
+        let mut client = Self::construct(config, cache, ifaces, false, jag_checksum);
+        client.cache_from_shared = true;
+        client
+    }
+
+    fn construct(
+        config: ClientConfig,
+        cache: Arc<Cache>,
+        ifaces: Vec<Option<IfType>>,
+        error_loading: bool,
+        jag_checksum: [i32; 9],
+    ) -> Self {
         let on_demand = Self::load_on_demand(&config);
         let midi = midi_backend(&config.cache_dir);
-        let (cache, error_loading) = match Self::load_cache(&config.cache_dir) {
-            Ok(cache) => (cache, false),
-            Err(()) => (Cache::default(), true),
-        };
         let jagfx = Self::unpack_jagfx(&config.cache_dir, config.lowmem);
         let groundh: LevelHeightmaps =
             vec![
@@ -783,6 +819,8 @@ impl Client {
             present: None,
             config,
             cache,
+            ifaces,
+            cache_from_shared: false,
 
             ingame: false,
             draw: false,
@@ -1098,29 +1136,31 @@ impl Client {
         jagfx
     }
 
-    /// Unpack `config` (and `interface` when present) from `cache_dir`. An
-    /// empty dir (tests, no pack) yields `Cache::default()`. A real cache
-    /// missing the required `config` jag — or one whose bytes are not a
-    /// valid jag (dummy test files) — is `Err`, which becomes
-    /// `errorLoading`.
-    fn load_cache(cache_dir: &str) -> Result<Cache, ()> {
+    /// Unpack `config` (and `interface` when present) from `cache_dir`,
+    /// returning the shared `Cache` tables and the per-client `ifaces`.
+    /// An empty dir (tests, no pack) yields `Cache::default()` with empty
+    /// ifaces. A real cache missing the required `config` jag — or one whose
+    /// bytes are not a valid jag (dummy test files) — is `Err`, which
+    /// becomes `errorLoading`.
+    fn load_cache(cache_dir: &str) -> Result<(Cache, Vec<Option<IfType>>), ()> {
         let cache_present = JAG_FILES
             .iter()
             .any(|name| Path::new(&format!("{cache_dir}/{name}")).is_file());
         if !cache_present {
-            return Ok(Cache::default());
+            return Ok((Cache::default(), Vec::new()));
         }
         let bytes = std::fs::read(format!("{cache_dir}/config")).map_err(|_| ())?;
-        let mut cache = catch_unwind(AssertUnwindSafe(|| Cache::unpack(&JagFile::new(bytes))))
+        let cache = catch_unwind(AssertUnwindSafe(|| Cache::unpack(&JagFile::new(bytes))))
             .map_err(|_| ())?;
+        let mut ifaces = Vec::new();
         if let Ok(iface_bytes) = std::fs::read(format!("{cache_dir}/interface")) {
-            if let Ok(ifaces) =
+            if let Ok(unpacked) =
                 catch_unwind(AssertUnwindSafe(|| IfType::unpack(&JagFile::new(iface_bytes))))
             {
-                cache.ifaces = ifaces;
+                ifaces = unpacked;
             }
         }
-        Ok(cache)
+        Ok((cache, ifaces))
     }
 
     /// HTTP/1.0 `GET {path}` returning the response body, headers split on
@@ -1327,12 +1367,22 @@ impl Client {
 
         // Unpack config/interface from the files now on disk (`load_cache`
         // reads the same persisted paths `get_jag_file` wrote). A missing or
-        // invalid config jag is `Err` → `errorLoading`.
-        match Self::load_cache(&self.config.cache_dir) {
-            Ok(cache) => self.cache = cache,
-            Err(()) => {
-                self.error_loading = true;
-                self.shell.set_framerate(1);
+        // invalid config jag is `Err` → `errorLoading`. Skipped when the
+        // cache was injected already-unpacked via `from_shared`: the host
+        // unpacked once per `cache_dir`, the shared `Arc<Cache>` is current,
+        // and re-unpacking would throw it away. `Client::new` (marker false)
+        // still re-unpacks after the fresh jag fetch — that unpack is
+        // intentional and must not be skipped.
+        if !self.cache_from_shared {
+            match Self::load_cache(&self.config.cache_dir) {
+                Ok((cache, ifaces)) => {
+                    self.cache = Arc::new(cache);
+                    self.ifaces = ifaces;
+                }
+                Err(()) => {
+                    self.error_loading = true;
+                    self.shell.set_framerate(1);
+                }
             }
         }
 
@@ -2337,7 +2387,6 @@ impl Client {
                 .unwrap_or_default();
             // TS 8999-9010: a com-link count >= 100000 reports "<n> x <name>"
             let examine = self
-                .cache
                 .ifaces
                 .get(c as usize)
                 .and_then(|o| o.as_ref())
@@ -2376,7 +2425,6 @@ impl Client {
             // TS 9024-9050: target mode for the spell, `targetOp` from the
             // verb prefix/suffix and base; returns before the wipe.
             let com = self
-                .cache
                 .ifaces
                 .get(c as usize)
                 .and_then(|o| o.as_ref())
@@ -2476,7 +2524,6 @@ impl Client {
             // kit; the logout/accept-design arms return `true` so the
             // click is sent, everything else returns `false`.
             let com = self
-                .cache
                 .ifaces
                 .get(c as usize)
                 .and_then(|o| o.as_ref())
@@ -2497,7 +2544,6 @@ impl Client {
             self.out.p1_enc(ClientProt::IF_BUTTON.id);
             self.out.p2(c);
             let com = self
-                .cache
                 .ifaces
                 .get(c as usize)
                 .and_then(|o| o.as_ref())
@@ -2520,7 +2566,6 @@ impl Client {
             self.out.p1_enc(ClientProt::IF_BUTTON.id);
             self.out.p2(c);
             let com = self
-                .cache
                 .ifaces
                 .get(c as usize)
                 .and_then(|o| o.as_ref())
@@ -2568,7 +2613,6 @@ impl Client {
                 self.report_abuse_input = option[tag + 5..].trim().to_string();
                 self.report_abuse_mute_option = false;
                 if let Some(com) = self
-                    .cache
                     .ifaces
                     .iter()
                     .flatten()
@@ -2741,7 +2785,6 @@ impl Client {
         self.selected_item = b;
         self.selected_area = 2;
         let layer_id = self
-            .cache
             .ifaces
             .get(c as usize)
             .and_then(|o| o.as_ref())
@@ -3395,7 +3438,6 @@ impl Client {
     /// children or missing child ids stop the walk.
     pub fn if_anim_reset(&mut self, id: i32) {
         let Some(children) = self
-            .cache
             .ifaces
             .get(id as usize)
             .and_then(|o| o.as_ref())
@@ -3408,7 +3450,6 @@ impl Client {
                 return;
             }
             let Some(child) = self
-                .cache
                 .ifaces
                 .get(child_id as usize)
                 .and_then(|o| o.as_ref())
@@ -3419,7 +3460,6 @@ impl Client {
                 self.if_anim_reset(child.id);
             }
             if let Some(com) = self
-                .cache
                 .ifaces
                 .get_mut(child_id as usize)
                 .and_then(|o| o.as_mut())
@@ -4035,7 +4075,7 @@ impl Client {
                 let com_id = self.obj_drag_com_id as usize;
                 let src = self.obj_drag_slot as usize;
                 let dst = self.hovered_slot as usize;
-                if let Some(com) = self.cache.ifaces.get_mut(com_id).and_then(|o| o.as_mut()) {
+                if let Some(com) = self.ifaces.get_mut(com_id).and_then(|o| o.as_mut()) {
                     let mut mode = 0;
                     if self.bank_arrange_mode == 1 && com.client_code == CC_BANKMODE {
                         mode = 1;
@@ -4105,7 +4145,7 @@ impl Client {
     /// `obj_replace`) grabs it. Returns true when a drag started so the
     /// click handler returns without hitting `IF_BUTTON`.
     fn obj_drag_start(&mut self, com_id: i32, slot: i32, x: i32, y: i32) -> bool {
-        let Some(com) = self.cache.ifaces.get(com_id as usize).and_then(|o| o.as_ref()) else {
+        let Some(com) = self.ifaces.get(com_id as usize).and_then(|o| o.as_ref()) else {
             return false;
         };
         if !(com.obj_swap || com.obj_replace) {
@@ -4342,10 +4382,9 @@ impl Client {
     /// `draw_interface` before each child plots (TS 9926).
     pub fn client_component(&mut self, com_id: i32) {
         // The CC_DESIGN_PREVIEW build needs the idk/seq tables while `com`
-        // is borrowed from the same `cache.ifaces`, so it runs before the
+        // is borrowed from the same `ifaces`, so it runs before the
         // borrow (TS 10777-10819; `com.model_xan/yan` are set after).
         let preview_model = match self
-            .cache
             .ifaces
             .get(com_id as usize)
             .and_then(|o| o.as_ref())
@@ -4354,7 +4393,7 @@ impl Client {
             Some(CC_DESIGN_PREVIEW) => self.design_preview_model(),
             _ => None,
         };
-        let Some(com) = self.cache.ifaces.get_mut(com_id as usize).and_then(|o| o.as_mut()) else {
+        let Some(com) = self.ifaces.get_mut(com_id as usize).and_then(|o| o.as_mut()) else {
             return;
         };
         let mut client_code = com.client_code;
@@ -4841,7 +4880,7 @@ impl Client {
         y: i32,
         scroll: i32,
     ) {
-        let Some(com) = self.cache.ifaces.get(com_id as usize).and_then(|o| o.as_ref()) else {
+        let Some(com) = self.ifaces.get(com_id as usize).and_then(|o| o.as_ref()) else {
             return;
         };
         if com.r#type != ComponentType::TYPE_LAYER
@@ -4869,7 +4908,7 @@ impl Client {
             let child_id = children[i];
             // An owned copy: the option pushes below call `push_option`
             // (`&mut self`) while the walk reads the child fields.
-            let Some(child) = self.cache.ifaces.get(child_id as usize).and_then(|o| o.clone()) else {
+            let Some(child) = self.ifaces.get(child_id as usize).and_then(|o| o.clone()) else {
                 continue;
             };
             let child_x = child_x[i] + x + child.x;
@@ -4892,7 +4931,6 @@ impl Client {
                 ComponentType::TYPE_LAYER => {
                     self.add_component_options(child_id, mouse_x, mouse_y, child_x, child_y, child.scroll_pos);
                     let (child_w, child_h, child_sh) = self
-                        .cache
                         .ifaces
                         .get(child_id as usize)
                         .and_then(|o| o.as_ref())
@@ -5453,7 +5491,6 @@ impl Client {
                 let b = colour & 0x1f;
 
                 if let Some(com) = self
-                    .cache
                     .ifaces
                     .get_mut(com_id as usize)
                     .and_then(|o| o.as_mut())
@@ -5468,7 +5505,6 @@ impl Client {
                 let hide = payload.g1() == 1;
 
                 if let Some(com) = self
-                    .cache
                     .ifaces
                     .get_mut(com_id as usize)
                     .and_then(|o| o.as_mut())
@@ -5491,7 +5527,6 @@ impl Client {
                 };
 
                 if let Some(com) = self
-                    .cache
                     .ifaces
                     .get_mut(com_id as usize)
                     .and_then(|o| o.as_mut())
@@ -5511,7 +5546,6 @@ impl Client {
                 let model_id = payload.g2();
 
                 if let Some(com) = self
-                    .cache
                     .ifaces
                     .get_mut(com_id as usize)
                     .and_then(|o| o.as_mut())
@@ -5527,7 +5561,6 @@ impl Client {
                 let seq_id = payload.g2b();
 
                 if let Some(com) = self
-                    .cache
                     .ifaces
                     .get_mut(com_id as usize)
                     .and_then(|o| o.as_mut())
@@ -5545,8 +5578,7 @@ impl Client {
                 let com_id = payload.g2();
 
                 if let (Some(com), Some(local)) = (
-                    self.cache
-                        .ifaces
+                    self.ifaces
                         .get_mut(com_id as usize)
                         .and_then(|o| o.as_mut()),
                     self.local_player.as_ref(),
@@ -5566,7 +5598,6 @@ impl Client {
                 let text = payload.gjstr();
 
                 if let Some(com) = self
-                    .cache
                     .ifaces
                     .get_mut(com_id as usize)
                     .and_then(|o| o.as_mut())
@@ -5586,7 +5617,6 @@ impl Client {
                 let npc_id = payload.g2();
 
                 if let Some(com) = self
-                    .cache
                     .ifaces
                     .get_mut(com_id as usize)
                     .and_then(|o| o.as_mut())
@@ -5603,7 +5633,6 @@ impl Client {
                 let y = payload.g2b();
 
                 if let Some(com) = self
-                    .cache
                     .ifaces
                     .get_mut(com_id as usize)
                     .and_then(|o| o.as_mut())
@@ -5619,7 +5648,6 @@ impl Client {
                 let mut pos = payload.g2();
 
                 if let Some(com) = self
-                    .cache
                     .ifaces
                     .get_mut(com_id as usize)
                     .and_then(|o| o.as_mut())
@@ -5643,7 +5671,6 @@ impl Client {
                 let com_id = payload.g2();
 
                 if let Some(inv) = self
-                    .cache
                     .ifaces
                     .get_mut(com_id as usize)
                     .and_then(|o| o.as_mut())
@@ -5672,7 +5699,6 @@ impl Client {
                 }
 
                 if let Some(inv) = self
-                    .cache
                     .ifaces
                     .get_mut(com_id as usize)
                     .and_then(|o| o.as_mut())
@@ -5706,7 +5732,6 @@ impl Client {
                     let (id, count) = Self::read_inv_count(payload);
 
                     if let Some(inv) = self
-                        .cache
                         .ifaces
                         .get_mut(com_id as usize)
                         .and_then(|o| o.as_mut())
@@ -7348,7 +7373,7 @@ impl Client {
     /// `doScrollbar` from client-ts (10291-10329): the up/down arrows step
     /// `scroll_pos` by `scroll_cycle*4`, and a press in the track/grip
     /// jumps to the grip position (grabbing it widens the track hit area to
-    /// 32 px next call). The target is `cache.ifaces[com_id]`, or
+    /// 32 px next call). The target is `ifaces[com_id]`, or
     /// `chat_interface` for a negative `com_id` (the chat scrollbar is a
     /// synthetic interface, TS `chatInterface`, not in the jag).
     ///
@@ -7376,8 +7401,7 @@ impl Client {
         let com = if com_id < 0 {
             Some(&mut self.chat_interface)
         } else {
-            self.cache
-                .ifaces
+            self.ifaces
                 .get_mut(com_id as usize)
                 .and_then(|o| o.as_mut())
         };
@@ -7717,7 +7741,7 @@ impl Client {
             return;
         }
         self.close_modal();
-        for entry in self.cache.ifaces.iter().flatten() {
+        for entry in self.ifaces.iter().flatten() {
             if entry.client_code == CC_REPORT_INPUT {
                 self.main_modal_id = entry.layer_id;
                 return;

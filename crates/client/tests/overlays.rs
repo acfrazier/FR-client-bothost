@@ -2,6 +2,8 @@
 // bubbles, health bars and hitmarks drawn into `area_game`. The projection
 // tests need no cache; the sprite/draw tests need the real `media`/`title`
 // packs and skip when they are absent (see hud.rs).
+use std::sync::Arc;
+
 use client::client::{Client, ClientConfig, ClientPlayer};
 use client::render::Renderer;
 use client::config::IdkType;
@@ -193,9 +195,9 @@ let _r = Renderer::new(false);
     let mut r = Renderer::new(false);
     let mut c = client();
     while c.cache.idks.len() <= 0 {
-        c.cache.idks.push(IdkType::default());
+        Arc::get_mut(&mut c.cache).unwrap().idks.push(IdkType::default());
     }
-    c.cache.idks[0].model = Some(vec![4096]);
+    Arc::get_mut(&mut c.cache).unwrap().idks[0].model = Some(vec![4096]);
     let mut player = ClientPlayer::default();
     player.ready = true;
     player.entity.x = 384;
