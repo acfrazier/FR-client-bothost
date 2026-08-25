@@ -207,7 +207,12 @@ impl Pix8 {
         }
     }
 
-    pub fn plot_sprite(&self, surface: &mut Pix2D, mut x: i32, mut y: i32) {
+    pub fn plot_sprite(&self, surface: &mut Pix2D, x: i32, y: i32) {
+        if let Some(chrome) = crate::render::backend::gpu_chrome::GpuChrome::active() {
+            chrome.sprite_pix8(self, x, y, 256);
+        }
+        let mut x = x;
+        let mut y = y;
         x += self.xof;
         y += self.yof;
 

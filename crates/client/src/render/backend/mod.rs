@@ -7,6 +7,7 @@
 pub mod cpu;
 pub mod gpu;
 pub mod gpu_atlas;
+pub mod gpu_chrome;
 
 use crate::client::client::Client;
 use crate::graphics::PixMap;

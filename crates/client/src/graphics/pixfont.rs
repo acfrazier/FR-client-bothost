@@ -304,7 +304,14 @@ impl PixFont {
         self.draw_string(surface, Some(str), x - self.string_wid(Some(str)), y, rgb);
     }
 
-    fn plot_letter(&self, surface: &mut Pix2D, data: &[i8], mut x: i32, mut y: i32, mut w: i32, mut h: i32, rgb: i32) {
+    fn plot_letter(&self, surface: &mut Pix2D, data: &[i8], x: i32, y: i32, w: i32, h: i32, rgb: i32) {
+        if let Some(chrome) = crate::render::backend::gpu_chrome::GpuChrome::active() {
+            chrome.glyph(data, w, h, x, y, rgb, 256);
+        }
+        let mut x = x;
+        let mut y = y;
+        let mut w = w;
+        let mut h = h;
         let mut dst_off = x + y * surface.width;
         let mut dst_step = surface.width - w;
         let mut src_step = 0;
@@ -375,7 +382,14 @@ impl PixFont {
         }
     }
 
-    fn plot_letter_trans(&self, surface: &mut Pix2D, data: &[i8], mut x: i32, mut y: i32, mut w: i32, mut h: i32, rgb: i32, alpha: i32) {
+    fn plot_letter_trans(&self, surface: &mut Pix2D, data: &[i8], x: i32, y: i32, w: i32, h: i32, rgb: i32, alpha: i32) {
+        if let Some(chrome) = crate::render::backend::gpu_chrome::GpuChrome::active() {
+            chrome.glyph(data, w, h, x, y, rgb, alpha);
+        }
+        let mut x = x;
+        let mut y = y;
+        let mut w = w;
+        let mut h = h;
         let mut dst_off = x + y * surface.width;
         let mut dst_step = surface.width - w;
         let mut src_step = 0;
