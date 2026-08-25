@@ -35,6 +35,8 @@ struct Args {
     cache: String,
     window: bool,
     audio: bool,
+    /// Force the CPU backend even with `--window` (visual fidelity check).
+    cpu: bool,
     /// `None` = pick from `--window` (windowed highmem, headless/bots lowmem).
     lowmem: Option<bool>,
 }
@@ -58,6 +60,7 @@ fn parse_args() -> Args {
         cache: default_cache_dir(),
         window: false,
         audio: false,
+        cpu: false,
         lowmem: None,
     };
     let mut it = env::args().skip(1);
@@ -70,6 +73,7 @@ fn parse_args() -> Args {
             "--cache" => args.cache = value(&mut it),
             "--window" => args.window = true,
             "--audio" => args.audio = true,
+            "--cpu" => args.cpu = true,
             "--lowmem" => args.lowmem = Some(true),
             "--highmem" => args.lowmem = Some(false),
             "--help" | "-h" => usage(),
@@ -83,7 +87,7 @@ fn usage() -> ! {
     eprintln!(
         "usage: client-play [--user USER --pass PASS] \
          [--host HOST] [--port PORT] [--cache DIR] [--window] [--audio] \
-         [--lowmem|--highmem]"
+         [--cpu] [--lowmem|--highmem]"
     );
     std::process::exit(2);
 }
@@ -130,7 +134,7 @@ fn main() -> ExitCode {
     // rasterized on the GPU where an adapter exists, else the renderer
     // falls back to the CPU backend (logged, never fatal). Headless /
     // bot-host stays CPU (the fidelity path).
-    Renderer::set_prefer_gpu(args.window);
+    Renderer::set_prefer_gpu(args.window && !args.cpu);
     let mut renderer = Renderer::new(lowmem);
     eprintln!(
         "render backend: {}",
