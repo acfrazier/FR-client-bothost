@@ -3712,7 +3712,12 @@ impl Renderer {
     /// bind `area_game` without cls so the last 3D frame stays frozen, plot
     /// "Loading - please wait." on top, blit (4, 4). Missing `p12` skips
     /// the string (the frozen pixels still blit). Gated on `draw`.
-    fn scene_loading_splash(&mut self, client: &mut Client) {
+    /// `checkMinimap`'s draw-only loading splash (TS 5076): "Loading -
+    /// please wait." into `area_game`, blitted at (4, 4) while the scene
+    /// is not built. `mainredraw` runs it before the frame stages; the GPU
+    /// backend re-runs it under the chrome recorder so the text is part of
+    /// the quad frame.
+    pub(crate) fn scene_loading_splash(&mut self, client: &mut Client) {
         if let Some(ag) = self.area_game.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut ag.pixels, ag.width, ag.height);
             if let Some(p12) = self.p12.as_ref() {

@@ -530,6 +530,13 @@ impl RenderBackend for GpuBackend {
         self.chrome.mark_staged(r.image_title0.as_ref());
         self.chrome.mark_staged(r.image_title1.as_ref());
 
+        // The loading splash draws into `draw_area` in `mainredraw`
+        // (outside the frame stages); re-run it under the recorder so the
+        // GPU frame carries it too.
+        if kind == FrameKind::Game && core.scene_state != 2 && core.draw {
+            r.scene_loading_splash(core);
+        }
+
         if kind == FrameKind::Game {
             // The chrome-frame strips (the CPU path blits them once per
             // `redraw_frame`; the GPU path re-records them every frame).
