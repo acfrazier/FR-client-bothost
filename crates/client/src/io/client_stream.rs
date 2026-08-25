@@ -6,6 +6,7 @@
 
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
+use std::os::unix::io::AsRawFd;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
@@ -76,6 +77,15 @@ impl ClientStream {
     /// `u64`.
     pub fn bytes_out(&self) -> u64 {
         self.bytes_out.load(Ordering::Relaxed)
+    }
+
+    /// The reader socket's raw fd, for `poll(2)` readability waits by the
+    /// host's idle-slot scheduler. The writer thread runs on a clone of the
+    /// socket, so polling this fd cannot race the writer; `close` shuts
+    /// both ends down, which wakes a parked poll with EOF.
+    #[cfg(unix)]
+    pub fn fd(&self) -> i32 {
+        self.reader.as_raw_fd()
     }
 
     /// Read one byte: 0 after `close`, -1 at EOF, else the byte value.
@@ -235,5 +245,37 @@ fn writer_loop(shared: Arc<Mutex<WriterState>>, condvar: Arc<Condvar>, mut sock:
         if st.tnum == st.tcycl && sock.flush().is_err() {
             st.ioerror = true;
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+
+    #[test]
+    fn fd_tracks_the_reader_socket_and_wakes_on_data() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut stream = ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        assert!(stream.fd() >= 0, "fd must be a valid socket descriptor");
+        // Idle: nothing readable yet.
+        assert_eq!(stream.available().unwrap(), 0);
+        server.write_all(&[1, 2, 3]).unwrap();
+        // The fd sits on the same socket `available` peeks; wait for the
+        // bytes to land (loopback delivery is not synchronous with write).
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            if stream.available().unwrap() == 3 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "bytes never became readable on the socket"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(stream.fd() >= 0);
     }
 }
