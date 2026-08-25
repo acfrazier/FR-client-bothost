@@ -181,8 +181,10 @@ fn main() -> ExitCode {
 
     // Jag fetch (`maininit`) runs before login no matter what: the optional
     // `--user/--pass` only skip the title *form* (the username/password
-    // fields), not `maininit`. `run`'s guard is then a no-op.
-    client.maininit(&mut renderer);
+    // fields), not `maininit`. `run`'s guard is then a no-op. The progress
+    // callback keeps the loading bar drawing synchronously during the
+    // renderer-free load (maininit itself names no `Renderer`).
+    client.maininit_with_progress(Some(&mut |c, m, p| renderer.draw_progress(c, m, p)));
 
     // `--user/--pass` skip title login; without them, run straight to the
     // title screen — it is the control plane (no usage exit).

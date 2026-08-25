@@ -205,7 +205,8 @@ fn crc_body(checksums: &[i32; 9]) -> Vec<u8> {
 
 #[test]
 fn maininit_is_oneshot_and_sets_progress_100_on_crc_hit() {
-let mut r = Renderer::new(false);
+    // No `Renderer` is constructed anywhere: headless `maininit()` records
+    // `last_progress_*` on the client (record sim-side, draw render-side).
     let dir = std::env::temp_dir().join("274-maininit");
     let _ = std::fs::create_dir_all(&dir);
     let mut checksums = [0i32; 9];
@@ -234,23 +235,71 @@ let mut r = Renderer::new(false);
         lowmem: false,
     });
     c.http_port = port;
-    c.maininit(&mut r);
+    c.maininit();
     th.join().ok();
     assert!(c.already_started);
     assert_eq!(c.last_progress_percent, 100);
+    assert_eq!(c.last_progress_message, "Preparing game engine");
     // dummy jags were all CRC hits: files unchanged, no HTTP after /crc
     for (i, name) in names.iter().enumerate() {
         let bytes = std::fs::read(dir.join(name)).unwrap();
         assert_eq!(bytes, format!("{name}-seed").into_bytes());
         assert_eq!(Packet::getcrc(&bytes, 0, bytes.len()), checksums[i + 1]);
     }
-    c.maininit(&mut r); // oneshot
+    c.maininit(); // oneshot
     assert_eq!(c.last_progress_percent, 100);
 }
 
 #[test]
+fn maininit_with_progress_notifies_callback_at_each_progress_point() {
+    let dir = std::env::temp_dir().join("274-maininit-callback");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut checksums = [0i32; 9];
+    let names = [
+        "title",
+        "config",
+        "interface",
+        "media",
+        "versionlist",
+        "textures",
+        "wordenc",
+        "sounds",
+    ];
+    for (i, name) in names.iter().enumerate() {
+        let bytes = format!("{name}-seed").into_bytes();
+        std::fs::write(dir.join(name), &bytes).unwrap();
+        checksums[i + 1] = Packet::getcrc(&bytes, 0, bytes.len());
+    }
+    let (port, th) = serve_once(crc_body(&checksums));
+
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: dir.to_str().unwrap().into(),
+        members: true,
+        lowmem: false,
+    });
+    c.http_port = port;
+    // The headed-driver path: an optional callback notified at every
+    // progress point (here recorded, in `run`/client-play drawn), while
+    // `last_progress_*` is still recorded on the client.
+    let mut calls = Vec::<(String, i32)>::new();
+    c.maininit_with_progress(Some(&mut |_cl, m, p| {
+        calls.push((m.to_string(), p));
+    }));
+    th.join().ok();
+    assert_eq!(calls.first().map(|(_, p)| *p), Some(0));
+    assert_eq!(
+        calls.last().map(|(m, p)| (m.as_str(), *p)),
+        Some(("Preparing game engine", 100))
+    );
+    assert_eq!(c.last_progress_percent, 100);
+    assert_eq!(c.last_progress_message, "Preparing game engine");
+}
+
+#[test]
 fn maininit_empty_cache_fetches_all_eight_jags_over_http() {
-let mut r = Renderer::new(false);
     let dir = std::env::temp_dir().join("274-maininit-empty");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -293,7 +342,7 @@ let mut r = Renderer::new(false);
     });
     c.http_port = port;
     c.fetch_retry_wait = Duration::from_millis(1);
-    c.maininit(&mut r);
+    c.maininit();
     th.join().ok();
     assert!(c.already_started);
     assert!(!c.error_loading);
@@ -321,7 +370,6 @@ let mut r = Renderer::new(false);
 
 #[test]
 fn maininit_retries_jag_get_after_crc_mismatch() {
-let mut r = Renderer::new(false);
     let dir = std::env::temp_dir().join("274-maininit-retry");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -369,7 +417,7 @@ let mut r = Renderer::new(false);
     });
     c.http_port = port;
     c.fetch_retry_wait = Duration::from_millis(1);
-    c.maininit(&mut r);
+    c.maininit();
     th.join().ok();
     let title_gets = seen
         .lock()
@@ -386,7 +434,6 @@ let mut r = Renderer::new(false);
 
 #[test]
 fn maininit_clears_error_loading_from_new_unpack() {
-let mut r = Renderer::new(false);
     let dir = std::env::temp_dir().join("274-maininit-recover");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -428,7 +475,7 @@ let mut r = Renderer::new(false);
     let (port, th, _seen) = serve_in_order(vec![crc_body(&checksums), valid_config.clone()]);
     c.http_port = port;
     c.fetch_retry_wait = Duration::from_millis(1);
-    c.maininit(&mut r);
+    c.maininit();
     th.join().ok();
     assert!(
         !c.error_loading,

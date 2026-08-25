@@ -2,13 +2,14 @@
 // bubbles, health bars and hitmarks drawn into `area_game`. The projection
 // tests need no cache; the sprite/draw tests need the real `media`/`title`
 // packs and skip when they are absent (see hud.rs).
+use std::sync::Arc;
+
 use client::client::{Client, ClientConfig, ClientPlayer};
 use client::render::Renderer;
 use client::config::IdkType;
 use client::dash3d::Model;
 use client::graphics::{Colour, Pix32};
 use std::collections::HashMap;
-use std::sync::Arc;
 
 fn client() -> Client {
     Client::new(ClientConfig {

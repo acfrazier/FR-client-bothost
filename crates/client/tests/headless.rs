@@ -13,9 +13,9 @@
 //! test in this process can construct a renderer and trip the assertions.
 
 use std::io::{Read, Write};
-use std::sync::Arc;
 use std::net::TcpListener;
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 

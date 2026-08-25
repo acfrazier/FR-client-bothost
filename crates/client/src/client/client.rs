@@ -288,6 +288,11 @@ pub struct Client {
     /// Interface components (`IfType`, hide/scroll/anim/inv slots),
     /// unpacked from the `interface` jag; per-client mutable.
     pub ifaces: Vec<Option<IfType>>,
+    /// True when the cache was injected already-unpacked via `from_shared`
+    /// (host-side `load_cache`). `maininit` skips its `load_cache` re-unpack
+    /// so the shared `Arc<Cache>` survives; `Client::new` stays false and
+    /// still re-unpacks after its fresh jag fetch.
+    pub cache_from_shared: bool,
 
     pub ingame: bool,
     /// `draw`: CPU-save switch — when false, `mainredraw` skips the frame
@@ -807,15 +812,18 @@ impl Client {
 
     /// Host construct: inject a process-wide `Arc<Cache>` and a cloned
     /// iface template. Skips `load_cache` and the `/crc` probe; the host
-    /// unpacks once per `cache_dir`. `error_loading` is false so `mainloop`
-    /// is not a no-op after a successful inject.
+    /// unpacks once per `cache_dir` and every client short-circuits the
+    /// `maininit` re-unpack via `cache_from_shared`. `error_loading` is
+    /// false so `mainloop` is not a no-op after a successful inject.
     pub fn from_shared(
         config: ClientConfig,
         cache: Arc<Cache>,
         ifaces: Vec<Option<IfType>>,
     ) -> Self {
         let jag_checksum = Self::read_jag_checksums(&config.cache_dir);
-        Self::construct(config, cache, ifaces, false, jag_checksum)
+        let mut client = Self::construct(config, cache, ifaces, false, jag_checksum);
+        client.cache_from_shared = true;
+        client
     }
 
     fn construct(
@@ -839,6 +847,7 @@ impl Client {
             config,
             cache,
             ifaces,
+            cache_from_shared: false,
 
             ingame: false,
             draw: false,
@@ -1294,16 +1303,55 @@ impl Client {
         .flatten()
     }
 
+    /// Record a loading-progress point on `Client` (`last_progress_percent`
+    /// / `last_progress_message`), mirroring what `Renderer::draw_progress`
+    /// records. `maininit`/`fetch_*` call this at every progress point so a
+    /// headless client records progress without any `Renderer`.
+    pub fn set_progress(&mut self, message: &str, percent: i32) {
+        self.last_progress_percent = percent;
+        self.last_progress_message = message.to_string();
+    }
+
+    /// Record a progress point (`set_progress`) and, when a progress
+    /// callback is attached (headed `run` / client-play), notify it so the
+    /// driver can draw the loading bar synchronously. Recording is
+    /// sim-side, drawing is render-side.
+    fn report_progress(
+        &mut self,
+        progress: &mut Option<&mut dyn FnMut(&mut Client, &str, i32)>,
+        message: &str,
+        percent: i32,
+    ) {
+        self.set_progress(message, percent);
+        if let Some(cb) = progress.as_deref_mut() {
+            cb(self, message, percent);
+        }
+    }
+
     /// TS `Client.maininit` (819-1178): the one-shot loading screen — fetch
     /// the 8 JAG archives over HTTP (CRC-hit on the local cache), unpack
     /// config/interface, start OnDemand from the versionlist, and prefetch
-    /// anims/models. `already_started` is set first, so a second call is a
+    /// anims/models. Renderer-free: progress is recorded on `Client`
+    /// (`last_progress_*`); `maininit_with_progress` additionally notifies
+    /// an optional callback so a headed driver can draw the bar
+    /// synchronously. `already_started` is set first, so a second call is a
     /// no-op (TS `alreadyStarted`). A failed or invalid jag sets
     /// `error_loading` but does not abort the fetch loop; progress reaches
     /// 100 only when the `/crc` fetch succeeds — the checksum-fail path
     /// returns early with `error_loading` and `last_progress_percent` left
     /// at 10.
-    pub fn maininit(&mut self, renderer: &mut Renderer) {
+    pub fn maininit(&mut self) {
+        self.maininit_with_progress(None);
+    }
+
+    /// The `maininit` body: every progress point records `last_progress_*`
+    /// via `set_progress` and, when `progress` is `Some`, invokes the
+    /// callback so a headed driver can draw `Renderer::draw_progress`
+    /// synchronously without `maininit` naming `Renderer`.
+    pub fn maininit_with_progress(
+        &mut self,
+        mut progress: Option<&mut dyn FnMut(&mut Client, &str, i32)>,
+    ) {
         if self.already_started {
             return;
         }
@@ -1314,13 +1362,13 @@ impl Client {
         self.error_loading = false;
         self.shell.set_framerate(50);
 
-        renderer.draw_progress(self, "Loading...", 0);
+        self.report_progress(&mut progress, "Loading...", 0);
 
         // TS `getJagChecksums` (694-748): `/crc` retried with a 5 s wait
         // doubling to 60 s, forever. Capped at 10 retries so a dead web
         // server cannot hang the caller; tests plant a listener so the
         // first attempt succeeds.
-        let checksums = match self.fetch_jag_checksums(renderer) {
+        let checksums = match self.fetch_jag_checksums(&mut progress) {
             Some(c) => c,
             None => {
                 self.error_loading = true;
@@ -1344,9 +1392,9 @@ impl Client {
             ("sound effects", "sounds", 8, 55),
             ("update list", "versionlist", 5, 60),
         ];
-        for (display, filename, index, progress) in JAG_FETCH {
+        for (display, filename, index, pct) in JAG_FETCH {
             if self
-                .fetch_jag_file(renderer, display, progress, filename, index, &checksums)
+                .fetch_jag_file(&mut progress, display, pct, filename, index, &checksums)
                 .is_none()
             {
                 self.error_loading = true;
@@ -1355,15 +1403,22 @@ impl Client {
 
         // Unpack config/interface from the files now on disk (`load_cache`
         // reads the same persisted paths `get_jag_file` wrote). A missing or
-        // invalid config jag is `Err` → `errorLoading`.
-        match Self::load_cache(&self.config.cache_dir) {
-            Ok((cache, ifaces)) => {
-                self.cache = Arc::new(cache);
-                self.ifaces = ifaces;
-            }
-            Err(()) => {
-                self.error_loading = true;
-                self.shell.set_framerate(1);
+        // invalid config jag is `Err` → `errorLoading`. Skipped when the
+        // cache was injected already-unpacked via `from_shared`: the host
+        // unpacked once per `cache_dir`, the shared `Arc<Cache>` is current,
+        // and re-unpacking would throw it away. `Client::new` (marker false)
+        // still re-unpacks after the fresh jag fetch — that unpack is
+        // intentional and must not be skipped.
+        if !self.cache_from_shared {
+            match Self::load_cache(&self.config.cache_dir) {
+                Ok((cache, ifaces)) => {
+                    self.cache = Arc::new(cache);
+                    self.ifaces = ifaces;
+                }
+                Err(()) => {
+                    self.error_loading = true;
+                    self.shell.set_framerate(1);
+                }
             }
         }
 
@@ -1421,17 +1476,17 @@ impl Client {
         // lists empty. Skipped when OnDemand is `None` (no versionlist —
         // the dummy-file tests).
         if self.on_demand.is_some() {
-            renderer.draw_progress(self, "Requesting animations", 65);
+            self.report_progress(&mut progress, "Requesting animations", 65);
             let anim_count = self.on_demand.as_ref().unwrap().get_file_count(1);
             for i in 0..anim_count {
                 self.on_demand.as_mut().unwrap().request(1, i);
             }
             while self.on_demand.as_ref().unwrap().remaining() > 0 {
-                let progress = anim_count - self.on_demand.as_ref().unwrap().remaining() as i32;
-                if progress > 0 {
-                    renderer.draw_progress(
-                        self,
-                        &format!("Loading animations - {}%", (progress * 100) / anim_count),
+                let done = anim_count - self.on_demand.as_ref().unwrap().remaining() as i32;
+                if done > 0 {
+                    self.report_progress(
+                        &mut progress,
+                        &format!("Loading animations - {}%", (done * 100) / anim_count),
                         65,
                     );
                 }
@@ -1439,7 +1494,7 @@ impl Client {
                 thread::sleep(Duration::from_millis(100));
             }
 
-            renderer.draw_progress(self, "Requesting models", 70);
+            self.report_progress(&mut progress, "Requesting models", 70);
             // Java 5206-5210: remaining()==0 only for `getModelUse & 1`.
             // Other use bits + maps + midi jingles are prefetchPriority
             // after the bar (5251-5285). Title `titleScreenDraw` plots
@@ -1451,11 +1506,11 @@ impl Client {
             self.on_demand.as_mut().unwrap().request_in_use_models();
             let model_total = self.on_demand.as_ref().unwrap().remaining() as i32;
             while self.on_demand.as_ref().unwrap().remaining() > 0 {
-                let progress = model_total - self.on_demand.as_ref().unwrap().remaining() as i32;
-                if progress > 0 && model_total > 0 {
-                    renderer.draw_progress(
-                        self,
-                        &format!("Loading models - {}%", (progress * 100) / model_total),
+                let done = model_total - self.on_demand.as_ref().unwrap().remaining() as i32;
+                if done > 0 && model_total > 0 {
+                    self.report_progress(
+                        &mut progress,
+                        &format!("Loading models - {}%", (done * 100) / model_total),
                         70,
                     );
                 }
@@ -1465,7 +1520,7 @@ impl Client {
 
             // Java `Client.java:5224-5250`: urgent Lumbridge starter maps,
             // waited on the loading bar (`remaining() == 0`) before title.
-            renderer.draw_progress(self, "Requesting maps", 75);
+            self.report_progress(&mut progress, "Requesting maps", 75);
             const LUMBRIDGE_SQUARES: [(i32, i32); 6] =
                 [(47, 48), (48, 48), (49, 48), (47, 47), (48, 47), (48, 148)];
             for (x, z) in LUMBRIDGE_SQUARES {
@@ -1478,11 +1533,11 @@ impl Client {
             }
             let map_total = self.on_demand.as_ref().unwrap().remaining() as i32;
             while self.on_demand.as_ref().unwrap().remaining() > 0 {
-                let progress = map_total - self.on_demand.as_ref().unwrap().remaining() as i32;
-                if progress > 0 && map_total > 0 {
-                    renderer.draw_progress(
-                        self,
-                        &format!("Loading maps - {}%", (progress * 100) / map_total),
+                let done = map_total - self.on_demand.as_ref().unwrap().remaining() as i32;
+                if done > 0 && map_total > 0 {
+                    self.report_progress(
+                        &mut progress,
+                        &format!("Loading maps - {}%", (done * 100) / map_total),
                         75,
                     );
                 }
@@ -1516,7 +1571,7 @@ impl Client {
             }
         }
 
-        renderer.draw_progress(self, "Preparing game engine", 100);
+        self.report_progress(&mut progress, "Preparing game engine", 100);
     }
 
     /// TS `getJagChecksums` retry policy (694-748): attempt `/crc`, then
@@ -1525,11 +1580,14 @@ impl Client {
     /// updated" message at `retries >= 10`); `None` lets `maininit` fail
     /// with `errorLoading` instead of hanging. The per-second countdown
     /// messages are not ported.
-    fn fetch_jag_checksums(&mut self, renderer: &mut Renderer) -> Option<[i32; 9]> {
+    fn fetch_jag_checksums(
+        &mut self,
+        progress: &mut Option<&mut dyn FnMut(&mut Client, &str, i32)>,
+    ) -> Option<[i32; 9]> {
         let mut wait = self.fetch_retry_wait;
         let mut retries = 0;
         loop {
-            renderer.draw_progress(self, "Connecting to web server", 10);
+            self.report_progress(progress, "Connecting to web server", 10);
             if let Some(checksums) = Self::get_jag_checksums(&self.config.host, self.http_port) {
                 return Some(checksums);
             }
@@ -1552,9 +1610,9 @@ impl Client {
     /// not ported.
     fn fetch_jag_file(
         &mut self,
-        renderer: &mut Renderer,
+        progress: &mut Option<&mut dyn FnMut(&mut Client, &str, i32)>,
         display: &str,
-        progress: i32,
+        pct: i32,
         filename: &str,
         index: usize,
         checksums: &[i32; 9],
@@ -1562,7 +1620,7 @@ impl Client {
         let mut wait = self.fetch_retry_wait;
         let mut retries = 0;
         loop {
-            renderer.draw_progress(self, &format!("Requesting {display}"), progress);
+            self.report_progress(progress, &format!("Requesting {display}"), pct);
             if let Some(bytes) = Self::get_jag_file(
                 &self.config.cache_dir,
                 &self.config.host,
@@ -9876,7 +9934,7 @@ impl Client {
     /// like Java `GameShell.run`.
     pub fn run<F: FnMut(&mut Self)>(&mut self, renderer: &mut Renderer, mut on_loop: F) {
         if !self.already_started {
-            self.maininit(renderer);
+            self.maininit_with_progress(Some(&mut |c, m, p| renderer.draw_progress(c, m, p)));
         }
         while self.shell.state >= 0 {
             if self.shell.state > 0 {
