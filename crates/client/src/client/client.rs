@@ -257,6 +257,20 @@ fn empty_ground_obj() -> Box<[[[Option<LinkList<ClientObj>>; 104]; 104]; 4]> {
 pub const APPLET_W: i32 = 765;
 pub const APPLET_H: i32 = 503;
 
+/// Packet-family generations: monotonic counters the host reads to know
+/// which world slices changed since its last poll. `handle_packet` bumps one
+/// family per applied packet; `REBUILD_NORMAL`/`LOGOUT` (and T2) bump all.
+#[derive(Default, Clone, Copy)]
+pub struct ClientGens {
+    pub npc: u64,
+    pub player: u64,
+    pub inv: u64,
+    pub varp: u64,
+    pub stat: u64,
+    pub chat: u64,
+    pub scene: u64,
+}
+
 pub struct Client {
     pub shell: GameShell,
     /// The frame target the driver attaches (task 6 `PresentTarget`). `run`
@@ -756,6 +770,10 @@ pub struct Client {
     /// `errorLoading` from Java/TS: missing required cache jag or a failed
     /// map request. `mainloop` returns immediately; framerate is 1.
     pub error_loading: bool,
+    /// Packet-family generations (`ClientGens`): bumped by `handle_packet`
+    /// after every applied packet so the host can tell which world slices
+    /// changed since its last poll.
+    pub gens: ClientGens,
 }
 
 impl Client {
@@ -1071,6 +1089,7 @@ impl Client {
             timeout_timer: 0,
             no_timeout_timer: 0,
             error_loading,
+            gens: ClientGens::default(),
         };
         if client.error_loading {
             client.shell.set_framerate(1);
@@ -3150,7 +3169,60 @@ impl Client {
         if result.is_err() {
             eprintln!("T2 - {ptype},{ptype1},{ptype2}");
             self.logout();
+            // The frame aborted mid-apply, so every world slice may be
+            // stale; the host re-reads all of them.
+            self.bump_all_gens();
+        } else {
+            self.bump_gens(ptype);
         }
+    }
+
+    /// Bump the generation counter of `ptype`'s family. `REBUILD_NORMAL`
+    /// and `LOGOUT` invalidate every family (new scene / full reset);
+    /// everything else bumps exactly one. Unknown opcodes bump nothing
+    /// (they never reach here — the T1 default logs out without one).
+    pub fn bump_gens(&mut self, ptype: i32) {
+        match ptype {
+            ServerProt::NPC_INFO => self.gens.npc += 1,
+            ServerProt::PLAYER_INFO => self.gens.player += 1,
+            ServerProt::UPDATE_INV_FULL
+            | ServerProt::UPDATE_INV_PARTIAL
+            | ServerProt::UPDATE_INV_STOP_TRANSMIT => self.gens.inv += 1,
+            ServerProt::VARP_SMALL | ServerProt::VARP_LARGE | ServerProt::VARP_SYNC => {
+                self.gens.varp += 1
+            }
+            ServerProt::UPDATE_STAT
+            | ServerProt::UPDATE_RUNENERGY
+            | ServerProt::UPDATE_RUNWEIGHT => self.gens.stat += 1,
+            ServerProt::MESSAGE_GAME | ServerProt::MESSAGE_PRIVATE => self.gens.chat += 1,
+            ServerProt::UPDATE_ZONE_PARTIAL_FOLLOWS
+            | ServerProt::UPDATE_ZONE_FULL_FOLLOWS
+            | ServerProt::UPDATE_ZONE_PARTIAL_ENCLOSED
+            | ServerProt::P_LOCMERGE
+            | ServerProt::LOC_ANIM
+            | ServerProt::OBJ_DEL
+            | ServerProt::OBJ_REVEAL
+            | ServerProt::LOC_ADD_CHANGE
+            | ServerProt::MAP_PROJANIM
+            | ServerProt::LOC_DEL
+            | ServerProt::OBJ_COUNT
+            | ServerProt::MAP_ANIM
+            | ServerProt::OBJ_ADD => self.gens.scene += 1,
+            ServerProt::REBUILD_NORMAL | ServerProt::LOGOUT => self.bump_all_gens(),
+            _ => {}
+        }
+    }
+
+    /// Bump every family generation (`REBUILD_NORMAL` scene rebuilds and
+    /// `LOGOUT`/T2 resets make every slice stale).
+    fn bump_all_gens(&mut self) {
+        self.gens.npc += 1;
+        self.gens.player += 1;
+        self.gens.inv += 1;
+        self.gens.varp += 1;
+        self.gens.stat += 1;
+        self.gens.chat += 1;
+        self.gens.scene += 1;
     }
 
     /// `IF_SETICON` handler (Client.ts 5992): bind interface `com_id` to side

@@ -1,5 +1,5 @@
 pub mod client;
-pub use client::{APPLET_H, APPLET_W, Client, ClientNpc, ClientPlayer};
+pub use client::{APPLET_H, APPLET_W, Client, ClientGens, ClientNpc, ClientPlayer};
 pub use crate::core::build as client_build;
 pub use client_build::ClientBuild;
 pub use crate::render::draw as client_draw;
