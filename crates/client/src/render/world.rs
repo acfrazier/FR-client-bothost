@@ -1929,10 +1929,11 @@ impl RenderWorld {
     // fixed-point math, backface-culled with the CPU winding test, and
     // shaded from the same colour table. The vertex shader divides by the
     // view depth; the depth buffer replaces the painter's per-face
-    // priority merge. Documented divergences: textured model/ground faces
-    // render flat-shaded from their per-vertex shade (no texture
-    // sampling), the per-face exact mouse picks are AABB-only, and the
-    // occluder tests are skipped (the depth buffer occludes).
+    // priority merge. Documented divergences: the per-face exact mouse
+    // picks are AABB-only, and the occluder tests are skipped (the depth
+    // buffer occludes). Textured faces (models and ground) carry the
+    // projective UV of the CPU `texture_triangle` and sample the shared
+    // model atlas in the scene shader — they are not flat-shaded.
 
     /// Build the GPU scene mesh for the tiles `prepare_scene` marked
     /// drawable this frame. Mutates only what the CPU fill would: the
@@ -3925,8 +3926,12 @@ struct SceneCam {
 }
 
 /// One triangle vertex of the GPU scene mesh: a camera-space position plus
-/// a shaded RGBA (`a` is the source alpha, 255 = opaque). `bytemuck::Pod`
-/// so the wgpu backend uploads the mesh as raw bytes.
+/// a shaded RGBA (`a` is the source alpha, 255 = opaque). Textured faces
+/// (task 5b) instead carry the projective UV of the CPU `texture_triangle`
+/// — `u_num/u_den`, `v_num/v_den` (the numerator already scaled by the
+/// 128/64 texel size), the 16-bit shade for the texel brightness, and the
+/// model texture id. `bytemuck::Pod` so the wgpu backend uploads the mesh
+/// as raw bytes.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuVertex {
@@ -3937,6 +3942,12 @@ pub struct GpuVertex {
     pub g: u8,
     pub b: u8,
     pub a: u8,
+    pub u_num: f32,
+    pub u_den: f32,
+    pub v_num: f32,
+    pub v_den: f32,
+    pub shade: f32,
+    pub tex_id: u32,
 }
 
 impl GpuVertex {
@@ -3952,13 +3963,51 @@ impl GpuVertex {
             g: ((rgb >> 8) & 0xff) as u8,
             b: (rgb & 0xff) as u8,
             a: alpha,
+            u_num: 0.0,
+            u_den: 1.0,
+            v_num: 0.0,
+            v_den: 1.0,
+            shade: 0.0,
+            tex_id: u32::MAX,
+        }
+    }
+
+    /// A textured-face vertex: the projective UV (numerators scaled by the
+    /// texel size 128, or 64 for `low_mem`) and the per-vertex shade for
+    /// the texel brightness; `tex_id` selects the atlas cell.
+    fn textured(
+        x: i32,
+        y: i32,
+        z: i32,
+        u_num: f32,
+        u_den: f32,
+        v_num: f32,
+        v_den: f32,
+        shade: f32,
+        tex_id: u32,
+        alpha: u8,
+    ) -> GpuVertex {
+        GpuVertex {
+            x: x as f32,
+            y: y as f32,
+            z: z as f32,
+            r: 0,
+            g: 0,
+            b: 0,
+            a: alpha,
+            u_num,
+            u_den,
+            v_num,
+            v_den,
+            shade,
+            tex_id,
         }
     }
 }
 
 /// The GPU scene mesh: opaque faces first, then translucent, so the
 /// backend can draw two ranges (depth-write on / alpha-blend).
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct SceneMesh {
     opaque: Vec<GpuVertex>,
     translucent: Vec<GpuVertex>,
@@ -4029,8 +4078,9 @@ fn emit_scene_model(
 /// model AABB, transform every vertex to camera space with the exact
 /// fixed-point math, then emit each visible face with its per-vertex
 /// colour-table shades. The depth-buffer pipeline replaces the CPU's
-/// depth/priority bucket merge; textured faces keep their shaded colour
-/// but are not texture-sampled.
+/// depth/priority bucket merge; textured faces (`renderType & 0x3 == 2`)
+/// carry the projective UV of the CPU `texture_triangle` and sample the
+/// shared model atlas.
 #[allow(clippy::too_many_arguments)]
 fn emit_model_faces(
     model: &Model,
@@ -4211,13 +4261,13 @@ fn emit_model_faces(
         else {
             continue;
         };
-        let r#type = model
+        let render_type = model
             .face_render_type
             .as_ref()
             .and_then(|rt| rt.get(f))
             .copied()
-            .unwrap_or(0)
-            & 0x3;
+            .unwrap_or(0);
+        let r#type = render_type & 0x3;
         let (shade_a, shade_b, shade_c) = if r#type == 1 || r#type == 3 {
             let shade = fca.get(f).copied().unwrap_or(0);
             (shade, shade, shade)
@@ -4240,20 +4290,101 @@ fn emit_model_faces(
         } else {
             (256 - trans).clamp(0, 255) as u8
         };
-        mesh.push(
-            GpuVertex::new(x_a, y_a, z_a, shade_a, alpha),
-            GpuVertex::new(x_b, y_b, z_b, shade_b, alpha),
-            GpuVertex::new(x_c, y_c, z_c, shade_c, alpha),
-            alpha != 255,
-        );
+
+        // Textured faces (`renderType & 0x3 == 2`): the texture id is
+        // `faceColour[face]`; the three texture-mapping vertices
+        // `faceTextureP/M/N[renderType >> 2]` define the texture plane.
+        // The per-vertex UV is the projective affine map the CPU
+        // `texture_triangle` rasterises: with `h = c - a`, `v = b - a`,
+        // `u = -(a×v)·p / ((h×v)·p)` and `t = -(h×a)·p / ((h×v)·p)`
+        // (a→(0,0), b→(0,1), c→(1,0) in the texture). The numerator is
+        // pre-scaled by the texel size (128 high-mem, 64 low-mem).
+        if r#type == 2 {
+            let Some(face_colour) = &model.face_colour else {
+                continue;
+            };
+            let Some(&tex_id) = face_colour.get(f) else {
+                continue;
+            };
+            if tex_id < 0 || tex_id >= 50 {
+                continue; // the CPU's `getTexels` returns None past 49
+            }
+            let textured_face = (render_type >> 2) as usize;
+            let (Some(tex_p), Some(tex_m), Some(tex_n)) = (
+                &model.face_texture_p,
+                &model.face_texture_m,
+                &model.face_texture_n,
+            ) else {
+                continue;
+            };
+            let (Some(&t_a), Some(&t_b), Some(&t_c)) = (
+                tex_p.get(textured_face),
+                tex_m.get(textured_face),
+                tex_n.get(textured_face),
+            ) else {
+                continue;
+            };
+            let (ax, ay, az) = (
+                cam_x[t_a as usize] as f32,
+                cam_y[t_a as usize] as f32,
+                cam_z[t_a as usize] as f32,
+            );
+            let (bx, by, bz) = (
+                cam_x[t_b as usize] as f32,
+                cam_y[t_b as usize] as f32,
+                cam_z[t_b as usize] as f32,
+            );
+            let (cx, cy, cz) = (
+                cam_x[t_c as usize] as f32,
+                cam_y[t_c as usize] as f32,
+                cam_z[t_c as usize] as f32,
+            );
+            let (hx, hy, hz) = (cx - ax, cy - ay, cz - az);
+            let (vx, vy, vz) = (bx - ax, by - ay, bz - az);
+            // d = h×v, n_u = -(a×v), n_v = -(h×a).
+            let (dx, dy, dz) = (hy * vz - hz * vy, hz * vx - hx * vz, hx * vy - hy * vx);
+            let (nux, nuy, nuz) = (az * vy - ay * vz, ax * vz - az * vx, ay * vx - ax * vy);
+            let (nvx, nvy, nvz) = (hz * ay - hy * az, hx * az - hz * ax, hy * ax - hx * ay);
+            let scale = if pix.low_mem { 64.0 } else { 128.0 };
+            let uv = |x: f32, y: f32, z: f32| -> (f32, f32, f32, f32) {
+                (
+                    (nux * x + nuy * y + nuz * z) * scale,
+                    dx * x + dy * y + dz * z,
+                    (nvx * x + nvy * y + nvz * z) * scale,
+                    dx * x + dy * y + dz * z,
+                )
+            };
+            let (u_a, ud_a, v_a, vd_a) = uv(x_a as f32, y_a as f32, z_a as f32);
+            let (u_b, ud_b, v_b, vd_b) = uv(x_b as f32, y_b as f32, z_b as f32);
+            let (u_c, ud_c, v_c, vd_c) = uv(x_c as f32, y_c as f32, z_c as f32);
+            mesh.push(
+                GpuVertex::textured(
+                    x_a, y_a, z_a, u_a, ud_a, v_a, vd_a, shade_a as f32, tex_id as u32, alpha,
+                ),
+                GpuVertex::textured(
+                    x_b, y_b, z_b, u_b, ud_b, v_b, vd_b, shade_b as f32, tex_id as u32, alpha,
+                ),
+                GpuVertex::textured(
+                    x_c, y_c, z_c, u_c, ud_c, v_c, vd_c, shade_c as f32, tex_id as u32, alpha,
+                ),
+                alpha != 255,
+            );
+        } else {
+            mesh.push(
+                GpuVertex::new(x_a, y_a, z_a, shade_a, alpha),
+                GpuVertex::new(x_b, y_b, z_b, shade_b, alpha),
+                GpuVertex::new(x_c, y_c, z_c, shade_c, alpha),
+                alpha != 255,
+            );
+        }
     }
 }
 
 /// `renderGround` for the GPU path: transform the ground's vertices to
 /// camera space, then mesh every face with its per-vertex colour-table
-/// shades (textured faces keep their shade, no texture sampling). The
-/// ground click raycast is kept: the sim's walk-dest pick reads
-/// `world.ground_x/z`.
+/// shades (textured ground samples the model atlas with the quad-corner
+/// projective UV). The ground click raycast is kept: the sim's walk-dest
+/// pick reads `world.ground_x/z`.
 #[allow(clippy::too_many_arguments)]
 fn emit_ground(
     world: &mut World,
@@ -4317,12 +4448,58 @@ fn emit_ground(
         }
         let colour_b = ground.face_colour_b.get(f).copied().unwrap_or(0);
         let colour_c = ground.face_colour_c.get(f).copied().unwrap_or(0);
-        mesh.push(
-            GpuVertex::new(x0, y0, z0, colour_a, 255),
-            GpuVertex::new(x1, y1, z1, colour_b, 255),
-            GpuVertex::new(x2, y2, z2, colour_c, 255),
-            false,
-        );
+
+        // Textured ground faces sample the model atlas with the same
+        // projective UV the CPU ground raster uses. The texture plane is
+        // the quad corners 0/1/3 for a flat ground (both triangles share
+        // the basis, so the texture is continuous across the diagonal),
+        // or the face's own corners for a non-flat ground, exactly like
+        // the CPU `texture_triangle` calls.
+        let face_texture = ground.face_texture.as_ref().and_then(|t| t.get(f)).copied();
+        let textured = match face_texture {
+            Some(t) if t != -1 && t < 50 => Some(t as u32),
+            _ => None,
+        };
+        if let Some(tex) = textured {
+            let (ba, bb, bc) = if ground.flat {
+                (0usize, 1usize, 3usize)
+            } else {
+                (a, b, c)
+            };
+            let (ax, ay, az) = (cam_x[ba] as f32, cam_y[ba] as f32, cam_z[ba] as f32);
+            let (bx, by, bz) = (cam_x[bb] as f32, cam_y[bb] as f32, cam_z[bb] as f32);
+            let (cx, cy, cz) = (cam_x[bc] as f32, cam_y[bc] as f32, cam_z[bc] as f32);
+            let (hx, hy, hz) = (cx - ax, cy - ay, cz - az);
+            let (vx, vy, vz) = (bx - ax, by - ay, bz - az);
+            let (dx, dy, dz) = (hy * vz - hz * vy, hz * vx - hx * vz, hx * vy - hy * vx);
+            let (nux, nuy, nuz) = (az * vy - ay * vz, ax * vz - az * vx, ay * vx - ax * vy);
+            let (nvx, nvy, nvz) = (hz * ay - hy * az, hx * az - hz * ax, hy * ax - hx * ay);
+            let scale = if pix.low_mem { 64.0 } else { 128.0 };
+            let uv = |x: f32, y: f32, z: f32| -> (f32, f32, f32, f32) {
+                (
+                    (nux * x + nuy * y + nuz * z) * scale,
+                    dx * x + dy * y + dz * z,
+                    (nvx * x + nvy * y + nvz * z) * scale,
+                    dx * x + dy * y + dz * z,
+                )
+            };
+            let (u0, ud0, v0, vd0) = uv(x0 as f32, y0 as f32, z0 as f32);
+            let (u1, ud1, v1, vd1) = uv(x1 as f32, y1 as f32, z1 as f32);
+            let (u2, ud2, v2, vd2) = uv(x2 as f32, y2 as f32, z2 as f32);
+            mesh.push(
+                GpuVertex::textured(x0, y0, z0, u0, ud0, v0, vd0, colour_a as f32, tex, 255),
+                GpuVertex::textured(x1, y1, z1, u1, ud1, v1, vd1, colour_b as f32, tex, 255),
+                GpuVertex::textured(x2, y2, z2, u2, ud2, v2, vd2, colour_c as f32, tex, 255),
+                false,
+            );
+        } else {
+            mesh.push(
+                GpuVertex::new(x0, y0, z0, colour_a, 255),
+                GpuVertex::new(x1, y1, z1, colour_b, 255),
+                GpuVertex::new(x2, y2, z2, colour_c, 255),
+                false,
+            );
+        }
     }
 }
 

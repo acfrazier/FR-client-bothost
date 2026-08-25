@@ -22,10 +22,11 @@
 //! occludes), and the chrome draws as GPU quads (rects/sprites/glyphs)
 //! with the rotated minimap composited from a CPU staging upload.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::client::client::Client;
-use crate::graphics::{Pix2D, Pix3D};
+use crate::graphics::{Pix2D, Pix3D, Pix3DDraw};
+use crate::render::backend::gpu_atlas::GpuAssets;
 use crate::render::backend::{BackendKind, CpuBackend, FrameKind, FrameOutput, RenderBackend, TextureHandle};
 use crate::render::world::{GpuVertex, SceneMesh};
 use crate::render::Renderer;
@@ -55,6 +56,9 @@ static GPU_BACKEND_TRIED: std::sync::atomic::AtomicUsize = std::sync::atomic::At
 struct GpuContext {
     device: wgpu::Device,
     queue: wgpu::Queue,
+    /// The shared asset store (model atlas; the chrome atlases in the
+    /// later slices). Uploads happen once per process on first use.
+    assets: Arc<Mutex<GpuAssets>>,
 }
 
 /// The process-wide GPU context, or `None` on a (cached) init failure.
@@ -93,24 +97,44 @@ fn init_gpu() -> Result<Arc<GpuContext>, String> {
         trace: wgpu::Trace::default(),
     }))
     .map_err(|e| format!("device: {e}"))?;
-    Ok(Arc::new(GpuContext { device, queue }))
+    let assets = Arc::new(Mutex::new(GpuAssets::new(&device, &queue)));
+    Ok(Arc::new(GpuContext { device, queue, assets }))
 }
 
 /// The scene pipeline: a passthrough projection (camera-space vertices,
 /// perspective divide in the shader) plus the shaded vertex colour.
+/// Textured faces (task 5b) carry a per-face texture index and projective
+/// UV (`u_num/u_den`, `v_num/v_den` — the affine maps of the CPU
+/// `texture_triangle`), sampled from the shared model atlas; the shade's
+/// top two bits pick the CPU's brightness level.
 const SCENE_SHADER: &str = r#"
 const NEAR: f32 = 50.0;
 const SCALE_X: f32 = 2.0;
 const SCALE_Y: f32 = -512.0 / 167.0;
 
+@group(0) @binding(0) var model_atlas: texture_2d<f32>;
+@group(0) @binding(1) var model_sampler: sampler;
+
 struct VsIn {
     @location(0) pos: vec3<f32>,
     @location(1) color: vec4<f32>,
+    @location(2) u_num: f32,
+    @location(3) u_den: f32,
+    @location(4) v_num: f32,
+    @location(5) v_den: f32,
+    @location(6) shade: f32,
+    @location(7) tex_id: u32,
 };
 
 struct VsOut {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
+    @location(1) u_num: f32,
+    @location(2) u_den: f32,
+    @location(3) v_num: f32,
+    @location(4) v_den: f32,
+    @location(5) shade: f32,
+    @location(6) tex_id: u32,
 };
 
 @vertex
@@ -124,12 +148,36 @@ fn vs_main(in: VsIn) -> VsOut {
     // (`clip.z >= -w` ⟺ `z >= NEAR / 2`).
     out.position = vec4<f32>(in.pos.x * SCALE_X, in.pos.y * SCALE_Y, z - NEAR, z);
     out.color = in.color;
+    out.u_num = in.u_num;
+    out.u_den = in.u_den;
+    out.v_num = in.v_num;
+    out.v_den = in.v_den;
+    out.shade = in.shade;
+    out.tex_id = in.tex_id;
     return out;
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    return in.color;
+    if (in.tex_id == 0xffffffffu) {
+        return in.color;
+    }
+    // The 8×8 grid of 128×128 cells in the 1024×1024 model atlas.
+    let cell = vec2<f32>(f32(in.tex_id % 8u), f32(in.tex_id / 8u));
+    // `abs` mirrors UV regions outside the texture's parallelogram (the
+    // second triangle of a quad sits on the v-negative side of the face's
+    // texture basis), matching the CPU's masked texel wrap: the texture
+    // mirrors across the quad diagonal instead of sampling empty atlas.
+    let u = abs(in.u_num / max(in.u_den, 0.000001));
+    let v = abs(in.v_num / max(in.v_den, 0.000001));
+    let uv = clamp((vec2<f32>(u, v) / 128.0 + cell) / 8.0, vec2<f32>(0.0), vec2<f32>(1.0));
+    let t = textureSample(model_atlas, model_sampler, uv);
+    if (t.a < 0.5) { discard; }
+    // The CPU's per-texel brightness: the interpolated 16-bit shade's top
+    // two bits select the texel block (rgb, ~7/8, ~3/4, ~5/8).
+    let level = (i32(in.shade) >> 14) & 3;
+    let factor = 1.0 - f32(level) * 0.125;
+    return vec4<f32>(t.rgb * factor, in.color.a);
 }
 "#;
 
@@ -149,6 +197,8 @@ pub struct GpuBackend {
     frame_view: wgpu::TextureView,
     pipeline_opaque: wgpu::RenderPipeline,
     pipeline_translucent: wgpu::RenderPipeline,
+    /// The shared model-atlas bind group, bound each scene pass.
+    model_bind_group: wgpu::BindGroup,
     /// Streaming vertex buffer (grows on demand; the mesh is re-uploaded
     /// every frame, the RuneLite plugin shape).
     vertex_buf: wgpu::Buffer,
@@ -214,13 +264,18 @@ impl GpuBackend {
                 source: wgpu::ShaderSource::Wgsl(SCENE_SHADER.into()),
             });
 
-        let layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("r274 scene layout"),
-            bind_group_layouts: &[],
-            immediate_size: 0,
-        });
+        let assets = context.assets.lock().unwrap();
+        let layout = context
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("r274 scene layout"),
+                bind_group_layouts: &[Some(&assets.model_bind_group_layout)],
+                immediate_size: 0,
+            });
         let pipeline_opaque = make_pipeline(&context.device, &layout, &shader, true);
         let pipeline_translucent = make_pipeline(&context.device, &layout, &shader, false);
+        let model_bind_group = assets.model_bind_group.clone();
+        drop(assets);
 
         let vertex_buf_capacity = 1 << 20; // 1 MiB of vertices to start
         let vertex_buf = context.device.create_buffer(&wgpu::BufferDescriptor {
@@ -239,6 +294,7 @@ impl GpuBackend {
             frame_view,
             pipeline_opaque,
             pipeline_translucent,
+            model_bind_group,
             vertex_buf,
             vertex_buf_capacity,
             cpu: CpuBackend,
@@ -250,6 +306,28 @@ impl GpuBackend {
     /// headless counter; a cached failure still counts one attempt).
     pub fn tried() -> usize {
         GPU_BACKEND_TRIED.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Test hook: upload the model textures from `pix`, render `mesh` into
+    /// the scene texture and read the scene back (the model-texture
+    /// sampling test asserts the rendered texels are non-white). The
+    /// production frame never reads back — `finish` hands the texture.
+    #[doc(hidden)]
+    pub fn render_scene_for_test(&mut self, mesh: SceneMesh, pix: &Pix3DDraw) -> Vec<i32> {
+        self.context
+            .assets
+            .lock()
+            .unwrap()
+            .ensure_model_textures(pix);
+        self.render_scene(mesh);
+        let handle = TextureHandle {
+            device: self.context.device.clone(),
+            queue: self.context.queue.clone(),
+            view: self.scene_view.clone(),
+            width: SCENE_W,
+            height: SCENE_H,
+        };
+        handle.read_back()
     }
 
     /// Upload the mesh and rasterize it into `scene_texture` (opaque faces
@@ -308,6 +386,7 @@ impl GpuBackend {
                 multiview_mask: None,
             });
             pass.set_vertex_buffer(0, self.vertex_buf.slice(..));
+            pass.set_bind_group(0, &self.model_bind_group, &[]);
             if opaque_len > 0 {
                 pass.set_pipeline(&self.pipeline_opaque);
                 pass.draw(0..opaque_len as u32, 0..1);
@@ -337,7 +416,16 @@ fn make_pipeline(
         buffers: &[wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<GpuVertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Unorm8x4],
+            attributes: &wgpu::vertex_attr_array![
+                0 => Float32x3,
+                1 => Unorm8x4,
+                2 => Float32,
+                3 => Float32,
+                4 => Float32,
+                5 => Float32,
+                6 => Float32,
+                7 => Uint32,
+            ],
         }],
     };
     let fragment = wgpu::FragmentState {
@@ -486,7 +574,14 @@ impl RenderBackend for GpuBackend {
         // The GPU rasterization: mark the visible tiles, build the scene
         // mesh (this also resolves the lazy model caches, appends the
         // AABB mouse picks and runs the ground click raycast), render it
-        // into `scene_texture` and read it back into `scene_pix`.
+        // into `scene_texture`.
+        // Model textures upload into the shared atlas once (per texture
+        // id), before the mesh is built so the ids resolve to cells.
+        self.context
+            .assets
+            .lock()
+            .unwrap()
+            .ensure_model_textures(&r.pix3d);
         r.world
             .prepare_scene(&mut core.world, cache, loop_cycle, cam_x, cam_y, cam_z, level, cam_yaw, cam_pitch);
         let mesh = r
