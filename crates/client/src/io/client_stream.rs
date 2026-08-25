@@ -6,6 +6,7 @@
 
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -44,6 +45,8 @@ pub struct ClientStream {
     shared: Arc<Mutex<WriterState>>,
     condvar: Arc<Condvar>,
     writer_thread: Option<JoinHandle<()>>,
+    bytes_in: AtomicU64,
+    bytes_out: AtomicU64,
 }
 
 impl ClientStream {
@@ -59,7 +62,20 @@ impl ClientStream {
             shared: Arc::new(Mutex::new(WriterState::new())),
             condvar: Arc::new(Condvar::new()),
             writer_thread: None,
+            bytes_in: AtomicU64::new(0),
+            bytes_out: AtomicU64::new(0),
         })
+    }
+
+    /// Payload bytes read so far (headers excluded); wraps at `u64`.
+    pub fn bytes_in(&self) -> u64 {
+        self.bytes_in.load(Ordering::Relaxed)
+    }
+
+    /// Payload bytes queued for writing so far (headers excluded); wraps at
+    /// `u64`.
+    pub fn bytes_out(&self) -> u64 {
+        self.bytes_out.load(Ordering::Relaxed)
     }
 
     /// Read one byte: 0 after `close`, -1 at EOF, else the byte value.
@@ -70,7 +86,10 @@ impl ClientStream {
         let mut b = [0u8; 1];
         match self.reader.read(&mut b) {
             Ok(0) => Ok(-1),
-            Ok(_) => Ok(b[0] as i32),
+            Ok(_) => {
+                self.bytes_in.fetch_add(1, Ordering::Relaxed);
+                Ok(b[0] as i32)
+            }
             Err(e) => Err(e),
         }
     }
@@ -90,6 +109,7 @@ impl ClientStream {
             }
             filled += n;
         }
+        self.bytes_in.fetch_add(len as u64, Ordering::Relaxed);
         Ok(())
     }
 
@@ -131,14 +151,18 @@ impl ClientStream {
             st.ioerror = false;
             return Err(io::Error::other("Error in writer thread"));
         }
+        let mut queued = 0u64;
         for &b in &buf[..len] {
             let tnum = st.tnum;
             st.buf[tnum] = b;
             st.tnum = (st.tnum + 1) % BUF_SIZE;
+            queued += 1;
             if st.tnum == (st.tcycl + BUF_SIZE - 100) % BUF_SIZE {
+                self.bytes_out.fetch_add(queued, Ordering::Relaxed);
                 return Err(io::Error::other("buffer overflow"));
             }
         }
+        self.bytes_out.fetch_add(queued, Ordering::Relaxed);
         if !st.writer {
             st.writer = true;
             self.writer_thread = Some(thread::spawn(move || writer_loop(shared, condvar, sock)));
