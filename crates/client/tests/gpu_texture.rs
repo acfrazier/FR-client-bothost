@@ -107,6 +107,26 @@ fn solid_texture(rgb: i32) -> Pix8 {
     tex
 }
 
+/// A 64×64 texture with a distinct colour in each 32×32 quadrant (red /
+/// green / blue / yellow) — what a low-mem renderer's halved texture looks
+/// like. A render proves *which* region of the texture a face samples: a
+/// scale-64 bug samples only the top-left quarter (all red).
+fn quadrant_texture() -> Pix8 {
+    let mut tex = Pix8::new(64, 64, vec![0, 0xff0000, 0x00ff00, 0x0000ff, 0xffff00]);
+    for y in 0..64 {
+        for x in 0..64 {
+            let idx = match (x < 32, y < 32) {
+                (true, true) => 1,   // top-left red
+                (false, true) => 2,  // top-right green
+                (true, false) => 3,  // bottom-left blue
+                (false, false) => 4, // bottom-right yellow
+            };
+            tex.data[(y * 64 + x) as usize] = idx as i8;
+        }
+    }
+    tex
+}
+
 /// A `Pix3DDraw` with solid red/blue textures depacked at ids 7 and 12
 /// (the `tex_pal` is the baked palette here; gamma is not involved).
 fn textured_pix() -> Pix3DDraw {
@@ -224,6 +244,75 @@ fn gpu_render_samples_multi_texture_model() {
     );
     // Sanity: the wall occupies real screen space (not a one-pixel sliver).
     assert!(found_red + found_blue > 500, "the textured wall must cover screen area");
+}
+
+/// The low-mem path (the default bot config): a halved 64×64 texture and
+/// `pix.low_mem` set. The atlas bakes every cell at 128×128, so the UV
+/// numerator scale must be 128 regardless of the memory mode — a scale-64
+/// mesh would sample only the top-left quarter of the cell, stretched 2×.
+/// The quadrant texture makes that visible: the full 64×64 texture (all
+/// four quadrants) must appear on the face.
+#[test]
+fn gpu_lowmem_texture_samples_the_full_128px_cell() {
+    Pix3D::init_colour_table(0.6);
+    let mut pix = Pix3DDraw::default();
+    pix.set_clipping(512, 334);
+    pix.low_mem = true;
+    let tex = quadrant_texture();
+    pix.textures[7] = Some(tex.clone());
+    pix.tex_pal[7] = Some(vec![0, 0xff0000, 0x00ff00, 0x0000ff, 0xffff00]);
+
+    let mut world = flat_world();
+    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+    let mut rw = RenderWorld::new();
+    let mut model = textured_wall_model();
+    model.face_colour = Some(vec![7, 7]); // both faces use the quadrant texture
+    rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
+    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
+
+    // Mesh-level: the textured vertices' UV must span the full 128px cell
+    // in both axes even on the low-mem path (a scale-64 bug caps at 64).
+    let mut max_u = 0.0f32;
+    let mut max_v = 0.0f32;
+    for v in mesh.clone().vertices().iter().filter(|v| v.tex_id == 7) {
+        max_u = max_u.max((v.u_num / v.u_den).abs());
+        max_v = max_v.max((v.v_num / v.v_den).abs());
+    }
+    assert!(
+        max_u > 110.0 && max_v > 110.0,
+        "the low-mem mesh UV must span the full 128px cell (got u≤{max_u}, v≤{max_v})"
+    );
+
+    // GPU: the render must sample the texture across a quadrant boundary —
+    // a scale-64 sample shows only the top-left quarter (all red). The
+    // default grazing camera shows the wall's near band, so at least two
+    // quadrant colours must appear.
+    let Ok(mut backend) = GpuBackend::try_new() else {
+        eprintln!("no adapter on this machine; the low-mem render check skips");
+        return;
+    };
+    let scene = backend.render_scene_for_test(mesh, &pix);
+    let mut seen = [false; 4];
+    for &rgb in &scene {
+        let r = (rgb >> 16) & 0xff;
+        let g = (rgb >> 8) & 0xff;
+        let b = rgb & 0xff;
+        if r > 100 && g < 60 && b < 60 {
+            seen[0] = true; // red (top-left quadrant)
+        } else if r < 60 && g > 100 && b < 60 {
+            seen[1] = true; // green (top-right)
+        } else if r < 60 && g < 60 && b > 100 {
+            seen[2] = true; // blue (bottom-left)
+        } else if r > 100 && g > 100 && b < 60 {
+            seen[3] = true; // yellow (bottom-right)
+        }
+    }
+    assert!(
+        seen.iter().filter(|&&s| s).count() >= 2,
+        "the low-mem textured face must sample more than the top-left quarter of the 128px cell (seen {seen:?})"
+    );
 }
 
 /// The composite: after a scene render, `finish` returns one full-frame

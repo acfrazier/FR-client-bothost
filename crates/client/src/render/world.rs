@@ -4345,7 +4345,10 @@ fn emit_model_faces(
             let (dx, dy, dz) = (hy * vz - hz * vy, hz * vx - hx * vz, hx * vy - hy * vx);
             let (nux, nuy, nuz) = (az * vy - ay * vz, ax * vz - az * vx, ay * vx - ax * vy);
             let (nvx, nvy, nvz) = (hz * ay - hy * az, hx * az - hz * ax, hy * ax - hx * ay);
-            let scale = if pix.low_mem { 64.0 } else { 128.0 };
+            // The model atlas is always 128×128 per texture (64 px textures
+            // are 2×2-upscaled at bake), so the UV numerator scale is 128
+            // regardless of the renderer's memory mode.
+            let scale = 128.0;
             let uv = |x: f32, y: f32, z: f32| -> (f32, f32, f32, f32) {
                 (
                     (nux * x + nuy * y + nuz * z) * scale,
@@ -4474,7 +4477,10 @@ fn emit_ground(
             let (dx, dy, dz) = (hy * vz - hz * vy, hz * vx - hx * vz, hx * vy - hy * vx);
             let (nux, nuy, nuz) = (az * vy - ay * vz, ax * vz - az * vx, ay * vx - ax * vy);
             let (nvx, nvy, nvz) = (hz * ay - hy * az, hx * az - hz * ax, hy * ax - hx * ay);
-            let scale = if pix.low_mem { 64.0 } else { 128.0 };
+            // The model atlas is always 128×128 per texture (64 px textures
+            // are 2×2-upscaled at bake), so the UV numerator scale is 128
+            // regardless of the renderer's memory mode.
+            let scale = 128.0;
             let uv = |x: f32, y: f32, z: f32| -> (f32, f32, f32, f32) {
                 (
                     (nux * x + nuy * y + nuz * z) * scale,
