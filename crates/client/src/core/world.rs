@@ -84,9 +84,10 @@ pub struct World {
     pub(crate) build_generation: u64,
     /// Set by `ClientBuild::finish_build` in place of the old sim-side
     /// `share_light` call; the render side runs the share-light pass over
-    /// its lazily-resolved models on the first frame after a build. A
+    /// its lazily-resolved models on the first frame after a build
+    /// (`render_all` consumes it via `take_share_light_pending`). A
     /// headless client never consumes it and never decodes a model.
-    pub(crate) share_light_pending: bool,
+    pub share_light_pending: bool,
 }
 
 impl World {

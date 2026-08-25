@@ -490,6 +490,42 @@ let _r = Renderer::new(false);
     assert_eq!(m2_angle, 1);
 }
 
+/// Task 3b fix round 1: LOC_ANIM's "two models" decision keys off the
+/// *packet* shape, not the placement shape. A shape-0 wall animated with a
+/// shape-2 (door) packet still animates both models (`model2` is set), the
+/// original `locAnimChange` `if shape == 2` behaviour.
+#[test]
+fn loc_anim_door_packet_overrides_non_door_placement() {
+let _r = Renderer::new(false);
+    let mut c = client();
+    seed_anim_loc(&mut c, 0);
+    c.scene_state = 2;
+    c.ingame = true;
+    let mut p = loc_add_payload(0x11, 0x00, 0); // shape 0 wall
+    c.handle_packet(ServerProt::LOC_ADD_CHANGE, &mut p);
+    c.game_loop();
+    let mut p = Packet::alloc(0);
+    p.p1(0x11);
+    p.p1(0x08); // shape 2 (door), rotate 0
+    p.p2(0);
+    p.pos = 0;
+    c.handle_packet(ServerProt::LOC_ANIM, &mut p);
+    let wall = c.world.get_wall(0, 1, 1).expect("wall present");
+    assert_eq!(wall.anim_shape, 2);
+    let mut rw = RenderWorld::new();
+    rw.resolve_tile(&c.world, &c.cache, c.loop_cycle, 0, 1, 1);
+    let m1_anim = matches!(
+        rw.wall_model1(&c.world, &c.cache, c.loop_cycle, 0, 1, 1),
+        Some(SceneModel::LocAnim(_))
+    );
+    let m2_anim = matches!(
+        rw.wall_model2(&c.world, &c.cache, c.loop_cycle, 0, 1, 1),
+        Some(SceneModel::LocAnim(_))
+    );
+    assert!(m1_anim, "model1 must animate");
+    assert!(m2_anim, "a door packet must animate both models");
+}
+
 /// WALL_DECOR applies to the decor at tile (x, z): the TS
 /// `decorType(level, z, x)` names its parameters backwards but indexes
 /// `squares[level][x][z]`, so a swapped call leaves the seeded decor

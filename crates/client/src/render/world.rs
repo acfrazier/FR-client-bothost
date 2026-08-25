@@ -617,9 +617,11 @@ impl RenderWorld {
         let (h_sw, h_se, h_ne, h_nw) = (wall.h_sw, wall.h_se, wall.h_ne, wall.h_nw);
 
         let (model1, model2) = if wall.anim_seq != -1 {
-            // LOC_ANIM override: shape-2 walls animate both models with the
-            // packet rotate, everything else replaces model1.
-            if shape == LocShape::WALL_L {
+            // LOC_ANIM override: the "two models" decision keys off the
+            // *packet* shape (recorded in `anim_shape`), exactly like the
+            // original `locAnimChange` `if shape == 2` — the placement
+            // shape in `typecode2` may differ from the packet's.
+            if wall.anim_shape == LocShape::WALL_L {
                 (
                     Some(SceneModel::LocAnim(ClientLocAnim::new(
                         cache, loc_id, 2, wall.anim_angle + 4, h_sw, h_se, h_ne, h_nw,
@@ -1133,24 +1135,31 @@ impl RenderWorld {
         self.apply_share_light(world, ambient, contrast, light_src_x, light_src_y, light_src_z);
     }
 
-    /// Resolve every tile's models (and the linked-square walls) ahead of
-    /// the share-light merge. `render_all` runs this once per build; the
-    /// tests' injected models are already current and are left untouched.
+    /// Resolve every tile's models and sprites (and the linked-square
+    /// walls/sprites) ahead of the share-light merge. `render_all` runs
+    /// this once per build; the tests' injected models are already current
+    /// and are left untouched. Scene sprites must be resolved here: the
+    /// merge pass below runs before the lazy per-draw resolution, and the
+    /// original `finishBuild` shared light over every placed sprite.
     fn run_share_light(&mut self, world: &World, cache: &Cache, loop_cycle: i32) {
         for level in 0..world.max_tile_level {
             for x in 0..world.max_tile_x {
                 for z in 0..world.max_tile_z {
-                    if tile_at(&world.squares, level, x, z).is_some() {
+                    if let Some(t) = tile_at(&world.squares, level, x, z) {
                         self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
+                        for i in 0..t.sprite_count as usize {
+                            if let Some(index) = t.sprites[i] {
+                                self.sprite_model_mut(world, cache, loop_cycle, index);
+                            }
+                        }
                     }
                 }
             }
         }
         for x in 0..world.max_tile_x {
             for z in 0..world.max_tile_z {
-                if tile_at(&world.squares, 0, x, z)
+                if let Some(linked) = tile_at(&world.squares, 0, x, z)
                     .and_then(|t| t.linked_square.as_ref())
-                    .is_some()
                 {
                     let index = self.tile_index(world, 0, x, z);
                     self.grow_linked_models(index);
@@ -1159,6 +1168,11 @@ impl RenderWorld {
                         .is_none_or(|s| s.model_stamp == i32::MIN)
                     {
                         self.resolve_linked_wall(world, cache, loop_cycle, 0, x, z);
+                    }
+                    for i in 0..linked.sprite_count as usize {
+                        if let Some(sprite_index) = linked.sprites[i] {
+                            self.sprite_model_mut(world, cache, loop_cycle, sprite_index);
+                        }
                     }
                 }
             }
@@ -1242,6 +1256,62 @@ impl RenderWorld {
                             self.sprite_models[sprite_index] = sprite;
                         }
                     }
+                }
+            }
+        }
+
+        // Linked squares (pushed-down level-0 content). The original ran
+        // `shareLight` before `push_down`, so the wall and sprites that
+        // later become a linked square were merged and lit as ordinary
+        // level-0 tiles; merge + light them here too (their `tile_models`
+        // counterparts cover the pushed-down content).
+        for tile_x in 0..world.max_tile_x {
+            for tile_z in 0..world.max_tile_z {
+                let Some(linked) = tile_at(&world.squares, 0, tile_x, tile_z)
+                    .and_then(|t| t.linked_square.as_ref())
+                else {
+                    continue;
+                };
+
+                let index = self.tile_index(world, 0, tile_x, tile_z);
+                let mut tile = self.linked_models.get_mut(index).and_then(|t| t.take());
+                if let Some(tile) = tile.as_mut() {
+                    if let Some(SceneModel::Model(model1)) = tile.wall_model1.as_mut() {
+                        if model1.point_normal.is_some() {
+                            self.share_light_loc(world, 0, tile_x, tile_z, 1, 1, model1);
+                            if let Some(SceneModel::Model(model2)) = tile.wall_model2.as_mut() {
+                                if model2.point_normal.is_some() {
+                                    self.share_light_loc(world, 0, tile_x, tile_z, 1, 1, model2);
+                                    self.model_share_light(model1, model2, 0, 0, 0, false);
+                                    model2.light(ambient, attenuation, light_src_x, light_src_y, light_src_z);
+                                }
+                            }
+                            model1.light(ambient, attenuation, light_src_x, light_src_y, light_src_z);
+                        }
+                    }
+                }
+                if let Some(tile) = tile {
+                    self.linked_models[index] = Some(tile);
+                }
+
+                for i in 0..linked.sprite_count as usize {
+                    let Some(sprite_index) = linked.sprites[i] else { continue };
+                    let mut sprite = self
+                        .sprite_models
+                        .get_mut(sprite_index)
+                        .and_then(|s| s.take());
+                    if let Some(SceneModel::Model(model)) = sprite.as_mut() {
+                        if model.point_normal.is_some() {
+                            if let Some(s) = world.sprites.get(sprite_index).and_then(|s| s.as_ref()) {
+                                let size_x = s.max_tile_x + 1 - s.min_tile_x;
+                                let size_z = s.max_tile_z + 1 - s.min_tile_z;
+                                self.share_light_loc(world, 0, tile_x, tile_z, size_x, size_z, model);
+                            }
+                            model.light(ambient, attenuation, light_src_x, light_src_y, light_src_z);
+                        }
+                    }
+                    self.grow_sprite_arrays(sprite_index);
+                    self.sprite_models[sprite_index] = sprite;
                 }
             }
         }
@@ -1585,7 +1655,9 @@ impl RenderWorld {
     ) {
         // Task 3b: drop the previous build's lazily-resolved models when
         // the sim world was reset, and run the `finishBuild` share-light
-        // pass (flagged by the sim) over the freshly-resolved models once.
+        // pass (flagged by the sim) over the freshly-resolved models once:
+        // resolve every tile/wall/sprite model, then merge + light them
+        // (the TS 331 `shareLight(64, 768, -50, -10, -50)` constants).
         if world.build_generation != self.last_build_generation {
             self.tile_models.clear();
             self.linked_models.clear();
@@ -1595,6 +1667,7 @@ impl RenderWorld {
         }
         if world.take_share_light_pending() {
             self.run_share_light(world, cache, loop_cycle);
+            self.apply_share_light(world, 64, 768, -50, -10, -50);
         }
 
         if eye_x < 0 {

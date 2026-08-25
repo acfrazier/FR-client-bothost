@@ -9,7 +9,7 @@ use client::config::{Cache, LocType};
 use client::core::World;
 use client::dash3d::LocAngle;
 use client::dash3d::ground::Ground;
-use client::dash3d::{Model, SceneModel, TerrainOverlayShape};
+use client::dash3d::{LocShape, Model, SceneModel, TerrainOverlayShape};
 use client::graphics::{Pix2D, Pix3D, Pix3DDraw, PixMap};
 use client::io::JagFile;
 use client::render::RenderWorld;
@@ -201,6 +201,84 @@ fn share_light_lights_ground_decor() {
     };
     assert!(model.point_normal.is_none());
     assert_ne!(model.face_colour_a.as_ref().unwrap()[0], 0);
+}
+
+/// Task 3b fix round 1: the *production* share-light path — `render_all`
+/// consuming the sim's pending flag — must resolve and light sharelight
+/// scene sprites even though they decode lazily at draw time. The
+/// injected-model tests call `rw.share_light` directly with the sprite
+/// already present, so they cannot catch a pass that skips un-resolved
+/// sprites (the sprite's model comes from the config `Cache` via
+/// `Model::load`, exactly like a live build).
+#[test]
+fn render_all_lights_pending_sharelight_scene_sprites() {
+    Pix3D::init_colour_table(0.6);
+    let Some(bytes) = loc_ob2("basic_wall_1.ob2") else {
+        eprintln!("basic_wall_1.ob2 missing; skip");
+        return;
+    };
+    // Loc ids are 15-bit in the typecode (`& 0x7fff`) and a scene sprite
+    // needs bits 29-30 == 2, so the id must stay under 32768.
+    const ID: i32 = 9000;
+    Model::unpack(ID, Some(&bytes));
+    let mut cache = Cache::default();
+    while cache.locs.len() <= ID as usize {
+        cache.locs.push(LocType::default());
+    }
+    cache.locs[ID as usize] = LocType {
+        id: ID,
+        model: Some(vec![ID]),
+        shape: Some(vec![LocShape::CENTREPIECE_STRAIGHT]),
+        sharelight: true,
+        ..LocType::default()
+    };
+
+    let mut world = flat_world();
+    // A sharelight centriepiece scene sprite (what `addLoc` would place for
+    // a loc packet; placed directly here).
+    world.add_scenery(
+        0,
+        1,
+        1,
+        2000,
+        0x4000_0000 + (ID << 14),
+        LocShape::CENTREPIECE_STRAIGHT,
+        1,
+        1,
+        0,
+        2000,
+        2000,
+        2000,
+        2000,
+    );
+    // `finishBuild` flags the pass (TS 331); `render_all` consumes it.
+    world.share_light_pending = true;
+
+    let mut rw = RenderWorld::new();
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let mut pix = Pix3DDraw::default();
+    let mut map = PixMap::new(512, 334);
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        viewport(&mut pix, &mut surface);
+        rw.render_all(&mut world, &mut pix, &mut surface, &cache, 0, 192, 1950, 192, 3, 0, 128);
+    }
+
+    // The pending pass resolved the scene sprite and lit it: normals
+    // consumed, vertices carry lit colours.
+    let index = world.scene_sprite_index(0, 1, 1).expect("sprite placed");
+    let SceneModel::Model(model) = rw
+        .sprite_model(&world, &cache, 0, index)
+        .expect("sprite model")
+    else {
+        panic!("sprite model must be a Model")
+    };
+    assert!(
+        model.point_normal.is_none(),
+        "render_all's pending share_light must consume the scene sprite's point normals"
+    );
+    let lit = model.face_colour_a.as_ref().expect("lit colour")[0];
+    assert_ne!(lit, 0, "render_all's pending share_light must light the scene sprite's vertices");
 }
 
 /// 512×334 viewport (the `area_game` size) bound as the render target.
