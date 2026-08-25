@@ -1,11 +1,11 @@
 //! `ClientGens` generation tests: per-family monotonic counters the host
 //! reads to know which world slices changed since its last poll.
 //! `handle_packet` bumps one family per applied packet; `REBUILD_NORMAL`
-//! and `LOGOUT` (and T2 aborts) bump every family. The /tmp cache has no
+//! and `logout()` (T1/T2/LOGOUT) bump every family. The /tmp cache has no
 //! packs, so `Client::new` falls back to `Cache::default()` and never
 //! touches the network.
 
-use client::client::{Client, ClientConfig, ClientPlayer, ClientGens};
+use client::client::{Client, ClientConfig, ClientGens, ClientPlayer};
 use client::io::{Packet, ServerProt};
 
 fn cfg() -> ClientConfig {
@@ -78,12 +78,44 @@ fn rebuild_bumps_all_gens() {
 }
 
 /// `LOGOUT` resets the whole world, so the `handle_packet` path bumps every
-/// family generation.
+/// family generation (once — `logout()` is the bump, not a second `bump_gens`).
 #[test]
 fn logout_bumps_all_gens() {
     let mut c = Client::new(cfg());
     let mut p = Packet::alloc(0);
     c.handle_packet(ServerProt::LOGOUT, &mut p);
+    assert_eq!(c.gens.npc, 1);
+    assert_eq!(c.gens.player, 1);
+    assert_eq!(c.gens.inv, 1);
+    assert_eq!(c.gens.varp, 1);
+    assert_eq!(c.gens.stat, 1);
+    assert_eq!(c.gens.chat, 1);
+    assert_eq!(c.gens.scene, 1);
+}
+
+/// Direct `logout()` (lost_con, tcp_in T2, in-band PLAYER/NPC T2) also
+/// invalidates every family, matching spec `REBUILD/logout → all`.
+#[test]
+fn logout_method_bumps_all_gens() {
+    let mut c = Client::new(cfg());
+    c.logout();
+    assert_eq!(c.gens.npc, 1);
+    assert_eq!(c.gens.player, 1);
+    assert_eq!(c.gens.inv, 1);
+    assert_eq!(c.gens.varp, 1);
+    assert_eq!(c.gens.stat, 1);
+    assert_eq!(c.gens.chat, 1);
+    assert_eq!(c.gens.scene, 1);
+}
+
+/// T1 unknown opcode logs out without a mapped `bump_gens` arm; `logout()`
+/// still moves every family so the host snapshot is not left live.
+#[test]
+fn t1_unknown_opcode_bumps_all_gens() {
+    let mut c = Client::new(cfg());
+    let mut p = Packet::alloc(0);
+    c.handle_packet(1, &mut p);
+    assert!(!c.ingame);
     assert_eq!(c.gens.npc, 1);
     assert_eq!(c.gens.player, 1);
     assert_eq!(c.gens.inv, 1);

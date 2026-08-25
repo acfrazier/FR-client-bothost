@@ -2,10 +2,13 @@
 //! block (Java 274 `loginUid`), so FIFO/slot identity is unambiguous — the
 //! host no longer broadcasts a shared `1337` constant to the server. `new`
 //! fills it with a random non-zero i32; the host may overwrite it with a
-//! profile uid before `login`. The RSA block is encrypted before the wire,
-//! so the wrapper check pins the block builder (`write_login_block`) that
-//! `login` feeds to `rsaenc`, not the ciphertext.
+//! profile uid before `login`. Distinctness is deterministic: `login_uid`
+//! XORs an `AtomicU64` counter (like `login_random`), so even same-tick or
+//! concurrent constructions cannot collide. The RSA block is encrypted
+//! before the wire, so the wrapper check pins the block builder
+//! (`write_login_block`) that `login` feeds to `rsaenc`, not the ciphertext.
 use client::client::{Client, ClientConfig};
+use std::thread;
 
 fn cfg() -> ClientConfig {
     ClientConfig {
@@ -18,7 +21,8 @@ fn cfg() -> ClientConfig {
 }
 
 /// Every Client carries its own uid: non-zero, never the old shared `1337`,
-/// and distinct across two fresh Clients.
+/// and distinct across two fresh Clients (guaranteed, not probabilistic —
+/// the `AtomicU64` mix advances on every attempt).
 #[test]
 fn two_clients_get_distinct_login_uids() {
     let a = Client::new(cfg());
@@ -26,6 +30,29 @@ fn two_clients_get_distinct_login_uids() {
     assert_ne!(a.login_uid, 0);
     assert_ne!(a.login_uid, 1337);
     assert_ne!(a.login_uid, b.login_uid);
+}
+
+/// Same-tick / concurrent constructions still get distinct uids: the
+/// `AtomicU64` counter differs even when the wall-clock reads coincide, so
+/// 16 threads constructing at once cannot collide on the same `login_uid`.
+#[test]
+fn concurrent_clients_get_distinct_login_uids() {
+    let handles: Vec<_> = (0..16)
+        .map(|_| thread::spawn(|| Client::new(cfg()).login_uid))
+        .collect();
+    let uids: Vec<i32> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    for uid in &uids {
+        assert_ne!(*uid, 0);
+        assert_ne!(*uid, 1337);
+    }
+    let mut sorted = uids.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(
+        sorted.len(),
+        uids.len(),
+        "all 16 concurrent clients got distinct login uids"
+    );
 }
 
 /// The uid is written into the 274 login wrapper at its RSA-block slot: the
