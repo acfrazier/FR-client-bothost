@@ -43,6 +43,11 @@ static CONTEXT: OnceLock<Result<Arc<GpuContext>, String>> = OnceLock::new();
 /// Whether the init failure has been logged (once per process).
 static FAILURE_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// How many times `GpuBackend::try_new` asked for a wgpu device (task 8).
+/// The headless proof (`tests/headless.rs`) asserts a pure `Client` run
+/// keeps it at 0.
+static GPU_BACKEND_TRIED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 struct GpuContext {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -157,6 +162,7 @@ impl GpuBackend {
     /// pipeline. Returns `Err` on any init failure (or a cached one); the
     /// renderer logs and falls back to `CpuBackend`.
     pub fn try_new() -> Result<GpuBackend, String> {
+        GPU_BACKEND_TRIED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let context = context().ok_or_else(|| "no GPU context".to_string())?;
 
         let scene_texture = context.device.create_texture(&wgpu::TextureDescriptor {
@@ -229,6 +235,12 @@ impl GpuBackend {
             cpu: CpuBackend,
             scene_ready: false,
         })
+    }
+
+    /// wgpu device initialisations attempted in this process (the task-8
+    /// headless counter; a cached failure still counts one attempt).
+    pub fn tried() -> usize {
+        GPU_BACKEND_TRIED.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Upload the mesh, rasterize it into `scene_texture` (opaque faces

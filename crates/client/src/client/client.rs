@@ -5,6 +5,12 @@
 //! `out`, `in`, menu arrays). `login` runs the 274 handshake (wrapper opcode
 //! 16 cold / 18 reconnect) over Java-style TCP `ClientStream`.
 //! There is no snapshot/query API.
+//!
+//! Headless = `Client` only (task 8): the sim machine (`mainloop`, packet
+//! apply, `tryMove`/`doAction`, scene build) never constructs a `Renderer`,
+//! a `Present` target, a `RenderBackend`, or a wgpu device, and never
+//! decodes a model. `tests/headless.rs` pins the construction counters at
+//! zero through a full login + build + sim run.
 
 use std::io;
 use std::panic::{catch_unwind, AssertUnwindSafe};

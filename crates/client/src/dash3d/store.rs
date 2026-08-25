@@ -13,12 +13,19 @@
 //! key was actually decoded from the packed source, for the sharing tests.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::dash3d::model::Model;
 use crate::datastruct::linkable::{LinkableTrait, Links};
 use crate::datastruct::LruCache;
 use crate::graphics::Pix32;
+
+/// How many models this process has decoded from the packed source (task
+/// 8): the "per-bot geometry decode" counter. The headless proof
+/// (`tests/headless.rs`) asserts a pure `Client` run keeps it at 0 — no
+/// scene mesh is ever decoded.
+static MODEL_DECODES: AtomicUsize = AtomicUsize::new(0);
 
 /// The model side holds up to `MODEL_CAPACITY` decoded models — the largest
 /// per-process model LRU today (`LocType.mc1`) is 500.
@@ -105,6 +112,13 @@ impl ModelStore {
         STORE.get_or_init(|| Mutex::new(ModelStore::new()))
     }
 
+    /// Models decoded from the packed source in this process (the task-8
+    /// headless counter; every `Model::load`/`store.model` miss routes
+    /// through `publish_model`).
+    pub fn decode_count() -> usize {
+        MODEL_DECODES.load(Ordering::Relaxed)
+    }
+
     /// The decoded model for `id` as the store's shared `Arc`. The model is
     /// decoded from the packed source on the first request only; every
     /// later request (from any renderer) gets the same `Arc` without
@@ -125,6 +139,7 @@ impl ModelStore {
     /// Publish a decoded model under its id and count the decode (the
     /// "loaded once" evidence the sharing tests assert on).
     pub(crate) fn publish_model(&mut self, id: i32, model: Model) -> Arc<Model> {
+        MODEL_DECODES.fetch_add(1, Ordering::Relaxed);
         let shared = Arc::new(model);
         let key = id as i64;
         *self.load_counts.entry(key).or_insert(0) += 1;

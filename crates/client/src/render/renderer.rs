@@ -14,7 +14,7 @@
 //! the `backend` field.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::client::client::Client;
 use crate::dash3d::BuildArea;
@@ -28,6 +28,11 @@ use crate::util::JavaRandom;
 /// backend selection in `Renderer::new` consults it. Headless builds and
 /// tests never set it, so `CpuBackend` stays the default test path.
 static PREFER_GPU: AtomicBool = AtomicBool::new(false);
+
+/// How many `Renderer`s this process has constructed (task 8). The
+/// headless proof (`tests/headless.rs`) asserts a pure `Client` run keeps
+/// it at 0 — no renderer, no `RenderBackend`, no wgpu device.
+static RENDERER_CONSTRUCTED: AtomicUsize = AtomicUsize::new(0);
 
 fn prefer_gpu() -> bool {
     PREFER_GPU.load(Ordering::Relaxed)
@@ -257,6 +262,7 @@ impl Renderer {
     /// fatal). Headless builds and tests never set the preference, so the
     /// CPU path stays the default and the fidelity path.
     pub fn new(lowmem: bool) -> Self {
+        RENDERER_CONSTRUCTED.fetch_add(1, Ordering::Relaxed);
         let mut renderer = Renderer {
             world: RenderWorld::new(),
             draw_area: PixMap::new(crate::client::client::APPLET_W, crate::client::client::APPLET_H),
@@ -375,6 +381,12 @@ impl Renderer {
     /// fidelity path by default.
     pub fn set_prefer_gpu(prefer: bool) {
         PREFER_GPU.store(prefer, Ordering::Relaxed);
+    }
+
+    /// `Renderer`s constructed in this process (the task-8 headless
+    /// counter; `with_backend` routes through `new` too).
+    pub fn constructed() -> usize {
+        RENDERER_CONSTRUCTED.load(Ordering::Relaxed)
     }
 
     /// Which backend this renderer routes frames through (the selection
