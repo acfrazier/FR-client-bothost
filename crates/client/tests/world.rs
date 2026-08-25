@@ -281,6 +281,120 @@ fn render_all_lights_pending_sharelight_scene_sprites() {
     assert_ne!(lit, 0, "render_all's pending share_light must light the scene sprite's vertices");
 }
 
+/// One model from the 274 `main_file_cache` (archive 1 = the model files
+/// the engine serves for client archive-0 model requests), gzip'd exactly
+/// like the OnDemand download path. `None` when the local 274 pack is
+/// absent (the `Server` checkout the ob2 fixtures also read).
+fn cache_model(cache_dir: &str, id: i32) -> Option<Vec<u8>> {
+    use flate2::read::GzDecoder;
+    use std::io::{Read, Seek, SeekFrom};
+    let mut idx = std::fs::File::open(format!("{cache_dir}/main_file_cache.idx1")).ok()?;
+    let mut dat = std::fs::File::open(format!("{cache_dir}/main_file_cache.dat")).ok()?;
+    idx.seek(SeekFrom::Start(id as u64 * 6)).ok()?;
+    let mut rec = [0u8; 6];
+    idx.read_exact(&mut rec).ok()?;
+    let size = ((rec[0] as i32) << 16) + ((rec[1] as i32) << 8) + rec[2] as i32;
+    let mut sector = ((rec[3] as i32) << 16) + ((rec[4] as i32) << 8) + rec[5] as i32;
+    if size <= 0 || size > 2_000_000 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(size as usize);
+    let mut part = 0i32;
+    while (out.len() as i32) < size {
+        if sector == 0 {
+            return None;
+        }
+        dat.seek(SeekFrom::Start(sector as u64 * 520)).ok()?;
+        let mut block = [0u8; 520];
+        dat.read_exact(&mut block).ok()?;
+        let file_id = ((block[0] as i32) << 8) + block[1] as i32;
+        let part_id = ((block[2] as i32) << 8) + block[3] as i32;
+        let next = ((block[4] as i32) << 16) + ((block[5] as i32) << 8) + block[6] as i32;
+        let archive_id = block[7] as i32;
+        if file_id != id || part_id != part || archive_id != 2 {
+            return None;
+        }
+        let take = ((size as usize) - out.len()).min(512);
+        out.extend_from_slice(&block[8..8 + take]);
+        sector = next;
+        part += 1;
+    }
+    let mut plain = Vec::new();
+    GzDecoder::new(out.as_slice()).read_to_end(&mut plain).ok()?;
+    Some(plain)
+}
+
+/// The real 274 config cache and loc 1812 ("Portal"): one of the only two
+/// `sharelight` + `anim` locs in the data (the other is 1779 "Sails"), so
+/// its placements decode to `SceneModel::LocAnim` and the share-light pass
+/// skips them. Its base frame model is unpacked from the file store.
+fn portal_fixture() -> Option<Cache> {
+    let home = std::env::var("HOME").ok()?;
+    let cache_dir = format!("{home}/experiments/Server/engine/data/pack");
+    let config = std::fs::read(format!("{cache_dir}/client/config")).ok()?;
+    let cache = Cache::unpack(&JagFile::new(config));
+    let base = *cache.locs[1812].model.as_ref()?.first()?;
+    let bytes = cache_model(&cache_dir, base)?;
+    Model::unpack(base, Some(&bytes));
+    Some(cache)
+}
+
+/// Task 1 (GPU-chrome campaign): the black wall. Loc 1812 is `sharelight`
+/// and animated (`anim` 491), so every placement decodes to
+/// `SceneModel::LocAnim`; the share-light pass only lights
+/// `SceneModel::Model`. The frame model must therefore be lit when the
+/// animation materialises it — before the fix it kept the zeroed pre-light
+/// `face_colour_a` and rendered black.
+#[test]
+fn render_all_lights_animated_sharelight_loc_frames() {
+    let Some(cache) = portal_fixture() else {
+        eprintln!("274 config/file store missing; skip");
+        return;
+    };
+    Pix3D::init_colour_table(0.6);
+    let mut world = flat_world();
+    // Loc 1812 is shape-less (centriepiece only), so `addLoc` places it as
+    // a scene sprite (typecode bits 29-30 = 2).
+    world.add_scenery(
+        0,
+        1,
+        1,
+        2000,
+        0x4000_0000 + (1812 << 14),
+        LocShape::CENTREPIECE_STRAIGHT,
+        1,
+        1,
+        0,
+        2000,
+        2000,
+        2000,
+        2000,
+    );
+    // `finishBuild` flags the pass; `render_all` consumes it with the real
+    // cache, exactly like the live build → draw cycle.
+    world.share_light_pending = true;
+
+    let mut rw = RenderWorld::new();
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let mut pix = Pix3DDraw::default();
+    let mut map = PixMap::new(512, 334);
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        viewport(&mut pix, &mut surface);
+        rw.render_all(&mut world, &mut pix, &mut surface, &cache, 0, 192, 1950, 192, 3, 0, 128);
+    }
+
+    let index = world.scene_sprite_index(0, 1, 1).expect("portal placed");
+    let frame = rw
+        .sprite_frame_model(&world, &cache, 0, index)
+        .expect("portal frame model materialises");
+    let lit = frame.face_colour_a.as_ref().expect("lit colours");
+    assert!(
+        lit.iter().any(|&c| c != 0),
+        "animated sharelight loc frames must be lit after the share-light pass; black wall regression"
+    );
+}
+
 /// 512×334 viewport (the `area_game` size) bound as the render target.
 /// `low_mem` stays false: `--window` play is highmem. Headless/bots default
 /// lowmem (`--lowmem`); this fixture matches the live windowed raster.

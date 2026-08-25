@@ -1115,6 +1115,24 @@ impl RenderWorld {
         self.sprite_model_mut(world, cache, loop_cycle, index).as_ref()
     }
 
+    /// Materialise a sprite's current frame model exactly as the draw path
+    /// does (`SceneModel::worldRender` → `ClientLocAnim::get_temp_model`).
+    /// The tests read the animated-loc frames back through this to assert
+    /// the share-light pass lit them (the `LocAnim` descriptor itself holds
+    /// no `Model` to inspect).
+    pub fn sprite_frame_model(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        index: usize,
+    ) -> Option<Model> {
+        match self.sprite_model_mut(world, cache, loop_cycle, index).as_mut()? {
+            SceneModel::LocAnim(anim) => anim.get_temp_model(cache, loop_cycle),
+            _ => None,
+        }
+    }
+
     /// `shareLight(ambient, contrast, lightSrcX, lightSrcY, lightSrcZ)`
     /// from World.ts 589-628, moved here with the models (Task 3b): resolve
     /// every tile's models, merge touching vertices' normals across

@@ -94,9 +94,31 @@ impl ClientLocAnim {
             }
         }
 
-        cache
-            .loc(self.index as usize)
-            .get_model(cache, self.shape, self.angle, self.height_sw, self.height_se, self.height_ne, self.height_nw, frame)
+        let mut model = cache.loc(self.index as usize).get_model(
+            cache,
+            self.shape,
+            self.angle,
+            self.height_sw,
+            self.height_se,
+            self.height_ne,
+            self.height_nw,
+            frame,
+        )?;
+
+        // `World.shareLight` only lights `SceneModel::Model` (its
+        // `pointNormal` gate); an animated sharelight loc's frame model
+        // would otherwise keep the zeroed pre-light `face_colour_a` and
+        // render black (the 274 data has two such locs: 1779 "Sails" and
+        // 1812 "Portal"). Light every materialised frame with the same
+        // `shareLight(64, 768, -50, -10, -50)` constants the pass applies
+        // to the static walls; the `point_normal` gate makes this a no-op
+        // for the frames `calculate_normals` already lit inline.
+        if model.point_normal.is_some() {
+            let light_magnitude = ((50 * 50 + 10 * 10 + 50 * 50) as f64).sqrt() as i32;
+            let attenuation = (768 * light_magnitude) >> 8;
+            model.light(64, attenuation, -50, -10, -50);
+        }
+        Some(model)
     }
 }
 
