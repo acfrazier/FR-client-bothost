@@ -77,7 +77,6 @@ fn init_gpu() -> Result<Arc<GpuContext>, String> {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,
         force_fallback_adapter: false,
-        apply_limit_buckets: false,
     }))
     .map_err(|e| format!("no adapter: {e}"))?;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -333,13 +332,16 @@ impl GpuBackend {
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = tx.send(result);
         });
-        loop {
+        // wgpu 29: `get_mapped_range` is infallible, so only touch the
+        // buffer once the map actually succeeded.
+        let map_result = loop {
             let _ = self.context.device.poll(wgpu::PollType::wait_indefinitely());
-            if rx.recv_timeout(Duration::from_millis(1)).is_ok() {
-                break;
+            if let Ok(result) = rx.recv_timeout(Duration::from_millis(1)) {
+                break result;
             }
-        }
-        if let Ok(data) = slice.get_mapped_range() {
+        };
+        if map_result.is_ok() {
+            let data = slice.get_mapped_range();
             for (dst, src) in self.scene_pix.pixels.iter_mut().zip(data.chunks_exact(4)) {
                 *dst = ((src[0] as i32) << 16) | ((src[1] as i32) << 8) | (src[2] as i32);
             }
@@ -364,11 +366,11 @@ fn make_pipeline(
         module: shader,
         entry_point: Some("vs_main"),
         compilation_options: Default::default(),
-        buffers: &[Some(wgpu::VertexBufferLayout {
+        buffers: &[wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<GpuVertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Unorm8x4],
-        })],
+        }],
     };
     let fragment = wgpu::FragmentState {
         module: shader,
