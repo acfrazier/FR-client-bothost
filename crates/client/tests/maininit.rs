@@ -1,4 +1,7 @@
 use std::io::{Read, Write};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use client::client::present::PresentTarget;
+use client::render::backend::FrameOutput;
 use client::render::Renderer;
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
@@ -7,6 +10,23 @@ use std::time::{Duration, Instant};
 
 use client::client::{Client, ClientConfig};
 use client::io::Packet;
+
+/// Records every poll/present the headed driver issues during the load,
+/// proving the progress callback pumped the window through `maininit`.
+struct CountingTarget {
+    polls: Arc<AtomicUsize>,
+    presents: Arc<AtomicUsize>,
+}
+
+impl PresentTarget for CountingTarget {
+    fn poll(&mut self, _shell: &mut client::client::GameShell) -> bool {
+        self.polls.fetch_add(1, Ordering::Relaxed);
+        true
+    }
+    fn present(&mut self, _frame: FrameOutput) {
+        self.presents.fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 fn client_tmp() -> Client {
     Client::new(ClientConfig {
@@ -430,6 +450,126 @@ fn maininit_retries_jag_get_after_crc_mismatch() {
     assert_eq!(c.last_progress_percent, 100);
     // the retried fetch persisted the fresh title
     assert_eq!(std::fs::read(dir.join("title")).unwrap(), fresh);
+}
+
+/// Java `getJagChecksums` (deob 11211-11268): `/crc` unreachable retries
+/// with a per-second countdown and, past 10 failed attempts, shows
+/// "Game updated - please reload page" forever. The port gives up at that
+/// point with `error_loading` — a bounded failure, not the old ~7 min
+/// silent block — and the Java message is what the loading bar shows.
+#[test]
+fn crc_unreachable_sets_error_loading_in_bounded_time() {
+    let dir = std::env::temp_dir().join("274-crc-unreachable");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // An unused localhost port: connect() refuses instantly, so each fetch
+    // attempt is fast and the whole 10-attempt retry budget is the
+    // countdown (small `fetch_retry_wait` below).
+    let unused = {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: dir.to_str().unwrap().into(),
+        members: true,
+        lowmem: false,
+    });
+    c.http_port = unused;
+    c.fetch_retry_wait = Duration::from_millis(1);
+    let start = Instant::now();
+    c.maininit();
+    assert!(c.already_started);
+    assert!(c.error_loading, "/crc unreachable must fail the load");
+    assert_eq!(
+        c.last_progress_message, "Game updated - please reload page",
+        "the Java error path must be shown, not a silent retry"
+    );
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "the /crc retry must be bounded (took {:?})",
+        start.elapsed()
+    );
+}
+
+/// The per-second countdown messages (TS 729-737) reach the progress
+/// callback — that callback is the pump that keeps the headed window and
+/// audio alive through the retry wait: `"{error} - Will retry in N secs."`
+/// each second, then `"Game updated - please reload page"` at the cap.
+#[test]
+fn crc_retry_countdown_reports_java_messages() {
+    let dir = std::env::temp_dir().join("274-crc-countdown");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let unused = {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: dir.to_str().unwrap().into(),
+        members: true,
+        lowmem: false,
+    });
+    c.http_port = unused;
+    c.fetch_retry_wait = Duration::from_millis(1);
+    let mut messages = Vec::new();
+    c.maininit_with_progress(Some(&mut |_cl, m, _p| messages.push(m.to_string())));
+    assert!(c.error_loading);
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.starts_with("connection problem - Will retry in ")),
+        "countdown messages must reach the progress callback: {messages:?}"
+    );
+    assert_eq!(
+        messages.last().map(String::as_str),
+        Some("Game updated - please reload page")
+    );
+}
+
+/// The headed-load pump (item 1): the progress callback drives
+/// `Renderer::draw_progress`, which polls and presents the window on every
+/// progress point — including each `/crc` retry countdown tick. A windowed
+/// `client-play` therefore stays responsive through a dead-server wait
+/// instead of beachballing (and starving the cpal buffer).
+#[test]
+fn crc_retry_pumps_present_target() {
+    let mut r = Renderer::new(false);
+    let dir = std::env::temp_dir().join("274-crc-pump");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let unused = {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: dir.to_str().unwrap().into(),
+        members: true,
+        lowmem: false,
+    });
+    c.http_port = unused;
+    c.fetch_retry_wait = Duration::from_millis(1);
+    c.draw = true;
+    let polls = Arc::new(AtomicUsize::new(0));
+    let presents = Arc::new(AtomicUsize::new(0));
+    let target = CountingTarget {
+        polls: polls.clone(),
+        presents: presents.clone(),
+    };
+    c.present = Some(Box::new(target));
+    c.maininit_with_progress(Some(&mut |cl, m, p| r.draw_progress(cl, m, p)));
+    assert!(c.error_loading);
+    assert!(
+        polls.load(Ordering::Relaxed) > 0 && presents.load(Ordering::Relaxed) > 0,
+        "the load must pump the window: {} polls, {} presents",
+        polls.load(Ordering::Relaxed),
+        presents.load(Ordering::Relaxed)
+    );
 }
 
 #[test]

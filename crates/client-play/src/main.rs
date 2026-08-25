@@ -3,7 +3,9 @@
 //! skip title login; without them the title screen is the control plane.
 //! `--window` presents the 765×503 applet (feature `window`, highmem);
 //! omit it for headless (lowmem, bot-host default). `--lowmem`/`--highmem`
-//! override. `--audio` opens the cpal speaker (feature `audio`). A login
+//! override. `--audio` opens the cpal speaker (feature `audio`).
+//! `--http-port N` points the jag-fetch web calls (the `/crc` table and the
+//! jag GETs) at port N instead of the default 80. A login
 //! error (already logged in, wrong password, …) stays in `run` on the
 //! title form so Login can be retried.
 //!
@@ -30,6 +32,11 @@ const DEFAULT_PORT: u16 = 43594;
 struct Args {
     host: String,
     port: u16,
+    /// Jag-fetch web port (`Client.http_port`): the web-origin port the
+    /// `maininit` HTTP fetch (`/crc`, the jag GETs) hits. Default 80; a
+    /// non-privileged local engine web server is reachable with
+    /// `--http-port N`.
+    http_port: u16,
     user: String,
     pass: String,
     cache: String,
@@ -55,6 +62,7 @@ fn parse_args() -> Args {
     let mut args = Args {
         host: "127.0.0.1".into(),
         port: DEFAULT_PORT,
+        http_port: 80,
         user: String::new(),
         pass: String::new(),
         cache: default_cache_dir(),
@@ -68,6 +76,7 @@ fn parse_args() -> Args {
         match arg.as_str() {
             "--host" => args.host = value(&mut it),
             "--port" => args.port = value(&mut it).parse().unwrap_or_else(|_| usage()),
+            "--http-port" => args.http_port = value(&mut it).parse().unwrap_or_else(|_| usage()),
             "--user" => args.user = value(&mut it),
             "--pass" => args.pass = value(&mut it),
             "--cache" => args.cache = value(&mut it),
@@ -86,8 +95,8 @@ fn parse_args() -> Args {
 fn usage() -> ! {
     eprintln!(
         "usage: client-play [--user USER --pass PASS] \
-         [--host HOST] [--port PORT] [--cache DIR] [--window] [--audio] \
-         [--cpu] [--lowmem|--highmem]"
+         [--host HOST] [--port PORT] [--http-port PORT] [--cache DIR] \
+         [--window] [--audio] [--cpu] [--lowmem|--highmem]"
     );
     std::process::exit(2);
 }
@@ -128,6 +137,11 @@ fn main() -> ExitCode {
         lowmem,
     };
     let mut client = Client::new(config);
+    // `--http-port N` points the `maininit` jag fetch (and `Client::new`'s
+    // pre-unpack `/crc` probe is unaffected: it always tries the default
+    // origin) at a non-privileged local engine web port. maininit's
+    // `fetch_jag_checksums`/`fetch_jag_file` read `Client.http_port`.
+    client.http_port = args.http_port;
     // Render state is separate (task 2b): the driver holds the `Renderer`
     // beside the sim `Client` and hands it to `maininit`/`run`.
     // `--window` prefers the wgpu backend (task 7): the 3D scene is

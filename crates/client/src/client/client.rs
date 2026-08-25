@@ -589,7 +589,8 @@ pub struct Client {
     /// the most recent `draw_progress` values, readable even headless.
     /// `http_port` is the web-origin port of the later HTTP jag fetch (TS
     /// `getJagChecksums` downloads `/crc` from it); default 80, tests that
-    /// stub HTTP set it.
+    /// stub HTTP set it, and `client-play --http-port` overrides it for a
+    /// non-privileged local web server.
     pub last_progress_percent: i32,
     pub last_progress_message: String,
     pub http_port: u16,
@@ -597,8 +598,9 @@ pub struct Client {
     /// a second `maininit` call is a no-op.
     pub already_started: bool,
     /// Base wait between `maininit` HTTP retries (TS `getJagChecksums`/
-    /// `getJagFile` start at 5 s and double to a 60 s cap). Tests that
-    /// stub HTTP set it small so retry paths do not sleep.
+    /// `getJagFile` start at 5 s and double to a 60 s cap), spent as one
+    /// countdown tick per second (`retry_countdown`). Tests that stub HTTP
+    /// set it small so retry paths do not sleep.
     pub fetch_retry_wait: Duration,
 
     /// Render-adjacent bridges to the separate `Renderer` (task 2b): the
@@ -802,7 +804,7 @@ impl Client {
         // engine's CrcBuffer32 check (login code 6). Prefer /crc; fall back
         // to files for tests without a web server.
         let jag_checksum = Self::get_jag_checksums(&config.host, 80)
-            .unwrap_or_else(|| Self::read_jag_checksums(&config.cache_dir));
+            .unwrap_or_else(|_| Self::read_jag_checksums(&config.cache_dir));
         let (cache, ifaces, error_loading) = match Self::load_cache(&config.cache_dir) {
             Ok((cache, ifaces)) => (cache, ifaces, false),
             Err(()) => (Cache::default(), Vec::new(), true),
@@ -1216,11 +1218,14 @@ impl Client {
     }
 
     /// TS `getJagChecksums`: GET `/crc` (9×g4 + hash). Hash check matches
-    /// client-ts (`1234`, `hash = (hash << 1) + crc[i]`).
-    fn get_jag_checksums(host: &str, port: u16) -> Option<[i32; 9]> {
-        let body = Self::http_get(host, port, "/crc")?;
+    /// client-ts (`1234`, `hash = (hash << 1) + crc[i]`). `Err` carries the
+    /// TS retry-message label (`connection problem` on a failed fetch,
+    /// `checksum problem` on a bad parse), which `fetch_jag_checksums`
+    /// shows in the per-second countdown.
+    fn get_jag_checksums(host: &str, port: u16) -> Result<[i32; 9], &'static str> {
+        let body = Self::http_get(host, port, "/crc").ok_or("connection problem")?;
         if body.len() < 40 {
-            return None;
+            return Err("checksum problem");
         }
         let mut p = Packet::new(body[..40].to_vec());
         let mut checksum = [0i32; 9];
@@ -1233,9 +1238,9 @@ impl Client {
             calculated = calculated.wrapping_shl(1).wrapping_add(c);
         }
         if expected != calculated {
-            return None;
+            return Err("checksum problem");
         }
-        Some(checksum)
+        Ok(checksum)
     }
 
     /// TS `getJagFile`: serve `{filename}` from the cache when its CRC
@@ -1365,9 +1370,10 @@ impl Client {
         self.report_progress(&mut progress, "Loading...", 0);
 
         // TS `getJagChecksums` (694-748): `/crc` retried with a 5 s wait
-        // doubling to 60 s, forever. Capped at 10 retries so a dead web
-        // server cannot hang the caller; tests plant a listener so the
-        // first attempt succeeds.
+        // doubling to 60 s, spent as one countdown tick per second and
+        // capped at 10 retries ("Game updated - please reload page") so a
+        // dead web server cannot hang the caller; tests plant a listener so
+        // the first attempt succeeds.
         let checksums = match self.fetch_jag_checksums(&mut progress) {
             Some(c) => c,
             None => {
@@ -1450,6 +1456,10 @@ impl Client {
                 od.request(2, 0);
             }
             while self.on_demand.as_ref().is_some_and(|od| od.remaining() > 0) {
+                // Report each pass (TS 874) so the progress callback pumps
+                // the window/audio through the OnDemand wait instead of a
+                // silent `thread::sleep` block.
+                self.report_progress(&mut progress, "Connecting to update server", 60);
                 self.on_demand_loop();
                 thread::sleep(Duration::from_millis(100));
                 if self.on_demand.as_ref().is_some_and(|od| od.fail_count > 3) {
@@ -1483,13 +1493,14 @@ impl Client {
             }
             while self.on_demand.as_ref().unwrap().remaining() > 0 {
                 let done = anim_count - self.on_demand.as_ref().unwrap().remaining() as i32;
-                if done > 0 {
-                    self.report_progress(
-                        &mut progress,
-                        &format!("Loading animations - {}%", (done * 100) / anim_count),
-                        65,
-                    );
-                }
+                // Report every pass (not only on progress): the callback
+                // pumps the window/audio, so a prefetch stall cannot
+                // beachball the headed client.
+                self.report_progress(
+                    &mut progress,
+                    &format!("Loading animations - {}%", (done * 100) / anim_count),
+                    65,
+                );
                 self.on_demand_loop();
                 thread::sleep(Duration::from_millis(100));
             }
@@ -1507,13 +1518,11 @@ impl Client {
             let model_total = self.on_demand.as_ref().unwrap().remaining() as i32;
             while self.on_demand.as_ref().unwrap().remaining() > 0 {
                 let done = model_total - self.on_demand.as_ref().unwrap().remaining() as i32;
-                if done > 0 && model_total > 0 {
-                    self.report_progress(
-                        &mut progress,
-                        &format!("Loading models - {}%", (done * 100) / model_total),
-                        70,
-                    );
-                }
+                self.report_progress(
+                    &mut progress,
+                    &format!("Loading models - {}%", (done * 100) / model_total.max(1)),
+                    70,
+                );
                 self.on_demand_loop();
                 thread::sleep(Duration::from_millis(100));
             }
@@ -1534,13 +1543,11 @@ impl Client {
             let map_total = self.on_demand.as_ref().unwrap().remaining() as i32;
             while self.on_demand.as_ref().unwrap().remaining() > 0 {
                 let done = map_total - self.on_demand.as_ref().unwrap().remaining() as i32;
-                if done > 0 && map_total > 0 {
-                    self.report_progress(
-                        &mut progress,
-                        &format!("Loading maps - {}%", (done * 100) / map_total),
-                        75,
-                    );
-                }
+                self.report_progress(
+                    &mut progress,
+                    &format!("Loading maps - {}%", (done * 100) / map_total.max(1)),
+                    75,
+                );
                 self.on_demand_loop();
                 thread::sleep(Duration::from_millis(100));
             }
@@ -1558,6 +1565,7 @@ impl Client {
             let deadline = started + Duration::from_secs(2);
             let mut idle = 0;
             while Instant::now() < deadline {
+                self.report_progress(&mut progress, "Loading extra files", 70);
                 let n = self.on_demand_loop();
                 if n == 0 {
                     idle += 1;
@@ -1574,12 +1582,15 @@ impl Client {
         self.report_progress(&mut progress, "Preparing game engine", 100);
     }
 
-    /// TS `getJagChecksums` retry policy (694-748): attempt `/crc`, then
-    /// wait `fetch_retry_wait` (doubling to the 60 s cap) before the next
-    /// attempt, forever. Capped at 10 retries (TS switches to its "Game
-    /// updated" message at `retries >= 10`); `None` lets `maininit` fail
-    /// with `errorLoading` instead of hanging. The per-second countdown
-    /// messages are not ported.
+    /// Java `getJagChecksums` (deob 11211-11268) / TS 694-748: attempt
+    /// `/crc`, then spend the retry wait as one `messageBox` countdown tick
+    /// per second (`"...Will retry in N secs."`, TS text), doubling 5 s to
+    /// the 60 s cap. Past 10 failed attempts the countdown switches to
+    /// "Game updated - please reload page"; Java loops there forever, this
+    /// port draws it once and returns `None` so `maininit` fails with
+    /// `errorLoading` instead of hanging. Every countdown tick reports
+    /// progress, so a headed driver pumps the window/audio through the wait
+    /// instead of beachballing.
     fn fetch_jag_checksums(
         &mut self,
         progress: &mut Option<&mut dyn FnMut(&mut Client, &str, i32)>,
@@ -1588,26 +1599,57 @@ impl Client {
         let mut retries = 0;
         loop {
             self.report_progress(progress, "Connecting to web server", 10);
-            if let Some(checksums) = Self::get_jag_checksums(&self.config.host, self.http_port) {
-                return Some(checksums);
-            }
+            let error = match Self::get_jag_checksums(&self.config.host, self.http_port) {
+                Ok(checksums) => return Some(checksums),
+                Err(error) => error,
+            };
             retries += 1;
             if retries >= 10 {
+                // Java deob 11252-11257 / TS 730-733: at `retries >= 10`
+                // the countdown message becomes "Game updated - please
+                // reload page".
+                self.report_progress(progress, "Game updated - please reload page", 10);
                 return None;
             }
-            thread::sleep(wait);
+            self.retry_countdown(progress, wait, error, 10);
             wait = (wait * 2).min(Duration::from_secs(60));
         }
     }
 
-    /// TS `getJagFile` retry loop (749-817): GET `/{filename}{crc}` with the
-    /// same doubling wait as the checksum fetch. A CRC mismatch is handled
-    /// inside `get_jag_file` (bytes discarded, `None` returned) and retried
-    /// here, so a transient failure or corrupted download recovers instead
-    /// of erroring the client. Capped at 10 retries like the checksum fetch
-    /// so a dead server cannot hang the caller; tests plant a listener or
-    /// set `fetch_retry_wait` small. The per-second countdown messages are
-    /// not ported.
+    /// Java `getJagChecksums`/`getJagFile` countdown (deob 11245-11263 /
+    /// TS 729-737): the retry wait is spent as one `messageBox` per second,
+    /// not a single blocking sleep. Each tick reports progress so a headed
+    /// driver pumps the window/audio through the wait. Sub-second
+    /// `fetch_retry_wait` (the stubbed-HTTP tests) collapses to one tick.
+    fn retry_countdown(
+        &mut self,
+        progress: &mut Option<&mut dyn FnMut(&mut Client, &str, i32)>,
+        wait: Duration,
+        message: &str,
+        pct: i32,
+    ) {
+        let ticks = wait.as_secs().max(1);
+        let step = wait / ticks as u32;
+        for remaining in (1..=ticks).rev() {
+            self.report_progress(
+                progress,
+                &format!("{message} - Will retry in {remaining} secs."),
+                pct,
+            );
+            thread::sleep(step);
+        }
+    }
+
+    /// Java `getJagFile` (deob 4817-4933) / TS 749-817: GET
+    /// `/{filename}{crc}` with the same per-second countdown and doubling
+    /// wait as the checksum fetch. A CRC mismatch is handled inside
+    /// `get_jag_file` (bytes discarded, `None` returned) and retried here,
+    /// so a transient failure or corrupted download recovers instead of
+    /// erroring the client. Past the 10-retry cap the countdown switches to
+    /// Java's "Game updated - please reload page" and `None` lets `maininit`
+    /// set `errorLoading`; a dead server cannot hang the caller. Each
+    /// countdown tick reports progress (window/audio pump); the message
+    /// text is the TS one (`Error loading - Will retry in N secs.`).
     fn fetch_jag_file(
         &mut self,
         progress: &mut Option<&mut dyn FnMut(&mut Client, &str, i32)>,
@@ -1633,9 +1675,10 @@ impl Client {
             }
             retries += 1;
             if retries >= 10 {
+                self.report_progress(progress, "Game updated - please reload page", pct);
                 return None;
             }
-            thread::sleep(wait);
+            self.retry_countdown(progress, wait, "Error loading", pct);
             wait = (wait * 2).min(Duration::from_secs(60));
         }
     }
