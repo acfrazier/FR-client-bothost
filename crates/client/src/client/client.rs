@@ -782,9 +782,13 @@ pub struct Client {
     /// sent by `UPDATE_REBOOT_TIMER` scaled by 30 (the `gameLoop` tick
     /// counts it down in the overlay).
     pub reboot_timer: i32,
-    /// `timeoutTimer` from Java: frames since the last full in-game packet;
-    /// `gameLoop` calls `lostCon` past 750 (~15 s at 20 ms).
-    pub timeout_timer: i32,
+    /// Wall-clock dead-server watchdog: `Instant` of the last full in-game
+    /// packet (or login grant). `gameLoop` calls `lostCon` once the stamp
+    /// is older than [`SERVER_TIMEOUT`] — elapsed time, not a pass count,
+    /// so a parked host slot (one `gameLoop` pass per ~600 ms, not 20 ms)
+    /// still detects a dead server in ~15 s, not ~450 s. `None` until the
+    /// first grant/packet (never trips the watchdog).
+    pub last_response: Option<Instant>,
     /// `noTimeoutTimer` from Java: frames since the last outbound flush;
     /// `gameLoop` writes `NO_TIMEOUT` past 50 (~1 s at 20 ms).
     pub no_timeout_timer: i32,
@@ -796,6 +800,11 @@ pub struct Client {
     /// changed since its last poll.
     pub gens: ClientGens,
 }
+
+/// Dead-server watchdog bound: the Java client's 750 `gameLoop` passes at
+/// 20 ms (~15 s), but measured in elapsed time so the bound holds at any
+/// pass cadence (a parked host slot runs `gameLoop` once per ~600 ms).
+const SERVER_TIMEOUT: Duration = Duration::from_secs(15);
 
 impl Client {
     pub fn new(config: ClientConfig) -> Self {
@@ -1136,7 +1145,7 @@ impl Client {
             baton: false,
             logout_timer: 0,
             reboot_timer: 0,
-            timeout_timer: 0,
+            last_response: None,
             no_timeout_timer: 0,
             error_loading,
             gens: ClientGens::default(),
@@ -1844,7 +1853,7 @@ impl Client {
             self.psize = 0;
             self.scene_state = 0;
             self.menu_num_entries = 0;
-            self.timeout_timer = 0;
+            self.last_response = Some(Instant::now());
             self.logout_timer = 0;
             self.no_timeout_timer = 0;
             // Java `Client.java` 3630-3699: a cold login restores the tab,
@@ -1912,7 +1921,7 @@ impl Client {
             self.ptype1 = -1;
             self.ptype2 = -1;
             self.psize = 0;
-            self.timeout_timer = 0;
+            self.last_response = Some(Instant::now());
             self.menu_num_entries = 0;
             self.scene_load_start_time = Instant::now();
             self.stream = Some(stream);
@@ -3338,8 +3347,8 @@ impl Client {
 
         self.r#in.pos = 0;
         stream.read_bytes(self.r#in.data_mut(), 0, self.psize as usize)?;
-        // a full packet resets the in-game silence watchdog (Java tcpIn)
-        self.timeout_timer = 0;
+        // a full packet restamps the in-game silence watchdog (Java tcpIn)
+        self.last_response = Some(Instant::now());
         self.ptype2 = self.ptype1;
         self.ptype1 = self.ptype0;
         self.ptype0 = self.ptype;
@@ -7675,6 +7684,14 @@ impl Client {
         self.bump_all_gens();
     }
 
+    /// Whether the server has gone silent past the wall-clock
+    /// [`SERVER_TIMEOUT`] bound since the last full packet / login grant.
+    fn dead_server(&self) -> bool {
+        self.last_response
+            .map(|t| t.elapsed() > SERVER_TIMEOUT)
+            .unwrap_or(false)
+    }
+
     /// `lostCon` from Java (`Client.java` 6147): in-game connection loss. A
     /// pending logout request (`logoutTimer > 0`) logs out immediately;
     /// otherwise drop to the title state and re-establish with
@@ -9671,8 +9688,11 @@ impl Client {
         for i in 0..5 {
             self.cam_shake_cycle[i] += 1;
         }
-        self.timeout_timer += 1;
-        if self.timeout_timer > 750 {
+        // Dead-server watchdog, wall-clock: the 20 ms pass count is not a
+        // clock once the host parks the slot (750 passes at one pass per
+        // ~600 ms would take ~450 s); elapsed time since the last response
+        // holds the ~15 s bound at any cadence. Checked every wake.
+        if self.dead_server() {
             self.lost_con();
         }
 
@@ -10489,5 +10509,84 @@ mod zone_post_build {
         }
         assert_eq!(n, 1);
         assert_eq!(c.loc_changes.head().unwrap().start_time, 0);
+    }
+}
+
+#[cfg(test)]
+mod dead_server_watchdog {
+    use super::*;
+
+    /// A config pointed at a port nothing is listening on, so a watchdog
+    /// `lostCon` → re-login gets an immediate `ECONNREFUSED` (no hang, no
+    /// real server involved).
+    fn client_at_dead_port() -> Client {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: true,
+        })
+    }
+
+    #[test]
+    fn stale_last_response_fires_lost_con_in_one_game_loop_pass() {
+        let mut c = client_at_dead_port();
+        c.ingame = true;
+        c.last_response = Some(Instant::now() - Duration::from_secs(16));
+        // One pass (the cadence of a parked host slot) must fire the
+        // watchdog — the wall-clock fix: 750 pass-counted frames at one
+        // pass per ~600 ms would have taken ~450 s instead.
+        c.game_loop();
+        assert!(!c.ingame, "a dead server must drop the connection in one pass");
+    }
+
+    #[test]
+    fn fresh_last_response_does_not_trip_the_watchdog() {
+        let mut c = client_at_dead_port();
+        c.ingame = true;
+        c.last_response = Some(Instant::now());
+        c.game_loop();
+        assert!(c.ingame, "a live server must not trip the watchdog");
+    }
+
+    #[test]
+    fn watchdog_stays_quiet_until_the_bound_elapses() {
+        let mut c = client_at_dead_port();
+        c.ingame = true;
+        c.last_response = Some(Instant::now() - Duration::from_secs(14));
+        c.game_loop();
+        assert!(c.ingame, "14 s (< 15 s bound) must not trip the watchdog");
+    }
+
+    #[test]
+    fn reading_a_full_packet_restamps_the_watchdog() {
+        use std::io::Write;
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut c = client_at_dead_port();
+        let stream = ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+        c.stream = Some(stream);
+        c.ptype = -1;
+        c.ingame = true;
+        c.last_response = Some(Instant::now() - Duration::from_secs(30));
+        let (mut server, _) = listener.accept().unwrap();
+        // UPDATE_REBOOT_TIMER: one header byte + two payload bytes.
+        server.write_all(&[89, 0, 10]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            c.tcp_in();
+            if c.last_response.is_some_and(|t| t.elapsed() < Duration::from_secs(5)) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "a full packet never restamped the watchdog"
+            );
+        }
     }
 }

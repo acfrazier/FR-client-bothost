@@ -1,12 +1,13 @@
 //! Task 20: `lostCon` reconnect (Java `Client.java` 6147). `lost_con` must
 //! re-establish with `login(..., reconnect = true)` (wrapper opcode 18); a
 //! pending logout request (`logoutTimer > 0`) logs out instead; the in-game
-//! silence watchdog (`timeoutTimer > 750`, ~15 s at 20 ms) drives it.
+//! silence watchdog (wall-clock: `last_response` older than the 15 s
+//! `SERVER_TIMEOUT` bound, not 750 pass-counted frames) drives it.
 use client::client::{Client, ClientConfig};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn client() -> Client {
     Client::new(ClientConfig {
@@ -128,11 +129,11 @@ fn silence_watchdog_reconnects_with_response_15() {
     assert!(c.ingame);
     let p = c.local_player.as_mut().unwrap();
     p.y = 77; // marker: the reconnect must not replace localPlayer
-    // 750 silent frames trip the silence watchdog; the reestablish is
-    // granted with response 15 and the game resumes
-    for _ in 0..751 {
-        c.game_loop();
-    }
+    // Age the watchdog past the fixed wall-clock bound, then one pass
+    // fires it — a parked host slot runs one `gameLoop` pass per ~600 ms,
+    // so 750 pass-counted frames would take ~450 s, not the ~15 s bound.
+    c.last_response = Some(Instant::now() - Duration::from_secs(16));
+    c.game_loop();
     assert_eq!(c.last_login_reconnect, Some(true));
     assert!(c.ingame);
     assert!(c.stream.is_some());
@@ -142,17 +143,17 @@ fn silence_watchdog_reconnects_with_response_15() {
 }
 
 #[test]
-fn silence_watchdog_calls_lost_con_after_750_frames() {
+fn silence_watchdog_calls_lost_con_after_wall_clock_silence() {
     let (addr, server) = login_then_reject();
     let mut c = client();
     c.config.host = addr.ip().to_string();
     c.config.port = addr.port();
     c.login("bob", "pw", false).unwrap();
     assert!(c.ingame);
-    // 750 frames without a full packet; the 751st trips the watchdog
-    for _ in 0..751 {
-        c.game_loop();
-    }
+    // Age the watchdog past the bound: one silent pass (the parked cadence)
+    // trips it, where the old 750-pass count would have needed ~450 s.
+    c.last_response = Some(Instant::now() - Duration::from_secs(16));
+    c.game_loop();
     assert_eq!(c.last_login_reconnect, Some(true));
     assert!(!c.ingame);
     server.join().unwrap();
