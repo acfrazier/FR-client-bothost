@@ -1,8 +1,8 @@
 // The `draw` CPU-save switch: `mainredraw` skips the whole frame render
 // when `draw` is false, independent of the window (`client-play` sets it
-// true after `Present::open`; headless bots on later 50-client hosts keep
-// it false). The /tmp cache has no packs, so `Client::new` falls back to
-// `Cache::default()` and never touches the network (see hud.rs).
+// true after `WindowTarget::open`; headless bots on later 50-client hosts
+// keep it false). The /tmp cache has no packs, so `Client::new` falls back
+// to `Cache::default()` and never touches the network (see hud.rs).
 use client::client::{Client, ClientConfig};
 use client::render::Renderer;
 

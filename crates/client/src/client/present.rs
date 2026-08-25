@@ -1,6 +1,13 @@
-//! Window present behind feature `window`: winit + softbuffer CPU blit of the
-//! 765×503 `PixMap`. `pack_rgb` is always-on so the pixel layout compiles
-//! headless; only the `Present` window is feature-gated.
+//! Frame present (task 6): the `PresentTarget` seam a rendered `FrameOutput`
+//! is handed to — `Window` (standalone `client-play`: the client owns the
+//! winit + softbuffer surface and blits its frame) or `Textures`
+//! (host-owned: the client hands the output to the target and the host
+//! binds the textures; on the CPU path that is an upload/blit, on the GPU
+//! path a texture handoff). `pack_rgb` is always-on so the pixel layout
+//! compiles headless; only the `WindowTarget` surface is feature-gated.
+
+use crate::client::game_shell::GameShell;
+use crate::render::backend::FrameOutput;
 
 /// Pack a PixMap pixel into the softbuffer `u32` layout.
 ///
@@ -10,8 +17,127 @@ pub fn pack_rgb(pix: i32) -> u32 {
     (pix as u32) & 0x00ff_ffff
 }
 
+/// A surface a rendered frame is handed to. The client drives every target
+/// through this trait, so no consumer mentions softbuffer:
+///
+/// - `WindowTarget`: the client owns the surface (`client-play --window`)
+///   and blits its `FrameOutput::PixMap` into it.
+/// - `TexturesTarget`: host-owned — the target receives the `FrameOutput`
+///   and the host binds the textures (CPU: upload/blit; GPU, task 7:
+///   texture handoff).
+pub trait PresentTarget {
+    /// Pump one batch of input into `shell`. `false` once the target is
+    /// gone (the window closed) — the run loop stops the machine. A
+    /// host-owned target has no input and always returns `true`.
+    fn poll(&mut self, shell: &mut GameShell) -> bool;
+    /// Hand `frame` to the target: the window path blits a `PixMap`; the
+    /// textures path hands the output to the host.
+    fn present(&mut self, frame: FrameOutput);
+}
+
+/// The `Window` present path: a winit + softbuffer surface the client owns
+/// (standalone `client-play`). `present` packs the `PixMap` (via `pack_rgb`)
+/// into the softbuffer `u32` layout and presents; `poll` pumps one batch of
+/// winit events into the `GameShell`.
+///
+/// The surface is `window`-feature-gated: a target with no live surface
+/// (`headless()`, or a build without the feature) counts accepted frames
+/// and drops them — the same degrade softbuffer applies to an
+/// occluded/lost surface.
+pub struct WindowTarget {
+    /// The winit + softbuffer surface, when compiled in and opened.
+    #[cfg(feature = "window")]
+    present: Option<window::WinitWindow>,
+    /// Frames accepted by this target. Surface-less targets still count:
+    /// the dispatch is surface-independent.
+    frames: u64,
+}
+
+impl WindowTarget {
+    /// Create the fixed-size applet window (765×503 applet). The window is
+    /// sized in physical pixels and non-resizable so present, surface, and
+    /// the `apply_mouse_*` coordinates share the 1:1 applet pixel space: no
+    /// resize-to-fit, no upscale.
+    #[cfg(feature = "window")]
+    pub fn open(width: u32, height: u32, title: &str) -> Result<Self, PresentError> {
+        Ok(WindowTarget {
+            present: Some(window::WinitWindow::open(width, height, title)?),
+            frames: 0,
+        })
+    }
+
+    /// A target with no live surface: accepted frames are counted and
+    /// dropped (the closed-window path). The dispatch test drives the
+    /// window path this way; headless builds never construct one.
+    pub fn headless() -> Self {
+        WindowTarget {
+            #[cfg(feature = "window")]
+            present: None,
+            frames: 0,
+        }
+    }
+
+    /// Frames accepted by this target (diagnostic; the dispatch test asserts
+    /// the window path receives frames).
+    pub fn frames(&self) -> u64 {
+        self.frames
+    }
+}
+
+impl PresentTarget for WindowTarget {
+    fn poll(&mut self, _shell: &mut GameShell) -> bool {
+        #[cfg(feature = "window")]
+        if let Some(window) = self.present.as_mut() {
+            return window.poll(_shell);
+        }
+        true
+    }
+
+    fn present(&mut self, _frame: FrameOutput) {
+        self.frames += 1;
+        #[cfg(feature = "window")]
+        if let Some(window) = self.present.as_mut() {
+            if let FrameOutput::PixMap(frame) = _frame {
+                window.blit(&frame.pixels, frame.width as u32, frame.height as u32);
+            }
+            // `FrameOutput::Texture` has no window consumer yet (task 7).
+        }
+    }
+}
+
+/// The `Textures` present path: host-owned. The client hands each rendered
+/// `FrameOutput` to the target; the host (the 274bot panel, later) takes it
+/// and binds the textures — on the CPU path an upload/blit, on the GPU path
+/// (task 7) a texture handoff. This crate owns only the handoff: the target
+/// retains the newest frame until the host takes it.
+#[derive(Default)]
+pub struct TexturesTarget {
+    frame: Option<FrameOutput>,
+}
+
+impl TexturesTarget {
+    pub fn new() -> Self {
+        TexturesTarget { frame: None }
+    }
+
+    /// The newest handed frame, if the host has not taken it yet.
+    pub fn take_frame(&mut self) -> Option<FrameOutput> {
+        self.frame.take()
+    }
+}
+
+impl PresentTarget for TexturesTarget {
+    fn poll(&mut self, _shell: &mut GameShell) -> bool {
+        true // host-owned: no window to close, no input to pump
+    }
+
+    fn present(&mut self, frame: FrameOutput) {
+        self.frame = Some(frame);
+    }
+}
+
 #[cfg(feature = "window")]
-pub use window::{Present, PresentError};
+pub use window::PresentError;
 
 #[cfg(feature = "window")]
 mod window {
@@ -35,10 +161,13 @@ mod window {
 
     use super::pack_rgb;
 
-    /// The fixed-size applet window. `blit` packs the `PixMap` (via
+    /// The winit + softbuffer window behind `WindowTarget`: owns the event
+    /// loop and the 765×503 surface. `blit` packs the `PixMap` (via
     /// `pack_rgb`) into the softbuffer surface; `poll` pumps one batch of
-    /// winit events into the `GameShell` Java fields.
-    pub struct Present {
+    /// winit events into the `GameShell` Java fields. `WindowTarget` wraps
+    /// the surface-owning piece so the present dispatch never mentions
+    /// softbuffer.
+    pub(super) struct WinitWindow {
         event_loop: EventLoop<()>,
         /// `Surface` borrows the display through `&Context`; keep it alive for
         /// the surface's lifetime even though nothing reads it after open.
@@ -61,12 +190,16 @@ mod window {
         InvalidSize(u32, u32),
     }
 
-    impl Present {
+    impl WinitWindow {
         /// Create the fixed-size window (765×503 applet). The window is sized
         /// in physical pixels and non-resizable so present, surface, and the
         /// `apply_mouse_*` coordinates share the 1:1 applet pixel space: no
         /// resize-to-fit, no upscale.
-        pub fn open(width: u32, height: u32, title: &str) -> Result<Self, PresentError> {
+        pub(super) fn open(
+            width: u32,
+            height: u32,
+            title: &str,
+        ) -> Result<Self, PresentError> {
             let event_loop = EventLoop::new()?;
             #[allow(deprecated)] // pump-based driver creates the window outside run_app
             let window = Arc::new(event_loop.create_window(
@@ -82,7 +215,7 @@ mod window {
                 NonZeroU32::new(height).ok_or(PresentError::InvalidSize(width, height))?,
             );
             surface.resize(w, h)?;
-            Ok(Present {
+            Ok(WinitWindow {
                 event_loop,
                 context,
                 surface,
@@ -93,7 +226,7 @@ mod window {
 
         /// Pack `pixels` (`0x00RRGGBB` `i32`s) into the surface and present
         /// it. Frames are 765×503; anything shorter leaves the tail stale.
-        pub fn blit(&mut self, pixels: &[i32], width: u32, height: u32) {
+        pub(super) fn blit(&mut self, pixels: &[i32], width: u32, height: u32) {
             let mut buffer = match self.surface.buffer_mut() {
                 Ok(buffer) => buffer,
                 Err(_) => return, // window closed/occluded: nothing to present
@@ -108,7 +241,7 @@ mod window {
         /// Pump one batch of winit events into `shell` via the Task 1
         /// `apply_*` helpers. Returns `false` once the window is closed or
         /// destroyed.
-        pub fn poll(&mut self, shell: &mut GameShell) -> bool {
+        pub(super) fn poll(&mut self, shell: &mut GameShell) -> bool {
             let mut app = PollApp {
                 cursor: &mut self.cursor,
                 closed: &mut self.closed,
@@ -162,7 +295,7 @@ mod window {
     }
 
     /// One poll's event sink: translates winit `WindowEvent`s into the
-    /// `GameShell` while borrowing the `Present` state it writes back.
+    /// `GameShell` while borrowing the `WinitWindow` state it writes back.
     struct PollApp<'a> {
         cursor: &'a mut (i32, i32),
         closed: &'a mut bool,

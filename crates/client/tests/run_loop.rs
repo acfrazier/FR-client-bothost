@@ -11,10 +11,10 @@ fn new_client() -> Client {
     })
 }
 
-/// The window close path sets `shell.state = -1` (Present::poll false → the
-/// run loop's close contract). `run` must stop the machine on the next
-/// frame: the while condition fails and the `state == -1` arm calls `stop()`
-/// (state → -2), exactly like GameShell.run.
+/// The window close path sets `shell.state = -1` (`PresentTarget::poll`
+/// false → the run loop's close contract). `run` must stop the machine on
+/// the next frame: the while condition fails and the `state == -1` arm calls
+/// `stop()` (state → -2), exactly like GameShell.run.
 #[test]
 fn run_stops_when_state_negative() {
 let mut r = Renderer::new(false);

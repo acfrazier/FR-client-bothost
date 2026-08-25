@@ -1,6 +1,6 @@
 //! Render-only state, held by the driver beside its `Client` (task 2b: the
 //! draw path in `render/draw.rs`, `scene_loading_splash`, `mainredraw`,
-//! present/blit) writes or reads to paint a frame: the CPU framebuffer, the
+//! frame present) writes or reads to paint a frame: the CPU framebuffer, the
 //! Pix3D raster state, the fonts/sprites, and the title/minimap/HUD paint
 //! state. The sim paths (packet apply, `doAction`, `tryMove`, `login`,
 //! `mainloop` input) do not touch these fields; fields they share with the
@@ -32,8 +32,8 @@ pub struct Renderer {
     /// parameter.
     pub world: RenderWorld,
     /// `drawArea` from client-ts: the 765×503 CPU framebuffer every frame
-    /// draws into (`client.ts` `titleScreenDraw`/`gameDraw`); blitted to
-    /// the window by `Present`.
+    /// draws into (`client.ts` `titleScreenDraw`/`gameDraw`); handed to the
+    /// present target (`Window`/`Textures`) by the frame consumer.
     pub draw_area: PixMap,
     /// Per-client Pix3D raster state (TS `Pix3D` mutable statics: the
     /// `scanline`, `originX/Y`, `trans`, `cycle`, and the texture pool).

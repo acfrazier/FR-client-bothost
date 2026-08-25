@@ -232,22 +232,13 @@ impl Renderer {
         self.present_progress(client);
     }
 
-    /// Java `messageBox` presents immediately. `run` only blits after
-    /// maininit, so the loading bar has to blit here or the title looks
+    /// Java `messageBox` presents immediately. `run` only presents after
+    /// maininit, so the loading bar has to present here or the title looks
     /// like loading already finished.
-    #[cfg_attr(not(feature = "window"), allow(unused_variables))]
     fn present_progress(&mut self, client: &mut Client) {
-        #[cfg(feature = "window")]
         if let Some(present) = client.present.as_mut() {
             let _ = present.poll(&mut client.shell);
-        }
-        #[cfg(feature = "window")]
-        if let Some(present) = client.present.as_mut() {
-            present.blit(
-                &self.draw_area.pixels,
-                self.draw_area.width as u32,
-                self.draw_area.height as u32,
-            );
+            present.present(FrameOutput::PixMap(self.draw_area.clone()));
         }
     }
 
@@ -3937,12 +3928,11 @@ impl Renderer {
     }
 
     /// `mainredraw` from Java — the frame render pass: title screen or
-    /// in-game draw into `draw_area` (which the `window` feature presents).
-    /// `draw` is the CPU-save switch: false skips the render entirely, so a
-    /// headless bot burns no pixels while the network machine keeps running.
-    /// Returns the composited frame (the backend-owned output, task-4
-    /// fix round 1), so the `window` path can blit it without re-reading
-    /// `draw_area`.
+    /// in-game draw into `draw_area`. `draw` is the CPU-save switch: false
+    /// skips the render entirely, so a headless bot burns no pixels while
+    /// the network machine keeps running. Returns the composited frame (the
+    /// backend-owned output, task-4 fix round 1), so the present target can
+    /// consume it without re-reading `draw_area`.
     ///
     /// Re-homed onto `Renderer` (task 2b): it also runs the draw-only halves
     /// the sim loop used to touch — `check_minimap`'s render half (the

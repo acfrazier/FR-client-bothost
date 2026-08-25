@@ -42,8 +42,6 @@ use crate::io::{
     ClientProt, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt, SERVER_PROT_SIZES,
 };
 use crate::login_rsa::{LOGIN_RSAE, LOGIN_RSAN};
-#[cfg(feature = "window")]
-use crate::render::backend::FrameOutput;
 use crate::render::Renderer;
 use crate::sound::{Fade, JagFX, Midi};
 use crate::util::JString;
@@ -255,12 +253,12 @@ pub const APPLET_H: i32 = 503;
 
 pub struct Client {
     pub shell: GameShell,
-    /// The `--window` applet (`Present`), opened by the driver. `run` polls
-    /// it for events each frame and blits `draw_area` after the redraw; a
-    /// closed window sets `shell.state = -1` to stop the machine. Headless
-    /// builds keep this `None`.
-    #[cfg(feature = "window")]
-    pub present: Option<crate::client::present::Present>,
+    /// The frame target the driver attaches (task 6 `PresentTarget`). `run`
+    /// polls it for events each frame and hands it the rendered frame after
+    /// the redraw; a closed window (`poll` false) sets `shell.state = -1` to
+    /// stop the machine. Headless builds keep this `None`; a `Textures`
+    /// host attaches a target to receive frames without a window.
+    pub present: Option<Box<dyn crate::client::present::PresentTarget>>,
     pub config: ClientConfig,
     /// Config type tables (`obj`, `npc`, `loc`, ...), unpacked from the
     /// `config` jag by `Cache::unpack`; empty until loaded.
@@ -269,7 +267,7 @@ pub struct Client {
     pub ingame: bool,
     /// `draw`: CPU-save switch — when false, `mainredraw` skips the frame
     /// render. Independent of the window: `client-play` sets it true after
-    /// `Present::open`; headless bots keep it false.
+    /// `WindowTarget::open`; headless bots keep it false.
     pub draw: bool,
     pub scene_state: i32,
     /// `inMultizone` from client-ts (TS 132): set by `SET_MULTIWAY`.
@@ -776,7 +774,6 @@ impl Client {
             ];
         let mut client = Client {
             shell: GameShell::new(),
-            #[cfg(feature = "window")]
             present: None,
             config,
             cache,
@@ -9718,11 +9715,12 @@ impl Client {
     /// The driver holds the `Renderer` beside the client and hands it in:
     /// `run` drives both the sim pass and the render pass.
     ///
-    /// With `window` the `Present` drives the frame: events are pumped into
-    /// the shell before the mainloop pass (via `latch_click`, GameShell.ts
-    /// 186-190), and `draw_area` blits after the redraw. Closing the window
-    /// (`poll` false) sets `shell.state = -1`, which stops the machine on
-    /// the next iteration like Java `GameShell.run`.
+    /// With a `PresentTarget` attached the target drives the frame: input is
+    /// pumped into the shell before the mainloop pass (via `latch_click`,
+    /// GameShell.ts 186-190), and the rendered frame is handed to the target
+    /// after the redraw. A window target that reports closed (`poll` false)
+    /// sets `shell.state = -1`, which stops the machine on the next iteration
+    /// like Java `GameShell.run`.
     pub fn run<F: FnMut(&mut Self)>(&mut self, renderer: &mut Renderer, mut on_loop: F) {
         if !self.already_started {
             self.maininit(renderer);
@@ -9736,7 +9734,6 @@ impl Client {
                 }
             }
 
-            #[cfg(feature = "window")]
             if let Some(present) = self.present.as_mut() {
                 if !present.poll(&mut self.shell) {
                     self.shell.state = -1;
@@ -9758,18 +9755,10 @@ impl Client {
             self.shell.count &= 0xff;
             self.shell.end_frame();
 
-            #[cfg_attr(not(feature = "window"), allow(unused_variables))]
             let output = renderer.mainredraw(self);
 
-            #[cfg(feature = "window")]
             if let Some(present) = self.present.as_mut() {
-                if let FrameOutput::PixMap(frame) = output {
-                    present.blit(
-                        &frame.pixels,
-                        frame.width as u32,
-                        frame.height as u32,
-                    );
-                }
+                present.present(output);
             }
         }
 

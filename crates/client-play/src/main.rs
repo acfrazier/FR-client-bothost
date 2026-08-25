@@ -20,7 +20,7 @@ use client::client::{Client, ClientConfig};
 use client::render::Renderer;
 
 #[cfg(feature = "window")]
-use client::client::present::Present;
+use client::client::present::WindowTarget;
 
 #[cfg(feature = "audio")]
 use client::sound::output::AudioOut;
@@ -132,13 +132,13 @@ fn main() -> ExitCode {
     // (`--window` asked for a control plane); audio failure is not.
     #[cfg(feature = "window")]
     if args.window {
-        match Present::open(
+        match WindowTarget::open(
             client::client::APPLET_W as u32,
             client::client::APPLET_H as u32,
             "RuneScape",
         ) {
-            Ok(present) => {
-                client.present = Some(present);
+            Ok(window) => {
+                client.present = Some(Box::new(window));
                 client.draw = true;
             }
             Err(e) => {
