@@ -16,6 +16,12 @@
 //! `check_scene`/`map_build`/`minimap_build_buffer` and `mainredraw` also
 //! live here so `mainloop`/`game_loop` stay renderer-free.
 //!
+//! Task 4: the frame-stage bodies (`game_draw`/`game_draw_main`/
+//! `title_screen_draw`) moved to `render/backend/cpu.rs` behind the
+//! `RenderBackend` trait; `Renderer::game_draw`/`title_screen_draw`
+//! delegate. The deep draw helpers below stay here and are reached from
+//! the backend through `&mut Renderer` (`pub(crate)`).
+//!
 //! The minimap `mapback` ring and mask build (1180–1216) land in
 //! `prepare_game`; `drawInterface` draws the side-tab interfaces
 //! (`TYPE_LAYER`/`TYPE_RECT`/`TYPE_TEXT`/`TYPE_GRAPHIC`).
@@ -101,173 +107,6 @@ pub(crate) fn get_av_h(
 }
 
 impl Renderer {
-    /// `titleScreenDraw` from client-ts (1489): draw the login UI into
-    /// `image_title4` (360×200), then composite the title regions into
-    /// `draw_area`; the 2/3/5/6/7/8 regions redraw only while `redraw_frame`
-    /// is set.
-    ///
-    /// Task 2b: `Client::logout` no longer owns the paint teardown; the
-    /// first title draw after a logout performs it (`unload_title`, a nulled
-    /// `image_title2` so `prepare_title` reallocates the 9 regions, and a
-    /// one-shot `draw_area` cls so no game-frame viewport/chat/side pixel
-    /// survives). Gated on `!ingame && redraw_frame`, which `logout` sets;
-    /// `login`/`apply_clientcode` also set `redraw_frame` but never reach
-    /// the title draw while ingame.
-    pub fn title_screen_draw(&mut self, client: &mut Client) {
-        if !client.ingame && client.redraw_frame {
-            self.unload_title();
-            self.image_title2 = None;
-            self.draw_area.fill(0);
-        }
-        self.prepare_title(client);
-
-        let w = 360;
-        let h = 200;
-        if let Some(map4) = self.image_title4.as_mut() {
-            let mut surface = Pix2D::with_pixels(&mut map4.pixels, w, h);
-
-            if let Some(titlebox) = &self.image_titlebox {
-                titlebox.plot_sprite(&mut surface, 0, 0);
-            }
-
-            if client.loginscreen == 0 {
-                let extra_y = (h / 2) + 80;
-                let mut y = (h / 2) - 20;
-
-                if client.on_demand.is_some() {
-                    let message = client.on_demand.as_ref().unwrap().message.clone();
-                    if let Some(p11) = self.p11.as_mut() {
-                        p11.centre_string_tag(&mut surface, &message, w / 2, extra_y, 0x75a9a9, true);
-                    }
-                }
-
-                if let Some(b12) = self.b12.as_mut() {
-                    b12.centre_string_tag(&mut surface, "Welcome to RuneScape", w / 2, y, Colour::YELLOW, true);
-                }
-
-                let mut x = (w / 2) - 80;
-                y = (h / 2) + 20;
-                if let Some(button) = &self.image_titlebutton {
-                    button.plot_sprite(&mut surface, x - 73, y - 20);
-                }
-                if let Some(b12) = self.b12.as_mut() {
-                    b12.centre_string_tag(&mut surface, "New User", x, y + 5, Colour::WHITE, true);
-                }
-
-                x = (w / 2) + 80;
-                if let Some(button) = &self.image_titlebutton {
-                    button.plot_sprite(&mut surface, x - 73, y - 20);
-                }
-                if let Some(b12) = self.b12.as_mut() {
-                    b12.centre_string_tag(&mut surface, "Existing User", x, y + 5, Colour::WHITE, true);
-                }
-            } else if client.loginscreen == 2 {
-                let mut y = (h / 2) - 40;
-                if let Some(b12) = self.b12.as_mut() {
-                    if client.login_mes1.is_empty() {
-                        b12.centre_string_tag(&mut surface, &client.login_mes2, w / 2, y - 7, Colour::YELLOW, true);
-                    } else {
-                        b12.centre_string_tag(&mut surface, &client.login_mes1, w / 2, y - 15, Colour::YELLOW, true);
-                        b12.centre_string_tag(&mut surface, &client.login_mes2, w / 2, y, Colour::YELLOW, true);
-                    }
-                    y += 30;
-
-                    let user_line = format!(
-                        "Username: {}{}",
-                        client.login_user,
-                        if client.login_select == 0 && client.loop_cycle % 40 < 20 { "@yel@|" } else { "" }
-                    );
-                    b12.draw_string_tag(&mut surface, &user_line, w / 2 - 90, y, Colour::WHITE, true);
-                    y += 15;
-
-                    let pass_line = format!(
-                        "Password: {}{}",
-                        JString::get_repeated_character(&client.login_pass),
-                        if client.login_select == 1 && client.loop_cycle % 40 < 20 { "@yel@|" } else { "" }
-                    );
-                    b12.draw_string_tag(&mut surface, &pass_line, w / 2 - 88, y, Colour::WHITE, true);
-                }
-
-                let x = (w / 2) - 80;
-                let y = (h / 2) + 50;
-                if let Some(button) = &self.image_titlebutton {
-                    button.plot_sprite(&mut surface, x - 73, y - 20);
-                }
-                if let Some(b12) = self.b12.as_mut() {
-                    b12.centre_string_tag(&mut surface, "Login", x, y + 5, Colour::WHITE, true);
-                }
-
-                let x = (w / 2) + 80;
-                if let Some(button) = &self.image_titlebutton {
-                    button.plot_sprite(&mut surface, x - 73, y - 20);
-                }
-                if let Some(b12) = self.b12.as_mut() {
-                    b12.centre_string_tag(&mut surface, "Cancel", x, y + 5, Colour::WHITE, true);
-                }
-            } else if client.loginscreen == 3 {
-                let x = w / 2;
-                let mut y = (h / 2) - 60;
-                if let Some(b12) = self.b12.as_mut() {
-                    b12.centre_string_tag(&mut surface, "Create a free account", x, y, Colour::YELLOW, true);
-
-                    y = (h / 2) - 35;
-                    b12.centre_string_tag(&mut surface, "To create a new account you need to", x, y, Colour::WHITE, true);
-                    y += 15;
-                    b12.centre_string_tag(&mut surface, "go back to the main RuneScape webpage", x, y, Colour::WHITE, true);
-                    y += 15;
-                    b12.centre_string_tag(&mut surface, "and choose the red 'create account'", x, y, Colour::WHITE, true);
-                    y += 15;
-                    b12.centre_string_tag(&mut surface, "button at the top right of that page.", x, y, Colour::WHITE, true);
-                }
-
-                let x = w / 2;
-                let y = (h / 2) + 50;
-                if let Some(button) = &self.image_titlebutton {
-                    button.plot_sprite(&mut surface, x - 73, y - 20);
-                }
-                if let Some(b12) = self.b12.as_mut() {
-                    b12.centre_string_tag(&mut surface, "Cancel", x, y + 5, Colour::WHITE, true);
-                }
-            }
-        }
-
-        if let Some(t4) = &self.image_title4 {
-            t4.blit_into(&mut self.draw_area, 202, 171);
-        }
-
-        if client.redraw_frame {
-            client.redraw_frame = false;
-            if let Some(t2) = &self.image_title2 {
-                t2.blit_into(&mut self.draw_area, 128, 0);
-            }
-            if let Some(t3) = &self.image_title3 {
-                t3.blit_into(&mut self.draw_area, 202, 371);
-            }
-            if let Some(t5) = &self.image_title5 {
-                t5.blit_into(&mut self.draw_area, 0, 265);
-            }
-            if let Some(t6) = &self.image_title6 {
-                t6.blit_into(&mut self.draw_area, 562, 265);
-            }
-            if let Some(t7) = &self.image_title7 {
-                t7.blit_into(&mut self.draw_area, 128, 171);
-            }
-            if let Some(t8) = &self.image_title8 {
-                t8.blit_into(&mut self.draw_area, 562, 171);
-            }
-        }
-
-        // TitleFlames.ts drawFlames: the torch columns redraw every frame
-        // (TS PixMap.draw onto the canvas). Inactive flames still blit the
-        // JPEG background that loadTitleBackground plotted into 0/1.
-        self.tick_title_flames(client);
-        if let Some(t0) = &self.image_title0 {
-            t0.blit_into(&mut self.draw_area, 0, 0);
-        }
-        if let Some(t1) = &self.image_title1 {
-            t1.blit_into(&mut self.draw_area, 637, 0);
-        }
-    }
 
     /// `drawProgress` from client-ts (3840): the loading-progress bar.
     /// Always records `last_progress_percent`/`last_progress_message`;
@@ -411,7 +250,7 @@ impl Renderer {
         }
     }
 
-    fn tick_title_flames(&mut self, client: &mut Client) {
+    pub(crate) fn tick_title_flames(&mut self, client: &mut Client) {
         let Some(flames) = self.title_flames.as_mut() else {
             return;
         };
@@ -430,7 +269,7 @@ impl Renderer {
     /// `title_screen_draw`'s logout teardown nulls `image_title2` (the gate
     /// below), so the next title draw reallocates the regions like Java
     /// `prepareTitle` after `prepareGame` dropped them.
-    fn prepare_title(&mut self, client: &mut Client) {
+    pub(crate) fn prepare_title(&mut self, client: &mut Client) {
         if self.image_title2.is_some() {
             return;
         }
@@ -572,370 +411,6 @@ impl Renderer {
         self.image_runes.clear();
     }
 
-    /// `gameDraw` from client-ts (3890): the in-game frame. `gameDrawMain`
-    /// (4172, the 3D pass) renders the world into `area_game` when
-    /// `scene_state` is 2, and `minimapDraw` (11279) fills `area_map`
-    /// before its (550, 4) blit. The chrome strips, side, chat,
-    /// icon-strip backgrounds, and chat-mode panels draw 1:1.
-    pub fn game_draw(&mut self, client: &mut Client) {
-        // TS GameShell ticks `scrollCycle` each mainloop pass while the
-        // mouse is held (Client.ts 2341-2343); 0/1 here is enough for the
-        // held-arrow scrollbar repeat.
-        client.scroll_cycle = if client.shell.mouse_button != 0 { 1 } else { 0 };
-        // `apply_clientcode` (sim) defers the brightness re-gamma to the
-        // renderer's texel state (task-2b bridge); the texture averages the
-        // sim's `finish_build` reads are refreshed with it.
-        if let Some(brightness) = client.pending_brightness.take() {
-            self.pix3d.init_texture_palettes(brightness);
-            self.pix3d.refresh_texture_averages();
-            client.tex_average = self.pix3d.tex_average;
-        }
-        // TS `buildMinimenu` (hover walk + menu options) runs from
-        // `other_overlays` when no menu is open (Client.ts 4865-4867),
-        // ahead of this frame's side/chat draws.
-        self.prepare_game(client);
-
-        if client.redraw_frame {
-            client.redraw_frame = false;
-
-            if let Some(b) = &self.area_backleft1 {
-                b.blit_into(&mut self.draw_area, 0, 4);
-            }
-            if let Some(b) = &self.area_backleft2 {
-                b.blit_into(&mut self.draw_area, 0, 357);
-            }
-            if let Some(b) = &self.area_backright1 {
-                b.blit_into(&mut self.draw_area, 722, 4);
-            }
-            if let Some(b) = &self.area_backright2 {
-                b.blit_into(&mut self.draw_area, 743, 205);
-            }
-            if let Some(b) = &self.area_backtop1 {
-                b.blit_into(&mut self.draw_area, 0, 0);
-            }
-            if let Some(b) = &self.area_backvmid1 {
-                b.blit_into(&mut self.draw_area, 516, 4);
-            }
-            if let Some(b) = &self.area_backvmid2 {
-                b.blit_into(&mut self.draw_area, 516, 205);
-            }
-            if let Some(b) = &self.area_backvmid3 {
-                b.blit_into(&mut self.draw_area, 496, 357);
-            }
-            if let Some(b) = &self.area_backhmid2 {
-                b.blit_into(&mut self.draw_area, 0, 338);
-            }
-
-            client.redraw_icons = true;
-            client.redraw_side = true;
-            client.redraw_chat = true;
-            client.redraw_chat_mode = true;
-
-            if client.scene_state != 2 {
-                if let Some(g) = &self.area_game {
-                    g.blit_into(&mut self.draw_area, 4, 4);
-                }
-                if let Some(m) = &self.area_map {
-                    m.blit_into(&mut self.draw_area, 550, 4);
-                }
-                // Map under chrome: `area_backvmid1` (34×156 at (516, 4))
-                // borders the 172×156 rect. In the 274 layout the strips do
-                // not overlap it, so this re-blit is a no-op guard that
-                // keeps an opaque `area_map` from covering the chrome.
-                if let Some(b) = &self.area_backvmid1 {
-                    b.blit_into(&mut self.draw_area, 516, 4);
-                }
-            }
-        }
-
-        if client.scene_state == 2 {
-            self.game_draw_main(client);
-        }
-
-        // TS 3924-3926: an open side minimenu redraws the side panel every
-        // frame so the hover-highlighted option rows track the pointer.
-        if client.is_menu_open && client.menu_area == 1 {
-            client.redraw_side = true;
-        }
-
-        // `sideModalId`/`animateInterface` redrawSide trigger (TS 3931-3937).
-        if client.side_modal_id != -1
-            && self.animate_interface(client, client.side_modal_id, client.world_update_num)
-        {
-            client.redraw_side = true;
-        }
-
-        // TS 3935-3941: the OP_HELD outline and the in-flight obj drag
-        // redraw the side panel every frame.
-        if client.selected_area == 2 {
-            client.redraw_side = true;
-        }
-        if client.obj_drag_area == 2 {
-            client.redraw_side = true;
-        }
-
-        if client.redraw_side {
-            self.draw_side(client);
-            client.redraw_side = false;
-        }
-
-        // `chatModalId`/`animateInterface` redrawChat trigger (TS 3966-3971).
-
-        // TS 3948-3967: with no chat modal the chat scrollbar is live. The
-        // held-arrow step goes through `chat_interface` (a synthetic IfType,
-        // `com_id` -1), then `chat_scroll_pos` is re-derived from it.
-        if client.chat_modal_id == -1 {
-            client.chat_interface.scroll_pos = client.chat_scroll_height - client.chat_scroll_pos - 77;
-            client.chat_interface.scroll_height = client.chat_scroll_height;
-            if client.shell.mouse_x > 448 && client.shell.mouse_x < 560 && client.shell.mouse_y > 332 {
-                client.do_scrollbar(
-                    client.shell.mouse_x - 17,
-                    client.shell.mouse_y - 357,
-                    client.chat_scroll_height,
-                    77,
-                    false,
-                    463,
-                    0,
-                    -1,
-                );
-            }
-            let mut offset = client.chat_scroll_height - client.chat_interface.scroll_pos - 77;
-            if offset < 0 {
-                offset = 0;
-            }
-            if offset > client.chat_scroll_height - 77 {
-                offset = client.chat_scroll_height - 77;
-            }
-            if client.chat_scroll_pos != offset {
-                client.chat_scroll_pos = offset;
-                client.redraw_chat = true;
-            }
-        }
-
-        if client.chat_modal_id != -1
-            && self.animate_interface(client, client.chat_modal_id, client.world_update_num)
-        {
-            client.redraw_chat = true;
-        }
-
-        // TS 3977-3982: the OP_HELD outline and the in-flight obj drag
-        // redraw the chat panel every frame.
-        if client.selected_area == 3 {
-            client.redraw_chat = true;
-        }
-        if client.obj_drag_area == 3 {
-            client.redraw_chat = true;
-        }
-
-        // TS 3989-3991: an open chat minimenu redraws the chat panel every
-        // frame so the hover-highlighted option rows track the pointer.
-        if client.is_menu_open && client.menu_area == 2 {
-            client.redraw_chat = true;
-        }
-
-        if client.redraw_chat {
-            self.draw_chat(client);
-            client.redraw_chat = false;
-        }
-
-        // `minimapDraw` (11279) into `area_map`, then the (550, 4) blit
-        // (TS 3999-4001), then the chrome re-blit guard (see the
-        // `redraw_frame` path above).
-        if client.scene_state == 2 {
-            self.minimap_draw(client);
-            if let Some(m) = &self.area_map {
-                m.blit_into(&mut self.draw_area, 550, 4);
-            }
-            if let Some(b) = &self.area_backvmid1 {
-                b.blit_into(&mut self.draw_area, 516, 4);
-            }
-        }
-
-        // `tutFlashIcon !== -1` redrawIcons trigger (TS 4003-4004).
-        if client.tut_flash_icon != -1 {
-            client.redraw_icons = true;
-        }
-
-        if client.redraw_icons {
-            self.draw_icons(client);
-            client.redraw_icons = false;
-        }
-
-        if client.redraw_chat_mode {
-            client.redraw_chat_mode = false;
-            // TS (4122): the chat mode buttons on `backbase1`, blitted at
-            // (0, 453).
-            if let Some(base) = self.area_backbase1.as_mut() {
-                let w = base.width;
-                let h = base.height;
-                let mut surface = Pix2D::with_pixels(&mut base.pixels, w, h);
-                if let Some(backbase1) = &self.backbase1 {
-                    backbase1.plot_sprite(&mut surface, 0, 0);
-                }
-                if let Some(p12) = self.p12.as_mut() {
-                    p12.centre_string_tag(&mut surface, "Public chat", 55, 28, Colour::WHITE, true);
-                    let (label, rgb) = match client.chat_public_mode {
-                        1 => ("Friends", Colour::YELLOW),
-                        2 => ("Off", Colour::RED),
-                        3 => ("Hide", Colour::CYAN),
-                        _ => ("On", Colour::GREEN),
-                    };
-                    p12.centre_string_tag(&mut surface, label, 55, 41, rgb, true);
-                    p12.centre_string_tag(&mut surface, "Private chat", 184, 28, Colour::WHITE, true);
-                    let (label, rgb) = match client.chat_private_mode {
-                        1 => ("Friends", Colour::YELLOW),
-                        2 => ("Off", Colour::RED),
-                        _ => ("On", Colour::GREEN),
-                    };
-                    p12.centre_string_tag(&mut surface, label, 184, 41, rgb, true);
-                    p12.centre_string_tag(&mut surface, "Trade/duel", 324, 28, Colour::WHITE, true);
-                    let (label, rgb) = match client.chat_trade_mode {
-                        1 => ("Friends", Colour::YELLOW),
-                        2 => ("Off", Colour::RED),
-                        _ => ("On", Colour::GREEN),
-                    };
-                    p12.centre_string_tag(&mut surface, label, 324, 41, rgb, true);
-                    p12.centre_string_tag(&mut surface, "Report abuse", 458, 33, Colour::WHITE, true);
-                }
-            }
-            if let Some(base) = &self.area_backbase1 {
-                base.blit_into(&mut self.draw_area, 0, 453);
-            }
-        }
-
-        // TS 4169: `worldUpdateNum = 0` at the end of the drawn frame.
-        client.world_update_num = 0;
-    }
-
-    /// `gameDrawMain` from client-ts (4172): the 3D pass. Adds the players,
-    /// NPCs and projectiles as dynamic sprites, follows the orbit camera
-    /// (or the cutscene camera while `cinema_cam`), applies the per-frame
-    /// `camShake` jitter, renders the world into `area_game`
-    /// (`Pix2D.cls()` + `render_all` + `removeSprites`, the TS 4238-4245
-    /// sequence) and blits it at (4, 4). `World.resetVisCalc` runs once on
-    /// the first pass (TS runs it from the game-loading flow) so
-    /// `render_all`'s visibility backing is populated. The overlay passes
-    /// are no-ops while their lists/sprites are not ported; the fps pass
-    /// is not ported either. `otherOverlays` (the main overlay and modal,
-    /// TS 4250) draws into `area_game` before the blit.
-    fn game_draw_main(&mut self, client: &mut Client) {
-        self.scene_cycle += 1;
-
-        self.add_players(client, true);
-        self.add_npcs(client, true);
-        self.add_players(client, false);
-        self.add_npcs(client, false);
-        self.add_projectiles(client);
-        self.add_map_anim(client);
-
-        // Camera (TS 4183-4195): a cutscene camera skips the orbit follow;
-        // otherwise the orbit camera follows the local player.
-        let mut pitch = client.orbit_camera_pitch;
-        if client.camera_pitch_clamp / 256 > pitch {
-            pitch = client.camera_pitch_clamp / 256;
-        }
-        if client.cam_shake[4] && client.cam_shake_ran[4] + 128 > pitch {
-            pitch = client.cam_shake_ran[4] + 128;
-        }
-        let yaw = (client.orbit_camera_yaw + client.macro_camera_angle) & 0x7ff;
-
-        if !client.cinema_cam {
-            if let Some(player) = &client.local_player {
-                let target_y = get_av_h(&client.groundh, &client.mapl, player.x, player.z, client.minusedlevel) - 50;
-                self.cam_follow(client, 
-                    pitch,
-                    yaw,
-                    client.orbit_camera_x,
-                    target_y,
-                    client.orbit_camera_z,
-                    pitch * 3 + 600,
-                );
-            }
-        }
-
-        // TS 4197-4203: the cutscene camera uses roofCheck2's eye height.
-        let level = if client.cinema_cam {
-            self.roof_check2(client)
-        } else {
-            self.roof_check(client)
-        };
-
-        // TS 4205-4209: snapshot the pre-jitter eye so it can be restored
-        // after the pass (the camShake jitter is per-frame only).
-        let eye_x = client.cam_x;
-        let eye_y = client.cam_y;
-        let eye_z = client.cam_z;
-        let eye_pitch = client.cam_pitch;
-        let eye_yaw = client.cam_yaw;
-
-        // TS 4211-4235: the camShake jitter applies to the rendered eye.
-        let (cam_x, cam_y, cam_z, cam_pitch, cam_yaw) =
-            self.cam_shake_jitter(client, eye_x, eye_y, eye_z, eye_pitch, eye_yaw);
-
-        // `World.resetVisCalc` (Client.ts loadGame 1222-1235): once per
-        // game, so `vis_backing` is populated before `render_all` binds its
-        // pitch/yaw row.
-        if !self.vis_calc_done {
-            self.vis_calc_done = true;
-            let mut distance = [0i32; 9];
-            for (x, slot) in distance.iter_mut().enumerate() {
-                let angle = x as i32 * 32 + 128 + 15;
-                let offset = angle * 3 + 600;
-                let sin = Pix3D::sin_table().get(angle as usize).copied().unwrap_or(0);
-                *slot = (offset * sin) >> 16;
-            }
-            self.world.reset_vis_calc(&distance, 500, 800, 512, 334);
-        }
-
-        // TS 4238-4242: the model picking state for this frame.
-        let cycle = self.pix3d.cycle;
-        self.pix3d.mouse_check = true;
-        self.pix3d.picked_count = 0;
-        self.pix3d.mouse_x = client.shell.mouse_x - 4;
-        self.pix3d.mouse_y = client.shell.mouse_y - 4;
-
-        // `Pix2D.cls()` on area_game, `Pix3D.setClipping(512, 334)`, then
-        // the world pass (TS 4238-4245).
-        let cache = &client.cache;
-        let loop_cycle = client.loop_cycle;
-        let (pix3d, world) = (&mut self.pix3d, &mut self.world);
-        if let Some(game) = self.area_game.as_mut() {
-            let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
-            surface.cls();
-            pix3d.set_clipping(game.width, game.height);
-            world.render_all(
-                &mut client.world, pix3d, &mut surface, cache, loop_cycle, cam_x, cam_y, cam_z,
-                level, cam_yaw, cam_pitch,
-            );
-        }
-        world.remove_sprites(&mut client.world);
-
-        self.entity_overlays(client);
-        self.coord_arrow(client);
-        self.texture_run_anims(client, cycle);
-
-        // Mirror this frame's 3D pick list onto `Client` BEFORE the menu
-        // build: `other_overlays` → `build_minimenu` → `add_world_options`
-        // consumes the picks in the same pass (task-2b fix round 1; the old
-        // end-of-frame copy was one frame stale).
-        client.pick_count = self.pix3d.picked_count;
-        client
-            .pick_typecodes
-            .copy_from_slice(&self.pix3d.picked_entity_typecode);
-        self.other_overlays(client);
-
-        // TS 4252-4257: restore the pre-jitter eye.
-        client.cam_x = eye_x;
-        client.cam_y = eye_y;
-        client.cam_z = eye_z;
-        client.cam_pitch = eye_pitch;
-        client.cam_yaw = eye_yaw;
-
-        if let Some(game) = &self.area_game {
-            game.blit_into(&mut self.draw_area, 4, 4);
-        }
-    }
-
     /// `drawPrivateMessages` from Client.ts (4915-4986): the split
     /// private-chat overlay, drawn into `area_game` when clientcode 8 set
     /// `split_private_chat`. Incoming (3/7) and sent (5/6) lines stack
@@ -1027,7 +502,7 @@ impl Renderer {
     /// menu open `buildMinimenu` rebuilds the menu (the pointer walk plus
     /// the option strings) before `draw_feedback` (TS 4865-4867), and the
     /// open minimenu (area 0) draws after the modal (TS 4868-4870).
-    fn other_overlays(&mut self, client: &mut Client) {
+    pub(crate) fn other_overlays(&mut self, client: &mut Client) {
         let mut game = self.area_game.take();
         if let Some(game) = game.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
@@ -1233,7 +708,7 @@ impl Renderer {
     /// tile clears `minimapFlagX` (the draw gate) and ticks
     /// `ANTICHEAT_CYCLELOGIC6`. The tile-occupancy stamp is kept so a
     /// second entity on a tile defers to the first this cycle.
-    fn add_players(&mut self, client: &mut Client, add_self: bool) {
+    pub(crate) fn add_players(&mut self, client: &mut Client, add_self: bool) {
         if client.local_player.is_none() {
             return;
         }
@@ -1341,7 +816,7 @@ impl Renderer {
 
     /// `addNpcs` from client-ts (4328): add every NPC as a dynamic sprite,
     /// split by the `alwaysontop` flag.
-    fn add_npcs(&mut self, client: &mut Client, alwaysontop: bool) {
+    pub(crate) fn add_npcs(&mut self, client: &mut Client, alwaysontop: bool) {
         for i in 0..client.npc_count as usize {
             let npc_id = client.npc_ids[i];
             let typecode = (npc_id << 14) + 0x2000_0000;
@@ -1395,7 +870,7 @@ impl Renderer {
     /// `world_update_num`, and re-add them as dynamic sprites. The
     /// `cyclelogic1` anticheat payload (TS 4387-4413) writes a length-
     /// prefixed random blob.
-    fn add_projectiles(&mut self, client: &mut Client) {
+    pub(crate) fn add_projectiles(&mut self, client: &mut Client) {
         let mut node = client.projectiles.head();
         while let Some(proj) = node {
             if proj.level != client.minusedlevel || client.loop_cycle > proj.t2 {
@@ -1486,7 +961,7 @@ impl Renderer {
     /// or already complete; otherwise advance (`update` with
     /// `world_update_num`), unlink when that completes the anim, else place
     /// the spot as a dynamic sprite (typecode -1, yaw 0, padding 60).
-    fn add_map_anim(&mut self, client: &mut Client) {
+    pub(crate) fn add_map_anim(&mut self, client: &mut Client) {
         let mut node = client.spotanims.head();
         while let Some(spot) = node {
             if spot.level != client.minusedlevel || spot.anim_complete {
@@ -1518,7 +993,7 @@ impl Renderer {
 
     /// `camFollow` from client-ts (4432): position the eye at `distance`
     /// along the inverse pitch/yaw from the target.
-    fn cam_follow(
+    pub(crate) fn cam_follow(
         &mut self, client: &mut Client,
         pitch: i32,
         yaw: i32,
@@ -2240,11 +1715,11 @@ impl Renderer {
 
     /// `coordArrow` from client-ts (4781): a no-op while `hintType`/
     /// `headicons` are not ported.
-    fn coord_arrow(&mut self, _client: &mut Client) {}
+    pub(crate) fn coord_arrow(&mut self, _client: &mut Client) {}
 
     /// `textureRunAnims` from client-ts (4794): a no-op while the animated
     /// texture buffers are not ported.
-    fn texture_run_anims(&mut self, _client: &mut Client, _cycle: i32) {}
+    pub(crate) fn texture_run_anims(&mut self, _client: &mut Client, _cycle: i32) {}
 
     /// `prepareGame` from client-ts (2001): allocate the in-game `PixMap`
     /// areas and load the `media` jag sprites, lazily on the first
@@ -2487,7 +1962,7 @@ impl Renderer {
     /// `side_icon`) via `drawInterface` (TS 11106-11110), the side-area
     /// minimenu (TS 11113), and blit at (553, 205). The trailing
     /// `areaGame.setPixels()` (no global Pix2D target) is not ported.
-    fn draw_side(&mut self, client: &mut Client) {
+    pub(crate) fn draw_side(&mut self, client: &mut Client) {
         let mut side = self.area_side.take();
         if let Some(side) = side.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut side.pixels, side.width, side.height);
@@ -3452,7 +2927,7 @@ impl Renderer {
     /// in place of the plain chat; the `modIcons`/`drawScrollbar` sprites
     /// load with Task 14, and the trailing `areaGame.setPixels()` is a
     /// no-op here (no global Pix2D target).
-    fn draw_chat(&mut self, client: &mut Client) {
+    pub(crate) fn draw_chat(&mut self, client: &mut Client) {
         let mut chat = self.area_chat.take();
         if let Some(chat) = chat.as_mut() {
             let w = chat.width;
@@ -3665,7 +3140,7 @@ impl Renderer {
     /// bottom-row guard index quirk of 4090-4111 (checks `side_icon[8]`
     /// while plotting `sideicons[7]`, and so on) is kept 1:1. The trailing
     /// `areaGame.setPixels()` is a no-op here (no global Pix2D target).
-    fn draw_icons(&mut self, client: &mut Client) {
+    pub(crate) fn draw_icons(&mut self, client: &mut Client) {
         if client.tut_flash_icon != -1 && client.tut_flash_icon == client.active_icon {
             client.tut_flash_icon = -1;
             client.out.p1_enc(ClientProt::TUT_CLICKSIDE.id);
@@ -3782,7 +3257,7 @@ impl Renderer {
     /// 11286-11299). Deviations: the friend split always draws `mapdots3`
     /// (no friend list is ported), and the `areaGame.setPixels()` target
     /// switches are no-ops (the `Pix2D` surface is bound here).
-    fn minimap_draw(&mut self, client: &mut Client) {
+    pub(crate) fn minimap_draw(&mut self, client: &mut Client) {
         let Some(player) = client.local_player.as_ref() else {
             return;
         };

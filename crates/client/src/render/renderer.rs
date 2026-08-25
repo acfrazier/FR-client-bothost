@@ -7,12 +7,19 @@
 //! draw (crosshair click position, minimenu arrays, the scrollbar input
 //! state, `world`/`collision`/`local_player`/`ifaces`/`vars`/`stats`) stay
 //! on `Client` until the shared-state step.
+//!
+//! Task 4: the frame-stage rasterization lives in `render/backend`
+//! (`CpuBackend` behind the `RenderBackend` trait); this struct is the
+//! state it draws into, and `game_draw`/`title_screen_draw` delegate to
+//! the `backend` field.
 
 use std::collections::HashMap;
 
+use crate::client::client::Client;
 use crate::dash3d::BuildArea;
 use crate::graphics::{Pix3D, Pix32, Pix3DDraw, Pix8, PixFont, PixMap};
 use crate::io::JagFile;
+use crate::render::backend::{CpuBackend, FrameKind, RenderBackend};
 use crate::render::world::RenderWorld;
 use crate::util::JavaRandom;
 
@@ -194,6 +201,13 @@ pub struct Renderer {
     /// anticheat counter sent with `ANTICHEAT_CYCLELOGIC3` every 113
     /// `minimapBuildBuffer` runs.
     pub cyclelogic3: i32,
+    /// The rasterizer this renderer routes frames through (task 4). An
+    /// `Option` so a frame can temporarily take the backend out: the stage
+    /// methods borrow the renderer's own state (`&mut Renderer`), which a
+    /// live borrow of `self.backend` would conflict with. `render_frame`
+    /// puts it back at the end of every frame; the `expect` is that
+    /// invariant.
+    backend: Option<Box<dyn RenderBackend>>,
 }
 
 impl Renderer {
@@ -301,9 +315,46 @@ impl Renderer {
             rand: JavaRandom::now(),
             cyclelogic1: 0,
             cyclelogic3: 0,
+            backend: None,
         };
         Pix3D::init_colour_table(0.8);
         renderer.pix3d.low_mem = lowmem;
+        renderer.backend = Some(Box::new(CpuBackend));
         renderer
+    }
+
+    /// Construct a renderer that routes frames through `backend` instead
+    /// of the default `CpuBackend` (the `renderer_backend_selection` test
+    /// injects a stub this way).
+    pub fn with_backend(backend: Box<dyn RenderBackend>, lowmem: bool) -> Self {
+        let mut renderer = Renderer::new(lowmem);
+        renderer.backend = Some(backend);
+        renderer
+    }
+
+    /// Run one frame through the backend: `begin` → `scene` → `chrome` →
+    /// `finish`. The backend is taken out of `self` for the frame so its
+    /// stages can borrow the renderer's own state (`&mut Renderer`); it is
+    /// put back before this returns.
+    fn render_frame(&mut self, client: &mut Client, kind: FrameKind) {
+        let mut backend = self.backend.take().expect("render backend present");
+        backend.begin(client, self, kind);
+        backend.scene(client, self, kind);
+        backend.chrome(client, self, kind);
+        let _ = backend.finish(self);
+        self.backend = Some(backend);
+    }
+
+    /// `gameDraw` from client-ts (3890): the in-game frame. Delegates the
+    /// frame stages to the render backend (task 4); the bodies live in
+    /// `render/backend/cpu.rs`.
+    pub fn game_draw(&mut self, client: &mut Client) {
+        self.render_frame(client, FrameKind::Game);
+    }
+
+    /// `titleScreenDraw` from client-ts (1489): the login frame. Delegates
+    /// to the render backend (task 4).
+    pub fn title_screen_draw(&mut self, client: &mut Client) {
+        self.render_frame(client, FrameKind::Title);
     }
 }
