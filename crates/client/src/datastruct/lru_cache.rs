@@ -63,6 +63,20 @@ impl<T: LinkableTrait> LruCache<T> {
         }
     }
 
+    /// Remove a key entirely: unlink it from both the hash-table chain and
+    /// the LRU history and free the node (unlike `unlink_key`, the node is
+    /// not recoverable). The shared geometry store uses this on
+    /// `Model::unload`, so a dropped model is re-requested instead of
+    /// served from a stale decoded copy.
+    pub fn remove(&mut self, key: i64) {
+        if let Some(id) = self.table.find(&self.arena, key) {
+            self.arena.unlink(id);
+            self.arena.unlink2(id);
+            self.arena.take(id);
+            self.available += 1;
+        }
+    }
+
     pub fn clear(&mut self) {
         while let Some(id) = self.history.pop_front(&mut self.arena) {
             self.arena.unlink(id);

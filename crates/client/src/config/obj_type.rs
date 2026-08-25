@@ -1,9 +1,10 @@
 // Port of `~/experiments/Server/webclient/src/config/ObjType.ts` (decode,
 // reset and `genCert`, plus the wear/head model methods and the 2D
 // `getSprite` render).
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::config::Cache;
+use crate::dash3d::store::ModelStore;
 use crate::dash3d::Model;
 use crate::datastruct::LruCache;
 use crate::graphics::{Pix2D, Pix32, Pix3D, Pix3DDraw};
@@ -15,14 +16,6 @@ use crate::io::{JagFile, Packet};
 fn model_cache() -> &'static Mutex<LruCache<Model>> {
     static CACHE: OnceLock<Mutex<LruCache<Model>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(LruCache::new(50)))
-}
-
-/// `ObjType.spriteCache` from the Java oracle (ObjType.java 85): the
-/// process-wide 100-entry LRU of rendered 32x32 item sprites (same design
-/// as `model_cache`).
-fn sprite_cache() -> &'static Mutex<LruCache<Pix32>> {
-    static CACHE: OnceLock<Mutex<LruCache<Pix32>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(LruCache::new(100)))
 }
 
 #[derive(Clone)]
@@ -113,9 +106,10 @@ impl Default for ObjType {
 }
 
 impl ObjType {
-    /// Java `ObjType.spriteCache.clear()` from `clientVar` brightness.
+    /// Java `ObjType.spriteCache.clear()` from `clientVar` brightness. The
+    /// rendered sprites live in the shared `ModelStore` (Task 5).
     pub fn clear_sprite_cache() {
-        sprite_cache().lock().unwrap().clear();
+        ModelStore::instance().lock().unwrap().clear_sprites();
     }
 
     /// Eager form of the TS `init` + `list(id)`: `obj.idx` offsets the
@@ -356,16 +350,16 @@ impl ObjType {
         count: i32,
     ) -> Option<Pix32> {
         if outline_rgb == 0 {
-            let mut sprite_cache = sprite_cache().lock().unwrap();
-            if let Some(cached) = sprite_cache.find(id as i64) {
+            let mut store = ModelStore::instance().lock().unwrap();
+            if let Some(cached) = store.sprite(id) {
                 if cached.ohi == count || cached.ohi == -1 {
-                    return Some(cached.clone());
+                    return Some((*cached).clone());
                 }
                 // Java `var4.unlink()` (ObjType.java 210-212): detach the
                 // stale node from the hash-table chain so the re-put below
                 // is the only table entry for this key (it stays in the LRU
                 // history until evicted, as in Java).
-                sprite_cache.unlink_key(id as i64);
+                store.unlink_sprite(id);
             }
         }
 
@@ -484,7 +478,7 @@ impl ObjType {
             let mut cached = var10.clone();
             cached.owi = if obj.stackable { 33 } else { 32 };
             cached.ohi = count;
-            sprite_cache().lock().unwrap().put(cached, id as i64);
+            ModelStore::instance().lock().unwrap().put_sprite(Arc::new(cached), id);
         }
 
         pix3d.origin_x = saved_origin_x;
@@ -633,15 +627,15 @@ impl ObjType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dash3d::store::tests::CACHE_LOCK;
     use std::sync::MutexGuard;
 
     /// The sprite/model caches are process-wide statics shared by every test
     /// in this binary, so tests that clear them or depend on their contents
     /// must not interleave (a concurrent clear would evict a hit mid-test).
     /// A failed test poisons the lock; recover so one failure does not
-    /// cascade into the rest.
-    static CACHE_LOCK: Mutex<()> = Mutex::new(());
-
+    /// cascade into the rest. The lock is shared with the `ModelStore`
+    /// tests (the sprite cache now lives in the store).
     fn lock_caches() -> MutexGuard<'static, ()> {
         CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -663,7 +657,7 @@ mod tests {
     ];
 
     fn reset_caches() {
-        sprite_cache().lock().unwrap().clear();
+        ModelStore::instance().lock().unwrap().clear();
         model_cache().lock().unwrap().clear();
         Model::unpack(0, Some(MODEL));
     }
@@ -763,7 +757,7 @@ mod tests {
         Model::unpack(0, Some(MODEL));
         assert!(ObjType::get_sprite(&cache, &mut pix, 22, 0, 5).is_some());
         assert!(ObjType::get_sprite(&cache, &mut pix, 22, 0, 10).is_some());
-        let cached_ohi = sprite_cache().lock().unwrap().find(22).map(|s| s.ohi).unwrap();
+        let cached_ohi = ModelStore::instance().lock().unwrap().sprite(22).map(|s| s.ohi).unwrap();
         assert_eq!(cached_ohi, 10, "the ohi=5 node must not shadow the re-put");
     }
 
@@ -781,9 +775,9 @@ mod tests {
                 "render for obj {i}"
             );
         }
-        let mut sprite_cache = sprite_cache().lock().unwrap();
-        assert!(sprite_cache.find(0).is_none(), "the first-put (LRU) entry must be evicted");
-        assert!(sprite_cache.find(100).is_some(), "the most recent entry stays");
+        let mut store = ModelStore::instance().lock().unwrap();
+        assert!(store.sprite(0).is_none(), "the first-put (LRU) entry must be evicted");
+        assert!(store.sprite(100).is_some(), "the most recent entry stays");
     }
 
     #[test]

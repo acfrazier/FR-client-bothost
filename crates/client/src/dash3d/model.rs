@@ -12,8 +12,9 @@
 // singleton and shared-array `copyForAnim`/`set` aliasing are replaced with
 // owned copies: single-threaded behaviour is identical and the port stays
 // `Send`.
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::dash3d::store::ModelStore as GeometryStore;
 use crate::dash3d::{AnimFrame, PointNormal};
 use crate::datastruct::linkable::{LinkableTrait, Links};
 use crate::graphics::{Pix2D, Pix3D, Pix3DDraw};
@@ -310,17 +311,48 @@ impl Model {
         });
     }
 
-    /// `Model.unload(id)` from client-ts.
+    /// `Model.unload(id)` from client-ts. The decoded geometry is dropped
+    /// from the shared store too, so the next `load` re-requests from the
+    /// provider instead of serving a stale decode (Task 5).
     pub fn unload(id: i32) {
-        let mut s = store().lock().unwrap();
-        if (id as usize) < s.meta.len() {
-            s.meta[id as usize] = None;
+        {
+            let mut s = store().lock().unwrap();
+            if (id as usize) < s.meta.len() {
+                s.meta[id as usize] = None;
+            }
         }
+        GeometryStore::instance().lock().unwrap().remove_model(id);
     }
 
     /// `Model.load(id)` from client-ts; decodes the model once its metadata
     /// is available, otherwise asks the provider for it and returns null.
+    /// The decoded geometry is shared through the canonical `ModelStore`
+    /// (Task 5): the first call decodes and publishes the `Arc`; later
+    /// calls clone the immutable geometry out of the store, so the unpack
+    /// runs once per model id while every caller's per-request transforms
+    /// still apply to its own copy.
     pub fn load(id: i32) -> Option<Model> {
+        Self::load_shared(id).map(|shared| (*shared).clone())
+    }
+
+    /// The shared form of `load`: the store's `Arc<Model>` for `id`,
+    /// decoding from the packed source on the first request only. Two
+    /// renderers that resolve the same model id get the same `Arc` (the
+    /// store's load-count stays 1).
+    pub fn load_shared(id: i32) -> Option<Arc<Model>> {
+        let mut store = GeometryStore::instance().lock().unwrap();
+        if let Some(shared) = store.find_model(id) {
+            return Some(shared);
+        }
+        let model = Self::load_raw(id)?;
+        Some(store.publish_model(id, model))
+    }
+
+    /// The raw decode from the unpacked metadata (the pre-task-5 `load`
+    /// body): the metadata slot is taken and restored so a provider request
+    /// is asked exactly once per unavailable id. `pub(super)` so the shared
+    /// store can decode on a miss without routing back through `load`.
+    pub(super) fn load_raw(id: i32) -> Option<Model> {
         let mut s = store().lock().unwrap();
         let slot = s.meta.get_mut(id as usize)?;
         let meta = slot.take()?;

@@ -44,6 +44,7 @@ pub mod point_normal;
 pub mod quick_ground;
 pub mod sprite;
 pub mod square;
+pub mod store;
 pub mod terrain_overlay_shape;
 pub mod wall;
 
