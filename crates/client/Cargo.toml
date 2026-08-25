@@ -10,10 +10,13 @@ audio = ["dep:rustysynth", "dep:cpal"]
 
 [dependencies]
 bzip2 = "0.4"
+bytemuck = { version = "1", features = ["derive"] }
 cpal = { version = "0.18", optional = true }
 flate2 = "1"
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 num-bigint = "0.4"
+pollster = "0.4"
 rustysynth = { version = "1.3", optional = true }
 softbuffer = { version = "0.4", optional = true }
+wgpu = "30"
 winit = { version = "0.30", optional = true }

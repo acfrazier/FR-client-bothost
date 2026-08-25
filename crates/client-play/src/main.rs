@@ -126,7 +126,19 @@ fn main() -> ExitCode {
     let mut client = Client::new(config);
     // Render state is separate (task 2b): the driver holds the `Renderer`
     // beside the sim `Client` and hands it to `maininit`/`run`.
+    // `--window` prefers the wgpu backend (task 7): the 3D scene is
+    // rasterized on the GPU where an adapter exists, else the renderer
+    // falls back to the CPU backend (logged, never fatal). Headless /
+    // bot-host stays CPU (the fidelity path).
+    Renderer::set_prefer_gpu(args.window);
     let mut renderer = Renderer::new(lowmem);
+    eprintln!(
+        "render backend: {}",
+        match renderer.backend_kind() {
+            client::render::backend::BackendKind::Gpu => "wgpu",
+            client::render::backend::BackendKind::Cpu => "cpu",
+        }
+    );
 
     // The 765×503 applet (engine canvas / title.dat). Open failure is fatal
     // (`--window` asked for a control plane); audio failure is not.

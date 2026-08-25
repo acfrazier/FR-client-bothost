@@ -114,7 +114,8 @@ impl RenderBackend for CpuBackend {
     /// as dynamic sprites, follows the orbit camera (or the cutscene camera
     /// while `cinema_cam`), applies the per-frame `camShake` jitter,
     /// renders the world into `area_game` (`Pix2D.cls()` + `render_all` +
-    /// `removeSprites`, the TS 4238-4245 sequence) and blits it at (4, 4).
+    /// `removeSprites`, the TS 4238-4245 sequence); `composite_scene`
+    /// blits it at (4, 4).
     /// `World.resetVisCalc` runs once on the first pass (TS runs it from the
     /// game-loading flow) so `render_all`'s visibility backing is
     /// populated. The overlay passes are no-ops while their lists/sprites
@@ -237,9 +238,17 @@ impl RenderBackend for CpuBackend {
         core.cam_z = eye_z;
         core.cam_pitch = eye_pitch;
         core.cam_yaw = eye_yaw;
+    }
 
-        if let Some(game) = &r.area_game {
-            game.blit_into(&mut r.draw_area, 4, 4);
+    /// The (4, 4) `area_game` blit — the task-7 composite seam. The 3D
+    /// pass rendered into `area_game` (and the overlay passes drew on top
+    /// of it); this lands it in `draw_area` ahead of the 2D chrome, which
+    /// is the same point the wgpu backend blits its scene texture at.
+    fn composite_scene(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
+        if kind == FrameKind::Game && core.scene_state == 2 {
+            if let Some(game) = &r.area_game {
+                game.blit_into(&mut r.draw_area, 4, 4);
+            }
         }
     }
 

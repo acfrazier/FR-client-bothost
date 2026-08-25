@@ -14,14 +14,24 @@
 //! the `backend` field.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::client::client::Client;
 use crate::dash3d::BuildArea;
 use crate::graphics::{Pix3D, Pix32, Pix3DDraw, Pix8, PixFont, PixMap};
 use crate::io::JagFile;
-use crate::render::backend::{CpuBackend, FrameKind, FrameOutput, RenderBackend};
+use crate::render::backend::{BackendKind, CpuBackend, FrameKind, FrameOutput, GpuBackend, RenderBackend};
 use crate::render::world::RenderWorld;
 use crate::util::JavaRandom;
+
+/// Process-wide GPU preference (task 7): the window driver sets it; the
+/// backend selection in `Renderer::new` consults it. Headless builds and
+/// tests never set it, so `CpuBackend` stays the default test path.
+static PREFER_GPU: AtomicBool = AtomicBool::new(false);
+
+fn prefer_gpu() -> bool {
+    PREFER_GPU.load(Ordering::Relaxed)
+}
 
 /// The `Client` render-only field set (see module docs).
 pub struct Renderer {
@@ -240,6 +250,12 @@ impl Renderer {
     /// `lowmem` mirrors the config the way `Client::new` used to; the
     /// process-wide `Pix3D::init_colour_table(0.8)` also moves here so the
     /// first shaded triangle of any 3D pass has a table.
+    ///
+    /// Backend selection (task 7): when the driver asked for a GPU
+    /// (`set_prefer_gpu`), select `GpuBackend` first and fall back to
+    /// `CpuBackend` on any wgpu init/device failure (logged once, never
+    /// fatal). Headless builds and tests never set the preference, so the
+    /// CPU path stays the default and the fidelity path.
     pub fn new(lowmem: bool) -> Self {
         let mut renderer = Renderer {
             world: RenderWorld::new(),
@@ -343,8 +359,31 @@ impl Renderer {
         };
         Pix3D::init_colour_table(0.8);
         renderer.pix3d.low_mem = lowmem;
-        renderer.backend = Some(Box::new(CpuBackend));
+        renderer.backend = Some(if prefer_gpu() {
+            match GpuBackend::try_new() {
+                Ok(backend) => Box::new(backend),
+                Err(_) => Box::new(CpuBackend),
+            }
+        } else {
+            Box::new(CpuBackend)
+        });
         renderer
+    }
+
+    /// The window driver opts a process into the wgpu backend; headless
+    /// builds and tests never call it, so `Renderer::new` keeps the CPU
+    /// fidelity path by default.
+    pub fn set_prefer_gpu(prefer: bool) {
+        PREFER_GPU.store(prefer, Ordering::Relaxed);
+    }
+
+    /// Which backend this renderer routes frames through (the selection
+    /// test and the window driver use it to log the active path).
+    pub fn backend_kind(&self) -> BackendKind {
+        self.backend
+            .as_deref()
+            .map(RenderBackend::kind)
+            .unwrap_or(BackendKind::Cpu)
     }
 
     /// Construct a renderer that routes frames through `backend` instead
@@ -356,16 +395,18 @@ impl Renderer {
         renderer
     }
 
-    /// Run one frame through the backend: `begin` → `scene` → `chrome` →
-    /// `finish`, and return the backend-owned output. `FrameBackend` holds
-    /// the renderer's own state for the stage calls and re-installs the
-    /// backend on drop (normal or unwinding).
+    /// Run one frame through the backend: `begin` → `scene` →
+    /// `composite_scene` → `chrome` → `finish`, and return the
+    /// backend-owned output. `FrameBackend` holds the renderer's own state
+    /// for the stage calls and re-installs the backend on drop (normal or
+    /// unwinding).
     fn render_frame(&mut self, client: &mut Client, kind: FrameKind) -> FrameOutput {
         let mut guard = FrameBackend::new(self);
         let backend = guard.backend.as_mut().expect("render backend present");
         let renderer = &mut *guard.renderer;
         backend.begin(client, renderer, kind);
         backend.scene(client, renderer, kind);
+        backend.composite_scene(client, renderer, kind);
         backend.chrome(client, renderer, kind);
         let output = backend.finish(renderer);
         drop(guard);

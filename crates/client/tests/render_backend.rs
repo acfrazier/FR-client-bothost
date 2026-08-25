@@ -16,7 +16,7 @@ use std::rc::Rc;
 
 use client::client::{Client, ClientConfig};
 use client::graphics::PixMap;
-use client::render::backend::{FrameKind, FrameOutput, RenderBackend, TextureHandle};
+use client::render::backend::{BackendKind, FrameKind, FrameOutput, RenderBackend, TextureHandle};
 use client::render::Renderer;
 
 fn client() -> Client {
@@ -156,4 +156,40 @@ fn stage_panic_reinstalls_backend() {
     // backend had been left `None` by the unwind).
     let output = r.game_draw(&mut c);
     assert!(matches!(output, FrameOutput::PixMap(_)));
+}
+
+// Task 7: the backend selection. `Renderer` prefers the wgpu backend when
+// the driver asked for a GPU (`set_prefer_gpu`); a wgpu init failure
+// (no adapter, or the `R274_TEST_FORCE_NO_GPU` test hook) must fall back to
+// `CpuBackend` — logged, never fatal — and the renderer still produces a
+// frame. The fallback is once-per-process: the first failed init is cached
+// by the shared GPU context, so the test pins the *selection* contract, not
+// the adapter state.
+#[test]
+fn gpu_init_failure_falls_back_to_cpu() {
+    // Force the process-wide wgpu init to fail (no adapter) via the test
+    // hook env var, then ask for a GPU backend: the renderer must land on
+    // `CpuBackend` and still produce a frame.
+    std::env::set_var("R274_TEST_FORCE_NO_GPU", "1");
+    Renderer::set_prefer_gpu(true);
+    let mut r = Renderer::new(false);
+    assert_eq!(
+        r.backend_kind(),
+        BackendKind::Cpu,
+        "a failed wgpu init must fall back to the CPU backend, never panic"
+    );
+
+    let mut c = client();
+    c.set_draw(true);
+    c.ingame = true;
+    let output = r.game_draw(&mut c);
+    assert!(
+        matches!(output, FrameOutput::PixMap(_)),
+        "the fallback renderer must still produce a frame"
+    );
+    let FrameOutput::PixMap(frame) = output else { unreachable!() };
+    assert!(!frame.pixels.is_empty(), "the fallback frame must be painted");
+
+    Renderer::set_prefer_gpu(false);
+    std::env::remove_var("R274_TEST_FORCE_NO_GPU");
 }

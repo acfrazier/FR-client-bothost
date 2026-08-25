@@ -1631,19 +1631,20 @@ impl RenderWorld {
         }
     }
 
-    /// `renderAll(eyeX, eyeY, eyeZ, maxLevel, eyeYaw, eyePitch)` from
-    /// client-ts. The `cache` and `loop_cycle` parameters are required, not
-    /// optional: the TS `sprite.model?.worldRender(...)` chain calls
-    /// `ModelSource.worldRender` -> `getTempModel()`, which rebuilds
-    /// player/npc/loc-anim models from the config `Cache` and
-    /// `Client.loopCycle` during the pass. `pix.hclip` is set per face as
-    /// TS does (the Task 2 raster contract).
+    /// The pre-fill half of `render_all` (task 7 split): drop the previous
+    /// build's lazily-resolved models when the sim world was reset, run
+    /// the `finishBuild` share-light pass (flagged by the sim) over the
+    /// freshly-resolved models once — resolve every tile/wall/sprite model,
+    /// then merge + light them (the TS 331 `shareLight(64, 768, -50, -10,
+    /// -50)` constants) — clamp the eye, bind the camera trig/visibility
+    /// backing, set the viewport bounds, run `calcOcclude`, and mark every
+    /// tile in the camera's 51×51 window drawable this frame. `render_all`
+    /// then runs the two fill passes over the marked tiles; the wgpu
+    /// backend (task 7) builds its scene mesh from the same marks.
     #[allow(clippy::too_many_arguments)]
-    pub fn render_all(
+    pub fn prepare_scene(
         &mut self,
         world: &mut World,
-        pix: &mut Pix3DDraw,
-        surface: &mut Pix2D,
         cache: &Cache,
         loop_cycle: i32,
         mut eye_x: i32,
@@ -1653,11 +1654,6 @@ impl RenderWorld {
         eye_yaw: i32,
         eye_pitch: i32,
     ) {
-        // Task 3b: drop the previous build's lazily-resolved models when
-        // the sim world was reset, and run the `finishBuild` share-light
-        // pass (flagged by the sim) over the freshly-resolved models once:
-        // resolve every tile/wall/sprite model, then merge + light them
-        // (the TS 331 `shareLight(64, 768, -50, -10, -50)` constants).
         if world.build_generation != self.last_build_generation {
             self.tile_models.clear();
             self.linked_models.clear();
@@ -1730,7 +1726,6 @@ impl RenderWorld {
         self.calc_occlude(world);
         self.fill_left = 0;
 
-        // Mark every tile in the camera's 51×51 window drawable this frame.
         for level in world.min_level..world.max_tile_level {
             for x in self.min_x..self.max_x {
                 for z in self.min_z..self.max_z {
@@ -1759,6 +1754,35 @@ impl RenderWorld {
                 }
             }
         }
+    }
+
+    /// `renderAll(eyeX, eyeY, eyeZ, maxLevel, eyeYaw, eyePitch)` from
+    /// client-ts. The `cache` and `loop_cycle` parameters are required, not
+    /// optional: the TS `sprite.model?.worldRender(...)` chain calls
+    /// `ModelSource.worldRender` -> `getTempModel()`, which rebuilds
+    /// player/npc/loc-anim models from the config `Cache` and
+    /// `Client.loopCycle` during the pass. `pix.hclip` is set per face as
+    /// TS does (the Task 2 raster contract).
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_all(
+        &mut self,
+        world: &mut World,
+        pix: &mut Pix3DDraw,
+        surface: &mut Pix2D,
+        cache: &Cache,
+        loop_cycle: i32,
+        eye_x: i32,
+        eye_y: i32,
+        eye_z: i32,
+        max_level: i32,
+        eye_yaw: i32,
+        eye_pitch: i32,
+    ) {
+        // The pre-fill state (task 7): the build/share-light check, camera
+        // fields, viewport bounds and the per-tile draw-front marking. The
+        // wgpu backend runs this alone and rasterizes the marked tiles
+        // itself; the CPU path runs it here ahead of the fill passes.
+        self.prepare_scene(world, cache, loop_cycle, eye_x, eye_y, eye_z, max_level, eye_yaw, eye_pitch);
 
         // Two fill passes, nearest-to-farthest ring order (`true` then
         // `false` for `checkAdjacent`), aborting when every tile is drawn.
@@ -1875,6 +1899,300 @@ impl RenderWorld {
         // frame retries, matching Java when `fillLeft` never hits 0.
         if world.ground_x != -1 {
             world.click = false;
+        }
+    }
+
+    // --- Task 7: the GPU scene mesh ---
+    //
+    // The wgpu backend rasterizes the same scene graph the CPU `fill`
+    // draws, but as a triangle list: every ground quad and
+    // wall/decor/gd/object/sprite model of the `prepare_scene`-marked
+    // tiles, transformed to camera space with the exact `world_render`
+    // fixed-point math, backface-culled with the CPU winding test, and
+    // shaded from the same colour table. The vertex shader divides by the
+    // view depth; the depth buffer replaces the painter's per-face
+    // priority merge. Documented divergences: textured model/ground faces
+    // render flat-shaded from their per-vertex shade (no texture
+    // sampling), the per-face exact mouse picks are AABB-only, and the
+    // occluder tests are skipped (the depth buffer occludes).
+
+    /// Build the GPU scene mesh for the tiles `prepare_scene` marked
+    /// drawable this frame. Mutates only what the CPU fill would: the
+    /// lazily-resolved model caches, the sprite draw-once stamps and the
+    /// ground click pick. The returned mesh is opaque-first so the backend
+    /// can draw two ranges (depth-write on / alpha-blend).
+    pub fn build_scene_mesh(
+        &mut self,
+        world: &mut World,
+        cache: &Cache,
+        loop_cycle: i32,
+        pix: &mut Pix3DDraw,
+    ) -> SceneMesh {
+        let cam = SceneCam {
+            eye_x: self.cx,
+            eye_y: self.cy,
+            eye_z: self.cz,
+            sin_pitch: self.camera_sin_x,
+            cos_pitch: self.camera_cos_x,
+            sin_yaw: self.camera_sin_y,
+            cos_yaw: self.camera_cos_y,
+        };
+        let cycle_no = self.cycle_no;
+        let mut mesh = SceneMesh::default();
+        for level in world.min_level..world.max_tile_level {
+            for x in self.min_x..self.max_x {
+                for z in self.min_z..self.max_z {
+                    let draw = tile_at(&world.squares, level, x, z)
+                        .map(|t| t.draw_front || t.draw_back)
+                        .unwrap_or(false);
+                    if !draw {
+                        continue;
+                    }
+                    self.emit_tile(world, cache, loop_cycle, pix, &mut mesh, &cam, level, x, z, cycle_no);
+                }
+            }
+        }
+        // Mirror `render_all`'s tail: a successful ground pick this frame
+        // drops `click` so the next frame cannot re-raycast the same
+        // screen coords.
+        if world.ground_x != -1 {
+            world.click = false;
+        }
+        mesh
+    }
+
+    /// One tile of the `fill` pass, meshed instead of rasterised: linked
+    /// square content, the tile ground, walls, decor, ground decor/objects
+    /// and the scene/dynamic sprites. Wall/door/decor placement mirrors
+    /// `fill` (the PRETAB direction gating, the DECORXOF branches); the
+    /// occluder tests are skipped (the depth buffer occludes).
+    #[allow(clippy::too_many_arguments)]
+    fn emit_tile(
+        &mut self,
+        world: &mut World,
+        cache: &Cache,
+        loop_cycle: i32,
+        pix: &mut Pix3DDraw,
+        mesh: &mut SceneMesh,
+        cam: &SceneCam,
+        level: i32,
+        tile_x: i32,
+        tile_z: i32,
+        cycle_no: i32,
+    ) {
+        let original_level = tile_at(&world.squares, level, tile_x, tile_z)
+            .map(|t| t.original_level)
+            .unwrap_or(level);
+
+        // Linked square (a level pushed down under this tile). Copy the
+        // content out first: the emits below borrow the world mutably.
+        let linked_quick = tile_at(&world.squares, level, tile_x, tile_z)
+            .and_then(|t| t.linked_square.as_ref())
+            .and_then(|ls| ls.quick_ground);
+        let linked_ground = tile_at(&world.squares, level, tile_x, tile_z)
+            .and_then(|t| t.linked_square.as_ref())
+            .and_then(|ls| ls.ground.clone());
+        let linked_wall = tile_at(&world.squares, level, tile_x, tile_z)
+            .and_then(|t| t.linked_square.as_ref())
+            .and_then(|ls| ls.wall.as_ref())
+            .map(|w| (w.typecode, w.x, w.y, w.z));
+        let linked_sprites: Vec<usize> = tile_at(&world.squares, level, tile_x, tile_z)
+            .and_then(|t| t.linked_square.as_ref())
+            .map(|ls| (0..ls.sprite_count as usize).filter_map(|i| ls.sprites[i]).collect())
+            .unwrap_or_default();
+
+        if let Some(quick) = linked_quick {
+            emit_quick_ground(world, pix, mesh, cam, quick, 0, tile_x, tile_z);
+        } else if let Some(ground) = linked_ground {
+            emit_ground(world, pix, mesh, cam, ground, tile_x, tile_z);
+        }
+        if let Some((typecode, wall_x, wall_y, wall_z)) = linked_wall {
+            let (wall_x, wall_y, wall_z) =
+                (wall_x - cam.eye_x, wall_y - cam.eye_y, wall_z - cam.eye_z);
+            if let Some(model) = self
+                .linked_wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                .0
+                .as_mut()
+            {
+                emit_scene_model(model, cache, loop_cycle, pix, mesh, cam, 0, wall_x, wall_y, wall_z, typecode);
+            }
+        }
+        for index in linked_sprites {
+            self.emit_sprite(world, cache, loop_cycle, pix, mesh, cam, index, cycle_no);
+        }
+
+        // The tile's own ground.
+        let quick = tile_at(&world.squares, level, tile_x, tile_z).and_then(|t| t.quick_ground);
+        if let Some(quick) = quick {
+            emit_quick_ground(world, pix, mesh, cam, quick, original_level, tile_x, tile_z);
+        } else if let Some(ground) = tile_at(&world.squares, level, tile_x, tile_z).and_then(|t| t.ground.clone()) {
+            emit_ground(world, pix, mesh, cam, ground, tile_x, tile_z);
+        }
+
+        // Walls: both slots, unconditionally (the CPU's `front_wall_types`
+        // gate and corner-side ordering are painter optimisations the
+        // depth buffer makes redundant; the winding test culls backfaces).
+        let wall_data = tile_at(&world.squares, level, tile_x, tile_z)
+            .and_then(|t| t.wall.as_ref())
+            .map(|w| (w.typecode, w.x - cam.eye_x, w.y - cam.eye_y, w.z - cam.eye_z));
+        if let Some((typecode, wall_x, wall_y, wall_z)) = wall_data {
+            if let Some(model) = self
+                .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                .0
+                .as_mut()
+            {
+                emit_scene_model(model, cache, loop_cycle, pix, mesh, cam, 0, wall_x, wall_y, wall_z, typecode);
+            }
+            if let Some(model) = self
+                .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                .1
+                .as_mut()
+            {
+                emit_scene_model(model, cache, loop_cycle, pix, mesh, cam, 0, wall_x, wall_y, wall_z, typecode);
+            }
+        }
+
+        // Decor: the `fill` placement branches verbatim (front wall types
+        // vs the DECORXOF/DECORXOF2 offset corners).
+        let decor_data = tile_at(&world.squares, level, tile_x, tile_z)
+            .and_then(|t| t.decor.as_ref())
+            .map(|d| (d.wshape, d.angle, d.typecode, d.x - cam.eye_x, d.y - cam.eye_y, d.z - cam.eye_z));
+        if let Some((wshape, angle, typecode, decor_x, decor_y, decor_z)) = decor_data {
+            let mut direction = 0i32;
+            let gx = cam.eye_x / 128;
+            let gz = cam.eye_z / 128;
+            if gx == tile_x {
+                direction += 1;
+            } else if gx < tile_x {
+                direction += 2;
+            }
+            if gz == tile_z {
+                direction += 3;
+            } else if gz > tile_z {
+                direction += 6;
+            }
+            let front_wall_types = PRETAB.get(direction as usize).copied().unwrap_or(0);
+            if (wshape & front_wall_types) != 0 {
+                if let Some(decor) = self
+                    .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                    .as_mut()
+                {
+                    emit_scene_model(decor, cache, loop_cycle, pix, mesh, cam, angle, decor_x, decor_y, decor_z, typecode);
+                }
+            } else if (wshape & 0x300) != 0 {
+                let nearest_x = if angle == LocAngle::NORTH || angle == LocAngle::EAST {
+                    -decor_x
+                } else {
+                    decor_x
+                };
+                let nearest_z = if angle == LocAngle::EAST || angle == LocAngle::SOUTH {
+                    -decor_z
+                } else {
+                    decor_z
+                };
+                if (wshape & 0x100) != 0 && nearest_z < nearest_x {
+                    let draw_x = decor_x + DECORXOF.get(angle as usize).copied().unwrap_or(0);
+                    let draw_z = decor_z + DECORZOF.get(angle as usize).copied().unwrap_or(0);
+                    if let Some(decor) = self
+                        .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                        .as_mut()
+                    {
+                        emit_scene_model(decor, cache, loop_cycle, pix, mesh, cam, angle * 512 + 256, draw_x, decor_y, draw_z, typecode);
+                    }
+                }
+                if (wshape & 0x200) != 0 && nearest_z > nearest_x {
+                    let draw_x = decor_x + DECORXOF2.get(angle as usize).copied().unwrap_or(0);
+                    let draw_z = decor_z + DECORZOF2.get(angle as usize).copied().unwrap_or(0);
+                    if let Some(decor) = self
+                        .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                        .as_mut()
+                    {
+                        emit_scene_model(decor, cache, loop_cycle, pix, mesh, cam, (angle * 512 + 1280) & 0x7ff, draw_x, decor_y, draw_z, typecode);
+                    }
+                }
+            }
+        }
+
+        // Ground decor + ground objects (stack height 0).
+        if let Some((typecode, gd_x, gd_y, gd_z)) = tile_at(&world.squares, level, tile_x, tile_z)
+            .and_then(|t| t.ground_decor.as_ref())
+            .map(|gd| (gd.typecode, gd.x - cam.eye_x, gd.y - cam.eye_y, gd.z - cam.eye_z))
+        {
+            if let Some(model) = self
+                .gd_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                .as_mut()
+            {
+                emit_scene_model(model, cache, loop_cycle, pix, mesh, cam, 0, gd_x, gd_y, gd_z, typecode);
+            }
+        }
+        if let Some((typecode, ox, oy, oz)) = tile_at(&world.squares, level, tile_x, tile_z)
+            .and_then(|t| t.ground_object.as_ref())
+            .map(|o| (o.typecode, o.x - cam.eye_x, o.y - cam.eye_y, o.z - cam.eye_z))
+        {
+            let height = self.ground_object_height(&*world, cache, loop_cycle, level, tile_x, tile_z);
+            if height == 0 {
+                let (bottom, middle, top) = self.obj_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z);
+                if let Some(model) = bottom.as_mut() {
+                    emit_scene_model(model, cache, loop_cycle, pix, mesh, cam, 0, ox, oy, oz, typecode);
+                }
+                if let Some(model) = middle.as_mut() {
+                    emit_scene_model(model, cache, loop_cycle, pix, mesh, cam, 0, ox, oy, oz, typecode);
+                }
+                if let Some(model) = top.as_mut() {
+                    emit_scene_model(model, cache, loop_cycle, pix, mesh, cam, 0, ox, oy, oz, typecode);
+                }
+            }
+        }
+
+        // The tile's sprites (scene + dynamic). The `sprite.cycle` stamp
+        // keeps a multi-tile sprite meshed once per frame, exactly as the
+        // CPU fill's sprite buffer does.
+        let sprite_indices: Vec<usize> = tile_at(&world.squares, level, tile_x, tile_z)
+            .map(|t| (0..t.sprite_count as usize).filter_map(|i| t.sprites[i]).collect())
+            .unwrap_or_default();
+        for index in sprite_indices {
+            self.emit_sprite(world, cache, loop_cycle, pix, mesh, cam, index, cycle_no);
+        }
+    }
+
+    /// Mesh one sprite-arena slot (a scene sprite or a dynamic entity):
+    /// resolve/decode its temp model, place it at the sprite's position
+    /// with the sprite's yaw, and stamp the once-per-frame cycle mark.
+    fn emit_sprite(
+        &mut self,
+        world: &mut World,
+        cache: &Cache,
+        loop_cycle: i32,
+        pix: &mut Pix3DDraw,
+        mesh: &mut SceneMesh,
+        cam: &SceneCam,
+        index: usize,
+        cycle_no: i32,
+    ) {
+        let Some(sprite) = world.sprites.get(index).and_then(|s| s.as_ref()) else {
+            return;
+        };
+        if sprite.cycle == cycle_no {
+            return;
+        }
+        let (yaw, typecode, x, y, z) = (sprite.yaw, sprite.typecode, sprite.x, sprite.y, sprite.z);
+        if let Some(model) = self.sprite_model_mut(&*world, cache, loop_cycle, index).as_mut() {
+            emit_scene_model(
+                model,
+                cache,
+                loop_cycle,
+                pix,
+                mesh,
+                cam,
+                yaw,
+                x - cam.eye_x,
+                y - cam.eye_y,
+                z - cam.eye_z,
+                typecode,
+            );
+        }
+        if let Some(sprite) = world.sprites.get_mut(index).and_then(|s| s.as_mut()) {
+            sprite.cycle = cycle_no;
         }
     }
 
@@ -3573,4 +3891,500 @@ fn get_table(hsl: i32, lightness: i32) -> i32 {
         lightness = 126;
     }
     (hsl & 0xff80) + lightness
+}
+
+/// The per-frame camera the GPU mesh builder projects with (the
+/// `prepare_scene` fixed-point trig + eye).
+#[derive(Clone, Copy)]
+struct SceneCam {
+    eye_x: i32,
+    eye_y: i32,
+    eye_z: i32,
+    sin_pitch: i32,
+    cos_pitch: i32,
+    sin_yaw: i32,
+    cos_yaw: i32,
+}
+
+/// One triangle vertex of the GPU scene mesh: a camera-space position plus
+/// a shaded RGBA (`a` is the source alpha, 255 = opaque). `bytemuck::Pod`
+/// so the wgpu backend uploads the mesh as raw bytes.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuVertex {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+    pub a: u8,
+}
+
+impl GpuVertex {
+    /// A camera-space vertex shaded from `shade` (a 16-bit colour-table
+    /// index, exactly what the CPU raster passes feed `gouraud_triangle`).
+    fn new(x: i32, y: i32, z: i32, shade: i32, alpha: u8) -> GpuVertex {
+        let rgb = Pix3D::colour_table().get((shade & 0xffff) as usize).copied().unwrap_or(0);
+        GpuVertex {
+            x: x as f32,
+            y: y as f32,
+            z: z as f32,
+            r: ((rgb >> 16) & 0xff) as u8,
+            g: ((rgb >> 8) & 0xff) as u8,
+            b: (rgb & 0xff) as u8,
+            a: alpha,
+        }
+    }
+}
+
+/// The GPU scene mesh: opaque faces first, then translucent, so the
+/// backend can draw two ranges (depth-write on / alpha-blend).
+#[derive(Default)]
+pub struct SceneMesh {
+    opaque: Vec<GpuVertex>,
+    translucent: Vec<GpuVertex>,
+}
+
+impl SceneMesh {
+    /// The mesh as one opaque-first vertex list.
+    pub fn vertices(self) -> Vec<GpuVertex> {
+        let mut all = self.opaque;
+        all.extend(self.translucent);
+        all
+    }
+
+    /// Vertex count of the opaque prefix (`vertices()[..n]`).
+    pub fn opaque_len(&self) -> usize {
+        self.opaque.len()
+    }
+
+    fn push(&mut self, v0: GpuVertex, v1: GpuVertex, v2: GpuVertex, translucent: bool) {
+        if translucent {
+            self.translucent.extend([v0, v1, v2]);
+        } else {
+            self.opaque.extend([v0, v1, v2]);
+        }
+    }
+}
+
+/// `ModelSource.worldRender` for the GPU path: fetch the temp model,
+/// record its `minY`, then mesh its faces. The `Model` variant meshes its
+/// geometry directly (the TS `Model` override).
+#[allow(clippy::too_many_arguments)]
+fn emit_scene_model(
+    model: &mut SceneModel,
+    cache: &Cache,
+    loop_cycle: i32,
+    pix: &mut Pix3DDraw,
+    mesh: &mut SceneMesh,
+    cam: &SceneCam,
+    yaw: i32,
+    rel_x: i32,
+    rel_y: i32,
+    rel_z: i32,
+    typecode: i32,
+) {
+    match model {
+        SceneModel::Model(model) => {
+            emit_model_faces(model, pix, mesh, cam, yaw, rel_x, rel_y, rel_z, typecode);
+        }
+        _ => {
+            if let Some(temp) = model.get_temp_model(cache, loop_cycle) {
+                let min_y = temp.min_y;
+                match model {
+                    SceneModel::Obj(obj) => obj.min_y = min_y,
+                    SceneModel::LocAnim(anim) => anim.min_y = min_y,
+                    SceneModel::Player(player) => player.min_y = min_y,
+                    SceneModel::Npc(npc) => npc.min_y = min_y,
+                    SceneModel::Proj(proj) => proj.min_y = min_y,
+                    SceneModel::SpotAnim(anim) => anim.min_y = min_y,
+                    SceneModel::Model(_) => unreachable!(),
+                }
+                emit_model_faces(&temp, pix, mesh, cam, yaw, rel_x, rel_y, rel_z, typecode);
+            }
+        }
+    }
+}
+
+/// `worldRender` + `render2`/`render3` for the GPU path: cull and pick the
+/// model AABB, transform every vertex to camera space with the exact
+/// fixed-point math, then emit each visible face with its per-vertex
+/// colour-table shades. The depth-buffer pipeline replaces the CPU's
+/// depth/priority bucket merge; textured faces keep their shaded colour
+/// but are not texture-sampled.
+#[allow(clippy::too_many_arguments)]
+fn emit_model_faces(
+    model: &Model,
+    pix: &mut Pix3DDraw,
+    mesh: &mut SceneMesh,
+    cam: &SceneCam,
+    yaw: i32,
+    rel_x: i32,
+    rel_y: i32,
+    rel_z: i32,
+    typecode: i32,
+) {
+    // The area_game viewport the projection origin was set for.
+    const SCENE_W: i32 = 512;
+    const SCENE_H: i32 = 334;
+
+    let (sin_yaw_m, cos_yaw_m) = if yaw != 0 {
+        (
+            Pix3D::sin_table().get(yaw as usize).copied().unwrap_or(0),
+            Pix3D::cos_table().get(yaw as usize).copied().unwrap_or(0),
+        )
+    } else {
+        (0, 0)
+    };
+
+    // `worldRender`'s model-space bounding-box test.
+    let z_prime = (rel_z.wrapping_mul(cam.cos_yaw).wrapping_sub(rel_x.wrapping_mul(cam.sin_yaw))) >> 16;
+    let mid_z = rel_y
+        .wrapping_mul(cam.sin_pitch)
+        .wrapping_add(z_prime.wrapping_mul(cam.cos_pitch))
+        >> 16;
+    let radius_cos_pitch = (model.radius.wrapping_mul(cam.cos_pitch)) >> 16;
+    let max_z = mid_z + radius_cos_pitch;
+    if max_z <= 50 || mid_z >= 3500 {
+        return;
+    }
+
+    let mid_x = (rel_z.wrapping_mul(cam.sin_yaw).wrapping_add(rel_x.wrapping_mul(cam.cos_yaw))) >> 16;
+    let mut left_x = (mid_x.wrapping_sub(model.radius)) << 9;
+    if left_x.wrapping_div(max_z) >= SCENE_W {
+        return;
+    }
+    let mut right_x = (mid_x.wrapping_add(model.radius)) << 9;
+    if right_x.wrapping_div(max_z) <= -SCENE_W {
+        return;
+    }
+
+    let mid_y = rel_y
+        .wrapping_mul(cam.cos_pitch)
+        .wrapping_sub(z_prime.wrapping_mul(cam.sin_pitch))
+        >> 16;
+    let radius_sin_pitch = (model.radius.wrapping_mul(cam.sin_pitch)) >> 16;
+    let mut bottom_y = (mid_y.wrapping_add(radius_sin_pitch)) << 9;
+    if bottom_y.wrapping_div(max_z) <= -SCENE_H {
+        return;
+    }
+    let y_prime = radius_sin_pitch + ((model.min_y.wrapping_mul(cam.cos_pitch)) >> 16);
+    let mut top_y = (mid_y.wrapping_sub(y_prime)) << 9;
+    if top_y.wrapping_div(max_z) >= SCENE_H {
+        return;
+    }
+
+    // The `worldRender` AABB mouse pick (task 7: AABB-only, no per-face
+    // exact test — the minimenu options still resolve per model).
+    if typecode > 0 && pix.mouse_check {
+        let mut z = mid_z - radius_cos_pitch;
+        if z <= 50 {
+            z = 50;
+        }
+        if mid_x > 0 {
+            left_x = left_x.wrapping_div(max_z);
+            right_x = right_x.wrapping_div(z);
+        } else {
+            right_x = right_x.wrapping_div(max_z);
+            left_x = left_x.wrapping_div(z);
+        }
+        if mid_y > 0 {
+            top_y = top_y.wrapping_div(max_z);
+            bottom_y = bottom_y.wrapping_div(z);
+        } else {
+            bottom_y = bottom_y.wrapping_div(max_z);
+            top_y = top_y.wrapping_div(z);
+        }
+        let mouse_x = pix.mouse_x - pix.origin_x;
+        let mouse_y = pix.mouse_y - pix.origin_y;
+        if mouse_x > left_x && mouse_x < right_x && mouse_y > top_y && mouse_y < bottom_y {
+            if let Some(slot) = pix.picked_entity_typecode.get_mut(pix.picked_count as usize) {
+                *slot = typecode;
+            }
+            pix.picked_count += 1;
+        }
+    }
+
+    // Per-vertex camera-space transform (the `worldRender` loop).
+    let (Some(point_x), Some(point_y), Some(point_z)) =
+        (&model.point_x, &model.point_y, &model.point_z)
+    else {
+        return;
+    };
+    let vertex_count = model.num_points as usize;
+    let mut cam_x = vec![0i32; vertex_count];
+    let mut cam_y = vec![0i32; vertex_count];
+    let mut cam_z = vec![0i32; vertex_count];
+    for v in 0..vertex_count {
+        let (Some(&x0), Some(&y0), Some(&z0)) =
+            (point_x.get(v), point_y.get(v), point_z.get(v))
+        else {
+            continue;
+        };
+        let (mut x, mut y, mut z) = (x0, y0, z0);
+        if yaw != 0 {
+            let temp = (z.wrapping_mul(sin_yaw_m).wrapping_add(x.wrapping_mul(cos_yaw_m))) >> 16;
+            z = (z.wrapping_mul(cos_yaw_m).wrapping_sub(x.wrapping_mul(sin_yaw_m))) >> 16;
+            x = temp;
+        }
+        x = x.wrapping_add(rel_x);
+        y = y.wrapping_add(rel_y);
+        z = z.wrapping_add(rel_z);
+        let temp = (z.wrapping_mul(cam.sin_yaw).wrapping_add(x.wrapping_mul(cam.cos_yaw))) >> 16;
+        z = (z.wrapping_mul(cam.cos_yaw).wrapping_sub(x.wrapping_mul(cam.sin_yaw))) >> 16;
+        x = temp;
+        let temp = (y.wrapping_mul(cam.cos_pitch).wrapping_sub(z.wrapping_mul(cam.sin_pitch))) >> 16;
+        z = (y.wrapping_mul(cam.sin_pitch).wrapping_add(z.wrapping_mul(cam.cos_pitch))) >> 16;
+        y = temp;
+        cam_x[v] = x;
+        cam_y[v] = y;
+        cam_z[v] = z;
+    }
+
+    let (Some(face_vertex_a), Some(face_vertex_b), Some(face_vertex_c)) =
+        (&model.face_vertex_a, &model.face_vertex_b, &model.face_vertex_c)
+    else {
+        return;
+    };
+    let face_colour_a = model.face_colour_a.as_ref();
+    let face_colour_b = model.face_colour_b.as_ref();
+    let face_colour_c = model.face_colour_c.as_ref();
+
+    for f in 0..model.num_faces as usize {
+        if model
+            .face_render_type
+            .as_ref()
+            .and_then(|rt| rt.get(f))
+            .copied()
+            .unwrap_or(0)
+            == -1
+        {
+            continue;
+        }
+        let (Some(&a), Some(&b), Some(&c)) = (
+            face_vertex_a.get(f),
+            face_vertex_b.get(f),
+            face_vertex_c.get(f),
+        ) else {
+            continue;
+        };
+        let (a, b, c) = (a as usize, b as usize, c as usize);
+        let (x_a, y_a, z_a) = (cam_x[a], cam_y[a], cam_z[a]);
+        let (x_b, y_b, z_b) = (cam_x[b], cam_y[b], cam_z[b]);
+        let (x_c, y_c, z_c) = (cam_x[c], cam_y[c], cam_z[c]);
+        if z_a < 50 || z_b < 50 || z_c < 50 {
+            continue; // near plane (the GPU would clip; dropping matches the CPU's clipped-face handling here)
+        }
+
+        // `render2`'s winding test: project for the test, keep `> 0`.
+        let sx_a = pix.origin_x + x_a.wrapping_shl(9).wrapping_div(z_a);
+        let sy_a = pix.origin_y + y_a.wrapping_shl(9).wrapping_div(z_a);
+        let sx_b = pix.origin_x + x_b.wrapping_shl(9).wrapping_div(z_b);
+        let sy_b = pix.origin_y + y_b.wrapping_shl(9).wrapping_div(z_b);
+        let sx_c = pix.origin_x + x_c.wrapping_shl(9).wrapping_div(z_c);
+        let sy_c = pix.origin_y + y_c.wrapping_shl(9).wrapping_div(z_c);
+        if wrapping_cross(sx_a - sx_b, sy_c - sy_b, sy_a - sy_b, sx_c - sx_b) <= 0 {
+            continue;
+        }
+
+        // `render3`: per-vertex shades, flat for render types 1 and 3.
+        let (Some(fca), Some(fcb), Some(fcc)) = (face_colour_a, face_colour_b, face_colour_c)
+        else {
+            continue;
+        };
+        let r#type = model
+            .face_render_type
+            .as_ref()
+            .and_then(|rt| rt.get(f))
+            .copied()
+            .unwrap_or(0)
+            & 0x3;
+        let (shade_a, shade_b, shade_c) = if r#type == 1 || r#type == 3 {
+            let shade = fca.get(f).copied().unwrap_or(0);
+            (shade, shade, shade)
+        } else {
+            (
+                fca.get(f).copied().unwrap_or(0),
+                fcb.get(f).copied().unwrap_or(0),
+                fcc.get(f).copied().unwrap_or(0),
+            )
+        };
+
+        let trans = model
+            .face_alpha
+            .as_ref()
+            .and_then(|a| a.get(f))
+            .copied()
+            .unwrap_or(0);
+        let alpha = if trans == 0 {
+            255
+        } else {
+            (256 - trans).clamp(0, 255) as u8
+        };
+        mesh.push(
+            GpuVertex::new(x_a, y_a, z_a, shade_a, alpha),
+            GpuVertex::new(x_b, y_b, z_b, shade_b, alpha),
+            GpuVertex::new(x_c, y_c, z_c, shade_c, alpha),
+            alpha != 255,
+        );
+    }
+}
+
+/// `renderGround` for the GPU path: transform the ground's vertices to
+/// camera space, then mesh every face with its per-vertex colour-table
+/// shades (textured faces keep their shade, no texture sampling). The
+/// ground click raycast is kept: the sim's walk-dest pick reads
+/// `world.ground_x/z`.
+#[allow(clippy::too_many_arguments)]
+fn emit_ground(
+    world: &mut World,
+    pix: &mut Pix3DDraw,
+    mesh: &mut SceneMesh,
+    cam: &SceneCam,
+    ground: Ground,
+    tile_x: i32,
+    tile_z: i32,
+) {
+    let vertex_count = ground.vertex_x.len();
+    let mut cam_x = Vec::with_capacity(vertex_count);
+    let mut cam_y = Vec::with_capacity(vertex_count);
+    let mut cam_z = Vec::with_capacity(vertex_count);
+    for i in 0..vertex_count {
+        let mut x = ground.vertex_x[i] - cam.eye_x;
+        let mut y = ground.vertex_y[i] - cam.eye_y;
+        let mut z = ground.vertex_z[i] - cam.eye_z;
+        let tmp = (z.wrapping_mul(cam.sin_yaw).wrapping_add(x.wrapping_mul(cam.cos_yaw))) >> 16;
+        z = (z.wrapping_mul(cam.cos_yaw).wrapping_sub(x.wrapping_mul(cam.sin_yaw))) >> 16;
+        x = tmp;
+        let tmp = (y.wrapping_mul(cam.cos_pitch).wrapping_sub(z.wrapping_mul(cam.sin_pitch))) >> 16;
+        z = (y.wrapping_mul(cam.sin_pitch).wrapping_add(z.wrapping_mul(cam.cos_pitch))) >> 16;
+        y = tmp;
+        cam_x.push(x);
+        cam_y.push(y);
+        cam_z.push(z);
+    }
+
+    let face_count = ground.face_vertex_a.len();
+    for f in 0..face_count {
+        let a = ground.face_vertex_a[f] as usize;
+        let b = ground.face_vertex_b[f] as usize;
+        let c = ground.face_vertex_c[f] as usize;
+        let (x0, y0, z0) = (cam_x[a], cam_y[a], cam_z[a]);
+        let (x1, y1, z1) = (cam_x[b], cam_y[b], cam_z[b]);
+        let (x2, y2, z2) = (cam_x[c], cam_y[c], cam_z[c]);
+        if z0 < 50 || z1 < 50 || z2 < 50 {
+            continue;
+        }
+        let sx0 = pix.origin_x + x0.wrapping_shl(9).wrapping_div(z0);
+        let sy0 = pix.origin_y + y0.wrapping_shl(9).wrapping_div(z0);
+        let sx1 = pix.origin_x + x1.wrapping_shl(9).wrapping_div(z1);
+        let sy1 = pix.origin_y + y1.wrapping_shl(9).wrapping_div(z1);
+        let sx2 = pix.origin_x + x2.wrapping_shl(9).wrapping_div(z2);
+        let sy2 = pix.origin_y + y2.wrapping_shl(9).wrapping_div(z2);
+        if wrapping_cross(sx0 - sx1, sy2 - sy1, sy0 - sy1, sx2 - sx1) <= 0 {
+            continue;
+        }
+
+        if world.click
+            && inside_triangle(world.click_x, world.click_y, sy0, sy1, sy2, sx0, sx1, sx2)
+        {
+            world.ground_x = tile_x;
+            world.ground_z = tile_z;
+        }
+
+        let colour_a = ground.face_colour_a.get(f).copied().unwrap_or(0);
+        if colour_a == 12345678 {
+            continue;
+        }
+        let colour_b = ground.face_colour_b.get(f).copied().unwrap_or(0);
+        let colour_c = ground.face_colour_c.get(f).copied().unwrap_or(0);
+        mesh.push(
+            GpuVertex::new(x0, y0, z0, colour_a, 255),
+            GpuVertex::new(x1, y1, z1, colour_b, 255),
+            GpuVertex::new(x2, y2, z2, colour_c, 255),
+            false,
+        );
+    }
+}
+
+/// `renderQuickGround` for the GPU path: the 4-corner quad (two
+/// triangles) with the corner shade indices.
+fn emit_quick_ground(
+    world: &mut World,
+    pix: &mut Pix3DDraw,
+    mesh: &mut SceneMesh,
+    cam: &SceneCam,
+    ground: QuickGround,
+    level: i32,
+    tile_x: i32,
+    tile_z: i32,
+) {
+    let mut x = [0i32; 4];
+    let mut y = [0i32; 4];
+    let mut z = [0i32; 4];
+    x[0] = (tile_x << 7) - cam.eye_x;
+    x[1] = x[0] + 128;
+    x[2] = x[1];
+    x[3] = x[0];
+    z[0] = (tile_z << 7) - cam.eye_z;
+    z[1] = z[0];
+    z[2] = z[0] + 128;
+    z[3] = z[2];
+    y[0] = ground_h(world, level, tile_x, tile_z) - cam.eye_y;
+    y[1] = ground_h(world, level, tile_x + 1, tile_z) - cam.eye_y;
+    y[2] = ground_h(world, level, tile_x + 1, tile_z + 1) - cam.eye_y;
+    y[3] = ground_h(world, level, tile_x, tile_z + 1) - cam.eye_y;
+
+    let mut sx = [0i32; 4];
+    let mut sy = [0i32; 4];
+    for i in 0..4 {
+        let tmp = (z[i].wrapping_mul(cam.sin_yaw).wrapping_add(x[i].wrapping_mul(cam.cos_yaw))) >> 16;
+        z[i] = (z[i].wrapping_mul(cam.cos_yaw).wrapping_sub(x[i].wrapping_mul(cam.sin_yaw))) >> 16;
+        x[i] = tmp;
+        let tmp = (y[i].wrapping_mul(cam.cos_pitch).wrapping_sub(z[i].wrapping_mul(cam.sin_pitch))) >> 16;
+        z[i] = (y[i].wrapping_mul(cam.sin_pitch).wrapping_add(z[i].wrapping_mul(cam.cos_pitch))) >> 16;
+        y[i] = tmp;
+        if z[i] < 50 {
+            return;
+        }
+        sx[i] = pix.origin_x + x[i].wrapping_shl(9).wrapping_div(z[i]);
+        sy[i] = pix.origin_y + y[i].wrapping_shl(9).wrapping_div(z[i]);
+    }
+
+    // Triangle 1: corners (2, 3, 1), shades (ne, nw, se).
+    if wrapping_cross(sx[2] - sx[3], sy[1] - sy[3], sy[2] - sy[3], sx[1] - sx[3]) > 0 {
+        if world.click
+            && inside_triangle(world.click_x, world.click_y, sy[2], sy[3], sy[1], sx[2], sx[3], sx[1])
+        {
+            world.ground_x = tile_x;
+            world.ground_z = tile_z;
+        }
+        if ground.colour_ne != 12345678 {
+            mesh.push(
+                GpuVertex::new(x[2], y[2], z[2], ground.colour_ne, 255),
+                GpuVertex::new(x[3], y[3], z[3], ground.colour_nw, 255),
+                GpuVertex::new(x[1], y[1], z[1], ground.colour_se, 255),
+                false,
+            );
+        }
+    }
+
+    // Triangle 2: corners (0, 1, 3), shades (sw, se, nw).
+    if wrapping_cross(sx[0] - sx[1], sy[3] - sy[1], sy[0] - sy[1], sx[3] - sx[1]) > 0 {
+        if world.click
+            && inside_triangle(world.click_x, world.click_y, sy[0], sy[1], sy[3], sx[0], sx[1], sx[3])
+        {
+            world.ground_x = tile_x;
+            world.ground_z = tile_z;
+        }
+        if ground.colour_sw != 12345678 {
+            mesh.push(
+                GpuVertex::new(x[0], y[0], z[0], ground.colour_sw, 255),
+                GpuVertex::new(x[1], y[1], z[1], ground.colour_se, 255),
+                GpuVertex::new(x[3], y[3], z[3], ground.colour_nw, 255),
+                false,
+            );
+        }
+    }
 }
