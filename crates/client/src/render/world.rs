@@ -4553,6 +4553,22 @@ fn emit_quick_ground(
         sy[i] = pix.origin_y + y[i].wrapping_shl(9).wrapping_div(z[i]);
     }
 
+    // A textured quick ground (water, lava) is flat-shaded with the
+    // texture's average colour in low-mem, mirroring the CPU
+    // `render_quick_ground` (`get_table(TEXTURE_AVERAGE[texture], colour)`).
+    // High-mem textured quick ground is a follow-up (samples the atlas).
+    let tex_average = if ground.texture >= 0 && ground.texture < 50 && pix.low_mem {
+        TEXTURE_AVERAGE.get(ground.texture as usize).copied()
+    } else {
+        None
+    };
+    let shade_of = |colour: i32| -> i32 {
+        match tex_average {
+            Some(avg) => get_table(avg, colour),
+            None => colour,
+        }
+    };
+
     // Triangle 1: corners (2, 3, 1), shades (ne, nw, se).
     if wrapping_cross(sx[2] - sx[3], sy[1] - sy[3], sy[2] - sy[3], sx[1] - sx[3]) > 0 {
         if world.click
@@ -4563,9 +4579,9 @@ fn emit_quick_ground(
         }
         if ground.colour_ne != 12345678 {
             mesh.push(
-                GpuVertex::new(x[2], y[2], z[2], ground.colour_ne, 255),
-                GpuVertex::new(x[3], y[3], z[3], ground.colour_nw, 255),
-                GpuVertex::new(x[1], y[1], z[1], ground.colour_se, 255),
+                GpuVertex::new(x[2], y[2], z[2], shade_of(ground.colour_ne), 255),
+                GpuVertex::new(x[3], y[3], z[3], shade_of(ground.colour_nw), 255),
+                GpuVertex::new(x[1], y[1], z[1], shade_of(ground.colour_se), 255),
                 false,
             );
         }
@@ -4581,9 +4597,9 @@ fn emit_quick_ground(
         }
         if ground.colour_sw != 12345678 {
             mesh.push(
-                GpuVertex::new(x[0], y[0], z[0], ground.colour_sw, 255),
-                GpuVertex::new(x[1], y[1], z[1], ground.colour_se, 255),
-                GpuVertex::new(x[3], y[3], z[3], ground.colour_nw, 255),
+                GpuVertex::new(x[0], y[0], z[0], shade_of(ground.colour_sw), 255),
+                GpuVertex::new(x[1], y[1], z[1], shade_of(ground.colour_se), 255),
+                GpuVertex::new(x[3], y[3], z[3], shade_of(ground.colour_nw), 255),
                 false,
             );
         }
