@@ -8,6 +8,7 @@ pub mod io;
 pub mod login_rsa;
 pub mod render;
 pub mod sound;
+pub mod unpack;
 pub mod util;
 pub mod wordfilter;
 pub use login_rsa::{LOGIN_RSAE, LOGIN_RSAN};
