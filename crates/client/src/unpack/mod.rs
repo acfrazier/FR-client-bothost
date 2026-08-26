@@ -129,8 +129,9 @@ pub fn unpack_cache(cache_dir: &str, out_dir: &str) -> Result<Manifest, UnpackEr
 }
 
 /// First 8 bytes of the SHA-256 of the versionlist content, hex-encoded.
-/// Re-running is idempotent; any cache change yields a new version.
-fn version_hash(versionlist: &[u8]) -> String {
+/// Re-running is idempotent; any cache change yields a new version. Public
+/// so tests can lay out a fake snapshot at the same path the loader reads.
+pub fn version_hash(versionlist: &[u8]) -> String {
     let digest = Sha256::digest(versionlist);
     hex(&digest[..8])
 }
@@ -241,7 +242,6 @@ fn encode_record<W: Write>(out: &mut W, id: u32, data: &[u8]) -> io::Result<()> 
 }
 
 /// Inverse of `encode_record`; `None` on a truncated header or body.
-#[cfg(test)]
 fn decode_record<'a>(data: &'a [u8], pos: &mut usize) -> Option<(u32, &'a [u8])> {
     if *pos + 8 > data.len() {
         return None;
@@ -255,6 +255,66 @@ fn decode_record<'a>(data: &'a [u8], pos: &mut usize) -> Option<(u32, &'a [u8])>
     let bytes = &data[*pos..*pos + len];
     *pos += len;
     Some((id, bytes))
+}
+
+/// What the boot inject pulled from a snapshot: model + anim record counts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Loaded {
+    /// `models.bin` records unpacked into the process-wide model store.
+    pub models: usize,
+    /// `anims.bin` records unpacked into the process-wide anim store (each
+    /// record may hold one or more frames).
+    pub anim_records: usize,
+}
+
+/// Load the snapshot written by [`unpack_cache`] into the process-wide
+/// model/animation stores so every model/anim is available before the scene
+/// places its locs. `cache_dir` supplies the versionlist content used to
+/// recompute the version (the same file `unpack_cache` hashed); `out_dir` is
+/// the snapshot root (`~/.274bot/unpack`). A missing or empty snapshot dir,
+/// or a truncated record, is `Err`.
+pub fn load_snapshot(cache_dir: &str, out_dir: &str) -> Result<Loaded, UnpackError> {
+    let versionlist_path = Path::new(cache_dir).join("versionlist");
+    let versionlist =
+        std::fs::read(&versionlist_path).map_err(|e| UnpackError::io("read versionlist", e))?;
+    let version = version_hash(&versionlist);
+    let dir_path = Path::new(out_dir).join(&version);
+
+    let models = load_records(&dir_path.join("models.bin"), |id, raw| {
+        crate::dash3d::Model::unpack(id as i32, Some(raw));
+    })?;
+    let anim_records = load_records(&dir_path.join("anims.bin"), |_id, raw| {
+        crate::dash3d::AnimFrame::unpack(raw);
+    })?;
+
+    Ok(Loaded { models, anim_records })
+}
+
+/// Read every `[id][len][raw]` record from `path` and hand each to `apply`.
+/// Returns the record count; a truncated header or body, or an empty file, is
+/// a hard error (Task 1 never writes partial or empty archives).
+fn load_records(path: &Path, mut apply: impl FnMut(u32, &[u8])) -> Result<usize, UnpackError> {
+    let bytes =
+        std::fs::read(path).map_err(|e| UnpackError::io(&format!("read {}", path.display()), e))?;
+    let mut count = 0usize;
+    let mut pos = 0usize;
+    while pos < bytes.len() {
+        let Some((id, raw)) = decode_record(&bytes, &mut pos) else {
+            return Err(UnpackError::new(format!(
+                "{}: truncated record at byte {pos}",
+                path.display()
+            )));
+        };
+        apply(id, raw);
+        count += 1;
+    }
+    if count == 0 {
+        return Err(UnpackError::new(format!(
+            "{}: no records (empty snapshot file)",
+            path.display()
+        )));
+    }
+    Ok(count)
 }
 
 fn manifest_text(m: &Manifest) -> String {

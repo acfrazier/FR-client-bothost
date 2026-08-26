@@ -1295,6 +1295,15 @@ impl Client {
         checksum
     }
 
+    /// The Task 2 snapshot root (`~/.274bot/unpack`), matching `unpack-cache`
+    /// when `HOME` is unset.
+    fn unpack_snapshot_dir() -> String {
+        match std::env::var("HOME") {
+            Ok(home) => format!("{home}/.274bot/unpack"),
+            Err(_) => ".274bot/unpack".to_string(),
+        }
+    }
+
     /// Start the OnDemand worker when the cache dir has a `versionlist` pack
     /// (the TS update-server fetch is a cache read here; the engine packs the
     /// same file). Missing cache → `None`, matching TS `onDemand === null`.
@@ -1490,59 +1499,86 @@ impl Client {
             }
         }
 
-        // Bot host: unpack every model already in the local file store
-        // (idx1) directly — no OnDemand/server round-trip — so a random-event
-        // model (the Maze walls) is available at boot and `Model::load` never
-        // misses because a loc was placed before its model arrived. The
-        // OnDemand request below still fetches anything the cache lacks.
-        if let Some(od) = self.on_demand.as_ref() {
-            od.unpack_models_from_cache(&self.config.cache_dir);
+        // Task 2 boot inject: load the Task 1 snapshot (models + anims) first
+        // so every model/anim is available before the scene places its locs.
+        // Non-fatal: a missing/empty snapshot falls back to the live-cache
+        // unpack and the OnDemand floods below unchanged.
+        let snapshot_loaded = match crate::unpack::load_snapshot(
+            &self.config.cache_dir,
+            &Self::unpack_snapshot_dir(),
+        ) {
+            Ok(loaded) => {
+                eprintln!(
+                    "274bot: loaded snapshot ({} models, {} anim records)",
+                    loaded.models, loaded.anim_records
+                );
+                true
+            }
+            Err(e) => {
+                eprintln!("274bot: snapshot load skipped: {e}");
+                false
+            }
+        };
+
+        // Fallback when the snapshot is absent: unpack every model already in
+        // the local file store (idx1) the server served — no
+        // OnDemand/server round-trip — so a random-event model (the Maze
+        // walls) is available at boot. The OnDemand request below still
+        // fetches anything the live cache lacks.
+        if !snapshot_loaded {
+            if let Some(od) = self.on_demand.as_ref() {
+                od.unpack_models_from_cache(&self.config.cache_dir);
+            }
         }
 
         // TS anim/model prefetch (893-960): request every anim, then the
         // in-use models, draining with `on_demand_loop` until the request
         // lists empty. Skipped when OnDemand is `None` (no versionlist —
-        // the dummy-file tests).
+        // the dummy-file tests) or when the snapshot already injected them.
         if self.on_demand.is_some() {
-            self.report_progress(&mut progress, "Requesting animations", 65);
-            let anim_count = self.on_demand.as_ref().unwrap().get_file_count(1);
-            for i in 0..anim_count {
-                self.on_demand.as_mut().unwrap().request(1, i);
-            }
-            while self.on_demand.as_ref().unwrap().remaining() > 0 {
-                let done = anim_count - self.on_demand.as_ref().unwrap().remaining() as i32;
-                // Report every pass (not only on progress): the callback
-                // pumps the window/audio, so a prefetch stall cannot
-                // beachball the headed client.
-                self.report_progress(
-                    &mut progress,
-                    &format!("Loading animations - {}%", (done * 100) / anim_count),
-                    65,
-                );
-                self.on_demand_loop();
-                thread::sleep(Duration::from_millis(100));
-            }
+            if !snapshot_loaded {
+                self.report_progress(&mut progress, "Requesting animations", 65);
+                let anim_count = self.on_demand.as_ref().unwrap().get_file_count(1);
+                for i in 0..anim_count {
+                    self.on_demand.as_mut().unwrap().request(1, i);
+                }
+                while self.on_demand.as_ref().unwrap().remaining() > 0 {
+                    let done =
+                        anim_count - self.on_demand.as_ref().unwrap().remaining() as i32;
+                    // Report every pass (not only on progress): the callback
+                    // pumps the window/audio, so a prefetch stall cannot
+                    // beachball the headed client.
+                    self.report_progress(
+                        &mut progress,
+                        &format!("Loading animations - {}%", (done * 100) / anim_count),
+                        65,
+                    );
+                    self.on_demand_loop();
+                    thread::sleep(Duration::from_millis(100));
+                }
 
-            self.report_progress(&mut progress, "Requesting models", 70);
-            // Java 5206-5210: remaining()==0 only for `getModelUse & 1`.
-            // Other use bits + maps + midi jingles are prefetchPriority
-            // after the bar (5251-5285). Title `titleScreenDraw` plots
-            // `onDemand.message` ("Loading extra files - x%") under the
-            // two login buttons while those drain (Java 3927, colour
-            // 7711145). Live-verify used to urgent-request every
-            // `priority != 0` model on the bar; that skipped the title
-            // extra-files pass and made startup slower than Java.
-            self.on_demand.as_mut().unwrap().request_all_models();
-            let model_total = self.on_demand.as_ref().unwrap().remaining() as i32;
-            while self.on_demand.as_ref().unwrap().remaining() > 0 {
-                let done = model_total - self.on_demand.as_ref().unwrap().remaining() as i32;
-                self.report_progress(
-                    &mut progress,
-                    &format!("Loading models - {}%", (done * 100) / model_total.max(1)),
-                    70,
-                );
-                self.on_demand_loop();
-                thread::sleep(Duration::from_millis(100));
+                self.report_progress(&mut progress, "Requesting models", 70);
+                // Java 5206-5210: remaining()==0 only for `getModelUse & 1`.
+                // Other use bits + maps + midi jingles are prefetchPriority
+                // after the bar (5251-5285). Title `titleScreenDraw` plots
+                // `onDemand.message` ("Loading extra files - x%") under the
+                // two login buttons while those drain (Java 3927, colour
+                // 7711145). Live-verify used to urgent-request every
+                // `priority != 0` model on the bar; that skipped the title
+                // extra-files pass and made startup slower than Java.
+                self.on_demand.as_mut().unwrap().request_all_models();
+                let model_total = self.on_demand.as_ref().unwrap().remaining() as i32;
+                while self.on_demand.as_ref().unwrap().remaining() > 0 {
+                    let done =
+                        model_total - self.on_demand.as_ref().unwrap().remaining() as i32;
+                    self.report_progress(
+                        &mut progress,
+                        &format!("Loading models - {}%", (done * 100) / model_total.max(1)),
+                        70,
+                    );
+                    self.on_demand_loop();
+                    thread::sleep(Duration::from_millis(100));
+                }
             }
 
             // Java `Client.java:5224-5250`: urgent Lumbridge starter maps,
