@@ -419,12 +419,15 @@ impl GpuChrome {
     pub fn map_blit(&mut self, src: &PixMap, x: i32, y: i32) {
         let tag = src.pixels.as_ptr() as usize;
         if self.staged.contains(&tag) {
+            // Pop the source surface first so the staged quad lands in the
+            // root buffer, not the source buffer that would then be dropped
+            // (the rotated minimap / title flames rendered black).
+            self.buffers.retain(|b| b.tag != tag);
             let Some(region) = self.assets.lock().unwrap().staged_upload(tag, src, self.epoch)
             else {
                 return;
             };
             self.sprite_quad(x, y, src.width, src.height, region, 256);
-            self.buffers.retain(|b| b.tag != tag);
             return;
         }
         // Every open surface over the source map (e.g. the `prepare_title`
@@ -670,4 +673,51 @@ impl Drop for GpuChromeGuard {
 /// Quads flushed by the last frame (the chrome-as-quads test reads this).
 pub fn last_quad_count() -> usize {
     LAST_QUAD_COUNT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter = pollster::block_on(instance.request_adapter(
+            &wgpu::RequestAdapterOptions::default(),
+        ))
+        .ok()?;
+        pollster::block_on(adapter.request_device(&Default::default())).ok()
+    }
+
+    /// A staged map's blit must record one quad into the root buffer (the
+    /// rotated minimap, the title flames). Regression: `map_blit`'s staged
+    /// branch emitted the quad while the source surface buffer was still on
+    /// top of the stack — its `staged` flag suppressed the quad, or the
+    /// trailing `retain` dropped the buffer that held it — so staged maps
+    /// never reached the composited frame.
+    #[test]
+    fn staged_map_blit_records_one_root_quad() {
+        let Some((device, queue)) = test_device() else {
+            eprintln!("no adapter; skipping");
+            return;
+        };
+        let assets = std::sync::Arc::new(std::sync::Mutex::new(GpuAssets::new(&device, &queue)));
+        let mut chrome = GpuChrome::new(&device, &queue, assets);
+
+        let draw_area = PixMap::new(FRAME_W as i32, FRAME_H as i32);
+        let area_map = PixMap::new(172, 156);
+        let tag = area_map.pixels.as_ptr() as usize;
+
+        chrome.frame_begin(&draw_area);
+        chrome.mark_staged(Some(&area_map));
+        // `minimap_draw` opens the staged surface before its (550, 4) blit.
+        chrome.surface_open(tag);
+        chrome.map_blit(&area_map, 550, 4);
+
+        assert_eq!(
+            chrome.quad_count(),
+            1,
+            "a staged map blit must record one quad into the root buffer"
+        );
+    }
 }
