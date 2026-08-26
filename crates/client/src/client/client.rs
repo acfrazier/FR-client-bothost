@@ -269,6 +269,10 @@ pub struct ClientGens {
     pub stat: u64,
     pub chat: u64,
     pub scene: u64,
+    pub iface: u64,
+    pub camera: u64,
+    pub map_flag: u64,
+    pub world: u64,
 }
 
 pub struct Client {
@@ -3454,6 +3458,31 @@ impl Client {
             | ServerProt::OBJ_COUNT
             | ServerProt::MAP_ANIM
             | ServerProt::OBJ_ADD => self.gens.scene += 1,
+            ServerProt::IF_OPENCHAT
+            | ServerProt::IF_OPENMAIN_SIDE
+            | ServerProt::IF_CLOSE
+            | ServerProt::IF_SETICON
+            | ServerProt::IF_SHOWICON
+            | ServerProt::IF_OPENMAIN
+            | ServerProt::IF_OPENSIDE
+            | ServerProt::IF_OPENOVERLAY
+            | ServerProt::IF_SETCOLOUR
+            | ServerProt::IF_SETHIDE
+            | ServerProt::IF_SETOBJECT
+            | ServerProt::IF_SETMODEL
+            | ServerProt::IF_SETANIM
+            | ServerProt::IF_SETPLAYERHEAD
+            | ServerProt::IF_SETTEXT
+            | ServerProt::IF_SETNPCHEAD
+            | ServerProt::IF_SETPOSITION
+            | ServerProt::IF_SETSCROLLPOS
+            | ServerProt::P_COUNTDIALOG => self.gens.iface += 1,
+            ServerProt::CAM_LOOKAT
+            | ServerProt::CAM_SHAKE
+            | ServerProt::CAM_MOVETO
+            | ServerProt::CAM_RESET => self.gens.camera += 1,
+            ServerProt::UNSET_MAP_FLAG => self.gens.map_flag += 1,
+            ServerProt::SET_MULTIWAY => self.gens.world += 1,
             ServerProt::REBUILD_NORMAL => self.bump_all_gens(),
             _ => {}
         }
@@ -3469,6 +3498,10 @@ impl Client {
         self.gens.stat += 1;
         self.gens.chat += 1;
         self.gens.scene += 1;
+        self.gens.iface += 1;
+        self.gens.camera += 1;
+        self.gens.map_flag += 1;
+        self.gens.world += 1;
     }
 
     /// `IF_SETICON` handler (Client.ts 5992): bind interface `com_id` to side

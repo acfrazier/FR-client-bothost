@@ -51,6 +51,10 @@ fn applied_packets_bump_their_family() {
     assert_eq!(c.gens.stat, 0);
     assert_eq!(c.gens.chat, 0);
     assert_eq!(c.gens.scene, 0);
+    assert_eq!(c.gens.iface, 0);
+    assert_eq!(c.gens.camera, 0);
+    assert_eq!(c.gens.map_flag, 0);
+    assert_eq!(c.gens.world, 0);
 }
 
 /// `bump_gens` maps a `ServerProt` opcode to exactly one family.
@@ -66,6 +70,86 @@ fn npc_info_bumps_npc_gen_only() {
     assert_eq!(c.gens.stat, before.stat);
     assert_eq!(c.gens.chat, before.chat);
     assert_eq!(c.gens.scene, before.scene);
+    assert_eq!(c.gens.iface, before.iface);
+    assert_eq!(c.gens.camera, before.camera);
+    assert_eq!(c.gens.map_flag, before.map_flag);
+    assert_eq!(c.gens.world, before.world);
+}
+
+/// `bump_gens` maps interface mutation packets to the `iface` family.
+#[test]
+fn iface_packets_bump_iface_gen() {
+    let mut c = Client::new(cfg());
+    let before = c.gens;
+    c.bump_gens(ServerProt::IF_SETTEXT);
+    assert_eq!(c.gens.iface, before.iface + 1);
+    assert_eq!(c.gens.npc, before.npc);
+    assert_eq!(c.gens.player, before.player);
+    assert_eq!(c.gens.inv, before.inv);
+    assert_eq!(c.gens.varp, before.varp);
+    assert_eq!(c.gens.stat, before.stat);
+    assert_eq!(c.gens.chat, before.chat);
+    assert_eq!(c.gens.scene, before.scene);
+    assert_eq!(c.gens.camera, before.camera);
+    assert_eq!(c.gens.map_flag, before.map_flag);
+    assert_eq!(c.gens.world, before.world);
+}
+
+/// `bump_gens` maps camera control packets to the `camera` family.
+#[test]
+fn camera_packets_bump_camera_gen() {
+    let mut c = Client::new(cfg());
+    let before = c.gens;
+    c.bump_gens(ServerProt::CAM_LOOKAT);
+    assert_eq!(c.gens.camera, before.camera + 1);
+    assert_eq!(c.gens.npc, before.npc);
+    assert_eq!(c.gens.player, before.player);
+    assert_eq!(c.gens.inv, before.inv);
+    assert_eq!(c.gens.varp, before.varp);
+    assert_eq!(c.gens.stat, before.stat);
+    assert_eq!(c.gens.chat, before.chat);
+    assert_eq!(c.gens.scene, before.scene);
+    assert_eq!(c.gens.iface, before.iface);
+    assert_eq!(c.gens.map_flag, before.map_flag);
+    assert_eq!(c.gens.world, before.world);
+}
+
+/// `bump_gens` maps `UNSET_MAP_FLAG` to the `map_flag` family.
+#[test]
+fn map_flag_packets_bump_map_flag_gen() {
+    let mut c = Client::new(cfg());
+    let before = c.gens;
+    c.bump_gens(ServerProt::UNSET_MAP_FLAG);
+    assert_eq!(c.gens.map_flag, before.map_flag + 1);
+    assert_eq!(c.gens.npc, before.npc);
+    assert_eq!(c.gens.player, before.player);
+    assert_eq!(c.gens.inv, before.inv);
+    assert_eq!(c.gens.varp, before.varp);
+    assert_eq!(c.gens.stat, before.stat);
+    assert_eq!(c.gens.chat, before.chat);
+    assert_eq!(c.gens.scene, before.scene);
+    assert_eq!(c.gens.iface, before.iface);
+    assert_eq!(c.gens.camera, before.camera);
+    assert_eq!(c.gens.world, before.world);
+}
+
+/// `bump_gens` maps world-level flag packets (`SET_MULTIWAY`) to the `world` family.
+#[test]
+fn world_packets_bump_world_gen() {
+    let mut c = Client::new(cfg());
+    let before = c.gens;
+    c.bump_gens(ServerProt::SET_MULTIWAY);
+    assert_eq!(c.gens.world, before.world + 1);
+    assert_eq!(c.gens.npc, before.npc);
+    assert_eq!(c.gens.player, before.player);
+    assert_eq!(c.gens.inv, before.inv);
+    assert_eq!(c.gens.varp, before.varp);
+    assert_eq!(c.gens.stat, before.stat);
+    assert_eq!(c.gens.chat, before.chat);
+    assert_eq!(c.gens.scene, before.scene);
+    assert_eq!(c.gens.iface, before.iface);
+    assert_eq!(c.gens.camera, before.camera);
+    assert_eq!(c.gens.map_flag, before.map_flag);
 }
 
 /// `REBUILD_NORMAL` swaps the whole scene, so every family is stale.
@@ -75,6 +159,7 @@ fn rebuild_bumps_all_gens() {
     c.bump_gens(ServerProt::REBUILD_NORMAL);
     assert!(c.gens.npc >= 1 && c.gens.player >= 1 && c.gens.inv >= 1);
     assert!(c.gens.varp >= 1 && c.gens.stat >= 1 && c.gens.chat >= 1 && c.gens.scene >= 1);
+    assert!(c.gens.iface >= 1 && c.gens.camera >= 1 && c.gens.map_flag >= 1 && c.gens.world >= 1);
 }
 
 /// `LOGOUT` resets the whole world, so the `handle_packet` path bumps every
@@ -91,6 +176,10 @@ fn logout_bumps_all_gens() {
     assert_eq!(c.gens.stat, 1);
     assert_eq!(c.gens.chat, 1);
     assert_eq!(c.gens.scene, 1);
+    assert_eq!(c.gens.iface, 1);
+    assert_eq!(c.gens.camera, 1);
+    assert_eq!(c.gens.map_flag, 1);
+    assert_eq!(c.gens.world, 1);
 }
 
 /// Direct `logout()` (lost_con, tcp_in T2, in-band PLAYER/NPC T2) also
@@ -106,6 +195,10 @@ fn logout_method_bumps_all_gens() {
     assert_eq!(c.gens.stat, 1);
     assert_eq!(c.gens.chat, 1);
     assert_eq!(c.gens.scene, 1);
+    assert_eq!(c.gens.iface, 1);
+    assert_eq!(c.gens.camera, 1);
+    assert_eq!(c.gens.map_flag, 1);
+    assert_eq!(c.gens.world, 1);
 }
 
 /// T1 unknown opcode logs out without a mapped `bump_gens` arm; `logout()`
@@ -123,6 +216,10 @@ fn t1_unknown_opcode_bumps_all_gens() {
     assert_eq!(c.gens.stat, 1);
     assert_eq!(c.gens.chat, 1);
     assert_eq!(c.gens.scene, 1);
+    assert_eq!(c.gens.iface, 1);
+    assert_eq!(c.gens.camera, 1);
+    assert_eq!(c.gens.map_flag, 1);
+    assert_eq!(c.gens.world, 1);
 }
 
 /// The generation bookkeeping derives the Java-visible shape the host reads:
@@ -133,4 +230,8 @@ fn gens_defaults_to_zero() {
     let g: ClientGens = Default::default();
     assert_eq!(c.gens.npc, g.npc);
     assert_eq!(c.gens.scene, g.scene);
+    assert_eq!(c.gens.iface, g.iface);
+    assert_eq!(c.gens.camera, g.camera);
+    assert_eq!(c.gens.map_flag, g.map_flag);
+    assert_eq!(c.gens.world, g.world);
 }
