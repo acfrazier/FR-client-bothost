@@ -1523,7 +1523,7 @@ impl Client {
             // 7711145). Live-verify used to urgent-request every
             // `priority != 0` model on the bar; that skipped the title
             // extra-files pass and made startup slower than Java.
-            self.on_demand.as_mut().unwrap().request_in_use_models();
+            self.on_demand.as_mut().unwrap().request_all_models();
             let model_total = self.on_demand.as_ref().unwrap().remaining() as i32;
             while self.on_demand.as_ref().unwrap().remaining() > 0 {
                 let done = model_total - self.on_demand.as_ref().unwrap().remaining() as i32;

@@ -467,6 +467,18 @@ impl OnDemand {
         }
     }
 
+    /// Request **every** model (archive 0), not just the `model_use & 1`
+    /// "in-use" subset. The bot host unpacks the whole 2004 cache on boot,
+    /// so any model a random event (the Maze), an on-demand map, or a
+    /// script later needs is already fetched — `Model::load` never misses
+    /// because a loc was placed before its model arrived.
+    pub fn request_all_models(&mut self) {
+        let n = self.get_file_count(0);
+        for i in 0..n {
+            self.request(0, i);
+        }
+    }
+
     /// Java `Client.maininit` 5251-5285: `prefetchPriority` the rest of the
     /// models, then maps, then midi jingles. These are not in `remaining()`
     /// — OnDemand downloads them after title, and `onDemand.message`

@@ -40,6 +40,47 @@ let _r = Renderer::new(false);
     assert_eq!(od.remaining(), 2);
 }
 
+/// The bot host prefetches every model on boot, not just the `model_use & 1`
+/// "in-use" subset — so a random-event model (the Maze walls) is already
+/// fetched when its loc is placed and `Model::load` never misses.
+#[test]
+fn request_all_models_requests_every_model() {
+let _r = Renderer::new(false);
+    use std::net::TcpListener;
+
+    // 3 models; only model 0 carries the "in-use" bit.
+    let files: Vec<(&str, Vec<u8>)> = vec![
+        ("model_version", vec![0, 1, 0, 1, 0, 1]),
+        ("anim_version", vec![0, 1]),
+        ("midi_version", vec![0, 1]),
+        ("map_version", vec![0, 1]),
+        ("model_crc", vec![0; 12]),
+        ("anim_crc", vec![0, 0, 0, 0]),
+        ("midi_crc", vec![0, 0, 0, 0]),
+        ("map_crc", vec![0, 0, 0, 0]),
+        ("model_index", vec![1, 0, 0]),
+    ];
+    let entries: Vec<(&str, &[u8])> = files.iter().map(|(n, d)| (*n, d.as_slice())).collect();
+    let versionlist = JagFile::new(jag(&entries));
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    let mut in_use = OnDemand::new(
+        &versionlist, "127.0.0.1", port, "/tmp", Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    in_use.request_in_use_models();
+    assert_eq!(in_use.remaining(), 1, "in-use prefetch requests only the flagged model");
+
+    let mut all = OnDemand::new(
+        &versionlist, "127.0.0.1", port, "/tmp", Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    all.request_all_models();
+    assert_eq!(all.remaining(), 3, "boot prefetch must request every model");
+}
+
 /// End-to-end worker pump against a mock engine ondemand socket: byte-15
 /// handshake, 4-byte request (archive 2 / file 0 / urgent), and one chunk of
 /// gzip + 2-byte version trailer, which the client gunzips on `loop_request`.
