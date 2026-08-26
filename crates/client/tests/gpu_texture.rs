@@ -12,8 +12,8 @@
 use client::config::Cache;
 use client::core::World;
 use client::dash3d::{SceneModel, TerrainOverlayShape};
-use client::graphics::{Pix2D, Pix3D, Pix3DDraw, Pix8};
-use client::render::backend::{FrameOutput, GpuBackend, RenderBackend};
+use client::graphics::{Pix3D, Pix3DDraw, Pix8};
+use client::render::backend::{FrameOutput, GpuBackend};
 use client::render::world::GpuVertex;
 use client::render::{RenderWorld, Renderer};
 
@@ -363,40 +363,73 @@ fn gpu_lowmem_texture_samples_the_full_128px_layer() {
     );
 }
 
-/// The composite: after a scene render, `finish` returns one full-frame
-/// 765×503 texture carrying the scene at its (4, 4) point — the scene and
-/// the (empty, here) chrome quads land in the same texture, no readback.
-/// The CPU-drawn `draw_area` composites over the scene: a black pixel in
-/// the scene window is the scene's transparent hole, and a painted
-/// (opaque) pixel covers the scene.
+/// The composite: a real in-game frame through the wgpu backend returns
+/// one full-frame 765×503 texture carrying the scene at its (4, 4) point —
+/// no readback. The overlay-coverage buffer drives the scene-window
+/// transparency: a pixel the overlay pass wrote is opaque *regardless of
+/// colour* (the minimenu's black title bar and border stay black over the
+/// scene), and an uncovered scene-window pixel shows the scene.
 #[test]
 fn composite_lands_the_scene_in_the_full_frame() {
     Pix3D::init_colour_table(0.6);
-    let Ok(mut backend) = GpuBackend::try_new() else {
+    let Ok(backend) = GpuBackend::try_new() else {
         eprintln!("no adapter on this machine; the composite test skips");
         return;
     };
-    let mut pix = textured_pix();
-    let (_rw, _world, mesh) = textured_wall_mesh(&mut pix);
-    backend.render_scene_for_test(mesh, &pix);
+    // A fresh empty cache dir: `prepare_game` must not overwrite the
+    // fixture textures with a real `textures` jag, and no fonts/sprites
+    // load (the minimenu rects need neither — the menu stays where the
+    // test puts it).
+    let cache_dir = std::env::temp_dir().join(format!("r274-gpu-composite-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&cache_dir);
+    // Drive the real frame stages through the wgpu backend: a renderer
+    // holding it, a client with the textured-wall fixture world + camera,
+    // and an open scene-view minimenu (the overlay the coverage pass
+    // records).
+    let mut r = Renderer::with_backend(Box::new(backend), false);
+    Pix3D::init_colour_table(0.6); // Renderer::new re-inits at 0.8; re-pin
+    let mut c = client(&cache_dir);
+    c.set_draw(true);
+    c.ingame = true;
+    c.scene_state = 2;
+    c.cam_x = 192;
+    c.cam_y = 1950;
+    c.cam_z = 192;
+    c.cam_pitch = 128;
+    // The open scene-view minimenu: `draw_minimenu` fills the brown box,
+    // a BLACK title bar and a BLACK border into `area_game` (area 0).
+    c.is_menu_open = true;
+    c.menu_area = 0;
+    c.menu_x = 50;
+    c.menu_y = 50;
+    c.menu_width = 100;
+    c.menu_height = 120;
+    c.world = flat_world();
+    c.world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+    r.world.set_wall_model(
+        &c.world,
+        0,
+        1,
+        2,
+        Some(SceneModel::Model(textured_wall_model())),
+        None,
+    );
+    r.pix3d.textures[TEXTURE_RED as usize] = Some(solid_texture(0xff0000));
+    r.pix3d.tex_pal[TEXTURE_RED as usize] = Some(vec![0, 0xff0000]);
+    r.pix3d.textures[TEXTURE_BLUE as usize] = Some(solid_texture(0x0000ff));
+    r.pix3d.tex_pal[TEXTURE_BLUE as usize] = Some(vec![0, 0x0000ff]);
 
-    let mut r = Renderer::new(false);
-    // Paint a known chrome rect inside the scene window (x∈[4,516),
-    // y∈[4,338)): with the scene ready it must stay opaque and cover the
-    // scene, while the surrounding black `draw_area` stays transparent.
-    {
-        let w = r.draw_area.width;
-        let h = r.draw_area.height;
-        let mut surface = Pix2D::with_pixels(&mut r.draw_area.pixels, w, h);
-        surface.fill_rect(100, 100, 16, 16, 0xffffff);
-    }
-    let FrameOutput::Texture(handle) = backend.finish(&mut r) else {
+    let FrameOutput::Texture(handle) = r.game_draw(&mut c) else {
         panic!("finish must return the full-frame texture");
     };
     assert_eq!((handle.width, handle.height), (765, 503));
     let pixels = handle.read_back();
+    // Nothing outside the frame's own bounds.
+    assert_eq!(pixels.len(), 765 * 503);
+
     // The textured wall renders inside the (4, 4) scene region (not the
-    // raw 512×334 scene texture — the full frame).
+    // raw 512×334 scene texture — the full frame): the uncovered scene
+    // window shows the scene.
     let mut scene_red = 0usize;
     for y in 4..338 {
         for x in 4..516 {
@@ -413,18 +446,37 @@ fn composite_lands_the_scene_in_the_full_frame() {
         scene_red > 500,
         "the composited full-frame must carry the scene at (4, 4) (got {scene_red} red px)"
     );
-    // The painted rect is opaque chrome over the scene window (alpha 255),
-    // not a transparent hole.
-    for y in 100..116 {
-        for x in 100..116 {
-            assert_eq!(
-                pixels[y * 765 + x], 0xffffff,
-                "a non-black draw_area pixel in the scene window must cover the scene at ({x}, {y})"
-            );
-        }
+
+    // The minimenu overlay is opaque *regardless of colour*: the brown
+    // box, and the BLACK title bar + border — covered pixels stay opaque
+    // over the scene (the coverage fix; a colour-sentinel key would punch
+    // these black pixels through to the scene).
+    // The menu is at area_game (50, 50, 100, 120), blitted at (4, 4):
+    // frame box [54,154)×[54,174), title bar [55,153)×[55,71), border
+    // cols 55/152 rows 72/172.
+    for (fx, fy, expected) in [
+        (104, 104, 0x5d5447), // brown box interior
+        (104, 59, 0x000000),  // black title bar, covered -> opaque black
+        (55, 104, 0x000000),  // black border, covered -> opaque black
+    ] {
+        assert_eq!(
+            pixels[fy * 765 + fx], expected,
+            "a covered minimenu pixel at ({fx}, {fy}) must be opaque over the scene"
+        );
     }
-    // Nothing outside the frame's own bounds.
-    assert_eq!(pixels.len(), 765 * 503);
+}
+
+/// A client with an empty cache (the GPU fixture frames need only the
+/// world/camera; no media sprites/fonts/textures load, so the menu
+/// position and the fixture textures stay deterministic).
+fn client(cache_dir: &std::path::Path) -> client::client::Client {
+    client::client::Client::new(client::client::ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache_dir.to_string_lossy().into_owned(),
+        members: true,
+        lowmem: false,
+    })
 }
 
 /// The `GpuVertex` layout stays `bytemuck`-clean for the raw upload (the

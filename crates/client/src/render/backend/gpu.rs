@@ -31,6 +31,7 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::client::client::Client;
+use crate::graphics::pix2d::coverage_guard;
 use crate::graphics::{Pix2D, Pix3D, Pix3DDraw, PixMap};
 use crate::render::backend::gpu_atlas::GpuAssets;
 use crate::render::backend::{BackendKind, CpuBackend, FrameKind, FrameOutput, RenderBackend, TextureHandle};
@@ -354,6 +355,10 @@ pub struct GpuBackend {
     chrome_pipeline: wgpu::RenderPipeline,
     /// The full-frame quad (six `ChromeVertex`es, uploaded once).
     chrome_vertex_buf: wgpu::Buffer,
+    /// The overlay-coverage marks (one byte per scene-window pixel): the
+    /// GPU overlay pass records which `area_game` pixels it wrote here,
+    /// and `finish` keys the scene-window transparency off it.
+    overlay_coverage: Vec<u8>,
     /// A scene was rendered this frame (a title frame, or an in-game frame
     /// with no built scene, leaves `composite_scene` a no-op like the CPU
     /// path's frozen-frame blit).
@@ -634,6 +639,7 @@ impl GpuBackend {
             chrome_bind_group,
             chrome_pipeline,
             chrome_vertex_buf,
+            overlay_coverage: vec![0; (SCENE_W * SCENE_H) as usize],
             scene_ready: false,
         })
     }
@@ -939,13 +945,21 @@ impl RenderBackend for GpuBackend {
         self.render_scene(mesh);
 
         // The overlays (chat bubbles, modal, minimenu, crosshair) draw into
-        // `area_game`, recorded as quads over the scene. Clear it exactly
-        // like the CPU path's `surface.cls()` before the world pass, so no
-        // stale overlay pixels ghost frame-to-frame.
+        // `area_game`. Clear it exactly like the CPU path's `surface.cls()`
+        // before the world pass, so no stale overlay pixels ghost
+        // frame-to-frame.
         if let Some(game) = r.area_game.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
             surface.cls();
         }
+
+        // The overlay pass records *which* scene-window pixels it wrote
+        // into a coverage buffer (reset each frame): `finish` keys the
+        // scene-window transparency off coverage, not pixel colour, so a
+        // legitimately black overlay pixel (the minimenu title bar, glyph
+        // drop-shadows) stays opaque over the scene.
+        self.overlay_coverage.fill(0);
+        let _cov_guard = coverage_guard(&mut self.overlay_coverage, SCENE_W, SCENE_H);
 
         r.world.remove_sprites(&mut core.world);
         r.entity_overlays(core);
@@ -955,6 +969,7 @@ impl RenderBackend for GpuBackend {
         core.pick_count = r.pix3d.picked_count;
         core.pick_typecodes.copy_from_slice(&r.pix3d.picked_entity_typecode);
         r.other_overlays(core);
+        drop(_cov_guard);
 
         core.cam_x = eye_x;
         core.cam_y = eye_y;
@@ -983,9 +998,11 @@ impl RenderBackend for GpuBackend {
     /// clear the frame, copy the GPU scene at (4, 4) when it was
     /// rendered, then upload the CPU-drawn `draw_area` as one RGBA8
     /// texture and draw it over the frame with alpha blending. The upload
-    /// is opaque chrome except inside the scene window, where a black
-    /// pixel is the scene's transparent hole (see [`draw_area_rgba`]).
-    /// No readback.
+    /// is opaque chrome except inside the scene window, where the
+    /// overlay-coverage buffer keys the transparency: a pixel the overlay
+    /// pass wrote is opaque regardless of colour (a black minimenu bar or
+    /// glyph shadow stays opaque); an uncovered pixel is the scene's hole
+    /// (see [`draw_area_rgba`]). No readback.
     fn finish(&mut self, r: &mut Renderer) -> FrameOutput {
         let mut encoder = self
             .context
@@ -1031,8 +1048,10 @@ impl RenderBackend for GpuBackend {
             );
         }
         // The CPU chrome body drew the 2D UI into the persistent
-        // `draw_area`; upload it as one RGBA8 texture.
-        let rgba = draw_area_rgba(&r.draw_area, self.scene_ready);
+        // `draw_area`; upload it as one RGBA8 texture. The rows are padded
+        // to wgpu's 256-byte `COPY_BYTES_PER_ROW_ALIGNMENT`.
+        let bytes_per_row = ((FRAME_W * 4 + 255) / 256) * 256;
+        let rgba = draw_area_rgba(&r.draw_area, &self.overlay_coverage, self.scene_ready, bytes_per_row);
         self.context.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &self.chrome_texture,
@@ -1043,7 +1062,7 @@ impl RenderBackend for GpuBackend {
             &rgba,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(FRAME_W * 4),
+                bytes_per_row: Some(bytes_per_row),
                 rows_per_image: Some(FRAME_H),
             },
             wgpu::Extent3d { width: FRAME_W, height: FRAME_H, depth_or_array_layers: 1 },
@@ -1086,23 +1105,29 @@ impl RenderBackend for GpuBackend {
 }
 
 /// Build the RGBA8 upload bytes from the CPU-drawn `draw_area` (opaque
-/// `0x00RRGGBB` pixels). When the scene was rendered, the scene window —
-/// the fixed rect x∈[4,516), y∈[4,338) — is the transparent hole: alpha 0
-/// there only for a black pixel (the GPU scene shows through), alpha 255
-/// for any chrome/overlay pixel on top of it. Everywhere outside the
-/// scene window the chrome is opaque. With no scene (title screen) the
-/// whole frame is opaque.
-fn draw_area_rgba(draw_area: &PixMap, scene_ready: bool) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity((FRAME_W * FRAME_H * 4) as usize);
+/// `0x00RRGGBB` pixels), one row padded to `bytes_per_row` (wgpu's 256-byte
+/// row alignment; the padding is zero-filled). When the scene was rendered,
+/// the scene window — the fixed rect x∈[4,516), y∈[4,338) — is the
+/// transparent hole: a pixel the overlay pass wrote (per the coverage
+/// buffer) is opaque *regardless of colour*, an uncovered pixel is the
+/// scene's hole. Outside the scene window the chrome is opaque; with no
+/// scene (title screen) the whole frame is opaque.
+fn draw_area_rgba(draw_area: &PixMap, coverage: &[u8], scene_ready: bool, bytes_per_row: u32) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity((bytes_per_row * FRAME_H) as usize);
     for y in 0..FRAME_H {
         for x in 0..FRAME_W {
             let rgb = draw_area.pixels[(y * FRAME_W + x) as usize];
             let alpha = if scene_ready
                 && (4..516).contains(&(x as i32))
                 && (4..338).contains(&(y as i32))
-                && rgb == 0
             {
-                0
+                // The scene window: covered overlay pixels are opaque, the
+                // uncovered rest is the scene's hole.
+                if coverage[((y - 4) * SCENE_W + (x - 4)) as usize] != 0 {
+                    255
+                } else {
+                    0
+                }
             } else {
                 255
             };
@@ -1111,6 +1136,7 @@ fn draw_area_rgba(draw_area: &PixMap, scene_ready: bool) -> Vec<u8> {
             bytes.push((rgb & 0xff) as u8);
             bytes.push(alpha);
         }
+        bytes.resize(bytes.len() + (bytes_per_row - FRAME_W * 4) as usize, 0);
     }
     bytes
 }

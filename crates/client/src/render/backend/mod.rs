@@ -149,9 +149,10 @@ pub enum FrameKind {
 /// (`CpuBackend` into `area_game`, `GpuBackend` into a wgpu texture), and
 /// `composite_scene` lands it in `draw_area` at the (4, 4) blit point
 /// ahead of the 2D chrome. `CpuBackend` blits `area_game`; `GpuBackend`
-/// reads its texture back and blits it (with the `area_game` overlay
-/// content merged) at the same point. The default is a no-op so test
-/// backends and the title path (which has no 3D scene) need nothing.
+/// copies its `scene_texture` into the full-frame texture on the GPU and
+/// `finish` composites the uploaded `draw_area` over it — no readback.
+/// The default is a no-op so test backends and the title path (which has
+/// no 3D scene) need nothing.
 ///
 /// Output is backend-owned: `finish` returns a `FrameOutput` the backend
 /// produced, never a borrow of the renderer's framebuffer. A GPU backend
@@ -171,8 +172,9 @@ pub trait RenderBackend {
     fn scene(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind);
     /// Land the backend's scene in `draw_area` at the (4, 4) blit point,
     /// ahead of the 2D chrome (task 7 composite seam). `CpuBackend` blits
-    /// `area_game`; `GpuBackend` reads its scene texture back and blits it
-    /// with the `area_game` overlay content merged. Default: no-op.
+    /// `area_game`; `GpuBackend` copies its scene texture into the
+    /// full-frame on the GPU, with the uploaded `draw_area` (the overlay
+    /// pixels included) composited over it. Default: no-op.
     fn composite_scene(&mut self, _core: &mut Client, _r: &mut Renderer, _kind: FrameKind) {}
     /// 2D chrome over the scene: ifaces/HUD, side/chat/icons, minimap and
     /// the in-game redraw-frame compositing, or the title compositing.

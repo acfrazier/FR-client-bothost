@@ -292,6 +292,7 @@ impl Pix32 {
                 for _ in 0..4 {
                     if let Some(p) = surface.pixels.get_mut(dst_off as usize) {
                         *p = self.data.get(src_off as usize).copied().unwrap_or(0);
+                        surface.mark_pixel(dst_off);
                     }
                     src_off += 1;
                     dst_off += 1;
@@ -300,6 +301,7 @@ impl Pix32 {
             for _ in 0..rem {
                 if let Some(p) = surface.pixels.get_mut(dst_off as usize) {
                     *p = self.data.get(src_off as usize).copied().unwrap_or(0);
+                    surface.mark_pixel(dst_off);
                 }
                 src_off += 1;
                 dst_off += 1;
@@ -369,6 +371,7 @@ impl Pix32 {
                     } else {
                         if let Some(p) = surface.pixels.get_mut(dst_off as usize) {
                             *p = rgb;
+                            surface.mark_pixel(dst_off);
                         }
                         dst_off += 1;
                     }
@@ -382,6 +385,7 @@ impl Pix32 {
                 } else {
                     if let Some(p) = surface.pixels.get_mut(dst_off as usize) {
                         *p = rgb;
+                        surface.mark_pixel(dst_off);
                     }
                     dst_off += 1;
                 }
@@ -451,6 +455,7 @@ impl Pix32 {
                         & 0xff00_ff00u32 as i32)
                         + (((rgb & 0xff00).wrapping_mul(alpha) + (dst_rgb & 0xff00).wrapping_mul(inv_alpha)) & 0xff0000))
                         >> 8;
+                    surface.mark_pixel(dst_off);
                     dst_off += 1;
                 }
             }
@@ -496,6 +501,7 @@ impl Pix32 {
                 let idx = (src_x >> 16) as i64 + (src_y >> 16) as i64 * self.wi as i64;
                 if let Some(p) = surface.pixels.get_mut(dst_x as usize) {
                     *p = self.data.get(idx as usize).copied().unwrap_or(0);
+                    surface.mark_pixel(dst_x);
                 }
                 dst_x += 1;
                 src_x = src_x.wrapping_add(cos_zoom);
@@ -534,6 +540,7 @@ impl Pix32 {
                     None => {
                         if let Some(p) = surface.pixels.get_mut(dst_x as usize) {
                             *p = 0;
+                            surface.mark_pixel(dst_x);
                         }
                         dst_x += 1;
                     }
@@ -543,6 +550,7 @@ impl Pix32 {
                     Some(&rgb) => {
                         if let Some(p) = surface.pixels.get_mut(dst_x as usize) {
                             *p = rgb;
+                            surface.mark_pixel(dst_x);
                         }
                         dst_x += 1;
                     }
@@ -612,6 +620,7 @@ impl Pix32 {
                     if rgb != 0 && mask.get(dst_off as usize).copied().unwrap_or(1) == 0 {
                         if let Some(p) = surface.pixels.get_mut(dst_off as usize) {
                             *p = rgb;
+                            surface.mark_pixel(dst_off);
                         }
                         dst_off += 1;
                     } else {
@@ -625,6 +634,7 @@ impl Pix32 {
                 if rgb != 0 && mask.get(dst_off as usize).copied().unwrap_or(1) == 0 {
                     if let Some(p) = surface.pixels.get_mut(dst_off as usize) {
                         *p = rgb;
+                        surface.mark_pixel(dst_off);
                     }
                     dst_off += 1;
                 } else {

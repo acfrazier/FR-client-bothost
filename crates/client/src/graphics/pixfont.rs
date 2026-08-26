@@ -357,6 +357,7 @@ impl PixFont {
                     } else {
                         if let Some(p) = surface.pixels.get_mut(dst_off as usize) {
                             *p = rgb;
+                            surface.mark_pixel(dst_off);
                         }
                         dst_off += 1;
                     }
@@ -369,6 +370,7 @@ impl PixFont {
                 } else {
                     if let Some(p) = surface.pixels.get_mut(dst_off as usize) {
                         *p = rgb;
+                        surface.mark_pixel(dst_off);
                     }
                     dst_off += 1;
                 }
@@ -436,6 +438,7 @@ impl PixFont {
                         + (((dst_rgb & 0xff00).wrapping_mul(inv_alpha)) & 0xff0000))
                         >> 8)
                         .wrapping_add(mixed);
+                    surface.mark_pixel(dst_off);
                     dst_off += 1;
                 }
                 src_off += 1;

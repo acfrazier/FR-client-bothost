@@ -5,6 +5,37 @@
 // products exceed i32, and `& 0xff00ff00` + `>> 8` only observe the low bits,
 // so wrapping ops reproduce the TS double arithmetic exactly.
 
+use std::cell::Cell;
+
+// The active coverage target (the GPU overlay pass): a raw pointer into a
+// per-pixel `u8` mark buffer plus its dimensions, set by `coverage_guard`.
+// `Pix2D::with_pixels` attaches it to a matching-size surface so the pixel
+// writes mark coverage. Zero when the CPU path draws (the `coverage` field
+// then stays `None` and the CPU oracle is byte-identical).
+thread_local! {
+    static COVERAGE: Cell<(usize, u32, u32)> = const { Cell::new((0, 0, 0)) };
+}
+
+/// A guard that makes every `Pix2D::with_pixels` on this thread attach
+/// `buffer` as its coverage target until the guard drops — the same shape
+/// as the deleted `GpuChromeGuard` (a raw pointer in a thread-local, owned
+/// by the guard, cleared on drop including unwind). Single-threaded render
+/// loop.
+pub struct CoverageGuard;
+
+/// Activate `buffer` (one byte per pixel, `width*height` bytes) as the
+/// coverage target for matching `Pix2D` surfaces on this thread.
+pub fn coverage_guard(buffer: &mut [u8], width: u32, height: u32) -> CoverageGuard {
+    COVERAGE.set((buffer.as_mut_ptr() as usize, width, height));
+    CoverageGuard
+}
+
+impl Drop for CoverageGuard {
+    fn drop(&mut self) {
+        COVERAGE.set((0, 0, 0));
+    }
+}
+
 pub struct Pix2D<'a> {
     pub pixels: &'a mut [i32],
     pub width: i32,
@@ -16,11 +47,16 @@ pub struct Pix2D<'a> {
     pub size_x: i32,
     pub max_x: i32,
     pub max_y: i32,
+    /// Coverage marks (the GPU overlay pass only): a byte per pixel, set
+    /// when a draw writes that pixel. `None` on the CPU path.
+    pub(crate) coverage: Option<&'a mut [u8]>,
 }
 
 impl<'a> Pix2D<'a> {
     /// TS `setPixels(pixels, width, height)` followed by the default full
-    /// clipping: bind a framebuffer as the active draw target.
+    /// clipping: bind a framebuffer as the active draw target. A surface
+    /// sized like the active coverage target (the GPU overlay pass binds
+    /// `area_game`) attaches it, so its pixel writes mark coverage.
     pub fn with_pixels(pixels: &'a mut [i32], width: i32, height: i32) -> Self {
         let mut s = Pix2D {
             pixels,
@@ -33,7 +69,16 @@ impl<'a> Pix2D<'a> {
             size_x: 0,
             max_x: 0,
             max_y: 0,
+            coverage: None,
         };
+        let (ptr, cw, ch) = COVERAGE.get();
+        if ptr != 0 && cw == width as u32 && ch == height as u32 {
+            // SAFETY: `CoverageGuard` owns the scope; the pointer is
+            // cleared on drop (normal or unwinding). Single-threaded
+            // render loop, and the buffer outlives this surface.
+            s.coverage =
+                Some(unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, (cw * ch) as usize) });
+        }
         s.set_clipping(0, 0, width, height);
         s
     }
@@ -105,6 +150,7 @@ impl<'a> Pix2D<'a> {
             }
             offset += step;
         }
+        self.mark_rect(x, y, width, height);
     }
 
     pub fn fill_rect(&mut self, mut x: i32, mut y: i32, mut width: i32, mut height: i32, rgb: i32) {
@@ -131,6 +177,7 @@ impl<'a> Pix2D<'a> {
             }
             offset += step;
         }
+        self.mark_rect(x, y, width, height);
     }
 
     pub fn draw_rect(&mut self, x: i32, y: i32, w: i32, h: i32, rgb: i32) {
@@ -164,6 +211,7 @@ impl<'a> Pix2D<'a> {
         for i in 0..width {
             self.pixels[(off + i) as usize] = rgb;
         }
+        self.mark_row(off, width);
     }
 
     pub fn hline_trans(&mut self, mut x: i32, y: i32, mut width: i32, rgb: i32, alpha: i32) {
@@ -190,6 +238,7 @@ impl<'a> Pix2D<'a> {
                 (((r0 + r1) >> 8) << 16) + (((g0 + g1) >> 8) << 8) + ((b0 + b1) >> 8);
             offset += 1;
         }
+        self.mark_row(x + y * self.width, width);
     }
 
     pub fn vline(&mut self, x: i32, mut y: i32, mut height: i32, rgb: i32) {
@@ -207,6 +256,7 @@ impl<'a> Pix2D<'a> {
         for i in 0..height {
             self.pixels[(off + i * self.width) as usize] = rgb;
         }
+        self.mark_col(off, height);
     }
 
     pub fn vline_trans(&mut self, x: i32, mut y: i32, mut height: i32, rgb: i32, alpha: i32) {
@@ -233,6 +283,7 @@ impl<'a> Pix2D<'a> {
                 (((r0 + r1) >> 8) << 16) + (((g0 + g1) >> 8) << 8) + ((b0 + b1) >> 8);
             offset += self.width;
         }
+        self.mark_col(x + y * self.width, height);
     }
 
     // mapview applet:
@@ -266,6 +317,7 @@ impl<'a> Pix2D<'a> {
             }
 
             let mut offset = x_start + y * self.width;
+            let row_start = offset;
             for _x in x_start..=x_end {
                 let r1 = ((self.pixels[offset as usize] >> 16) & 0xff) * inv_alpha;
                 let g1 = ((self.pixels[offset as usize] >> 8) & 0xff) * inv_alpha;
@@ -273,6 +325,46 @@ impl<'a> Pix2D<'a> {
                 self.pixels[offset as usize] =
                     (((r0 + r1) >> 8) << 16) + (((g0 + g1) >> 8) << 8) + ((b0 + b1) >> 8);
                 offset += 1;
+            }
+            self.mark_row(row_start, x_end - x_start + 1);
+        }
+    }
+
+    /// Mark one written pixel covered (the sprite/glyph writers; a no-op
+    /// when no coverage buffer is attached).
+    pub(crate) fn mark_pixel(&mut self, off: i32) {
+        if let Some(cov) = &mut self.coverage {
+            cov[off as usize] = 1;
+        }
+    }
+
+    /// Mark the exact written region covered (the GPU overlay pass only;
+    /// a no-op when no coverage buffer is attached).
+    fn mark_rect(&mut self, x: i32, y: i32, w: i32, h: i32) {
+        if let Some(cov) = &mut self.coverage {
+            for cy in 0..h {
+                let row = (y + cy) * self.width;
+                for cx in 0..w {
+                    cov[(row + x + cx) as usize] = 1;
+                }
+            }
+        }
+    }
+
+    /// Mark one written row segment covered.
+    fn mark_row(&mut self, off: i32, len: i32) {
+        if let Some(cov) = &mut self.coverage {
+            for i in 0..len {
+                cov[(off + i) as usize] = 1;
+            }
+        }
+    }
+
+    /// Mark one written column segment covered.
+    fn mark_col(&mut self, off: i32, len: i32) {
+        if let Some(cov) = &mut self.coverage {
+            for i in 0..len {
+                cov[(off + i * self.width) as usize] = 1;
             }
         }
     }

@@ -265,6 +265,7 @@ impl Pix8 {
                     } else {
                         if let Some(p) = surface.pixels.get_mut(dst_off as usize) {
                             *p = self.bpal.get((pal_index as u8) as usize).copied().unwrap_or(0);
+                            surface.mark_pixel(dst_off);
                         }
                         dst_off += 1;
                     }
@@ -278,6 +279,7 @@ impl Pix8 {
                 } else {
                     if let Some(p) = surface.pixels.get_mut(dst_off as usize) {
                         *p = self.bpal.get((pal_index as u8) as usize).copied().unwrap_or(0);
+                        surface.mark_pixel(dst_off);
                     }
                     dst_off += 1;
                 }
@@ -358,6 +360,7 @@ impl Pix8 {
                     None => {
                         if let Some(p) = surface.pixels.get_mut(dst_off as usize) {
                             *p = self.bpal.first().copied().unwrap_or(0);
+                            surface.mark_pixel(dst_off);
                         }
                         dst_off += 1;
                     }
@@ -367,6 +370,7 @@ impl Pix8 {
                     Some(rgb) => {
                         if let Some(p) = surface.pixels.get_mut(dst_off as usize) {
                             *p = self.bpal.get((rgb as u8) as usize).copied().unwrap_or(0);
+                            surface.mark_pixel(dst_off);
                         }
                         dst_off += 1;
                     }
