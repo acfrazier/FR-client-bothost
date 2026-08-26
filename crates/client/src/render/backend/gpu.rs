@@ -11,10 +11,12 @@
 //!
 //! One device/queue per process: the first `GpuBackend::try_new`
 //! initialises a shared `GpuContext` (`CONTEXT`, a `OnceLock`) and every
-//! backend clones it. A failed init is cached and logged once; the
-//! renderer falls back to `CpuBackend` — a missing GPU never takes the bot
-//! down. The `R274_TEST_FORCE_NO_GPU` env var forces an init failure for
-//! the selection test.
+//! backend clones it — or the host injects its own device/queue first via
+//! [`inject_device`] (the shared-device seam), which wins the slot. A
+//! failed self-init is cached and logged once; the renderer falls back to
+//! `CpuBackend` — a missing GPU never takes the bot down. The
+//! `R274_TEST_FORCE_NO_GPU` env var forces an init failure for the
+//! selection test.
 //!
 //! Known divergences from the CPU path (documented in `render/world.rs`):
 //! textured faces sample the model atlas (see `gpu_atlas.rs`), mouse picks
@@ -45,6 +47,20 @@ const FRAME_H: u32 = crate::client::client::APPLET_H as u32;
 /// failed init is cached: the fallback log fires once and later renderers
 /// do not retry (and cannot take the bot down).
 static CONTEXT: OnceLock<Result<Arc<GpuContext>, String>> = OnceLock::new();
+
+/// Shared-device seam (campaign task 3): hand the host's wgpu device/queue
+/// to the process-wide GPU context so the client renders on the host's
+/// device and the host binds the frame texture directly (no read-back
+/// round-trip). Call before any `GpuBackend` exists; the first context
+/// wins — an injection arriving after a self-init (or vice versa) is a
+/// no-op, so a slot renderer can never create its own device once the host
+/// injected. The headless host never injects and falls back to `init_gpu`.
+pub fn inject_device(device: wgpu::Device, queue: wgpu::Queue) {
+    CONTEXT.get_or_init(|| {
+        let assets = Arc::new(Mutex::new(GpuAssets::new(&device, &queue)));
+        Ok(Arc::new(GpuContext { device, queue, assets }))
+    });
+}
 
 /// Whether the init failure has been logged (once per process).
 static FAILURE_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -254,9 +270,12 @@ impl GpuBackend {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
+            // TEXTURE_BINDING: the shared-device seam — the host samples
+            // the frame texture directly in its ImGui renderer.
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::COPY_DST
-                | wgpu::TextureUsages::COPY_SRC,
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let frame_view = frame_texture.create_view(&Default::default());
@@ -312,6 +331,14 @@ impl GpuBackend {
     /// headless counter; a cached failure still counts one attempt).
     pub fn tried() -> usize {
         GPU_BACKEND_TRIED.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Test hook: the device the process-wide context renders on (the
+    /// host's device after injection, or the self-init fallback). Lets the
+    /// shared-device test assert which device won the context.
+    #[doc(hidden)]
+    pub fn device(&self) -> &wgpu::Device {
+        &self.context.device
     }
 
     /// Test hook: upload the model textures from `pix`, render `mesh` into

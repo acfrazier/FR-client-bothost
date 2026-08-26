@@ -189,4 +189,5 @@ pub trait RenderBackend {
 }
 
 pub use cpu::CpuBackend;
+pub use gpu::inject_device;
 pub use gpu::GpuBackend;
