@@ -12,7 +12,7 @@
 use client::config::Cache;
 use client::core::World;
 use client::dash3d::{SceneModel, TerrainOverlayShape};
-use client::graphics::{Pix3D, Pix3DDraw, Pix8};
+use client::graphics::{Pix2D, Pix3D, Pix3DDraw, Pix8};
 use client::render::backend::{FrameOutput, GpuBackend, RenderBackend};
 use client::render::world::GpuVertex;
 use client::render::{RenderWorld, Renderer};
@@ -366,6 +366,9 @@ fn gpu_lowmem_texture_samples_the_full_128px_layer() {
 /// The composite: after a scene render, `finish` returns one full-frame
 /// 765×503 texture carrying the scene at its (4, 4) point — the scene and
 /// the (empty, here) chrome quads land in the same texture, no readback.
+/// The CPU-drawn `draw_area` composites over the scene: a black pixel in
+/// the scene window is the scene's transparent hole, and a painted
+/// (opaque) pixel covers the scene.
 #[test]
 fn composite_lands_the_scene_in_the_full_frame() {
     Pix3D::init_colour_table(0.6);
@@ -378,6 +381,15 @@ fn composite_lands_the_scene_in_the_full_frame() {
     backend.render_scene_for_test(mesh, &pix);
 
     let mut r = Renderer::new(false);
+    // Paint a known chrome rect inside the scene window (x∈[4,516),
+    // y∈[4,338)): with the scene ready it must stay opaque and cover the
+    // scene, while the surrounding black `draw_area` stays transparent.
+    {
+        let w = r.draw_area.width;
+        let h = r.draw_area.height;
+        let mut surface = Pix2D::with_pixels(&mut r.draw_area.pixels, w, h);
+        surface.fill_rect(100, 100, 16, 16, 0xffffff);
+    }
     let FrameOutput::Texture(handle) = backend.finish(&mut r) else {
         panic!("finish must return the full-frame texture");
     };
@@ -401,6 +413,16 @@ fn composite_lands_the_scene_in_the_full_frame() {
         scene_red > 500,
         "the composited full-frame must carry the scene at (4, 4) (got {scene_red} red px)"
     );
+    // The painted rect is opaque chrome over the scene window (alpha 255),
+    // not a transparent hole.
+    for y in 100..116 {
+        for x in 100..116 {
+            assert_eq!(
+                pixels[y * 765 + x], 0xffffff,
+                "a non-black draw_area pixel in the scene window must cover the scene at ({x}, {y})"
+            );
+        }
+    }
     // Nothing outside the frame's own bounds.
     assert_eq!(pixels.len(), 765 * 503);
 }

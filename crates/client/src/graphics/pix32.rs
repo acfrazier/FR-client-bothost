@@ -238,9 +238,6 @@ impl Pix32 {
     }
 
     pub fn quick_plot_sprite(&self, surface: &mut Pix2D, x: i32, y: i32) {
-        if let Some(chrome) = crate::render::backend::gpu_chrome::GpuChrome::active() {
-            chrome.sprite_pix32(self, x, y, 256);
-        }
         let mut x = x;
         let mut y = y;
         x += self.xof;
@@ -313,9 +310,6 @@ impl Pix32 {
     }
 
     pub fn plot_sprite(&self, surface: &mut Pix2D, x: i32, y: i32) {
-        if let Some(chrome) = crate::render::backend::gpu_chrome::GpuChrome::active() {
-            chrome.sprite_pix32(self, x, y, 256);
-        }
         let mut x = x;
         let mut y = y;
         x += self.xof;
@@ -398,9 +392,6 @@ impl Pix32 {
     }
 
     pub fn trans_plot_sprite(&self, surface: &mut Pix2D, x: i32, y: i32, alpha: i32) {
-        if let Some(chrome) = crate::render::backend::gpu_chrome::GpuChrome::active() {
-            chrome.sprite_pix32(self, x, y, alpha);
-        }
         let mut x = x;
         let mut y = y;
         x += self.xof;

@@ -30,13 +30,7 @@ impl PixMap {
     /// TS `PixMap.draw(x, y)`: canvas `putImageData` of this map into `dest`
     /// at (x, y), clipped to both maps. Pixels are `0x00RRGGBB` and copy
     /// verbatim (the TS paint step converts RGB → RGBA for the canvas only).
-    /// On the GPU frame path this records a quad (a staged upload for maps
-    /// that cannot be quads, the open surface's deferred buffer otherwise,
-    /// or the map's cached atlas region for static maps).
     pub fn blit_into(&self, dest: &mut PixMap, x: i32, y: i32) {
-        if let Some(chrome) = crate::render::backend::gpu_chrome::GpuChrome::active() {
-            chrome.map_blit(self, x, y);
-        }
         let x0 = x.max(0);
         let y0 = y.max(0);
         let x1 = (x + self.width).min(dest.width);

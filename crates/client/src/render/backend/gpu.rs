@@ -1,10 +1,12 @@
 //! The wgpu backend (task 7): the 3D scene is rasterized on the GPU into
-//! a texture and the 2D chrome draws on top as GPU quads (task 5 of the
-//! GPU-chrome campaign) — the whole frame is composited on the GPU and
-//! handed to the host as a full-frame texture, with no scene readback. The
-//! scene mesh (`RenderWorld::build_scene_mesh`) transforms the marked
-//! tiles' ground, walls, decor, objects and sprites to camera space with
-//! the exact CPU fixed-point math; the vertex shader does the perspective
+//! a texture and the 2D chrome composites over it as one CPU texture
+//! upload — the RuneLite pattern (the game's CPU immediate-mode draws the
+//! UI into a canvas, and the GPU plugin uploads that canvas and draws it
+//! over the scene). The whole frame is composited on the GPU and handed to
+//! the host as a full-frame texture, with no scene readback. The scene
+//! mesh (`RenderWorld::build_scene_mesh`) transforms the marked tiles'
+//! ground, walls, decor, objects and sprites to camera space with the
+//! exact CPU fixed-point math; the vertex shader does the perspective
 //! divide (near-clipping at z = 50 for free) and the depth buffer replaces
 //! the CPU painter's priority merge. The `CpuBackend` stays the
 //! pixel-faithful oracle/fallback.
@@ -21,15 +23,16 @@
 //! Known divergences from the CPU path (documented in `render/world.rs`):
 //! textured faces sample the model texture array (see `gpu_atlas.rs`), mouse picks
 //! are AABB-only, the occluder tests are skipped (the depth buffer
-//! occludes), and the chrome draws as GPU quads (rects/sprites/glyphs)
-//! with the rotated minimap composited from a CPU staging upload.
+//! occludes), and the 2D chrome draws on the CPU into the persistent
+//! `draw_area`, which `finish` uploads as one RGBA8 texture and composites
+//! over the scene (a black pixel inside the scene window is the scene's
+//! transparent hole; see [`draw_area_rgba`]).
 
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::client::client::Client;
-use crate::graphics::{Pix2D, Pix3D, Pix3DDraw};
+use crate::graphics::{Pix2D, Pix3D, Pix3DDraw, PixMap};
 use crate::render::backend::gpu_atlas::GpuAssets;
-use crate::render::backend::gpu_chrome::GpuChrome;
 use crate::render::backend::{BackendKind, CpuBackend, FrameKind, FrameOutput, RenderBackend, TextureHandle};
 use crate::render::world::{GpuVertex, SceneMesh};
 use crate::render::Renderer;
@@ -262,11 +265,63 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// The wgpu scene backend (see the module docs). `begin`/`chrome` delegate
-/// to the inner `CpuBackend` (the 2D chrome stays CPU this slice); `scene`
-/// rasterizes the 3D world into `scene_texture`; `composite_scene` copies
-/// the scene into the full-frame texture at (4, 4); `finish` hands the
-/// full-frame texture to the host.
+/// The 2D chrome composite shader: a full-frame passthrough that samples
+/// the CPU-drawn `draw_area` uploaded as one RGBA8 texture (the RuneLite
+/// pattern — the UI is never recorded as GPU quads). The alpha byte the
+/// upload carries decides what covers the scene: opaque chrome, or the
+/// scene's transparent hole (black pixels inside the scene window).
+const CHROME_SHADER: &str = r#"
+@group(0) @binding(0) var chrome_texture: texture_2d<f32>;
+@group(0) @binding(1) var chrome_sampler: sampler;
+
+struct VsIn {
+    @location(0) pos: vec2<f32>,
+    @location(1) uv: vec2<f32>,
+};
+
+struct VsOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(in: VsIn) -> VsOut {
+    var out: VsOut;
+    // draw_area pixels -> NDC (the same mapping the chrome quad shader
+    // used: the full frame maps exactly onto the 765x503 viewport).
+    out.position = vec4<f32>(
+        in.pos.x * (2.0 / 765.0) - 1.0,
+        1.0 - in.pos.y * (2.0 / 503.0),
+        0.0,
+        1.0,
+    );
+    out.uv = in.uv;
+    return out;
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    return textureSample(chrome_texture, chrome_sampler, in.uv);
+}
+"#;
+
+/// One corner of the full-frame chrome quad (position in draw_area pixels,
+/// UV in texture space). Six vertices, uploaded once.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct ChromeVertex {
+    x: f32,
+    y: f32,
+    u: f32,
+    v: f32,
+}
+
+/// The wgpu scene backend (see the module docs). `begin`/`scene`/`chrome`
+/// delegate to the inner `CpuBackend` (the 2D chrome stays CPU this slice);
+/// `scene` rasterizes the 3D world into `scene_texture` and draws the
+/// overlays into `area_game` as pixels; `composite_scene` blits that into
+/// the persistent `draw_area`; `finish` uploads `draw_area` as a texture
+/// and composites it over the scene.
 pub struct GpuBackend {
     context: Arc<GpuContext>,
     scene_texture: wgpu::Texture,
@@ -288,11 +343,17 @@ pub struct GpuBackend {
     /// every frame, the RuneLite plugin shape).
     vertex_buf: wgpu::Buffer,
     vertex_buf_capacity: usize,
-    /// The 2D chrome/title half.
+    /// The 2D chrome/title half: the CPU fidelity path the frame stages
+    /// delegate to. The chrome draws into the persistent `draw_area`.
     cpu: CpuBackend,
-    /// The chrome quad recorder + pipeline (task 5c): the chrome draws as
-    /// GPU quads flushed into the full-frame texture.
-    chrome: GpuChrome,
+    /// The CPU `draw_area` uploaded as one RGBA8 texture each frame (the
+    /// RuneLite canvas-upload composite), drawn over the frame with alpha
+    /// blending.
+    chrome_texture: wgpu::Texture,
+    chrome_bind_group: wgpu::BindGroup,
+    chrome_pipeline: wgpu::RenderPipeline,
+    /// The full-frame quad (six `ChromeVertex`es, uploaded once).
+    chrome_vertex_buf: wgpu::Buffer,
     /// A scene was rendered this frame (a title frame, or an in-game frame
     /// with no built scene, leaves `composite_scene` a no-op like the CPU
     /// path's frozen-frame blit).
@@ -411,7 +472,149 @@ impl GpuBackend {
             mapped_at_creation: false,
         });
 
-        let chrome = GpuChrome::new(&context.device, &context.queue, Arc::clone(&context.assets));
+        // The chrome composite (the RuneLite canvas-upload pattern): the
+        // CPU `draw_area` uploads as one RGBA8 texture each frame and a
+        // passthrough full-frame quad draws it over the scene with alpha
+        // blending (SrcAlpha/OneMinusSrcAlpha).
+        let chrome_shader = context
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("r274 chrome composite shader"),
+                source: wgpu::ShaderSource::Wgsl(CHROME_SHADER.into()),
+            });
+        let chrome_layout = context
+            .device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("r274 chrome composite layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+        let chrome_pipeline_layout = context
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("r274 chrome composite pipeline layout"),
+                bind_group_layouts: &[Some(&chrome_layout)],
+                immediate_size: 0,
+            });
+        let chrome_pipeline = context
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("r274 chrome composite"),
+                layout: Some(&chrome_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &chrome_shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<ChromeVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2],
+                    }],
+                },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    unclipped_depth: false,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    conservative: false,
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &chrome_shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        blend: Some(wgpu::BlendState {
+                            color: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::SrcAlpha,
+                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                            alpha: wgpu::BlendComponent::OVER,
+                        }),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            });
+        let chrome_texture = context.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("r274 chrome upload"),
+            size: wgpu::Extent3d { width: FRAME_W, height: FRAME_H, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let chrome_view = chrome_texture.create_view(&Default::default());
+        let chrome_sampler = context.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("r274 chrome sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+        let chrome_bind_group = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("r274 chrome upload group"),
+            layout: &chrome_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&chrome_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&chrome_sampler),
+                },
+            ],
+        });
+        let chrome_vertices: [ChromeVertex; 6] = [
+            ChromeVertex { x: 0.0, y: 0.0, u: 0.0, v: 0.0 },
+            ChromeVertex { x: FRAME_W as f32, y: 0.0, u: 1.0, v: 0.0 },
+            ChromeVertex { x: 0.0, y: FRAME_H as f32, u: 0.0, v: 1.0 },
+            ChromeVertex { x: 0.0, y: FRAME_H as f32, u: 0.0, v: 1.0 },
+            ChromeVertex { x: FRAME_W as f32, y: 0.0, u: 1.0, v: 0.0 },
+            ChromeVertex { x: FRAME_W as f32, y: FRAME_H as f32, u: 1.0, v: 1.0 },
+        ];
+        let chrome_vertex_buf = context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("r274 chrome quad"),
+            size: (chrome_vertices.len() * std::mem::size_of::<ChromeVertex>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        context
+            .queue
+            .write_buffer(&chrome_vertex_buf, 0, bytemuck::cast_slice(&chrome_vertices));
+
         Ok(GpuBackend {
             context,
             scene_texture,
@@ -427,7 +630,10 @@ impl GpuBackend {
             vertex_buf,
             vertex_buf_capacity,
             cpu: CpuBackend,
-            chrome,
+            chrome_texture,
+            chrome_bind_group,
+            chrome_pipeline,
+            chrome_vertex_buf,
             scene_ready: false,
         })
     }
@@ -466,12 +672,6 @@ impl GpuBackend {
             height: SCENE_H,
         };
         handle.read_back()
-    }
-
-    /// Chrome quads the last flushed frame recorded (the chrome-as-quads
-    /// test).
-    pub fn chrome_quad_count() -> usize {
-        crate::render::backend::gpu_chrome::last_quad_count()
     }
 
     /// Upload the mesh and rasterize it into `scene_texture` (opaque faces
@@ -628,92 +828,21 @@ fn make_pipeline(
 }
 
 impl RenderBackend for GpuBackend {
-    /// Frame start on the GPU path: open the chrome recorder's frame
-    /// (the root quad list, the staged minimap/flame maps), run the CPU
-    /// prep (prepare_game/prepare_title, the deferred brightness), and
-    /// record the chrome-frame strip blits — every frame, because the GPU
-    /// frame is rebuilt from quads each frame instead of a persistent
-    /// `draw_area`.
+    /// Frame start: delegate to the CPU backend. The 2D chrome draws into
+    /// the persistent `draw_area`, so the `redraw_frame` gating (the
+    /// chrome-strip blits and the frozen-frame blit) works exactly like
+    /// the CPU path.
     fn begin(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
-        let _guard = self.chrome.guard();
-        self.chrome.frame_begin(&r.draw_area);
-        if kind == FrameKind::Title {
-            if !core.ingame && core.redraw_frame {
-                r.unload_title();
-                r.image_title2 = None;
-                r.draw_area.fill(0);
-            }
-            r.prepare_title(core);
-        } else {
-            // TS GameShell ticks `scrollCycle` each mainloop pass while the
-            // mouse is held (Client.ts 2341-2343); 0/1 here is enough for the
-            // held-arrow scrollbar repeat.
-            core.scroll_cycle = if core.shell.mouse_button != 0 { 1 } else { 0 };
-            // `apply_clientcode` (sim) defers the brightness re-gamma to the
-            // renderer's texel state (task-2b bridge).
-            if let Some(brightness) = core.pending_brightness.take() {
-                r.pix3d.init_texture_palettes(brightness);
-                r.pix3d.refresh_texture_averages();
-                core.tex_average = r.pix3d.tex_average;
-            }
-            r.prepare_game(core);
-        }
-        // The staged maps exist only after the prep above allocated them;
-        // mark them now (the first frame's prep happens under this frame's
-        // recorder, and their blits must stage, not cache, from the start).
-        self.chrome.mark_staged(r.area_map.as_ref());
-        self.chrome.mark_staged(r.image_title0.as_ref());
-        self.chrome.mark_staged(r.image_title1.as_ref());
-
-        // The loading splash draws into `draw_area` in `mainredraw`
-        // (outside the frame stages); re-run it under the recorder so the
-        // GPU frame carries it too.
-        if kind == FrameKind::Game && core.scene_state != 2 && core.draw {
-            r.scene_loading_splash(core);
-        }
-
-        if kind == FrameKind::Game {
-            // The chrome-frame strips (the CPU path blits them once per
-            // `redraw_frame`; the GPU path re-records them every frame).
-            if let Some(b) = &r.area_backleft1 {
-                b.blit_into(&mut r.draw_area, 0, 4);
-            }
-            if let Some(b) = &r.area_backleft2 {
-                b.blit_into(&mut r.draw_area, 0, 357);
-            }
-            if let Some(b) = &r.area_backright1 {
-                b.blit_into(&mut r.draw_area, 722, 4);
-            }
-            if let Some(b) = &r.area_backright2 {
-                b.blit_into(&mut r.draw_area, 743, 205);
-            }
-            if let Some(b) = &r.area_backtop1 {
-                b.blit_into(&mut r.draw_area, 0, 0);
-            }
-            if let Some(b) = &r.area_backvmid1 {
-                b.blit_into(&mut r.draw_area, 516, 4);
-            }
-            if let Some(b) = &r.area_backvmid2 {
-                b.blit_into(&mut r.draw_area, 516, 205);
-            }
-            if let Some(b) = &r.area_backvmid3 {
-                b.blit_into(&mut r.draw_area, 496, 357);
-            }
-            if let Some(b) = &r.area_backhmid2 {
-                b.blit_into(&mut r.draw_area, 0, 338);
-            }
-            core.redraw_frame = false;
-        }
+        self.cpu.begin(core, r, kind);
     }
 
     /// `gameDrawMain`'s 3D pass on the GPU: the same entity/camera/prep
     /// steps as the CPU backend, then `prepare_scene` (draw-front marking,
     /// share-light) + the scene mesh rasterized into the wgpu scene
     /// texture. The overlays (chat bubbles, modal, the minimenu) draw into
-    /// `area_game` as on the CPU path and record as quads (the composite
-    /// lands them over the scene at (4, 4)).
+    /// `area_game` as pixels (the CPU writes — no recorder); `composite_scene`
+    /// blits them over the scene at (4, 4).
     fn scene(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
-        let _guard = self.chrome.guard();
         if kind != FrameKind::Game || core.scene_state != 2 {
             self.scene_ready = false;
             return;
@@ -834,39 +963,30 @@ impl RenderBackend for GpuBackend {
         core.cam_yaw = eye_yaw;
     }
 
-    /// The composite seam on the GPU path: land the `area_game` overlay
-    /// quads (drawn by the scene stage) over the scene at the (4, 4)
-    /// point, into the root quad list. The scene texture itself is copied
-    /// into the full-frame by `finish`, before the chrome flush.
+    /// The composite seam: delegate to the CPU backend — the `area_game`
+    /// overlay pixels (drawn by the scene stage) blit into the persistent
+    /// `draw_area` at (4, 4), exactly like the CPU path.
     fn composite_scene(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
-        let _guard = self.chrome.guard();
-        if kind == FrameKind::Game && core.scene_state == 2 {
-            if let Some(game) = &r.area_game {
-                self.chrome.drain_tagged(game.pixels.as_ptr() as usize, 4, 4);
-            }
-        }
+        self.cpu.composite_scene(core, r, kind);
     }
 
-    /// 2D chrome as GPU quads: the `CpuBackend` chrome body runs with the
-    /// recorder active (its `Pix2D`/sprite/font/blit calls record quads)
-    /// and every area redraw forced, because the GPU frame is rebuilt each
-    /// frame instead of a persistent `draw_area`.
+    /// 2D chrome: delegate to the `CpuBackend` body, which draws the
+    /// side/chat/icons/minimap/title into the persistent `draw_area`. The
+    /// redraw flags gate the draws (no forced redraw — the persistent
+    /// `draw_area` carries the previous frame's chrome until a redraw
+    /// flag is set).
     fn chrome(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
-        let _guard = self.chrome.guard();
-        if kind == FrameKind::Game {
-            core.redraw_side = true;
-            core.redraw_chat = true;
-            core.redraw_icons = true;
-            core.redraw_chat_mode = true;
-        }
         self.cpu.chrome(core, r, kind);
     }
 
-    /// The full-frame composite: clear the frame, copy the GPU scene at
-    /// (4, 4), draw the recorded chrome quads over it, and hand the frame
-    /// texture to the host. No readback.
-    fn finish(&mut self, _r: &mut Renderer) -> FrameOutput {
-        let _guard = self.chrome.guard();
+    /// The full-frame composite (the RuneLite canvas-upload pattern):
+    /// clear the frame, copy the GPU scene at (4, 4) when it was
+    /// rendered, then upload the CPU-drawn `draw_area` as one RGBA8
+    /// texture and draw it over the frame with alpha blending. The upload
+    /// is opaque chrome except inside the scene window, where a black
+    /// pixel is the scene's transparent hole (see [`draw_area_rgba`]).
+    /// No readback.
+    fn finish(&mut self, r: &mut Renderer) -> FrameOutput {
         let mut encoder = self
             .context
             .device
@@ -910,7 +1030,46 @@ impl RenderBackend for GpuBackend {
                 wgpu::Extent3d { width: SCENE_W, height: SCENE_H, depth_or_array_layers: 1 },
             );
         }
-        self.chrome.flush(&mut encoder, &self.frame_view);
+        // The CPU chrome body drew the 2D UI into the persistent
+        // `draw_area`; upload it as one RGBA8 texture.
+        let rgba = draw_area_rgba(&r.draw_area, self.scene_ready);
+        self.context.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.chrome_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(FRAME_W * 4),
+                rows_per_image: Some(FRAME_H),
+            },
+            wgpu::Extent3d { width: FRAME_W, height: FRAME_H, depth_or_array_layers: 1 },
+        );
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("r274 chrome composite pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.frame_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.chrome_pipeline);
+            pass.set_bind_group(0, &self.chrome_bind_group, &[]);
+            pass.set_vertex_buffer(0, self.chrome_vertex_buf.slice(..));
+            pass.draw(0..6, 0..1);
+        }
         self.context.queue.submit([encoder.finish()]);
         FrameOutput::Texture(TextureHandle {
             device: self.context.device.clone(),
@@ -924,4 +1083,34 @@ impl RenderBackend for GpuBackend {
     fn kind(&self) -> BackendKind {
         BackendKind::Gpu
     }
+}
+
+/// Build the RGBA8 upload bytes from the CPU-drawn `draw_area` (opaque
+/// `0x00RRGGBB` pixels). When the scene was rendered, the scene window —
+/// the fixed rect x∈[4,516), y∈[4,338) — is the transparent hole: alpha 0
+/// there only for a black pixel (the GPU scene shows through), alpha 255
+/// for any chrome/overlay pixel on top of it. Everywhere outside the
+/// scene window the chrome is opaque. With no scene (title screen) the
+/// whole frame is opaque.
+fn draw_area_rgba(draw_area: &PixMap, scene_ready: bool) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity((FRAME_W * FRAME_H * 4) as usize);
+    for y in 0..FRAME_H {
+        for x in 0..FRAME_W {
+            let rgb = draw_area.pixels[(y * FRAME_W + x) as usize];
+            let alpha = if scene_ready
+                && (4..516).contains(&(x as i32))
+                && (4..338).contains(&(y as i32))
+                && rgb == 0
+            {
+                0
+            } else {
+                255
+            };
+            bytes.push(((rgb >> 16) & 0xff) as u8);
+            bytes.push(((rgb >> 8) & 0xff) as u8);
+            bytes.push((rgb & 0xff) as u8);
+            bytes.push(alpha);
+        }
+    }
+    bytes
 }

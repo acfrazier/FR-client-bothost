@@ -305,9 +305,6 @@ impl PixFont {
     }
 
     fn plot_letter(&self, surface: &mut Pix2D, data: &[i8], x: i32, y: i32, w: i32, h: i32, rgb: i32) {
-        if let Some(chrome) = crate::render::backend::gpu_chrome::GpuChrome::active() {
-            chrome.glyph(data, w, h, x, y, rgb, 256);
-        }
         let mut x = x;
         let mut y = y;
         let mut w = w;
@@ -383,9 +380,6 @@ impl PixFont {
     }
 
     fn plot_letter_trans(&self, surface: &mut Pix2D, data: &[i8], x: i32, y: i32, w: i32, h: i32, rgb: i32, alpha: i32) {
-        if let Some(chrome) = crate::render::backend::gpu_chrome::GpuChrome::active() {
-            chrome.glyph(data, w, h, x, y, rgb, alpha);
-        }
         let mut x = x;
         let mut y = y;
         let mut w = w;

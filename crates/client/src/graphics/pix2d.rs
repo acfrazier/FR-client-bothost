@@ -20,8 +20,7 @@ pub struct Pix2D<'a> {
 
 impl<'a> Pix2D<'a> {
     /// TS `setPixels(pixels, width, height)` followed by the default full
-    /// clipping: bind a framebuffer as the active draw target. On the GPU
-    /// frame path this opens a recorded surface (the chrome quad layer).
+    /// clipping: bind a framebuffer as the active draw target.
     pub fn with_pixels(pixels: &'a mut [i32], width: i32, height: i32) -> Self {
         let mut s = Pix2D {
             pixels,
@@ -35,9 +34,6 @@ impl<'a> Pix2D<'a> {
             max_x: 0,
             max_y: 0,
         };
-        if let Some(chrome) = crate::render::backend::gpu_chrome::GpuChrome::active() {
-            chrome.surface_open(s.pixels.as_ptr() as usize);
-        }
         s.set_clipping(0, 0, width, height);
         s
     }
@@ -49,9 +45,6 @@ impl<'a> Pix2D<'a> {
         self.clip_max_y = self.height;
         self.size_x = self.clip_max_x - 1;
         self.max_x = self.clip_max_x / 2;
-        if let Some(chrome) = crate::render::backend::gpu_chrome::GpuChrome::active() {
-            chrome.surface_clip(self.clip_min_x, self.clip_min_y, self.clip_max_x, self.clip_max_y);
-        }
     }
 
     pub fn set_clipping(&mut self, mut x1: i32, mut y1: i32, mut x2: i32, mut y2: i32) {
@@ -74,22 +67,13 @@ impl<'a> Pix2D<'a> {
         self.size_x = self.clip_max_x - 1;
         self.max_x = self.clip_max_x / 2;
         self.max_y = self.clip_max_y / 2;
-        if let Some(chrome) = crate::render::backend::gpu_chrome::GpuChrome::active() {
-            chrome.surface_clip(self.clip_min_x, self.clip_min_y, self.clip_max_x, self.clip_max_y);
-        }
     }
 
     pub fn cls(&mut self) {
         self.pixels.fill(0);
-        if let Some(chrome) = crate::render::backend::gpu_chrome::GpuChrome::active() {
-            chrome.surface_cls();
-        }
     }
 
     pub fn fill_rect_trans(&mut self, mut x: i32, mut y: i32, mut width: i32, mut height: i32, rgb: i32, alpha: i32) {
-        if let Some(chrome) = crate::render::backend::gpu_chrome::GpuChrome::active() {
-            chrome.fill_rect(x, y, width, height, rgb, alpha);
-        }
         if x < self.clip_min_x {
             width -= self.clip_min_x - x;
             x = self.clip_min_x;
@@ -124,9 +108,6 @@ impl<'a> Pix2D<'a> {
     }
 
     pub fn fill_rect(&mut self, mut x: i32, mut y: i32, mut width: i32, mut height: i32, rgb: i32) {
-        if let Some(chrome) = crate::render::backend::gpu_chrome::GpuChrome::active() {
-            chrome.fill_rect(x, y, width, height, rgb, 256);
-        }
         if x < self.clip_min_x {
             width -= self.clip_min_x - x;
             x = self.clip_min_x;
@@ -169,9 +150,6 @@ impl<'a> Pix2D<'a> {
     }
 
     pub fn hline(&mut self, mut x: i32, y: i32, mut width: i32, rgb: i32) {
-        if let Some(chrome) = crate::render::backend::gpu_chrome::GpuChrome::active() {
-            chrome.fill_rect(x, y, width, 1, rgb, 256);
-        }
         if y < self.clip_min_y || y >= self.clip_max_y {
             return;
         }
@@ -189,9 +167,6 @@ impl<'a> Pix2D<'a> {
     }
 
     pub fn hline_trans(&mut self, mut x: i32, y: i32, mut width: i32, rgb: i32, alpha: i32) {
-        if let Some(chrome) = crate::render::backend::gpu_chrome::GpuChrome::active() {
-            chrome.fill_rect(x, y, width, 1, rgb, alpha);
-        }
         if y < self.clip_min_y || y >= self.clip_max_y {
             return;
         }
@@ -218,9 +193,6 @@ impl<'a> Pix2D<'a> {
     }
 
     pub fn vline(&mut self, x: i32, mut y: i32, mut height: i32, rgb: i32) {
-        if let Some(chrome) = crate::render::backend::gpu_chrome::GpuChrome::active() {
-            chrome.fill_rect(x, y, 1, height, rgb, 256);
-        }
         if x < self.clip_min_x || x >= self.clip_max_x {
             return;
         }
@@ -238,9 +210,6 @@ impl<'a> Pix2D<'a> {
     }
 
     pub fn vline_trans(&mut self, x: i32, mut y: i32, mut height: i32, rgb: i32, alpha: i32) {
-        if let Some(chrome) = crate::render::backend::gpu_chrome::GpuChrome::active() {
-            chrome.fill_rect(x, y, 1, height, rgb, alpha);
-        }
         if x < self.clip_min_x || x >= self.clip_max_x {
             return;
         }
