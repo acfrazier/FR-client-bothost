@@ -479,6 +479,27 @@ impl OnDemand {
         }
     }
 
+    /// Unpack every model present in the local file store (idx1) directly —
+    /// no OnDemand/server round-trip. The bot host's cache is complete, so a
+    /// random-event model (the Maze walls) is available at boot and
+    /// `Model::load` never misses because a loc was placed before its model
+    /// arrived. Returns the number of models unpacked.
+    pub fn unpack_models_from_cache(&self, cache_dir: &str) -> usize {
+        let n = self.get_file_count(0);
+        let mut count = 0;
+        for i in 0..n {
+            if let Some(data) = cache_read(cache_dir, 1, i) {
+                // The store keeps gzip + a 2-byte version trailer, exactly
+                // what `loop_request` strips before handing to `Model::unpack`.
+                let body = if data.len() >= 2 { &data[..data.len() - 2] } else { &data };
+                let raw = gunzip(body);
+                crate::dash3d::Model::unpack(i, Some(raw.as_slice()));
+                count += 1;
+            }
+        }
+        count
+    }
+
     /// Java `Client.maininit` 5251-5285: `prefetchPriority` the rest of the
     /// models, then maps, then midi jingles. These are not in `remaining()`
     /// — OnDemand downloads them after title, and `onDemand.message`
@@ -1142,8 +1163,10 @@ fn resolve_file_store(cache_dir: &str) -> Option<String> {
 
 /// One read from the `main_file_cache` file store, the read path of the
 /// engine `FileStream.read` / Java `FileStream.readFromFile` (the client
-/// never writes its cache, so the write path is not ported).
-fn cache_read(cache_dir: &str, archive: i32, file: i32) -> Option<Vec<u8>> {
+/// never writes its cache, so the write path is not ported). `pub(crate)`
+/// so the client's `maininit` can unpack the whole store eagerly without a
+/// server round-trip.
+pub(crate) fn cache_read(cache_dir: &str, archive: i32, file: i32) -> Option<Vec<u8>> {
     cache_read_in(cache_dir, archive, file).or_else(|| {
         // Engine layout: jag packs live in pack/client, the main_file_cache
         // lives in pack/ (one directory up).

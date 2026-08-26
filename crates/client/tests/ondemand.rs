@@ -81,6 +81,33 @@ let _r = Renderer::new(false);
     assert_eq!(all.remaining(), 3, "boot prefetch must request every model");
 }
 
+/// The bot host reads the whole model store from the local cache (idx1) at
+/// boot, no server round-trip — a random-event model (the Maze wall 783) is
+/// loadable without any OnDemand request.
+#[test]
+fn unpack_models_from_cache_makes_a_random_event_model_loadable() {
+let _r = Renderer::new(false);
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&format!("{cache}/versionlist")).is_file() {
+        return;
+    }
+    let versionlist = JagFile::new(std::fs::read(format!("{cache}/versionlist")).unwrap());
+    let od = OnDemand::new(
+        &versionlist, "127.0.0.1", 1, &cache, Arc::new(AtomicBool::new(false)),
+    )
+    .expect("engine versionlist");
+
+    let unpacked = od.unpack_models_from_cache(&cache);
+    assert!(unpacked > 0, "the local cache must hold models");
+
+    // 783 is loc 1489's (the Maze wall) shape-table model — the one that used
+    // to be missing because its OnDemand fetch never landed before placement.
+    assert!(
+        client::dash3d::Model::load(783).is_some(),
+        "model 783 must decode straight from the unpacked cache data"
+    );
+}
+
 /// End-to-end worker pump against a mock engine ondemand socket: byte-15
 /// handshake, 4-byte request (archive 2 / file 0 / urgent), and one chunk of
 /// gzip + 2-byte version trailer, which the client gunzips on `loop_request`.

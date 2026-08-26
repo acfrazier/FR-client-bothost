@@ -1490,6 +1490,15 @@ impl Client {
             }
         }
 
+        // Bot host: unpack every model already in the local file store
+        // (idx1) directly — no OnDemand/server round-trip — so a random-event
+        // model (the Maze walls) is available at boot and `Model::load` never
+        // misses because a loc was placed before its model arrived. The
+        // OnDemand request below still fetches anything the cache lacks.
+        if let Some(od) = self.on_demand.as_ref() {
+            od.unpack_models_from_cache(&self.config.cache_dir);
+        }
+
         // TS anim/model prefetch (893-960): request every anim, then the
         // in-use models, draining with `on_demand_loop` until the request
         // lists empty. Skipped when OnDemand is `None` (no versionlist —
