@@ -657,3 +657,22 @@ let _r = Renderer::new(false);
     // the far edge keeps its own value
     assert_eq!(c.groundh[0][65][5], 50);
 }
+
+#[test]
+fn scene_model_ids_protects_placed_loc_models() {
+let _r = Renderer::new(false);
+    let mut c = client();
+    let mut cache = Cache::default();
+    cache.locs.push(LocType {
+        model: Some(vec![42]),
+        ..LocType::default()
+    });
+    cache.locs.push(LocType::default());
+    c.cache = Arc::new(cache);
+    // A wall whose typecode decodes to loc id 0 (`x + z<<7 + 0x40000000`,
+    // the `addLoc` layout). Its model 42 must survive lowmem's unload.
+    c.world.set_wall(0, 2, 2, 0, 0, 0, 2 + (2 << 7) + 0x40000000, 0, 0, 0, 0, 0);
+    let used = c.scene_model_ids(64);
+    assert!(used[42], "a placed wall's model id is protected from unload");
+    assert!(!used[43], "an unreferenced model id stays unprotected");
+}

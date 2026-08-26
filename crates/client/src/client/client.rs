@@ -8987,6 +8987,50 @@ impl Client {
         0
     }
 
+    /// Model ids referenced by the locs placed in the current build (walls,
+    /// decor, scenery, ground decor). The render resolves those models
+    /// lazily from typecodes, so lowmem's post-build unload must keep them.
+    /// `pub` for the `client_build` integration tests.
+    pub fn scene_model_ids(&self, model_count: usize) -> Vec<bool> {
+        let mut used = vec![false; model_count];
+        for level in 0..BuildArea::LEVELS {
+            for x in 0..BuildArea::SIZE {
+                for z in 0..BuildArea::SIZE {
+                    let typecodes = [
+                        self.world
+                            .get_wall(level as i32, x as i32, z as i32)
+                            .map(|w| w.typecode),
+                        self.world
+                            .get_decor(level as i32, x as i32, z as i32)
+                            .map(|d| d.typecode),
+                        self.world
+                            .get_scene(level as i32, x as i32, z as i32)
+                            .map(|s| s.typecode),
+                        self.world
+                            .get_gd(level as i32, x as i32, z as i32)
+                            .map(|g| g.typecode),
+                    ];
+                    for typecode in typecodes.into_iter().flatten() {
+                        let loc_id = (typecode >> 14) & 0x7fff;
+                        if (loc_id as usize) >= self.cache.locs.len() {
+                            continue;
+                        }
+                        let loc = self.cache.loc(loc_id as usize);
+                        if let Some(models) = &loc.model {
+                            for &m in models {
+                                let id = (m & 0xffff) as usize;
+                                if id < used.len() {
+                                    used[id] = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        used
+    }
+
     /// `mapBuild` from client-ts (5141): reset the scene grids, decode the
     /// requested map squares (`load_ground`/`fade_adjacent`/`load_locations`),
     /// run `finish_build`, then re-init the texture pool and prefetch the
@@ -9104,12 +9148,17 @@ impl Client {
         self.build_minusedlevel = self.minusedlevel;
 
         // TS 5254-5261: low-memory model unload for models the render
-        // never uses (flags 0x79 = all render uses).
+        // never uses (flags 0x79 = all render uses). The render resolves
+        // loc models lazily from typecodes (task 3b), so a model a placed
+        // loc still references must survive the unload even when its use
+        // flags do not intersect 0x79 — Java decoded and retained placed
+        // models at build time, so it was immune to this unload.
         if self.config.lowmem && self.on_demand.is_some() {
             let model_count = self.on_demand.as_ref().map(|od| od.get_file_count(0)).unwrap_or(0);
+            let scene_models = self.scene_model_ids(model_count as usize);
             for i in 0..model_count {
                 let flags = self.on_demand.as_ref().map(|od| od.get_model_use(i)).unwrap_or(0);
-                if flags & 0x79 == 0 {
+                if flags & 0x79 == 0 && !scene_models.get(i as usize).copied().unwrap_or(false) {
                     Model::unload(i);
                 }
             }
