@@ -3926,81 +3926,64 @@ struct SceneCam {
 }
 
 /// One triangle vertex of the GPU scene mesh: a camera-space position plus
-/// a shaded RGBA (`a` is the source alpha, 255 = opaque). Textured faces
-/// (task 5b) instead carry the projective UV of the CPU `texture_triangle`
-/// — `u_num/u_den`, `v_num/v_den` (the numerator already scaled by the
-/// 128/64 texel size), the 16-bit shade for the texel brightness, and the
-/// model texture id. `bytemuck::Pod` so the wgpu backend uploads the mesh
-/// as raw bytes.
+/// the packed RuneLite-GPU-plugin attributes — `abhsl` (alpha << 24 | bias
+/// << 16 | the raw 16-bit face shade) and, for textured faces, the
+/// fixed-point 0..255 texture `u`/`v` and the `texture id + 1` (`0` means
+/// flat, i.e. untextured). `bytemuck::Pod` so the wgpu backend uploads the
+/// mesh as raw bytes.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuVertex {
     pub x: f32,
     pub y: f32,
     pub z: f32,
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-    pub a: u8,
-    pub u_num: f32,
-    pub u_den: f32,
-    pub v_num: f32,
-    pub v_den: f32,
-    pub shade: f32,
-    pub tex_id: u32,
+    pub abhsl: u32,
+    pub uv_tex: u32,
+    pub v: u32,
 }
 
 impl GpuVertex {
-    /// A camera-space vertex shaded from `shade` (a 16-bit colour-table
-    /// index, exactly what the CPU raster passes feed `gouraud_triangle`).
-    fn new(x: i32, y: i32, z: i32, shade: i32, alpha: u8) -> GpuVertex {
-        let rgb = Pix3D::colour_table().get((shade & 0xffff) as usize).copied().unwrap_or(0);
+    /// Pack `alpha` (0..255, 255 = opaque), the face priority `bias`
+    /// (0..255) and the raw 16-bit `shade` into one word, exactly the
+    /// RuneLite `alphaBias | color` layout.
+    fn pack(alpha: u8, bias: u32, shade: i32) -> u32 {
+        ((alpha as u32) << 24) | ((bias & 0xff) << 16) | (shade as u32 & 0xffff)
+    }
+
+    /// A flat (untextured) camera-space vertex. `shade` is the raw 16-bit
+    /// colour-table index — the shader converts it via `hslToRgb`.
+    fn new(x: i32, y: i32, z: i32, shade: i32, alpha: u8, bias: u32) -> GpuVertex {
         GpuVertex {
             x: x as f32,
             y: y as f32,
             z: z as f32,
-            r: ((rgb >> 16) & 0xff) as u8,
-            g: ((rgb >> 8) & 0xff) as u8,
-            b: (rgb & 0xff) as u8,
-            a: alpha,
-            u_num: 0.0,
-            u_den: 1.0,
-            v_num: 0.0,
-            v_den: 1.0,
-            shade: 0.0,
-            tex_id: u32::MAX,
+            abhsl: Self::pack(alpha, bias, shade),
+            uv_tex: 0,
+            v: 0,
         }
     }
 
-    /// A textured-face vertex: the projective UV (numerators scaled by the
-    /// texel size 128, or 64 for `low_mem`) and the per-vertex shade for
-    /// the texel brightness; `tex_id` selects the atlas cell.
+    /// A textured-face vertex: fixed-point `u`/`v` (0..255) on the model
+    /// texture, the raw 16-bit `shade` for the texel brightness, and
+    /// `tex_id_plus_1` (texture id + 1; `0` would read as flat).
     fn textured(
         x: i32,
         y: i32,
         z: i32,
-        u_num: f32,
-        u_den: f32,
-        v_num: f32,
-        v_den: f32,
-        shade: f32,
-        tex_id: u32,
+        u: u32,
+        v: u32,
+        shade: i32,
         alpha: u8,
+        bias: u32,
+        tex_id_plus_1: u32,
     ) -> GpuVertex {
         GpuVertex {
             x: x as f32,
             y: y as f32,
             z: z as f32,
-            r: 0,
-            g: 0,
-            b: 0,
-            a: alpha,
-            u_num,
-            u_den,
-            v_num,
-            v_den,
-            shade,
-            tex_id,
+            abhsl: Self::pack(alpha, bias, shade),
+            uv_tex: ((u & 0xffff) << 16) | (tex_id_plus_1 & 0xffff),
+            v: v & 0xffff,
         }
     }
 }
@@ -4033,6 +4016,69 @@ impl SceneMesh {
             self.opaque.extend([v0, v1, v2]);
         }
     }
+}
+
+/// RuneLite `computeFaceUvs` (model space): project the face's three actual
+/// vertices (`a`/`b`/`c`) onto the texture triangle's plane (`t_a`/`t_b`/`t_c`)
+/// and return each vertex's texture coordinate as fixed-point 0..255.
+/// `point_x/y/z` are the model's local vertex positions, before any camera
+/// or entity transform.
+#[allow(clippy::too_many_arguments)]
+fn compute_face_uvs(
+    point_x: &[i32],
+    point_y: &[i32],
+    point_z: &[i32],
+    a: usize,
+    b: usize,
+    c: usize,
+    t_a: usize,
+    t_b: usize,
+    t_c: usize,
+) -> ([u32; 3], [u32; 3]) {
+    let v1x = point_x[t_a] as f32;
+    let v1y = point_y[t_a] as f32;
+    let v1z = point_z[t_a] as f32;
+    let v2x = point_x[t_b] as f32 - v1x;
+    let v2y = point_y[t_b] as f32 - v1y;
+    let v2z = point_z[t_b] as f32 - v1z;
+    let v3x = point_x[t_c] as f32 - v1x;
+    let v3y = point_y[t_c] as f32 - v1y;
+    let v3z = point_z[t_c] as f32 - v1z;
+
+    let v4x = point_x[a] as f32 - v1x;
+    let v4y = point_y[a] as f32 - v1y;
+    let v4z = point_z[a] as f32 - v1z;
+    let v5x = point_x[b] as f32 - v1x;
+    let v5y = point_y[b] as f32 - v1y;
+    let v5z = point_z[b] as f32 - v1z;
+    let v6x = point_x[c] as f32 - v1x;
+    let v6y = point_y[c] as f32 - v1y;
+    let v6z = point_z[c] as f32 - v1z;
+
+    let v7x = v2y * v3z - v2z * v3y;
+    let v7y = v2z * v3x - v2x * v3z;
+    let v7z = v2x * v3y - v2y * v3x;
+
+    let mut v8x = v3y * v7z - v3z * v7y;
+    let mut v8y = v3z * v7x - v3x * v7z;
+    let mut v8z = v3x * v7y - v3y * v7x;
+
+    let f = 1.0 / (v8x * v2x + v8y * v2y + v8z * v2z);
+    let u0 = (v8x * v4x + v8y * v4y + v8z * v4z) * f;
+    let u1 = (v8x * v5x + v8y * v5y + v8z * v5z) * f;
+    let u2 = (v8x * v6x + v8y * v6y + v8z * v6z) * f;
+
+    v8x = v2y * v7z - v2z * v7y;
+    v8y = v2z * v7x - v2x * v7z;
+    v8z = v2x * v7y - v2y * v7x;
+
+    let f = 1.0 / (v8x * v3x + v8y * v3y + v8z * v3z);
+    let v0 = (v8x * v4x + v8y * v4y + v8z * v4z) * f;
+    let v1 = (v8x * v5x + v8y * v5y + v8z * v5z) * f;
+    let v2 = (v8x * v6x + v8y * v6y + v8z * v6z) * f;
+
+    let pack = |x: f32| (x * 256.0).clamp(0.0, 255.0) as u32;
+    ([pack(u0), pack(u1), pack(u2)], [pack(v0), pack(v1), pack(v2)])
 }
 
 /// `ModelSource.worldRender` for the GPU path: fetch the temp model,
@@ -4291,14 +4337,21 @@ fn emit_model_faces(
             (256 - trans).clamp(0, 255) as u8
         };
 
+        // The face priority becomes the shader's depth bias (the CPU's
+        // priority-bucket painter merge, replaced by the depth buffer).
+        let bias = model
+            .face_priority
+            .as_ref()
+            .and_then(|p| p.get(f))
+            .copied()
+            .unwrap_or(0)
+            .clamp(0, 255) as u32;
+
         // Textured faces (`renderType & 0x3 == 2`): the texture id is
         // `faceColour[face]`; the three texture-mapping vertices
         // `faceTextureP/M/N[renderType >> 2]` define the texture plane.
-        // The per-vertex UV is the projective affine map the CPU
-        // `texture_triangle` rasterises: with `h = c - a`, `v = b - a`,
-        // `u = -(a×v)·p / ((h×v)·p)` and `t = -(h×a)·p / ((h×v)·p)`
-        // (a→(0,0), b→(0,1), c→(1,0) in the texture). The numerator is
-        // pre-scaled by the texel size (128 high-mem, 64 low-mem).
+        // The per-vertex UV is RuneLite's `computeFaceUvs` in model space
+        // (a→(0,0), b→(0,1), c→(1,0) in the texture), packed 0..255.
         if r#type == 2 {
             let Some(face_colour) = &model.face_colour else {
                 continue;
@@ -4324,59 +4377,29 @@ fn emit_model_faces(
             ) else {
                 continue;
             };
-            let (ax, ay, az) = (
-                cam_x[t_a as usize] as f32,
-                cam_y[t_a as usize] as f32,
-                cam_z[t_a as usize] as f32,
+            let (uvs, vvs) = compute_face_uvs(
+                point_x,
+                point_y,
+                point_z,
+                a,
+                b,
+                c,
+                t_a as usize,
+                t_b as usize,
+                t_c as usize,
             );
-            let (bx, by, bz) = (
-                cam_x[t_b as usize] as f32,
-                cam_y[t_b as usize] as f32,
-                cam_z[t_b as usize] as f32,
-            );
-            let (cx, cy, cz) = (
-                cam_x[t_c as usize] as f32,
-                cam_y[t_c as usize] as f32,
-                cam_z[t_c as usize] as f32,
-            );
-            let (hx, hy, hz) = (cx - ax, cy - ay, cz - az);
-            let (vx, vy, vz) = (bx - ax, by - ay, bz - az);
-            // d = h×v, n_u = -(a×v), n_v = -(h×a).
-            let (dx, dy, dz) = (hy * vz - hz * vy, hz * vx - hx * vz, hx * vy - hy * vx);
-            let (nux, nuy, nuz) = (az * vy - ay * vz, ax * vz - az * vx, ay * vx - ax * vy);
-            let (nvx, nvy, nvz) = (hz * ay - hy * az, hx * az - hz * ax, hy * ax - hx * ay);
-            // The model atlas is always 128×128 per texture (64 px textures
-            // are 2×2-upscaled at bake), so the UV numerator scale is 128
-            // regardless of the renderer's memory mode.
-            let scale = 128.0;
-            let uv = |x: f32, y: f32, z: f32| -> (f32, f32, f32, f32) {
-                (
-                    (nux * x + nuy * y + nuz * z) * scale,
-                    dx * x + dy * y + dz * z,
-                    (nvx * x + nvy * y + nvz * z) * scale,
-                    dx * x + dy * y + dz * z,
-                )
-            };
-            let (u_a, ud_a, v_a, vd_a) = uv(x_a as f32, y_a as f32, z_a as f32);
-            let (u_b, ud_b, v_b, vd_b) = uv(x_b as f32, y_b as f32, z_b as f32);
-            let (u_c, ud_c, v_c, vd_c) = uv(x_c as f32, y_c as f32, z_c as f32);
+            let tex_id_plus_1 = tex_id as u32 + 1;
             mesh.push(
-                GpuVertex::textured(
-                    x_a, y_a, z_a, u_a, ud_a, v_a, vd_a, shade_a as f32, tex_id as u32, alpha,
-                ),
-                GpuVertex::textured(
-                    x_b, y_b, z_b, u_b, ud_b, v_b, vd_b, shade_b as f32, tex_id as u32, alpha,
-                ),
-                GpuVertex::textured(
-                    x_c, y_c, z_c, u_c, ud_c, v_c, vd_c, shade_c as f32, tex_id as u32, alpha,
-                ),
+                GpuVertex::textured(x_a, y_a, z_a, uvs[0], vvs[0], shade_a, alpha, bias, tex_id_plus_1),
+                GpuVertex::textured(x_b, y_b, z_b, uvs[1], vvs[1], shade_b, alpha, bias, tex_id_plus_1),
+                GpuVertex::textured(x_c, y_c, z_c, uvs[2], vvs[2], shade_c, alpha, bias, tex_id_plus_1),
                 alpha != 255,
             );
         } else {
             mesh.push(
-                GpuVertex::new(x_a, y_a, z_a, shade_a, alpha),
-                GpuVertex::new(x_b, y_b, z_b, shade_b, alpha),
-                GpuVertex::new(x_c, y_c, z_c, shade_c, alpha),
+                GpuVertex::new(x_a, y_a, z_a, shade_a, alpha, bias),
+                GpuVertex::new(x_b, y_b, z_b, shade_b, alpha, bias),
+                GpuVertex::new(x_c, y_c, z_c, shade_c, alpha, bias),
                 alpha != 255,
             );
         }
@@ -4477,32 +4500,31 @@ fn emit_ground(
             let (dx, dy, dz) = (hy * vz - hz * vy, hz * vx - hx * vz, hx * vy - hy * vx);
             let (nux, nuy, nuz) = (az * vy - ay * vz, ax * vz - az * vx, ay * vx - ax * vy);
             let (nvx, nvy, nvz) = (hz * ay - hy * az, hx * az - hz * ax, hy * ax - hx * ay);
-            // The model atlas is always 128×128 per texture (64 px textures
-            // are 2×2-upscaled at bake), so the UV numerator scale is 128
-            // regardless of the renderer's memory mode.
-            let scale = 128.0;
-            let uv = |x: f32, y: f32, z: f32| -> (f32, f32, f32, f32) {
-                (
-                    (nux * x + nuy * y + nuz * z) * scale,
-                    dx * x + dy * y + dz * z,
-                    (nvx * x + nvy * y + nvz * z) * scale,
-                    dx * x + dy * y + dz * z,
-                )
+            // The CPU `texture_triangle`'s projective UV, packed to the
+            // fixed-point 0..255 form the shader samples. The `abs` mirrors
+            // UV regions outside the texture's parallelogram (the second
+            // triangle of a quad), matching the CPU's masked texel wrap.
+            let uv = |x: f32, y: f32, z: f32| -> (u32, u32) {
+                let den = (dx * x + dy * y + dz * z).max(1e-6);
+                let u = (nux * x + nuy * y + nuz * z) / den;
+                let v = (nvx * x + nvy * y + nvz * z) / den;
+                let pack = |t: f32| (t.abs() * 256.0).clamp(0.0, 255.0) as u32;
+                (pack(u), pack(v))
             };
-            let (u0, ud0, v0, vd0) = uv(x0 as f32, y0 as f32, z0 as f32);
-            let (u1, ud1, v1, vd1) = uv(x1 as f32, y1 as f32, z1 as f32);
-            let (u2, ud2, v2, vd2) = uv(x2 as f32, y2 as f32, z2 as f32);
+            let (u0, v0) = uv(x0 as f32, y0 as f32, z0 as f32);
+            let (u1, v1) = uv(x1 as f32, y1 as f32, z1 as f32);
+            let (u2, v2) = uv(x2 as f32, y2 as f32, z2 as f32);
             mesh.push(
-                GpuVertex::textured(x0, y0, z0, u0, ud0, v0, vd0, colour_a as f32, tex, 255),
-                GpuVertex::textured(x1, y1, z1, u1, ud1, v1, vd1, colour_b as f32, tex, 255),
-                GpuVertex::textured(x2, y2, z2, u2, ud2, v2, vd2, colour_c as f32, tex, 255),
+                GpuVertex::textured(x0, y0, z0, u0, v0, colour_a, 255, 0, tex + 1),
+                GpuVertex::textured(x1, y1, z1, u1, v1, colour_b, 255, 0, tex + 1),
+                GpuVertex::textured(x2, y2, z2, u2, v2, colour_c, 255, 0, tex + 1),
                 false,
             );
         } else {
             mesh.push(
-                GpuVertex::new(x0, y0, z0, colour_a, 255),
-                GpuVertex::new(x1, y1, z1, colour_b, 255),
-                GpuVertex::new(x2, y2, z2, colour_c, 255),
+                GpuVertex::new(x0, y0, z0, colour_a, 255, 0),
+                GpuVertex::new(x1, y1, z1, colour_b, 255, 0),
+                GpuVertex::new(x2, y2, z2, colour_c, 255, 0),
                 false,
             );
         }
@@ -4579,9 +4601,9 @@ fn emit_quick_ground(
         }
         if ground.colour_ne != 12345678 {
             mesh.push(
-                GpuVertex::new(x[2], y[2], z[2], shade_of(ground.colour_ne), 255),
-                GpuVertex::new(x[3], y[3], z[3], shade_of(ground.colour_nw), 255),
-                GpuVertex::new(x[1], y[1], z[1], shade_of(ground.colour_se), 255),
+                GpuVertex::new(x[2], y[2], z[2], shade_of(ground.colour_ne), 255, 0),
+                GpuVertex::new(x[3], y[3], z[3], shade_of(ground.colour_nw), 255, 0),
+                GpuVertex::new(x[1], y[1], z[1], shade_of(ground.colour_se), 255, 0),
                 false,
             );
         }
@@ -4597,9 +4619,9 @@ fn emit_quick_ground(
         }
         if ground.colour_sw != 12345678 {
             mesh.push(
-                GpuVertex::new(x[0], y[0], z[0], shade_of(ground.colour_sw), 255),
-                GpuVertex::new(x[1], y[1], z[1], shade_of(ground.colour_se), 255),
-                GpuVertex::new(x[3], y[3], z[3], shade_of(ground.colour_nw), 255),
+                GpuVertex::new(x[0], y[0], z[0], shade_of(ground.colour_sw), 255, 0),
+                GpuVertex::new(x[1], y[1], z[1], shade_of(ground.colour_se), 255, 0),
+                GpuVertex::new(x[3], y[3], z[3], shade_of(ground.colour_nw), 255, 0),
                 false,
             );
         }

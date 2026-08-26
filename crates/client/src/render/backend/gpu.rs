@@ -119,11 +119,12 @@ fn init_gpu() -> Result<Arc<GpuContext>, String> {
 }
 
 /// The scene pipeline: a passthrough projection (camera-space vertices,
-/// perspective divide in the shader) plus the shaded vertex colour.
-/// Textured faces (task 5b) carry a per-face texture index and projective
-/// UV (`u_num/u_den`, `v_num/v_den` — the affine maps of the CPU
-/// `texture_triangle`), sampled from the shared model atlas; the shade's
-/// top two bits pick the CPU's brightness level.
+/// perspective divide in the shader) plus the packed RuneLite-GPU-plugin
+/// vertex (`abhsl`, `uv_tex`, `v`). Flat faces convert the raw 16-bit
+/// shade to RGB via `hslToRgb` in the vertex shader (so gouraud faces
+/// interpolate RGB, not the packed shade); textured faces sample the
+/// shared 8×8 model atlas, the shade's top two bits picking the CPU's
+/// brightness level.
 const SCENE_SHADER: &str = r#"
 const NEAR: f32 = 50.0;
 const SCALE_X: f32 = 2.0;
@@ -132,69 +133,130 @@ const SCALE_Y: f32 = -512.0 / 167.0;
 @group(0) @binding(0) var model_atlas: texture_2d<f32>;
 @group(0) @binding(1) var model_sampler: sampler;
 
+struct SceneUniforms {
+    brightness: f32,
+};
+@group(1) @binding(0) var<uniform> scene: SceneUniforms;
+
 struct VsIn {
     @location(0) pos: vec3<f32>,
-    @location(1) color: vec4<f32>,
-    @location(2) u_num: f32,
-    @location(3) u_den: f32,
-    @location(4) v_num: f32,
-    @location(5) v_den: f32,
-    @location(6) shade: f32,
-    @location(7) tex_id: u32,
+    @location(1) abhsl: u32,
+    @location(2) uv_tex: u32,
+    @location(3) v: u32,
 };
 
 struct VsOut {
     @builtin(position) position: vec4<f32>,
-    @location(0) color: vec4<f32>,
-    @location(1) u_num: f32,
-    @location(2) u_den: f32,
-    @location(3) v_num: f32,
-    @location(4) v_den: f32,
-    @location(5) shade: f32,
-    @location(6) tex_id: u32,
+    @location(0) color: vec3<f32>,
+    @location(1) hsl: f32,
+    @location(2) u: f32,
+    @location(3) v: f32,
+    @location(4) @interpolate(flat) tex_id: u32,
+    @location(5) alpha: f32,
 };
+
+// `build_colour_table`'s HSL→RGB + gamma (the `hsl_to_rgb.glsl` port):
+// flat faces must match `Pix3D::colour_table()[shade] / 256.0`.
+fn hslToRgb(hsl: u32) -> vec3<f32> {
+    let hue = f32((hsl >> 10) & 0x3fu) / 64.0 + 0.0078125;
+    let sat = f32((hsl >> 7) & 0x7u) / 8.0 + 0.0625;
+    let lum = f32(hsl & 0x7fu);
+    let var11 = lum / 128.0;
+    var r = var11;
+    var g = var11;
+    var b = var11;
+
+    let var19 = select(var11 + sat - var11 * sat, var11 * (1.0 + sat), var11 < 0.5);
+    let var21 = 2.0 * var11 - var19;
+    var var23 = hue + 0.3333333333333333;
+    if (var23 > 1.0) { var23 -= 1.0; }
+    var var27 = hue - 0.3333333333333333;
+    if (var27 < 0.0) { var27 += 1.0; }
+
+    if (6.0 * var23 < 1.0) {
+        r = var21 + (var19 - var21) * 6.0 * var23;
+    } else if (2.0 * var23 < 1.0) {
+        r = var19;
+    } else if (3.0 * var23 < 2.0) {
+        r = var21 + (var19 - var21) * (0.6666666666666666 - var23) * 6.0;
+    } else {
+        r = var21;
+    }
+
+    if (6.0 * hue < 1.0) {
+        g = var21 + (var19 - var21) * 6.0 * hue;
+    } else if (2.0 * hue < 1.0) {
+        g = var19;
+    } else if (3.0 * hue < 2.0) {
+        g = var21 + (var19 - var21) * (0.6666666666666666 - hue) * 6.0;
+    } else {
+        g = var21;
+    }
+
+    if (6.0 * var27 < 1.0) {
+        b = var21 + (var19 - var21) * 6.0 * var27;
+    } else if (2.0 * var27 < 1.0) {
+        b = var19;
+    } else if (3.0 * var27 < 2.0) {
+        b = var21 + (var19 - var21) * (0.6666666666666666 - var27) * 6.0;
+    } else {
+        b = var21;
+    }
+
+    // `build_colour_table` truncates each channel to `(r * 256)` and gamma
+    // corrects that quantized value, so mirror the double rounding or dark
+    // shades drift well off the CPU table.
+    let r0 = floor(r * 256.0) / 256.0;
+    let g0 = floor(g * 256.0) / 256.0;
+    let b0 = floor(b * 256.0) / 256.0;
+    return vec3<f32>(pow(r0, scene.brightness), pow(g0, scene.brightness), pow(b0, scene.brightness));
+}
 
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
     var out: VsOut;
     let z = in.pos.z;
+    let alpha = f32((in.abhsl >> 24) & 0xffu) / 255.0;
+    let bias = (in.abhsl >> 16) & 0xffu;
+    let hsl = in.abhsl & 0xffffu;
+    let tex_id = in.uv_tex & 0xffffu;
+    let u = (in.uv_tex >> 16) & 0xffffu;
+
     // The projection mirrors the CPU `origin + (x << 9) / z` (origin = the
     // 512×334 area_game centre). clip.z is set so the interpolated depth
-    // is perspective-correct and stays in [0, 1] for every z >= 50 (the
-    // CPU's near guard); the GPU still clips triangles at the near plane
-    // (`clip.z >= -w` ⟺ `z >= NEAR / 2`).
-    out.position = vec4<f32>(in.pos.x * SCALE_X, in.pos.y * SCALE_Y, z - NEAR, z);
-    out.color = in.color;
-    out.u_num = in.u_num;
-    out.u_den = in.u_den;
-    out.v_num = in.v_num;
-    out.v_den = in.v_den;
-    out.shade = in.shade;
-    out.tex_id = in.tex_id;
+    // is perspective-correct and stays in [0, 1] for every z >= 50. The
+    // face priority biases it *nearer* (higher priority wins under
+    // `CompareFunction::Less`), matching the CPU painter's ascending
+    // priority-bucket order; priorities are ≤ ~11, so bias/128 ≤ ~0.086
+    // and the near plane is never crossed.
+    out.position = vec4<f32>(in.pos.x * SCALE_X, in.pos.y * SCALE_Y, z - NEAR - f32(bias) / 128.0, z);
+    out.color = hslToRgb(hsl);
+    out.hsl = f32(hsl);
+    out.u = f32(u);
+    out.v = f32(in.v);
+    out.tex_id = tex_id;
+    out.alpha = alpha;
     return out;
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    if (in.tex_id == 0xffffffffu) {
-        return in.color;
+    if (in.tex_id > 0u) {
+        // The 8×8 grid of 128×128 cells in the 1024×1024 model atlas. The
+        // packed `tex_id` is texture id + 1; the fixed-point 0..255 u/v
+        // maps to the 0..128-texel cell (u/256 × 128 = u/2).
+        let id = in.tex_id - 1u;
+        let cell = vec2<f32>(f32(id % 8u), f32(id / 8u));
+        let uv = clamp((vec2<f32>(in.u * 0.5, in.v * 0.5) / 128.0 + cell) / 8.0, vec2<f32>(0.0), vec2<f32>(1.0));
+        let t = textureSample(model_atlas, model_sampler, uv);
+        if (t.a < 0.5) { discard; }
+        // The CPU's per-texel brightness: the interpolated 16-bit shade's
+        // top two bits select the texel block (rgb, ~7/8, ~3/4, ~5/8).
+        let level = (i32(in.hsl) >> 14) & 3;
+        let factor = 1.0 - f32(level) * 0.125;
+        return vec4<f32>(t.rgb * factor, in.alpha);
     }
-    // The 8×8 grid of 128×128 cells in the 1024×1024 model atlas.
-    let cell = vec2<f32>(f32(in.tex_id % 8u), f32(in.tex_id / 8u));
-    // `abs` mirrors UV regions outside the texture's parallelogram (the
-    // second triangle of a quad sits on the v-negative side of the face's
-    // texture basis), matching the CPU's masked texel wrap: the texture
-    // mirrors across the quad diagonal instead of sampling empty atlas.
-    let u = abs(in.u_num / max(in.u_den, 0.000001));
-    let v = abs(in.v_num / max(in.v_den, 0.000001));
-    let uv = clamp((vec2<f32>(u, v) / 128.0 + cell) / 8.0, vec2<f32>(0.0), vec2<f32>(1.0));
-    let t = textureSample(model_atlas, model_sampler, uv);
-    if (t.a < 0.5) { discard; }
-    // The CPU's per-texel brightness: the interpolated 16-bit shade's top
-    // two bits select the texel block (rgb, ~7/8, ~3/4, ~5/8).
-    let level = (i32(in.shade) >> 14) & 3;
-    let factor = 1.0 - f32(level) * 0.125;
-    return vec4<f32>(t.rgb * factor, in.color.a);
+    return vec4<f32>(in.color, in.alpha);
 }
 "#;
 
@@ -216,6 +278,10 @@ pub struct GpuBackend {
     pipeline_translucent: wgpu::RenderPipeline,
     /// The shared model-atlas bind group, bound each scene pass.
     model_bind_group: wgpu::BindGroup,
+    /// The scene-shader brightness uniform (group 1): the current
+    /// `Pix3D::colour_table` gamma, so `hslToRgb` matches the CPU table.
+    brightness_bind_group: wgpu::BindGroup,
+    brightness_buf: wgpu::Buffer,
     /// Streaming vertex buffer (grows on demand; the mesh is re-uploaded
     /// every frame, the RuneLite plugin shape).
     vertex_buf: wgpu::Buffer,
@@ -287,12 +353,47 @@ impl GpuBackend {
                 source: wgpu::ShaderSource::Wgsl(SCENE_SHADER.into()),
             });
 
+        let brightness_layout =
+            context
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("r274 scene uniforms layout"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: wgpu::BufferSize::new(16),
+                        },
+                        count: None,
+                    }],
+                });
+        let brightness_buf = context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("r274 scene uniforms"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let brightness_bind_group = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("r274 scene uniforms group"),
+            layout: &brightness_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &brightness_buf,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(16),
+                }),
+            }],
+        });
+
         let assets = context.assets.lock().unwrap();
         let layout = context
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("r274 scene layout"),
-                bind_group_layouts: &[Some(&assets.model_bind_group_layout)],
+                bind_group_layouts: &[Some(&assets.model_bind_group_layout), Some(&brightness_layout)],
                 immediate_size: 0,
             });
         let pipeline_opaque = make_pipeline(&context.device, &layout, &shader, true);
@@ -319,6 +420,8 @@ impl GpuBackend {
             pipeline_opaque,
             pipeline_translucent,
             model_bind_group,
+            brightness_bind_group,
+            brightness_buf,
             vertex_buf,
             vertex_buf_capacity,
             cpu: CpuBackend,
@@ -393,6 +496,12 @@ impl GpuBackend {
         self.context
             .queue
             .write_buffer(&self.vertex_buf, 0, bytemuck::cast_slice(&vertices));
+        // The scene shader's `hslToRgb` gamma must match the CPU colour
+        // table the flat-face shades were built with (process-wide).
+        let brightness = [Pix3D::colour_brightness() as f32, 0.0f32, 0.0f32, 0.0f32];
+        self.context
+            .queue
+            .write_buffer(&self.brightness_buf, 0, bytemuck::cast_slice(&brightness));
 
         let mut encoder = self
             .context
@@ -426,6 +535,7 @@ impl GpuBackend {
             });
             pass.set_vertex_buffer(0, self.vertex_buf.slice(..));
             pass.set_bind_group(0, &self.model_bind_group, &[]);
+            pass.set_bind_group(1, &self.brightness_bind_group, &[]);
             if opaque_len > 0 {
                 pass.set_pipeline(&self.pipeline_opaque);
                 pass.draw(0..opaque_len as u32, 0..1);
@@ -457,13 +567,9 @@ fn make_pipeline(
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &wgpu::vertex_attr_array![
                 0 => Float32x3,
-                1 => Unorm8x4,
-                2 => Float32,
-                3 => Float32,
-                4 => Float32,
-                5 => Float32,
-                6 => Float32,
-                7 => Uint32,
+                1 => Uint32,
+                2 => Uint32,
+                3 => Uint32,
             ],
         }],
     };

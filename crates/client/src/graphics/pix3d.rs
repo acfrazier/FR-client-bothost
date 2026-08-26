@@ -129,6 +129,14 @@ impl Pix3D {
             .as_ref()
     }
 
+    /// The brightness (0.9/0.8/0.7/0.6) the current colour table was built
+    /// at, so the GPU scene shader's `hslToRgb` applies the same gamma the
+    /// CPU flat-face `colour_table()` baked in.
+    pub fn colour_brightness() -> f64 {
+        let slot = COLOUR_TABLE_SLOT.load(Ordering::Relaxed);
+        slot_brightness(slot)
+    }
+
     fn gamma_correct(rgb: i32, gamma: f64) -> i32 {
         let r = (rgb >> 16) as f64 / 256.0;
         let g = ((rgb >> 8) & 0xff) as f64 / 256.0;

@@ -171,28 +171,31 @@ fn textured_model_mesh_carries_tex_id_and_uv() {
 
     let mut found_red = false;
     let mut found_blue = false;
+    let mut saw_nonzero_u = false;
+    let mut saw_nonzero_v = false;
     for v in vertices.iter() {
-        if v.tex_id == TEXTURE_RED as u32 {
+        let tex_plus = v.uv_tex & 0xffff;
+        if tex_plus == TEXTURE_RED as u32 + 1 {
             found_red = true;
         }
-        if v.tex_id == TEXTURE_BLUE as u32 {
+        if tex_plus == TEXTURE_BLUE as u32 + 1 {
             found_blue = true;
         }
-        if v.tex_id != u32::MAX {
-            assert!(
-                v.u_num.is_finite() && v.u_den.is_finite() && v.v_num.is_finite() && v.v_den.is_finite(),
-                "a textured vertex must carry a finite UV"
-            );
-            assert!(
-                v.u_den.abs() > 1e-3 && v.v_den.abs() > 1e-3,
-                "a visible textured face must have a non-degenerate UV denominator"
-            );
+        if tex_plus != 0 {
+            // A textured vertex packs texture id + 1 in the low 16 bits and
+            // the fixed-point u in the high 16 bits, plus the raw shade.
+            assert_eq!((v.abhsl & 0xffff) as i32, SHADE, "a textured vertex carries the raw shade");
+            saw_nonzero_u |= (v.uv_tex >> 16) != 0;
+            saw_nonzero_v |= v.v != 0;
         } else {
-            assert_eq!(v.u_num, 0.0, "untextured vertices carry no UV");
+            assert_eq!(v.uv_tex, 0, "untextured vertices carry no texture");
+            assert_eq!(v.v, 0, "untextured vertices carry no v");
         }
     }
     assert!(found_red, "the red-textured face must be in the mesh");
     assert!(found_blue, "the blue-textured face must be in the mesh");
+    assert!(saw_nonzero_u, "a textured face must pack a nonzero u (high 16 bits)");
+    assert!(saw_nonzero_v, "a textured face must pack a nonzero v");
 
     // The two textures resolve to different atlas cells (the shader derives
     // the cell from the id), so a red face and a blue face sample different
@@ -272,16 +275,17 @@ fn gpu_lowmem_texture_samples_the_full_128px_cell() {
     rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
     let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
 
-    // Mesh-level: the textured vertices' UV must span the full 128px cell
-    // in both axes even on the low-mem path (a scale-64 bug caps at 64).
-    let mut max_u = 0.0f32;
-    let mut max_v = 0.0f32;
-    for v in mesh.clone().vertices().iter().filter(|v| v.tex_id == 7) {
-        max_u = max_u.max((v.u_num / v.u_den).abs());
-        max_v = max_v.max((v.v_num / v.v_den).abs());
+    // Mesh-level: the textured vertices' fixed-point UV must span the full
+    // 128px cell in both axes even on the low-mem path (a scale-64 bug caps
+    // at 64, i.e. u/v ≤ 128 here).
+    let mut max_u = 0u32;
+    let mut max_v = 0u32;
+    for v in mesh.clone().vertices().iter().filter(|v| (v.uv_tex & 0xffff) == 8) {
+        max_u = max_u.max(v.uv_tex >> 16);
+        max_v = max_v.max(v.v);
     }
     assert!(
-        max_u > 110.0 && max_v > 110.0,
+        max_u > 220 && max_v > 220,
         "the low-mem mesh UV must span the full 128px cell (got u≤{max_u}, v≤{max_v})"
     );
 

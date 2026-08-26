@@ -125,13 +125,15 @@ fn scene_mesh_builds_ground_and_wall_triangles() {
     let mut found_ground = false;
     let mut found_wall = false;
     for v in vertices.iter() {
-        let rgb = ((v.r as i32) << 16) | ((v.g as i32) << 8) | v.b as i32;
-        found_ground |= rgb == ground_rgb;
-        found_wall |= rgb == wall_rgb;
+        let shade = (v.abhsl & 0xffff) as i32;
+        found_ground |= shade == SHADE;
+        found_wall |= shade == WALL_SHADE;
         assert!(
             v.z.is_finite() && v.x.is_finite() && v.y.is_finite(),
             "every mesh vertex is a finite camera-space position"
         );
+        assert_eq!(v.uv_tex, 0, "flat faces carry no texture");
+        assert_eq!(v.v, 0, "flat faces carry no v");
     }
     assert!(
         found_ground,
@@ -209,21 +211,20 @@ fn lowmem_textured_quick_ground_shades_with_the_texture_average() {
     let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
 
     let expected_shade = get_table(39248, SHADE);
-    let expected_rgb = Pix3D::colour_table()[expected_shade as usize];
-    let raw_rgb = Pix3D::colour_table()[SHADE as usize];
     assert_ne!(
-        expected_rgb, raw_rgb,
+        Pix3D::colour_table()[expected_shade as usize],
+        Pix3D::colour_table()[SHADE as usize],
         "the texture-average shade must differ from the raw shade"
     );
 
     let mut found_average = false;
     for v in mesh.vertices() {
-        let rgb = ((v.r as i32) << 16) | ((v.g as i32) << 8) | v.b as i32;
+        let shade = (v.abhsl & 0xffff) as i32;
         assert_ne!(
-            rgb, raw_rgb,
+            shade, SHADE,
             "a low-mem textured quick ground must not use the raw ground shade"
         );
-        if rgb == expected_rgb {
+        if shade == expected_shade {
             found_average = true;
         }
     }
@@ -231,4 +232,77 @@ fn lowmem_textured_quick_ground_shades_with_the_texture_average() {
         found_average,
         "the low-mem textured quick ground must shade with the texture average"
     );
+}
+
+/// The WGSL `hslToRgb` (the `build_colour_table` / `hsl_to_rgb.glsl` port)
+/// mirrored in Rust so the cross-check below stays GPU-free. `shade` is the
+/// raw 16-bit colour-table index; the returned channels are 0..1, i.e.
+/// `colour_table()[shade] / 256.0`.
+fn hsl_to_rgb_wgsl(shade: u32, brightness: f32) -> [f32; 3] {
+    let hue = ((shade >> 10) & 0x3f) as f32 / 64.0 + 0.0078125;
+    let sat = ((shade >> 7) & 0x7) as f32 / 8.0 + 0.0625;
+    let lum = (shade & 0x7f) as f32;
+    let var11 = lum / 128.0;
+
+    let var19 = if var11 < 0.5 {
+        var11 * (1.0 + sat)
+    } else {
+        var11 + sat - var11 * sat
+    };
+    let var21 = 2.0 * var11 - var19;
+    let mut var23 = hue + 0.3333333333333333;
+    if var23 > 1.0 {
+        var23 -= 1.0;
+    }
+    let mut var27 = hue - 0.3333333333333333;
+    if var27 < 0.0 {
+        var27 += 1.0;
+    }
+
+    let channel = |phase: f32| {
+        if 6.0 * phase < 1.0 {
+            var21 + (var19 - var21) * 6.0 * phase
+        } else if 2.0 * phase < 1.0 {
+            var19
+        } else if 3.0 * phase < 2.0 {
+            var21 + (var19 - var21) * (0.6666666666666666 - phase) * 6.0
+        } else {
+            var21
+        }
+    };
+
+    // `build_colour_table` truncates each channel to `(x * 256)` before
+    // gamma, so mirror the double rounding or dark shades drift off.
+    let r = (channel(var23) * 256.0).floor() / 256.0;
+    let g = (channel(hue) * 256.0).floor() / 256.0;
+    let b = (channel(var27) * 256.0).floor() / 256.0;
+    [r.powf(brightness), g.powf(brightness), b.powf(brightness)]
+}
+
+/// The scene shader's `hslToRgb` must reproduce `Pix3D::colour_table()` for
+/// a spread of shades (flat faces are shaded from the raw 16-bit index in
+/// the shader now, not the CPU table). `colour_table` truncates `r*256`
+/// before gamma and uses f64, so compare with a small per-channel tolerance.
+#[test]
+fn hsl_to_rgb_matches_colour_table() {
+    Pix3D::init_colour_table(0.6);
+    let brightness = Pix3D::colour_brightness() as f32;
+    let shades = [0u32, 1, 127, 128, 200 * 128 + 100, 40 * 128 + 80, 0x6464, 0xffff];
+    for shade in shades {
+        let table = Pix3D::colour_table()[shade as usize];
+        let got = hsl_to_rgb_wgsl(shade, brightness);
+        let expected = [
+            ((table >> 16) & 0xff) as f32,
+            ((table >> 8) & 0xff) as f32,
+            (table & 0xff) as f32,
+        ];
+        for (got_ch, exp_ch) in got.iter().zip(expected.iter()) {
+            let delta = (got_ch * 256.0 - exp_ch).abs();
+            assert!(
+                delta <= 2.0,
+                "shade {shade}: hslToRgb channel {got_ch} (x256 {}) != colour_table {exp_ch}",
+                got_ch * 256.0
+            );
+        }
+    }
 }
