@@ -9980,6 +9980,34 @@ impl Client {
         self.draw = draw;
     }
 
+    /// Flip the client's `lowmem` mode live (the panel's Music/SFX toggle):
+    /// set `config.lowmem` — the single source of truth every lowmem gate
+    /// already reads (sound synthesis, the 2D audio UI, player/model
+    /// `low_mem`) — and, on the low→high edge, re-run the one-time sound
+    /// load the lowmem spawn skipped (`unpack_jagfx` + the midi on-demand
+    /// request, mirroring `maininit_with_progress` under `!lowmem`).
+    /// Idempotent (early return when unchanged) so it can be called every
+    /// frame; the full re-raster (`redraw_frame`, like the brightness
+    /// path) makes the current scene and the 2D UI reflect the new mode.
+    /// The login handshake is one-time (sent at login) and is not re-sent
+    /// here; a later reconnect handshakes the new mode from
+    /// `config.lowmem`.
+    pub fn set_lowmem(&mut self, lowmem: bool) {
+        if self.config.lowmem == lowmem {
+            return;
+        }
+        self.config.lowmem = lowmem;
+        if !lowmem {
+            self.jagfx = Self::unpack_jagfx(&self.config.cache_dir, false);
+            if let Some(od) = &mut self.on_demand {
+                self.midi_song = 0;
+                self.midi_fading = true;
+                od.request(2, 0);
+            }
+        }
+        self.redraw_frame = true;
+    }
+
     /// Drive the 20 ms GameShell machine on the calling thread (spec §3):
     /// one `mainloop` then `mainredraw` per frame with the Java
     /// ratio/count catch-up. `on_loop` runs after each `mainloop` pass so a
@@ -10588,5 +10616,134 @@ mod dead_server_watchdog {
                 "a full packet never restamped the watchdog"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod audio_toggle {
+    use super::*;
+    use std::io::Write;
+
+    /// A `sounds` jag with one `sounds.dat` entry (sound id 0, ten empty
+    /// tones), so `unpack_jagfx` yields a non-empty table. Stored in a
+    /// per-process temp dir; no `versionlist`, so `load_on_demand` stays
+    /// `None` and nothing touches the network.
+    fn sounds_cache_dir() -> std::path::PathBuf {
+        let mut dat = Vec::new();
+        dat.extend_from_slice(&0u16.to_be_bytes()); // sound id 0
+        dat.extend_from_slice(&[0u8; 10]); // ten empty tones
+        dat.extend_from_slice(&0u16.to_be_bytes()); // loop_begin
+        dat.extend_from_slice(&0u16.to_be_bytes()); // loop_end
+        dat.extend_from_slice(&0xffffu16.to_be_bytes()); // end of table
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-client-audio-toggle-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("sounds"), jag(&[("sounds.dat", &dat)])).unwrap();
+        dir
+    }
+
+    fn lowmem_client_with_sounds() -> Client {
+        let dir = sounds_cache_dir();
+        Client::from_shared(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: dir.to_str().unwrap().into(),
+                members: true,
+                lowmem: true,
+            },
+            Arc::new(Cache::default()),
+            Vec::new(),
+        )
+    }
+
+    fn synth_sound(client: &mut Client, sound_id: i32) {
+        let mut payload = Packet::alloc(0);
+        payload.p2(sound_id);
+        payload.p1(1);
+        payload.p2(0);
+        payload.pos = 0;
+        client.handle_packet(ServerProt::SYNTH_SOUND, &mut payload);
+    }
+
+    fn midi_song(client: &mut Client, song_id: i32) {
+        let mut payload = Packet::alloc(0);
+        payload.p2(song_id);
+        payload.pos = 0;
+        client.handle_packet(ServerProt::MIDI_SONG, &mut payload);
+    }
+
+    #[test]
+    fn set_lowmem_false_loads_sound_and_opens_gates() {
+        let mut c = lowmem_client_with_sounds();
+        // Spawned lowmem: table empty, both gates closed.
+        assert!(c.jagfx.synth.iter().all(|s| s.is_none()));
+        synth_sound(&mut c, 0);
+        assert_eq!(c.wave_count, 0, "lowmem must gate SYNTH_SOUND");
+        midi_song(&mut c, 7);
+        assert_eq!(c.midi_song, -1, "lowmem must gate MIDI_SONG");
+        assert!(c.config.lowmem);
+
+        // Toggle on (highmem) live — no respawn.
+        c.set_lowmem(false);
+        assert!(!c.config.lowmem);
+        assert!(
+            c.jagfx.synth.iter().any(|s| s.is_some()),
+            "set_lowmem(false) must load the JagFX table the lowmem spawn skipped"
+        );
+        assert!(c.redraw_frame, "the mode flip must re-raster");
+        // Idempotent: a repeated unchanged call stays quiet.
+        c.redraw_frame = false;
+        c.set_lowmem(false);
+        assert!(!c.redraw_frame, "set_lowmem must be idempotent");
+
+        synth_sound(&mut c, 0);
+        assert_eq!(c.wave_count, 1, "highmem must accept SYNTH_SOUND");
+        midi_song(&mut c, 8);
+        assert_eq!(c.midi_song, 8, "highmem must accept MIDI_SONG");
+
+        // Toggle back off (lowmem): the gates close again.
+        c.set_lowmem(true);
+        assert!(c.config.lowmem);
+        synth_sound(&mut c, 0);
+        assert_eq!(c.wave_count, 1, "lowmem must gate SYNTH_SOUND again");
+    }
+
+    /// Pack a JAG container with bz2-compressed payloads (the shape the
+    /// real `/crc`-fetched pack files take on disk).
+    fn jag(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let packed: Vec<Vec<u8>> = files.iter().map(|(_, d)| bz2(d)).collect();
+        let data_len: usize = packed.iter().map(|d| d.len()).sum();
+        let total = (8 + 10 * files.len() + data_len) as i32;
+        let mut out = Vec::new();
+        g3(&mut out, total);
+        g3(&mut out, total);
+        out.push((files.len() >> 8) as u8);
+        out.push(files.len() as u8);
+        for ((name, data), packed_data) in files.iter().zip(packed.iter()) {
+            out.extend_from_slice(&JagFile::gen_hash(name).to_be_bytes());
+            g3(&mut out, data.len() as i32);
+            g3(&mut out, packed_data.len() as i32);
+        }
+        for d in &packed {
+            out.extend_from_slice(d);
+        }
+        out
+    }
+
+    fn bz2(data: &[u8]) -> Vec<u8> {
+        let mut enc = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
+        enc.write_all(data).unwrap();
+        let out = enc.finish().unwrap();
+        assert!(out.starts_with(b"BZh"));
+        out[4..].to_vec()
+    }
+
+    fn g3(out: &mut Vec<u8>, value: i32) {
+        out.push((value >> 16) as u8);
+        out.push((value >> 8) as u8);
+        out.push(value as u8);
     }
 }
