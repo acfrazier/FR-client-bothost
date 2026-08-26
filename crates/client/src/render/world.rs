@@ -4359,36 +4359,42 @@ fn emit_model_faces(
             let Some(&tex_id) = face_colour.get(f) else {
                 continue;
             };
-            if tex_id < 0 || tex_id >= 50 {
-                continue; // the CPU's `getTexels` returns None past 49
-            }
+            // RuneLite-faithful (`ModelUploader` stores `faceTexture + 1`
+            // and the shader samples the texture array with a clamped id):
+            // an out-of-range id — the CPU's `getTexels` returns None past
+            // 49 — is clamped into the valid range, never dropped, so a
+            // textured wall/fence/door still emits vertices on the GPU path.
+            let tex_id = tex_id.clamp(0, 49) as u32;
             let textured_face = (render_type >> 2) as usize;
-            let (Some(tex_p), Some(tex_m), Some(tex_n)) = (
-                &model.face_texture_p,
-                &model.face_texture_m,
-                &model.face_texture_n,
-            ) else {
-                continue;
-            };
-            let (Some(&t_a), Some(&t_b), Some(&t_c)) = (
-                tex_p.get(textured_face),
-                tex_m.get(textured_face),
-                tex_n.get(textured_face),
-            ) else {
-                continue;
-            };
-            let (uvs, vvs) = compute_face_uvs(
-                point_x,
-                point_y,
-                point_z,
-                a,
-                b,
-                c,
-                t_a as usize,
-                t_b as usize,
-                t_c as usize,
-            );
-            let tex_id_plus_1 = tex_id as u32 + 1;
+            let (uvs, vvs) =
+                match (&model.face_texture_p, &model.face_texture_m, &model.face_texture_n) {
+                    (Some(tex_p), Some(tex_m), Some(tex_n)) => {
+                        match (
+                            tex_p.get(textured_face),
+                            tex_m.get(textured_face),
+                            tex_n.get(textured_face),
+                        ) {
+                            (Some(&t_a), Some(&t_b), Some(&t_c)) => compute_face_uvs(
+                                point_x,
+                                point_y,
+                                point_z,
+                                a,
+                                b,
+                                c,
+                                t_a as usize,
+                                t_b as usize,
+                                t_c as usize,
+                            ),
+                            // The texture-vertex index is out of range: fall
+                            // back to RuneLite `computeFaceUvs`'s no-texture-
+                            // face basis (a→(0,0), b→(1,0), c→(0,1)) rather
+                            // than dropping the face.
+                            _ => ([0, 255, 0], [0, 0, 255]),
+                        }
+                    }
+                    _ => ([0, 255, 0], [0, 0, 255]),
+                };
+            let tex_id_plus_1 = tex_id + 1;
             mesh.push(
                 GpuVertex::textured(x_a, y_a, z_a, uvs[0], vvs[0], shade_a, alpha, bias, tex_id_plus_1),
                 GpuVertex::textured(x_b, y_b, z_b, uvs[1], vvs[1], shade_b, alpha, bias, tex_id_plus_1),

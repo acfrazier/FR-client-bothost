@@ -1,17 +1,17 @@
 //! The process-wide GPU assets (the "upload once" half of the GPU-chrome
-//! campaign): the model-texture atlas the scene shader samples, and the
+//! campaign): the model-texture array the scene shader samples, and the
 //! chrome sprite/font atlases the quad path draws from. All uploads happen
 //! through the shared queue on first use; the only data movement is the
 //! initial upload, never per frame.
 //!
-//! The model atlas is a fixed 8×8 grid of 128×128 cells (1024×1024 total)
-//! — the client has at most 50 textures, so a fixed grid needs no growth;
-//! the region for texture id `i` is the cell `(i % 8, i / 8)`, derived in
-//! the shader with no per-vertex data beyond the id. Texels are baked from
-//! the renderer's gamma-corrected texture palette (`tex_pal`, brightness
-//! 0.8), 64×64 textures upscaled 2×2 exactly like the CPU's high-mem
-//! `getTexels`. Alpha is set where the palette entry is non-zero, matching
-//! the CPU's transparent-texel skip (palette index 0).
+//! The model atlas is a `texture_2d_array` with one 128×128 layer per
+//! texture id (50 layers — the client has at most 50 textures); the shader
+//! samples layer `id` directly, clamped to the layer count, with no cell
+//! maths. Texels are baked from the renderer's gamma-corrected texture
+//! palette (`tex_pal`, brightness 0.8), 64×64 textures upscaled 2×2 exactly
+//! like the CPU's high-mem `getTexels`. Alpha is set where the palette
+//! entry is non-zero, matching the CPU's transparent-texel skip (palette
+//! index 0).
 //!
 //! The chrome sprite atlas is a stack of shelf-packed `GpuAtlas` layers
 //! (`LayerAtlas`). Each layer grows by doubling its height up to the
@@ -31,8 +31,8 @@ use crate::graphics::{Pix3DDraw, Pix32, Pix8, PixMap};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 
-/// The grid: 50 textures max, 128×128 each, 8 per row.
-const MODEL_ATLAS: u32 = 1024;
+/// The texture array: 50 textures max, one 128×128 layer per id.
+const MODEL_LAYERS: u32 = 50;
 const MODEL_CELL: u32 = 128;
 
 /// The initial chrome sprite atlas size (grows by doubling the height).
@@ -383,13 +383,13 @@ impl<K: Copy + Eq + std::hash::Hash> RegionCache<K> {
 pub struct GpuAssets {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    /// The model-texture atlas texture (scene shader group 0, binding 0).
+    /// The model-texture array texture (scene shader group 0, binding 0).
     model_atlas: wgpu::Texture,
     /// The scene pipeline's bind group layout (texture + sampler).
     pub model_bind_group_layout: wgpu::BindGroupLayout,
     /// The scene pipeline's bind group, bound once per frame.
     pub model_bind_group: wgpu::BindGroup,
-    /// Which texture ids are already in the atlas (upload once per
+    /// Which texture ids are already in the array (upload once per
     /// process; a missing texture on this renderer just stays unset).
     model_regions: [bool; 50],
     /// The chrome sprite atlas layers (bindings 0..7) and the font atlas
@@ -427,11 +427,11 @@ impl GpuAssets {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> GpuAssets {
         let max = device.limits().max_texture_dimension_2d;
         let model_atlas = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("r274 model texture atlas"),
+            label: Some("r274 model texture array"),
             size: wgpu::Extent3d {
-                width: MODEL_ATLAS,
-                height: MODEL_ATLAS,
-                depth_or_array_layers: 1,
+                width: MODEL_CELL,
+                height: MODEL_CELL,
+                depth_or_array_layers: MODEL_LAYERS,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -453,14 +453,14 @@ impl GpuAssets {
         });
         let model_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("r274 model atlas layout"),
+                label: Some("r274 model texture array layout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
                             sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
                             multisampled: false,
                         },
                         count: None,
@@ -474,7 +474,7 @@ impl GpuAssets {
                 ],
             });
         let model_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("r274 model atlas group"),
+            label: Some("r274 model texture array group"),
             layout: &model_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -871,7 +871,7 @@ impl GpuAssets {
         );
     }
 
-    /// Upload any of the renderer's model textures not yet in the atlas
+    /// Upload any of the renderer's model textures not yet in the array
     /// (once per process, keyed by texture id). A renderer without the
     /// `textures` jag (or a failed depack) leaves its id unset; the scene
     /// mesh then samples nothing for those faces.
@@ -918,13 +918,12 @@ impl GpuAssets {
                     }
                 }
             }
-            let cell_x = ((id as u32) % 8) * MODEL_CELL;
-            let cell_y = ((id as u32) / 8) * MODEL_CELL;
+            let layer = id as u32;
             self.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &self.model_atlas,
                     mip_level: 0,
-                    origin: wgpu::Origin3d { x: cell_x, y: cell_y, z: 0 },
+                    origin: wgpu::Origin3d { x: 0, y: 0, z: layer },
                     aspect: wgpu::TextureAspect::All,
                 },
                 &rgba,

@@ -145,6 +145,87 @@ fn scene_mesh_builds_ground_and_wall_triangles() {
     );
 }
 
+/// A vertical south-facing wall quad whose two faces are textured with
+/// out-of-range texture ids (60, past the 50-texture range, and -1): the
+/// GPU emitter must clamp the ids (49 and 0) and still emit the faces.
+fn out_of_range_texture_wall_model() -> client::dash3d::Model {
+    let mut model = client::dash3d::Model::default();
+    model.num_points = 4;
+    model.point_x = Some(vec![-60, 60, 60, -60]);
+    model.point_y = Some(vec![0, 0, -180, -180]);
+    model.point_z = Some(vec![0, 0, 0, 0]);
+    model.num_faces = 2;
+    model.face_vertex_a = Some(vec![0, 0]);
+    model.face_vertex_b = Some(vec![1, 2]);
+    model.face_vertex_c = Some(vec![2, 3]);
+    // `renderType & 0x3 == 2` = textured; `>> 2` = texture-vertex index 0.
+    model.face_render_type = Some(vec![2, 2]);
+    model.face_colour = Some(vec![60, -1]);
+    model.face_colour_a = Some(vec![WALL_SHADE, WALL_SHADE]);
+    model.face_colour_b = Some(vec![WALL_SHADE, WALL_SHADE]);
+    model.face_colour_c = Some(vec![WALL_SHADE, WALL_SHADE]);
+    model.face_texture_p = Some(vec![0, 0]);
+    model.face_texture_m = Some(vec![1, 1]);
+    model.face_texture_n = Some(vec![2, 2]);
+    model.calc_bounding_cylinder();
+    model
+}
+
+/// A textured face whose texture id is outside the 50-texture range must
+/// still emit vertices: the id is clamped into the valid range (RuneLite's
+/// `ModelUploader` stores `faceTexture + 1` for any id — no drop), so a
+/// textured wall/fence/door never vanishes on the GPU path.
+#[test]
+fn textured_face_with_out_of_range_tex_id_still_emits() {
+    Pix3D::init_colour_table(0.6);
+    let mut world = flat_world();
+    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+    let mut rw = RenderWorld::new();
+    rw.set_wall_model(
+        &world,
+        0,
+        1,
+        2,
+        Some(SceneModel::Model(out_of_range_texture_wall_model())),
+        None,
+    );
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+
+    let mut pix = Pix3DDraw::default();
+    pix.set_clipping(512, 334);
+    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
+    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
+
+    let mut found_clamped_high = false;
+    let mut found_clamped_low = false;
+    let mut found_unclamped = false;
+    for v in mesh.vertices() {
+        let tex_plus = v.uv_tex & 0xffff;
+        // tex_id 60 → clamped 49 → packs 50; tex_id -1 → clamped 0 → packs 1.
+        if tex_plus == 50 {
+            found_clamped_high = true;
+        }
+        if tex_plus == 1 {
+            found_clamped_low = true;
+        }
+        if tex_plus == 61 {
+            found_unclamped = true;
+        }
+    }
+    assert!(
+        found_clamped_high,
+        "a face with tex_id >= 50 must emit vertices with the clamped id 49 (packs 50), not drop"
+    );
+    assert!(
+        found_clamped_low,
+        "a face with tex_id < 0 must emit vertices with the clamped id 0 (packs 1), not drop"
+    );
+    assert!(
+        !found_unclamped,
+        "the raw out-of-range texture id must never be packed into the vertex"
+    );
+}
+
 /// `get_table` inline (the world.rs helper is private): combine an HSL
 /// texture average with a ground lightness into a colour-table index —
 /// the CPU `render_quick_ground` low-mem textured-ground shade.

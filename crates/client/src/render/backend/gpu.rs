@@ -19,7 +19,7 @@
 //! selection test.
 //!
 //! Known divergences from the CPU path (documented in `render/world.rs`):
-//! textured faces sample the model atlas (see `gpu_atlas.rs`), mouse picks
+//! textured faces sample the model texture array (see `gpu_atlas.rs`), mouse picks
 //! are AABB-only, the occluder tests are skipped (the depth buffer
 //! occludes), and the chrome draws as GPU quads (rects/sprites/glyphs)
 //! with the rotated minimap composited from a CPU staging upload.
@@ -73,8 +73,8 @@ static GPU_BACKEND_TRIED: std::sync::atomic::AtomicUsize = std::sync::atomic::At
 struct GpuContext {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    /// The shared asset store (model atlas; the chrome atlases in the
-    /// later slices). Uploads happen once per process on first use.
+    /// The shared asset store (model texture array; the chrome atlases in
+    /// the later slices). Uploads happen once per process on first use.
     assets: Arc<Mutex<GpuAssets>>,
 }
 
@@ -123,14 +123,14 @@ fn init_gpu() -> Result<Arc<GpuContext>, String> {
 /// vertex (`abhsl`, `uv_tex`, `v`). Flat faces convert the raw 16-bit
 /// shade to RGB via `hslToRgb` in the vertex shader (so gouraud faces
 /// interpolate RGB, not the packed shade); textured faces sample the
-/// shared 8×8 model atlas, the shade's top two bits picking the CPU's
-/// brightness level.
+/// shared `texture_2d_array` by clamped layer (texture id), the shade's
+/// top two bits picking the CPU's brightness level.
 const SCENE_SHADER: &str = r#"
 const NEAR: f32 = 50.0;
 const SCALE_X: f32 = 2.0;
 const SCALE_Y: f32 = -512.0 / 167.0;
 
-@group(0) @binding(0) var model_atlas: texture_2d<f32>;
+@group(0) @binding(0) var model_atlas: texture_2d_array<f32>;
 @group(0) @binding(1) var model_sampler: sampler;
 
 struct SceneUniforms {
@@ -242,13 +242,15 @@ fn vs_main(in: VsIn) -> VsOut {
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (in.tex_id > 0u) {
-        // The 8×8 grid of 128×128 cells in the 1024×1024 model atlas. The
-        // packed `tex_id` is texture id + 1; the fixed-point 0..255 u/v
-        // maps to the 0..128-texel cell (u/256 × 128 = u/2).
-        let id = in.tex_id - 1u;
-        let cell = vec2<f32>(f32(id % 8u), f32(id / 8u));
-        let uv = clamp((vec2<f32>(in.u * 0.5, in.v * 0.5) / 128.0 + cell) / 8.0, vec2<f32>(0.0), vec2<f32>(1.0));
-        let t = textureSample(model_atlas, model_sampler, uv);
+        // The `texture_2d_array` has one 128×128 layer per texture id;
+        // the packed `tex_id` is texture id + 1. The fixed-point 0..255
+        // u/v maps across the whole layer (u/256 × 128 = u/2), sampled
+        // with the layer clamped to the array depth (RuneLite `frag.glsl`
+        // samples `textures` by `fTextureId - 1`; ids beyond the array
+        // clamp instead of dropping, so textured faces never vanish).
+        let id = min(in.tex_id - 1u, 49u);
+        let uv = clamp(vec2<f32>(in.u * 0.5, in.v * 0.5) / 128.0, vec2<f32>(0.0), vec2<f32>(1.0));
+        let t = textureSample(model_atlas, model_sampler, uv, i32(id));
         if (t.a < 0.5) { discard; }
         // The CPU's per-texel brightness: the interpolated 16-bit shade's
         // top two bits select the texel block (rgb, ~7/8, ~3/4, ~5/8).
@@ -276,7 +278,7 @@ pub struct GpuBackend {
     frame_view: wgpu::TextureView,
     pipeline_opaque: wgpu::RenderPipeline,
     pipeline_translucent: wgpu::RenderPipeline,
-    /// The shared model-atlas bind group, bound each scene pass.
+    /// The shared model-texture-array bind group, bound each scene pass.
     model_bind_group: wgpu::BindGroup,
     /// The scene-shader brightness uniform (group 1): the current
     /// `Pix3D::colour_table` gamma, so `hslToRgb` matches the CPU table.
@@ -793,8 +795,8 @@ impl RenderBackend for GpuBackend {
         // mesh (this also resolves the lazy model caches, appends the
         // AABB mouse picks and runs the ground click raycast), render it
         // into `scene_texture`.
-        // Model textures upload into the shared atlas once (per texture
-        // id), before the mesh is built so the ids resolve to cells.
+        // Model textures upload into the shared array once (per texture
+        // id), before the mesh is built so the ids resolve to layers.
         self.context
             .assets
             .lock()

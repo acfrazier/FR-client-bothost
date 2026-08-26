@@ -1,13 +1,14 @@
 // Task 5b (GPU-chrome campaign): the model-texture sampling (white-buildings
 // fix). Textured faces carry a per-face texture index + projective UV and
-// sample the shared model atlas in the scene shader — they are no longer
-// flat-shaded. Two checks: (1) the scene mesh carries the texture id and a
-// finite, non-degenerate UV for a multi-texture model (pure CPU math, like
-// gpu_mesh.rs); (2) a real `GpuBackend` renders that mesh and the read-back
-// scene contains the two textures' colours (red + blue), so each texture
-// samples non-white texels. The GPU check needs an adapter and skips
-// without one. This binary owns the textured-mesh colour-table brightness,
-// so it pins `Pix3D::init_colour_table(0.6)` itself.
+// sample the shared model `texture_2d_array` (one 128×128 layer per id) in
+// the scene shader — they are no longer flat-shaded. Two checks: (1) the
+// scene mesh carries the texture id and a finite, non-degenerate UV for a
+// multi-texture model (pure CPU math, like gpu_mesh.rs); (2) a real
+// `GpuBackend` renders that mesh and the read-back scene contains the two
+// textures' colours (red + blue), so each texture samples non-white texels.
+// The GPU check needs an adapter and skips without one. This binary owns the
+// textured-mesh colour-table brightness, so it pins
+// `Pix3D::init_colour_table(0.6)` itself.
 use client::config::Cache;
 use client::core::World;
 use client::dash3d::{SceneModel, TerrainOverlayShape};
@@ -197,20 +198,20 @@ fn textured_model_mesh_carries_tex_id_and_uv() {
     assert!(saw_nonzero_u, "a textured face must pack a nonzero u (high 16 bits)");
     assert!(saw_nonzero_v, "a textured face must pack a nonzero v");
 
-    // The two textures resolve to different atlas cells (the shader derives
-    // the cell from the id), so a red face and a blue face sample different
-    // regions.
+    // The texture array has one 128×128 layer per texture id, so ids 7
+    // and 12 sample different layers (no shared-atlas cell derivation).
+    assert!((0..50).contains(&TEXTURE_RED), "the fixture texture id is in the valid range");
+    assert!((0..50).contains(&TEXTURE_BLUE), "the fixture texture id is in the valid range");
     assert_ne!(
-        TEXTURE_RED % 8 + 8 * (TEXTURE_RED / 8),
-        TEXTURE_BLUE % 8 + 8 * (TEXTURE_BLUE / 8),
-        "the two textures must occupy different atlas cells"
+        TEXTURE_RED, TEXTURE_BLUE,
+        "the two textures must sample different array layers"
     );
 }
 
 /// End-to-end: a real `GpuBackend` renders the textured-wall mesh and the
 /// read-back scene contains the two textures' colours — red *and* blue
-/// texels, so textured faces sample the atlas instead of flat-shading
-/// white. Skips on machines without an adapter.
+/// texels, so textured faces sample the texture array by layer instead of
+/// flat-shading white. Skips on machines without an adapter.
 #[test]
 fn gpu_render_samples_multi_texture_model() {
     Pix3D::init_colour_table(0.6);
@@ -249,14 +250,57 @@ fn gpu_render_samples_multi_texture_model() {
     assert!(found_red + found_blue > 500, "the textured wall must cover screen area");
 }
 
+/// A face whose texture id is past the array's depth (>= 50) still renders:
+/// the emitter clamps the id to 49 and the shader clamps the layer to the
+/// array depth, so the layer-49 texels appear — the walls/fences/doors
+/// never-vanish fix. Skips on machines without an adapter.
+#[test]
+fn gpu_render_clamps_out_of_range_tex_id() {
+    Pix3D::init_colour_table(0.6);
+    let mut pix = Pix3DDraw::default();
+    pix.set_clipping(512, 334);
+    pix.textures[49] = Some(solid_texture(0x00ff00));
+    pix.tex_pal[49] = Some(vec![0, 0x00ff00]);
+
+    let mut world = flat_world();
+    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+    let mut rw = RenderWorld::new();
+    let mut model = textured_wall_model();
+    model.face_colour = Some(vec![60, 60]); // both faces past the 50-texture range
+    rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
+    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
+
+    let Ok(mut backend) = GpuBackend::try_new() else {
+        eprintln!("no adapter on this machine; the clamped-tex-id render check skips");
+        return;
+    };
+    let scene = backend.render_scene_for_test(mesh, &pix);
+
+    let mut found_green = 0usize;
+    for &rgb in &scene {
+        let r = (rgb >> 16) & 0xff;
+        let g = (rgb >> 8) & 0xff;
+        let b = rgb & 0xff;
+        if g > 150 && r < 80 && b < 80 {
+            found_green += 1;
+        }
+    }
+    assert!(
+        found_green > 500,
+        "an out-of-range-texture-id wall face must render the clamped layer-49 texels, not drop (got {found_green} green px)"
+    );
+}
+
 /// The low-mem path (the default bot config): a halved 64×64 texture and
-/// `pix.low_mem` set. The atlas bakes every cell at 128×128, so the UV
+/// `pix.low_mem` set. The array bakes every layer at 128×128, so the UV
 /// numerator scale must be 128 regardless of the memory mode — a scale-64
-/// mesh would sample only the top-left quarter of the cell, stretched 2×.
+/// mesh would sample only the top-left quarter of the layer, stretched 2×.
 /// The quadrant texture makes that visible: the full 64×64 texture (all
 /// four quadrants) must appear on the face.
 #[test]
-fn gpu_lowmem_texture_samples_the_full_128px_cell() {
+fn gpu_lowmem_texture_samples_the_full_128px_layer() {
     Pix3D::init_colour_table(0.6);
     let mut pix = Pix3DDraw::default();
     pix.set_clipping(512, 334);
@@ -276,7 +320,7 @@ fn gpu_lowmem_texture_samples_the_full_128px_cell() {
     let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
 
     // Mesh-level: the textured vertices' fixed-point UV must span the full
-    // 128px cell in both axes even on the low-mem path (a scale-64 bug caps
+    // 128px layer in both axes even on the low-mem path (a scale-64 bug caps
     // at 64, i.e. u/v ≤ 128 here).
     let mut max_u = 0u32;
     let mut max_v = 0u32;
@@ -286,7 +330,7 @@ fn gpu_lowmem_texture_samples_the_full_128px_cell() {
     }
     assert!(
         max_u > 220 && max_v > 220,
-        "the low-mem mesh UV must span the full 128px cell (got u≤{max_u}, v≤{max_v})"
+        "the low-mem mesh UV must span the full 128px layer (got u≤{max_u}, v≤{max_v})"
     );
 
     // GPU: the render must sample the texture across a quadrant boundary —
@@ -315,7 +359,7 @@ fn gpu_lowmem_texture_samples_the_full_128px_cell() {
     }
     assert!(
         seen.iter().filter(|&&s| s).count() >= 2,
-        "the low-mem textured face must sample more than the top-left quarter of the 128px cell (seen {seen:?})"
+        "the low-mem textured face must sample more than the top-left quarter of the 128px layer (seen {seen:?})"
     );
 }
 
