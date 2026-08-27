@@ -728,6 +728,9 @@ pub struct Client {
     pub chat_input: String,
     pub chat_scroll_pos: i32,
     pub chat_scroll_height: i32,
+    /// Stable per-message id: bumped once per `add_chat` append so hosts can
+    /// refer to a chat line without snapshot-owned counters.
+    pub chat_seq: u64,
     /// Ignore list and `chatDisabled` from client-ts (`ignoreCount`/
     /// `ignoreUserhash[100]`/`chatDisabled`). The CHAT mask reads them for
     /// the `type <= 1` skip; the list itself is filled by the social slice.
@@ -1122,6 +1125,7 @@ impl Client {
             chat_input: String::new(),
             chat_scroll_pos: 0,
             chat_scroll_height: 78,
+            chat_seq: 0,
             ignore_count: 0,
             ignore_userhash: [0; 100],
             chat_disabled: 0,
@@ -3880,11 +3884,13 @@ impl Client {
     /// `addChat` from client-ts (11453): shift the 100 chat slots down one
     /// (99→1), write the new line at slot 0, and redraw. The `tutComId`
     /// branch (TS 11454-11458) writes `tutComMessage` and clears the mouse
-    /// click; the tutorial message feature is not ported.
+    /// click; the tutorial message feature is not ported. Each appended line
+    /// bumps `chat_seq` once (before the slot shift).
     pub fn add_chat(&mut self, r#type: i32, text: &str, sender: &str) {
         if self.chat_modal_id == -1 {
             self.redraw_chat = true;
         }
+        self.chat_seq += 1;
         for i in (1..100).rev() {
             self.chat_type[i] = self.chat_type[i - 1];
             self.chat_username[i] = std::mem::take(&mut self.chat_username[i - 1]);

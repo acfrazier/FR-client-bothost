@@ -420,6 +420,17 @@ let _r = Renderer::new(false);
 }
 
 #[test]
+fn add_chat_bumps_chat_seq_per_message() {
+    let _r = Renderer::new(false);
+    let mut c = client();
+    assert_eq!(c.chat_seq, 0);
+    c.add_chat(0, "hello", "");
+    assert_eq!(c.chat_seq, 1);
+    c.add_chat(4, "wishes to trade with you.", "Zezima");
+    assert_eq!(c.chat_seq, 2);
+}
+
+#[test]
 fn message_game_plain_is_type_0() {
 let _r = Renderer::new(false);
     let mut c = client();

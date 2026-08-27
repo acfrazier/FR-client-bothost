@@ -132,6 +132,19 @@ impl<T: LinkableTrait> LinkList<T> {
         Some(self.arena.get_mut(node))
     }
 
+    /// Immutable walk of the `next` chain from head to tail, the same order
+    /// `head`/`next` visits. Takes `&self` (does not touch `cursor`/`last`),
+    /// so hosts can read ground items through a `&Client`; use `head`/`next`
+    /// when the walk needs to unlink or re-insert nodes.
+    pub fn for_each(&self, mut f: impl FnMut(&T)) {
+        let s = self.sentinel;
+        let mut node = self.arena.get(s).links().next.expect("linked list invariant");
+        while node != s {
+            f(self.arena.get(node));
+            node = self.arena.get(node).links().next.expect("linked list invariant");
+        }
+    }
+
     /// Remove and free the node most recently returned by `head`/`next`/
     /// `tail`/`prev` (TS `unlink()` during an iteration). No-op when there is
     /// no such node.

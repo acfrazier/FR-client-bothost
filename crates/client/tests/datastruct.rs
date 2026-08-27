@@ -34,6 +34,42 @@ fn link_list_clear_drops_all_and_is_reusable() {
 }
 
 #[test]
+fn link_list_for_each_walks_in_order() {
+    let mut list = LinkList::new();
+    list.push(Linkable::new(10));
+    list.push(Linkable::new(20));
+    list.push(Linkable::new(30));
+    let mut keys = Vec::new();
+    list.for_each(|n| keys.push(n.key));
+    assert_eq!(keys, [10, 20, 30]);
+}
+
+#[test]
+fn link_list_for_each_empty_is_noop() {
+    let list: LinkList<Linkable> = LinkList::new();
+    let mut count = 0;
+    list.for_each(|_| count += 1);
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn link_list_for_each_leaves_mutable_cursor_untouched() {
+    let mut list = LinkList::new();
+    list.push(Linkable::new(10));
+    list.push(Linkable::new(20));
+    let mut seen = Vec::new();
+    list.for_each(|n| seen.push(n.key));
+    assert_eq!(seen, [10, 20]);
+    // the immutable walk must not disturb head/next cursor state
+    let mut keys = Vec::new();
+    keys.push(list.head().unwrap().key);
+    while let Some(n) = list.next() {
+        keys.push(n.key);
+    }
+    assert_eq!(keys, [10, 20]);
+}
+
+#[test]
 fn link_list_head_next_iterates() {
     let mut list = LinkList::new();
     list.push(Linkable::new(10));
