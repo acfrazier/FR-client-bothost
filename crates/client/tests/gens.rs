@@ -235,3 +235,145 @@ fn gens_defaults_to_zero() {
     assert_eq!(c.gens.map_flag, g.map_flag);
     assert_eq!(c.gens.world, g.world);
 }
+
+/// One of the eleven `ClientGens` families, in struct field order.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum GensField {
+    Npc,
+    Player,
+    Inv,
+    Varp,
+    Stat,
+    Chat,
+    Scene,
+    Iface,
+    Camera,
+    MapFlag,
+    World,
+}
+
+impl GensField {
+    const ALL: [GensField; 11] = [
+        GensField::Npc,
+        GensField::Player,
+        GensField::Inv,
+        GensField::Varp,
+        GensField::Stat,
+        GensField::Chat,
+        GensField::Scene,
+        GensField::Iface,
+        GensField::Camera,
+        GensField::MapFlag,
+        GensField::World,
+    ];
+
+    fn get(self, g: &ClientGens) -> u64 {
+        match self {
+            GensField::Npc => g.npc,
+            GensField::Player => g.player,
+            GensField::Inv => g.inv,
+            GensField::Varp => g.varp,
+            GensField::Stat => g.stat,
+            GensField::Chat => g.chat,
+            GensField::Scene => g.scene,
+            GensField::Iface => g.iface,
+            GensField::Camera => g.camera,
+            GensField::MapFlag => g.map_flag,
+            GensField::World => g.world,
+        }
+    }
+}
+
+/// Fresh client, apply `ptype`, then assert exactly `family` is 1 and every
+/// other family is 0 (`Client::new` leaves all gens zero).
+fn check_bump(ptype: i32, family: GensField) {
+    let mut c = Client::new(cfg());
+    c.bump_gens(ptype);
+    for f in GensField::ALL {
+        let expected = if f == family { 1 } else { 0 };
+        assert_eq!(f.get(&c.gens), expected, "bump_gens({ptype}) family {f:?}");
+    }
+}
+
+/// Pins the exact server-packet → generation-family mapping in `bump_gens`
+/// (client.rs). Every `ServerProt` const in a `bump_gens` arm must bump
+/// exactly its family by 1 and no other; `REBUILD_NORMAL` bumps all 11.
+/// A future edit to a packet or a family that drifts this mapping fails here.
+#[test]
+fn packet_to_family_mapping_is_exact() {
+    let cases: &[(i32, GensField)] = &[
+        // npc
+        (ServerProt::NPC_INFO, GensField::Npc),
+        // player
+        (ServerProt::PLAYER_INFO, GensField::Player),
+        // inv
+        (ServerProt::UPDATE_INV_FULL, GensField::Inv),
+        (ServerProt::UPDATE_INV_PARTIAL, GensField::Inv),
+        (ServerProt::UPDATE_INV_STOP_TRANSMIT, GensField::Inv),
+        // varp
+        (ServerProt::VARP_SMALL, GensField::Varp),
+        (ServerProt::VARP_LARGE, GensField::Varp),
+        (ServerProt::VARP_SYNC, GensField::Varp),
+        // stat
+        (ServerProt::UPDATE_STAT, GensField::Stat),
+        (ServerProt::UPDATE_RUNENERGY, GensField::Stat),
+        (ServerProt::UPDATE_RUNWEIGHT, GensField::Stat),
+        // chat
+        (ServerProt::MESSAGE_GAME, GensField::Chat),
+        (ServerProt::MESSAGE_PRIVATE, GensField::Chat),
+        // scene
+        (ServerProt::UPDATE_ZONE_PARTIAL_FOLLOWS, GensField::Scene),
+        (ServerProt::UPDATE_ZONE_FULL_FOLLOWS, GensField::Scene),
+        (ServerProt::UPDATE_ZONE_PARTIAL_ENCLOSED, GensField::Scene),
+        (ServerProt::P_LOCMERGE, GensField::Scene),
+        (ServerProt::LOC_ANIM, GensField::Scene),
+        (ServerProt::OBJ_DEL, GensField::Scene),
+        (ServerProt::OBJ_REVEAL, GensField::Scene),
+        (ServerProt::LOC_ADD_CHANGE, GensField::Scene),
+        (ServerProt::MAP_PROJANIM, GensField::Scene),
+        (ServerProt::LOC_DEL, GensField::Scene),
+        (ServerProt::OBJ_COUNT, GensField::Scene),
+        (ServerProt::MAP_ANIM, GensField::Scene),
+        (ServerProt::OBJ_ADD, GensField::Scene),
+        // iface
+        (ServerProt::IF_OPENCHAT, GensField::Iface),
+        (ServerProt::IF_OPENMAIN_SIDE, GensField::Iface),
+        (ServerProt::IF_CLOSE, GensField::Iface),
+        (ServerProt::IF_SETICON, GensField::Iface),
+        (ServerProt::IF_SHOWICON, GensField::Iface),
+        (ServerProt::IF_OPENMAIN, GensField::Iface),
+        (ServerProt::IF_OPENSIDE, GensField::Iface),
+        (ServerProt::IF_OPENOVERLAY, GensField::Iface),
+        (ServerProt::IF_SETCOLOUR, GensField::Iface),
+        (ServerProt::IF_SETHIDE, GensField::Iface),
+        (ServerProt::IF_SETOBJECT, GensField::Iface),
+        (ServerProt::IF_SETMODEL, GensField::Iface),
+        (ServerProt::IF_SETANIM, GensField::Iface),
+        (ServerProt::IF_SETPLAYERHEAD, GensField::Iface),
+        (ServerProt::IF_SETTEXT, GensField::Iface),
+        (ServerProt::IF_SETNPCHEAD, GensField::Iface),
+        (ServerProt::IF_SETPOSITION, GensField::Iface),
+        (ServerProt::IF_SETSCROLLPOS, GensField::Iface),
+        (ServerProt::P_COUNTDIALOG, GensField::Iface),
+        // camera
+        (ServerProt::CAM_LOOKAT, GensField::Camera),
+        (ServerProt::CAM_SHAKE, GensField::Camera),
+        (ServerProt::CAM_MOVETO, GensField::Camera),
+        (ServerProt::CAM_RESET, GensField::Camera),
+        // map_flag
+        (ServerProt::UNSET_MAP_FLAG, GensField::MapFlag),
+        // world
+        (ServerProt::SET_MULTIWAY, GensField::World),
+    ];
+
+    for &(ptype, family) in cases {
+        check_bump(ptype, family);
+    }
+
+    // REBUILD_NORMAL swaps the whole scene: every family advances by 1.
+    let mut c = Client::new(cfg());
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    for f in GensField::ALL {
+        assert_eq!(f.get(&c.gens), 1, "REBUILD_NORMAL missed family {f:?}");
+    }
+}
