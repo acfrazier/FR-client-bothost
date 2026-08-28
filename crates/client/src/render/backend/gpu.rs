@@ -230,9 +230,10 @@ fn vs_main(in: VsIn) -> VsOut {
     // 512×334 area_game centre). clip.z is set so the interpolated depth
     // is perspective-correct and stays in [0, 1] for every z >= 50. The
     // face priority biases it *nearer* (higher priority wins under
-    // `CompareFunction::Less`), matching the CPU painter's ascending
-    // priority-bucket order; priorities are ≤ ~11, so bias/128 ≤ ~0.086
-    // and the near plane is never crossed.
+    // `CompareFunction::LessEqual`, with the mesh sorted far-first),
+    // matching the CPU painter's ascending priority-bucket order;
+    // priorities are ≤ ~11, so bias/128 ≤ ~0.086 and the near plane is
+    // never crossed.
     out.position = vec4<f32>(in.pos.x * SCALE_X, in.pos.y * SCALE_Y, z - NEAR - f32(bias) / 128.0, z);
     out.color = hslToRgb(hsl);
     out.hsl = f32(hsl);
@@ -823,7 +824,7 @@ fn make_pipeline(
         depth_stencil: Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
             depth_write_enabled: Some(opaque),
-            depth_compare: Some(wgpu::CompareFunction::Less),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }),

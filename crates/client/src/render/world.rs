@@ -2024,7 +2024,7 @@ impl RenderWorld {
         if world.ground_x != -1 {
             world.click = false;
         }
-        mesh.sort_opaque_near_first();
+        mesh.sort_opaque_far_first();
         mesh
     }
 
@@ -4107,25 +4107,19 @@ impl SceneMesh {
         all
     }
 
-    /// Sort opaque triangles near-first (ascending minimum camera-space z).
-    /// The depth test is `Less`, so the first triangle written at a depth
-    /// wins; near-first makes the nearer wall win over a flush sprite face
-    /// that the CPU painter hides by drawing the wall last. Faces at the
-    /// same depth break ties by the packed face priority (higher first),
-    /// mirroring the shader's depth bias.
-    pub fn sort_opaque_near_first(&mut self) {
+    /// Sort opaque triangles far-first (descending minimum camera-space z)
+    /// with a stable tie-break. The depth test is `LessEqual`, so the last
+    /// triangle written at a depth wins; far-first plus `LessEqual` is the
+    /// painter's algorithm the CPU uses — a nearer wall overwrites a flush
+    /// sprite face, and coplanar faces within a model keep their face order
+    /// (later face wins) without z-fighting.
+    pub fn sort_opaque_far_first(&mut self) {
         let mut tris: Vec<(f32, [GpuVertex; 3])> = self
             .opaque
             .chunks_exact(3)
             .map(|c| (c[0].z.min(c[1].z).min(c[2].z), [c[0], c[1], c[2]]))
             .collect();
-        tris.sort_by(|a, b| {
-            a.0.total_cmp(&b.0).then_with(|| {
-                let bias_a = (a.1[0].abhsl >> 16) & 0xff;
-                let bias_b = (b.1[0].abhsl >> 16) & 0xff;
-                bias_b.cmp(&bias_a)
-            })
-        });
+        tris.sort_by(|a, b| b.0.total_cmp(&a.0));
         self.opaque = tris.into_iter().flat_map(|(_, t)| t).collect();
     }
 
