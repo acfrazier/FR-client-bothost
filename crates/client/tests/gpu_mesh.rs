@@ -315,6 +315,68 @@ fn lowmem_textured_quick_ground_shades_with_the_texture_average() {
     );
 }
 
+/// A high-mem textured quick ground (the flat water tiles) must sample the
+/// atlas, not fall through to the low-mem average-colour branch: the GPU
+/// `emit_quick_ground` follow-up rendered high-mem water flat gray.
+#[test]
+fn highmem_textured_quick_ground_samples_the_atlas() {
+    Pix3D::init_colour_table(0.6);
+    let max_level: i32 = 1;
+    let max_tile_x: i32 = 3;
+    let max_tile_z: i32 = 3;
+    let groundh = vec![
+        vec![vec![2000i32; max_tile_z as usize + 1]; max_tile_x as usize + 1];
+        max_level as usize
+    ];
+    let mut world = World::new(groundh, max_tile_z, max_level, max_tile_x);
+    world.fill_base_level(0);
+    for x in 0..max_tile_x {
+        for z in 0..max_tile_z {
+            world.set_ground(
+                0,
+                x,
+                z,
+                TerrainOverlayShape::DIAGONAL,
+                0,
+                1, // water
+                2000,
+                2000,
+                2000,
+                2000,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                0,
+                0,
+            );
+        }
+    }
+
+    let mut rw = RenderWorld::new();
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let mut pix = Pix3DDraw::default();
+    pix.set_clipping(512, 334);
+    pix.low_mem = false;
+    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
+    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
+
+    let mut textured = 0usize;
+    for v in mesh.vertices() {
+        if v.uv_tex & 0xffff != 0 {
+            textured += 1;
+        }
+    }
+    assert!(
+        textured >= 3,
+        "a high-mem textured quick ground must emit textured vertices, not flat (got {textured})"
+    );
+}
+
 /// A low-mem *non-quick* textured ground face (the water/lava edge tiles
 /// that build a `Ground` rather than a `QuickGround`) must flat-shade with
 /// the texture average, not sample the atlas — the GPU `emit_ground` bug

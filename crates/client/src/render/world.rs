@@ -4653,6 +4653,32 @@ fn emit_model_faces(
     }
 }
 
+/// The RuneLite projective UV: a point `p`'s (u, v) in the texture plane
+/// spanned by basis `origin`/`b`/`c`, packed 0..255 like the CPU's
+/// fixed-point texture coordinates (the `abs` mirrors the CPU's masked
+/// texel wrap outside the parallelogram).
+fn projective_uv(
+    origin: (f32, f32, f32),
+    b: (f32, f32, f32),
+    c: (f32, f32, f32),
+    p: (f32, f32, f32),
+) -> (u32, u32) {
+    let (ax, ay, az) = origin;
+    let (bx, by, bz) = b;
+    let (cx, cy, cz) = c;
+    let (px, py, pz) = p;
+    let (hx, hy, hz) = (cx - ax, cy - ay, cz - az);
+    let (vx, vy, vz) = (bx - ax, by - ay, bz - az);
+    let (dx, dy, dz) = (hy * vz - hz * vy, hz * vx - hx * vz, hx * vy - hy * vx);
+    let (nux, nuy, nuz) = (az * vy - ay * vz, ax * vz - az * vx, ay * vx - ax * vy);
+    let (nvx, nvy, nvz) = (hz * ay - hy * az, hx * az - hz * ax, hy * ax - hx * ay);
+    let den = (dx * px + dy * py + dz * pz).max(1e-6);
+    let u = (nux * px + nuy * py + nuz * pz) / den;
+    let v = (nvx * px + nvy * py + nvz * pz) / den;
+    let pack = |t: f32| (t.abs() * 256.0).clamp(0.0, 255.0) as u32;
+    (pack(u), pack(v))
+}
+
 /// `renderGround` for the GPU path: transform the ground's vertices to
 /// camera space, then mesh every face with its per-vertex colour-table
 /// shades (textured ground samples the model atlas with the quad-corner
@@ -4842,18 +4868,24 @@ fn emit_quick_ground(
     // A textured quick ground (water, lava) is flat-shaded with the
     // texture's average colour in low-mem, mirroring the CPU
     // `render_quick_ground` (`get_table(TEXTURE_AVERAGE[texture], colour)`).
-    // High-mem textured quick ground is a follow-up (samples the atlas).
-    let tex_average = if ground.texture >= 0 && ground.texture < 50 && pix.low_mem {
+    // High-mem samples the atlas with the quad-corner projective UV.
+    let lowmem_average = if ground.texture >= 0 && ground.texture < 50 && pix.low_mem {
         TEXTURE_AVERAGE.get(ground.texture as usize).copied()
     } else {
         None
     };
+    let highmem_texture = if ground.texture >= 0 && ground.texture < 50 && !pix.low_mem {
+        Some(ground.texture as u32)
+    } else {
+        None
+    };
     let shade_of = |colour: i32| -> i32 {
-        match tex_average {
+        match lowmem_average {
             Some(avg) => get_table(avg, colour),
             None => colour,
         }
     };
+    let corner = |k: usize| (x[k] as f32, y[k] as f32, z[k] as f32);
 
     // Triangle 1: corners (2, 3, 1), shades (ne, nw, se).
     if wrapping_cross(sx[2] - sx[3], sy[1] - sy[3], sy[2] - sy[3], sx[1] - sx[3]) > 0 {
@@ -4864,12 +4896,25 @@ fn emit_quick_ground(
             world.ground_z = tile_z;
         }
         if ground.colour_ne != 12345678 {
-            mesh.push(
-                GpuVertex::new(x[2], y[2], z[2], shade_of(ground.colour_ne), 255, 0),
-                GpuVertex::new(x[3], y[3], z[3], shade_of(ground.colour_nw), 255, 0),
-                GpuVertex::new(x[1], y[1], z[1], shade_of(ground.colour_se), 255, 0),
-                false,
-            );
+            if let Some(tex) = highmem_texture {
+                let (ba, bb, bc) = if ground.flat { (0, 1, 3) } else { (2, 3, 1) };
+                let (u2, v2) = projective_uv(corner(ba), corner(bb), corner(bc), corner(2));
+                let (u3, v3) = projective_uv(corner(ba), corner(bb), corner(bc), corner(3));
+                let (u1, v1) = projective_uv(corner(ba), corner(bb), corner(bc), corner(1));
+                mesh.push(
+                    GpuVertex::textured(x[2], y[2], z[2], u2, v2, ground.colour_ne, 255, 0, tex + 1),
+                    GpuVertex::textured(x[3], y[3], z[3], u3, v3, ground.colour_nw, 255, 0, tex + 1),
+                    GpuVertex::textured(x[1], y[1], z[1], u1, v1, ground.colour_se, 255, 0, tex + 1),
+                    false,
+                );
+            } else {
+                mesh.push(
+                    GpuVertex::new(x[2], y[2], z[2], shade_of(ground.colour_ne), 255, 0),
+                    GpuVertex::new(x[3], y[3], z[3], shade_of(ground.colour_nw), 255, 0),
+                    GpuVertex::new(x[1], y[1], z[1], shade_of(ground.colour_se), 255, 0),
+                    false,
+                );
+            }
         }
     }
 
@@ -4882,12 +4927,24 @@ fn emit_quick_ground(
             world.ground_z = tile_z;
         }
         if ground.colour_sw != 12345678 {
-            mesh.push(
-                GpuVertex::new(x[0], y[0], z[0], shade_of(ground.colour_sw), 255, 0),
-                GpuVertex::new(x[1], y[1], z[1], shade_of(ground.colour_se), 255, 0),
-                GpuVertex::new(x[3], y[3], z[3], shade_of(ground.colour_nw), 255, 0),
-                false,
-            );
+            if let Some(tex) = highmem_texture {
+                let (u0, v0) = projective_uv(corner(0), corner(1), corner(3), corner(0));
+                let (u1, v1) = projective_uv(corner(0), corner(1), corner(3), corner(1));
+                let (u3, v3) = projective_uv(corner(0), corner(1), corner(3), corner(3));
+                mesh.push(
+                    GpuVertex::textured(x[0], y[0], z[0], u0, v0, ground.colour_sw, 255, 0, tex + 1),
+                    GpuVertex::textured(x[1], y[1], z[1], u1, v1, ground.colour_se, 255, 0, tex + 1),
+                    GpuVertex::textured(x[3], y[3], z[3], u3, v3, ground.colour_nw, 255, 0, tex + 1),
+                    false,
+                );
+            } else {
+                mesh.push(
+                    GpuVertex::new(x[0], y[0], z[0], shade_of(ground.colour_sw), 255, 0),
+                    GpuVertex::new(x[1], y[1], z[1], shade_of(ground.colour_se), 255, 0),
+                    GpuVertex::new(x[3], y[3], z[3], shade_of(ground.colour_nw), 255, 0),
+                    false,
+                );
+            }
         }
     }
 }
