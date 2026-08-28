@@ -3945,9 +3945,8 @@ impl Renderer {
     pub fn mainredraw(&mut self, client: &mut Client) -> FrameOutput {
         // A live lowmem/highmem flip updates `Client.config.lowmem`; keep the
         // raster flag in step so the ground/water path picks the texture
-        // vs average-colour branch without a respawn. `set_lowmem` only
-        // touches the client, and `Renderer` constructed at spawn holds the
-        // original flag.
+        // vs average-colour branch without rebuilding the renderer (which
+        // hangs the slot mid-flight). `set_lowmem` only touches the client.
         self.pix3d.low_mem = client.config.lowmem;
         if !client.draw {
             return FrameOutput::PixMap(self.draw_area.clone());
