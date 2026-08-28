@@ -405,6 +405,17 @@ impl Pix3DDraw {
         self.active_texels.fill(None);
     }
 
+    /// Re-size the texel pool for a live lowmem/highmem flip. `init_pool`
+    /// is one-shot by design, so the live toggle needs a fresh pool: the
+    /// high-mem raster writes four 16384-texel blocks (65536 total) and a
+    /// low-mem-sized row crashes with `index 16384` on the second block.
+    pub fn reset_pool(&mut self, size: i32) {
+        self.texel_pool = None;
+        self.pool_size = 0;
+        self.active_texels.fill(None);
+        self.init_pool(size);
+    }
+
     /// TS `unpackTextures`: depack textures 0..49 from the `textures` jag.
     /// In lowMem, 128×128 textures are halved first; otherwise they are
     /// trimmed back to their original size. Failed depacks are skipped.

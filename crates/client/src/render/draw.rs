@@ -3943,11 +3943,24 @@ impl Renderer {
     /// loading splash and the minimap *image* build; `Client::check_minimap`
     /// runs the scene build on the sim loop) and `follow_camera`.
     pub fn mainredraw(&mut self, client: &mut Client) -> FrameOutput {
-        // A live lowmem/highmem flip updates `Client.config.lowmem`; keep the
-        // raster flag in step so the ground/water path picks the texture
-        // vs average-colour branch without rebuilding the renderer (which
-        // hangs the slot mid-flight). `set_lowmem` only touches the client.
-        self.pix3d.low_mem = client.config.lowmem;
+        // A live lowmem/highmem flip updates `Client.config.lowmem`; re-init
+        // the renderer's texture state — the raster flag, the unpacked
+        // textures (lowmem halves 128×128, highmem trims) and the texel pool
+        // (whose row length follows the mode) — so both the CPU texel raster
+        // and the GPU ground/water branch see the new mode. The backend and
+        // `draw_area` stay alive; rebuilding the whole renderer hangs the
+        // slot mid-flight.
+        if self.pix3d.low_mem != client.config.lowmem {
+            self.pix3d.low_mem = client.config.lowmem;
+            if let Ok(bytes) = std::fs::read(format!("{}/textures", client.config.cache_dir)) {
+                let jag = JagFile::new(bytes);
+                self.pix3d.unpack_textures(&jag);
+            }
+            self.pix3d.reset_pool(20);
+            self.pix3d.init_texture_palettes(0.8);
+            self.pix3d.refresh_texture_averages();
+            client.tex_average = self.pix3d.tex_average;
+        }
         if !client.draw {
             return FrameOutput::PixMap(self.draw_area.clone());
         }
