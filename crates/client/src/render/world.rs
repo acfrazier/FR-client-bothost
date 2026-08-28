@@ -4720,7 +4720,7 @@ fn emit_model_faces(
         let translucent = alpha != 255;
         for i in 1..clipped.len() - 1 {
             let (v0, v1, v2) = (clipped[0], clipped[i], clipped[i + 1]);
-            emitted_min_z = emitted_min_z.min(v0.z.min(v1.z).min(v2.z));
+            emitted_min_z = emitted_min_z.min(v0.z as f32).min(v1.z as f32).min(v2.z as f32);
             if let Some((tex_id_plus_1, _, _)) = textured {
                 mesh.push(
                     GpuVertex::textured(v0.x, v0.y, v0.z, v0.u, v0.v, v0.shade, alpha, bias, tex_id_plus_1),
