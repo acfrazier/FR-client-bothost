@@ -1037,11 +1037,13 @@ impl RenderWorld {
 
     /// The live loc model at scene tile (`tile_x`, `tile_z`) whose loc id
     /// is `loc_id` — the nav-debug hull target. Resolves the
-    /// wall/decor/ground-decor slot exactly like the draw pass (Task 3b
-    /// cache) and returns the placement scene position, the render yaw
-    /// index and a copy of the current temp model. Reads the AABB only;
-    /// the loc's `use_aabb_mouse_check` flag is never touched, so hull
-    /// paint cannot change loc picking.
+    /// wall/decor/ground-decor slot *or* the tile's grounded scene loc
+    /// (the entity-2 sprites `add_scenery` places, typical type-10
+    /// scenery) exactly like the draw pass (Task 3b cache) and returns the
+    /// placement scene position, the render yaw index and a copy of the
+    /// current temp model. Reads the AABB only; the loc's
+    /// `use_aabb_mouse_check` flag is never touched, so hull paint cannot
+    /// change loc picking.
     pub fn loc_model_at(
         &mut self,
         world: &World,
@@ -1057,11 +1059,9 @@ impl RenderWorld {
             if (wall.typecode >> 14) & 0x7fff == loc_id {
                 let (model1, model2) =
                     self.wall_models_mut(world, cache, loop_cycle, level, tile_x, tile_z);
-                for model in [model1, model2] {
-                    if let Some(model) = model {
-                        if let Some(model) = model.get_temp_model(cache, loop_cycle) {
-                            return Some((wall.x, wall.y, wall.z, 0, model));
-                        }
+                for model in [model1, model2].into_iter().flatten() {
+                    if let Some(model) = model.get_temp_model(cache, loop_cycle) {
+                        return Some((wall.x, wall.y, wall.z, 0, model));
                     }
                 }
             }
@@ -1087,6 +1087,25 @@ impl RenderWorld {
                     if let Some(model) = model.get_temp_model(cache, loop_cycle) {
                         return Some((gd.x, gd.y, gd.z, 0, model));
                     }
+                }
+            }
+        }
+        // Grounded tile locs: the tile's scene sprites (entity 2) carry
+        // the loc id, resolved exactly like the draw pass.
+        for i in 0..tile.sprite_count as usize {
+            let Some(index) = tile.sprites[i] else {
+                continue;
+            };
+            let Some(sprite) = world.sprites.get(index).and_then(|s| s.as_ref()) else {
+                continue;
+            };
+            if (sprite.typecode >> 29) & 0x3 != 2 || (sprite.typecode >> 14) & 0x7fff != loc_id {
+                continue;
+            }
+            let (sx, sy, sz, yaw) = (sprite.x, sprite.y, sprite.z, sprite.yaw);
+            if let Some(model) = self.sprite_model_mut(world, cache, loop_cycle, index).as_mut() {
+                if let Some(model) = model.get_temp_model(cache, loop_cycle) {
+                    return Some((sx, sy, sz, yaw, model));
                 }
             }
         }

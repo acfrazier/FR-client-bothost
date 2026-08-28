@@ -801,6 +801,37 @@ fn nav_debug_paint_does_not_enable_aabb_loc_pick() {
     );
 }
 
+/// `loc_model_at` resolves grounded tile locs too — the tile's scene
+/// sprites (entity 2, the `add_scenery` / type-10 scenery) — not just
+/// wall/decor/ground-decor slots: a hull for a grounded loc is found, and
+/// the loc's pick flag stays untouched.
+#[test]
+fn loc_model_at_resolves_grounded_scenery_loc() {
+    let mut world = flat_world();
+    let typecode = (2 << 29) | (1531 << 14) | (2 << 7) | 1;
+    assert!(world.add_scenery(0, 1, 2, 2000, typecode, 0, 1, 1, 0, 0, 0, 0, 0));
+    let sprite_index = world.last_sprite_index().expect("the scenery sprite");
+    let mut rw = RenderWorld::new();
+    rw.set_sprite_model(
+        &world,
+        sprite_index,
+        Some(SceneModel::Model(angled_door_model())),
+    );
+
+    let (x, y, z, _yaw, resolved) = rw
+        .loc_model_at(&world, &Cache::default(), 0, 0, 1, 2, 1531)
+        .expect("a grounded scenery loc must resolve for the hull paint");
+    assert!(
+        !resolved.use_aabb_mouse_check,
+        "hull paint must never set use_aabb_mouse_check on a grounded loc"
+    );
+    assert_eq!(resolved.num_points, 4, "the grounded loc model must resolve");
+    assert!(
+        x > 0 && y > 0 && z > 0,
+        "the grounded loc must carry a scene position"
+    );
+}
+
 /// `set_nav_debug_paint` round-trips on the client: the paint stores and
 /// clears (the host publishes `None` by default so the tree builds).
 #[test]
