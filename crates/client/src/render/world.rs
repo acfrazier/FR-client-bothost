@@ -559,7 +559,7 @@ impl RenderWorld {
         let loc = loc?;
         if loc.anim == -1 {
             let model = loc.get_model(cache, shape, angle, h_sw, h_se, h_ne, h_nw, -1);
-            if crate::debug_enabled() {
+            if crate::render_debug_enabled() {
                 if let Some(m) = &model {
                     if let (Some(rt), Some(fc)) = (&m.face_render_type, &m.face_colour) {
                         let mut textured = Vec::new();
@@ -625,7 +625,7 @@ impl RenderWorld {
         let stamp = world.tile_model_stamp(level, x, z);
         let old = self.slot(world, level, x, z).model_stamp;
         if old != stamp {
-            if crate::debug_enabled() {
+            if crate::render_debug_enabled() {
                 eprintln!("[resolve] tile ({x},{z}) level={level} stamp {old}->{stamp}");
             }
             self.resolve_tile(world, cache, loop_cycle, level, x, z);
@@ -881,7 +881,7 @@ impl RenderWorld {
             return;
         }
         let loc_id = (sprite.typecode >> 14) & 0x7fff;
-        if crate::debug_enabled() {
+        if crate::render_debug_enabled() {
             let name = Self::loc_at(cache, loc_id)
                 .map(|l| l.name.as_str())
                 .unwrap_or("");
@@ -1422,7 +1422,7 @@ impl RenderWorld {
                             }
                         }
 
-                        if crate::debug_enabled() {
+                        if crate::render_debug_enabled() {
                             let (typecode, lit, hidden, unlit) = tile
                                 .wall_model1
                                 .as_ref()
@@ -2678,7 +2678,7 @@ impl RenderWorld {
                 max_tile_z,
                 model_min_y,
             );
-            if crate::debug_enabled() {
+            if crate::render_debug_enabled() {
                 let name = cache
                     .locs
                     .get(((typecode >> 14) & 0x7fff) as usize)
@@ -2941,7 +2941,7 @@ impl RenderWorld {
             }
         }
 
-        if crate::debug_enabled() {
+        if crate::render_debug_enabled() {
             let mut tiles = Vec::new();
             for i in 0..self.num_active_occluders as usize {
                 if let Some(index) = self.active_occluders.get(i).copied().flatten() {
@@ -5386,7 +5386,7 @@ fn emit_scene_model(
     typecode: i32,
     wall: bool,
 ) {
-    if crate::debug_enabled() {
+    if crate::render_debug_enabled() {
         let loc_id = (typecode >> 14) & 0x7fff;
         static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<i32>>> =
             std::sync::OnceLock::new();
@@ -5896,7 +5896,7 @@ fn emit_model_faces(
         }
     }
 
-    if crate::debug_enabled() {
+    if crate::render_debug_enabled() {
         let loc_id = (typecode >> 14) & 0x7fff;
         if matches!(loc_id, 1602 | 2213 | 2215) {
             eprintln!(

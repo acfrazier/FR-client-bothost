@@ -1035,7 +1035,7 @@ impl GpuAssets {
                 continue;
             }
             let (Some(texture), Some(palette)) = (&pix.textures[id], &pix.tex_pal[id]) else {
-                if crate::debug_enabled() {
+                if crate::render_debug_enabled() {
                     eprintln!(
                         "[gpu-atlas] texture {id} skipped (texture={} palette={})",
                         pix.textures[id].is_some(),
@@ -1082,7 +1082,7 @@ impl GpuAssets {
             let layer = id as u32;
             self.write_model_mips(layer, &rgba);
             self.model_regions[id] = true;
-            if crate::debug_enabled() {
+            if crate::render_debug_enabled() {
                 let opaque = rgba.iter().skip(3).step_by(4).filter(|&&a| a != 0).count();
                 eprintln!(
                     "[gpu-atlas] texture {id} uploaded wi={} hi={} opaque={}/{}",

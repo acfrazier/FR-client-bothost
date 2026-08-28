@@ -16,9 +16,17 @@ pub use login_rsa::{LOGIN_RSAE, LOGIN_RSAN};
 /// Whether verbose client-side diagnostics are on (`BOT_DEBUG=1`), cached
 /// once per process. Used by the scene-build / on-demand paths to dump the
 /// loc stream they actually receive, so a live run can be compared against
-/// the packed cache data.
+/// the packed cache data. Render dumps are [`render_debug_enabled`].
 pub fn debug_enabled() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var("BOT_DEBUG").is_ok_and(|v| v == "1"))
+}
+
+/// GPU/CPU render dumps (`[gpu-emit]`, `[winding]`, atlas, …). Separate
+/// from [`debug_enabled`] so nav live traces are not drowned. `BOT_RENDER_DEBUG=1`.
+pub fn render_debug_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("BOT_RENDER_DEBUG").is_ok_and(|v| v == "1"))
 }

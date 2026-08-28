@@ -10570,7 +10570,7 @@ impl Client {
         }
         for i in 0..self.map_build_ground_data.len() {
             if self.map_build_ground_file[i] == file {
-                if crate::debug_enabled() {
+                if crate::render_debug_enabled() {
                     eprintln!(
                         "[client-map] ground file={file} slot={i} mapsquare=({},{})",
                         self.map_build_index[i] >> 8,
@@ -10581,7 +10581,7 @@ impl Client {
                 return;
             }
             if self.map_build_location_file[i] == file {
-                if crate::debug_enabled() {
+                if crate::render_debug_enabled() {
                     eprintln!(
                         "[client-map] loc file={file} slot={i} mapsquare=({},{})",
                         self.map_build_index[i] >> 8,

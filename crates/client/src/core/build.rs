@@ -363,7 +363,7 @@ impl ClientBuild {
                 let stx = x + x_offset;
                 let stz = z + z_offset;
 
-                if crate::debug_enabled() && loc_id == 1530 {
+                if crate::render_debug_enabled() && loc_id == 1530 {
                     eprintln!(
                         "[client-loc] loc 1530 loc_pos={} x={x} z={z} x_offset={x_offset} z_offset={z_offset} stx={stx} stz={stz}",
                         loc_pos
