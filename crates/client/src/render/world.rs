@@ -563,8 +563,8 @@ impl RenderWorld {
                             }
                         }
                         eprintln!(
-                            "[render] loc {loc_id} sharelight={} model textured={:?}",
-                            loc.sharelight, textured
+                            "[render] loc {loc_id} ({}) sharelight={} model textured={:?}",
+                            loc.name, loc.sharelight, textured
                         );
                     }
                 }
