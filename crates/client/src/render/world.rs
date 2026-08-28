@@ -4381,7 +4381,16 @@ fn emit_scene_model(
                         ));
                     }
                 }
-                eprintln!("[gpu-emit] loc {loc_id}: {}", sample.join(" "));
+                let hidden = model
+                    .face_render_type
+                    .as_ref()
+                    .map(|rt| rt.iter().filter(|&&t| t == -1).count())
+                    .unwrap_or(0);
+                eprintln!(
+                    "[gpu-emit] loc {loc_id}: faces={} hidden={hidden} {}",
+                    model.num_faces,
+                    sample.join(" ")
+                );
             }
         }
         // A static model that reaches the emitter unlit (`face_colour_a`
