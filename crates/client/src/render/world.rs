@@ -806,6 +806,13 @@ impl RenderWorld {
             return;
         }
         let loc_id = (sprite.typecode >> 14) & 0x7fff;
+        if crate::debug_enabled() {
+            let name = Self::loc_at(cache, loc_id).map(|l| l.name.as_str()).unwrap_or("");
+            eprintln!(
+                "[sprite] loc {loc_id} ({name}) tiles ({},{})..({},{})",
+                sprite.min_tile_x, sprite.min_tile_z, sprite.max_tile_x, sprite.max_tile_z
+            );
+        }
         let info = sprite.typecode2 & 0xff;
         let mut shape = info & 0x1f;
         if shape == LocShape::CENTREPIECE_DIAGONAL {
