@@ -4574,6 +4574,7 @@ fn emit_model_faces(
     let face_colour_b = model.face_colour_b.as_ref();
     let face_colour_c = model.face_colour_c.as_ref();
 
+    let mut winding_culled = 0usize;
     for f in 0..model.num_faces as usize {
         if model
             .face_render_type
@@ -4711,6 +4712,7 @@ fn emit_model_faces(
             verts.to_vec()
         };
         if clipped.len() < 3 || !face_winding_passes(pix, &clipped) {
+            winding_culled += 1;
             continue;
         }
 
@@ -4732,6 +4734,16 @@ fn emit_model_faces(
                     translucent,
                 );
             }
+        }
+    }
+
+    if crate::debug_enabled() {
+        let loc_id = (typecode >> 14) & 0x7fff;
+        if matches!(loc_id, 1602 | 2213 | 2215) {
+            eprintln!(
+                "[winding] loc {loc_id}: faces={} winding_culled={winding_culled}",
+                model.num_faces
+            );
         }
     }
 }
