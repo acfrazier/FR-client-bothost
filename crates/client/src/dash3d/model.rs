@@ -61,7 +61,11 @@ static STORE: OnceLock<Mutex<ModelStore>> = OnceLock::new();
 
 fn store() -> &'static Mutex<ModelStore> {
     STORE.get_or_init(|| {
-        Mutex::new(ModelStore { meta: Vec::new(), provider: None, loaded: 0 })
+        Mutex::new(ModelStore {
+            meta: Vec::new(),
+            provider: None,
+            loaded: 0,
+        })
     })
 }
 
@@ -835,7 +839,11 @@ impl Model {
         model.point_y = Some(src.point_y.as_ref().map_or_else(Vec::new, |p| p.clone()));
         model.point_z = Some(src.point_z.as_ref().map_or_else(Vec::new, |p| p.clone()));
 
-        model.face_colour = Some(src.face_colour.as_ref().map_or_else(Vec::new, |f| f.clone()));
+        model.face_colour = Some(
+            src.face_colour
+                .as_ref()
+                .map_or_else(Vec::new, |f| f.clone()),
+        );
 
         model.face_alpha = Some(match &src.face_alpha {
             Some(fa) => fa.clone(),
@@ -873,9 +881,21 @@ impl Model {
         }
 
         if copy_faces {
-            model.face_colour_a = Some(src.face_colour_a.as_ref().map_or_else(Vec::new, |f| f.clone()));
-            model.face_colour_b = Some(src.face_colour_b.as_ref().map_or_else(Vec::new, |f| f.clone()));
-            model.face_colour_c = Some(src.face_colour_c.as_ref().map_or_else(Vec::new, |f| f.clone()));
+            model.face_colour_a = Some(
+                src.face_colour_a
+                    .as_ref()
+                    .map_or_else(Vec::new, |f| f.clone()),
+            );
+            model.face_colour_b = Some(
+                src.face_colour_b
+                    .as_ref()
+                    .map_or_else(Vec::new, |f| f.clone()),
+            );
+            model.face_colour_c = Some(
+                src.face_colour_c
+                    .as_ref()
+                    .map_or_else(Vec::new, |f| f.clone()),
+            );
 
             model.face_render_type = Some(match &src.face_render_type {
                 Some(rt) => rt.clone(),
@@ -884,7 +904,9 @@ impl Model {
 
             model.point_normal = Some(match &src.point_normal {
                 Some(pn) => pn.clone(),
-                None => (0..src.num_points).map(|_| Some(PointNormal::default())).collect(),
+                None => (0..src.num_points)
+                    .map(|_| Some(PointNormal::default()))
+                    .collect(),
             });
 
             model.shared_point_normal = src.shared_point_normal.clone();
@@ -1012,11 +1034,10 @@ impl Model {
         }
 
         self.radius = ((self.radius as f64).sqrt() + 0.99) as i32;
-        self.min_depth = (((self.radius * self.radius + self.min_y * self.min_y) as f64).sqrt()
-            + 0.99) as i32;
+        self.min_depth =
+            (((self.radius * self.radius + self.min_y * self.min_y) as f64).sqrt() + 0.99) as i32;
         self.max_depth = self.min_depth
-            + (((self.radius * self.radius + self.max_y * self.max_y) as f64).sqrt() + 0.99)
-                as i32;
+            + (((self.radius * self.radius + self.max_y * self.max_y) as f64).sqrt() + 0.99) as i32;
     }
 
     /// `recalcBoundingCylinder()` from client-ts.
@@ -1034,11 +1055,10 @@ impl Model {
             }
         }
 
-        self.min_depth = (((self.radius * self.radius + self.min_y * self.min_y) as f64).sqrt()
-            + 0.99) as i32;
+        self.min_depth =
+            (((self.radius * self.radius + self.min_y * self.min_y) as f64).sqrt() + 0.99) as i32;
         self.max_depth = self.min_depth
-            + (((self.radius * self.radius + self.max_y * self.max_y) as f64).sqrt() + 0.99)
-                as i32;
+            + (((self.radius * self.radius + self.max_y * self.max_y) as f64).sqrt() + 0.99) as i32;
     }
 
     /// `calcBoundingCube()` from client-ts; used for sharelit models.
@@ -1082,7 +1102,8 @@ impl Model {
         }
 
         self.radius = (self.radius as f64).sqrt() as i32;
-        self.min_depth = ((self.radius * self.radius + self.min_y * self.min_y) as f64).sqrt() as i32;
+        self.min_depth =
+            ((self.radius * self.radius + self.min_y * self.min_y) as f64).sqrt() as i32;
         self.max_depth = self.min_depth
             + ((self.radius * self.radius + self.max_y * self.max_y) as f64).sqrt() as i32;
     }
@@ -1164,7 +1185,9 @@ impl Model {
         if self.label_vertices.is_none() || id == -1 {
             return;
         }
-        let Some(transform) = AnimFrame::get(id) else { return };
+        let Some(transform) = AnimFrame::get(id) else {
+            return;
+        };
         let Some(base) = &transform.base else { return };
 
         let mut origin = (0i32, 0i32, 0i32);
@@ -1174,27 +1197,26 @@ impl Model {
             let Some(tx) = &transform.tx else { continue };
             let Some(ty) = &transform.ty else { continue };
             let Some(tz) = &transform.tz else { continue };
-            let Some(base_labels) = &base.labels else { continue };
-            let Some(base_type) = &base.r#type else { continue };
-
-            let ti = ti[i] as usize;
-            let (Some(labels), Some(&r#type)) =
-                (base_labels.get(ti).and_then(|l| l.as_deref()), base_type.get(ti))
-            else {
+            let Some(base_labels) = &base.labels else {
                 continue;
             };
-            origin =
-                self.animate2(tx[i], ty[i], tz[i], labels, r#type as i32, origin);
+            let Some(base_type) = &base.r#type else {
+                continue;
+            };
+
+            let ti = ti[i] as usize;
+            let (Some(labels), Some(&r#type)) = (
+                base_labels.get(ti).and_then(|l| l.as_deref()),
+                base_type.get(ti),
+            ) else {
+                continue;
+            };
+            origin = self.animate2(tx[i], ty[i], tz[i], labels, r#type as i32, origin);
         }
     }
 
     /// `maskAnimate(primaryId, secondaryId, mask)` from client-ts.
-    pub fn mask_animate(
-        &mut self,
-        primary_id: i32,
-        secondary_id: i32,
-        mask: Option<&[i32]>,
-    ) {
+    pub fn mask_animate(&mut self, primary_id: i32, secondary_id: i32, mask: Option<&[i32]>) {
         if primary_id == -1 {
             return;
         }
@@ -1204,13 +1226,17 @@ impl Model {
             return;
         };
 
-        let Some(primary) = AnimFrame::get(primary_id) else { return };
+        let Some(primary) = AnimFrame::get(primary_id) else {
+            return;
+        };
         let Some(secondary) = AnimFrame::get(secondary_id) else {
             self.animate(primary_id);
             return;
         };
 
-        let Some(skeleton) = &primary.base else { return };
+        let Some(skeleton) = &primary.base else {
+            return;
+        };
         let skeleton_type = skeleton.r#type.as_deref().unwrap_or(&[]);
         let skeleton_labels = skeleton.labels.as_deref().unwrap_or(&[]);
 
@@ -1232,8 +1258,13 @@ impl Model {
                 mask_base = mask[counter];
                 counter += 1;
             }
-            if base == mask_base || skeleton_type.get(base as usize).copied().unwrap_or(0) as i32 == 0 {
-                if let Some(labels) = skeleton_labels.get(base as usize).and_then(|l| l.as_deref()) {
+            if base == mask_base
+                || skeleton_type.get(base as usize).copied().unwrap_or(0) as i32 == 0
+            {
+                if let Some(labels) = skeleton_labels
+                    .get(base as usize)
+                    .and_then(|l| l.as_deref())
+                {
                     origin = self.animate2(
                         tx[i],
                         ty[i],
@@ -1264,8 +1295,13 @@ impl Model {
                 mask_base = mask[counter];
                 counter += 1;
             }
-            if base == mask_base || skeleton_type.get(base as usize).copied().unwrap_or(0) as i32 == 0 {
-                if let Some(labels) = skeleton_labels.get(base as usize).and_then(|l| l.as_deref()) {
+            if base == mask_base
+                || skeleton_type.get(base as usize).copied().unwrap_or(0) as i32 == 0
+            {
+                if let Some(labels) = skeleton_labels
+                    .get(base as usize)
+                    .and_then(|l| l.as_deref())
+                {
                     self.animate2(
                         tx[i],
                         ty[i],
@@ -1319,7 +1355,9 @@ impl Model {
             }
         } else if r#type == crate::dash3d::AnimTransform::TRANSLATE {
             for &group in labels {
-                let Some(lv) = self.label_vertices.as_deref() else { continue };
+                let Some(lv) = self.label_vertices.as_deref() else {
+                    continue;
+                };
                 let Some(vertices) = lv.get(group as usize).and_then(|v| v.as_deref()) else {
                     continue;
                 };
@@ -1332,7 +1370,9 @@ impl Model {
             (ox, oy, oz)
         } else if r#type == crate::dash3d::AnimTransform::ROTATE {
             for &group in labels {
-                let Some(lv) = self.label_vertices.as_deref() else { continue };
+                let Some(lv) = self.label_vertices.as_deref() else {
+                    continue;
+                };
                 let Some(vertices) = lv.get(group as usize).and_then(|v| v.as_deref()) else {
                     continue;
                 };
@@ -1354,10 +1394,10 @@ impl Model {
                         let x_ = (self.point_y.as_ref().unwrap()[v] * sin
                             + self.point_x.as_ref().unwrap()[v] * cos)
                             >> 16;
-                        self.point_y.as_mut().unwrap()[v] =
-                            (self.point_y.as_ref().unwrap()[v] * cos
-                                - self.point_x.as_ref().unwrap()[v] * sin)
-                                >> 16;
+                        self.point_y.as_mut().unwrap()[v] = (self.point_y.as_ref().unwrap()[v]
+                            * cos
+                            - self.point_x.as_ref().unwrap()[v] * sin)
+                            >> 16;
                         self.point_x.as_mut().unwrap()[v] = x_;
                     }
 
@@ -1367,10 +1407,10 @@ impl Model {
                         let y_ = (self.point_y.as_ref().unwrap()[v] * cos
                             - self.point_z.as_ref().unwrap()[v] * sin)
                             >> 16;
-                        self.point_z.as_mut().unwrap()[v] =
-                            (self.point_y.as_ref().unwrap()[v] * sin
-                                + self.point_z.as_ref().unwrap()[v] * cos)
-                                >> 16;
+                        self.point_z.as_mut().unwrap()[v] = (self.point_y.as_ref().unwrap()[v]
+                            * sin
+                            + self.point_z.as_ref().unwrap()[v] * cos)
+                            >> 16;
                         self.point_y.as_mut().unwrap()[v] = y_;
                     }
 
@@ -1380,10 +1420,10 @@ impl Model {
                         let x_ = (self.point_z.as_ref().unwrap()[v] * sin
                             + self.point_x.as_ref().unwrap()[v] * cos)
                             >> 16;
-                        self.point_z.as_mut().unwrap()[v] =
-                            (self.point_z.as_ref().unwrap()[v] * cos
-                                - self.point_x.as_ref().unwrap()[v] * sin)
-                                >> 16;
+                        self.point_z.as_mut().unwrap()[v] = (self.point_z.as_ref().unwrap()[v]
+                            * cos
+                            - self.point_x.as_ref().unwrap()[v] * sin)
+                            >> 16;
                         self.point_x.as_mut().unwrap()[v] = x_;
                     }
 
@@ -1395,7 +1435,9 @@ impl Model {
             (ox, oy, oz)
         } else if r#type == crate::dash3d::AnimTransform::SCALE {
             for &group in labels {
-                let Some(lv) = self.label_vertices.as_deref() else { continue };
+                let Some(lv) = self.label_vertices.as_deref() else {
+                    continue;
+                };
                 let Some(vertices) = lv.get(group as usize).and_then(|v| v.as_deref()) else {
                     continue;
                 };
@@ -1419,8 +1461,12 @@ impl Model {
             }
             (ox, oy, oz)
         } else if r#type == crate::dash3d::AnimTransform::TRANSPARENCY {
-            let Some(lf) = self.label_faces.as_deref() else { return (ox, oy, oz) };
-            let Some(fa) = self.face_alpha.as_mut() else { return (ox, oy, oz) };
+            let Some(lf) = self.label_faces.as_deref() else {
+                return (ox, oy, oz);
+            };
+            let Some(fa) = self.face_alpha.as_mut() else {
+                return (ox, oy, oz);
+            };
             for &label in labels {
                 let Some(faces) = lf.get(label as usize).and_then(|f| f.as_deref()) else {
                     continue;
@@ -1456,10 +1502,12 @@ impl Model {
         let cos = Pix3D::cos_table()[angle as usize];
 
         for v in 0..self.num_points as usize {
-            let tmp =
-                (self.point_y.as_ref().unwrap()[v] * cos - self.point_z.as_ref().unwrap()[v] * sin) >> 16;
-            self.point_z.as_mut().unwrap()[v] =
-                (self.point_y.as_ref().unwrap()[v] * sin + self.point_z.as_ref().unwrap()[v] * cos) >> 16;
+            let tmp = (self.point_y.as_ref().unwrap()[v] * cos
+                - self.point_z.as_ref().unwrap()[v] * sin)
+                >> 16;
+            self.point_z.as_mut().unwrap()[v] = (self.point_y.as_ref().unwrap()[v] * sin
+                + self.point_z.as_ref().unwrap()[v] * cos)
+                >> 16;
             self.point_y.as_mut().unwrap()[v] = tmp;
         }
     }
@@ -1475,7 +1523,9 @@ impl Model {
 
     /// `recolour(src, dst)` from client-ts.
     pub fn recolour(&mut self, src: i32, dst: i32) {
-        let Some(fc) = self.face_colour.as_mut() else { return };
+        let Some(fc) = self.face_colour.as_mut() else {
+            return;
+        };
         for colour in fc.iter_mut() {
             if *colour == src {
                 *colour = dst;
@@ -1518,7 +1568,9 @@ impl Model {
         let light_magnitude = ((x * x + y * y + z * z) as f64).sqrt() as i32;
         let scale = (contrast * light_magnitude) >> 8;
 
-        if self.face_colour_a.is_none() || self.face_colour_b.is_none() || self.face_colour_c.is_none()
+        if self.face_colour_a.is_none()
+            || self.face_colour_b.is_none()
+            || self.face_colour_c.is_none()
         {
             self.face_colour_a = Some(vec![0; self.num_faces as usize]);
             self.face_colour_b = Some(vec![0; self.num_faces as usize]);
@@ -1594,8 +1646,11 @@ impl Model {
             } else {
                 let lightness = ambient + ((x * nx + y * ny + z * nz) / (scale + (scale / 2)));
                 if let Some(fc) = self.face_colour.as_ref() {
-                    self.face_colour_a.as_mut().unwrap()[f] =
-                        Model::get_colour(fc[f], lightness, self.face_render_type.as_ref().unwrap()[f]);
+                    self.face_colour_a.as_mut().unwrap()[f] = Model::get_colour(
+                        fc[f],
+                        lightness,
+                        self.face_render_type.as_ref().unwrap()[f],
+                    );
                 }
             }
         }
@@ -1603,13 +1658,11 @@ impl Model {
         if do_not_share_light {
             self.light(ambient, scale, x, y, z);
         } else {
-            self.shared_point_normal = Some(
-                self.point_normal
-                    .clone()
-                    .unwrap_or_else(|| {
-                        (0..self.num_points).map(|_| Some(PointNormal::default())).collect()
-                    }),
-            );
+            self.shared_point_normal = Some(self.point_normal.clone().unwrap_or_else(|| {
+                (0..self.num_points)
+                    .map(|_| Some(PointNormal::default()))
+                    .collect()
+            }));
         }
 
         if do_not_share_light {
@@ -1729,9 +1782,13 @@ impl Model {
     /// TS `Model.pickedEntityTypecode[Model.pickedCount++] = typecode`, the
     /// single pick-append site (the worldRender AABB and the render2
     /// triangle test both funnel here). The 1000-slot array guards the write
-    /// like a TS typed array; the counter always advances.
-    fn pick(pix: &mut Pix3DDraw, typecode: i32) {
-        if let Some(slot) = pix.picked_entity_typecode.get_mut(pix.picked_count as usize) {
+    /// like a TS typed array; the counter always advances. `pub(crate)` so
+    /// the GPU mesh emitter can share it (locs are per-face, not AABB).
+    pub(crate) fn pick(pix: &mut Pix3DDraw, typecode: i32) {
+        if let Some(slot) = pix
+            .picked_entity_typecode
+            .get_mut(pix.picked_count as usize)
+        {
             *slot = typecode;
         }
         pix.picked_count += 1;
@@ -1742,9 +1799,21 @@ impl Model {
     /// `Int32Array` miss.
     fn vertex_screen(pix: &Pix3DDraw, v: usize) -> (i32, i32, i32) {
         (
-            pix.model_scratch.vertex_screen_x.get(v).copied().unwrap_or(0),
-            pix.model_scratch.vertex_screen_y.get(v).copied().unwrap_or(0),
-            pix.model_scratch.vertex_screen_z.get(v).copied().unwrap_or(0),
+            pix.model_scratch
+                .vertex_screen_x
+                .get(v)
+                .copied()
+                .unwrap_or(0),
+            pix.model_scratch
+                .vertex_screen_y
+                .get(v)
+                .copied()
+                .unwrap_or(0),
+            pix.model_scratch
+                .vertex_screen_z
+                .get(v)
+                .copied()
+                .unwrap_or(0),
         )
     }
 
@@ -1752,9 +1821,21 @@ impl Model {
     /// semantics as `vertex_screen`).
     fn vertex_view_space(pix: &Pix3DDraw, v: usize) -> (i32, i32, i32) {
         (
-            pix.model_scratch.vertex_view_space_x.get(v).copied().unwrap_or(0),
-            pix.model_scratch.vertex_view_space_y.get(v).copied().unwrap_or(0),
-            pix.model_scratch.vertex_view_space_z.get(v).copied().unwrap_or(0),
+            pix.model_scratch
+                .vertex_view_space_x
+                .get(v)
+                .copied()
+                .unwrap_or(0),
+            pix.model_scratch
+                .vertex_view_space_y
+                .get(v)
+                .copied()
+                .unwrap_or(0),
+            pix.model_scratch
+                .vertex_view_space_z
+                .get(v)
+                .copied()
+                .unwrap_or(0),
         )
     }
 
@@ -1787,8 +1868,10 @@ impl Model {
         let sin_eye_pitch = sin_table.get(eye_pitch as usize).copied().unwrap_or(0);
         let cos_eye_pitch = cos_table.get(eye_pitch as usize).copied().unwrap_or(0);
 
-        let mid_z =
-            (eye_y.wrapping_mul(sin_eye_pitch).wrapping_add(eye_z.wrapping_mul(cos_eye_pitch))) >> 16;
+        let mid_z = (eye_y
+            .wrapping_mul(sin_eye_pitch)
+            .wrapping_add(eye_z.wrapping_mul(cos_eye_pitch)))
+            >> 16;
 
         let (Some(point_x), Some(point_y), Some(point_z)) =
             (&self.point_x, &self.point_y, &self.point_z)
@@ -1805,20 +1888,38 @@ impl Model {
             let (mut x, mut y, mut z) = (x0, y0, z0);
 
             if roll != 0 {
-                let tmp = (y.wrapping_mul(sin_roll).wrapping_add(x.wrapping_mul(cos_roll))) >> 16;
-                y = (y.wrapping_mul(cos_roll).wrapping_sub(x.wrapping_mul(sin_roll))) >> 16;
+                let tmp = (y
+                    .wrapping_mul(sin_roll)
+                    .wrapping_add(x.wrapping_mul(cos_roll)))
+                    >> 16;
+                y = (y
+                    .wrapping_mul(cos_roll)
+                    .wrapping_sub(x.wrapping_mul(sin_roll)))
+                    >> 16;
                 x = tmp;
             }
 
             if pitch != 0 {
-                let tmp = (y.wrapping_mul(cos_pitch).wrapping_sub(z.wrapping_mul(sin_pitch))) >> 16;
-                z = (y.wrapping_mul(sin_pitch).wrapping_add(z.wrapping_mul(cos_pitch))) >> 16;
+                let tmp = (y
+                    .wrapping_mul(cos_pitch)
+                    .wrapping_sub(z.wrapping_mul(sin_pitch)))
+                    >> 16;
+                z = (y
+                    .wrapping_mul(sin_pitch)
+                    .wrapping_add(z.wrapping_mul(cos_pitch)))
+                    >> 16;
                 y = tmp;
             }
 
             if yaw != 0 {
-                let tmp = (z.wrapping_mul(sin_yaw).wrapping_add(x.wrapping_mul(cos_yaw))) >> 16;
-                z = (z.wrapping_mul(cos_yaw).wrapping_sub(x.wrapping_mul(sin_yaw))) >> 16;
+                let tmp = (z
+                    .wrapping_mul(sin_yaw)
+                    .wrapping_add(x.wrapping_mul(cos_yaw)))
+                    >> 16;
+                z = (z
+                    .wrapping_mul(cos_yaw)
+                    .wrapping_sub(x.wrapping_mul(sin_yaw)))
+                    >> 16;
                 x = tmp;
             }
 
@@ -1826,8 +1927,14 @@ impl Model {
             y = y.wrapping_add(eye_y);
             z = z.wrapping_add(eye_z);
 
-            let tmp = (y.wrapping_mul(cos_eye_pitch).wrapping_sub(z.wrapping_mul(sin_eye_pitch))) >> 16;
-            z = (y.wrapping_mul(sin_eye_pitch).wrapping_add(z.wrapping_mul(cos_eye_pitch))) >> 16;
+            let tmp = (y
+                .wrapping_mul(cos_eye_pitch)
+                .wrapping_sub(z.wrapping_mul(sin_eye_pitch)))
+                >> 16;
+            z = (y
+                .wrapping_mul(sin_eye_pitch)
+                .wrapping_add(z.wrapping_mul(cos_eye_pitch)))
+                >> 16;
             y = tmp;
 
             if let Some(slot) = pix.model_scratch.vertex_screen_z.get_mut(v) {
@@ -1882,8 +1989,10 @@ impl Model {
         relative_z: i32,
         typecode: i32,
     ) {
-        let z_prime =
-            (relative_z.wrapping_mul(cos_eye_yaw).wrapping_sub(relative_x.wrapping_mul(sin_eye_yaw))) >> 16;
+        let z_prime = (relative_z
+            .wrapping_mul(cos_eye_yaw)
+            .wrapping_sub(relative_x.wrapping_mul(sin_eye_yaw)))
+            >> 16;
         let mid_z = relative_y
             .wrapping_mul(sin_eye_pitch)
             .wrapping_add(z_prime.wrapping_mul(cos_eye_pitch))
@@ -1895,8 +2004,10 @@ impl Model {
             return;
         }
 
-        let mid_x =
-            (relative_z.wrapping_mul(sin_eye_yaw).wrapping_add(relative_x.wrapping_mul(cos_eye_yaw))) >> 16;
+        let mid_x = (relative_z
+            .wrapping_mul(sin_eye_yaw)
+            .wrapping_add(relative_x.wrapping_mul(cos_eye_yaw)))
+            >> 16;
         let mut left_x = (mid_x - self.radius) << 9;
         if left_x.wrapping_div(max_z) >= surface.max_x {
             return;
@@ -1987,8 +2098,14 @@ impl Model {
             let (mut x, mut y, mut z) = (x0, y0, z0);
 
             if yaw != 0 {
-                let temp = (z.wrapping_mul(sin_yaw).wrapping_add(x.wrapping_mul(cos_yaw))) >> 16;
-                z = (z.wrapping_mul(cos_yaw).wrapping_sub(x.wrapping_mul(sin_yaw))) >> 16;
+                let temp = (z
+                    .wrapping_mul(sin_yaw)
+                    .wrapping_add(x.wrapping_mul(cos_yaw)))
+                    >> 16;
+                z = (z
+                    .wrapping_mul(cos_yaw)
+                    .wrapping_sub(x.wrapping_mul(sin_yaw)))
+                    >> 16;
                 x = temp;
             }
 
@@ -1996,12 +2113,24 @@ impl Model {
             y = y.wrapping_add(relative_y);
             z = z.wrapping_add(relative_z);
 
-            let temp = (z.wrapping_mul(sin_eye_yaw).wrapping_add(x.wrapping_mul(cos_eye_yaw))) >> 16;
-            z = (z.wrapping_mul(cos_eye_yaw).wrapping_sub(x.wrapping_mul(sin_eye_yaw))) >> 16;
+            let temp = (z
+                .wrapping_mul(sin_eye_yaw)
+                .wrapping_add(x.wrapping_mul(cos_eye_yaw)))
+                >> 16;
+            z = (z
+                .wrapping_mul(cos_eye_yaw)
+                .wrapping_sub(x.wrapping_mul(sin_eye_yaw)))
+                >> 16;
             x = temp;
 
-            let temp = (y.wrapping_mul(cos_eye_pitch).wrapping_sub(z.wrapping_mul(sin_eye_pitch))) >> 16;
-            z = (y.wrapping_mul(sin_eye_pitch).wrapping_add(z.wrapping_mul(cos_eye_pitch))) >> 16;
+            let temp = (y
+                .wrapping_mul(cos_eye_pitch)
+                .wrapping_sub(z.wrapping_mul(sin_eye_pitch)))
+                >> 16;
+            z = (y
+                .wrapping_mul(sin_eye_pitch)
+                .wrapping_add(z.wrapping_mul(cos_eye_pitch)))
+                >> 16;
             y = temp;
 
             if let Some(slot) = pix.model_scratch.vertex_screen_z.get_mut(v) {
@@ -2056,9 +2185,11 @@ impl Model {
             }
         }
 
-        let (Some(face_vertex_a), Some(face_vertex_b), Some(face_vertex_c)) =
-            (&self.face_vertex_a, &self.face_vertex_b, &self.face_vertex_c)
-        else {
+        let (Some(face_vertex_a), Some(face_vertex_b), Some(face_vertex_c)) = (
+            &self.face_vertex_a,
+            &self.face_vertex_b,
+            &self.face_vertex_c,
+        ) else {
             return;
         };
 
@@ -2089,8 +2220,10 @@ impl Model {
 
                 let depth_average =
                     ((z_a as i64 + z_b as i64 + z_c as i64) / 3) as i32 + self.min_depth;
-                if let Some(count) =
-                    pix.model_scratch.tmp_depth_face_count.get_mut(depth_average as usize)
+                if let Some(count) = pix
+                    .model_scratch
+                    .tmp_depth_face_count
+                    .get_mut(depth_average as usize)
                 {
                     let index = *count as usize;
                     *count += 1;
@@ -2112,7 +2245,14 @@ impl Model {
             } else {
                 if picking
                     && self.is_mouse_roughly_inside_triangle(
-                        pix.mouse_x, pix.mouse_y, y_a, y_b, y_c, x_a, x_b, x_c,
+                        pix.mouse_x,
+                        pix.mouse_y,
+                        y_a,
+                        y_b,
+                        y_c,
+                        x_a,
+                        x_b,
+                        x_c,
                     )
                 {
                     Self::pick(pix, typecode);
@@ -2145,8 +2285,10 @@ impl Model {
 
                 let depth_average =
                     ((z_a as i64 + z_b as i64 + z_c as i64) / 3) as i32 + self.min_depth;
-                if let Some(count) =
-                    pix.model_scratch.tmp_depth_face_count.get_mut(depth_average as usize)
+                if let Some(count) = pix
+                    .model_scratch
+                    .tmp_depth_face_count
+                    .get_mut(depth_average as usize)
                 {
                     let index = *count as usize;
                     *count += 1;
@@ -2252,17 +2394,13 @@ impl Model {
                                 *sum += depth as i32;
                             }
                         } else if priority_face == 10 {
-                            if let Some(slot) = pix
-                                .model_scratch
-                                .tmp_priority10_face_depth
-                                .get_mut(index)
+                            if let Some(slot) =
+                                pix.model_scratch.tmp_priority10_face_depth.get_mut(index)
                             {
                                 *slot = depth as i32;
                             }
-                        } else if let Some(slot) = pix
-                            .model_scratch
-                            .tmp_priority11_face_depth
-                            .get_mut(index)
+                        } else if let Some(slot) =
+                            pix.model_scratch.tmp_priority11_face_depth.get_mut(index)
                         {
                             *slot = depth as i32;
                         }
@@ -2272,31 +2410,91 @@ impl Model {
         }
 
         let mut average_priority_depth_sum1_2 = 0;
-        let count1 = pix.model_scratch.tmp_priority_face_count.get(1).copied().unwrap_or(0);
-        let count2 = pix.model_scratch.tmp_priority_face_count.get(2).copied().unwrap_or(0);
+        let count1 = pix
+            .model_scratch
+            .tmp_priority_face_count
+            .get(1)
+            .copied()
+            .unwrap_or(0);
+        let count2 = pix
+            .model_scratch
+            .tmp_priority_face_count
+            .get(2)
+            .copied()
+            .unwrap_or(0);
         if count1 > 0 || count2 > 0 {
-            let sum1 = pix.model_scratch.tmp_priority_depth_sum.get(1).copied().unwrap_or(0);
-            let sum2 = pix.model_scratch.tmp_priority_depth_sum.get(2).copied().unwrap_or(0);
+            let sum1 = pix
+                .model_scratch
+                .tmp_priority_depth_sum
+                .get(1)
+                .copied()
+                .unwrap_or(0);
+            let sum2 = pix
+                .model_scratch
+                .tmp_priority_depth_sum
+                .get(2)
+                .copied()
+                .unwrap_or(0);
             average_priority_depth_sum1_2 =
                 ((sum1 + sum2) as i64 / (count1 + count2) as i64) as i32;
         }
 
         let mut average_priority_depth_sum3_4 = 0;
-        let count3 = pix.model_scratch.tmp_priority_face_count.get(3).copied().unwrap_or(0);
-        let count4 = pix.model_scratch.tmp_priority_face_count.get(4).copied().unwrap_or(0);
+        let count3 = pix
+            .model_scratch
+            .tmp_priority_face_count
+            .get(3)
+            .copied()
+            .unwrap_or(0);
+        let count4 = pix
+            .model_scratch
+            .tmp_priority_face_count
+            .get(4)
+            .copied()
+            .unwrap_or(0);
         if count3 > 0 || count4 > 0 {
-            let sum3 = pix.model_scratch.tmp_priority_depth_sum.get(3).copied().unwrap_or(0);
-            let sum4 = pix.model_scratch.tmp_priority_depth_sum.get(4).copied().unwrap_or(0);
+            let sum3 = pix
+                .model_scratch
+                .tmp_priority_depth_sum
+                .get(3)
+                .copied()
+                .unwrap_or(0);
+            let sum4 = pix
+                .model_scratch
+                .tmp_priority_depth_sum
+                .get(4)
+                .copied()
+                .unwrap_or(0);
             average_priority_depth_sum3_4 =
                 ((sum3 + sum4) as i64 / (count3 + count4) as i64) as i32;
         }
 
         let mut average_priority_depth_sum6_8 = 0;
-        let count6 = pix.model_scratch.tmp_priority_face_count.get(6).copied().unwrap_or(0);
-        let count8 = pix.model_scratch.tmp_priority_face_count.get(8).copied().unwrap_or(0);
+        let count6 = pix
+            .model_scratch
+            .tmp_priority_face_count
+            .get(6)
+            .copied()
+            .unwrap_or(0);
+        let count8 = pix
+            .model_scratch
+            .tmp_priority_face_count
+            .get(8)
+            .copied()
+            .unwrap_or(0);
         if count6 > 0 || count8 > 0 {
-            let sum6 = pix.model_scratch.tmp_priority_depth_sum.get(6).copied().unwrap_or(0);
-            let sum8 = pix.model_scratch.tmp_priority_depth_sum.get(8).copied().unwrap_or(0);
+            let sum6 = pix
+                .model_scratch
+                .tmp_priority_depth_sum
+                .get(6)
+                .copied()
+                .unwrap_or(0);
+            let sum8 = pix
+                .model_scratch
+                .tmp_priority_depth_sum
+                .get(8)
+                .copied()
+                .unwrap_or(0);
             average_priority_depth_sum6_8 =
                 ((sum6 + sum8) as i64 / (count6 + count8) as i64) as i32;
         }
@@ -2410,12 +2608,8 @@ impl Model {
             self.render3(pix, surface, face);
         }
 
-        let (new_face, new_count, new_on_11, new_depth) = Self::advance_priority(
-            pix,
-            *priority_face,
-            *priority_face_count,
-            *on_11,
-        );
+        let (new_face, new_count, new_on_11, new_depth) =
+            Self::advance_priority(pix, *priority_face, *priority_face_count, *on_11);
         *priority_face = new_face;
         *priority_face_count = new_count;
         *on_11 = new_on_11;
@@ -2474,14 +2668,22 @@ impl Model {
     /// texture arrays skip the face (the TS `!` asserts would throw and be
     /// swallowed by `render2`'s try/catch).
     fn render3(&self, pix: &mut Pix3DDraw, surface: &mut Pix2D, face: usize) {
-        if pix.model_scratch.face_near_clipped.get(face).copied().unwrap_or(false) {
+        if pix
+            .model_scratch
+            .face_near_clipped
+            .get(face)
+            .copied()
+            .unwrap_or(false)
+        {
             self.render3_z_clip(pix, surface, face);
             return;
         }
 
-        let (Some(face_vertex_a), Some(face_vertex_b), Some(face_vertex_c)) =
-            (&self.face_vertex_a, &self.face_vertex_b, &self.face_vertex_c)
-        else {
+        let (Some(face_vertex_a), Some(face_vertex_b), Some(face_vertex_c)) = (
+            &self.face_vertex_a,
+            &self.face_vertex_b,
+            &self.face_vertex_c,
+        ) else {
             return;
         };
         let (Some(&a), Some(&b), Some(&c)) = (
@@ -2518,9 +2720,11 @@ impl Model {
         let (x_c, y_c, _) = Self::vertex_screen(pix, c);
 
         if r#type == 0 {
-            let (Some(face_colour_a), Some(face_colour_b), Some(face_colour_c)) =
-                (&self.face_colour_a, &self.face_colour_b, &self.face_colour_c)
-            else {
+            let (Some(face_colour_a), Some(face_colour_b), Some(face_colour_c)) = (
+                &self.face_colour_a,
+                &self.face_colour_b,
+                &self.face_colour_c,
+            ) else {
                 return;
             };
             let (Some(&shade_a), Some(&shade_b), Some(&shade_c)) = (
@@ -2548,12 +2752,27 @@ impl Model {
             );
         } else if r#type == 1 {
             self.render_triangle(
-                pix, surface, r#type, render_type, face, x_a, x_b, x_c, y_a, y_b, y_c, 0, 0, 0,
+                pix,
+                surface,
+                r#type,
+                render_type,
+                face,
+                x_a,
+                x_b,
+                x_c,
+                y_a,
+                y_b,
+                y_c,
+                0,
+                0,
+                0,
             );
         } else {
-            let (Some(face_colour_a), Some(face_colour_b), Some(face_colour_c)) =
-                (&self.face_colour_a, &self.face_colour_b, &self.face_colour_c)
-            else {
+            let (Some(face_colour_a), Some(face_colour_b), Some(face_colour_c)) = (
+                &self.face_colour_a,
+                &self.face_colour_b,
+                &self.face_colour_c,
+            ) else {
                 return;
             };
             let (Some(&shade_a), Some(&shade_b), Some(&shade_c)) = (
@@ -2605,17 +2824,28 @@ impl Model {
         shade_c: i32,
     ) {
         if r#type == 0 {
-            pix.gouraud_triangle(surface, x_a, x_b, x_c, y_a, y_b, y_c, shade_a, shade_b, shade_c);
+            pix.gouraud_triangle(
+                surface, x_a, x_b, x_c, y_a, y_b, y_c, shade_a, shade_b, shade_c,
+            );
         } else if r#type == 1 {
-            let Some(face_colour_a) = &self.face_colour_a else { return };
-            let Some(&shade) = face_colour_a.get(face) else { return };
-            let colour = Pix3D::colour_table().get(shade as usize).copied().unwrap_or(0);
+            let Some(face_colour_a) = &self.face_colour_a else {
+                return;
+            };
+            let Some(&shade) = face_colour_a.get(face) else {
+                return;
+            };
+            let colour = Pix3D::colour_table()
+                .get(shade as usize)
+                .copied()
+                .unwrap_or(0);
             pix.flat_triangle(surface, x_a, x_b, x_c, y_a, y_b, y_c, colour);
         } else {
             let textured_face = (render_type >> 2) as usize;
-            let (Some(texture_p), Some(texture_m), Some(texture_n)) =
-                (&self.face_texture_p, &self.face_texture_m, &self.face_texture_n)
-            else {
+            let (Some(texture_p), Some(texture_m), Some(texture_n)) = (
+                &self.face_texture_p,
+                &self.face_texture_m,
+                &self.face_texture_n,
+            ) else {
                 return;
             };
             let (Some(&t_a), Some(&t_b), Some(&t_c)) = (
@@ -2625,31 +2855,32 @@ impl Model {
             ) else {
                 return;
             };
-            let Some(face_colour) = &self.face_colour else { return };
-            let Some(&texture) = face_colour.get(face) else { return };
+            let Some(face_colour) = &self.face_colour else {
+                return;
+            };
+            let Some(&texture) = face_colour.get(face) else {
+                return;
+            };
 
             let (origin_x, origin_y, origin_z) = Self::vertex_view_space(pix, t_a as usize);
             let (tx_b, ty_b, tz_b) = Self::vertex_view_space(pix, t_b as usize);
             let (tx_c, ty_c, tz_c) = Self::vertex_view_space(pix, t_c as usize);
 
             let (shade_a, shade_b, shade_c) = if r#type == 3 {
-                let Some(face_colour_a) = &self.face_colour_a else { return };
-                let Some(&shade) = face_colour_a.get(face) else { return };
+                let Some(face_colour_a) = &self.face_colour_a else {
+                    return;
+                };
+                let Some(&shade) = face_colour_a.get(face) else {
+                    return;
+                };
                 (shade, shade, shade)
             } else {
                 (shade_a, shade_b, shade_c)
             };
 
             pix.texture_triangle(
-                surface,
-                x_a, x_b, x_c,
-                y_a, y_b, y_c,
-                shade_a, shade_b, shade_c,
-                origin_x, origin_y, origin_z,
-                tx_b, tx_c,
-                ty_b, ty_c,
-                tz_b, tz_c,
-                texture,
+                surface, x_a, x_b, x_c, y_a, y_b, y_c, shade_a, shade_b, shade_c, origin_x,
+                origin_y, origin_z, tx_b, tx_c, ty_b, ty_c, tz_b, tz_c, texture,
             );
         }
     }
@@ -2665,9 +2896,11 @@ impl Model {
         let center_x = pix.origin_x;
         let center_y = pix.origin_y;
 
-        let (Some(face_vertex_a), Some(face_vertex_b), Some(face_vertex_c)) =
-            (&self.face_vertex_a, &self.face_vertex_b, &self.face_vertex_c)
-        else {
+        let (Some(face_vertex_a), Some(face_vertex_b), Some(face_vertex_c)) = (
+            &self.face_vertex_a,
+            &self.face_vertex_b,
+            &self.face_vertex_c,
+        ) else {
             return;
         };
         let (Some(&a), Some(&b), Some(&c)) = (
@@ -2683,9 +2916,15 @@ impl Model {
         let (_, _, z_b) = Self::vertex_view_space(pix, b);
         let (_, _, z_c) = Self::vertex_view_space(pix, c);
 
-        let Some(face_colour_a) = &self.face_colour_a else { return };
-        let Some(face_colour_b) = &self.face_colour_b else { return };
-        let Some(face_colour_c) = &self.face_colour_c else { return };
+        let Some(face_colour_a) = &self.face_colour_a else {
+            return;
+        };
+        let Some(face_colour_b) = &self.face_colour_b else {
+            return;
+        };
+        let Some(face_colour_c) = &self.face_colour_c else {
+            return;
+        };
 
         if z_a >= 50 {
             let (x, y, _) = Self::vertex_screen(pix, a);
@@ -2712,8 +2951,16 @@ impl Model {
                 Self::clipped_push(
                     pix,
                     &mut elements,
-                    center_x + x_a.wrapping_add((x_c - x_a).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
-                    center_y + y_a.wrapping_add((y_c - y_a).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
+                    center_x
+                        + x_a
+                            .wrapping_add((x_c - x_a).wrapping_mul(scalar) >> 16)
+                            .wrapping_shl(9)
+                            .wrapping_div(50),
+                    center_y
+                        + y_a
+                            .wrapping_add((y_c - y_a).wrapping_mul(scalar) >> 16)
+                            .wrapping_shl(9)
+                            .wrapping_div(50),
                     colour_a.wrapping_add((colour_c - colour_a).wrapping_mul(scalar) >> 16),
                 );
             }
@@ -2730,8 +2977,16 @@ impl Model {
                 Self::clipped_push(
                     pix,
                     &mut elements,
-                    center_x + x_a.wrapping_add((x_b - x_a).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
-                    center_y + y_a.wrapping_add((y_b - y_a).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
+                    center_x
+                        + x_a
+                            .wrapping_add((x_b - x_a).wrapping_mul(scalar) >> 16)
+                            .wrapping_shl(9)
+                            .wrapping_div(50),
+                    center_y
+                        + y_a
+                            .wrapping_add((y_b - y_a).wrapping_mul(scalar) >> 16)
+                            .wrapping_shl(9)
+                            .wrapping_div(50),
                     colour_a.wrapping_add((colour_b - colour_a).wrapping_mul(scalar) >> 16),
                 );
             }
@@ -2762,8 +3017,16 @@ impl Model {
                 Self::clipped_push(
                     pix,
                     &mut elements,
-                    center_x + x_b.wrapping_add((x_a - x_b).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
-                    center_y + y_b.wrapping_add((y_a - y_b).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
+                    center_x
+                        + x_b
+                            .wrapping_add((x_a - x_b).wrapping_mul(scalar) >> 16)
+                            .wrapping_shl(9)
+                            .wrapping_div(50),
+                    center_y
+                        + y_b
+                            .wrapping_add((y_a - y_b).wrapping_mul(scalar) >> 16)
+                            .wrapping_shl(9)
+                            .wrapping_div(50),
                     colour_b.wrapping_add((colour_a - colour_b).wrapping_mul(scalar) >> 16),
                 );
             }
@@ -2780,8 +3043,16 @@ impl Model {
                 Self::clipped_push(
                     pix,
                     &mut elements,
-                    center_x + x_b.wrapping_add((x_c - x_b).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
-                    center_y + y_b.wrapping_add((y_c - y_b).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
+                    center_x
+                        + x_b
+                            .wrapping_add((x_c - x_b).wrapping_mul(scalar) >> 16)
+                            .wrapping_shl(9)
+                            .wrapping_div(50),
+                    center_y
+                        + y_b
+                            .wrapping_add((y_c - y_b).wrapping_mul(scalar) >> 16)
+                            .wrapping_shl(9)
+                            .wrapping_div(50),
                     colour_b.wrapping_add((colour_c - colour_b).wrapping_mul(scalar) >> 16),
                 );
             }
@@ -2812,8 +3083,16 @@ impl Model {
                 Self::clipped_push(
                     pix,
                     &mut elements,
-                    center_x + x_c.wrapping_add((x_b - x_c).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
-                    center_y + y_c.wrapping_add((y_b - y_c).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
+                    center_x
+                        + x_c
+                            .wrapping_add((x_b - x_c).wrapping_mul(scalar) >> 16)
+                            .wrapping_shl(9)
+                            .wrapping_div(50),
+                    center_y
+                        + y_c
+                            .wrapping_add((y_b - y_c).wrapping_mul(scalar) >> 16)
+                            .wrapping_shl(9)
+                            .wrapping_div(50),
                     colour_c.wrapping_add((colour_b - colour_c).wrapping_mul(scalar) >> 16),
                 );
             }
@@ -2830,8 +3109,16 @@ impl Model {
                 Self::clipped_push(
                     pix,
                     &mut elements,
-                    center_x + x_c.wrapping_add((x_a - x_c).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
-                    center_y + y_c.wrapping_add((y_a - y_c).wrapping_mul(scalar) >> 16).wrapping_shl(9).wrapping_div(50),
+                    center_x
+                        + x_c
+                            .wrapping_add((x_a - x_c).wrapping_mul(scalar) >> 16)
+                            .wrapping_shl(9)
+                            .wrapping_div(50),
+                    center_y
+                        + y_c
+                            .wrapping_add((y_a - y_c).wrapping_mul(scalar) >> 16)
+                            .wrapping_shl(9)
+                            .wrapping_div(50),
                     colour_c.wrapping_add((colour_a - colour_c).wrapping_mul(scalar) >> 16),
                 );
             }
@@ -2844,8 +3131,12 @@ impl Model {
         let y1 = pix.model_scratch.clipped_y.get(1).copied().unwrap_or(0);
         let y2 = pix.model_scratch.clipped_y.get(2).copied().unwrap_or(0);
 
-        if crate::dash3d::wrapping_cross(x0.wrapping_sub(x1), y2.wrapping_sub(y1), y0.wrapping_sub(y1), x2.wrapping_sub(x1))
-            <= 0
+        if crate::dash3d::wrapping_cross(
+            x0.wrapping_sub(x1),
+            y2.wrapping_sub(y1),
+            y0.wrapping_sub(y1),
+            x2.wrapping_sub(x1),
+        ) <= 0
         {
             return;
         }
@@ -2871,11 +3162,39 @@ impl Model {
                 pix.hclip = true;
             }
 
-            let c0 = pix.model_scratch.clipped_colour.first().copied().unwrap_or(0);
-            let c1 = pix.model_scratch.clipped_colour.get(1).copied().unwrap_or(0);
-            let c2 = pix.model_scratch.clipped_colour.get(2).copied().unwrap_or(0);
+            let c0 = pix
+                .model_scratch
+                .clipped_colour
+                .first()
+                .copied()
+                .unwrap_or(0);
+            let c1 = pix
+                .model_scratch
+                .clipped_colour
+                .get(1)
+                .copied()
+                .unwrap_or(0);
+            let c2 = pix
+                .model_scratch
+                .clipped_colour
+                .get(2)
+                .copied()
+                .unwrap_or(0);
             self.render_triangle(
-                pix, surface, r#type, render_type, face, x0, x1, x2, y0, y1, y2, c0, c1, c2,
+                pix,
+                surface,
+                r#type,
+                render_type,
+                face,
+                x0,
+                x1,
+                x2,
+                y0,
+                y1,
+                y2,
+                c0,
+                c1,
+                c2,
             );
         } else if elements == 4 {
             if x0 < 0
@@ -2892,15 +3211,61 @@ impl Model {
 
             let x3 = pix.model_scratch.clipped_x.get(3).copied().unwrap_or(0);
             let y3 = pix.model_scratch.clipped_y.get(3).copied().unwrap_or(0);
-            let c0 = pix.model_scratch.clipped_colour.first().copied().unwrap_or(0);
-            let c1 = pix.model_scratch.clipped_colour.get(1).copied().unwrap_or(0);
-            let c2 = pix.model_scratch.clipped_colour.get(2).copied().unwrap_or(0);
-            let c3 = pix.model_scratch.clipped_colour.get(3).copied().unwrap_or(0);
+            let c0 = pix
+                .model_scratch
+                .clipped_colour
+                .first()
+                .copied()
+                .unwrap_or(0);
+            let c1 = pix
+                .model_scratch
+                .clipped_colour
+                .get(1)
+                .copied()
+                .unwrap_or(0);
+            let c2 = pix
+                .model_scratch
+                .clipped_colour
+                .get(2)
+                .copied()
+                .unwrap_or(0);
+            let c3 = pix
+                .model_scratch
+                .clipped_colour
+                .get(3)
+                .copied()
+                .unwrap_or(0);
             self.render_triangle(
-                pix, surface, r#type, render_type, face, x0, x1, x2, y0, y1, y2, c0, c1, c2,
+                pix,
+                surface,
+                r#type,
+                render_type,
+                face,
+                x0,
+                x1,
+                x2,
+                y0,
+                y1,
+                y2,
+                c0,
+                c1,
+                c2,
             );
             self.render_triangle(
-                pix, surface, r#type, render_type, face, x0, x2, x3, y0, y2, y3, c0, c2, c3,
+                pix,
+                surface,
+                r#type,
+                render_type,
+                face,
+                x0,
+                x2,
+                x3,
+                y0,
+                y2,
+                y3,
+                c0,
+                c2,
+                c3,
             );
         }
     }
@@ -2925,7 +3290,7 @@ impl Model {
     /// pre-test `render2` runs per picking face). The four-branch boolean
     /// chain is kept 1:1 with the TS.
     #[allow(clippy::needless_bool)]
-    fn is_mouse_roughly_inside_triangle(
+    pub(crate) fn is_mouse_roughly_inside_triangle(
         &self,
         x: i32,
         y: i32,

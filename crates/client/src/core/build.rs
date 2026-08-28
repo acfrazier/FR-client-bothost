@@ -145,7 +145,8 @@ impl ClientBuild {
                                     ) * 8;
                                 } else {
                                     groundh[level as usize][stx as usize][stz as usize] =
-                                        groundh[level as usize - 1][stx as usize][stz as usize] - 240;
+                                        groundh[level as usize - 1][stx as usize][stz as usize]
+                                            - 240;
                                 }
                                 break;
                             }
@@ -362,6 +363,13 @@ impl ClientBuild {
                 let stx = x + x_offset;
                 let stz = z + z_offset;
 
+                if crate::debug_enabled() && loc_id == 1530 {
+                    eprintln!(
+                        "[client-loc] loc 1530 loc_pos={} x={x} z={z} x_offset={x_offset} z_offset={z_offset} stx={stx} stz={stz}",
+                        loc_pos
+                    );
+                }
+
                 if stx > 0 && stz > 0 && stx < BuildArea::SIZE - 1 && stz < BuildArea::SIZE - 1 {
                     let mut current_level = level;
                     if mapl[1][stx as usize][stz as usize] as i32 & MapFlag::LINK_BELOW != 0 {
@@ -405,7 +413,8 @@ impl ClientBuild {
         _loop_cycle: i32,
     ) {
         if self.low_mem {
-            if mapl[level as usize][x as usize][z as usize] as i32 & MapFlag::FORCE_HIGH_DETAIL != 0 {
+            if mapl[level as usize][x as usize][z as usize] as i32 & MapFlag::FORCE_HIGH_DETAIL != 0
+            {
                 return;
             }
 
@@ -438,15 +447,7 @@ impl ClientBuild {
                 // the availability gate mirrors `getModel` without decoding.
                 if loc.get_model_available(LocShape::GROUND_DECOR, angle) {
                     world.set_ground_decor(
-                        level,
-                        x,
-                        z,
-                        y,
-                        typecode,
-                        typecode2,
-                        height_sw,
-                        height_se,
-                        height_ne,
+                        level, x, z, y, typecode, typecode2, height_sw, height_se, height_ne,
                         height_nw,
                     );
                 }
@@ -457,7 +458,8 @@ impl ClientBuild {
                     }
                 }
             }
-        } else if shape == LocShape::CENTREPIECE_STRAIGHT || shape == LocShape::CENTREPIECE_DIAGONAL {
+        } else if shape == LocShape::CENTREPIECE_STRAIGHT || shape == LocShape::CENTREPIECE_DIAGONAL
+        {
             let mut yaw = 0;
             if shape == LocShape::CENTREPIECE_DIAGONAL {
                 yaw += 256;
@@ -482,7 +484,9 @@ impl ClientBuild {
                 // remaining sim-side model decode (see the task-3b report);
                 // it only runs for shadow-casting centrepieces.
                 let radius = loc
-                    .get_model(cache, 10, angle, height_sw, height_se, height_ne, height_nw, -1)
+                    .get_model(
+                        cache, 10, angle, height_sw, height_se, height_ne, height_nw, -1,
+                    )
                     .map(|m| m.radius);
 
                 if let Some(radius) = radius {
@@ -499,7 +503,8 @@ impl ClientBuild {
                             let sz = z + dz;
                             if (1..=BuildArea::SIZE).contains(&sx)
                                 && (1..=BuildArea::SIZE).contains(&sz)
-                                && shade > self.shadow[level as usize][sx as usize][sz as usize] as i32
+                                && shade
+                                    > self.shadow[level as usize][sx as usize][sz as usize] as i32
                             {
                                 self.shadow[level as usize][sx as usize][sz as usize] = shade as u8;
                             }
@@ -516,18 +521,7 @@ impl ClientBuild {
         } else if shape >= LocShape::ROOF_STRAIGHT {
             if loc.get_model_available(shape, angle) {
                 world.add_scenery(
-                    level,
-                    x,
-                    z,
-                    y,
-                    typecode,
-                    typecode2,
-                    1,
-                    1,
-                    0,
-                    height_sw,
-                    height_se,
-                    height_ne,
+                    level, x, z, y, typecode, typecode2, 1, 1, 0, height_sw, height_se, height_ne,
                     height_nw,
                 );
             }
@@ -549,8 +543,18 @@ impl ClientBuild {
             // walking (TS 924-928); only the visual placement is gated.
             if loc.get_model_available(LocShape::WALL_STRAIGHT, angle) {
                 world.set_wall(
-                    level, x, z, y, WSHAPE0[angle as usize], 0, typecode, typecode2, height_sw,
-                    height_se, height_ne, height_nw,
+                    level,
+                    x,
+                    z,
+                    y,
+                    WSHAPE0[angle as usize],
+                    0,
+                    typecode,
+                    typecode2,
+                    height_sw,
+                    height_se,
+                    height_ne,
+                    height_nw,
                 );
             }
 
@@ -604,8 +608,18 @@ impl ClientBuild {
         } else if shape == LocShape::WALL_DIAGONAL_CORNER {
             if loc.get_model_available(LocShape::WALL_DIAGONAL_CORNER, angle) {
                 world.set_wall(
-                    level, x, z, y, WSHAPE1[angle as usize], 0, typecode, typecode2, height_sw,
-                    height_se, height_ne, height_nw,
+                    level,
+                    x,
+                    z,
+                    y,
+                    WSHAPE1[angle as usize],
+                    0,
+                    typecode,
+                    typecode2,
+                    height_sw,
+                    height_se,
+                    height_ne,
+                    height_nw,
                 );
             }
 
@@ -675,8 +689,18 @@ impl ClientBuild {
         } else if shape == LocShape::WALL_SQUARE_CORNER {
             if loc.get_model_available(LocShape::WALL_SQUARE_CORNER, angle) {
                 world.set_wall(
-                    level, x, z, y, WSHAPE1[angle as usize], 0, typecode, typecode2, height_sw,
-                    height_se, height_ne, height_nw,
+                    level,
+                    x,
+                    z,
+                    y,
+                    WSHAPE1[angle as usize],
+                    0,
+                    typecode,
+                    typecode2,
+                    height_sw,
+                    height_se,
+                    height_ne,
+                    height_nw,
                 );
             }
 
@@ -752,7 +776,9 @@ impl ClientBuild {
                 let mut wallwidth = 16;
                 let wall_typecode = world.wall_type(level, x, z);
                 if wall_typecode > 0 {
-                    wallwidth = cache.loc(((wall_typecode >> 14) & 0x7fff) as usize).wallwidth;
+                    wallwidth = cache
+                        .loc(((wall_typecode >> 14) & 0x7fff) as usize)
+                        .wallwidth;
                 }
 
                 if decor_available {
@@ -857,7 +883,8 @@ impl ClientBuild {
                     cmap.block_ground(x, z);
                 }
             }
-        } else if shape == LocShape::CENTREPIECE_STRAIGHT || shape == LocShape::CENTREPIECE_DIAGONAL {
+        } else if shape == LocShape::CENTREPIECE_STRAIGHT || shape == LocShape::CENTREPIECE_DIAGONAL
+        {
             let mut yaw = 0;
             if shape == LocShape::CENTREPIECE_DIAGONAL {
                 yaw += 256;
@@ -897,8 +924,18 @@ impl ClientBuild {
         } else if shape == LocShape::WALL_STRAIGHT {
             if loc.get_model_available(LocShape::WALL_STRAIGHT, angle) {
                 world.set_wall(
-                    level, x, z, y, WSHAPE0[angle as usize], 0, typecode, typecode2, height_sw,
-                    height_se, height_ne, height_nw,
+                    level,
+                    x,
+                    z,
+                    y,
+                    WSHAPE0[angle as usize],
+                    0,
+                    typecode,
+                    typecode2,
+                    height_sw,
+                    height_se,
+                    height_ne,
+                    height_nw,
                 );
             }
 
@@ -910,8 +947,18 @@ impl ClientBuild {
         } else if shape == LocShape::WALL_DIAGONAL_CORNER {
             if loc.get_model_available(LocShape::WALL_DIAGONAL_CORNER, angle) {
                 world.set_wall(
-                    level, x, z, y, WSHAPE1[angle as usize], 0, typecode, typecode2, height_sw,
-                    height_se, height_ne, height_nw,
+                    level,
+                    x,
+                    z,
+                    y,
+                    WSHAPE1[angle as usize],
+                    0,
+                    typecode,
+                    typecode2,
+                    height_sw,
+                    height_se,
+                    height_ne,
+                    height_nw,
                 );
             }
 
@@ -949,8 +996,18 @@ impl ClientBuild {
         } else if shape == LocShape::WALL_SQUARE_CORNER {
             if loc.get_model_available(LocShape::WALL_SQUARE_CORNER, angle) {
                 world.set_wall(
-                    level, x, z, y, WSHAPE1[angle as usize], 0, typecode, typecode2, height_sw,
-                    height_se, height_ne, height_nw,
+                    level,
+                    x,
+                    z,
+                    y,
+                    WSHAPE1[angle as usize],
+                    0,
+                    typecode,
+                    typecode2,
+                    height_sw,
+                    height_se,
+                    height_ne,
+                    height_nw,
                 );
             }
 
@@ -1016,7 +1073,9 @@ impl ClientBuild {
                 let mut wallwidth = 16;
                 let wall_typecode = world.wall_type(level, x, z);
                 if wall_typecode > 0 {
-                    wallwidth = cache.loc(((wall_typecode >> 14) & 0x7fff) as usize).wallwidth;
+                    wallwidth = cache
+                        .loc(((wall_typecode >> 14) & 0x7fff) as usize)
+                        .wallwidth;
                 }
 
                 if decor_available {
@@ -1114,14 +1173,12 @@ impl ClientBuild {
             const LIGHT_X: i32 = -50;
             const LIGHT_Y: i32 = -10;
             const LIGHT_Z: i32 = -50;
-            let light_mag = (f64::sqrt(
-                (LIGHT_X * LIGHT_X + LIGHT_Y * LIGHT_Y + LIGHT_Z * LIGHT_Z) as f64,
-            )) as i32;
+            let light_mag =
+                (f64::sqrt((LIGHT_X * LIGHT_X + LIGHT_Y * LIGHT_Y + LIGHT_Z * LIGHT_Z) as f64))
+                    as i32;
             let light_magnitude = (LIGHT_ATTENUATION * light_mag) >> 8;
-            let mut lightmap = vec![
-                vec![0i32; (BuildArea::SIZE + 1) as usize];
-                (BuildArea::SIZE + 1) as usize
-            ];
+            let mut lightmap =
+                vec![vec![0i32; (BuildArea::SIZE + 1) as usize]; (BuildArea::SIZE + 1) as usize];
 
             for z in 1..BuildArea::SIZE - 1 {
                 for x in 1..BuildArea::SIZE - 1 {
@@ -1214,11 +1271,16 @@ impl ClientBuild {
 
                         // TS short-circuits left to right: the mapl reads
                         // below only run for interior z0 (TS 200-205).
-                        if Self::ground_tile_visible(mapl, level, x0, z0, self.low_mem, self.minusedlevel) {
-                            let t1 =
-                                self.floort1[level as usize][x0 as usize][z0 as usize] as i32;
-                            let t2 =
-                                self.floort2[level as usize][x0 as usize][z0 as usize] as i32;
+                        if Self::ground_tile_visible(
+                            mapl,
+                            level,
+                            x0,
+                            z0,
+                            self.low_mem,
+                            self.minusedlevel,
+                        ) {
+                            let t1 = self.floort1[level as usize][x0 as usize][z0 as usize] as i32;
+                            let t2 = self.floort2[level as usize][x0 as usize][z0 as usize] as i32;
 
                             if t1 > 0 || t2 > 0 {
                                 let height_sw = groundh[level as usize][x0 as usize][z0 as usize];
@@ -1299,11 +1361,12 @@ impl ClientBuild {
                                     );
                                 } else {
                                     let shape = self.floors[level as usize][x0 as usize]
-                                        [z0 as usize] as i32
+                                        [z0 as usize]
+                                        as i32
                                         + 1;
-                                    let rotation =
-                                        self.floorr[level as usize][x0 as usize][z0 as usize]
-                                            as i32;
+                                    let rotation = self.floorr[level as usize][x0 as usize]
+                                        [z0 as usize]
+                                        as i32;
                                     let flo = cache.flo((t2 - 1) as usize);
 
                                     let mut texture = flo.texture;
@@ -1358,7 +1421,12 @@ impl ClientBuild {
             // TS 325-329: per-tile draw layer.
             for stz in 1..BuildArea::SIZE - 1 {
                 for stx in 1..BuildArea::SIZE - 1 {
-                    world.set_layer(level, stx, stz, Self::get_vis_below_level(mapl, level, stx, stz));
+                    world.set_layer(
+                        level,
+                        stx,
+                        stz,
+                        Self::get_vis_below_level(mapl, level, stx, stz),
+                    );
                 }
             }
         }
@@ -1396,7 +1464,8 @@ impl ClientBuild {
             for level in 0..=top_level {
                 for tile_z in 0..=BuildArea::SIZE {
                     for tile_x in 0..=BuildArea::SIZE {
-                        if self.mapo[level as usize][tile_x as usize][tile_z as usize] & wall0 != 0 {
+                        if self.mapo[level as usize][tile_x as usize][tile_z as usize] & wall0 != 0
+                        {
                             let mut min_tile_z = tile_z;
                             let mut max_tile_z = tile_z;
                             let mut min_level = level;
@@ -1477,13 +1546,15 @@ impl ClientBuild {
 
                                 for l in min_level..=max_level {
                                     for z in min_tile_z..=max_tile_z {
-                                        self.mapo[l as usize][tile_x as usize][z as usize] &= !wall0;
+                                        self.mapo[l as usize][tile_x as usize][z as usize] &=
+                                            !wall0;
                                     }
                                 }
                             }
                         }
 
-                        if self.mapo[level as usize][tile_x as usize][tile_z as usize] & wall1 != 0 {
+                        if self.mapo[level as usize][tile_x as usize][tile_z as usize] & wall1 != 0
+                        {
                             let mut min_tile_x = tile_x;
                             let mut max_tile_x = tile_x;
                             let mut min_level = level;
@@ -1565,13 +1636,15 @@ impl ClientBuild {
 
                                 for l in min_level..=max_level {
                                     for x in min_tile_x..=max_tile_x {
-                                        self.mapo[l as usize][x as usize][tile_z as usize] &= !wall1;
+                                        self.mapo[l as usize][x as usize][tile_z as usize] &=
+                                            !wall1;
                                     }
                                 }
                             }
                         }
 
-                        if self.mapo[level as usize][tile_x as usize][tile_z as usize] & floor != 0 {
+                        if self.mapo[level as usize][tile_x as usize][tile_z as usize] & floor != 0
+                        {
                             let mut min_tile_x = tile_x;
                             let mut max_tile_x = tile_x;
                             let mut min_tile_z = tile_z;
@@ -1677,19 +1750,23 @@ impl ClientBuild {
                     self.shadow[0][x as usize][z as usize] = 127;
 
                     if start_x == x && x > 0 {
-                        groundh[0][x as usize][z as usize] = groundh[0][(x - 1) as usize][z as usize];
+                        groundh[0][x as usize][z as usize] =
+                            groundh[0][(x - 1) as usize][z as usize];
                     }
 
                     if start_x + end_x == x && x < BuildArea::SIZE - 1 {
-                        groundh[0][x as usize][z as usize] = groundh[0][(x + 1) as usize][z as usize];
+                        groundh[0][x as usize][z as usize] =
+                            groundh[0][(x + 1) as usize][z as usize];
                     }
 
                     if start_z == z && z > 0 {
-                        groundh[0][x as usize][z as usize] = groundh[0][x as usize][(z - 1) as usize];
+                        groundh[0][x as usize][z as usize] =
+                            groundh[0][x as usize][(z - 1) as usize];
                     }
 
                     if start_z + end_z == z && z < BuildArea::SIZE - 1 {
-                        groundh[0][x as usize][z as usize] = groundh[0][x as usize][(z + 1) as usize];
+                        groundh[0][x as usize][z as usize] =
+                            groundh[0][x as usize][(z + 1) as usize];
                     }
                 }
             }
@@ -1751,7 +1828,9 @@ impl ClientBuild {
     /// 1137-1142): which level's collision a loc belongs to.
     fn get_vis_below_level(mapl: &[Vec<Vec<u8>>], level: i32, stx: i32, stz: i32) -> i32 {
         if mapl[level as usize][stx as usize][stz as usize] as i32 & MapFlag::VIS_BELOW == 0 {
-            return if level <= 0 || mapl[1][stx as usize][stz as usize] as i32 & MapFlag::LINK_BELOW == 0 {
+            return if level <= 0
+                || mapl[1][stx as usize][stz as usize] as i32 & MapFlag::LINK_BELOW == 0
+            {
                 level
             } else {
                 level - 1
@@ -1796,8 +1875,10 @@ impl ClientBuild {
             + Self::noise(x + 1, y - 1)
             + Self::noise(x - 1, y + 1)
             + Self::noise(x + 1, y + 1);
-        let sides =
-            Self::noise(x - 1, y) + Self::noise(x + 1, y) + Self::noise(x, y - 1) + Self::noise(x, y + 1);
+        let sides = Self::noise(x - 1, y)
+            + Self::noise(x + 1, y)
+            + Self::noise(x, y - 1)
+            + Self::noise(x, y + 1);
         let center = Self::noise(x, y);
         // i32 division truncates toward zero, matching the TS `| 0`
         corners / 16 + sides / 8 + center / 4

@@ -236,11 +236,8 @@ fn empty_ground_obj() -> Box<[[[Option<LinkList<ClientObj>>; 104]; 104]; 4]> {
     // rows each. `[[T; 104]; 416]` and `[[[T; 104]; 104]; 4]` have the same
     // size and alignment, so the sole-owner allocation can be re-typed
     // without copying.
-    let boxed: Box<[[Option<LinkList<ClientObj>>; 104]; 416]> = rows
-        .into_boxed_slice()
-        .try_into()
-        .map_err(|_| ())
-        .unwrap();
+    let boxed: Box<[[Option<LinkList<ClientObj>>; 104]; 416]> =
+        rows.into_boxed_slice().try_into().map_err(|_| ()).unwrap();
     // SAFETY: the box holds exactly 416 row arrays, which is the same
     // memory (size, alignment, cell layout) as 4 levels of 104 rows; the
     // re-typed box keeps sole ownership and its drop glue walks the same
@@ -1209,9 +1206,9 @@ impl Client {
             .map_err(|_| ())?;
         let mut ifaces = Vec::new();
         if let Ok(iface_bytes) = std::fs::read(format!("{cache_dir}/interface")) {
-            if let Ok(unpacked) =
-                catch_unwind(AssertUnwindSafe(|| IfType::unpack(&JagFile::new(iface_bytes))))
-            {
+            if let Ok(unpacked) = catch_unwind(AssertUnwindSafe(|| {
+                IfType::unpack(&JagFile::new(iface_bytes))
+            })) {
                 ifaces = unpacked;
             }
         }
@@ -1224,9 +1221,7 @@ impl Client {
     fn http_get(host: &str, port: u16, path: &str) -> Option<Vec<u8>> {
         use std::io::{Read, Write};
         let mut stream = std::net::TcpStream::connect((host, port)).ok()?;
-        stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .ok()?;
+        stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
         write!(stream, "GET {path} HTTP/1.0\r\nHost: {host}\r\n\r\n").ok()?;
         let mut buf = Vec::new();
         stream.read_to_end(&mut buf).ok()?;
@@ -1465,7 +1460,9 @@ impl Client {
         // idempotent (OnceLock), so repeated maininit calls are no-ops.
         let wordenc_path = format!("{}/wordenc", self.config.cache_dir);
         if let Ok(bytes) = std::fs::read(&wordenc_path) {
-            let _ = catch_unwind(AssertUnwindSafe(|| WordFilter::unpack(&JagFile::new(bytes))));
+            let _ = catch_unwind(AssertUnwindSafe(|| {
+                WordFilter::unpack(&JagFile::new(bytes))
+            }));
         }
 
         self.on_demand = Self::load_on_demand(&self.config);
@@ -1551,8 +1548,7 @@ impl Client {
                     self.on_demand.as_mut().unwrap().request(1, i);
                 }
                 while self.on_demand.as_ref().unwrap().remaining() > 0 {
-                    let done =
-                        anim_count - self.on_demand.as_ref().unwrap().remaining() as i32;
+                    let done = anim_count - self.on_demand.as_ref().unwrap().remaining() as i32;
                     // Report every pass (not only on progress): the callback
                     // pumps the window/audio, so a prefetch stall cannot
                     // beachball the headed client.
@@ -1577,8 +1573,7 @@ impl Client {
                 self.on_demand.as_mut().unwrap().request_all_models();
                 let model_total = self.on_demand.as_ref().unwrap().remaining() as i32;
                 while self.on_demand.as_ref().unwrap().remaining() > 0 {
-                    let done =
-                        model_total - self.on_demand.as_ref().unwrap().remaining() as i32;
+                    let done = model_total - self.on_demand.as_ref().unwrap().remaining() as i32;
                     self.report_progress(
                         &mut progress,
                         &format!("Loading models - {}%", (done * 100) / model_total.max(1)),
@@ -1835,12 +1830,18 @@ impl Client {
         self.out.pos = 0;
         self.out.p1(14);
         self.out.p1(login_server);
-        stream.write(self.out.data(), 2).map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+        stream
+            .write(self.out.data(), 2)
+            .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
 
         for _ in 0..8 {
-            stream.read().map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+            stream
+                .read()
+                .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
         }
-        let mut response = stream.read().map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+        let mut response = stream
+            .read()
+            .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
 
         if response == 0 {
             stream
@@ -1884,7 +1885,9 @@ impl Client {
             stream
                 .write(loginout.data(), loginout.pos)
                 .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
-            response = stream.read().map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+            response = stream
+                .read()
+                .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
         }
 
         if response == 1 {
@@ -1894,8 +1897,13 @@ impl Client {
         }
 
         if response == 2 {
-            self.staffmodlevel = stream.read().map_err(|_| self.fail_title_login(io_error(), reconnect))?;
-            self.mouse_tracked = stream.read().map_err(|_| self.fail_title_login(io_error(), reconnect))? == 1;
+            self.staffmodlevel = stream
+                .read()
+                .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+            self.mouse_tracked = stream
+                .read()
+                .map_err(|_| self.fail_title_login(io_error(), reconnect))?
+                == 1;
             self.ingame = true;
             self.out.pos = 0;
             self.r#in.pos = 0;
@@ -2151,12 +2159,7 @@ impl Client {
         }
 
         if action == MiniMenuAction::OP_OBJ6 {
-            let obj = self
-                .cache
-                .objs
-                .get(a as usize)
-                .cloned()
-                .unwrap_or_default();
+            let obj = self.cache.objs.get(a as usize).cloned().unwrap_or_default();
             let examine = if obj.desc.is_empty() {
                 format!("It's a {}.", obj.name)
             } else {
@@ -2569,12 +2572,7 @@ impl Client {
         }
 
         if action == MiniMenuAction::OP_HELD6 {
-            let obj = self
-                .cache
-                .objs
-                .get(a as usize)
-                .cloned()
-                .unwrap_or_default();
+            let obj = self.cache.objs.get(a as usize).cloned().unwrap_or_default();
             // TS 8999-9010: a com-link count >= 100000 reports "<n> x <name>"
             let examine = self
                 .ifaces
@@ -2630,9 +2628,7 @@ impl Client {
                 .map(|com| {
                     let verb = com.target_verb.clone();
                     match verb.find(' ') {
-                        Some(space) => {
-                            (verb[..space].to_string(), verb[space + 1..].to_string())
-                        }
+                        Some(space) => (verb[..space].to_string(), verb[space + 1..].to_string()),
                         None => (verb.clone(), verb),
                     }
                 })
@@ -2766,11 +2762,8 @@ impl Client {
                 if let Some(script) = com.scripts.as_ref().and_then(|s| s.first()) {
                     if script.first() == Some(&5) {
                         let varp = script.get(1).copied().unwrap_or(0);
-                        if let Some(operand) = com
-                            .script_operand
-                            .as_ref()
-                            .and_then(|o| o.first())
-                            .copied()
+                        if let Some(operand) =
+                            com.script_operand.as_ref().and_then(|o| o.first()).copied()
                         {
                             if self.var.get(varp as usize).copied() != Some(operand) {
                                 grow_write(&mut self.var, varp, operand);
@@ -2871,8 +2864,10 @@ impl Client {
                     self.social_input = String::new();
                     self.social_input_type = 3;
                     self.social_userhash = self.friend_userhash[friend as usize];
-                    self.social_input_header =
-                        format!("Enter message to send to {}", self.friend_username[friend as usize]);
+                    self.social_input_header = format!(
+                        "Enter message to send to {}",
+                        self.friend_username[friend as usize]
+                    );
                 }
             }
         }
@@ -2945,8 +2940,7 @@ impl Client {
             };
             let mut forceapproach = loc_forceapproach;
             if angle != 0 {
-                forceapproach =
-                    ((forceapproach << angle) & 0xf) + (forceapproach >> (4 - angle));
+                forceapproach = ((forceapproach << angle) & 0xf) + (forceapproach >> (4 - angle));
             }
             self.tryMove(px, pz, x, z, false, width, height, 0, 0, forceapproach, 2);
         } else {
@@ -3548,8 +3542,13 @@ impl Client {
         if self.cam_look_at_rate2 >= 100 {
             let scene_x = self.cam_look_at_lx * 128 + 64;
             let scene_z = self.cam_look_at_lz * 128 + 64;
-            let scene_y = get_av_h(&self.groundh, &self.mapl, scene_x, scene_z, self.minusedlevel)
-                - self.cam_look_at_hei;
+            let scene_y = get_av_h(
+                &self.groundh,
+                &self.mapl,
+                scene_x,
+                scene_z,
+                self.minusedlevel,
+            ) - self.cam_look_at_hei;
 
             let delta_x = scene_x - self.cam_x;
             let delta_y = scene_y - self.cam_y;
@@ -3602,8 +3601,13 @@ impl Client {
         if self.cam_move_to_rate2 >= 100 {
             self.cam_x = self.cam_move_to_lx * 128 + 64;
             self.cam_z = self.cam_move_to_lz * 128 + 64;
-            self.cam_y = get_av_h(&self.groundh, &self.mapl, self.cam_x, self.cam_z, self.minusedlevel)
-                - self.cam_move_to_hei;
+            self.cam_y = get_av_h(
+                &self.groundh,
+                &self.mapl,
+                self.cam_x,
+                self.cam_z,
+                self.minusedlevel,
+            ) - self.cam_move_to_hei;
         }
     }
 
@@ -3719,11 +3723,7 @@ impl Client {
             if child_id == -1 {
                 return;
             }
-            let Some(child) = self
-                .ifaces
-                .get(child_id as usize)
-                .and_then(|o| o.as_ref())
-            else {
+            let Some(child) = self.ifaces.get(child_id as usize).and_then(|o| o.as_ref()) else {
                 return;
             };
             if child.r#type == ComponentType::TYPE_LAYER {
@@ -3987,7 +3987,11 @@ impl Client {
         let display_name = JString::to_screen_name(&JString::to_raw_username(userhash));
         for i in 0..self.friend_count {
             if self.friend_userhash[i as usize] == userhash {
-                self.add_chat(0, &format!("{display_name} is already on your friend list"), "");
+                self.add_chat(
+                    0,
+                    &format!("{display_name} is already on your friend list"),
+                    "",
+                );
                 return;
             }
         }
@@ -4029,7 +4033,11 @@ impl Client {
         let display_name = JString::to_screen_name(&JString::to_raw_username(userhash));
         for i in 0..self.ignore_count {
             if self.ignore_userhash[i as usize] == userhash {
-                self.add_chat(0, &format!("{display_name} is already on your ignore list"), "");
+                self.add_chat(
+                    0,
+                    &format!("{display_name} is already on your ignore list"),
+                    "",
+                );
                 return;
             }
         }
@@ -4362,8 +4370,11 @@ impl Client {
                     // TS 2261-2281: `obj_replace` moves src into dst (copy,
                     // then clear src); bank arrange inserts by bubbling the
                     // item toward dst; otherwise the two slots swap.
-                    match (com.obj_replace, com.link_obj_type.as_mut(), com.link_obj_number.as_mut())
-                    {
+                    match (
+                        com.obj_replace,
+                        com.link_obj_type.as_mut(),
+                        com.link_obj_number.as_mut(),
+                    ) {
                         (true, Some(t), Some(n)) => {
                             t[dst] = t[src];
                             n[dst] = n[src];
@@ -4665,7 +4676,11 @@ impl Client {
             Some(CC_DESIGN_PREVIEW) => self.design_preview_model(),
             _ => None,
         };
-        let Some(com) = self.ifaces.get_mut(com_id as usize).and_then(|o| o.as_mut()) else {
+        let Some(com) = self
+            .ifaces
+            .get_mut(com_id as usize)
+            .and_then(|o| o.as_mut())
+        else {
             return;
         };
         let mut client_code = com.client_code;
@@ -4718,9 +4733,15 @@ impl Client {
                 if self.friend_node_id[client_code as usize] == 0 {
                     com.text = "@red@Offline".into();
                 } else if self.friend_node_id[client_code as usize] == self.node_id {
-                    com.text = format!("@gre@World-{}", self.friend_node_id[client_code as usize] - 9);
+                    com.text = format!(
+                        "@gre@World-{}",
+                        self.friend_node_id[client_code as usize] - 9
+                    );
                 } else {
-                    com.text = format!("@yel@World-{}", self.friend_node_id[client_code as usize] - 9);
+                    com.text = format!(
+                        "@yel@World-{}",
+                        self.friend_node_id[client_code as usize] - 9
+                    );
                 }
                 com.button_type = 1;
             }
@@ -4887,7 +4908,11 @@ impl Client {
                     0,
                 );
             } else {
-                let icon_id = self.side_icon.get(self.active_icon as usize).copied().unwrap_or(-1);
+                let icon_id = self
+                    .side_icon
+                    .get(self.active_icon as usize)
+                    .copied()
+                    .unwrap_or(-1);
                 if icon_id != -1 {
                     self.add_component_options(
                         icon_id,
@@ -5098,7 +5123,8 @@ impl Client {
                 }
                 line += 1;
             } else if r#type == 4
-                && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && self.is_friend(&sender)))
+                && (self.chat_trade_mode == 0
+                    || (self.chat_trade_mode == 1 && self.is_friend(&sender)))
             {
                 if mouse_y > y - 14 && mouse_y <= y {
                     let option = format!("Accept trade @whi@{sender}");
@@ -5111,7 +5137,8 @@ impl Client {
             {
                 line += 1;
             } else if r#type == 8
-                && (self.chat_trade_mode == 0 || (self.chat_trade_mode == 1 && self.is_friend(&sender)))
+                && (self.chat_trade_mode == 0
+                    || (self.chat_trade_mode == 1 && self.is_friend(&sender)))
             {
                 if mouse_y > y - 14 && mouse_y <= y {
                     let option = format!("Accept duel @whi@{sender}");
@@ -5201,7 +5228,14 @@ impl Client {
 
             match child.r#type {
                 ComponentType::TYPE_LAYER => {
-                    self.add_component_options(child_id, mouse_x, mouse_y, child_x, child_y, child.scroll_pos);
+                    self.add_component_options(
+                        child_id,
+                        mouse_x,
+                        mouse_y,
+                        child_x,
+                        child_y,
+                        child.scroll_pos,
+                    );
                     let (child_w, child_h, child_sh) = self
                         .ifaces
                         .get(child_id as usize)
@@ -5314,11 +5348,7 @@ impl Client {
                                                 MiniMenuAction::OP_HELD5
                                             };
                                             self.push_option(
-                                                option,
-                                                action,
-                                                obj_id,
-                                                slot,
-                                                child_id,
+                                                option, action, obj_id, slot, child_id,
                                             );
                                         } else if op == 4 {
                                             let option = format!("Drop @lre@{obj_name}");
@@ -5355,11 +5385,7 @@ impl Client {
                                                 _ => MiniMenuAction::OP_HELD3,
                                             };
                                             self.push_option(
-                                                option,
-                                                action,
-                                                obj_id,
-                                                slot,
-                                                child_id,
+                                                option, action, obj_id, slot, child_id,
                                             );
                                         }
                                     }
@@ -5376,13 +5402,7 @@ impl Client {
                                             3 => MiniMenuAction::INV_BUTTON4,
                                             _ => MiniMenuAction::INV_BUTTON5,
                                         };
-                                        self.push_option(
-                                            option,
-                                            action,
-                                            obj_id,
-                                            slot,
-                                            child_id,
-                                        );
+                                        self.push_option(option, action, obj_id, slot, child_id);
                                     }
                                 }
 
@@ -5426,7 +5446,9 @@ impl Client {
                                     child.id,
                                 );
                             }
-                        } else if child.button_type == ButtonType::BUTTON_TARGET && self.target_mode == 0 {
+                        } else if child.button_type == ButtonType::BUTTON_TARGET
+                            && self.target_mode == 0
+                        {
                             // prefix is the first word of `target_verb`
                             // (TS 9808-9811)
                             let mut prefix = child.target_verb.clone();
@@ -5434,13 +5456,7 @@ impl Client {
                                 prefix.truncate(space);
                             }
                             let option = format!("{} @gre@{}", prefix, child.target_base);
-                            self.push_option(
-                                option,
-                                MiniMenuAction::TGT_BUTTON,
-                                0,
-                                0,
-                                child.id,
-                            );
+                            self.push_option(option, MiniMenuAction::TGT_BUTTON, 0, 0, child.id);
                         } else if child.button_type == ButtonType::BUTTON_CLOSE {
                             self.push_option(
                                 "Close".into(),
@@ -5512,7 +5528,10 @@ impl Client {
             let option = format!("Remove @whi@{}", self.friend_username[client_code as usize]);
             self.push_option(option, MiniMenuAction::FRIENDLIST_DEL, 0, 0, 0);
 
-            let option = format!("Message @whi@{}", self.friend_username[client_code as usize]);
+            let option = format!(
+                "Message @whi@{}",
+                self.friend_username[client_code as usize]
+            );
             self.push_option(option, MiniMenuAction::MESSAGE_PRIVATE, 0, 0, 0);
             return true;
         } else if (CC_IGNORES_START..=CC_IGNORES_END).contains(&client_code) {
@@ -5669,7 +5688,8 @@ impl Client {
                                     && last_x < BuildArea::SIZE
                                     && last_z < BuildArea::SIZE
                                 {
-                                    self.ground_obj[level as usize][last_x as usize][last_z as usize]
+                                    self.ground_obj[level as usize][last_x as usize]
+                                        [last_z as usize]
                                         .take()
                                 } else {
                                     None
@@ -5685,7 +5705,11 @@ impl Client {
                     while let Some(loc) = node {
                         loc.x -= dx;
                         loc.z -= dz;
-                        if loc.x < 0 || loc.z < 0 || loc.x >= BuildArea::SIZE || loc.z >= BuildArea::SIZE {
+                        if loc.x < 0
+                            || loc.z < 0
+                            || loc.x >= BuildArea::SIZE
+                            || loc.z >= BuildArea::SIZE
+                        {
                             self.loc_changes.unlink_last();
                         }
                         node = self.loc_changes.next();
@@ -7241,7 +7265,17 @@ impl Client {
                     && z < BuildArea::SIZE
                 {
                     let layer = LOC_SHAPE_TO_LAYER[shape as usize];
-                    self.loc_change_create(self.minusedlevel, x, z, layer, id, shape, rotate, 0, -1);
+                    self.loc_change_create(
+                        self.minusedlevel,
+                        x,
+                        z,
+                        layer,
+                        id,
+                        shape,
+                        rotate,
+                        0,
+                        -1,
+                    );
                 }
             }
             ServerProt::LOC_DEL => {
@@ -7259,7 +7293,17 @@ impl Client {
                     && z < BuildArea::SIZE
                 {
                     let layer = LOC_SHAPE_TO_LAYER[shape as usize];
-                    self.loc_change_create(self.minusedlevel, x, z, layer, -1, shape, rotate, 0, -1);
+                    self.loc_change_create(
+                        self.minusedlevel,
+                        x,
+                        z,
+                        layer,
+                        -1,
+                        shape,
+                        rotate,
+                        0,
+                        -1,
+                    );
                 }
             }
             ServerProt::LOC_ANIM => {
@@ -7307,9 +7351,7 @@ impl Client {
                         LocLayer::WALL_DECOR => {
                             // `getDecor(level, z, x)` in the TS swaps its
                             // parameter names; it indexes by tile x,z.
-                            if let Some(decor) =
-                                self.world.get_decor_mut(self.minusedlevel, x, z)
-                            {
+                            if let Some(decor) = self.world.get_decor_mut(self.minusedlevel, x, z) {
                                 decor.anim_seq = seq;
                                 decor.anim_shape = 4;
                                 decor.anim_angle = 0;
@@ -7575,9 +7617,7 @@ impl Client {
                             let player = if pid == self.self_slot {
                                 self.local_player.as_mut()
                             } else {
-                                self.players
-                                    .get_mut(pid as usize)
-                                    .and_then(|p| p.as_mut())
+                                self.players.get_mut(pid as usize).and_then(|p| p.as_mut())
                             };
                             if let Some(player) = player {
                                 player.loc_start_cycle = t1 + self.loop_cycle;
@@ -8586,7 +8626,8 @@ impl Client {
                     let loc_name = loc.name.clone();
                     let loc_ops = loc.op.clone();
                     if self.use_mode == 1 {
-                        let option = format!("Use {} with @cya@{}", self.obj_selected_name, loc_name);
+                        let option =
+                            format!("Use {} with @cya@{}", self.obj_selected_name, loc_name);
                         self.push_option(option, MiniMenuAction::USEHELD_ONLOC, typecode, x, z);
                     } else if self.target_mode == 1 {
                         if (self.target_mask & 0x4) == 0x4 {
@@ -8597,13 +8638,7 @@ impl Client {
                         for i in (0..=4).rev() {
                             if let Some(op) = loc_ops.get(i).and_then(|o| o.clone()) {
                                 let option = format!("{op} @cya@{loc_name}");
-                                self.push_option(
-                                    option,
-                                    LOC_OP_ACTIONS[i],
-                                    typecode,
-                                    x,
-                                    z,
-                                );
+                                self.push_option(option, LOC_OP_ACTIONS[i], typecode, x, z);
                             }
                         }
                         let option = format!("Examine @cya@{loc_name}");
@@ -8711,13 +8746,7 @@ impl Client {
                         if self.use_mode == 1 {
                             let option =
                                 format!("Use {} with @lre@{}", self.obj_selected_name, type_name);
-                            self.push_option(
-                                option,
-                                MiniMenuAction::USEHELD_ONOBJ,
-                                obj_id,
-                                x,
-                                z,
-                            );
+                            self.push_option(option, MiniMenuAction::USEHELD_ONOBJ, obj_id, x, z);
                         } else if self.target_mode == 1 {
                             if (self.target_mask & 0x1) == 0x1 {
                                 let option = format!("{} @lre@{}", self.target_op, type_name);
@@ -8727,22 +8756,10 @@ impl Client {
                             for op in (0..=4).rev() {
                                 if let Some(o) = type_ops[op].as_deref() {
                                     let option = format!("{o} @lre@{type_name}");
-                                    self.push_option(
-                                        option,
-                                        OBJ_OP_ACTIONS[op],
-                                        obj_id,
-                                        x,
-                                        z,
-                                    );
+                                    self.push_option(option, OBJ_OP_ACTIONS[op], obj_id, x, z);
                                 } else if op == 2 {
                                     let option = format!("Take @lre@{type_name}");
-                                    self.push_option(
-                                        option,
-                                        MiniMenuAction::OP_OBJ3,
-                                        obj_id,
-                                        x,
-                                        z,
-                                    );
+                                    self.push_option(option, MiniMenuAction::OP_OBJ3, obj_id, x, z);
                                 }
                             }
                             let option = format!("Examine @lre@{type_name}");
@@ -8872,13 +8889,7 @@ impl Client {
                 } else if self.player_op_priority[i] {
                     priority = MiniMenuAction::_PRIORITY;
                 }
-                self.push_option(
-                    option,
-                    priority + PLAYER_OP_ACTIONS[i],
-                    a,
-                    b,
-                    c,
-                );
+                self.push_option(option, priority + PLAYER_OP_ACTIONS[i], a, b, c);
             }
         }
 
@@ -9008,7 +9019,13 @@ impl Client {
             if let Some(data) = &self.map_build_location_data[i] {
                 let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
                 let z = (self.map_build_index[i] & 0xff) * 64 - self.map_build_base_z;
-                if !ClientBuild::check_locations_low_mem(self.config.lowmem, &self.cache, data, x, z) {
+                if !ClientBuild::check_locations_low_mem(
+                    self.config.lowmem,
+                    &self.cache,
+                    data,
+                    x,
+                    z,
+                ) {
                     ready = false;
                 }
             }
@@ -9175,6 +9192,13 @@ impl Client {
             &self.mapl,
         );
 
+        // The world is now re-stamped with this build's locs. The snapshot's
+        // loc family is gated on `gens.scene`, which the server bumps on the
+        // map-build packet — that can land before this local re-stamp runs.
+        // Bump it again so any snapshot read after this tick rebuilds the
+        // loc list from the fresh world, never the previous build's locs.
+        self.gens.scene += 1;
+
         self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
 
         for x in 0..BuildArea::SIZE {
@@ -9193,10 +9217,18 @@ impl Client {
         // flags do not intersect 0x79 — Java decoded and retained placed
         // models at build time, so it was immune to this unload.
         if self.config.lowmem && self.on_demand.is_some() {
-            let model_count = self.on_demand.as_ref().map(|od| od.get_file_count(0)).unwrap_or(0);
+            let model_count = self
+                .on_demand
+                .as_ref()
+                .map(|od| od.get_file_count(0))
+                .unwrap_or(0);
             let scene_models = self.scene_model_ids(model_count as usize);
             for i in 0..model_count {
-                let flags = self.on_demand.as_ref().map(|od| od.get_model_use(i)).unwrap_or(0);
+                let flags = self
+                    .on_demand
+                    .as_ref()
+                    .map(|od| od.get_model_use(i))
+                    .unwrap_or(0);
                 if flags & 0x79 == 0 && !scene_models.get(i as usize).copied().unwrap_or(false) {
                     Model::unload(i);
                 }
@@ -9472,8 +9504,13 @@ impl Client {
 
                 let r#type = self.cache.loc(other_id as usize);
                 if r#type.blockwalk {
-                    self.collision[level as usize]
-                        .del_wall(x, z, other_shape, other_angle, r#type.blockrange);
+                    self.collision[level as usize].del_wall(
+                        x,
+                        z,
+                        other_shape,
+                        other_angle,
+                        r#type.blockrange,
+                    );
                 }
             } else if layer == LocLayer::WALL_DECOR {
                 self.world.del_decor(level, x, z);
@@ -9511,8 +9548,7 @@ impl Client {
 
         if id >= 0 {
             let mut tile_level = level;
-            if level < 3
-                && (self.mapl[1][x as usize][z as usize] as i32 & MapFlag::LINK_BELOW) != 0
+            if level < 3 && (self.mapl[1][x as usize][z as usize] as i32 & MapFlag::LINK_BELOW) != 0
             {
                 tile_level = level + 1;
             }
@@ -9559,7 +9595,11 @@ impl Client {
                     && loc.x <= 102
                     && loc.z <= 102
                     && (loc.new_type < 0
-                        || ClientBuild::change_loc_available(&self.cache, loc.new_type, loc.new_shape))
+                        || ClientBuild::change_loc_available(
+                            &self.cache,
+                            loc.new_type,
+                            loc.new_shape,
+                        ))
                 {
                     let level = loc.level;
                     let layer = loc.layer;
@@ -9604,45 +9644,52 @@ impl Client {
     pub fn cinema_camera(&mut self) {
         let mut x = self.cam_move_to_lx * 128 + 64;
         let mut z = self.cam_move_to_lz * 128 + 64;
-        let mut y = get_av_h(&self.groundh, &self.mapl, x, z, self.minusedlevel) - self.cam_move_to_hei;
+        let mut y =
+            get_av_h(&self.groundh, &self.mapl, x, z, self.minusedlevel) - self.cam_move_to_hei;
 
         if self.cam_x < x {
-            self.cam_x += self.cam_move_to_rate + (((x - self.cam_x) * self.cam_move_to_rate2) / 1000);
+            self.cam_x +=
+                self.cam_move_to_rate + (((x - self.cam_x) * self.cam_move_to_rate2) / 1000);
             if self.cam_x > x {
                 self.cam_x = x;
             }
         }
 
         if self.cam_x > x {
-            self.cam_x -= self.cam_move_to_rate + (((self.cam_x - x) * self.cam_move_to_rate2) / 1000);
+            self.cam_x -=
+                self.cam_move_to_rate + (((self.cam_x - x) * self.cam_move_to_rate2) / 1000);
             if self.cam_x < x {
                 self.cam_x = x;
             }
         }
 
         if self.cam_y < y {
-            self.cam_y += self.cam_move_to_rate + (((y - self.cam_y) * self.cam_move_to_rate2) / 1000);
+            self.cam_y +=
+                self.cam_move_to_rate + (((y - self.cam_y) * self.cam_move_to_rate2) / 1000);
             if self.cam_y > y {
                 self.cam_y = y;
             }
         }
 
         if self.cam_y > y {
-            self.cam_y -= self.cam_move_to_rate + (((self.cam_y - y) * self.cam_move_to_rate2) / 1000);
+            self.cam_y -=
+                self.cam_move_to_rate + (((self.cam_y - y) * self.cam_move_to_rate2) / 1000);
             if self.cam_y < y {
                 self.cam_y = y;
             }
         }
 
         if self.cam_z < z {
-            self.cam_z += self.cam_move_to_rate + (((z - self.cam_z) * self.cam_move_to_rate2) / 1000);
+            self.cam_z +=
+                self.cam_move_to_rate + (((z - self.cam_z) * self.cam_move_to_rate2) / 1000);
             if self.cam_z > z {
                 self.cam_z = z;
             }
         }
 
         if self.cam_z > z {
-            self.cam_z -= self.cam_move_to_rate + (((self.cam_z - z) * self.cam_move_to_rate2) / 1000);
+            self.cam_z -=
+                self.cam_move_to_rate + (((self.cam_z - z) * self.cam_move_to_rate2) / 1000);
             if self.cam_z < z {
                 self.cam_z = z;
             }
@@ -9667,14 +9714,16 @@ impl Client {
         }
 
         if self.cam_pitch < pitch {
-            self.cam_pitch += self.cam_look_at_rate + (((pitch - self.cam_pitch) * self.cam_look_at_rate2) / 1000);
+            self.cam_pitch += self.cam_look_at_rate
+                + (((pitch - self.cam_pitch) * self.cam_look_at_rate2) / 1000);
             if self.cam_pitch > pitch {
                 self.cam_pitch = pitch;
             }
         }
 
         if self.cam_pitch > pitch {
-            self.cam_pitch -= self.cam_look_at_rate + (((self.cam_pitch - pitch) * self.cam_look_at_rate2) / 1000);
+            self.cam_pitch -= self.cam_look_at_rate
+                + (((self.cam_pitch - pitch) * self.cam_look_at_rate2) / 1000);
             if self.cam_pitch < pitch {
                 self.cam_pitch = pitch;
             }
@@ -9693,7 +9742,8 @@ impl Client {
         }
 
         if delta_yaw < 0 {
-            self.cam_yaw -= self.cam_look_at_rate + (((-delta_yaw) * self.cam_look_at_rate2) / 1000);
+            self.cam_yaw -=
+                self.cam_look_at_rate + (((-delta_yaw) * self.cam_look_at_rate2) / 1000);
             self.cam_yaw &= 0x7ff;
         }
 
@@ -9993,7 +10043,10 @@ impl Client {
             || e.primary_anim == -1
             || e.primary_anim_delay != 0
             || e.primary_anim_cycle + 1
-                > self.cache.seq(e.primary_anim as usize).get_delay(e.primary_anim_frame)
+                > self
+                    .cache
+                    .seq(e.primary_anim as usize)
+                    .get_delay(e.primary_anim_frame)
         {
             let duration = e.exact_move_start - e.exact_move_end;
             let delta = self.loop_cycle - e.exact_move_end;
@@ -10036,7 +10089,11 @@ impl Client {
             return;
         }
         if e.face_entity != -1 && e.face_entity < 32768 {
-            if let Some(npc) = self.npc.get(e.face_entity as usize).and_then(|n| n.as_ref()) {
+            if let Some(npc) = self
+                .npc
+                .get(e.face_entity as usize)
+                .and_then(|n| n.as_ref())
+            {
                 let dx = e.x - npc.x;
                 let dz = e.z - npc.z;
                 if dx != 0 || dz != 0 {
@@ -10489,7 +10546,11 @@ impl Client {
                     // (TS `onDemandLoop` 1370-1373).
                     if let Some(od) = self.on_demand.as_mut() {
                         if od.has_map_loc_file(req.file) {
-                            ClientBuild::prefetch_locations(&self.cache, &mut Packet::new(data), od);
+                            ClientBuild::prefetch_locations(
+                                &self.cache,
+                                &mut Packet::new(data),
+                                od,
+                            );
                         }
                     }
                 }
@@ -10509,10 +10570,24 @@ impl Client {
         }
         for i in 0..self.map_build_ground_data.len() {
             if self.map_build_ground_file[i] == file {
+                if crate::debug_enabled() {
+                    eprintln!(
+                        "[client-map] ground file={file} slot={i} mapsquare=({},{})",
+                        self.map_build_index[i] >> 8,
+                        self.map_build_index[i] & 0xff
+                    );
+                }
                 self.map_build_ground_data[i] = Some(data);
                 return;
             }
             if self.map_build_location_file[i] == file {
+                if crate::debug_enabled() {
+                    eprintln!(
+                        "[client-map] loc file={file} slot={i} mapsquare=({},{})",
+                        self.map_build_index[i] >> 8,
+                        self.map_build_index[i] & 0xff
+                    );
+                }
                 self.map_build_location_data[i] = Some(data);
                 return;
             }
@@ -10702,7 +10777,10 @@ mod dead_server_watchdog {
         // watchdog — the wall-clock fix: 750 pass-counted frames at one
         // pass per ~600 ms would have taken ~450 s instead.
         c.game_loop();
-        assert!(!c.ingame, "a dead server must drop the connection in one pass");
+        assert!(
+            !c.ingame,
+            "a dead server must drop the connection in one pass"
+        );
     }
 
     #[test]
@@ -10741,7 +10819,9 @@ mod dead_server_watchdog {
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
             c.tcp_in();
-            if c.last_response.is_some_and(|t| t.elapsed() < Duration::from_secs(5)) {
+            if c.last_response
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(5))
+            {
                 break;
             }
             assert!(
@@ -10768,10 +10848,8 @@ mod audio_toggle {
         dat.extend_from_slice(&0u16.to_be_bytes()); // loop_begin
         dat.extend_from_slice(&0u16.to_be_bytes()); // loop_end
         dat.extend_from_slice(&0xffffu16.to_be_bytes()); // end of table
-        let dir = std::env::temp_dir().join(format!(
-            "274bot-client-audio-toggle-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("274bot-client-audio-toggle-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("sounds"), jag(&[("sounds.dat", &dat)])).unwrap();
         dir

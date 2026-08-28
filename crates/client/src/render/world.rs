@@ -67,20 +67,13 @@ const DECORZOF2: [i32; 4] = [45, 45, -45, -45];
 
 // prettier-ignore
 const TEXTURE_AVERAGE: [i32; 50] = [
-    41,
-    39248, // water
-    41,
-    4643, // planks
-    41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41,
-    43086, // marble
-    41, 41, 41, 41, 41, 41, 41,
-    8602, // mossybricks
-    41,
-    28992, // gungywater
-    41, 41, 41, 41, 41,
-    5056, // lava
-    41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41,
-    3131, // pebblefloor
+    41, 39248, // water
+    41, 4643, // planks
+    41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 43086, // marble
+    41, 41, 41, 41, 41, 41, 41, 8602, // mossybricks
+    41, 28992, // gungywater
+    41, 41, 41, 41, 41, 5056, // lava
+    41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 3131, // pebblefloor
     41, 41, 41,
 ];
 
@@ -306,17 +299,29 @@ impl RenderWorld {
             let mut off = 0usize;
             if overlay != 0 {
                 for _ in 0..4 {
-                    dst[offset as usize] =
-                        if minimap_shape[minimap_rotation[off]] == 0 { overlay } else { underlay };
+                    dst[offset as usize] = if minimap_shape[minimap_rotation[off]] == 0 {
+                        overlay
+                    } else {
+                        underlay
+                    };
                     off += 1;
-                    dst[offset as usize + 1] =
-                        if minimap_shape[minimap_rotation[off]] == 0 { overlay } else { underlay };
+                    dst[offset as usize + 1] = if minimap_shape[minimap_rotation[off]] == 0 {
+                        overlay
+                    } else {
+                        underlay
+                    };
                     off += 1;
-                    dst[offset as usize + 2] =
-                        if minimap_shape[minimap_rotation[off]] == 0 { overlay } else { underlay };
+                    dst[offset as usize + 2] = if minimap_shape[minimap_rotation[off]] == 0 {
+                        overlay
+                    } else {
+                        underlay
+                    };
                     off += 1;
-                    dst[offset as usize + 3] =
-                        if minimap_shape[minimap_rotation[off]] == 0 { overlay } else { underlay };
+                    dst[offset as usize + 3] = if minimap_shape[minimap_rotation[off]] == 0 {
+                        overlay
+                    } else {
+                        underlay
+                    };
                     off += 1;
                     offset += step;
                 }
@@ -394,7 +399,8 @@ impl RenderWorld {
                             }
                             y += 128;
                         }
-                        scratch[(pitch_level * 32 + yaw_level) * 53 * 53 + (dx + 26) as usize * 53
+                        scratch[(pitch_level * 32 + yaw_level) * 53 * 53
+                            + (dx + 26) as usize * 53
                             + (dz + 26) as usize] = visible;
                     }
                 }
@@ -572,7 +578,16 @@ impl RenderWorld {
             model.map(SceneModel::Model)
         } else {
             Some(SceneModel::LocAnim(ClientLocAnim::new(
-                cache, loc_id, shape, angle, h_sw, h_se, h_ne, h_nw, loc.anim as usize, true,
+                cache,
+                loc_id,
+                shape,
+                angle,
+                h_sw,
+                h_se,
+                h_ne,
+                h_nw,
+                loc.anim as usize,
+                true,
                 loop_cycle,
             )))
         }
@@ -643,19 +658,46 @@ impl RenderWorld {
             if wall.anim_shape == LocShape::WALL_L {
                 (
                     Some(SceneModel::LocAnim(ClientLocAnim::new(
-                        cache, loc_id, 2, wall.anim_angle + 4, h_sw, h_se, h_ne, h_nw,
-                        wall.anim_seq as usize, false, loop_cycle,
+                        cache,
+                        loc_id,
+                        2,
+                        wall.anim_angle + 4,
+                        h_sw,
+                        h_se,
+                        h_ne,
+                        h_nw,
+                        wall.anim_seq as usize,
+                        false,
+                        loop_cycle,
                     ))),
                     Some(SceneModel::LocAnim(ClientLocAnim::new(
-                        cache, loc_id, 2, (wall.anim_angle + 1) & 0x3, h_sw, h_se, h_ne, h_nw,
-                        wall.anim_seq as usize, false, loop_cycle,
+                        cache,
+                        loc_id,
+                        2,
+                        (wall.anim_angle + 1) & 0x3,
+                        h_sw,
+                        h_se,
+                        h_ne,
+                        h_nw,
+                        wall.anim_seq as usize,
+                        false,
+                        loop_cycle,
                     ))),
                 )
             } else {
                 (
                     Some(SceneModel::LocAnim(ClientLocAnim::new(
-                        cache, loc_id, wall.anim_shape, wall.anim_angle, h_sw, h_se, h_ne, h_nw,
-                        wall.anim_seq as usize, false, loop_cycle,
+                        cache,
+                        loc_id,
+                        wall.anim_shape,
+                        wall.anim_angle,
+                        h_sw,
+                        h_se,
+                        h_ne,
+                        h_nw,
+                        wall.anim_seq as usize,
+                        false,
+                        loop_cycle,
                     ))),
                     None,
                 )
@@ -667,7 +709,16 @@ impl RenderWorld {
                     let offset = (angle + 1) & 0x3;
                     (
                         Self::decode_loc_model(
-                            loc_id, loc, cache, 2, angle + 4, h_sw, h_se, h_ne, h_nw, loop_cycle,
+                            loc_id,
+                            loc,
+                            cache,
+                            2,
+                            angle + 4,
+                            h_sw,
+                            h_se,
+                            h_ne,
+                            h_nw,
+                            loop_cycle,
                         ),
                         Self::decode_loc_model(
                             loc_id, loc, cache, 2, offset, h_sw, h_se, h_ne, h_nw, loop_cycle,
@@ -749,8 +800,17 @@ impl RenderWorld {
         let angle = info >> 6;
         let model = if gd.anim_seq != -1 {
             Some(SceneModel::LocAnim(ClientLocAnim::new(
-                cache, loc_id, LocShape::GROUND_DECOR, gd.anim_angle, gd.h_sw, gd.h_se, gd.h_ne,
-                gd.h_nw, gd.anim_seq as usize, false, loop_cycle,
+                cache,
+                loc_id,
+                LocShape::GROUND_DECOR,
+                gd.anim_angle,
+                gd.h_sw,
+                gd.h_se,
+                gd.h_ne,
+                gd.h_nw,
+                gd.anim_seq as usize,
+                false,
+                loop_cycle,
             )))
         } else if let Some(loc) = Self::loc_at(cache, loc_id) {
             if loc.anim == -1 {
@@ -769,8 +829,17 @@ impl RenderWorld {
                 // [sic] `addLoc` passes the shape as the `ClientLocAnim`
                 // angle for animated ground decor.
                 Some(SceneModel::LocAnim(ClientLocAnim::new(
-                    cache, loc_id, LocShape::GROUND_DECOR, LocShape::GROUND_DECOR, gd.h_sw, gd.h_se,
-                    gd.h_ne, gd.h_nw, loc.anim as usize, true, loop_cycle,
+                    cache,
+                    loc_id,
+                    LocShape::GROUND_DECOR,
+                    LocShape::GROUND_DECOR,
+                    gd.h_sw,
+                    gd.h_se,
+                    gd.h_ne,
+                    gd.h_nw,
+                    loc.anim as usize,
+                    true,
+                    loop_cycle,
                 )))
             }
         } else {
@@ -786,9 +855,15 @@ impl RenderWorld {
         else {
             return;
         };
-        let bottom = go.bottom.map(|(id, count)| SceneModel::Obj(ClientObj::new(id, count)));
-        let middle = go.middle.map(|(id, count)| SceneModel::Obj(ClientObj::new(id, count)));
-        let top = go.top.map(|(id, count)| SceneModel::Obj(ClientObj::new(id, count)));
+        let bottom = go
+            .bottom
+            .map(|(id, count)| SceneModel::Obj(ClientObj::new(id, count)));
+        let middle = go
+            .middle
+            .map(|(id, count)| SceneModel::Obj(ClientObj::new(id, count)));
+        let top = go
+            .top
+            .map(|(id, count)| SceneModel::Obj(ClientObj::new(id, count)));
         let slot = self.slot(world, level, x, z);
         slot.obj_bottom = bottom;
         slot.obj_middle = middle;
@@ -807,7 +882,9 @@ impl RenderWorld {
         }
         let loc_id = (sprite.typecode >> 14) & 0x7fff;
         if crate::debug_enabled() {
-            let name = Self::loc_at(cache, loc_id).map(|l| l.name.as_str()).unwrap_or("");
+            let name = Self::loc_at(cache, loc_id)
+                .map(|l| l.name.as_str())
+                .unwrap_or("");
             eprintln!(
                 "[sprite] loc {loc_id} ({name}) tiles ({},{})..({},{})",
                 sprite.min_tile_x, sprite.min_tile_z, sprite.max_tile_x, sprite.max_tile_z
@@ -821,8 +898,17 @@ impl RenderWorld {
         let angle = info >> 6;
         let model = if sprite.anim_seq != -1 {
             Some(SceneModel::LocAnim(ClientLocAnim::new(
-                cache, loc_id, sprite.anim_shape, sprite.anim_angle, sprite.h_sw, sprite.h_se,
-                sprite.h_ne, sprite.h_nw, sprite.anim_seq as usize, false, loop_cycle,
+                cache,
+                loc_id,
+                sprite.anim_shape,
+                sprite.anim_angle,
+                sprite.h_sw,
+                sprite.h_se,
+                sprite.h_ne,
+                sprite.h_nw,
+                sprite.anim_seq as usize,
+                false,
+                loop_cycle,
             )))
         } else {
             let loc = Self::loc_at(cache, loc_id);
@@ -873,7 +959,16 @@ impl RenderWorld {
                 let offset = (angle + 1) & 0x3;
                 (
                     Self::decode_loc_model(
-                        loc_id, loc, cache, 2, angle + 4, h_sw, h_se, h_ne, h_nw, loop_cycle,
+                        loc_id,
+                        loc,
+                        cache,
+                        2,
+                        angle + 4,
+                        h_sw,
+                        h_se,
+                        h_ne,
+                        h_nw,
+                        loop_cycle,
                     ),
                     Self::decode_loc_model(
                         loc_id, loc, cache, 2, offset, h_sw, h_se, h_ne, h_nw, loop_cycle,
@@ -948,10 +1043,18 @@ impl RenderWorld {
         level: i32,
         x: i32,
         z: i32,
-    ) -> (&mut Option<SceneModel>, &mut Option<SceneModel>, &mut Option<SceneModel>) {
+    ) -> (
+        &mut Option<SceneModel>,
+        &mut Option<SceneModel>,
+        &mut Option<SceneModel>,
+    ) {
         self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
         let slot = self.slot(world, level, x, z);
-        (&mut slot.obj_bottom, &mut slot.obj_middle, &mut slot.obj_top)
+        (
+            &mut slot.obj_bottom,
+            &mut slot.obj_middle,
+            &mut slot.obj_top,
+        )
     }
 
     /// The linked square's wall models (resolved once — a linked square is
@@ -1019,9 +1122,12 @@ impl RenderWorld {
             return 0;
         };
         for i in 0..tile.sprite_count as usize {
-            let Some(index) = tile.sprites[i] else { continue };
-            if let Some(SceneModel::Model(model)) =
-                self.sprite_model_mut(world, cache, loop_cycle, index).as_ref()
+            let Some(index) = tile.sprites[i] else {
+                continue;
+            };
+            if let Some(SceneModel::Model(model)) = self
+                .sprite_model_mut(world, cache, loop_cycle, index)
+                .as_ref()
             {
                 if model.obj_raise > stack_offset {
                     stack_offset = model.obj_raise;
@@ -1063,7 +1169,14 @@ impl RenderWorld {
     }
 
     /// Inject a decor's model on the render side (tests only).
-    pub fn set_decor_model(&mut self, world: &World, level: i32, x: i32, z: i32, model: SceneModel) {
+    pub fn set_decor_model(
+        &mut self,
+        world: &World,
+        level: i32,
+        x: i32,
+        z: i32,
+        model: SceneModel,
+    ) {
         let slot = self.slot(world, level, x, z);
         slot.model_stamp = world.tile_model_stamp(level, x, z);
         slot.decor_model = Some(model);
@@ -1137,8 +1250,15 @@ impl RenderWorld {
         self.slot(world, level, x, z).decor_model.as_ref()
     }
 
-    pub fn sprite_model(&mut self, world: &World, cache: &Cache, loop_cycle: i32, index: usize) -> Option<&SceneModel> {
-        self.sprite_model_mut(world, cache, loop_cycle, index).as_ref()
+    pub fn sprite_model(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        index: usize,
+    ) -> Option<&SceneModel> {
+        self.sprite_model_mut(world, cache, loop_cycle, index)
+            .as_ref()
     }
 
     /// Materialise a sprite's current frame model exactly as the draw path
@@ -1153,7 +1273,10 @@ impl RenderWorld {
         loop_cycle: i32,
         index: usize,
     ) -> Option<Model> {
-        match self.sprite_model_mut(world, cache, loop_cycle, index).as_mut()? {
+        match self
+            .sprite_model_mut(world, cache, loop_cycle, index)
+            .as_mut()?
+        {
             SceneModel::LocAnim(anim) => anim.get_temp_model(cache, loop_cycle),
             _ => None,
         }
@@ -1176,7 +1299,14 @@ impl RenderWorld {
         light_src_z: i32,
     ) {
         self.run_share_light(world, &Cache::default(), 0);
-        self.apply_share_light(world, ambient, contrast, light_src_x, light_src_y, light_src_z);
+        self.apply_share_light(
+            world,
+            ambient,
+            contrast,
+            light_src_x,
+            light_src_y,
+            light_src_z,
+        );
     }
 
     /// Resolve every tile's models and sprites (and the linked-square
@@ -1202,8 +1332,8 @@ impl RenderWorld {
         }
         for x in 0..world.max_tile_x {
             for z in 0..world.max_tile_z {
-                if let Some(linked) = tile_at(&world.squares, 0, x, z)
-                    .and_then(|t| t.linked_square.as_ref())
+                if let Some(linked) =
+                    tile_at(&world.squares, 0, x, z).and_then(|t| t.linked_square.as_ref())
                 {
                     let index = self.tile_index(world, 0, x, z);
                     self.grow_linked_models(index);
@@ -1256,19 +1386,39 @@ impl RenderWorld {
                                 self.share_light_loc(world, level, tile_x, tile_z, 1, 1, model1);
                                 if let Some(SceneModel::Model(model2)) = tile.wall_model2.as_mut() {
                                     if model2.point_normal.is_some() {
-                                        self.share_light_loc(world, level, tile_x, tile_z, 1, 1, model2);
+                                        self.share_light_loc(
+                                            world, level, tile_x, tile_z, 1, 1, model2,
+                                        );
                                         self.model_share_light(model1, model2, 0, 0, 0, false);
-                                        model2.light(ambient, attenuation, light_src_x, light_src_y, light_src_z);
+                                        model2.light(
+                                            ambient,
+                                            attenuation,
+                                            light_src_x,
+                                            light_src_y,
+                                            light_src_z,
+                                        );
                                     }
                                 }
-                                model1.light(ambient, attenuation, light_src_x, light_src_y, light_src_z);
+                                model1.light(
+                                    ambient,
+                                    attenuation,
+                                    light_src_x,
+                                    light_src_y,
+                                    light_src_z,
+                                );
                             }
                         }
 
                         if let Some(SceneModel::Model(model)) = tile.gd_model.as_mut() {
                             if model.point_normal.is_some() {
                                 self.share_light_gd(world, level, tile_x, tile_z, model);
-                                model.light(ambient, attenuation, light_src_x, light_src_y, light_src_z);
+                                model.light(
+                                    ambient,
+                                    attenuation,
+                                    light_src_x,
+                                    light_src_y,
+                                    light_src_z,
+                                );
                             }
                         }
 
@@ -1278,9 +1428,21 @@ impl RenderWorld {
                                 .as_ref()
                                 .map(|m| match m {
                                     SceneModel::Model(model) => {
-                                        let lit = model.face_colour_a.as_ref().map(|f| f.iter().filter(|&&c| c != 0).count()).unwrap_or(0);
-                                        let hidden = model.face_render_type.as_ref().map(|rt| rt.iter().filter(|&&t| t == -1).count()).unwrap_or(0);
-                                        let unlit = model.face_colour_a.as_ref().map(|f| f.iter().filter(|&&c| c == 0).count()).unwrap_or(0);
+                                        let lit = model
+                                            .face_colour_a
+                                            .as_ref()
+                                            .map(|f| f.iter().filter(|&&c| c != 0).count())
+                                            .unwrap_or(0);
+                                        let hidden = model
+                                            .face_render_type
+                                            .as_ref()
+                                            .map(|rt| rt.iter().filter(|&&t| t == -1).count())
+                                            .unwrap_or(0);
+                                        let unlit = model
+                                            .face_colour_a
+                                            .as_ref()
+                                            .map(|f| f.iter().filter(|&&c| c == 0).count())
+                                            .unwrap_or(0);
                                         (0, lit, hidden, unlit)
                                     }
                                     _ => (-1, 0, 0, 0),
@@ -1302,19 +1464,31 @@ impl RenderWorld {
                     // each of its footprint tiles as the TS does).
                     if let Some(t) = tile_at(&world.squares, level, tile_x, tile_z) {
                         for i in 0..t.sprite_count as usize {
-                            let Some(sprite_index) = t.sprites[i] else { continue };
+                            let Some(sprite_index) = t.sprites[i] else {
+                                continue;
+                            };
                             let mut sprite = self
                                 .sprite_models
                                 .get_mut(sprite_index)
                                 .and_then(|s| s.take());
                             if let Some(SceneModel::Model(model)) = sprite.as_mut() {
                                 if model.point_normal.is_some() {
-                                    if let Some(s) = world.sprites.get(sprite_index).and_then(|s| s.as_ref()) {
+                                    if let Some(s) =
+                                        world.sprites.get(sprite_index).and_then(|s| s.as_ref())
+                                    {
                                         let size_x = s.max_tile_x + 1 - s.min_tile_x;
                                         let size_z = s.max_tile_z + 1 - s.min_tile_z;
-                                        self.share_light_loc(world, level, tile_x, tile_z, size_x, size_z, model);
+                                        self.share_light_loc(
+                                            world, level, tile_x, tile_z, size_x, size_z, model,
+                                        );
                                     }
-                                    model.light(ambient, attenuation, light_src_x, light_src_y, light_src_z);
+                                    model.light(
+                                        ambient,
+                                        attenuation,
+                                        light_src_x,
+                                        light_src_y,
+                                        light_src_z,
+                                    );
                                 }
                             }
                             self.grow_sprite_arrays(sprite_index);
@@ -1348,10 +1522,22 @@ impl RenderWorld {
                                 if model2.point_normal.is_some() {
                                     self.share_light_loc(world, 0, tile_x, tile_z, 1, 1, model2);
                                     self.model_share_light(model1, model2, 0, 0, 0, false);
-                                    model2.light(ambient, attenuation, light_src_x, light_src_y, light_src_z);
+                                    model2.light(
+                                        ambient,
+                                        attenuation,
+                                        light_src_x,
+                                        light_src_y,
+                                        light_src_z,
+                                    );
                                 }
                             }
-                            model1.light(ambient, attenuation, light_src_x, light_src_y, light_src_z);
+                            model1.light(
+                                ambient,
+                                attenuation,
+                                light_src_x,
+                                light_src_y,
+                                light_src_z,
+                            );
                         }
                     }
                 }
@@ -1360,19 +1546,31 @@ impl RenderWorld {
                 }
 
                 for i in 0..linked.sprite_count as usize {
-                    let Some(sprite_index) = linked.sprites[i] else { continue };
+                    let Some(sprite_index) = linked.sprites[i] else {
+                        continue;
+                    };
                     let mut sprite = self
                         .sprite_models
                         .get_mut(sprite_index)
                         .and_then(|s| s.take());
                     if let Some(SceneModel::Model(model)) = sprite.as_mut() {
                         if model.point_normal.is_some() {
-                            if let Some(s) = world.sprites.get(sprite_index).and_then(|s| s.as_ref()) {
+                            if let Some(s) =
+                                world.sprites.get(sprite_index).and_then(|s| s.as_ref())
+                            {
                                 let size_x = s.max_tile_x + 1 - s.min_tile_x;
                                 let size_z = s.max_tile_z + 1 - s.min_tile_z;
-                                self.share_light_loc(world, 0, tile_x, tile_z, size_x, size_z, model);
+                                self.share_light_loc(
+                                    world, 0, tile_x, tile_z, size_x, size_z, model,
+                                );
                             }
-                            model.light(ambient, attenuation, light_src_x, light_src_y, light_src_z);
+                            model.light(
+                                ambient,
+                                attenuation,
+                                light_src_x,
+                                light_src_y,
+                                light_src_z,
+                            );
                         }
                     }
                     self.grow_sprite_arrays(sprite_index);
@@ -1387,11 +1585,20 @@ impl RenderWorld {
     /// neighbours' ground-decor models. The neighbour bounds checks are
     /// replicated verbatim (including the TS `tileZ < maxTileX` quirk at
     /// 638); the world is square so they coincide.
-    fn share_light_gd(&mut self, world: &World, level: i32, tile_x: i32, tile_z: i32, model: &mut Model) {
+    fn share_light_gd(
+        &mut self,
+        world: &World,
+        level: i32,
+        tile_x: i32,
+        tile_z: i32,
+        model: &mut Model,
+    ) {
         if tile_x < world.max_tile_x {
             let index = self.tile_index(world, level, tile_x + 1, tile_z);
             let mut tile = self.tile_models.get_mut(index).and_then(|t| t.take());
-            if let Some(SceneModel::Model(model_b)) = tile.as_mut().and_then(|t| t.gd_model.as_mut()) {
+            if let Some(SceneModel::Model(model_b)) =
+                tile.as_mut().and_then(|t| t.gd_model.as_mut())
+            {
                 if model_b.point_normal.is_some() {
                     self.model_share_light(model, model_b, 128, 0, 0, true);
                 }
@@ -1404,7 +1611,9 @@ impl RenderWorld {
         if tile_z < world.max_tile_x {
             let index = self.tile_index(world, level, tile_x, tile_z + 1);
             let mut tile = self.tile_models.get_mut(index).and_then(|t| t.take());
-            if let Some(SceneModel::Model(model_b)) = tile.as_mut().and_then(|t| t.gd_model.as_mut()) {
+            if let Some(SceneModel::Model(model_b)) =
+                tile.as_mut().and_then(|t| t.gd_model.as_mut())
+            {
                 if model_b.point_normal.is_some() {
                     self.model_share_light(model, model_b, 0, 0, 128, true);
                 }
@@ -1417,7 +1626,9 @@ impl RenderWorld {
         if tile_x < world.max_tile_x && tile_z < world.max_tile_z {
             let index = self.tile_index(world, level, tile_x + 1, tile_z + 1);
             let mut tile = self.tile_models.get_mut(index).and_then(|t| t.take());
-            if let Some(SceneModel::Model(model_b)) = tile.as_mut().and_then(|t| t.gd_model.as_mut()) {
+            if let Some(SceneModel::Model(model_b)) =
+                tile.as_mut().and_then(|t| t.gd_model.as_mut())
+            {
                 if model_b.point_normal.is_some() {
                     self.model_share_light(model, model_b, 128, 0, 128, true);
                 }
@@ -1430,7 +1641,9 @@ impl RenderWorld {
         if tile_x < world.max_tile_x && tile_z > 0 {
             let index = self.tile_index(world, level, tile_x + 1, tile_z - 1);
             let mut tile = self.tile_models.get_mut(index).and_then(|t| t.take());
-            if let Some(SceneModel::Model(model_b)) = tile.as_mut().and_then(|t| t.gd_model.as_mut()) {
+            if let Some(SceneModel::Model(model_b)) =
+                tile.as_mut().and_then(|t| t.gd_model.as_mut())
+            {
                 if model_b.point_normal.is_some() {
                     self.model_share_light(model, model_b, 128, 0, -128, true);
                 }
@@ -1500,13 +1713,20 @@ impl RenderWorld {
                             / 4);
 
                     let candidate_index = self.tile_index(world, l, x, z);
-                    let mut candidate = self.tile_models.get_mut(candidate_index).and_then(|t| t.take());
+                    let mut candidate = self
+                        .tile_models
+                        .get_mut(candidate_index)
+                        .and_then(|t| t.take());
 
                     if let Some(candidate) = candidate.as_mut() {
                         if let Some(SceneModel::Model(model_b)) = candidate.wall_model1.as_mut() {
                             if model_b.point_normal.is_some() {
                                 self.model_share_light(
-                                    model_a, model_b, offset_x, offset_y, offset_z,
+                                    model_a,
+                                    model_b,
+                                    offset_x,
+                                    offset_y,
+                                    offset_z,
                                     allow_face_removal,
                                 );
                             }
@@ -1514,7 +1734,11 @@ impl RenderWorld {
                         if let Some(SceneModel::Model(model_b)) = candidate.wall_model2.as_mut() {
                             if model_b.point_normal.is_some() {
                                 self.model_share_light(
-                                    model_a, model_b, offset_x, offset_y, offset_z,
+                                    model_a,
+                                    model_b,
+                                    offset_x,
+                                    offset_y,
+                                    offset_z,
                                     allow_face_removal,
                                 );
                             }
@@ -1526,28 +1750,36 @@ impl RenderWorld {
 
                     if let Some(t) = tile_at(&world.squares, l, x, z) {
                         for i in 0..t.sprite_count as usize {
-                            let Some(sprite_index) = t.sprites[i] else { continue };
+                            let Some(sprite_index) = t.sprites[i] else {
+                                continue;
+                            };
                             let mut sprite = self
                                 .sprite_models
                                 .get_mut(sprite_index)
                                 .and_then(|s| s.take());
                             if let Some(SceneModel::Model(model_b)) = sprite.as_mut() {
                                 if model_b.point_normal.is_some() {
-                                    let (min_sx, min_sz, size_x, size_z) =
-                                        if let Some(s) = world.sprites.get(sprite_index).and_then(|s| s.as_ref()) {
-                                            (
-                                                s.min_tile_x,
-                                                s.min_tile_z,
-                                                s.max_tile_x + 1 - s.min_tile_x,
-                                                s.max_tile_z + 1 - s.min_tile_z,
-                                            )
-                                        } else {
-                                            (0, 0, 1, 1)
-                                        };
+                                    let (min_sx, min_sz, size_x, size_z) = if let Some(s) =
+                                        world.sprites.get(sprite_index).and_then(|s| s.as_ref())
+                                    {
+                                        (
+                                            s.min_tile_x,
+                                            s.min_tile_z,
+                                            s.max_tile_x + 1 - s.min_tile_x,
+                                            s.max_tile_z + 1 - s.min_tile_z,
+                                        )
+                                    } else {
+                                        (0, 0, 1, 1)
+                                    };
                                     let sx = (min_sx - tile_x) * 128 + (size_x - tile_size_x) * 64;
                                     let sz = (min_sz - tile_z) * 128 + (size_z - tile_size_z) * 64;
                                     self.model_share_light(
-                                        model_a, model_b, sx, offset_y, sz, allow_face_removal,
+                                        model_a,
+                                        model_b,
+                                        sx,
+                                        offset_y,
+                                        sz,
+                                        allow_face_removal,
                                     );
                                 }
                             }
@@ -1744,10 +1976,22 @@ impl RenderWorld {
         }
 
         self.cycle_no += 1;
-        self.camera_sin_x = Pix3D::sin_table().get(eye_pitch as usize).copied().unwrap_or(0);
-        self.camera_cos_x = Pix3D::cos_table().get(eye_pitch as usize).copied().unwrap_or(0);
-        self.camera_sin_y = Pix3D::sin_table().get(eye_yaw as usize).copied().unwrap_or(0);
-        self.camera_cos_y = Pix3D::cos_table().get(eye_yaw as usize).copied().unwrap_or(0);
+        self.camera_sin_x = Pix3D::sin_table()
+            .get(eye_pitch as usize)
+            .copied()
+            .unwrap_or(0);
+        self.camera_cos_x = Pix3D::cos_table()
+            .get(eye_pitch as usize)
+            .copied()
+            .unwrap_or(0);
+        self.camera_sin_y = Pix3D::sin_table()
+            .get(eye_yaw as usize)
+            .copied()
+            .unwrap_or(0);
+        self.camera_cos_y = Pix3D::cos_table()
+            .get(eye_yaw as usize)
+            .copied()
+            .unwrap_or(0);
 
         // TS `World.visBackingDirty = World.visBacking[pitchLevel][yawLevel]`
         // with `pitchLevel` 0..7 for the clamped 128..383 camera pitch; an
@@ -1847,7 +2091,9 @@ impl RenderWorld {
         // fields, viewport bounds and the per-tile draw-front marking. The
         // wgpu backend runs this alone and rasterizes the marked tiles
         // itself; the CPU path runs it here ahead of the fill passes.
-        self.prepare_scene(world, cache, loop_cycle, eye_x, eye_y, eye_z, max_level, eye_yaw, eye_pitch);
+        self.prepare_scene(
+            world, cache, loop_cycle, eye_x, eye_y, eye_z, max_level, eye_yaw, eye_pitch,
+        );
 
         // Two fill passes, nearest-to-farthest ring order (`true` then
         // `false` for `checkAdjacent`), aborting when every tile is drawn.
@@ -1868,14 +2114,31 @@ impl RenderWorld {
                         if forward_tile_z >= self.min_z {
                             let tile = tile_at(&world.squares, level, right_tile_x, forward_tile_z);
                             if tile.is_some_and(|t| t.draw_front) {
-                                self.fill(world, pix, surface, cache, loop_cycle, (level, right_tile_x, forward_tile_z), true);
+                                self.fill(
+                                    world,
+                                    pix,
+                                    surface,
+                                    cache,
+                                    loop_cycle,
+                                    (level, right_tile_x, forward_tile_z),
+                                    true,
+                                );
                             }
                         }
 
                         if backward_tile_z < self.max_z {
-                            let tile = tile_at(&world.squares, level, right_tile_x, backward_tile_z);
+                            let tile =
+                                tile_at(&world.squares, level, right_tile_x, backward_tile_z);
                             if tile.is_some_and(|t| t.draw_front) {
-                                self.fill(world, pix, surface, cache, loop_cycle, (level, right_tile_x, backward_tile_z), true);
+                                self.fill(
+                                    world,
+                                    pix,
+                                    surface,
+                                    cache,
+                                    loop_cycle,
+                                    (level, right_tile_x, backward_tile_z),
+                                    true,
+                                );
                             }
                         }
                     }
@@ -1884,14 +2147,30 @@ impl RenderWorld {
                         if forward_tile_z >= self.min_z {
                             let tile = tile_at(&world.squares, level, left_tile_x, forward_tile_z);
                             if tile.is_some_and(|t| t.draw_front) {
-                                self.fill(world, pix, surface, cache, loop_cycle, (level, left_tile_x, forward_tile_z), true);
+                                self.fill(
+                                    world,
+                                    pix,
+                                    surface,
+                                    cache,
+                                    loop_cycle,
+                                    (level, left_tile_x, forward_tile_z),
+                                    true,
+                                );
                             }
                         }
 
                         if backward_tile_z < self.max_z {
                             let tile = tile_at(&world.squares, level, left_tile_x, backward_tile_z);
                             if tile.is_some_and(|t| t.draw_front) {
-                                self.fill(world, pix, surface, cache, loop_cycle, (level, left_tile_x, backward_tile_z), true);
+                                self.fill(
+                                    world,
+                                    pix,
+                                    surface,
+                                    cache,
+                                    loop_cycle,
+                                    (level, left_tile_x, backward_tile_z),
+                                    true,
+                                );
                             }
                         }
                     }
@@ -1921,14 +2200,31 @@ impl RenderWorld {
                         if forward_tile_z >= self.min_z {
                             let tile = tile_at(&world.squares, level, right_tile_x, forward_tile_z);
                             if tile.is_some_and(|t| t.draw_front) {
-                                self.fill(world, pix, surface, cache, loop_cycle, (level, right_tile_x, forward_tile_z), false);
+                                self.fill(
+                                    world,
+                                    pix,
+                                    surface,
+                                    cache,
+                                    loop_cycle,
+                                    (level, right_tile_x, forward_tile_z),
+                                    false,
+                                );
                             }
                         }
 
                         if backward_tile_z < self.max_z {
-                            let tile = tile_at(&world.squares, level, right_tile_x, backward_tile_z);
+                            let tile =
+                                tile_at(&world.squares, level, right_tile_x, backward_tile_z);
                             if tile.is_some_and(|t| t.draw_front) {
-                                self.fill(world, pix, surface, cache, loop_cycle, (level, right_tile_x, backward_tile_z), false);
+                                self.fill(
+                                    world,
+                                    pix,
+                                    surface,
+                                    cache,
+                                    loop_cycle,
+                                    (level, right_tile_x, backward_tile_z),
+                                    false,
+                                );
                             }
                         }
                     }
@@ -1937,14 +2233,30 @@ impl RenderWorld {
                         if forward_tile_z >= self.min_z {
                             let tile = tile_at(&world.squares, level, left_tile_x, forward_tile_z);
                             if tile.is_some_and(|t| t.draw_front) {
-                                self.fill(world, pix, surface, cache, loop_cycle, (level, left_tile_x, forward_tile_z), false);
+                                self.fill(
+                                    world,
+                                    pix,
+                                    surface,
+                                    cache,
+                                    loop_cycle,
+                                    (level, left_tile_x, forward_tile_z),
+                                    false,
+                                );
                             }
                         }
 
                         if backward_tile_z < self.max_z {
                             let tile = tile_at(&world.squares, level, left_tile_x, backward_tile_z);
                             if tile.is_some_and(|t| t.draw_front) {
-                                self.fill(world, pix, surface, cache, loop_cycle, (level, left_tile_x, backward_tile_z), false);
+                                self.fill(
+                                    world,
+                                    pix,
+                                    surface,
+                                    cache,
+                                    loop_cycle,
+                                    (level, left_tile_x, backward_tile_z),
+                                    false,
+                                );
                             }
                         }
                     }
@@ -1976,9 +2288,11 @@ impl RenderWorld {
     // fixed-point math, backface-culled with the CPU winding test, and
     // shaded from the same colour table. The vertex shader divides by the
     // view depth; the depth buffer replaces the painter's per-face
-    // priority merge. Documented divergences: the per-face exact mouse
-    // picks are AABB-only, and the occluder tests are skipped (the depth
-    // buffer occludes). Textured faces (models and ground) carry the
+    // priority merge. Documented divergences: loc mouse picks use the CPU
+    // AABB pre-test plus the render2 face bbox (RuneLite GPU never
+    // replaces clickboxes; AABB-only loc picks open doors on walk-by
+    // clicks). Occluder tests are skipped (the depth buffer occludes).
+    // Textured faces (models and ground) carry the
     // projective UV of the CPU `texture_triangle` and sample the shared
     // model atlas in the scene shader — they are not flat-shaded.
 
@@ -2014,7 +2328,9 @@ impl RenderWorld {
                     if !draw {
                         continue;
                     }
-                    self.emit_tile(world, cache, loop_cycle, pix, &mut mesh, &cam, level, x, z, cycle_no);
+                    self.emit_tile(
+                        world, cache, loop_cycle, pix, &mut mesh, &cam, level, x, z, cycle_no,
+                    );
                 }
             }
         }
@@ -2065,7 +2381,11 @@ impl RenderWorld {
             .map(|w| (w.typecode, w.x, w.y, w.z));
         let linked_sprites: Vec<usize> = tile_at(&world.squares, level, tile_x, tile_z)
             .and_then(|t| t.linked_square.as_ref())
-            .map(|ls| (0..ls.sprite_count as usize).filter_map(|i| ls.sprites[i]).collect())
+            .map(|ls| {
+                (0..ls.sprite_count as usize)
+                    .filter_map(|i| ls.sprites[i])
+                    .collect()
+            })
             .unwrap_or_default();
 
         if let Some(quick) = linked_quick {
@@ -2081,7 +2401,10 @@ impl RenderWorld {
                 .0
                 .as_mut()
             {
-                emit_scene_model(model, cache, loop_cycle, pix, mesh, cam, 0, wall_x, wall_y, wall_z, typecode);
+                emit_scene_model(
+                    model, cache, loop_cycle, pix, mesh, cam, 0, wall_x, wall_y, wall_z, typecode,
+                    true,
+                );
             }
         }
         for index in linked_sprites {
@@ -2092,30 +2415,46 @@ impl RenderWorld {
         let quick = tile_at(&world.squares, level, tile_x, tile_z).and_then(|t| t.quick_ground);
         if let Some(quick) = quick {
             emit_quick_ground(world, pix, mesh, cam, quick, original_level, tile_x, tile_z);
-        } else if let Some(ground) = tile_at(&world.squares, level, tile_x, tile_z).and_then(|t| t.ground.clone()) {
+        } else if let Some(ground) =
+            tile_at(&world.squares, level, tile_x, tile_z).and_then(|t| t.ground.clone())
+        {
             emit_ground(world, pix, mesh, cam, ground, tile_x, tile_z);
         }
 
         // Walls: both slots, unconditionally (the CPU's `front_wall_types`
-        // gate and corner-side ordering are painter optimisations the
-        // depth buffer makes redundant; the winding test culls backfaces).
+        // gate is a painter optimisation). They are meshed into the wall
+        // bucket so they draw *after* scenery — the CPU's back-wall pass
+        // overwrites a same-tile booth that occupies the wall's thickness.
         let wall_data = tile_at(&world.squares, level, tile_x, tile_z)
             .and_then(|t| t.wall.as_ref())
-            .map(|w| (w.typecode, w.x - cam.eye_x, w.y - cam.eye_y, w.z - cam.eye_z));
+            .map(|w| {
+                (
+                    w.typecode,
+                    w.x - cam.eye_x,
+                    w.y - cam.eye_y,
+                    w.z - cam.eye_z,
+                )
+            });
         if let Some((typecode, wall_x, wall_y, wall_z)) = wall_data {
             if let Some(model) = self
                 .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
                 .0
                 .as_mut()
             {
-                emit_scene_model(model, cache, loop_cycle, pix, mesh, cam, 0, wall_x, wall_y, wall_z, typecode);
+                emit_scene_model(
+                    model, cache, loop_cycle, pix, mesh, cam, 0, wall_x, wall_y, wall_z, typecode,
+                    true,
+                );
             }
             if let Some(model) = self
                 .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
                 .1
                 .as_mut()
             {
-                emit_scene_model(model, cache, loop_cycle, pix, mesh, cam, 0, wall_x, wall_y, wall_z, typecode);
+                emit_scene_model(
+                    model, cache, loop_cycle, pix, mesh, cam, 0, wall_x, wall_y, wall_z, typecode,
+                    true,
+                );
             }
         }
 
@@ -2123,7 +2462,16 @@ impl RenderWorld {
         // vs the DECORXOF/DECORXOF2 offset corners).
         let decor_data = tile_at(&world.squares, level, tile_x, tile_z)
             .and_then(|t| t.decor.as_ref())
-            .map(|d| (d.wshape, d.angle, d.typecode, d.x - cam.eye_x, d.y - cam.eye_y, d.z - cam.eye_z));
+            .map(|d| {
+                (
+                    d.wshape,
+                    d.angle,
+                    d.typecode,
+                    d.x - cam.eye_x,
+                    d.y - cam.eye_y,
+                    d.z - cam.eye_z,
+                )
+            });
         if let Some((wshape, angle, typecode, decor_x, decor_y, decor_z)) = decor_data {
             let mut direction = 0i32;
             let gx = cam.eye_x / 128;
@@ -2144,7 +2492,10 @@ impl RenderWorld {
                     .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
                     .as_mut()
                 {
-                    emit_scene_model(decor, cache, loop_cycle, pix, mesh, cam, angle, decor_x, decor_y, decor_z, typecode);
+                    emit_scene_model(
+                        decor, cache, loop_cycle, pix, mesh, cam, angle, decor_x, decor_y, decor_z,
+                        typecode, true,
+                    );
                 }
             } else if (wshape & 0x300) != 0 {
                 let nearest_x = if angle == LocAngle::NORTH || angle == LocAngle::EAST {
@@ -2164,7 +2515,20 @@ impl RenderWorld {
                         .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
                         .as_mut()
                     {
-                        emit_scene_model(decor, cache, loop_cycle, pix, mesh, cam, angle * 512 + 256, draw_x, decor_y, draw_z, typecode);
+                        emit_scene_model(
+                            decor,
+                            cache,
+                            loop_cycle,
+                            pix,
+                            mesh,
+                            cam,
+                            angle * 512 + 256,
+                            draw_x,
+                            decor_y,
+                            draw_z,
+                            typecode,
+                            true,
+                        );
                     }
                 }
                 if (wshape & 0x200) != 0 && nearest_z > nearest_x {
@@ -2174,7 +2538,20 @@ impl RenderWorld {
                         .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
                         .as_mut()
                     {
-                        emit_scene_model(decor, cache, loop_cycle, pix, mesh, cam, (angle * 512 + 1280) & 0x7ff, draw_x, decor_y, draw_z, typecode);
+                        emit_scene_model(
+                            decor,
+                            cache,
+                            loop_cycle,
+                            pix,
+                            mesh,
+                            cam,
+                            (angle * 512 + 1280) & 0x7ff,
+                            draw_x,
+                            decor_y,
+                            draw_z,
+                            typecode,
+                            true,
+                        );
                     }
                 }
             }
@@ -2183,30 +2560,54 @@ impl RenderWorld {
         // Ground decor + ground objects (stack height 0).
         if let Some((typecode, gd_x, gd_y, gd_z)) = tile_at(&world.squares, level, tile_x, tile_z)
             .and_then(|t| t.ground_decor.as_ref())
-            .map(|gd| (gd.typecode, gd.x - cam.eye_x, gd.y - cam.eye_y, gd.z - cam.eye_z))
+            .map(|gd| {
+                (
+                    gd.typecode,
+                    gd.x - cam.eye_x,
+                    gd.y - cam.eye_y,
+                    gd.z - cam.eye_z,
+                )
+            })
         {
             if let Some(model) = self
                 .gd_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
                 .as_mut()
             {
-                emit_scene_model(model, cache, loop_cycle, pix, mesh, cam, 0, gd_x, gd_y, gd_z, typecode);
+                emit_scene_model(
+                    model, cache, loop_cycle, pix, mesh, cam, 0, gd_x, gd_y, gd_z, typecode, false,
+                );
             }
         }
         if let Some((typecode, ox, oy, oz)) = tile_at(&world.squares, level, tile_x, tile_z)
             .and_then(|t| t.ground_object.as_ref())
-            .map(|o| (o.typecode, o.x - cam.eye_x, o.y - cam.eye_y, o.z - cam.eye_z))
+            .map(|o| {
+                (
+                    o.typecode,
+                    o.x - cam.eye_x,
+                    o.y - cam.eye_y,
+                    o.z - cam.eye_z,
+                )
+            })
         {
-            let height = self.ground_object_height(&*world, cache, loop_cycle, level, tile_x, tile_z);
+            let height =
+                self.ground_object_height(&*world, cache, loop_cycle, level, tile_x, tile_z);
             if height == 0 {
-                let (bottom, middle, top) = self.obj_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z);
+                let (bottom, middle, top) =
+                    self.obj_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z);
                 if let Some(model) = bottom.as_mut() {
-                    emit_scene_model(model, cache, loop_cycle, pix, mesh, cam, 0, ox, oy, oz, typecode);
+                    emit_scene_model(
+                        model, cache, loop_cycle, pix, mesh, cam, 0, ox, oy, oz, typecode, false,
+                    );
                 }
                 if let Some(model) = middle.as_mut() {
-                    emit_scene_model(model, cache, loop_cycle, pix, mesh, cam, 0, ox, oy, oz, typecode);
+                    emit_scene_model(
+                        model, cache, loop_cycle, pix, mesh, cam, 0, ox, oy, oz, typecode, false,
+                    );
                 }
                 if let Some(model) = top.as_mut() {
-                    emit_scene_model(model, cache, loop_cycle, pix, mesh, cam, 0, ox, oy, oz, typecode);
+                    emit_scene_model(
+                        model, cache, loop_cycle, pix, mesh, cam, 0, ox, oy, oz, typecode, false,
+                    );
                 }
             }
         }
@@ -2215,7 +2616,11 @@ impl RenderWorld {
         // keeps a multi-tile sprite meshed once per frame, exactly as the
         // CPU fill's sprite buffer does.
         let sprite_indices: Vec<usize> = tile_at(&world.squares, level, tile_x, tile_z)
-            .map(|t| (0..t.sprite_count as usize).filter_map(|i| t.sprites[i]).collect())
+            .map(|t| {
+                (0..t.sprite_count as usize)
+                    .filter_map(|i| t.sprites[i])
+                    .collect()
+            })
             .unwrap_or_default();
         for index in sprite_indices {
             self.emit_sprite(world, cache, loop_cycle, pix, mesh, cam, index, cycle_no);
@@ -2274,7 +2679,11 @@ impl RenderWorld {
                 model_min_y,
             );
             if crate::debug_enabled() {
-                let name = cache.locs.get(((typecode >> 14) & 0x7fff) as usize).map(|l| l.name.as_str()).unwrap_or("");
+                let name = cache
+                    .locs
+                    .get(((typecode >> 14) & 0x7fff) as usize)
+                    .map(|l| l.name.as_str())
+                    .unwrap_or("");
                 eprintln!(
                     "[sprite-occl] loc {name} tiles ({min_tile_x},{min_tile_z})..({max_tile_x},{max_tile_z}) angle={} yaw={yaw} occluded={occluded}",
                     info >> 6
@@ -2288,7 +2697,23 @@ impl RenderWorld {
             }
         }
 
-        if let Some(model) = self.sprite_model_mut(&*world, cache, loop_cycle, index).as_mut() {
+        // 274 loc 1602 is wallwidth=8 with a 16-unit-thick model; a 1×1
+        // centrepiece on the same tile (the bank booth) fills that
+        // thickness. RuneLite's GPU plugin (vert.glsl `screenPos.z +=
+        // bias/128`, GL_GREATER) relies on OSRS placements that do not
+        // overlap like this — the same bias cannot beat 16 units of
+        // camera z. CPU 274 paints the wall over the overlap in the
+        // back-wall pass; slide the scenery inward so the depth buffer
+        // sees the adjacent-tile layout that already works.
+        let (nudge_x, nudge_z) = if scene_sprite {
+            scenery_inward_nudge(world, level, min_tile_x, max_tile_x, min_tile_z, max_tile_z)
+        } else {
+            (0, 0)
+        };
+        if let Some(model) = self
+            .sprite_model_mut(&*world, cache, loop_cycle, index)
+            .as_mut()
+        {
             emit_scene_model(
                 model,
                 cache,
@@ -2297,10 +2722,11 @@ impl RenderWorld {
                 mesh,
                 cam,
                 yaw,
-                x - cam.eye_x,
+                x - cam.eye_x + nudge_x,
                 y - cam.eye_y,
-                z - cam.eye_z,
+                z - cam.eye_z + nudge_z,
                 typecode,
+                false,
             );
         }
         if let Some(sprite) = world.sprites.get_mut(index).and_then(|s| s.as_mut()) {
@@ -2385,10 +2811,14 @@ impl RenderWorld {
                             delta_max_tile_x = -delta_max_tile_x;
                         }
 
-                        min_delta_z = ((min_z - self.cz).wrapping_shl(8)).wrapping_div(delta_max_tile_x);
-                        max_delta_z = ((max_z - self.cz).wrapping_shl(8)).wrapping_div(delta_max_tile_x);
-                        min_delta_y = ((min_y - self.cy).wrapping_shl(8)).wrapping_div(delta_max_tile_x);
-                        max_delta_y = ((max_y - self.cy).wrapping_shl(8)).wrapping_div(delta_max_tile_x);
+                        min_delta_z =
+                            ((min_z - self.cz).wrapping_shl(8)).wrapping_div(delta_max_tile_x);
+                        max_delta_z =
+                            ((max_z - self.cz).wrapping_shl(8)).wrapping_div(delta_max_tile_x);
+                        min_delta_y =
+                            ((min_y - self.cy).wrapping_shl(8)).wrapping_div(delta_max_tile_x);
+                        max_delta_y =
+                            ((max_y - self.cy).wrapping_shl(8)).wrapping_div(delta_max_tile_x);
                         active = true;
                     }
                 }
@@ -2428,10 +2858,14 @@ impl RenderWorld {
                             delta_max_tile_x = -delta_max_tile_x;
                         }
 
-                        min_delta_x = ((min_x - self.cx).wrapping_shl(8)).wrapping_div(delta_max_tile_x);
-                        max_delta_x = ((max_x - self.cx).wrapping_shl(8)).wrapping_div(delta_max_tile_x);
-                        min_delta_y = ((min_y - self.cy).wrapping_shl(8)).wrapping_div(delta_max_tile_x);
-                        max_delta_y = ((max_y - self.cy).wrapping_shl(8)).wrapping_div(delta_max_tile_x);
+                        min_delta_x =
+                            ((min_x - self.cx).wrapping_shl(8)).wrapping_div(delta_max_tile_x);
+                        max_delta_x =
+                            ((max_x - self.cx).wrapping_shl(8)).wrapping_div(delta_max_tile_x);
+                        min_delta_y =
+                            ((min_y - self.cy).wrapping_shl(8)).wrapping_div(delta_max_tile_x);
+                        max_delta_y =
+                            ((max_y - self.cy).wrapping_shl(8)).wrapping_div(delta_max_tile_x);
                         active = true;
                     }
                 }
@@ -2472,10 +2906,14 @@ impl RenderWorld {
 
                         if ok {
                             mode = 5;
-                            min_delta_x = ((min_x - self.cx).wrapping_shl(8)).wrapping_div(delta_max_y);
-                            max_delta_x = ((max_x - self.cx).wrapping_shl(8)).wrapping_div(delta_max_y);
-                            min_delta_z = ((min_z - self.cz).wrapping_shl(8)).wrapping_div(delta_max_y);
-                            max_delta_z = ((max_z - self.cz).wrapping_shl(8)).wrapping_div(delta_max_y);
+                            min_delta_x =
+                                ((min_x - self.cx).wrapping_shl(8)).wrapping_div(delta_max_y);
+                            max_delta_x =
+                                ((max_x - self.cx).wrapping_shl(8)).wrapping_div(delta_max_y);
+                            min_delta_z =
+                                ((min_z - self.cz).wrapping_shl(8)).wrapping_div(delta_max_y);
+                            max_delta_z =
+                                ((max_z - self.cz).wrapping_shl(8)).wrapping_div(delta_max_y);
                             active = true;
                         }
                     }
@@ -2493,7 +2931,10 @@ impl RenderWorld {
                     occluder.min_delta_y = min_delta_y;
                     occluder.max_delta_y = max_delta_y;
                 }
-                if let Some(slot) = self.active_occluders.get_mut(self.num_active_occluders as usize) {
+                if let Some(slot) = self
+                    .active_occluders
+                    .get_mut(self.num_active_occluders as usize)
+                {
                     *slot = Some(index);
                 }
                 self.num_active_occluders += 1;
@@ -2509,7 +2950,10 @@ impl RenderWorld {
                     }
                 }
             }
-            eprintln!("[occluder] active={} tiles={tiles:?}", self.num_active_occluders);
+            eprintln!(
+                "[occluder] active={} tiles={tiles:?}",
+                self.num_active_occluders
+            );
         }
     }
 
@@ -2598,28 +3042,36 @@ impl RenderWorld {
 
                     if tile_x <= gx && tile_x > min_x {
                         let adjacent = tile_at(&world.squares, level, tile_x - 1, tile_z);
-                        if adjacent.is_some_and(|t| t.draw_back && (t.draw_front || (sprite_spans & 0x1) == 0)) {
+                        if adjacent.is_some_and(|t| {
+                            t.draw_back && (t.draw_front || (sprite_spans & 0x1) == 0)
+                        }) {
                             continue 'fill;
                         }
                     }
 
                     if tile_x >= gx && tile_x < max_x - 1 {
                         let adjacent = tile_at(&world.squares, level, tile_x + 1, tile_z);
-                        if adjacent.is_some_and(|t| t.draw_back && (t.draw_front || (sprite_spans & 0x4) == 0)) {
+                        if adjacent.is_some_and(|t| {
+                            t.draw_back && (t.draw_front || (sprite_spans & 0x4) == 0)
+                        }) {
                             continue 'fill;
                         }
                     }
 
                     if tile_z <= gz && tile_z > min_z {
                         let adjacent = tile_at(&world.squares, level, tile_x, tile_z - 1);
-                        if adjacent.is_some_and(|t| t.draw_back && (t.draw_front || (sprite_spans & 0x8) == 0)) {
+                        if adjacent.is_some_and(|t| {
+                            t.draw_back && (t.draw_front || (sprite_spans & 0x8) == 0)
+                        }) {
                             continue 'fill;
                         }
                     }
 
                     if tile_z >= gz && tile_z < max_z - 1 {
                         let adjacent = tile_at(&world.squares, level, tile_x, tile_z + 1);
-                        if adjacent.is_some_and(|t| t.draw_back && (t.draw_front || (sprite_spans & 0x2) == 0)) {
+                        if adjacent.is_some_and(|t| {
+                            t.draw_back && (t.draw_front || (sprite_spans & 0x2) == 0)
+                        }) {
                             continue 'fill;
                         }
                     }
@@ -2637,7 +3089,10 @@ impl RenderWorld {
                     .and_then(|ls| ls.quick_ground);
                 if let Some(quick) = linked_quick {
                     if !self.ground_occluded(world, 0, tile_x, tile_z) {
-                        self.render_quick_ground(world, pix, surface, quick, 0, tile_x, tile_z, sin_pitch, cos_pitch, sin_yaw, cos_yaw);
+                        self.render_quick_ground(
+                            world, pix, surface, quick, 0, tile_x, tile_z, sin_pitch, cos_pitch,
+                            sin_yaw, cos_yaw,
+                        );
                     }
                 } else {
                     let linked_ground = tile_at(&world.squares, level, tile_x, tile_z)
@@ -2645,7 +3100,10 @@ impl RenderWorld {
                         .and_then(|ls| ls.ground.clone());
                     if let Some(ground) = linked_ground {
                         if !self.ground_occluded(world, 0, tile_x, tile_z) {
-                            self.render_ground(world, pix, surface, tile_x, tile_z, ground, sin_pitch, cos_pitch, sin_yaw, cos_yaw);
+                            self.render_ground(
+                                world, pix, surface, tile_x, tile_z, ground, sin_pitch, cos_pitch,
+                                sin_yaw, cos_yaw,
+                            );
                         }
                     }
                 }
@@ -2657,11 +3115,16 @@ impl RenderWorld {
                         .map(|w| (w.typecode, w.x - cx, w.y - cy, w.z - cz));
                     if let Some((typecode, wall_x, wall_y, wall_z)) = linked {
                         if let Some(model) = self
-                            .linked_wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                            .linked_wall_models_mut(
+                                &*world, cache, loop_cycle, level, tile_x, tile_z,
+                            )
                             .0
                             .as_mut()
                         {
-                            model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode);
+                            model.world_render(
+                                cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw,
+                                cos_yaw, wall_x, wall_y, wall_z, typecode,
+                            );
                         }
                     }
                 }
@@ -2669,27 +3132,58 @@ impl RenderWorld {
                 let linked_sprites: Vec<usize> = tile_at(&world.squares, level, tile_x, tile_z)
                     .and_then(|t| t.linked_square.as_ref())
                     .map(|ls| {
-                        (0..ls.sprite_count as usize).filter_map(|i| ls.sprites[i]).collect()
+                        (0..ls.sprite_count as usize)
+                            .filter_map(|i| ls.sprites[i])
+                            .collect()
                     })
                     .unwrap_or_default();
                 for index in linked_sprites {
                     if let Some(sprite) = world.sprites.get(index).and_then(|s| s.as_ref()) {
                         let (yaw, typecode, x, y, z) =
                             (sprite.yaw, sprite.typecode, sprite.x, sprite.y, sprite.z);
-                        if let Some(model) = self.sprite_model_mut(&*world, cache, loop_cycle, index).as_mut() {
-                            model.world_render(cache, loop_cycle, pix, surface, yaw, sin_pitch, cos_pitch, sin_yaw, cos_yaw, x - cx, y - cy, z - cz, typecode);
+                        if let Some(model) = self
+                            .sprite_model_mut(&*world, cache, loop_cycle, index)
+                            .as_mut()
+                        {
+                            model.world_render(
+                                cache,
+                                loop_cycle,
+                                pix,
+                                surface,
+                                yaw,
+                                sin_pitch,
+                                cos_pitch,
+                                sin_yaw,
+                                cos_yaw,
+                                x - cx,
+                                y - cy,
+                                z - cz,
+                                typecode,
+                            );
                         }
                     }
                 }
 
                 // The tile's own ground.
                 let mut tile_drawn = false;
-                let quick = tile_at(&world.squares, level, tile_x, tile_z)
-                    .and_then(|t| t.quick_ground);
+                let quick =
+                    tile_at(&world.squares, level, tile_x, tile_z).and_then(|t| t.quick_ground);
                 if let Some(quick) = quick {
                     if !self.ground_occluded(world, original_level, tile_x, tile_z) {
                         tile_drawn = true;
-                        self.render_quick_ground(world, pix, surface, quick, original_level, tile_x, tile_z, sin_pitch, cos_pitch, sin_yaw, cos_yaw);
+                        self.render_quick_ground(
+                            world,
+                            pix,
+                            surface,
+                            quick,
+                            original_level,
+                            tile_x,
+                            tile_z,
+                            sin_pitch,
+                            cos_pitch,
+                            sin_yaw,
+                            cos_yaw,
+                        );
                     }
                 } else {
                     let ground = tile_at(&world.squares, level, tile_x, tile_z)
@@ -2697,7 +3191,10 @@ impl RenderWorld {
                     if let Some(ground) = ground {
                         if !self.ground_occluded(world, original_level, tile_x, tile_z) {
                             tile_drawn = true;
-                            self.render_ground(world, pix, surface, tile_x, tile_z, ground, sin_pitch, cos_pitch, sin_yaw, cos_yaw);
+                            self.render_ground(
+                                world, pix, surface, tile_x, tile_z, ground, sin_pitch, cos_pitch,
+                                sin_yaw, cos_yaw,
+                            );
                         }
                     }
                 }
@@ -2723,7 +3220,8 @@ impl RenderWorld {
 
                     front_wall_types = PRETAB.get(direction as usize).copied().unwrap_or(0);
                     if let Some(tile) = tile_at_mut(&mut world.squares, level, tile_x, tile_z) {
-                        tile.back_wall_types = POSTTAB.get(direction as usize).copied().unwrap_or(0);
+                        tile.back_wall_types =
+                            POSTTAB.get(direction as usize).copied().unwrap_or(0);
                     }
                 }
 
@@ -2754,15 +3252,33 @@ impl RenderWorld {
                         }
                     }
 
-                    if (angle1 & front_wall_types) != 0 && !self.wall_occluded(world, original_level, tile_x, tile_z, angle1) {
-                        if let Some(model) = self.wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).0.as_mut() {
-                            model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode);
+                    if (angle1 & front_wall_types) != 0
+                        && !self.wall_occluded(world, original_level, tile_x, tile_z, angle1)
+                    {
+                        if let Some(model) = self
+                            .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                            .0
+                            .as_mut()
+                        {
+                            model.world_render(
+                                cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw,
+                                cos_yaw, wall_x, wall_y, wall_z, typecode,
+                            );
                         }
                     }
 
-                    if (angle2 & front_wall_types) != 0 && !self.wall_occluded(world, original_level, tile_x, tile_z, angle2) {
-                        if let Some(model) = self.wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).1.as_mut() {
-                            model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode);
+                    if (angle2 & front_wall_types) != 0
+                        && !self.wall_occluded(world, original_level, tile_x, tile_z, angle2)
+                    {
+                        if let Some(model) = self
+                            .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                            .1
+                            .as_mut()
+                        {
+                            model.world_render(
+                                cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw,
+                                cos_yaw, wall_x, wall_y, wall_z, typecode,
+                            );
                         }
                     }
                 }
@@ -2770,16 +3286,7 @@ impl RenderWorld {
                 // Decor on the near side of the tile.
                 let decor_data = tile_at(&world.squares, level, tile_x, tile_z)
                     .and_then(|t| t.decor.as_ref())
-                    .map(|d| {
-                        (
-                            d.wshape,
-                            d.angle,
-                            d.typecode,
-                            d.x - cx,
-                            d.y - cy,
-                            d.z - cz,
-                        )
-                    });
+                    .map(|d| (d.wshape, d.angle, d.typecode, d.x - cx, d.y - cy, d.z - cz));
                 if let Some((wshape, angle, typecode, decor_x, decor_y, decor_z)) = decor_data {
                     let min_y = self
                         .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
@@ -2788,8 +3295,14 @@ impl RenderWorld {
                         .unwrap_or(1000);
                     if !self.sprite_occluded(world, original_level, tile_x, tile_z, min_y) {
                         if (wshape & front_wall_types) != 0 {
-                            if let Some(decor) = self.decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).as_mut() {
-                                decor.world_render(cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch, sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode);
+                            if let Some(decor) = self
+                                .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                                .as_mut()
+                            {
+                                decor.world_render(
+                                    cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch,
+                                    sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode,
+                                );
                             }
                         } else if (wshape & 0x300) != 0 {
                             let nearest_x = if angle == LocAngle::NORTH || angle == LocAngle::EAST {
@@ -2805,18 +3318,60 @@ impl RenderWorld {
                             };
 
                             if (wshape & 0x100) != 0 && nearest_z < nearest_x {
-                                let draw_x = decor_x + DECORXOF.get(angle as usize).copied().unwrap_or(0);
-                                let draw_z = decor_z + DECORZOF.get(angle as usize).copied().unwrap_or(0);
-                                if let Some(decor) = self.decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).as_mut() {
-                                    decor.world_render(cache, loop_cycle, pix, surface, angle * 512 + 256, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
+                                let draw_x =
+                                    decor_x + DECORXOF.get(angle as usize).copied().unwrap_or(0);
+                                let draw_z =
+                                    decor_z + DECORZOF.get(angle as usize).copied().unwrap_or(0);
+                                if let Some(decor) = self
+                                    .decor_model_mut(
+                                        &*world, cache, loop_cycle, level, tile_x, tile_z,
+                                    )
+                                    .as_mut()
+                                {
+                                    decor.world_render(
+                                        cache,
+                                        loop_cycle,
+                                        pix,
+                                        surface,
+                                        angle * 512 + 256,
+                                        sin_pitch,
+                                        cos_pitch,
+                                        sin_yaw,
+                                        cos_yaw,
+                                        draw_x,
+                                        decor_y,
+                                        draw_z,
+                                        typecode,
+                                    );
                                 }
                             }
 
                             if (wshape & 0x200) != 0 && nearest_z > nearest_x {
-                                let draw_x = decor_x + DECORXOF2.get(angle as usize).copied().unwrap_or(0);
-                                let draw_z = decor_z + DECORZOF2.get(angle as usize).copied().unwrap_or(0);
-                                if let Some(decor) = self.decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).as_mut() {
-                                    decor.world_render(cache, loop_cycle, pix, surface, (angle * 512 + 1280) & 0x7ff, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
+                                let draw_x =
+                                    decor_x + DECORXOF2.get(angle as usize).copied().unwrap_or(0);
+                                let draw_z =
+                                    decor_z + DECORZOF2.get(angle as usize).copied().unwrap_or(0);
+                                if let Some(decor) = self
+                                    .decor_model_mut(
+                                        &*world, cache, loop_cycle, level, tile_x, tile_z,
+                                    )
+                                    .as_mut()
+                                {
+                                    decor.world_render(
+                                        cache,
+                                        loop_cycle,
+                                        pix,
+                                        surface,
+                                        (angle * 512 + 1280) & 0x7ff,
+                                        sin_pitch,
+                                        cos_pitch,
+                                        sin_yaw,
+                                        cos_yaw,
+                                        draw_x,
+                                        decor_y,
+                                        draw_z,
+                                        typecode,
+                                    );
                                 }
                             }
                         }
@@ -2829,8 +3384,14 @@ impl RenderWorld {
                         .and_then(|t| t.ground_decor.as_ref())
                         .map(|gd| (gd.typecode, gd.x - cx, gd.y - cy, gd.z - cz));
                     if let Some((typecode, gd_x, gd_y, gd_z)) = ground_decor_data {
-                        if let Some(model) = self.gd_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).as_mut() {
-                            model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, gd_x, gd_y, gd_z, typecode);
+                        if let Some(model) = self
+                            .gd_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                            .as_mut()
+                        {
+                            model.world_render(
+                                cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw,
+                                cos_yaw, gd_x, gd_y, gd_z, typecode,
+                            );
                         }
                     }
 
@@ -2838,20 +3399,31 @@ impl RenderWorld {
                         .and_then(|t| t.ground_object.as_ref())
                         .map(|o| (o.typecode, o.x - cx, o.y - cy, o.z - cz));
                     if let Some((typecode, ox, oy, oz)) = ground_object_data {
-                        let height = self.ground_object_height(&*world, cache, loop_cycle, level, tile_x, tile_z);
+                        let height = self.ground_object_height(
+                            &*world, cache, loop_cycle, level, tile_x, tile_z,
+                        );
                         if height == 0 {
-                            let (bottom, middle, top) =
-                                self.obj_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z);
+                            let (bottom, middle, top) = self
+                                .obj_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z);
                             if let Some(model) = bottom.as_mut() {
-                                model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, ox, oy, oz, typecode);
+                                model.world_render(
+                                    cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
+                                    sin_yaw, cos_yaw, ox, oy, oz, typecode,
+                                );
                             }
 
                             if let Some(model) = middle.as_mut() {
-                                model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, ox, oy, oz, typecode);
+                                model.world_render(
+                                    cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
+                                    sin_yaw, cos_yaw, ox, oy, oz, typecode,
+                                );
                             }
 
                             if let Some(model) = top.as_mut() {
-                                model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, ox, oy, oz, typecode);
+                                model.world_render(
+                                    cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
+                                    sin_yaw, cos_yaw, ox, oy, oz, typecode,
+                                );
                             }
                         }
                     }
@@ -2894,25 +3466,27 @@ impl RenderWorld {
 
             // Corner-side walls draw after every sprite slot on the tile has
             // been considered.
-            let (corner_sides, sprite_pairs, sides_before, sides_after) = tile_at(&world.squares, level, tile_x, tile_z)
-                .map(|t| {
-                    (
-                        t.corner_sides,
-                        (0..t.sprite_count as usize)
-                            .map(|i| (t.sprites[i], t.sprite_span[i]))
-                            .collect::<Vec<_>>(),
-                        t.sides_before_corner,
-                        t.sides_after_corner,
-                    )
-                })
-                .unwrap_or((0, Vec::new(), 0, 0));
+            let (corner_sides, sprite_pairs, sides_before, sides_after) =
+                tile_at(&world.squares, level, tile_x, tile_z)
+                    .map(|t| {
+                        (
+                            t.corner_sides,
+                            (0..t.sprite_count as usize)
+                                .map(|i| (t.sprites[i], t.sprite_span[i]))
+                                .collect::<Vec<_>>(),
+                            t.sides_before_corner,
+                            t.sides_after_corner,
+                        )
+                    })
+                    .unwrap_or((0, Vec::new(), 0, 0));
             if corner_sides != 0 {
                 let mut draw = true;
                 for (sprite_index, span) in &sprite_pairs {
                     let Some(sprite_index) = sprite_index else {
                         continue;
                     };
-                    let Some(sprite) = world.sprites.get(*sprite_index).and_then(|s| s.as_ref()) else {
+                    let Some(sprite) = world.sprites.get(*sprite_index).and_then(|s| s.as_ref())
+                    else {
                         continue;
                     };
 
@@ -2928,8 +3502,15 @@ impl RenderWorld {
                         .map(|w| (w.angle1, w.typecode, w.x - cx, w.y - cy, w.z - cz));
                     if let Some((angle1, typecode, wall_x, wall_y, wall_z)) = wall_data {
                         if !self.wall_occluded(world, original_level, tile_x, tile_z, angle1) {
-                            if let Some(model) = self.wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).0.as_mut() {
-                                model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode);
+                            if let Some(model) = self
+                                .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                                .0
+                                .as_mut()
+                            {
+                                model.world_render(
+                                    cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
+                                    sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
+                                );
                             }
                         }
                     }
@@ -2961,7 +3542,8 @@ impl RenderWorld {
                     let Some(sprite_index) = sprite_index else {
                         continue;
                     };
-                    let Some(sprite) = world.sprites.get(sprite_index).and_then(|s| s.as_ref()) else {
+                    let Some(sprite) = world.sprites.get(sprite_index).and_then(|s| s.as_ref())
+                    else {
                         continue;
                     };
 
@@ -2983,7 +3565,9 @@ impl RenderWorld {
 
                             if other.draw_front {
                                 draw_sprites = true;
-                                if let Some(tile) = tile_at_mut(&mut world.squares, level, tile_x, tile_z) {
+                                if let Some(tile) =
+                                    tile_at_mut(&mut world.squares, level, tile_x, tile_z)
+                                {
                                     tile.draw_sprites = true;
                                 }
                                 skip = true;
@@ -3031,7 +3615,9 @@ impl RenderWorld {
 
                     let min_tile_distance_z = gz - sprite.min_tile_z;
                     let max_tile_distance_z = sprite.max_tile_z - gz;
-                    if let Some(sprite) = world.sprites.get_mut(sprite_index).and_then(|s| s.as_mut()) {
+                    if let Some(sprite) =
+                        world.sprites.get_mut(sprite_index).and_then(|s| s.as_mut())
+                    {
                         if max_tile_distance_z > min_tile_distance_z {
                             sprite.distance = min_tile_distance_x + max_tile_distance_z;
                         } else {
@@ -3051,7 +3637,8 @@ impl RenderWorld {
                         let Some(sprite) = self.sprite_buffer.get(index).copied().flatten() else {
                             continue;
                         };
-                        let Some(sprite) = world.sprites.get(sprite).and_then(|s| s.as_ref()) else {
+                        let Some(sprite) = world.sprites.get(sprite).and_then(|s| s.as_ref())
+                        else {
                             continue;
                         };
 
@@ -3093,9 +3680,34 @@ impl RenderWorld {
                         .map(|m| m.min_y())
                         .unwrap_or(0);
 
-                    if !self.sprite_occluded2(world, original_level, min_x, max_x, min_z, max_z, model_min_y) {
-                        if let Some(model) = self.sprite_model_mut(&*world, cache, loop_cycle, farthest).as_mut() {
-                            model.world_render(cache, loop_cycle, pix, surface, yaw, sin_pitch, cos_pitch, sin_yaw, cos_yaw, sx - cx, sy - cy, sz - cz, typecode);
+                    if !self.sprite_occluded2(
+                        world,
+                        original_level,
+                        min_x,
+                        max_x,
+                        min_z,
+                        max_z,
+                        model_min_y,
+                    ) {
+                        if let Some(model) = self
+                            .sprite_model_mut(&*world, cache, loop_cycle, farthest)
+                            .as_mut()
+                        {
+                            model.world_render(
+                                cache,
+                                loop_cycle,
+                                pix,
+                                surface,
+                                yaw,
+                                sin_pitch,
+                                cos_pitch,
+                                sin_yaw,
+                                cos_yaw,
+                                sx - cx,
+                                sy - cy,
+                                sz - cz,
+                                typecode,
+                            );
                         }
                     }
 
@@ -3199,20 +3811,63 @@ impl RenderWorld {
                 .and_then(|t| t.ground_object.as_ref())
                 .map(|o| (o.typecode, o.x - cx, o.y - cy, o.z - cz));
             if let Some((typecode, ox, oy, oz)) = ground_object_data {
-                let height = self.ground_object_height(&*world, cache, loop_cycle, level, tile_x, tile_z);
+                let height =
+                    self.ground_object_height(&*world, cache, loop_cycle, level, tile_x, tile_z);
                 if height != 0 {
                     let (bottom, middle, top) =
                         self.obj_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z);
                     if let Some(model) = bottom.as_mut() {
-                        model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, ox, oy - height, oz, typecode);
+                        model.world_render(
+                            cache,
+                            loop_cycle,
+                            pix,
+                            surface,
+                            0,
+                            sin_pitch,
+                            cos_pitch,
+                            sin_yaw,
+                            cos_yaw,
+                            ox,
+                            oy - height,
+                            oz,
+                            typecode,
+                        );
                     }
 
                     if let Some(model) = middle.as_mut() {
-                        model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, ox, oy - height, oz, typecode);
+                        model.world_render(
+                            cache,
+                            loop_cycle,
+                            pix,
+                            surface,
+                            0,
+                            sin_pitch,
+                            cos_pitch,
+                            sin_yaw,
+                            cos_yaw,
+                            ox,
+                            oy - height,
+                            oz,
+                            typecode,
+                        );
                     }
 
                     if let Some(model) = top.as_mut() {
-                        model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, ox, oy - height, oz, typecode);
+                        model.world_render(
+                            cache,
+                            loop_cycle,
+                            pix,
+                            surface,
+                            0,
+                            sin_pitch,
+                            cos_pitch,
+                            sin_yaw,
+                            cos_yaw,
+                            ox,
+                            oy - height,
+                            oz,
+                            typecode,
+                        );
                     }
                 }
             }
@@ -3224,16 +3879,7 @@ impl RenderWorld {
             if back_wall_types != 0 {
                 let decor_data = tile_at(&world.squares, level, tile_x, tile_z)
                     .and_then(|t| t.decor.as_ref())
-                    .map(|d| {
-                        (
-                            d.wshape,
-                            d.angle,
-                            d.typecode,
-                            d.x - cx,
-                            d.y - cy,
-                            d.z - cz,
-                        )
-                    });
+                    .map(|d| (d.wshape, d.angle, d.typecode, d.x - cx, d.y - cy, d.z - cz));
                 if let Some((wshape, angle, typecode, decor_x, decor_y, decor_z)) = decor_data {
                     let min_y = self
                         .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
@@ -3242,8 +3888,14 @@ impl RenderWorld {
                         .unwrap_or(1000);
                     if !self.sprite_occluded(world, original_level, tile_x, tile_z, min_y) {
                         if (wshape & back_wall_types) != 0 {
-                            if let Some(decor) = self.decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).as_mut() {
-                                decor.world_render(cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch, sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode);
+                            if let Some(decor) = self
+                                .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                                .as_mut()
+                            {
+                                decor.world_render(
+                                    cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch,
+                                    sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode,
+                                );
                             }
                         } else if (wshape & 0x300) != 0 {
                             let nearest_x = if angle == LocAngle::NORTH || angle == LocAngle::EAST {
@@ -3259,18 +3911,60 @@ impl RenderWorld {
                             };
 
                             if (wshape & 0x100) != 0 && nearest_z >= nearest_x {
-                                let draw_x = decor_x + DECORXOF.get(angle as usize).copied().unwrap_or(0);
-                                let draw_z = decor_z + DECORZOF.get(angle as usize).copied().unwrap_or(0);
-                                if let Some(decor) = self.decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).as_mut() {
-                                    decor.world_render(cache, loop_cycle, pix, surface, angle * 512 + 256, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
+                                let draw_x =
+                                    decor_x + DECORXOF.get(angle as usize).copied().unwrap_or(0);
+                                let draw_z =
+                                    decor_z + DECORZOF.get(angle as usize).copied().unwrap_or(0);
+                                if let Some(decor) = self
+                                    .decor_model_mut(
+                                        &*world, cache, loop_cycle, level, tile_x, tile_z,
+                                    )
+                                    .as_mut()
+                                {
+                                    decor.world_render(
+                                        cache,
+                                        loop_cycle,
+                                        pix,
+                                        surface,
+                                        angle * 512 + 256,
+                                        sin_pitch,
+                                        cos_pitch,
+                                        sin_yaw,
+                                        cos_yaw,
+                                        draw_x,
+                                        decor_y,
+                                        draw_z,
+                                        typecode,
+                                    );
                                 }
                             }
 
                             if (wshape & 0x200) != 0 && nearest_z <= nearest_x {
-                                let draw_x = decor_x + DECORXOF2.get(angle as usize).copied().unwrap_or(0);
-                                let draw_z = decor_z + DECORZOF2.get(angle as usize).copied().unwrap_or(0);
-                                if let Some(decor) = self.decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).as_mut() {
-                                    decor.world_render(cache, loop_cycle, pix, surface, (angle * 512 + 1280) & 0x7ff, sin_pitch, cos_pitch, sin_yaw, cos_yaw, draw_x, decor_y, draw_z, typecode);
+                                let draw_x =
+                                    decor_x + DECORXOF2.get(angle as usize).copied().unwrap_or(0);
+                                let draw_z =
+                                    decor_z + DECORZOF2.get(angle as usize).copied().unwrap_or(0);
+                                if let Some(decor) = self
+                                    .decor_model_mut(
+                                        &*world, cache, loop_cycle, level, tile_x, tile_z,
+                                    )
+                                    .as_mut()
+                                {
+                                    decor.world_render(
+                                        cache,
+                                        loop_cycle,
+                                        pix,
+                                        surface,
+                                        (angle * 512 + 1280) & 0x7ff,
+                                        sin_pitch,
+                                        cos_pitch,
+                                        sin_yaw,
+                                        cos_yaw,
+                                        draw_x,
+                                        decor_y,
+                                        draw_z,
+                                        typecode,
+                                    );
                                 }
                             }
                         }
@@ -3281,15 +3975,33 @@ impl RenderWorld {
                     .and_then(|t| t.wall.as_ref())
                     .map(|w| (w.angle1, w.angle2, w.typecode, w.x - cx, w.y - cy, w.z - cz));
                 if let Some((angle1, angle2, typecode, wall_x, wall_y, wall_z)) = wall_data {
-                    if (angle2 & back_wall_types) != 0 && !self.wall_occluded(world, original_level, tile_x, tile_z, angle2) {
-                        if let Some(model) = self.wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).1.as_mut() {
-                            model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode);
+                    if (angle2 & back_wall_types) != 0
+                        && !self.wall_occluded(world, original_level, tile_x, tile_z, angle2)
+                    {
+                        if let Some(model) = self
+                            .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                            .1
+                            .as_mut()
+                        {
+                            model.world_render(
+                                cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw,
+                                cos_yaw, wall_x, wall_y, wall_z, typecode,
+                            );
                         }
                     }
 
-                    if (angle1 & back_wall_types) != 0 && !self.wall_occluded(world, original_level, tile_x, tile_z, angle1) {
-                        if let Some(model) = self.wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z).0.as_mut() {
-                            model.world_render(cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode);
+                    if (angle1 & back_wall_types) != 0
+                        && !self.wall_occluded(world, original_level, tile_x, tile_z, angle1)
+                    {
+                        if let Some(model) = self
+                            .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                            .0
+                            .as_mut()
+                        {
+                            model.world_render(
+                                cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw,
+                                cos_yaw, wall_x, wall_y, wall_z, typecode,
+                            );
                         }
                     }
                 }
@@ -3366,48 +4078,96 @@ impl RenderWorld {
         let mut y2 = ground_h(world, level, tile_x + 1, tile_z + 1) - self.cy;
         let mut y3 = ground_h(world, level, tile_x, tile_z + 1) - self.cy;
 
-        let mut tmp = (z0.wrapping_mul(sin_eye_yaw).wrapping_add(x0.wrapping_mul(cos_eye_yaw))) >> 16;
-        z0 = (z0.wrapping_mul(cos_eye_yaw).wrapping_sub(x0.wrapping_mul(sin_eye_yaw))) >> 16;
+        let mut tmp = (z0
+            .wrapping_mul(sin_eye_yaw)
+            .wrapping_add(x0.wrapping_mul(cos_eye_yaw)))
+            >> 16;
+        z0 = (z0
+            .wrapping_mul(cos_eye_yaw)
+            .wrapping_sub(x0.wrapping_mul(sin_eye_yaw)))
+            >> 16;
         x0 = tmp;
 
-        tmp = (y0.wrapping_mul(cos_eye_pitch).wrapping_sub(z0.wrapping_mul(sin_eye_pitch))) >> 16;
-        z0 = (y0.wrapping_mul(sin_eye_pitch).wrapping_add(z0.wrapping_mul(cos_eye_pitch))) >> 16;
+        tmp = (y0
+            .wrapping_mul(cos_eye_pitch)
+            .wrapping_sub(z0.wrapping_mul(sin_eye_pitch)))
+            >> 16;
+        z0 = (y0
+            .wrapping_mul(sin_eye_pitch)
+            .wrapping_add(z0.wrapping_mul(cos_eye_pitch)))
+            >> 16;
         y0 = tmp;
 
         if z0 < 50 {
             return;
         }
 
-        tmp = (z1.wrapping_mul(sin_eye_yaw).wrapping_add(x1.wrapping_mul(cos_eye_yaw))) >> 16;
-        z1 = (z1.wrapping_mul(cos_eye_yaw).wrapping_sub(x1.wrapping_mul(sin_eye_yaw))) >> 16;
+        tmp = (z1
+            .wrapping_mul(sin_eye_yaw)
+            .wrapping_add(x1.wrapping_mul(cos_eye_yaw)))
+            >> 16;
+        z1 = (z1
+            .wrapping_mul(cos_eye_yaw)
+            .wrapping_sub(x1.wrapping_mul(sin_eye_yaw)))
+            >> 16;
         x1 = tmp;
 
-        tmp = (y1.wrapping_mul(cos_eye_pitch).wrapping_sub(z1.wrapping_mul(sin_eye_pitch))) >> 16;
-        z1 = (y1.wrapping_mul(sin_eye_pitch).wrapping_add(z1.wrapping_mul(cos_eye_pitch))) >> 16;
+        tmp = (y1
+            .wrapping_mul(cos_eye_pitch)
+            .wrapping_sub(z1.wrapping_mul(sin_eye_pitch)))
+            >> 16;
+        z1 = (y1
+            .wrapping_mul(sin_eye_pitch)
+            .wrapping_add(z1.wrapping_mul(cos_eye_pitch)))
+            >> 16;
         y1 = tmp;
 
         if z1 < 50 {
             return;
         }
 
-        tmp = (z2.wrapping_mul(sin_eye_yaw).wrapping_add(x2.wrapping_mul(cos_eye_yaw))) >> 16;
-        z2 = (z2.wrapping_mul(cos_eye_yaw).wrapping_sub(x2.wrapping_mul(sin_eye_yaw))) >> 16;
+        tmp = (z2
+            .wrapping_mul(sin_eye_yaw)
+            .wrapping_add(x2.wrapping_mul(cos_eye_yaw)))
+            >> 16;
+        z2 = (z2
+            .wrapping_mul(cos_eye_yaw)
+            .wrapping_sub(x2.wrapping_mul(sin_eye_yaw)))
+            >> 16;
         x2 = tmp;
 
-        tmp = (y2.wrapping_mul(cos_eye_pitch).wrapping_sub(z2.wrapping_mul(sin_eye_pitch))) >> 16;
-        z2 = (y2.wrapping_mul(sin_eye_pitch).wrapping_add(z2.wrapping_mul(cos_eye_pitch))) >> 16;
+        tmp = (y2
+            .wrapping_mul(cos_eye_pitch)
+            .wrapping_sub(z2.wrapping_mul(sin_eye_pitch)))
+            >> 16;
+        z2 = (y2
+            .wrapping_mul(sin_eye_pitch)
+            .wrapping_add(z2.wrapping_mul(cos_eye_pitch)))
+            >> 16;
         y2 = tmp;
 
         if z2 < 50 {
             return;
         }
 
-        tmp = (z3.wrapping_mul(sin_eye_yaw).wrapping_add(x3.wrapping_mul(cos_eye_yaw))) >> 16;
-        z3 = (z3.wrapping_mul(cos_eye_yaw).wrapping_sub(x3.wrapping_mul(sin_eye_yaw))) >> 16;
+        tmp = (z3
+            .wrapping_mul(sin_eye_yaw)
+            .wrapping_add(x3.wrapping_mul(cos_eye_yaw)))
+            >> 16;
+        z3 = (z3
+            .wrapping_mul(cos_eye_yaw)
+            .wrapping_sub(x3.wrapping_mul(sin_eye_yaw)))
+            >> 16;
         x3 = tmp;
 
-        tmp = (y3.wrapping_mul(cos_eye_pitch).wrapping_sub(z3.wrapping_mul(sin_eye_pitch))) >> 16;
-        z3 = (y3.wrapping_mul(sin_eye_pitch).wrapping_add(z3.wrapping_mul(cos_eye_pitch))) >> 16;
+        tmp = (y3
+            .wrapping_mul(cos_eye_pitch)
+            .wrapping_sub(z3.wrapping_mul(sin_eye_pitch)))
+            >> 16;
+        z3 = (y3
+            .wrapping_mul(sin_eye_pitch)
+            .wrapping_add(z3.wrapping_mul(cos_eye_pitch)))
+            >> 16;
         y3 = tmp;
 
         if z3 < 50 {
@@ -3425,10 +4185,23 @@ impl RenderWorld {
 
         pix.trans = 0;
 
-        if wrapping_cross(py1.wrapping_sub(px3), px1.wrapping_sub(py3), pz1.wrapping_sub(py3), pz0.wrapping_sub(px3)) > 0 {
-            pix.hclip = py1 < 0 || px3 < 0 || pz0 < 0 || py1 > surface.size_x || px3 > surface.size_x || pz0 > surface.size_x;
+        if wrapping_cross(
+            py1.wrapping_sub(px3),
+            px1.wrapping_sub(py3),
+            pz1.wrapping_sub(py3),
+            pz0.wrapping_sub(px3),
+        ) > 0
+        {
+            pix.hclip = py1 < 0
+                || px3 < 0
+                || pz0 < 0
+                || py1 > surface.size_x
+                || px3 > surface.size_x
+                || pz0 > surface.size_x;
 
-            if world.click && inside_triangle(world.click_x, world.click_y, pz1, py3, px1, py1, px3, pz0) {
+            if world.click
+                && inside_triangle(world.click_x, world.click_y, pz1, py3, px1, py1, px3, pz0)
+            {
                 world.ground_x = tile_x;
                 world.ground_z = tile_z;
             }
@@ -3438,34 +4211,63 @@ impl RenderWorld {
                     if ground.flat {
                         pix.texture_triangle(
                             surface,
-                            py1, px3, pz0,
-                            pz1, py3, px1,
-                            ground.colour_ne, ground.colour_nw, ground.colour_se,
-                            x0, y0, z0,
-                            x1, x3,
-                            y1, y3,
-                            z1, z3,
+                            py1,
+                            px3,
+                            pz0,
+                            pz1,
+                            py3,
+                            px1,
+                            ground.colour_ne,
+                            ground.colour_nw,
+                            ground.colour_se,
+                            x0,
+                            y0,
+                            z0,
+                            x1,
+                            x3,
+                            y1,
+                            y3,
+                            z1,
+                            z3,
                             ground.texture,
                         );
                     } else {
                         pix.texture_triangle(
                             surface,
-                            py1, px3, pz0,
-                            pz1, py3, px1,
-                            ground.colour_ne, ground.colour_nw, ground.colour_se,
-                            x2, y2, z2,
-                            x3, x1,
-                            y3, y1,
-                            z3, z1,
+                            py1,
+                            px3,
+                            pz0,
+                            pz1,
+                            py3,
+                            px1,
+                            ground.colour_ne,
+                            ground.colour_nw,
+                            ground.colour_se,
+                            x2,
+                            y2,
+                            z2,
+                            x3,
+                            x1,
+                            y3,
+                            y1,
+                            z3,
+                            z1,
                             ground.texture,
                         );
                     }
                 } else {
-                    let texture_average = TEXTURE_AVERAGE.get(ground.texture as usize).copied().unwrap_or(41);
+                    let texture_average = TEXTURE_AVERAGE
+                        .get(ground.texture as usize)
+                        .copied()
+                        .unwrap_or(41);
                     pix.gouraud_triangle(
                         surface,
-                        py1, px3, pz0,
-                        pz1, py3, px1,
+                        py1,
+                        px3,
+                        pz0,
+                        pz1,
+                        py3,
+                        px1,
                         get_table(texture_average, ground.colour_ne),
                         get_table(texture_average, ground.colour_nw),
                         get_table(texture_average, ground.colour_se),
@@ -3474,17 +4276,36 @@ impl RenderWorld {
             } else if ground.colour_ne != 12345678 {
                 pix.gouraud_triangle(
                     surface,
-                    py1, px3, pz0,
-                    pz1, py3, px1,
-                    ground.colour_ne, ground.colour_nw, ground.colour_se,
+                    py1,
+                    px3,
+                    pz0,
+                    pz1,
+                    py3,
+                    px1,
+                    ground.colour_ne,
+                    ground.colour_nw,
+                    ground.colour_se,
                 );
             }
         }
 
-        if wrapping_cross(px0.wrapping_sub(pz0), py3.wrapping_sub(px1), py0.wrapping_sub(px1), px3.wrapping_sub(pz0)) > 0 {
-            pix.hclip = px0 < 0 || pz0 < 0 || px3 < 0 || px0 > surface.size_x || pz0 > surface.size_x || px3 > surface.size_x;
+        if wrapping_cross(
+            px0.wrapping_sub(pz0),
+            py3.wrapping_sub(px1),
+            py0.wrapping_sub(px1),
+            px3.wrapping_sub(pz0),
+        ) > 0
+        {
+            pix.hclip = px0 < 0
+                || pz0 < 0
+                || px3 < 0
+                || px0 > surface.size_x
+                || pz0 > surface.size_x
+                || px3 > surface.size_x;
 
-            if world.click && inside_triangle(world.click_x, world.click_y, py0, px1, py3, px0, pz0, px3) {
+            if world.click
+                && inside_triangle(world.click_x, world.click_y, py0, px1, py3, px0, pz0, px3)
+            {
                 world.ground_x = tile_x;
                 world.ground_z = tile_z;
             }
@@ -3493,21 +4314,39 @@ impl RenderWorld {
                 if !pix.low_mem {
                     pix.texture_triangle(
                         surface,
-                        px0, pz0, px3,
-                        py0, px1, py3,
-                        ground.colour_sw, ground.colour_se, ground.colour_nw,
-                        x0, y0, z0,
-                        x1, x3,
-                        y1, y3,
-                        z1, z3,
+                        px0,
+                        pz0,
+                        px3,
+                        py0,
+                        px1,
+                        py3,
+                        ground.colour_sw,
+                        ground.colour_se,
+                        ground.colour_nw,
+                        x0,
+                        y0,
+                        z0,
+                        x1,
+                        x3,
+                        y1,
+                        y3,
+                        z1,
+                        z3,
                         ground.texture,
                     );
                 } else {
-                    let texture_average = TEXTURE_AVERAGE.get(ground.texture as usize).copied().unwrap_or(41);
+                    let texture_average = TEXTURE_AVERAGE
+                        .get(ground.texture as usize)
+                        .copied()
+                        .unwrap_or(41);
                     pix.gouraud_triangle(
                         surface,
-                        px0, pz0, px3,
-                        py0, px1, py3,
+                        px0,
+                        pz0,
+                        px3,
+                        py0,
+                        px1,
+                        py3,
                         get_table(texture_average, ground.colour_sw),
                         get_table(texture_average, ground.colour_se),
                         get_table(texture_average, ground.colour_nw),
@@ -3516,9 +4355,15 @@ impl RenderWorld {
             } else if ground.colour_sw != 12345678 {
                 pix.gouraud_triangle(
                     surface,
-                    px0, pz0, px3,
-                    py0, px1, py3,
-                    ground.colour_sw, ground.colour_se, ground.colour_nw,
+                    px0,
+                    pz0,
+                    px3,
+                    py0,
+                    px1,
+                    py3,
+                    ground.colour_sw,
+                    ground.colour_se,
+                    ground.colour_nw,
                 );
             }
         }
@@ -3547,12 +4392,24 @@ impl RenderWorld {
             let mut y = ground.vertex_y[i] - self.cy;
             let mut z = ground.vertex_z[i] - self.cz;
 
-            let mut tmp = (z.wrapping_mul(sin_eye_yaw).wrapping_add(x.wrapping_mul(cos_eye_yaw))) >> 16;
-            z = (z.wrapping_mul(cos_eye_yaw).wrapping_sub(x.wrapping_mul(sin_eye_yaw))) >> 16;
+            let mut tmp = (z
+                .wrapping_mul(sin_eye_yaw)
+                .wrapping_add(x.wrapping_mul(cos_eye_yaw)))
+                >> 16;
+            z = (z
+                .wrapping_mul(cos_eye_yaw)
+                .wrapping_sub(x.wrapping_mul(sin_eye_yaw)))
+                >> 16;
             x = tmp;
 
-            tmp = (y.wrapping_mul(cos_eye_pitch).wrapping_sub(z.wrapping_mul(sin_eye_pitch))) >> 16;
-            z = (y.wrapping_mul(sin_eye_pitch).wrapping_add(z.wrapping_mul(cos_eye_pitch))) >> 16;
+            tmp = (y
+                .wrapping_mul(cos_eye_pitch)
+                .wrapping_sub(z.wrapping_mul(sin_eye_pitch)))
+                >> 16;
+            z = (y
+                .wrapping_mul(sin_eye_pitch)
+                .wrapping_add(z.wrapping_mul(cos_eye_pitch)))
+                >> 16;
             y = tmp;
 
             if z < 50 {
@@ -3602,10 +4459,23 @@ impl RenderWorld {
                 continue;
             };
 
-            if wrapping_cross(x0.wrapping_sub(x1), y2.wrapping_sub(y1), y0.wrapping_sub(y1), x2.wrapping_sub(x1)) > 0 {
-                pix.hclip = x0 < 0 || x1 < 0 || x2 < 0 || x0 > surface.size_x || x1 > surface.size_x || x2 > surface.size_x;
+            if wrapping_cross(
+                x0.wrapping_sub(x1),
+                y2.wrapping_sub(y1),
+                y0.wrapping_sub(y1),
+                x2.wrapping_sub(x1),
+            ) > 0
+            {
+                pix.hclip = x0 < 0
+                    || x1 < 0
+                    || x2 < 0
+                    || x0 > surface.size_x
+                    || x1 > surface.size_x
+                    || x2 > surface.size_x;
 
-                if world.click && inside_triangle(world.click_x, world.click_y, y0, y1, y2, x0, x1, x2) {
+                if world.click
+                    && inside_triangle(world.click_x, world.click_y, y0, y1, y2, x0, x1, x2)
+                {
                     world.ground_x = tile_x;
                     world.ground_z = tile_z;
                 }
@@ -3624,34 +4494,61 @@ impl RenderWorld {
                         if ground.flat {
                             pix.texture_triangle(
                                 surface,
-                                x0, x1, x2,
-                                y0, y1, y2,
-                                colour_a, colour_b, colour_c,
-                                self.ground_draw_texture_vertex_x[0], self.ground_draw_texture_vertex_y[0], self.ground_draw_texture_vertex_z[0],
-                                self.ground_draw_texture_vertex_x[1], self.ground_draw_texture_vertex_x[3],
-                                self.ground_draw_texture_vertex_y[1], self.ground_draw_texture_vertex_y[3],
-                                self.ground_draw_texture_vertex_z[1], self.ground_draw_texture_vertex_z[3],
+                                x0,
+                                x1,
+                                x2,
+                                y0,
+                                y1,
+                                y2,
+                                colour_a,
+                                colour_b,
+                                colour_c,
+                                self.ground_draw_texture_vertex_x[0],
+                                self.ground_draw_texture_vertex_y[0],
+                                self.ground_draw_texture_vertex_z[0],
+                                self.ground_draw_texture_vertex_x[1],
+                                self.ground_draw_texture_vertex_x[3],
+                                self.ground_draw_texture_vertex_y[1],
+                                self.ground_draw_texture_vertex_y[3],
+                                self.ground_draw_texture_vertex_z[1],
+                                self.ground_draw_texture_vertex_z[3],
                                 tex,
                             );
                         } else {
                             pix.texture_triangle(
                                 surface,
-                                x0, x1, x2,
-                                y0, y1, y2,
-                                colour_a, colour_b, colour_c,
-                                self.ground_draw_texture_vertex_x[a], self.ground_draw_texture_vertex_y[a], self.ground_draw_texture_vertex_z[a],
-                                self.ground_draw_texture_vertex_x[b], self.ground_draw_texture_vertex_x[c],
-                                self.ground_draw_texture_vertex_y[b], self.ground_draw_texture_vertex_y[c],
-                                self.ground_draw_texture_vertex_z[b], self.ground_draw_texture_vertex_z[c],
+                                x0,
+                                x1,
+                                x2,
+                                y0,
+                                y1,
+                                y2,
+                                colour_a,
+                                colour_b,
+                                colour_c,
+                                self.ground_draw_texture_vertex_x[a],
+                                self.ground_draw_texture_vertex_y[a],
+                                self.ground_draw_texture_vertex_z[a],
+                                self.ground_draw_texture_vertex_x[b],
+                                self.ground_draw_texture_vertex_x[c],
+                                self.ground_draw_texture_vertex_y[b],
+                                self.ground_draw_texture_vertex_y[c],
+                                self.ground_draw_texture_vertex_z[b],
+                                self.ground_draw_texture_vertex_z[c],
                                 tex,
                             );
                         }
                     } else {
-                        let texture_average = TEXTURE_AVERAGE.get(tex as usize).copied().unwrap_or(41);
+                        let texture_average =
+                            TEXTURE_AVERAGE.get(tex as usize).copied().unwrap_or(41);
                         pix.gouraud_triangle(
                             surface,
-                            x0, x1, x2,
-                            y0, y1, y2,
+                            x0,
+                            x1,
+                            x2,
+                            y0,
+                            y1,
+                            y2,
                             get_table(texture_average, colour_a),
                             get_table(texture_average, colour_b),
                             get_table(texture_average, colour_c),
@@ -3659,10 +4556,7 @@ impl RenderWorld {
                     }
                 } else if colour_a != 12345678 {
                     pix.gouraud_triangle(
-                        surface,
-                        x0, x1, x2,
-                        y0, y1, y2,
-                        colour_a, colour_b, colour_c,
+                        surface, x0, x1, x2, y0, y1, y2, colour_a, colour_b, colour_c,
                     );
                 }
             }
@@ -3674,7 +4568,11 @@ impl RenderWorld {
         let stride_z = world.max_tile_z + 1;
         let stride_x = world.max_tile_x + 1;
         let index = (level * stride_x + x) * stride_z + z;
-        let cycle = world.occlusion_cycle.get(index as usize).copied().unwrap_or(0);
+        let cycle = world
+            .occlusion_cycle
+            .get(index as usize)
+            .copied()
+            .unwrap_or(0);
         if cycle == -self.cycle_no {
             return false;
         } else if cycle == self.cycle_no {
@@ -3683,9 +4581,24 @@ impl RenderWorld {
             let sx = x << 7;
             let sz = z << 7;
             if self.occluded(world, sx + 1, ground_h(world, level, x, z), sz + 1)
-                && self.occluded(world, sx + 128 - 1, ground_h(world, level, x + 1, z), sz + 1)
-                && self.occluded(world, sx + 128 - 1, ground_h(world, level, x + 1, z + 1), sz + 128 - 1)
-                && self.occluded(world, sx + 1, ground_h(world, level, x, z + 1), sz + 128 - 1)
+                && self.occluded(
+                    world,
+                    sx + 128 - 1,
+                    ground_h(world, level, x + 1, z),
+                    sz + 1,
+                )
+                && self.occluded(
+                    world,
+                    sx + 128 - 1,
+                    ground_h(world, level, x + 1, z + 1),
+                    sz + 128 - 1,
+                )
+                && self.occluded(
+                    world,
+                    sx + 1,
+                    ground_h(world, level, x, z + 1),
+                    sz + 128 - 1,
+                )
             {
                 if let Some(slot) = world.occlusion_cycle.get_mut(index as usize) {
                     *slot = self.cycle_no;
@@ -3701,7 +4614,14 @@ impl RenderWorld {
     }
 
     /// `wallOccluded(level, x, z, type)` from client-ts 2216-2310.
-    fn wall_occluded(&mut self, world: &mut World, level: i32, x: i32, z: i32, r#type: i32) -> bool {
+    fn wall_occluded(
+        &mut self,
+        world: &mut World,
+        level: i32,
+        x: i32,
+        z: i32,
+        r#type: i32,
+    ) -> bool {
         if !self.ground_occluded(world, level, x, z) {
             return false;
         }
@@ -3820,14 +4740,38 @@ impl RenderWorld {
     }
 
     /// `spriteOccluded(level, tileX, tileZ, y)` from client-ts 2311-2328.
-    fn sprite_occluded(&mut self, world: &mut World, level: i32, tile_x: i32, tile_z: i32, y: i32) -> bool {
+    fn sprite_occluded(
+        &mut self,
+        world: &mut World,
+        level: i32,
+        tile_x: i32,
+        tile_z: i32,
+        y: i32,
+    ) -> bool {
         if self.ground_occluded(world, level, tile_x, tile_z) {
             let x = tile_x << 7;
             let z = tile_z << 7;
-            return self.occluded(world, x + 1, ground_h(world, level, tile_x, tile_z) - y, z + 1)
-                && self.occluded(world, x + 128 - 1, ground_h(world, level, tile_x + 1, tile_z) - y, z + 1)
-                && self.occluded(world, x + 128 - 1, ground_h(world, level, tile_x + 1, tile_z + 1) - y, z + 128 - 1)
-                && self.occluded(world, x + 1, ground_h(world, level, tile_x, tile_z + 1) - y, z + 128 - 1);
+            return self.occluded(
+                world,
+                x + 1,
+                ground_h(world, level, tile_x, tile_z) - y,
+                z + 1,
+            ) && self.occluded(
+                world,
+                x + 128 - 1,
+                ground_h(world, level, tile_x + 1, tile_z) - y,
+                z + 1,
+            ) && self.occluded(
+                world,
+                x + 128 - 1,
+                ground_h(world, level, tile_x + 1, tile_z + 1) - y,
+                z + 128 - 1,
+            ) && self.occluded(
+                world,
+                x + 1,
+                ground_h(world, level, tile_x, tile_z + 1) - y,
+                z + 128 - 1,
+            );
         }
         false
     }
@@ -3835,7 +4779,16 @@ impl RenderWorld {
     /// `spriteOccluded2(level, minX, maxX, minZ, maxZ, y)` from client-ts
     /// 2329-2373. The TS `z` local holds the min-x scene coordinate; kept
     /// verbatim.
-    fn sprite_occluded2(&mut self, world: &mut World, level: i32, min_x: i32, max_x: i32, min_z: i32, max_z: i32, y: i32) -> bool {
+    fn sprite_occluded2(
+        &mut self,
+        world: &mut World,
+        level: i32,
+        min_x: i32,
+        max_x: i32,
+        min_z: i32,
+        max_z: i32,
+        y: i32,
+    ) -> bool {
         let x: i32;
         let z: i32;
         if min_x != max_x || min_z != max_z {
@@ -3870,10 +4823,27 @@ impl RenderWorld {
         } else if self.ground_occluded(world, level, min_x, min_z) {
             x = min_x << 7;
             z = min_z << 7;
-            return self.occluded(world, x + 1, ground_h(world, level, min_x, min_z) - y, z + 1)
-                && self.occluded(world, x + 128 - 1, ground_h(world, level, min_x + 1, min_z) - y, z + 1)
-                && self.occluded(world, x + 128 - 1, ground_h(world, level, min_x + 1, min_z + 1) - y, z + 128 - 1)
-                && self.occluded(world, x + 1, ground_h(world, level, min_x, min_z + 1) - y, z + 128 - 1);
+            return self.occluded(
+                world,
+                x + 1,
+                ground_h(world, level, min_x, min_z) - y,
+                z + 1,
+            ) && self.occluded(
+                world,
+                x + 128 - 1,
+                ground_h(world, level, min_x + 1, min_z) - y,
+                z + 1,
+            ) && self.occluded(
+                world,
+                x + 128 - 1,
+                ground_h(world, level, min_x + 1, min_z + 1) - y,
+                z + 128 - 1,
+            ) && self.occluded(
+                world,
+                x + 1,
+                ground_h(world, level, min_x, min_z + 1) - y,
+                z + 128 - 1,
+            );
         }
         false
     }
@@ -3883,7 +4853,11 @@ impl RenderWorld {
         let stride_z = world.max_tile_z + 1;
         let stride_x = world.max_tile_x + 1;
         let index = (level * stride_x + x) * stride_z + z;
-        world.occlusion_cycle.get(index as usize).copied().unwrap_or(0)
+        world
+            .occlusion_cycle
+            .get(index as usize)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// `occluded(x, y, z)` from client-ts 2374-2442: test a point against
@@ -3893,7 +4867,8 @@ impl RenderWorld {
             let Some(occluder_index) = self.active_occluders.get(i).copied().flatten() else {
                 continue;
             };
-            let Some(occluder) = world.occluders.get(occluder_index).and_then(|o| o.as_ref()) else {
+            let Some(occluder) = world.occluders.get(occluder_index).and_then(|o| o.as_ref())
+            else {
                 continue;
             };
 
@@ -3976,16 +4951,7 @@ fn vis_backing_at(world: &RenderWorld, dx: i32, dz: i32) -> bool {
 /// `World.insideTriangle(...)` from client-ts 2443-2461. i64 cross products
 /// (screen coordinates can reach ±335k, so the products overflow i32).
 #[allow(clippy::too_many_arguments)]
-fn inside_triangle(
-    x: i32,
-    y: i32,
-    y0: i32,
-    y1: i32,
-    y2: i32,
-    x0: i32,
-    x1: i32,
-    x2: i32,
-) -> bool {
+fn inside_triangle(x: i32, y: i32, y0: i32, y1: i32, y2: i32, x0: i32, x1: i32, x2: i32) -> bool {
     if y < y0 && y < y1 && y < y2 {
         return false;
     } else if y > y0 && y > y1 && y > y2 {
@@ -3996,12 +4962,12 @@ fn inside_triangle(
         return false;
     }
 
-    let cross_product_01 =
-        (y as i64 - y0 as i64) * (x1 as i64 - x0 as i64) - (x as i64 - x0 as i64) * (y1 as i64 - y0 as i64);
-    let cross_product_20 =
-        (y as i64 - y2 as i64) * (x0 as i64 - x2 as i64) - (x as i64 - x2 as i64) * (y0 as i64 - y2 as i64);
-    let cross_product_12 =
-        (y as i64 - y1 as i64) * (x2 as i64 - x1 as i64) - (x as i64 - x1 as i64) * (y2 as i64 - y1 as i64);
+    let cross_product_01 = (y as i64 - y0 as i64) * (x1 as i64 - x0 as i64)
+        - (x as i64 - x0 as i64) * (y1 as i64 - y0 as i64);
+    let cross_product_20 = (y as i64 - y2 as i64) * (x0 as i64 - x2 as i64)
+        - (x as i64 - x2 as i64) * (y0 as i64 - y2 as i64);
+    let cross_product_12 = (y as i64 - y1 as i64) * (x2 as i64 - x1 as i64)
+        - (x as i64 - x1 as i64) * (y2 as i64 - y1 as i64);
     cross_product_01 * cross_product_12 > 0 && cross_product_12 * cross_product_20 > 0
 }
 
@@ -4093,46 +5059,54 @@ impl GpuVertex {
     }
 }
 
-/// The GPU scene mesh: opaque faces first, then translucent, so the
-/// backend can draw two ranges (depth-write on / alpha-blend).
+/// The GPU scene mesh: scenery/ground opaque first, then walls, then
+/// translucent. Walls draw after scenery so a same-tile booth that
+/// occupies the wall's thickness loses `LessEqual` to the wall facade
+/// (the CPU's back-wall pass after sprites).
 #[derive(Default, Clone)]
 pub struct SceneMesh {
     opaque: Vec<GpuVertex>,
+    walls: Vec<GpuVertex>,
     translucent: Vec<GpuVertex>,
 }
 
 impl SceneMesh {
-    /// The mesh as one opaque-first vertex list.
+    /// The mesh as one opaque-first vertex list (scenery, then walls,
+    /// then translucent).
     pub fn vertices(self) -> Vec<GpuVertex> {
         let mut all = self.opaque;
+        all.extend(self.walls);
         all.extend(self.translucent);
         all
     }
 
-    /// Sort opaque triangles far-first (descending minimum camera-space z)
-    /// with a stable tie-break. The depth test is `LessEqual`, so the last
-    /// triangle written at a depth wins; far-first plus `LessEqual` is the
-    /// painter's algorithm the CPU uses — a nearer wall overwrites a flush
-    /// sprite face, and coplanar faces within a model keep their face order
-    /// (later face wins) without z-fighting.
+    /// Sort each opaque group far-first (descending minimum camera-space
+    /// z). Walls stay a separate group so they are still written after
+    /// scenery; `LessEqual` then lets a coplanar wall overwrite a booth.
     pub fn sort_opaque_far_first(&mut self) {
-        let mut tris: Vec<(f32, [GpuVertex; 3])> = self
-            .opaque
-            .chunks_exact(3)
-            .map(|c| (c[0].z.min(c[1].z).min(c[2].z), [c[0], c[1], c[2]]))
-            .collect();
-        tris.sort_by(|a, b| b.0.total_cmp(&a.0));
-        self.opaque = tris.into_iter().flat_map(|(_, t)| t).collect();
+        fn sort_group(verts: &mut Vec<GpuVertex>) {
+            let mut tris: Vec<(f32, [GpuVertex; 3])> = verts
+                .chunks_exact(3)
+                .map(|c| (c[0].z.min(c[1].z).min(c[2].z), [c[0], c[1], c[2]]))
+                .collect();
+            tris.sort_by(|a, b| b.0.total_cmp(&a.0));
+            *verts = tris.into_iter().flat_map(|(_, t)| t).collect();
+        }
+        sort_group(&mut self.opaque);
+        sort_group(&mut self.walls);
     }
 
-    /// Vertex count of the opaque prefix (`vertices()[..n]`).
+    /// Vertex count of the opaque prefix (`vertices()[..n]`), including
+    /// the wall bucket.
     pub fn opaque_len(&self) -> usize {
-        self.opaque.len()
+        self.opaque.len() + self.walls.len()
     }
 
-    fn push(&mut self, v0: GpuVertex, v1: GpuVertex, v2: GpuVertex, translucent: bool) {
+    fn push(&mut self, v0: GpuVertex, v1: GpuVertex, v2: GpuVertex, translucent: bool, wall: bool) {
         if translucent {
             self.translucent.extend([v0, v1, v2]);
+        } else if wall {
+            self.walls.extend([v0, v1, v2]);
         } else {
             self.opaque.extend([v0, v1, v2]);
         }
@@ -4198,8 +5172,13 @@ fn compute_face_uvs(
     let v1 = (v8x * v5x + v8y * v5y + v8z * v5z) * f;
     let v2 = (v8x * v6x + v8y * v6y + v8z * v6z) * f;
 
-    let pack = |x: f32| (x * 256.0).clamp(0.0, 255.0) as u32;
-    ([pack(u0), pack(u1), pack(u2)], [pack(v0), pack(v1), pack(v2)])
+    // RuneLite `computeFaceUvs` stores `(int)(u * 256)` unclamped; the
+    // sampler ClampToEdge handles out-of-range, matching `vert.glsl`.
+    let pack = |x: f32| (x * 256.0) as i32 as u32;
+    (
+        [pack(u0), pack(u1), pack(u2)],
+        [pack(v0), pack(v1), pack(v2)],
+    )
 }
 
 /// One camera-space face vertex plus the per-vertex attributes that must be
@@ -4283,7 +5262,14 @@ mod near_plane_tests {
     use super::{clip_near_intersection, clip_near_plane, ClipVertex};
 
     fn v(x: i32, y: i32, z: i32) -> ClipVertex {
-        ClipVertex { x, y, z, shade: 0, u: 0, v: 0 }
+        ClipVertex {
+            x,
+            y,
+            z,
+            shade: 0,
+            u: 0,
+            v: 0,
+        }
     }
 
     /// A triangle with one vertex behind the near plane: the clipped output
@@ -4301,8 +5287,14 @@ mod near_plane_tests {
         assert_eq!(clipped[3].z, 100);
         // The two intersections are distinct: on edge A→C and edge A→B.
         let (i_ac, i_ab) = (clipped[0], clipped[1]);
-        assert!(i_ab.x > 0 && i_ab.y == 0, "A→B intersection lies on y=0, x>0");
-        assert!(i_ac.x == 0 && i_ac.y > 0, "A→C intersection lies on x=0, y>0");
+        assert!(
+            i_ab.x > 0 && i_ab.y == 0,
+            "A→B intersection lies on y=0, x>0"
+        );
+        assert!(
+            i_ac.x == 0 && i_ac.y > 0,
+            "A→C intersection lies on x=0, y>0"
+        );
     }
 
     #[test]
@@ -4338,6 +5330,44 @@ fn face_winding_passes(pix: &Pix3DDraw, clipped: &[ClipVertex]) -> bool {
     wrapping_cross(x0 - x1, y2 - y1, y0 - y1, x2 - x1) > 0
 }
 
+/// World-space shift that slides a scene sprite off a same-tile wall's
+/// thickness (16 units, the loc model span) toward the tile interior.
+/// `WSHAPE0` bits: west=1 north=2 east=4 south=8.
+fn scenery_inward_nudge(
+    world: &World,
+    level: i32,
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+) -> (i32, i32) {
+    const THICK: i32 = 16;
+    let mut dx = 0i32;
+    let mut dz = 0i32;
+    for tx in min_x..=max_x {
+        for tz in min_z..=max_z {
+            let Some(wall) = tile_at(&world.squares, level, tx, tz).and_then(|t| t.wall.as_ref())
+            else {
+                continue;
+            };
+            let bits = wall.angle1 | wall.angle2;
+            if bits & 1 != 0 {
+                dx = THICK;
+            }
+            if bits & 2 != 0 {
+                dz = -THICK;
+            }
+            if bits & 4 != 0 {
+                dx = -THICK;
+            }
+            if bits & 8 != 0 {
+                dz = THICK;
+            }
+        }
+    }
+    (dx, dz)
+}
+
 /// `ModelSource.worldRender` for the GPU path: fetch the temp model,
 /// record its `minY`, then mesh its faces. The `Model` variant meshes its
 /// geometry directly (the TS `Model` override).
@@ -4354,6 +5384,7 @@ fn emit_scene_model(
     rel_y: i32,
     rel_z: i32,
     typecode: i32,
+    wall: bool,
 ) {
     if crate::debug_enabled() {
         let loc_id = (typecode >> 14) & 0x7fff;
@@ -4366,9 +5397,11 @@ fn emit_scene_model(
                 SceneModel::Model(m) => m.clone(),
                 _ => model.get_temp_model(cache, loop_cycle).unwrap_or_default(),
             };
-            if let (Some(rt), Some(fc), Some(fca)) =
-                (&model.face_render_type, &model.face_colour, &model.face_colour_a)
-            {
+            if let (Some(rt), Some(fc), Some(fca)) = (
+                &model.face_render_type,
+                &model.face_colour,
+                &model.face_colour_a,
+            ) {
                 let mut sample = Vec::new();
                 for (f, &t) in rt.iter().enumerate() {
                     let ty = t & 0x3;
@@ -4377,7 +5410,12 @@ fn emit_scene_model(
                             "(ty{ty} tex{} shade{} pr{})",
                             fc.get(f).copied().unwrap_or(-1),
                             fca.get(f).copied().unwrap_or(-1),
-                            model.face_priority.as_ref().and_then(|p| p.get(f)).copied().unwrap_or(-1)
+                            model
+                                .face_priority
+                                .as_ref()
+                                .and_then(|p| p.get(f))
+                                .copied()
+                                .unwrap_or(-1)
                         ));
                     }
                 }
@@ -4398,9 +5436,11 @@ fn emit_scene_model(
         // colour. Report it once per loc id to trace the re-resolve path.
         if let SceneModel::Model(m) = &*model {
             if m.face_colour_a.is_none() {
-                static UNLIT: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<i32>>> =
-                    std::sync::OnceLock::new();
-                let unlit = UNLIT.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+                static UNLIT: std::sync::OnceLock<
+                    std::sync::Mutex<std::collections::HashSet<i32>>,
+                > = std::sync::OnceLock::new();
+                let unlit =
+                    UNLIT.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
                 if unlit.lock().unwrap().insert(loc_id) {
                     eprintln!("[unlit] loc {loc_id} reached emitter with no face_colour_a (faces skipped)");
                 }
@@ -4409,7 +5449,9 @@ fn emit_scene_model(
     }
     match model {
         SceneModel::Model(model) => {
-            emit_model_faces(model, pix, mesh, cam, yaw, rel_x, rel_y, rel_z, typecode);
+            emit_model_faces(
+                model, pix, mesh, cam, yaw, rel_x, rel_y, rel_z, typecode, wall,
+            );
         }
         _ => {
             if let Some(temp) = model.get_temp_model(cache, loop_cycle) {
@@ -4423,7 +5465,9 @@ fn emit_scene_model(
                     SceneModel::SpotAnim(anim) => anim.min_y = min_y,
                     SceneModel::Model(_) => unreachable!(),
                 }
-                emit_model_faces(&temp, pix, mesh, cam, yaw, rel_x, rel_y, rel_z, typecode);
+                emit_model_faces(
+                    &temp, pix, mesh, cam, yaw, rel_x, rel_y, rel_z, typecode, wall,
+                );
             }
         }
     }
@@ -4447,6 +5491,7 @@ fn emit_model_faces(
     rel_y: i32,
     rel_z: i32,
     typecode: i32,
+    wall: bool,
 ) {
     // The area_game viewport the projection origin was set for.
     const SCENE_W: i32 = 512;
@@ -4462,7 +5507,10 @@ fn emit_model_faces(
     };
 
     // `worldRender`'s model-space bounding-box test.
-    let z_prime = (rel_z.wrapping_mul(cam.cos_yaw).wrapping_sub(rel_x.wrapping_mul(cam.sin_yaw))) >> 16;
+    let z_prime = (rel_z
+        .wrapping_mul(cam.cos_yaw)
+        .wrapping_sub(rel_x.wrapping_mul(cam.sin_yaw)))
+        >> 16;
     let mid_z = rel_y
         .wrapping_mul(cam.sin_pitch)
         .wrapping_add(z_prime.wrapping_mul(cam.cos_pitch))
@@ -4473,7 +5521,10 @@ fn emit_model_faces(
         return;
     }
 
-    let mid_x = (rel_z.wrapping_mul(cam.sin_yaw).wrapping_add(rel_x.wrapping_mul(cam.cos_yaw))) >> 16;
+    let mid_x = (rel_z
+        .wrapping_mul(cam.sin_yaw)
+        .wrapping_add(rel_x.wrapping_mul(cam.cos_yaw)))
+        >> 16;
     let mut left_x = (mid_x.wrapping_sub(model.radius)) << 9;
     if left_x.wrapping_div(max_z) >= SCENE_W {
         return;
@@ -4498,8 +5549,12 @@ fn emit_model_faces(
         return;
     }
 
-    // The `worldRender` AABB mouse pick (task 7: AABB-only, no per-face
-    // exact test — the minimenu options still resolve per model).
+    // `worldRender` AABB pre-test. Locs (`use_aabb_mouse_check == false`)
+    // then require a projected face to contain the mouse, matching CPU
+    // `render2`. Entities that set the AABB flag (objs/npcs/players) pick
+    // here. AABB-only loc picks are what open a door on a walk-by click;
+    // RuneLite's GPU plugin never replaces clickboxes.
+    let mut picking = false;
     if typecode > 0 && pix.mouse_check {
         let mut z = mid_z - radius_cos_pitch;
         if z <= 50 {
@@ -4522,10 +5577,11 @@ fn emit_model_faces(
         let mouse_x = pix.mouse_x - pix.origin_x;
         let mouse_y = pix.mouse_y - pix.origin_y;
         if mouse_x > left_x && mouse_x < right_x && mouse_y > top_y && mouse_y < bottom_y {
-            if let Some(slot) = pix.picked_entity_typecode.get_mut(pix.picked_count as usize) {
-                *slot = typecode;
+            if model.use_aabb_mouse_check {
+                Model::pick(pix, typecode);
+            } else {
+                picking = true;
             }
-            pix.picked_count += 1;
         }
     }
 
@@ -4540,34 +5596,53 @@ fn emit_model_faces(
     let mut cam_y = vec![0i32; vertex_count];
     let mut cam_z = vec![0i32; vertex_count];
     for v in 0..vertex_count {
-        let (Some(&x0), Some(&y0), Some(&z0)) =
-            (point_x.get(v), point_y.get(v), point_z.get(v))
+        let (Some(&x0), Some(&y0), Some(&z0)) = (point_x.get(v), point_y.get(v), point_z.get(v))
         else {
             continue;
         };
         let (mut x, mut y, mut z) = (x0, y0, z0);
         if yaw != 0 {
-            let temp = (z.wrapping_mul(sin_yaw_m).wrapping_add(x.wrapping_mul(cos_yaw_m))) >> 16;
-            z = (z.wrapping_mul(cos_yaw_m).wrapping_sub(x.wrapping_mul(sin_yaw_m))) >> 16;
+            let temp = (z
+                .wrapping_mul(sin_yaw_m)
+                .wrapping_add(x.wrapping_mul(cos_yaw_m)))
+                >> 16;
+            z = (z
+                .wrapping_mul(cos_yaw_m)
+                .wrapping_sub(x.wrapping_mul(sin_yaw_m)))
+                >> 16;
             x = temp;
         }
         x = x.wrapping_add(rel_x);
         y = y.wrapping_add(rel_y);
         z = z.wrapping_add(rel_z);
-        let temp = (z.wrapping_mul(cam.sin_yaw).wrapping_add(x.wrapping_mul(cam.cos_yaw))) >> 16;
-        z = (z.wrapping_mul(cam.cos_yaw).wrapping_sub(x.wrapping_mul(cam.sin_yaw))) >> 16;
+        let temp = (z
+            .wrapping_mul(cam.sin_yaw)
+            .wrapping_add(x.wrapping_mul(cam.cos_yaw)))
+            >> 16;
+        z = (z
+            .wrapping_mul(cam.cos_yaw)
+            .wrapping_sub(x.wrapping_mul(cam.sin_yaw)))
+            >> 16;
         x = temp;
-        let temp = (y.wrapping_mul(cam.cos_pitch).wrapping_sub(z.wrapping_mul(cam.sin_pitch))) >> 16;
-        z = (y.wrapping_mul(cam.sin_pitch).wrapping_add(z.wrapping_mul(cam.cos_pitch))) >> 16;
+        let temp = (y
+            .wrapping_mul(cam.cos_pitch)
+            .wrapping_sub(z.wrapping_mul(cam.sin_pitch)))
+            >> 16;
+        z = (y
+            .wrapping_mul(cam.sin_pitch)
+            .wrapping_add(z.wrapping_mul(cam.cos_pitch)))
+            >> 16;
         y = temp;
         cam_x[v] = x;
         cam_y[v] = y;
         cam_z[v] = z;
     }
 
-    let (Some(face_vertex_a), Some(face_vertex_b), Some(face_vertex_c)) =
-        (&model.face_vertex_a, &model.face_vertex_b, &model.face_vertex_c)
-    else {
+    let (Some(face_vertex_a), Some(face_vertex_b), Some(face_vertex_c)) = (
+        &model.face_vertex_a,
+        &model.face_vertex_b,
+        &model.face_vertex_c,
+    ) else {
         return;
     };
     let face_colour_a = model.face_colour_a.as_ref();
@@ -4598,6 +5673,29 @@ fn emit_model_faces(
         let (x_a, y_a, z_a) = (cam_x[a], cam_y[a], cam_z[a]);
         let (x_b, y_b, z_b) = (cam_x[b], cam_y[b], cam_z[b]);
         let (x_c, y_c, z_c) = (cam_x[c], cam_y[c], cam_z[c]);
+
+        // CPU `render2` loc pick: projected-face bbox, first hit wins.
+        if picking && z_a >= 50 && z_b >= 50 && z_c >= 50 {
+            let sx_a = pix.origin_x + x_a.wrapping_shl(9).wrapping_div(z_a);
+            let sy_a = pix.origin_y + y_a.wrapping_shl(9).wrapping_div(z_a);
+            let sx_b = pix.origin_x + x_b.wrapping_shl(9).wrapping_div(z_b);
+            let sy_b = pix.origin_y + y_b.wrapping_shl(9).wrapping_div(z_b);
+            let sx_c = pix.origin_x + x_c.wrapping_shl(9).wrapping_div(z_c);
+            let sy_c = pix.origin_y + y_c.wrapping_shl(9).wrapping_div(z_c);
+            if model.is_mouse_roughly_inside_triangle(
+                pix.mouse_x,
+                pix.mouse_y,
+                sy_a,
+                sy_b,
+                sy_c,
+                sx_a,
+                sx_b,
+                sx_c,
+            ) {
+                Model::pick(pix, typecode);
+                picking = false;
+            }
+        }
 
         // `render3`: per-vertex shades, flat for render types 1 and 3.
         let (Some(fca), Some(fcb), Some(fcc)) = (face_colour_a, face_colour_b, face_colour_c)
@@ -4665,43 +5763,67 @@ fn emit_model_faces(
             // textured wall/fence/door still emits vertices on the GPU path.
             let tex_id = tex_id.clamp(0, 49) as u32;
             let textured_face = (render_type >> 2) as usize;
-            let (uvs, vvs) =
-                match (&model.face_texture_p, &model.face_texture_m, &model.face_texture_n) {
-                    (Some(tex_p), Some(tex_m), Some(tex_n)) => {
-                        match (
-                            tex_p.get(textured_face),
-                            tex_m.get(textured_face),
-                            tex_n.get(textured_face),
-                        ) {
-                            (Some(&t_a), Some(&t_b), Some(&t_c)) => compute_face_uvs(
-                                point_x,
-                                point_y,
-                                point_z,
-                                a,
-                                b,
-                                c,
-                                t_a as usize,
-                                t_b as usize,
-                                t_c as usize,
-                            ),
-                            // The texture-vertex index is out of range: fall
-                            // back to RuneLite `computeFaceUvs`'s no-texture-
-                            // face basis (a→(0,0), b→(1,0), c→(0,1)) rather
-                            // than dropping the face.
-                            _ => ([0, 255, 0], [0, 0, 255]),
-                        }
+            let (uvs, vvs) = match (
+                &model.face_texture_p,
+                &model.face_texture_m,
+                &model.face_texture_n,
+            ) {
+                (Some(tex_p), Some(tex_m), Some(tex_n)) => {
+                    match (
+                        tex_p.get(textured_face),
+                        tex_m.get(textured_face),
+                        tex_n.get(textured_face),
+                    ) {
+                        (Some(&t_a), Some(&t_b), Some(&t_c)) => compute_face_uvs(
+                            point_x,
+                            point_y,
+                            point_z,
+                            a,
+                            b,
+                            c,
+                            t_a as usize,
+                            t_b as usize,
+                            t_c as usize,
+                        ),
+                        // The texture-vertex index is out of range: fall
+                        // back to RuneLite `computeFaceUvs`'s no-texture-
+                        // face basis (a→(0,0), b→(1,0), c→(0,1)) rather
+                        // than dropping the face.
+                        _ => ([0, 255, 0], [0, 0, 255]),
                     }
-                    _ => ([0, 255, 0], [0, 0, 255]),
-                };
+                }
+                _ => ([0, 255, 0], [0, 0, 255]),
+            };
             Some((tex_id + 1, uvs, vvs))
         } else {
             None
         };
 
         let verts = [
-            ClipVertex { x: x_a, y: y_a, z: z_a, shade: shade_a, u: textured.map_or(0, |(_, u, _)| u[0]), v: textured.map_or(0, |(_, _, v)| v[0]) },
-            ClipVertex { x: x_b, y: y_b, z: z_b, shade: shade_b, u: textured.map_or(0, |(_, u, _)| u[1]), v: textured.map_or(0, |(_, _, v)| v[1]) },
-            ClipVertex { x: x_c, y: y_c, z: z_c, shade: shade_c, u: textured.map_or(0, |(_, u, _)| u[2]), v: textured.map_or(0, |(_, _, v)| v[2]) },
+            ClipVertex {
+                x: x_a,
+                y: y_a,
+                z: z_a,
+                shade: shade_a,
+                u: textured.map_or(0, |(_, u, _)| u[0]),
+                v: textured.map_or(0, |(_, _, v)| v[0]),
+            },
+            ClipVertex {
+                x: x_b,
+                y: y_b,
+                z: z_b,
+                shade: shade_b,
+                u: textured.map_or(0, |(_, u, _)| u[1]),
+                v: textured.map_or(0, |(_, _, v)| v[1]),
+            },
+            ClipVertex {
+                x: x_c,
+                y: y_c,
+                z: z_c,
+                shade: shade_c,
+                u: textured.map_or(0, |(_, u, _)| u[2]),
+                v: textured.map_or(0, |(_, _, v)| v[2]),
+            },
         ];
 
         // The CPU clips faces crossing the near plane (`render3_z_clip`),
@@ -4720,13 +5842,47 @@ fn emit_model_faces(
         let translucent = alpha != 255;
         for i in 1..clipped.len() - 1 {
             let (v0, v1, v2) = (clipped[0], clipped[i], clipped[i + 1]);
-            emitted_min_z = emitted_min_z.min(v0.z as f32).min(v1.z as f32).min(v2.z as f32);
+            emitted_min_z = emitted_min_z
+                .min(v0.z as f32)
+                .min(v1.z as f32)
+                .min(v2.z as f32);
             if let Some((tex_id_plus_1, _, _)) = textured {
                 mesh.push(
-                    GpuVertex::textured(v0.x, v0.y, v0.z, v0.u, v0.v, v0.shade, alpha, bias, tex_id_plus_1),
-                    GpuVertex::textured(v1.x, v1.y, v1.z, v1.u, v1.v, v1.shade, alpha, bias, tex_id_plus_1),
-                    GpuVertex::textured(v2.x, v2.y, v2.z, v2.u, v2.v, v2.shade, alpha, bias, tex_id_plus_1),
+                    GpuVertex::textured(
+                        v0.x,
+                        v0.y,
+                        v0.z,
+                        v0.u,
+                        v0.v,
+                        v0.shade,
+                        alpha,
+                        bias,
+                        tex_id_plus_1,
+                    ),
+                    GpuVertex::textured(
+                        v1.x,
+                        v1.y,
+                        v1.z,
+                        v1.u,
+                        v1.v,
+                        v1.shade,
+                        alpha,
+                        bias,
+                        tex_id_plus_1,
+                    ),
+                    GpuVertex::textured(
+                        v2.x,
+                        v2.y,
+                        v2.z,
+                        v2.u,
+                        v2.v,
+                        v2.shade,
+                        alpha,
+                        bias,
+                        tex_id_plus_1,
+                    ),
                     translucent,
+                    wall,
                 );
             } else {
                 mesh.push(
@@ -4734,6 +5890,7 @@ fn emit_model_faces(
                     GpuVertex::new(v1.x, v1.y, v1.z, v1.shade, alpha, bias),
                     GpuVertex::new(v2.x, v2.y, v2.z, v2.shade, alpha, bias),
                     translucent,
+                    wall,
                 );
             }
         }
@@ -4799,11 +5956,23 @@ fn emit_ground(
         let mut x = ground.vertex_x[i] - cam.eye_x;
         let mut y = ground.vertex_y[i] - cam.eye_y;
         let mut z = ground.vertex_z[i] - cam.eye_z;
-        let tmp = (z.wrapping_mul(cam.sin_yaw).wrapping_add(x.wrapping_mul(cam.cos_yaw))) >> 16;
-        z = (z.wrapping_mul(cam.cos_yaw).wrapping_sub(x.wrapping_mul(cam.sin_yaw))) >> 16;
+        let tmp = (z
+            .wrapping_mul(cam.sin_yaw)
+            .wrapping_add(x.wrapping_mul(cam.cos_yaw)))
+            >> 16;
+        z = (z
+            .wrapping_mul(cam.cos_yaw)
+            .wrapping_sub(x.wrapping_mul(cam.sin_yaw)))
+            >> 16;
         x = tmp;
-        let tmp = (y.wrapping_mul(cam.cos_pitch).wrapping_sub(z.wrapping_mul(cam.sin_pitch))) >> 16;
-        z = (y.wrapping_mul(cam.sin_pitch).wrapping_add(z.wrapping_mul(cam.cos_pitch))) >> 16;
+        let tmp = (y
+            .wrapping_mul(cam.cos_pitch)
+            .wrapping_sub(z.wrapping_mul(cam.sin_pitch)))
+            >> 16;
+        z = (y
+            .wrapping_mul(cam.sin_pitch)
+            .wrapping_add(z.wrapping_mul(cam.cos_pitch)))
+            >> 16;
         y = tmp;
         cam_x.push(x);
         cam_y.push(y);
@@ -4902,6 +6071,7 @@ fn emit_ground(
                 GpuVertex::textured(x1, y1, z1, u1, v1, colour_b, 255, 0, tex + 1),
                 GpuVertex::textured(x2, y2, z2, u2, v2, colour_c, 255, 0, tex + 1),
                 false,
+                false,
             );
         } else {
             let shade_of = |c: i32| match tex_average {
@@ -4912,6 +6082,7 @@ fn emit_ground(
                 GpuVertex::new(x0, y0, z0, shade_of(colour_a), 255, 0),
                 GpuVertex::new(x1, y1, z1, shade_of(colour_b), 255, 0),
                 GpuVertex::new(x2, y2, z2, shade_of(colour_c), 255, 0),
+                false,
                 false,
             );
         }
@@ -4949,11 +6120,23 @@ fn emit_quick_ground(
     let mut sx = [0i32; 4];
     let mut sy = [0i32; 4];
     for i in 0..4 {
-        let tmp = (z[i].wrapping_mul(cam.sin_yaw).wrapping_add(x[i].wrapping_mul(cam.cos_yaw))) >> 16;
-        z[i] = (z[i].wrapping_mul(cam.cos_yaw).wrapping_sub(x[i].wrapping_mul(cam.sin_yaw))) >> 16;
+        let tmp = (z[i]
+            .wrapping_mul(cam.sin_yaw)
+            .wrapping_add(x[i].wrapping_mul(cam.cos_yaw)))
+            >> 16;
+        z[i] = (z[i]
+            .wrapping_mul(cam.cos_yaw)
+            .wrapping_sub(x[i].wrapping_mul(cam.sin_yaw)))
+            >> 16;
         x[i] = tmp;
-        let tmp = (y[i].wrapping_mul(cam.cos_pitch).wrapping_sub(z[i].wrapping_mul(cam.sin_pitch))) >> 16;
-        z[i] = (y[i].wrapping_mul(cam.sin_pitch).wrapping_add(z[i].wrapping_mul(cam.cos_pitch))) >> 16;
+        let tmp = (y[i]
+            .wrapping_mul(cam.cos_pitch)
+            .wrapping_sub(z[i].wrapping_mul(cam.sin_pitch)))
+            >> 16;
+        z[i] = (y[i]
+            .wrapping_mul(cam.sin_pitch)
+            .wrapping_add(z[i].wrapping_mul(cam.cos_pitch)))
+            >> 16;
         y[i] = tmp;
         if z[i] < 50 {
             return;
@@ -4987,7 +6170,16 @@ fn emit_quick_ground(
     // Triangle 1: corners (2, 3, 1), shades (ne, nw, se).
     if wrapping_cross(sx[2] - sx[3], sy[1] - sy[3], sy[2] - sy[3], sx[1] - sx[3]) > 0 {
         if world.click
-            && inside_triangle(world.click_x, world.click_y, sy[2], sy[3], sy[1], sx[2], sx[3], sx[1])
+            && inside_triangle(
+                world.click_x,
+                world.click_y,
+                sy[2],
+                sy[3],
+                sy[1],
+                sx[2],
+                sx[3],
+                sx[1],
+            )
         {
             world.ground_x = tile_x;
             world.ground_z = tile_z;
@@ -4999,9 +6191,40 @@ fn emit_quick_ground(
                 let (u3, v3) = projective_uv(corner(ba), corner(bb), corner(bc), corner(3));
                 let (u1, v1) = projective_uv(corner(ba), corner(bb), corner(bc), corner(1));
                 mesh.push(
-                    GpuVertex::textured(x[2], y[2], z[2], u2, v2, ground.colour_ne, 255, 0, tex + 1),
-                    GpuVertex::textured(x[3], y[3], z[3], u3, v3, ground.colour_nw, 255, 0, tex + 1),
-                    GpuVertex::textured(x[1], y[1], z[1], u1, v1, ground.colour_se, 255, 0, tex + 1),
+                    GpuVertex::textured(
+                        x[2],
+                        y[2],
+                        z[2],
+                        u2,
+                        v2,
+                        ground.colour_ne,
+                        255,
+                        0,
+                        tex + 1,
+                    ),
+                    GpuVertex::textured(
+                        x[3],
+                        y[3],
+                        z[3],
+                        u3,
+                        v3,
+                        ground.colour_nw,
+                        255,
+                        0,
+                        tex + 1,
+                    ),
+                    GpuVertex::textured(
+                        x[1],
+                        y[1],
+                        z[1],
+                        u1,
+                        v1,
+                        ground.colour_se,
+                        255,
+                        0,
+                        tex + 1,
+                    ),
+                    false,
                     false,
                 );
             } else {
@@ -5009,6 +6232,7 @@ fn emit_quick_ground(
                     GpuVertex::new(x[2], y[2], z[2], shade_of(ground.colour_ne), 255, 0),
                     GpuVertex::new(x[3], y[3], z[3], shade_of(ground.colour_nw), 255, 0),
                     GpuVertex::new(x[1], y[1], z[1], shade_of(ground.colour_se), 255, 0),
+                    false,
                     false,
                 );
             }
@@ -5018,7 +6242,16 @@ fn emit_quick_ground(
     // Triangle 2: corners (0, 1, 3), shades (sw, se, nw).
     if wrapping_cross(sx[0] - sx[1], sy[3] - sy[1], sy[0] - sy[1], sx[3] - sx[1]) > 0 {
         if world.click
-            && inside_triangle(world.click_x, world.click_y, sy[0], sy[1], sy[3], sx[0], sx[1], sx[3])
+            && inside_triangle(
+                world.click_x,
+                world.click_y,
+                sy[0],
+                sy[1],
+                sy[3],
+                sx[0],
+                sx[1],
+                sx[3],
+            )
         {
             world.ground_x = tile_x;
             world.ground_z = tile_z;
@@ -5029,9 +6262,40 @@ fn emit_quick_ground(
                 let (u1, v1) = projective_uv(corner(0), corner(1), corner(3), corner(1));
                 let (u3, v3) = projective_uv(corner(0), corner(1), corner(3), corner(3));
                 mesh.push(
-                    GpuVertex::textured(x[0], y[0], z[0], u0, v0, ground.colour_sw, 255, 0, tex + 1),
-                    GpuVertex::textured(x[1], y[1], z[1], u1, v1, ground.colour_se, 255, 0, tex + 1),
-                    GpuVertex::textured(x[3], y[3], z[3], u3, v3, ground.colour_nw, 255, 0, tex + 1),
+                    GpuVertex::textured(
+                        x[0],
+                        y[0],
+                        z[0],
+                        u0,
+                        v0,
+                        ground.colour_sw,
+                        255,
+                        0,
+                        tex + 1,
+                    ),
+                    GpuVertex::textured(
+                        x[1],
+                        y[1],
+                        z[1],
+                        u1,
+                        v1,
+                        ground.colour_se,
+                        255,
+                        0,
+                        tex + 1,
+                    ),
+                    GpuVertex::textured(
+                        x[3],
+                        y[3],
+                        z[3],
+                        u3,
+                        v3,
+                        ground.colour_nw,
+                        255,
+                        0,
+                        tex + 1,
+                    ),
+                    false,
                     false,
                 );
             } else {
@@ -5039,6 +6303,7 @@ fn emit_quick_ground(
                     GpuVertex::new(x[0], y[0], z[0], shade_of(ground.colour_sw), 255, 0),
                     GpuVertex::new(x[1], y[1], z[1], shade_of(ground.colour_se), 255, 0),
                     GpuVertex::new(x[3], y[3], z[3], shade_of(ground.colour_nw), 255, 0),
+                    false,
                     false,
                 );
             }

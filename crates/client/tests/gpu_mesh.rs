@@ -116,7 +116,10 @@ fn scene_mesh_builds_ground_and_wall_triangles() {
     let opaque_len = mesh.opaque_len();
     let vertices = mesh.vertices();
 
-    assert!(!vertices.is_empty(), "a camera-facing world must mesh geometry");
+    assert!(
+        !vertices.is_empty(),
+        "a camera-facing world must mesh geometry"
+    );
     assert!(
         opaque_len > 0 && opaque_len <= vertices.len(),
         "the opaque prefix must cover the (all-opaque) mesh"
@@ -506,7 +509,16 @@ fn hsl_to_rgb_wgsl(shade: u32, brightness: f32) -> [f32; 3] {
 fn hsl_to_rgb_matches_colour_table() {
     Pix3D::init_colour_table(0.6);
     let brightness = Pix3D::colour_brightness() as f32;
-    let shades = [0u32, 1, 127, 128, 200 * 128 + 100, 40 * 128 + 80, 0x6464, 0xffff];
+    let shades = [
+        0u32,
+        1,
+        127,
+        128,
+        200 * 128 + 100,
+        40 * 128 + 80,
+        0x6464,
+        0xffff,
+    ];
     for shade in shades {
         let table = Pix3D::colour_table()[shade as usize];
         let got = hsl_to_rgb_wgsl(shade, brightness);
@@ -524,4 +536,166 @@ fn hsl_to_rgb_matches_colour_table() {
             );
         }
     }
+}
+
+/// A 128-wide south-facing door. The XZ cylinder is ~64, so the worldRender
+/// AABB inflates on the near-z side when the loc sits off-centre (the
+/// grazing-angle walk-by case). Locs keep `use_aabb_mouse_check = false`:
+/// RuneLite's GPU plugin never replaces clickboxes, and the CPU path only
+/// AABB-pretests then requires the projected face to contain the mouse.
+fn angled_door_model() -> client::dash3d::Model {
+    let mut model = client::dash3d::Model::default();
+    model.num_points = 4;
+    model.point_x = Some(vec![-64, 64, 64, -64]);
+    model.point_y = Some(vec![0, 0, -180, -180]);
+    model.point_z = Some(vec![0, 0, 0, 0]);
+    model.num_faces = 2;
+    model.face_vertex_a = Some(vec![0, 0]);
+    model.face_vertex_b = Some(vec![1, 2]);
+    model.face_vertex_c = Some(vec![2, 3]);
+    model.face_colour_a = Some(vec![WALL_SHADE, WALL_SHADE]);
+    model.face_colour_b = Some(vec![WALL_SHADE, WALL_SHADE]);
+    model.face_colour_c = Some(vec![WALL_SHADE, WALL_SHADE]);
+    model.calc_bounding_cylinder();
+    model
+}
+
+/// Packed loc typecode: entity 2, loc id 1530, scene tile (1, 2).
+const DOOR_TYPECODE: i32 = (2 << 29) | (1530 << 14) | (2 << 7) | 1;
+
+/// Off-centre identity-camera placement that inflates the loc AABB to the
+/// right of the projected faces. Mouse at this screen point is inside the
+/// AABB and outside the face bbox — CPU locs miss, AABB-only hits.
+const DOOR_REL_X: i32 = 200;
+const DOOR_REL_Z: i32 = 300;
+const DOOR_BESIDE_MOUSE_X: i32 = 760;
+const DOOR_BESIDE_MOUSE_Y: i32 = 160;
+
+/// GPU loc picking must match the CPU loc path (AABB is only a pre-test;
+/// the face has to contain the mouse). Clicking the ground beside a door
+/// must not append the loc — that is what left-clicks Open instead of
+/// Walk here.
+#[test]
+fn gpu_loc_pick_is_per_face_not_aabb() {
+    Pix3D::init_colour_table(0.6);
+
+    let door = angled_door_model();
+    let mut pix = Pix3DDraw::default();
+    let mut map = client::graphics::PixMap::new(512, 334);
+    {
+        let mut surface =
+            client::graphics::Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        pix.set_render_clipping(&surface);
+        pix.mouse_check = true;
+        pix.mouse_x = DOOR_BESIDE_MOUSE_X;
+        pix.mouse_y = DOOR_BESIDE_MOUSE_Y;
+        door.world_render(
+            &mut pix,
+            &mut surface,
+            0,
+            0,
+            65536,
+            0,
+            65536,
+            DOOR_REL_X,
+            0,
+            DOOR_REL_Z,
+            DOOR_TYPECODE,
+        );
+    }
+    assert_eq!(
+        pix.picked_count, 0,
+        "CPU loc pick is per-face: mouse beside the door must miss"
+    );
+
+    let mut aabb_door = angled_door_model();
+    aabb_door.use_aabb_mouse_check = true;
+    pix.picked_count = 0;
+    {
+        let mut surface =
+            client::graphics::Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        pix.set_render_clipping(&surface);
+        pix.mouse_check = true;
+        pix.mouse_x = DOOR_BESIDE_MOUSE_X;
+        pix.mouse_y = DOOR_BESIDE_MOUSE_Y;
+        aabb_door.world_render(
+            &mut pix,
+            &mut surface,
+            0,
+            0,
+            65536,
+            0,
+            65536,
+            DOOR_REL_X,
+            0,
+            DOOR_REL_Z,
+            DOOR_TYPECODE,
+        );
+    }
+    assert!(
+        pix.picked_count >= 1,
+        "AABB-only would swallow a click beside the door (the GPU bug)"
+    );
+
+    // GPU path: vis-test camera that meshes a wall at tile (1,2). Relative
+    // to that camera the door sits at (0, 50, 128), pitch 128. Viewport
+    // centre is inside the inflated AABB and outside the projected faces
+    // (CPU loc pick misses; GPU AABB currently hits).
+    let mut world = flat_world();
+    world.set_wall(0, 1, 2, 2000, 8, 0, DOOR_TYPECODE, 0, 0, 0, 0, 0);
+    let mut rw = RenderWorld::new();
+    rw.set_wall_model(
+        &world,
+        0,
+        1,
+        2,
+        Some(SceneModel::Model(angled_door_model())),
+        None,
+    );
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
+
+    pix.picked_count = 0;
+    {
+        let mut surface =
+            client::graphics::Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        pix.set_render_clipping(&surface);
+        pix.mouse_check = true;
+        pix.mouse_x = 256;
+        pix.mouse_y = 160;
+        door.world_render(
+            &mut pix,
+            &mut surface,
+            0,
+            Pix3D::sin_table()[128],
+            Pix3D::cos_table()[128],
+            0,
+            65536,
+            0,
+            50,
+            128,
+            DOOR_TYPECODE,
+        );
+    }
+    assert_eq!(
+        pix.picked_count, 0,
+        "CPU loc pick misses at the vis-camera viewport centre"
+    );
+
+    let mut gpu_pix = Pix3DDraw::default();
+    gpu_pix.set_clipping(512, 334);
+    gpu_pix.mouse_check = true;
+    gpu_pix.mouse_x = 256;
+    gpu_pix.mouse_y = 160;
+    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut gpu_pix);
+    assert!(
+        mesh.vertices()
+            .iter()
+            .any(|v| (v.abhsl & 0xffff) as i32 == WALL_SHADE),
+        "the door loc must actually be in the GPU mesh or the pick miss is a vis false-pass"
+    );
+    assert_eq!(
+        gpu_pix.picked_count, 0,
+        "GPU loc pick must be per-face like the CPU; AABB-only opens doors on walk-by clicks"
+    );
 }

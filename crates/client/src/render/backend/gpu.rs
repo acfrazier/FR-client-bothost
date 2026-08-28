@@ -21,8 +21,9 @@
 //! selection test.
 //!
 //! Known divergences from the CPU path (documented in `render/world.rs`):
-//! textured faces sample the model texture array (see `gpu_atlas.rs`), mouse picks
-//! are AABB-only, the occluder tests are skipped (the depth buffer
+//! textured faces sample the model texture array (see `gpu_atlas.rs`), loc
+//! mouse picks use the CPU AABB pre-test plus the render2 face bbox,
+//! the occluder tests are skipped (the depth buffer
 //! occludes), and the 2D chrome draws on the CPU into the persistent
 //! `draw_area`, which `finish` uploads as one RGBA8 texture and composites
 //! over the scene (a black pixel inside the scene window is the scene's
@@ -34,10 +35,12 @@ use crate::client::client::Client;
 use crate::graphics::pix2d::coverage_guard;
 use crate::graphics::{Pix2D, Pix3D, Pix3DDraw, PixMap};
 use crate::render::backend::gpu_atlas::GpuAssets;
-use crate::render::backend::{BackendKind, CpuBackend, FrameKind, FrameOutput, RenderBackend, TextureHandle};
+use crate::render::backend::{
+    BackendKind, CpuBackend, FrameKind, FrameOutput, RenderBackend, TextureHandle,
+};
+use crate::render::draw::get_av_h;
 use crate::render::world::{GpuVertex, SceneMesh};
 use crate::render::Renderer;
-use crate::render::draw::get_av_h;
 
 /// The wgpu scene texture size: `area_game` is 512×334, blitted at (4, 4).
 const SCENE_W: u32 = 512;
@@ -62,7 +65,11 @@ static CONTEXT: OnceLock<Result<Arc<GpuContext>, String>> = OnceLock::new();
 pub fn inject_device(device: wgpu::Device, queue: wgpu::Queue) {
     CONTEXT.get_or_init(|| {
         let assets = Arc::new(Mutex::new(GpuAssets::new(&device, &queue)));
-        Ok(Arc::new(GpuContext { device, queue, assets }))
+        Ok(Arc::new(GpuContext {
+            device,
+            queue,
+            assets,
+        }))
     });
 }
 
@@ -119,7 +126,11 @@ fn init_gpu() -> Result<Arc<GpuContext>, String> {
     }))
     .map_err(|e| format!("device: {e}"))?;
     let assets = Arc::new(Mutex::new(GpuAssets::new(&device, &queue)));
-    Ok(Arc::new(GpuContext { device, queue, assets }))
+    Ok(Arc::new(GpuContext {
+        device,
+        queue,
+        assets,
+    }))
 }
 
 /// The scene pipeline: a passthrough projection (camera-space vertices,
@@ -228,12 +239,12 @@ fn vs_main(in: VsIn) -> VsOut {
 
     // The projection mirrors the CPU `origin + (x << 9) / z` (origin = the
     // 512×334 area_game centre). clip.z is set so the interpolated depth
-    // is perspective-correct and stays in [0, 1] for every z >= 50. The
-    // face priority biases it *nearer* (higher priority wins under
-    // `CompareFunction::LessEqual`, with the mesh sorted far-first),
-    // matching the CPU painter's ascending priority-bucket order;
-    // priorities are ≤ ~11, so bias/128 ≤ ~0.086 and the near plane is
-    // never crossed.
+    // is perspective-correct and stays in [0, 1] for every z >= 50.
+    // RuneLite `vert.glsl` does `screenPos.z += float(bias) / 128.0` after
+    // a reverse-z projection (`Mat4.projection`, `GL_GREATER`); we subtract
+    // the same term under `LessEqual`. Face priority (0..11) is too small
+    // to hide a 16-unit wall/booth overlap — that is handled in the mesh
+    // builder, not by stretching this bias.
     out.position = vec4<f32>(in.pos.x * SCALE_X, in.pos.y * SCALE_Y, z - NEAR - f32(bias) / 128.0, z);
     out.color = hslToRgb(hsl);
     out.hsl = f32(hsl);
@@ -254,9 +265,13 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         // samples `textures` by `fTextureId - 1`; ids beyond the array
         // clamp instead of dropping, so textured faces never vanish).
         let id = min(in.tex_id - 1u, 49u);
-        let uv = clamp(vec2<f32>(in.u * 0.5, in.v * 0.5) / 128.0, vec2<f32>(0.0), vec2<f32>(1.0));
+        // RuneLite `vert.glsl`: `fUv = tex / 256` with no shader clamp.
+        // `frag.glsl` samples the mipmapped atlas, then `textureLod(..., 0)`
+        // for alpha discard so mips do not punch holes.
+        let uv = vec2<f32>(in.u, in.v) / 256.0;
         let t = textureSample(model_atlas, model_sampler, uv, i32(id));
-        if (t.a < 0.5) { discard; }
+        let t0 = textureSampleLevel(model_atlas, model_sampler, uv, i32(id), 0.0);
+        if (t0.a < 1.0) { discard; }
         // The CPU's per-texel brightness: the interpolated 7-bit shade
         // (0..127, `Model.getColour`'s `127 - scalar`) selects one of the
         // four pre-baked texel blocks with bits 4-5 and then halves it for
@@ -381,7 +396,11 @@ impl GpuBackend {
 
         let scene_texture = context.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("r274 scene"),
-            size: wgpu::Extent3d { width: SCENE_W, height: SCENE_H, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: SCENE_W,
+                height: SCENE_H,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -393,7 +412,11 @@ impl GpuBackend {
         let scene_view = scene_texture.create_view(&Default::default());
         let depth_texture = context.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("r274 scene depth"),
-            size: wgpu::Extent3d { width: SCENE_W, height: SCENE_H, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: SCENE_W,
+                height: SCENE_H,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -405,7 +428,11 @@ impl GpuBackend {
 
         let frame_texture = context.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("r274 frame"),
-            size: wgpu::Extent3d { width: FRAME_W, height: FRAME_H, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: FRAME_W,
+                height: FRAME_H,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -449,25 +476,30 @@ impl GpuBackend {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let brightness_bind_group = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("r274 scene uniforms group"),
-            layout: &brightness_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &brightness_buf,
-                    offset: 0,
-                    size: wgpu::BufferSize::new(16),
-                }),
-            }],
-        });
+        let brightness_bind_group = context
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("r274 scene uniforms group"),
+                layout: &brightness_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &brightness_buf,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(16),
+                    }),
+                }],
+            });
 
         let assets = context.assets.lock().unwrap();
         let layout = context
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("r274 scene layout"),
-                bind_group_layouts: &[Some(&assets.model_bind_group_layout), Some(&brightness_layout)],
+                bind_group_layouts: &[
+                    Some(&assets.model_bind_group_layout),
+                    Some(&brightness_layout),
+                ],
                 immediate_size: 0,
             });
         let pipeline_opaque = make_pipeline(&context.device, &layout, &shader, true);
@@ -493,89 +525,96 @@ impl GpuBackend {
                 label: Some("r274 chrome composite shader"),
                 source: wgpu::ShaderSource::Wgsl(CHROME_SHADER.into()),
             });
-        let chrome_layout = context
-            .device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("r274 chrome composite layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-        let chrome_pipeline_layout = context
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("r274 chrome composite pipeline layout"),
-                bind_group_layouts: &[Some(&chrome_layout)],
-                immediate_size: 0,
-            });
-        let chrome_pipeline = context
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("r274 chrome composite"),
-                layout: Some(&chrome_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &chrome_shader,
-                    entry_point: Some("vs_main"),
-                    compilation_options: Default::default(),
-                    buffers: &[wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<ChromeVertex>() as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2],
-                    }],
-                },
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState {
-                    count: 1,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &chrome_shader,
-                    entry_point: Some("fs_main"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba8Unorm,
-                        blend: Some(wgpu::BlendState {
-                            color: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::SrcAlpha,
-                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: wgpu::BlendOperation::Add,
+        let chrome_layout =
+            context
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("r274 chrome composite layout"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
                             },
-                            alpha: wgpu::BlendComponent::OVER,
-                        }),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            });
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                });
+        let chrome_pipeline_layout =
+            context
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("r274 chrome composite pipeline layout"),
+                    bind_group_layouts: &[Some(&chrome_layout)],
+                    immediate_size: 0,
+                });
+        let chrome_pipeline =
+            context
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("r274 chrome composite"),
+                    layout: Some(&chrome_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &chrome_shader,
+                        entry_point: Some("vs_main"),
+                        compilation_options: Default::default(),
+                        buffers: &[wgpu::VertexBufferLayout {
+                            array_stride: std::mem::size_of::<ChromeVertex>() as u64,
+                            step_mode: wgpu::VertexStepMode::Vertex,
+                            attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2],
+                        }],
+                    },
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        strip_index_format: None,
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: None,
+                        unclipped_depth: false,
+                        polygon_mode: wgpu::PolygonMode::Fill,
+                        conservative: false,
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState {
+                        count: 1,
+                        mask: !0,
+                        alpha_to_coverage_enabled: false,
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &chrome_shader,
+                        entry_point: Some("fs_main"),
+                        compilation_options: Default::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba8Unorm,
+                            blend: Some(wgpu::BlendState {
+                                color: wgpu::BlendComponent {
+                                    src_factor: wgpu::BlendFactor::SrcAlpha,
+                                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                    operation: wgpu::BlendOperation::Add,
+                                },
+                                alpha: wgpu::BlendComponent::OVER,
+                            }),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
+                });
         let chrome_texture = context.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("r274 chrome upload"),
-            size: wgpu::Extent3d { width: FRAME_W, height: FRAME_H, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: FRAME_W,
+                height: FRAME_H,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -594,27 +633,59 @@ impl GpuBackend {
             mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
-        let chrome_bind_group = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("r274 chrome upload group"),
-            layout: &chrome_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&chrome_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&chrome_sampler),
-                },
-            ],
-        });
+        let chrome_bind_group = context
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("r274 chrome upload group"),
+                layout: &chrome_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&chrome_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&chrome_sampler),
+                    },
+                ],
+            });
         let chrome_vertices: [ChromeVertex; 6] = [
-            ChromeVertex { x: 0.0, y: 0.0, u: 0.0, v: 0.0 },
-            ChromeVertex { x: FRAME_W as f32, y: 0.0, u: 1.0, v: 0.0 },
-            ChromeVertex { x: 0.0, y: FRAME_H as f32, u: 0.0, v: 1.0 },
-            ChromeVertex { x: 0.0, y: FRAME_H as f32, u: 0.0, v: 1.0 },
-            ChromeVertex { x: FRAME_W as f32, y: 0.0, u: 1.0, v: 0.0 },
-            ChromeVertex { x: FRAME_W as f32, y: FRAME_H as f32, u: 1.0, v: 1.0 },
+            ChromeVertex {
+                x: 0.0,
+                y: 0.0,
+                u: 0.0,
+                v: 0.0,
+            },
+            ChromeVertex {
+                x: FRAME_W as f32,
+                y: 0.0,
+                u: 1.0,
+                v: 0.0,
+            },
+            ChromeVertex {
+                x: 0.0,
+                y: FRAME_H as f32,
+                u: 0.0,
+                v: 1.0,
+            },
+            ChromeVertex {
+                x: 0.0,
+                y: FRAME_H as f32,
+                u: 0.0,
+                v: 1.0,
+            },
+            ChromeVertex {
+                x: FRAME_W as f32,
+                y: 0.0,
+                u: 1.0,
+                v: 0.0,
+            },
+            ChromeVertex {
+                x: FRAME_W as f32,
+                y: FRAME_H as f32,
+                u: 1.0,
+                v: 1.0,
+            },
         ];
         let chrome_vertex_buf = context.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("r274 chrome quad"),
@@ -622,9 +693,11 @@ impl GpuBackend {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        context
-            .queue
-            .write_buffer(&chrome_vertex_buf, 0, bytemuck::cast_slice(&chrome_vertices));
+        context.queue.write_buffer(
+            &chrome_vertex_buf,
+            0,
+            bytemuck::cast_slice(&chrome_vertices),
+        );
 
         Ok(GpuBackend {
             context,
@@ -717,12 +790,12 @@ impl GpuBackend {
             .queue
             .write_buffer(&self.brightness_buf, 0, bytemuck::cast_slice(&brightness));
 
-        let mut encoder = self
-            .context
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("r274 scene encoder"),
-            });
+        let mut encoder =
+            self.context
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("r274 scene encoder"),
+                });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("r274 scene pass"),
@@ -809,7 +882,11 @@ fn make_pipeline(
         })],
     };
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some(if opaque { "r274 scene opaque" } else { "r274 scene translucent" }),
+        label: Some(if opaque {
+            "r274 scene opaque"
+        } else {
+            "r274 scene translucent"
+        }),
         layout: Some(layout),
         vertex,
         primitive: wgpu::PrimitiveState {
@@ -879,8 +956,13 @@ impl RenderBackend for GpuBackend {
 
         if !core.cinema_cam {
             if let Some(player) = &core.local_player {
-                let target_y =
-                    get_av_h(&core.groundh, &core.mapl, player.x, player.z, core.minusedlevel) - 50;
+                let target_y = get_av_h(
+                    &core.groundh,
+                    &core.mapl,
+                    player.x,
+                    player.z,
+                    core.minusedlevel,
+                ) - 50;
                 r.cam_follow(
                     core,
                     pitch,
@@ -933,8 +1015,8 @@ impl RenderBackend for GpuBackend {
         let loop_cycle = core.loop_cycle;
 
         // The GPU rasterization: mark the visible tiles, build the scene
-        // mesh (this also resolves the lazy model caches, appends the
-        // AABB mouse picks and runs the ground click raycast), render it
+        // mesh (this also resolves the lazy model caches, appends loc
+        // mouse picks and runs the ground click raycast), render it
         // into `scene_texture`.
         // Model textures upload into the shared array once (per texture
         // id), before the mesh is built so the ids resolve to layers.
@@ -943,8 +1025,17 @@ impl RenderBackend for GpuBackend {
             .lock()
             .unwrap()
             .ensure_model_textures(&r.pix3d);
-        r.world
-            .prepare_scene(&mut core.world, cache, loop_cycle, cam_x, cam_y, cam_z, level, cam_yaw, cam_pitch);
+        r.world.prepare_scene(
+            &mut core.world,
+            cache,
+            loop_cycle,
+            cam_x,
+            cam_y,
+            cam_z,
+            level,
+            cam_yaw,
+            cam_pitch,
+        );
         let mesh = r
             .world
             .build_scene_mesh(&mut core.world, cache, loop_cycle, &mut r.pix3d);
@@ -973,7 +1064,8 @@ impl RenderBackend for GpuBackend {
         r.texture_run_anims(core, cycle);
 
         core.pick_count = r.pix3d.picked_count;
-        core.pick_typecodes.copy_from_slice(&r.pix3d.picked_entity_typecode);
+        core.pick_typecodes
+            .copy_from_slice(&r.pix3d.picked_entity_typecode);
         r.other_overlays(core);
         drop(_cov_guard);
 
@@ -1010,12 +1102,12 @@ impl RenderBackend for GpuBackend {
     /// glyph shadow stays opaque); an uncovered pixel is the scene's hole
     /// (see [`draw_area_rgba`]). No readback.
     fn finish(&mut self, r: &mut Renderer) -> FrameOutput {
-        let mut encoder = self
-            .context
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("r274 frame encoder"),
-            });
+        let mut encoder =
+            self.context
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("r274 frame encoder"),
+                });
         {
             // An empty clear pass (begin + immediate end) — the frame
             // starts black each frame.
@@ -1050,14 +1142,23 @@ impl RenderBackend for GpuBackend {
                     origin: wgpu::Origin3d { x: 4, y: 4, z: 0 },
                     aspect: wgpu::TextureAspect::All,
                 },
-                wgpu::Extent3d { width: SCENE_W, height: SCENE_H, depth_or_array_layers: 1 },
+                wgpu::Extent3d {
+                    width: SCENE_W,
+                    height: SCENE_H,
+                    depth_or_array_layers: 1,
+                },
             );
         }
         // The CPU chrome body drew the 2D UI into the persistent
         // `draw_area`; upload it as one RGBA8 texture. The rows are padded
         // to wgpu's 256-byte `COPY_BYTES_PER_ROW_ALIGNMENT`.
         let bytes_per_row = ((FRAME_W * 4 + 255) / 256) * 256;
-        let rgba = draw_area_rgba(&r.draw_area, &self.overlay_coverage, self.scene_ready, bytes_per_row);
+        let rgba = draw_area_rgba(
+            &r.draw_area,
+            &self.overlay_coverage,
+            self.scene_ready,
+            bytes_per_row,
+        );
         self.context.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &self.chrome_texture,
@@ -1071,7 +1172,11 @@ impl RenderBackend for GpuBackend {
                 bytes_per_row: Some(bytes_per_row),
                 rows_per_image: Some(FRAME_H),
             },
-            wgpu::Extent3d { width: FRAME_W, height: FRAME_H, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width: FRAME_W,
+                height: FRAME_H,
+                depth_or_array_layers: 1,
+            },
         );
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1118,7 +1223,12 @@ impl RenderBackend for GpuBackend {
 /// buffer) is opaque *regardless of colour*, an uncovered pixel is the
 /// scene's hole. Outside the scene window the chrome is opaque; with no
 /// scene (title screen) the whole frame is opaque.
-fn draw_area_rgba(draw_area: &PixMap, coverage: &[u8], scene_ready: bool, bytes_per_row: u32) -> Vec<u8> {
+fn draw_area_rgba(
+    draw_area: &PixMap,
+    coverage: &[u8],
+    scene_ready: bool,
+    bytes_per_row: u32,
+) -> Vec<u8> {
     let mut bytes = Vec::with_capacity((bytes_per_row * FRAME_H) as usize);
     for y in 0..FRAME_H {
         for x in 0..FRAME_W {

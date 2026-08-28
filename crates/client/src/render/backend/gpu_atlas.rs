@@ -27,13 +27,58 @@
 //! epoch: a region evicted during a frame is only reused from the next
 //! frame on, so no recorded quad can sample an overwritten region.
 
-use crate::graphics::{Pix3DDraw, Pix32, Pix8, PixMap};
+use crate::graphics::{Pix32, Pix3DDraw, Pix8, PixMap};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 
 /// The texture array: 50 textures max, one 128×128 layer per id.
 const MODEL_LAYERS: u32 = 50;
 const MODEL_CELL: u32 = 128;
+/// RuneLite `TextureManager`: `glTexStorage3D(..., 8, GL_RGBA8, 128, 128, …)`.
+const MODEL_MIP_LEVELS: u32 = 8;
+
+/// Average a square RGBA8 image down 2× (box filter). Used to fill the
+/// model-atlas mip chain after lod 0, matching `glGenerateMipmap`.
+fn downsample_rgba(src: &[u8], width: u32) -> Vec<u8> {
+    let w = width as usize;
+    let hw = w / 2;
+    let mut dst = vec![0u8; hw * hw * 4];
+    for y in 0..hw {
+        for x in 0..hw {
+            let mut r = 0u32;
+            let mut g = 0u32;
+            let mut b = 0u32;
+            let mut a = 0u32;
+            for oy in 0..2 {
+                for ox in 0..2 {
+                    let i = ((y * 2 + oy) * w + (x * 2 + ox)) * 4;
+                    r += src[i] as u32;
+                    g += src[i + 1] as u32;
+                    b += src[i + 2] as u32;
+                    a += src[i + 3] as u32;
+                }
+            }
+            let o = (y * hw + x) * 4;
+            dst[o] = (r / 4) as u8;
+            dst[o + 1] = (g / 4) as u8;
+            dst[o + 2] = (b / 4) as u8;
+            dst[o + 3] = (a / 4) as u8;
+        }
+    }
+    dst
+}
+
+/// Lod 0 plus the 2× box-filter chain down to 1×1 (8 levels from 128).
+fn rgba_mip_chain(lod0: &[u8], mut width: u32) -> Vec<(u32, Vec<u8>)> {
+    let mut chain = vec![(width, lod0.to_vec())];
+    let mut src = lod0.to_vec();
+    while width > 1 {
+        src = downsample_rgba(&src, width);
+        width /= 2;
+        chain.push((width, src.clone()));
+    }
+    chain
+}
 
 /// The initial chrome sprite atlas size (grows by doubling the height).
 const SPRITE_ATLAS: (u32, u32) = (1024, 1024);
@@ -94,7 +139,11 @@ impl GpuAtlas {
     ) -> GpuAtlas {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
-            size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: size.0,
+                height: size.1,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -106,7 +155,17 @@ impl GpuAtlas {
             view_formats: &[],
         });
         let view = texture.create_view(&Default::default());
-        GpuAtlas { texture, view, size, max, layer, x: 0, y: 0, shelf_h: 0, generation: 0 }
+        GpuAtlas {
+            texture,
+            view,
+            size,
+            max,
+            layer,
+            x: 0,
+            y: 0,
+            shelf_h: 0,
+            generation: 0,
+        }
     }
 
     /// The texture view the chrome bind group binds.
@@ -149,7 +208,13 @@ impl GpuAtlas {
                 return None;
             }
         }
-        let region = Region { x: self.x, y: self.y, w, h, layer: self.layer };
+        let region = Region {
+            x: self.x,
+            y: self.y,
+            w,
+            h,
+            layer: self.layer,
+        };
         self.x += w;
         self.shelf_h = self.shelf_h.max(h);
         Some(region)
@@ -198,7 +263,11 @@ impl GpuAtlas {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            wgpu::Extent3d { width: old_w, height: old_h, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width: old_w,
+                height: old_h,
+                depth_or_array_layers: 1,
+            },
         );
         queue.submit([encoder.finish()]);
         self.texture = new_texture;
@@ -226,22 +295,28 @@ pub struct LayerAtlas {
 }
 
 impl LayerAtlas {
-    pub fn new(
-        device: &wgpu::Device,
-        label: &str,
-        size: (u32, u32),
-        max: u32,
-    ) -> LayerAtlas {
+    pub fn new(device: &wgpu::Device, label: &str, size: (u32, u32), max: u32) -> LayerAtlas {
         let mut layers = Vec::new();
         layers.push(GpuAtlas::new(device, label, size, max, 0));
-        LayerAtlas { layers, free: Vec::new(), max }
+        LayerAtlas {
+            layers,
+            free: Vec::new(),
+            max,
+        }
     }
 
     /// Allocate a `w×h` region on some layer: exact-size evicted regions
     /// (freed before `epoch`) are reused first, then the existing layers
     /// in order, then a fresh layer (up to `MAX_SPRITE_LAYERS`).
     /// `None` when every layer is full and no region can be reused.
-    pub fn alloc(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, w: u32, h: u32, epoch: u64) -> Option<Region> {
+    pub fn alloc(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        w: u32,
+        h: u32,
+        epoch: u64,
+    ) -> Option<Region> {
         if let Some(i) = self
             .free
             .iter()
@@ -259,7 +334,8 @@ impl LayerAtlas {
             let layer = self.layers.len() as u32;
             // A fresh layer starts at the atlas width, min(1024, cap) tall.
             let initial = (self.layers[0].size.0, self.max.min(1024));
-            let mut fresh = GpuAtlas::new(device, "r274 sprite atlas layer", initial, self.max, layer);
+            let mut fresh =
+                GpuAtlas::new(device, "r274 sprite atlas layer", initial, self.max, layer);
             if let Some(region) = fresh.alloc(device, queue, w, h) {
                 self.layers.push(fresh);
                 return Some(region);
@@ -271,7 +347,10 @@ impl LayerAtlas {
     /// Return an evicted region to the free list (reusable from the next
     /// epoch on).
     pub fn free_region(&mut self, region: Region, epoch: u64) {
-        self.free.push(FreeRegion { region, freed_epoch: epoch });
+        self.free.push(FreeRegion {
+            region,
+            freed_epoch: epoch,
+        });
     }
 
     /// The number of layers (a grow/appends change the bind group).
@@ -282,7 +361,10 @@ impl LayerAtlas {
     /// The current size of one layer (the quad flush resolves region UVs
     /// against it — layers may have grown).
     pub fn layer_size(&self, layer: u32) -> (u32, u32) {
-        self.layers.get(layer as usize).map(|l| l.size).unwrap_or((1, 1))
+        self.layers
+            .get(layer as usize)
+            .map(|l| l.size)
+            .unwrap_or((1, 1))
     }
 
     /// The texture views, one per layer, padded to `MAX_SPRITE_LAYERS`
@@ -335,7 +417,11 @@ struct CachedRegion {
 
 impl<K: Copy + Eq + std::hash::Hash> RegionCache<K> {
     fn new(bound: usize) -> RegionCache<K> {
-        RegionCache { bound, map: HashMap::new(), order: VecDeque::new() }
+        RegionCache {
+            bound,
+            map: HashMap::new(),
+            order: VecDeque::new(),
+        }
     }
 
     fn get(&mut self, key: K, epoch: u64) -> Option<Region> {
@@ -370,11 +456,16 @@ impl<K: Copy + Eq + std::hash::Hash> RegionCache<K> {
                 });
             victim.map(|(_, region)| (region, epoch))
         };
-        self.map.insert(key, CachedRegion { region, last_epoch: epoch });
+        self.map.insert(
+            key,
+            CachedRegion {
+                region,
+                last_epoch: epoch,
+            },
+        );
         self.order.push_back(key);
         evicted
     }
-
 }
 
 /// The shared, lazily-initialised GPU asset store (one per process). The
@@ -433,7 +524,7 @@ impl GpuAssets {
                 height: MODEL_CELL,
                 depth_or_array_layers: MODEL_LAYERS,
             },
-            mip_level_count: 1,
+            mip_level_count: MODEL_MIP_LEVELS,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
@@ -441,14 +532,17 @@ impl GpuAssets {
             view_formats: &[],
         });
         let model_view = model_atlas.create_view(&Default::default());
+        // RuneLite default anisotropic=1: mag nearest, min NEAREST_MIPMAP_LINEAR
+        // (nearest in-mip, linear between mips). Linear-without-mips was the
+        // notice-board / ground-clutter crawl.
         let model_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("r274 model sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
         let model_bind_group_layout =
@@ -675,8 +769,7 @@ impl GpuAssets {
     /// Rebuild the chrome bind group when an atlas has grown since the
     /// last rebuild (called after every chrome upload).
     fn refresh_chrome_bind_group(&mut self) {
-        if (self.sprite_atlas.generation(), self.font_atlas.generation())
-            != self.chrome_generations
+        if (self.sprite_atlas.generation(), self.font_atlas.generation()) != self.chrome_generations
         {
             self.rebuild_chrome_bind_group();
         }
@@ -779,7 +872,9 @@ impl GpuAssets {
         let region = match self.staged_regions.get(tag, epoch) {
             Some(region) => region,
             None => {
-                let region = self.sprite_atlas.alloc(&self.device, &self.queue, w, h, epoch)?;
+                let region = self
+                    .sprite_atlas
+                    .alloc(&self.device, &self.queue, w, h, epoch)?;
                 if let Some((freed, _)) = self.staged_regions.insert(tag, region, epoch) {
                     self.sprite_atlas.free_region(freed, epoch);
                 }
@@ -824,8 +919,17 @@ impl GpuAssets {
     /// Allocate a sprite-atlas region, upload the RGBA pixels, and cache
     /// the region under `key` (an LRU eviction returns the evicted region
     /// to the free list).
-    fn upload_sprite(&mut self, key: usize, w: u32, h: u32, rgba: &[u8], epoch: u64) -> Option<Region> {
-        let region = self.sprite_atlas.alloc(&self.device, &self.queue, w, h, epoch)?;
+    fn upload_sprite(
+        &mut self,
+        key: usize,
+        w: u32,
+        h: u32,
+        rgba: &[u8],
+        epoch: u64,
+    ) -> Option<Region> {
+        let region = self
+            .sprite_atlas
+            .alloc(&self.device, &self.queue, w, h, epoch)?;
         self.write_atlas(self.sprite_atlas.layer_texture(region.layer), region, rgba);
         self.refresh_chrome_bind_group();
         if let Some((freed, _)) = self.sprite_regions.insert(key, region, epoch) {
@@ -854,7 +958,11 @@ impl GpuAssets {
             wgpu::TexelCopyTextureInfo {
                 texture,
                 mip_level: 0,
-                origin: wgpu::Origin3d { x: region.x, y: region.y, z: 0 },
+                origin: wgpu::Origin3d {
+                    x: region.x,
+                    y: region.y,
+                    z: 0,
+                },
                 aspect: wgpu::TextureAspect::All,
             },
             rgba,
@@ -869,6 +977,52 @@ impl GpuAssets {
                 depth_or_array_layers: 1,
             },
         );
+    }
+
+    /// Write lod 0 and the box-filter mip chain for one array layer.
+    /// Rows of mips smaller than 64px are padded to wgpu's 256-byte copy
+    /// alignment.
+    fn write_model_mips(&self, layer: u32, lod0: &[u8]) {
+        const ALIGN: u32 = 256;
+        for (level, (width, rgba)) in rgba_mip_chain(lod0, MODEL_CELL).into_iter().enumerate() {
+            let unpadded = width * 4;
+            let padded = unpadded.div_ceil(ALIGN) * ALIGN;
+            let height = width;
+            let data: Vec<u8> = if padded == unpadded {
+                rgba
+            } else {
+                let mut buf = vec![0u8; (padded * height) as usize];
+                let u = unpadded as usize;
+                let p = padded as usize;
+                for y in 0..height as usize {
+                    buf[y * p..y * p + u].copy_from_slice(&rgba[y * u..(y + 1) * u]);
+                }
+                buf
+            };
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.model_atlas,
+                    mip_level: level as u32,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: 0,
+                        z: layer,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &data,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded),
+                    rows_per_image: Some(height),
+                },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
     }
 
     /// Upload any of the renderer's model textures not yet in the array
@@ -926,25 +1080,7 @@ impl GpuAssets {
                 }
             }
             let layer = id as u32;
-            self.queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &self.model_atlas,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d { x: 0, y: 0, z: layer },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &rgba,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(MODEL_CELL * 4),
-                    rows_per_image: Some(MODEL_CELL),
-                },
-                wgpu::Extent3d {
-                    width: MODEL_CELL,
-                    height: MODEL_CELL,
-                    depth_or_array_layers: 1,
-                },
-            );
+            self.write_model_mips(layer, &rgba);
             self.model_regions[id] = true;
             if crate::debug_enabled() {
                 let opaque = rgba.iter().skip(3).step_by(4).filter(|&&a| a != 0).count();
@@ -1025,12 +1161,46 @@ pub type SharedAssets = Mutex<GpuAssets>;
 mod tests {
     use super::*;
 
+    #[test]
+    fn downsample_rgba_averages_a_2x2_checker() {
+        // red, blue / red, blue → one magenta-ish texel.
+        let src = [
+            255, 0, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255, 0, 0, 255, 255,
+        ];
+        let mip = downsample_rgba(&src, 2);
+        assert_eq!(mip, [127, 0, 127, 255]);
+    }
+
+    #[test]
+    fn rgba_mip_chain_from_128_has_eight_levels() {
+        let lod0 = vec![255u8; (MODEL_CELL * MODEL_CELL * 4) as usize];
+        let chain = rgba_mip_chain(&lod0, MODEL_CELL);
+        assert_eq!(chain.len(), MODEL_MIP_LEVELS as usize);
+        let widths: Vec<u32> = chain.iter().map(|(w, _)| *w).collect();
+        assert_eq!(widths, vec![128, 64, 32, 16, 8, 4, 2, 1]);
+        assert_eq!(chain[7].1.len(), 4);
+        assert_eq!(&chain[7].1, &[255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn model_atlas_texture_reports_eight_mips() {
+        let Some((device, queue)) = test_device() else {
+            eprintln!("no adapter; skipping");
+            return;
+        };
+        let assets = GpuAssets::new(&device, &queue);
+        assert_eq!(
+            assets.model_atlas.mip_level_count(),
+            MODEL_MIP_LEVELS,
+            "RuneLite TextureManager allocates 8 mip levels on the 128px array"
+        );
+    }
+
     fn test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let adapter = pollster::block_on(instance.request_adapter(
-            &wgpu::RequestAdapterOptions::default(),
-        ))
-        .ok()?;
+        let adapter =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+                .ok()?;
         pollster::block_on(adapter.request_device(&Default::default())).ok()
     }
 
@@ -1050,7 +1220,11 @@ mod tests {
             count += 1;
         }
         assert_eq!(count, 8);
-        assert_eq!(atlas.size, (8, 16), "the layer must stop at the cap, never grow past it");
+        assert_eq!(
+            atlas.size,
+            (8, 16),
+            "the layer must stop at the cap, never grow past it"
+        );
     }
 
     /// Filling past one layer spills to fresh layers (never a panic), and
@@ -1086,7 +1260,10 @@ mod tests {
         // Freed at epoch 1: not reusable at epoch 1 (same frame)...
         atlas.free_region(first, 1);
         let second = atlas.alloc(&device, &queue, 4, 4, 1).unwrap();
-        assert_ne!(second, first, "a region freed this frame is not reused this frame");
+        assert_ne!(
+            second, first,
+            "a region freed this frame is not reused this frame"
+        );
         assert_eq!(atlas.layer_count(), 1);
         // ...but reusable from epoch 2 on (the freeing frame is flushed).
         atlas.free_region(second, 1);
@@ -1103,7 +1280,13 @@ mod tests {
     /// atlas without bound.
     #[test]
     fn region_cache_evicts_the_lru_entry() {
-        let r = |n: u32| Region { x: n, y: 0, w: 1, h: 1, layer: 0 };
+        let r = |n: u32| Region {
+            x: n,
+            y: 0,
+            w: 1,
+            h: 1,
+            layer: 0,
+        };
         let mut cache = RegionCache::<u32>::new(3);
         assert_eq!(cache.insert(1, r(1), 1), None);
         assert_eq!(cache.insert(2, r(2), 1), None);
@@ -1113,7 +1296,10 @@ mod tests {
         let (freed, _) = cache.insert(4, r(4), 1).unwrap();
         assert_eq!(freed, r(1), "the least-recently-used region is returned");
         assert_eq!(cache.map.len(), 3);
-        assert!(cache.get(1, 2).is_none(), "the evicted key must miss (it re-uploads)");
+        assert!(
+            cache.get(1, 2).is_none(),
+            "the evicted key must miss (it re-uploads)"
+        );
         assert!(cache.get(2, 2).is_some());
         // A fresh key with the cache full evicts again.
         cache.insert(5, r(5), 1);
