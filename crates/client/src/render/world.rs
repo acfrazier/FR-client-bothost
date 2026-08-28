@@ -552,8 +552,24 @@ impl RenderWorld {
     ) -> Option<SceneModel> {
         let loc = loc?;
         if loc.anim == -1 {
-            loc.get_model(cache, shape, angle, h_sw, h_se, h_ne, h_nw, -1)
-                .map(SceneModel::Model)
+            let model = loc.get_model(cache, shape, angle, h_sw, h_se, h_ne, h_nw, -1);
+            if crate::debug_enabled() {
+                if let Some(m) = &model {
+                    if let (Some(rt), Some(fc)) = (&m.face_render_type, &m.face_colour) {
+                        let mut textured = Vec::new();
+                        for (f, &t) in rt.iter().enumerate() {
+                            if t & 0x3 == 2 || t & 0x3 == 3 {
+                                textured.push((t & 0x3, fc.get(f).copied().unwrap_or(-1)));
+                            }
+                        }
+                        eprintln!(
+                            "[render] loc {loc_id} sharelight={} model textured={:?}",
+                            loc.sharelight, textured
+                        );
+                    }
+                }
+            }
+            model.map(SceneModel::Model)
         } else {
             Some(SceneModel::LocAnim(ClientLocAnim::new(
                 cache, loc_id, shape, angle, h_sw, h_se, h_ne, h_nw, loc.anim as usize, true,
@@ -592,8 +608,11 @@ impl RenderWorld {
         z: i32,
     ) {
         let stamp = world.tile_model_stamp(level, x, z);
-        let stale = self.slot(world, level, x, z).model_stamp != stamp;
-        if stale {
+        let old = self.slot(world, level, x, z).model_stamp;
+        if old != stamp {
+            if crate::debug_enabled() {
+                eprintln!("[resolve] tile ({x},{z}) level={level} stamp {old}->{stamp}");
+            }
             self.resolve_tile(world, cache, loop_cycle, level, x, z);
         }
     }
@@ -1244,6 +1263,27 @@ impl RenderWorld {
                                 self.share_light_gd(world, level, tile_x, tile_z, model);
                                 model.light(ambient, attenuation, light_src_x, light_src_y, light_src_z);
                             }
+                        }
+
+                        if crate::debug_enabled() {
+                            let (typecode, lit, hidden, unlit) = tile
+                                .wall_model1
+                                .as_ref()
+                                .map(|m| match m {
+                                    SceneModel::Model(model) => {
+                                        let lit = model.face_colour_a.as_ref().map(|f| f.iter().filter(|&&c| c != 0).count()).unwrap_or(0);
+                                        let hidden = model.face_render_type.as_ref().map(|rt| rt.iter().filter(|&&t| t == -1).count()).unwrap_or(0);
+                                        let unlit = model.face_colour_a.as_ref().map(|f| f.iter().filter(|&&c| c == 0).count()).unwrap_or(0);
+                                        (0, lit, hidden, unlit)
+                                    }
+                                    _ => (-1, 0, 0, 0),
+                                })
+                                .unwrap_or((-1, 0, 0, 0));
+                            let _ = typecode;
+                            eprintln!(
+                                "[share-light] tile ({tile_x},{tile_z}) wall faces={} lit={lit} hidden={hidden} unlit={unlit}",
+                                lit + hidden + unlit
+                            );
                         }
                     }
                     if let Some(tile) = tile {
@@ -4081,6 +4121,142 @@ fn compute_face_uvs(
     ([pack(u0), pack(u1), pack(u2)], [pack(v0), pack(v1), pack(v2)])
 }
 
+/// One camera-space face vertex plus the per-vertex attributes that must be
+/// interpolated when a face is clipped against the near plane (z = 50).
+#[derive(Clone, Copy)]
+struct ClipVertex {
+    x: i32,
+    y: i32,
+    z: i32,
+    shade: i32,
+    u: u32,
+    v: u32,
+}
+
+/// Clip a triangle against the near plane `z = 50` exactly like the CPU's
+/// `render3_z_clip`: process A, then B, then C; for each vertex keep it when
+/// in front, otherwise push the intersections with the *other* in-front
+/// vertices (for A: C then B; for B: A then C; for C: B then A). The output
+/// order matters — the winding test and the triangle fan consume it — so a
+/// Sutherland–Hodgman traversal with a different order would flip the
+/// winding and intermittently drop the face as the camera pans.
+fn clip_near_plane(verts: [ClipVertex; 3]) -> Vec<ClipVertex> {
+    let [a, b, c] = verts;
+    let mut out = Vec::with_capacity(4);
+    if a.z >= 50 {
+        out.push(a);
+    } else {
+        if c.z >= 50 {
+            out.push(clip_near_intersection(c, a));
+        }
+        if b.z >= 50 {
+            out.push(clip_near_intersection(b, a));
+        }
+    }
+    if b.z >= 50 {
+        out.push(b);
+    } else {
+        if a.z >= 50 {
+            out.push(clip_near_intersection(a, b));
+        }
+        if c.z >= 50 {
+            out.push(clip_near_intersection(c, b));
+        }
+    }
+    if c.z >= 50 {
+        out.push(c);
+    } else {
+        if b.z >= 50 {
+            out.push(clip_near_intersection(b, c));
+        }
+        if a.z >= 50 {
+            out.push(clip_near_intersection(a, c));
+        }
+    }
+    out
+}
+
+/// The point where the `outside → inside` edge crosses `z = 50`, with all
+/// interpolated attributes. `t = (50 - zOutside) * 65536 / (zInside - zOutside)`,
+/// then each value is `outside + (inside - outside) * t >> 16`.
+fn clip_near_intersection(inside: ClipVertex, outside: ClipVertex) -> ClipVertex {
+    let dz = (inside.z - outside.z).max(1) as i64;
+    let t = (50 - outside.z) as i64 * 65536 / dz;
+    let lerp = |a: i32, b: i32| -> i32 {
+        let a = a as i64;
+        let b = b as i64;
+        (a + ((b - a) * t >> 16)) as i32
+    };
+    ClipVertex {
+        x: lerp(outside.x, inside.x),
+        y: lerp(outside.y, inside.y),
+        z: 50,
+        shade: lerp(outside.shade, inside.shade),
+        u: lerp(outside.u as i32, inside.u as i32) as u32,
+        v: lerp(outside.v as i32, inside.v as i32) as u32,
+    }
+}
+
+#[cfg(test)]
+mod near_plane_tests {
+    use super::{clip_near_intersection, clip_near_plane, ClipVertex};
+
+    fn v(x: i32, y: i32, z: i32) -> ClipVertex {
+        ClipVertex { x, y, z, shade: 0, u: 0, v: 0 }
+    }
+
+    /// A triangle with one vertex behind the near plane: the clipped output
+    /// must match `render3_z_clip`'s A/B/C order — the winding test and the
+    /// triangle fan consume it, so the order is load-bearing.
+    #[test]
+    fn a_behind_clips_in_abc_order() {
+        // A behind, B and C in front.
+        let clipped = clip_near_plane([v(0, 0, 10), v(10, 0, 100), v(0, 10, 100)]);
+        assert_eq!(clipped.len(), 4, "one-behind clips to a quad");
+        // render3_z_clip order: clip(A→C), clip(A→B), B, C.
+        assert_eq!(clipped[0].z, 50);
+        assert_eq!(clipped[1].z, 50);
+        assert_eq!(clipped[2].z, 100);
+        assert_eq!(clipped[3].z, 100);
+        // The two intersections are distinct: on edge A→C and edge A→B.
+        let (i_ac, i_ab) = (clipped[0], clipped[1]);
+        assert!(i_ab.x > 0 && i_ab.y == 0, "A→B intersection lies on y=0, x>0");
+        assert!(i_ac.x == 0 && i_ac.y > 0, "A→C intersection lies on x=0, y>0");
+    }
+
+    #[test]
+    fn two_behind_clips_to_a_triangle() {
+        let clipped = clip_near_plane([v(0, 0, 10), v(10, 0, 10), v(0, 10, 100)]);
+        assert_eq!(clipped.len(), 3, "two-behind clips to a triangle");
+        assert!(clipped.iter().all(|p| p.z >= 50));
+    }
+
+    #[test]
+    fn all_behind_clips_to_nothing() {
+        let clipped = clip_near_plane([v(0, 0, 10), v(10, 0, 10), v(0, 10, 10)]);
+        assert!(clipped.is_empty(), "a fully-behind triangle is invisible");
+    }
+
+    #[test]
+    fn intersection_lands_on_the_near_plane_with_interpolated_xy() {
+        let p = clip_near_intersection(v(100, 0, 100), v(0, 0, 0));
+        assert_eq!(p.z, 50);
+        assert_eq!(p.x, 50, "half-way between x=0 and x=100");
+        assert_eq!(p.y, 0);
+    }
+}
+
+/// `render2`/`render3_z_clip`'s winding test on the first three screen-space
+/// vertices of a (possibly clipped) polygon: keep `cross > 0`.
+fn face_winding_passes(pix: &Pix3DDraw, clipped: &[ClipVertex]) -> bool {
+    let sx = |v: &ClipVertex| pix.origin_x + v.x.wrapping_shl(9).wrapping_div(v.z);
+    let sy = |v: &ClipVertex| pix.origin_y + v.y.wrapping_shl(9).wrapping_div(v.z);
+    let (x0, y0) = (sx(&clipped[0]), sy(&clipped[0]));
+    let (x1, y1) = (sx(&clipped[1]), sy(&clipped[1]));
+    let (x2, y2) = (sx(&clipped[2]), sy(&clipped[2]));
+    wrapping_cross(x0 - x1, y2 - y1, y0 - y1, x2 - x1) > 0
+}
+
 /// `ModelSource.worldRender` for the GPU path: fetch the temp model,
 /// record its `minY`, then mesh its faces. The `Model` variant meshes its
 /// geometry directly (the TS `Model` override).
@@ -4098,6 +4274,48 @@ fn emit_scene_model(
     rel_z: i32,
     typecode: i32,
 ) {
+    if crate::debug_enabled() {
+        let loc_id = (typecode >> 14) & 0x7fff;
+        static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<i32>>> =
+            std::sync::OnceLock::new();
+        let seen = SEEN.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+        let mut seen = seen.lock().unwrap();
+        if seen.insert(loc_id) {
+            let model = match model {
+                SceneModel::Model(m) => m.clone(),
+                _ => model.get_temp_model(cache, loop_cycle).unwrap_or_default(),
+            };
+            if let (Some(rt), Some(fc), Some(fca)) =
+                (&model.face_render_type, &model.face_colour, &model.face_colour_a)
+            {
+                let mut sample = Vec::new();
+                for (f, &t) in rt.iter().enumerate() {
+                    let ty = t & 0x3;
+                    if ty == 2 || ty == 3 {
+                        sample.push(format!(
+                            "(ty{ty} tex{} shade{})",
+                            fc.get(f).copied().unwrap_or(-1),
+                            fca.get(f).copied().unwrap_or(-1)
+                        ));
+                    }
+                }
+                eprintln!("[gpu-emit] loc {loc_id}: {}", sample.join(" "));
+            }
+        }
+        // A static model that reaches the emitter unlit (`face_colour_a`
+        // absent) emits no faces — the wall becomes the scene's black clear
+        // colour. Report it once per loc id to trace the re-resolve path.
+        if let SceneModel::Model(m) = &*model {
+            if m.face_colour_a.is_none() {
+                static UNLIT: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<i32>>> =
+                    std::sync::OnceLock::new();
+                let unlit = UNLIT.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+                if unlit.lock().unwrap().insert(loc_id) {
+                    eprintln!("[unlit] loc {loc_id} reached emitter with no face_colour_a (faces skipped)");
+                }
+            }
+        }
+    }
     match model {
         SceneModel::Model(model) => {
             emit_model_faces(model, pix, mesh, cam, yaw, rel_x, rel_y, rel_z, typecode);
@@ -4287,20 +4505,6 @@ fn emit_model_faces(
         let (x_a, y_a, z_a) = (cam_x[a], cam_y[a], cam_z[a]);
         let (x_b, y_b, z_b) = (cam_x[b], cam_y[b], cam_z[b]);
         let (x_c, y_c, z_c) = (cam_x[c], cam_y[c], cam_z[c]);
-        if z_a < 50 || z_b < 50 || z_c < 50 {
-            continue; // near plane (the GPU would clip; dropping matches the CPU's clipped-face handling here)
-        }
-
-        // `render2`'s winding test: project for the test, keep `> 0`.
-        let sx_a = pix.origin_x + x_a.wrapping_shl(9).wrapping_div(z_a);
-        let sy_a = pix.origin_y + y_a.wrapping_shl(9).wrapping_div(z_a);
-        let sx_b = pix.origin_x + x_b.wrapping_shl(9).wrapping_div(z_b);
-        let sy_b = pix.origin_y + y_b.wrapping_shl(9).wrapping_div(z_b);
-        let sx_c = pix.origin_x + x_c.wrapping_shl(9).wrapping_div(z_c);
-        let sy_c = pix.origin_y + y_c.wrapping_shl(9).wrapping_div(z_c);
-        if wrapping_cross(sx_a - sx_b, sy_c - sy_b, sy_a - sy_b, sx_c - sx_b) <= 0 {
-            continue;
-        }
 
         // `render3`: per-vertex shades, flat for render types 1 and 3.
         let (Some(fca), Some(fcb), Some(fcc)) = (face_colour_a, face_colour_b, face_colour_c)
@@ -4347,12 +4551,14 @@ fn emit_model_faces(
             .unwrap_or(0)
             .clamp(0, 255) as u32;
 
-        // Textured faces (`renderType & 0x3 == 2`): the texture id is
+        // Textured faces (`renderType & 0x3 == 2` or `3`): the texture id is
         // `faceColour[face]`; the three texture-mapping vertices
         // `faceTextureP/M/N[renderType >> 2]` define the texture plane.
-        // The per-vertex UV is RuneLite's `computeFaceUvs` in model space
+        // Type 3 is the flat-shaded texture variant (the CPU `render3`'s
+        // `else` branch shades it with a single `face_colour_a`). The
+        // per-vertex UV is RuneLite's `computeFaceUvs` in model space
         // (a→(0,0), b→(0,1), c→(1,0) in the texture), packed 0..255.
-        if r#type == 2 {
+        let textured = if r#type == 2 || r#type == 3 {
             let Some(face_colour) = &model.face_colour else {
                 continue;
             };
@@ -4394,20 +4600,47 @@ fn emit_model_faces(
                     }
                     _ => ([0, 255, 0], [0, 0, 255]),
                 };
-            let tex_id_plus_1 = tex_id + 1;
-            mesh.push(
-                GpuVertex::textured(x_a, y_a, z_a, uvs[0], vvs[0], shade_a, alpha, bias, tex_id_plus_1),
-                GpuVertex::textured(x_b, y_b, z_b, uvs[1], vvs[1], shade_b, alpha, bias, tex_id_plus_1),
-                GpuVertex::textured(x_c, y_c, z_c, uvs[2], vvs[2], shade_c, alpha, bias, tex_id_plus_1),
-                alpha != 255,
-            );
+            Some((tex_id + 1, uvs, vvs))
         } else {
-            mesh.push(
-                GpuVertex::new(x_a, y_a, z_a, shade_a, alpha, bias),
-                GpuVertex::new(x_b, y_b, z_b, shade_b, alpha, bias),
-                GpuVertex::new(x_c, y_c, z_c, shade_c, alpha, bias),
-                alpha != 255,
-            );
+            None
+        };
+
+        let verts = [
+            ClipVertex { x: x_a, y: y_a, z: z_a, shade: shade_a, u: textured.map_or(0, |(_, u, _)| u[0]), v: textured.map_or(0, |(_, _, v)| v[0]) },
+            ClipVertex { x: x_b, y: y_b, z: z_b, shade: shade_b, u: textured.map_or(0, |(_, u, _)| u[1]), v: textured.map_or(0, |(_, _, v)| v[1]) },
+            ClipVertex { x: x_c, y: y_c, z: z_c, shade: shade_c, u: textured.map_or(0, |(_, u, _)| u[2]), v: textured.map_or(0, |(_, _, v)| v[2]) },
+        ];
+
+        // The CPU clips faces crossing the near plane (`render3_z_clip`),
+        // never drops them; do the same here so a wall the camera walks up
+        // to does not vanish to the scene's black clear colour.
+        let clipped = if verts.iter().any(|v| v.z < 50) {
+            clip_near_plane(verts)
+        } else {
+            verts.to_vec()
+        };
+        if clipped.len() < 3 || !face_winding_passes(pix, &clipped) {
+            continue;
+        }
+
+        let translucent = alpha != 255;
+        for i in 1..clipped.len() - 1 {
+            let (v0, v1, v2) = (clipped[0], clipped[i], clipped[i + 1]);
+            if let Some((tex_id_plus_1, _, _)) = textured {
+                mesh.push(
+                    GpuVertex::textured(v0.x, v0.y, v0.z, v0.u, v0.v, v0.shade, alpha, bias, tex_id_plus_1),
+                    GpuVertex::textured(v1.x, v1.y, v1.z, v1.u, v1.v, v1.shade, alpha, bias, tex_id_plus_1),
+                    GpuVertex::textured(v2.x, v2.y, v2.z, v2.u, v2.v, v2.shade, alpha, bias, tex_id_plus_1),
+                    translucent,
+                );
+            } else {
+                mesh.push(
+                    GpuVertex::new(v0.x, v0.y, v0.z, v0.shade, alpha, bias),
+                    GpuVertex::new(v1.x, v1.y, v1.z, v1.shade, alpha, bias),
+                    GpuVertex::new(v2.x, v2.y, v2.z, v2.shade, alpha, bias),
+                    translucent,
+                );
+            }
         }
     }
 }

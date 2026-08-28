@@ -256,10 +256,15 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let uv = clamp(vec2<f32>(in.u * 0.5, in.v * 0.5) / 128.0, vec2<f32>(0.0), vec2<f32>(1.0));
         let t = textureSample(model_atlas, model_sampler, uv, i32(id));
         if (t.a < 0.5) { discard; }
-        // The CPU's per-texel brightness: the interpolated 16-bit shade's
-        // top two bits select the texel block (rgb, ~7/8, ~3/4, ~5/8).
-        let level = (i32(in.hsl) >> 14) & 3;
-        let factor = 1.0 - f32(level) * 0.125;
+        // The CPU's per-texel brightness: the interpolated 7-bit shade
+        // (0..127, `Model.getColour`'s `127 - scalar`) selects one of the
+        // four pre-baked texel blocks with bits 4-5 and then halves it for
+        // shades >= 64 with bit 6 (`Pix3D.textureRaster`'s
+        // `curU += (shadeA >> 3) & 0xc0000` and `shadeShift = shadeA >> 23`).
+        let s = u32(in.hsl) & 0x7fu;
+        let block = (s >> 4u) & 3u;
+        let block_factor = array<f32, 4>(1.0, 0.875, 0.75, 0.625)[block];
+        let factor = block_factor * select(1.0, 0.5, (s >> 6u) == 1u);
         return vec4<f32>(t.rgb * factor, in.alpha);
     }
     return vec4<f32>(in.color, in.alpha);

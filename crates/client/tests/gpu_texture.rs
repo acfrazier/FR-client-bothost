@@ -18,6 +18,11 @@ use client::render::world::GpuVertex;
 use client::render::{RenderWorld, Renderer};
 
 const SHADE: i32 = 200 * 128 + 100;
+/// The raw 16-bit shade carried on *textured* vertices. The CPU clamps the
+/// texel brightness to 0..127 (`Model.getColour`'s `127 - scalar`), so 0
+/// is full brightness — the block-0, no-halving bucket the GPU shader must
+/// honour.
+const TEX_SHADE: i32 = 0;
 const TEXTURE_RED: i32 = 7;
 const TEXTURE_BLUE: i32 = 12;
 
@@ -78,9 +83,9 @@ fn textured_wall_model() -> client::dash3d::Model {
     // `renderType & 0x3 == 2` = textured; `>> 2` = texture-vertex index 0.
     model.face_render_type = Some(vec![2, 2]);
     model.face_colour = Some(vec![TEXTURE_RED, TEXTURE_BLUE]);
-    model.face_colour_a = Some(vec![SHADE, SHADE]);
-    model.face_colour_b = Some(vec![SHADE, SHADE]);
-    model.face_colour_c = Some(vec![SHADE, SHADE]);
+    model.face_colour_a = Some(vec![TEX_SHADE, TEX_SHADE]);
+    model.face_colour_b = Some(vec![TEX_SHADE, TEX_SHADE]);
+    model.face_colour_c = Some(vec![TEX_SHADE, TEX_SHADE]);
     model.face_texture_p = Some(vec![0, 0]);
     model.face_texture_m = Some(vec![1, 1]);
     model.face_texture_n = Some(vec![2, 2]);
@@ -185,7 +190,7 @@ fn textured_model_mesh_carries_tex_id_and_uv() {
         if tex_plus != 0 {
             // A textured vertex packs texture id + 1 in the low 16 bits and
             // the fixed-point u in the high 16 bits, plus the raw shade.
-            assert_eq!((v.abhsl & 0xffff) as i32, SHADE, "a textured vertex carries the raw shade");
+            assert_eq!((v.abhsl & 0xffff) as i32, TEX_SHADE, "a textured vertex carries the raw shade");
             saw_nonzero_u |= (v.uv_tex >> 16) != 0;
             saw_nonzero_v |= v.v != 0;
         } else {
@@ -208,6 +213,150 @@ fn textured_model_mesh_carries_tex_id_and_uv() {
     );
 }
 
+/// A textured face with `renderType & 0x3 == 3` (textured, single flat
+/// shade) must still carry the texture id and UV — the CPU path treats
+/// type 3 as textured (`render_triangle`'s else branch). Before the fix the
+/// GPU emitter routed it through the flat branch, so books/shelves with
+/// flat-textured faces rendered as white void.
+#[test]
+fn textured_type3_face_carries_tex_id_and_uv() {
+    Pix3D::init_colour_table(0.6);
+    let mut pix = textured_pix();
+    let mut world = flat_world();
+    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+    let mut rw = RenderWorld::new();
+    let mut model = textured_wall_model();
+    // Both faces textured with a flat shade (renderType = 3 | 0<<2).
+    model.face_render_type = Some(vec![3, 3]);
+    rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
+    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
+
+    let mut textured = 0usize;
+    for v in mesh.vertices() {
+        if v.uv_tex & 0xffff != 0 {
+            textured += 1;
+            assert_eq!(
+                (v.abhsl & 0xffff) as i32,
+                TEX_SHADE,
+                "a type-3 textured vertex carries the flat shade"
+            );
+        }
+    }
+    assert!(
+        textured >= 3,
+        "type-3 textured faces must emit textured vertices, not flat (got {textured})"
+    );
+}
+
+/// A flat wall face whose near vertices fall behind the near plane (z < 50)
+/// must be clipped and still emit vertices, not dropped to the scene's black
+/// clear colour. Live: walking up to a wall puts its upper edge past the
+/// camera plane while the base is still in front.
+#[test]
+fn wall_face_crossing_the_near_plane_still_emits() {
+    Pix3D::init_colour_table(0.6);
+    let mut pix = Pix3DDraw::default();
+    pix.set_clipping(512, 334);
+
+    let mut world = flat_world();
+    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+    let mut rw = RenderWorld::new();
+    let mut model = client::dash3d::Model::default();
+    model.num_points = 4;
+    model.point_x = Some(vec![-60, 60, 60, -60]);
+    model.point_y = Some(vec![0, 0, -180, -180]);
+    model.point_z = Some(vec![0, 0, 0, 0]);
+    model.num_faces = 2;
+    model.face_vertex_a = Some(vec![0, 0]);
+    model.face_vertex_b = Some(vec![1, 2]);
+    model.face_vertex_c = Some(vec![2, 3]);
+    model.face_colour_a = Some(vec![SHADE, SHADE]);
+    model.face_colour_b = Some(vec![SHADE, SHADE]);
+    model.face_colour_c = Some(vec![SHADE, SHADE]);
+    model.calc_bounding_cylinder();
+    rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    // Camera 40 units in front of the wall (z=320): the base is in front
+    // of the near plane, the top vertices behind it.
+    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 280, 3, 0, 128);
+    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
+
+    let mut wall_verts = 0usize;
+    for v in mesh.vertices() {
+        if (v.abhsl & 0xffff) as i32 == SHADE {
+            wall_verts += 1;
+            assert!(v.z >= 50.0, "clipped wall vertices must stay on the near plane or in front");
+        }
+    }
+    assert!(
+        wall_verts >= 3,
+        "a wall face crossing the near plane must emit clipped vertices, not vanish (got {wall_verts})"
+    );
+}
+
+/// A gouraud (untextured) face must shade to the CPU colour-table RGB, not
+/// black. Live: the wall beam / fence post / wooden post are gouraud faces
+/// that the GPU renders black while the CPU shades them correctly.
+#[test]
+fn gpu_gouraud_face_shades_like_the_colour_table() {
+    Pix3D::init_colour_table(0.6);
+    let Ok(mut backend) = GpuBackend::try_new() else {
+        eprintln!("no adapter on this machine; the gouraud shade test skips");
+        return;
+    };
+    // A one-face gouraud wall with a known 16-bit shade.
+    let mut model = client::dash3d::Model::default();
+    model.num_points = 4;
+    model.point_x = Some(vec![-60, 60, 60, -60]);
+    model.point_y = Some(vec![0, 0, -180, -180]);
+    model.point_z = Some(vec![0, 0, 0, 0]);
+    model.num_faces = 2;
+    model.face_vertex_a = Some(vec![0, 0]);
+    model.face_vertex_b = Some(vec![1, 2]);
+    model.face_vertex_c = Some(vec![2, 3]);
+    model.face_colour_a = Some(vec![SHADE, SHADE]);
+    model.face_colour_b = Some(vec![SHADE, SHADE]);
+    model.face_colour_c = Some(vec![SHADE, SHADE]);
+    model.calc_bounding_cylinder();
+
+    let mut world = flat_world();
+    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+    let mut rw = RenderWorld::new();
+    rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let mut pix = Pix3DDraw::default();
+    pix.set_clipping(512, 334);
+    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
+    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
+    let scene = backend.render_scene_for_test(mesh, &pix);
+
+    let expected = Pix3D::colour_table()[SHADE as usize];
+    let expected = (
+        (expected >> 16) & 0xff,
+        (expected >> 8) & 0xff,
+        expected & 0xff,
+    );
+    let mut matched = 0usize;
+    for &rgb in &scene {
+        let r = (rgb >> 16) & 0xff;
+        let g = (rgb >> 8) & 0xff;
+        let b = rgb & 0xff;
+        if (r as i32 - expected.0 as i32).abs() <= 2
+            && (g as i32 - expected.1 as i32).abs() <= 2
+            && (b as i32 - expected.2 as i32).abs() <= 2
+        {
+            matched += 1;
+        }
+    }
+    assert!(
+        matched > 500,
+        "gouraud wall must shade to the colour-table RGB (expected {:?}, matched {matched})",
+        expected
+    );
+}
+
 /// End-to-end: a real `GpuBackend` renders the textured-wall mesh and the
 /// read-back scene contains the two textures' colours — red *and* blue
 /// texels, so textured faces sample the texture array by layer instead of
@@ -223,8 +372,8 @@ fn gpu_render_samples_multi_texture_model() {
     let (_rw, _world, mesh) = textured_wall_mesh(&mut pix);
     let scene = backend.render_scene_for_test(mesh, &pix);
 
-    // The shade (SHADE = 0x6464) selects brightness level 1 (~7/8), so the
-    // rendered red/blue are the palette colours scaled, never white.
+    // The textured shade (TEX_SHADE = 0) is the full-brightness bucket, so
+    // the rendered red/blue are the full palette colours, never white.
     let mut found_red = 0usize;
     let mut found_blue = 0usize;
     for &rgb in &scene {
@@ -248,6 +397,67 @@ fn gpu_render_samples_multi_texture_model() {
     );
     // Sanity: the wall occupies real screen space (not a one-pixel sliver).
     assert!(found_red + found_blue > 500, "the textured wall must cover screen area");
+}
+
+/// The GPU textured path must apply the CPU's 8-level per-texel brightness:
+/// bits 4-5 of the 0..127 shade pick one of the four pre-baked texel blocks
+/// (1, 7/8, 3/4, 5/8) and bit 6 halves shades >= 64 (`Pix3D.textureRaster`).
+/// Before the fix the shader read bits 14-15 of the full 16-bit word — always
+/// 0 for a 0..127 texel shade — so indoor/textured faces rendered at full
+/// brightness instead of their lit shade.
+#[test]
+fn gpu_textured_shade_scales_texel_brightness() {
+    Pix3D::init_colour_table(0.6);
+    let Ok(mut backend) = GpuBackend::try_new() else {
+        eprintln!("no adapter on this machine; the texel-brightness test skips");
+        return;
+    };
+    // (shade, expected red channel): block 0..3 times the >=64 halving.
+    let cases: [(i32, i32); 8] = [
+        (0, 0xff),
+        (16, 0xdf),
+        (32, 0xbf),
+        (48, 0x9f),
+        (64, 0x7f),
+        (80, 0x6f),
+        (96, 0x5f),
+        (112, 0x4f),
+    ];
+
+    for (shade, expected) in cases {
+        let mut pix = textured_pix();
+        let mut world = flat_world();
+        world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+        let mut rw = RenderWorld::new();
+        let mut model = textured_wall_model();
+        // Both faces red, the requested 0..127 texel brightness.
+        model.face_colour = Some(vec![TEXTURE_RED, TEXTURE_RED]);
+        model.face_colour_a = Some(vec![shade, shade]);
+        model.face_colour_b = Some(vec![shade, shade]);
+        model.face_colour_c = Some(vec![shade, shade]);
+        rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
+        rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+        rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
+        let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
+        let scene = backend.render_scene_for_test(mesh, &pix);
+
+        // The red-dominant pixels are the textured wall (the ground shades
+        // gray); their red channel must be the palette red scaled by the
+        // block/halving factor.
+        let mut max_red = 0i32;
+        for &rgb in &scene {
+            let r = ((rgb >> 16) & 0xff) as i32;
+            let g = ((rgb >> 8) & 0xff) as i32;
+            let b = (rgb & 0xff) as i32;
+            if r > g + 40 && r > b + 40 {
+                max_red = max_red.max(r);
+            }
+        }
+        assert!(
+            (max_red - expected).abs() <= 8,
+            "shade {shade} must scale the red texel to ~{expected}, got {max_red}"
+        );
+    }
 }
 
 /// A face whose texture id is past the array's depth (>= 50) still renders:

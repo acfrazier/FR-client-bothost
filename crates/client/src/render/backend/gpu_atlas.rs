@@ -881,6 +881,13 @@ impl GpuAssets {
                 continue;
             }
             let (Some(texture), Some(palette)) = (&pix.textures[id], &pix.tex_pal[id]) else {
+                if crate::debug_enabled() {
+                    eprintln!(
+                        "[gpu-atlas] texture {id} skipped (texture={} palette={})",
+                        pix.textures[id].is_some(),
+                        pix.tex_pal[id].is_some()
+                    );
+                }
                 continue;
             };
             let mut rgba = vec![0u8; (MODEL_CELL * MODEL_CELL * 4) as usize];
@@ -939,6 +946,16 @@ impl GpuAssets {
                 },
             );
             self.model_regions[id] = true;
+            if crate::debug_enabled() {
+                let opaque = rgba.iter().skip(3).step_by(4).filter(|&&a| a != 0).count();
+                eprintln!(
+                    "[gpu-atlas] texture {id} uploaded wi={} hi={} opaque={}/{}",
+                    texture.wi,
+                    texture.hi,
+                    opaque,
+                    MODEL_CELL * MODEL_CELL
+                );
+            }
         }
     }
 }
