@@ -1,9 +1,10 @@
 //! Nav debug tile/hull paint (Task 7): draws the host-supplied
 //! `NavDebugPaint` into the game viewport after the 3D world pass. The
-//! wgpu scene stage calls [`draw`] once the world is in `area_game`; every
-//! painted pixel is coverage-marked, so the paint stays opaque over the
-//! scene composite. CpuPix3D and skip-paint slots never call it —
-//! `set_nav_debug_paint` always stores, painting is wgpu-headed only.
+//! wgpu scene stage calls [`draw`] once the world is in `area_game`. Fill
+//! coverage is the overlay alpha so translucent tiles composite over the
+//! 3D scene (rs2b0t `pathScenePaint`: fill + stroke, not opaque blocks).
+//! CpuPix3D and skip-paint slots never call it — `set_nav_debug_paint`
+//! always stores, painting is wgpu-headed only.
 //!
 //! Paints are scene-relative tiles (the host already scene-clipped the
 //! collision list) projected at terrain height; hulls stroke the live loc
@@ -120,7 +121,8 @@ struct Quad {
     x: [i32; 4],
     y: [i32; 4],
     colour: i32,
-    alpha: i32,
+    fill_alpha: i32,
+    stroke_alpha: i32,
 }
 
 /// 5×5 dot glyphs for the NSEW face letters (bit 4 = leftmost column).
@@ -161,21 +163,27 @@ pub(crate) fn draw(client: &mut Client, r: &mut Renderer, surface: &mut Pix2D) {
             if !collision_fill_cell(cell) {
                 continue;
             }
-            if let Some(quad) =
-                tile_quad(client, r, cell.lx, cell.lz, rgb(paint.colors.collision), WALK_FILL_ALPHA)
-            {
+            if let Some(quad) = tile_quad(
+                client,
+                r,
+                cell.lx,
+                cell.lz,
+                rgb(paint.colors.collision),
+                WALK_FILL_ALPHA,
+                STROKE_ALPHA,
+            ) {
                 quads.push(quad);
             }
         }
     }
     if paint.show_path {
         for &(lx, lz, transport) in &paint.path {
-            let (colour, alpha) = if transport {
-                (rgb(paint.colors.path_hop), HOP_FILL_ALPHA)
+            let (colour, fill, stroke) = if transport {
+                (rgb(paint.colors.path_hop), HOP_FILL_ALPHA, HOP_STROKE_ALPHA)
             } else {
-                (rgb(paint.colors.path), WALK_FILL_ALPHA)
+                (rgb(paint.colors.path), WALK_FILL_ALPHA, STROKE_ALPHA)
             };
-            if let Some(quad) = tile_quad(client, r, lx, lz, colour, alpha) {
+            if let Some(quad) = tile_quad(client, r, lx, lz, colour, fill, stroke) {
                 quads.push(quad);
             }
         }
@@ -187,7 +195,8 @@ pub(crate) fn draw(client: &mut Client, r: &mut Renderer, surface: &mut Pix2D) {
             } else {
                 rgb(paint.colors.trail)
             };
-            if let Some(quad) = tile_quad(client, r, lx, lz, colour, WALK_FILL_ALPHA) {
+            if let Some(quad) = tile_quad(client, r, lx, lz, colour, HOP_FILL_ALPHA, HOP_STROKE_ALPHA)
+            {
                 quads.push(quad);
             }
         }
@@ -195,6 +204,7 @@ pub(crate) fn draw(client: &mut Client, r: &mut Renderer, surface: &mut Pix2D) {
     quads.sort_by_key(|quad| std::cmp::Reverse(quad.depth));
     for quad in &quads {
         fill_quad(surface, quad);
+        stroke_quad(surface, quad);
     }
 
     if paint.show_nsew {
@@ -217,7 +227,15 @@ pub(crate) fn draw(client: &mut Client, r: &mut Renderer, surface: &mut Pix2D) {
 /// Project a tile's four ground corners; `None` when any corner fails to
 /// project (behind the camera or off the playable scene — the path may
 /// include tiles the projection cannot see).
-fn tile_quad(client: &Client, r: &Renderer, lx: i32, lz: i32, colour: i32, alpha: i32) -> Option<Quad> {
+fn tile_quad(
+    client: &Client,
+    r: &Renderer,
+    lx: i32,
+    lz: i32,
+    colour: i32,
+    fill_alpha: i32,
+    stroke_alpha: i32,
+) -> Option<Quad> {
     let x0 = lx.wrapping_mul(TILE);
     let z0 = lz.wrapping_mul(TILE);
     let p0 = r.project_overlay(client, x0, z0, 0);
@@ -233,7 +251,8 @@ fn tile_quad(client: &Client, r: &Renderer, lx: i32, lz: i32, colour: i32, alpha
         x: [p0.0, p1.0, p2.0, p3.0],
         y: [p0.1, p1.1, p2.1, p3.1],
         colour,
-        alpha,
+        fill_alpha,
+        stroke_alpha,
     })
 }
 
@@ -252,9 +271,9 @@ fn scene_depth(client: &Client, x: i32, z: i32, height: i32) -> i32 {
     dy.wrapping_mul(sin_pitch).wrapping_add(var14.wrapping_mul(cos_pitch)) >> 16
 }
 
-/// Scanline-fill a convex projected quad with the layer colour × alpha,
-/// clipped to the viewport and coverage-marked (the GPU composite keys its
-/// transparency off coverage).
+/// Scanline-fill a convex projected quad. RGB is the layer colour; overlay
+/// alpha is the coverage byte so the chrome composite blends over the 3D
+/// scene (rs2b0t `fillQuadPix`).
 fn fill_quad(surface: &mut Pix2D, quad: &Quad) {
     let [x0, x1, x2, x3] = quad.x;
     let [y0, y1, y2, y3] = quad.y;
@@ -283,20 +302,26 @@ fn fill_quad(surface: &mut Pix2D, quad: &Quad) {
         let lo = hits[0].min(hits[1]).ceil() as i32;
         let hi = hits[0].max(hits[1]).floor() as i32;
         for x in lo.max(0)..=hi.min(width - 1) {
-            blend_pixel(surface, y * width + x, quad.colour, quad.alpha);
+            plot_overlay(surface, y * width + x, quad.colour, quad.fill_alpha);
         }
     }
 }
 
-/// Alpha-blend one pixel and mark it covered.
-fn blend_pixel(surface: &mut Pix2D, off: i32, rgb: i32, alpha: i32) {
-    let inv = 256 - alpha;
-    let d = surface.pixels[off as usize];
-    let r = ((((d >> 16) & 0xff) * inv + ((rgb >> 16) & 0xff) * alpha) >> 8) & 0xff;
-    let g = ((((d >> 8) & 0xff) * inv + ((rgb >> 8) & 0xff) * alpha) >> 8) & 0xff;
-    let b = (((d & 0xff) * inv + (rgb & 0xff) * alpha) >> 8) & 0xff;
-    surface.pixels[off as usize] = (r << 16) | (g << 8) | b;
-    surface.mark_pixel(off);
+/// Stroke the projected quad (rs2b0t `strokeQuadPix`).
+fn stroke_quad(surface: &mut Pix2D, quad: &Quad) {
+    for i in 0..4 {
+        let a = (quad.x[i], quad.y[i]);
+        let b = (quad.x[(i + 1) % 4], quad.y[(i + 1) % 4]);
+        stroke_line(surface, a.0, a.1, b.0, b.1, quad.colour, quad.stroke_alpha);
+    }
+}
+
+/// Write overlay RGB and coverage alpha. The GPU chrome pass blends this
+/// over the 3D scene; do not pre-blend onto the cleared `area_game` black
+/// (that is what made tiles look solid).
+fn plot_overlay(surface: &mut Pix2D, off: i32, rgb: i32, alpha: i32) {
+    surface.pixels[off as usize] = rgb & 0x00ff_ffff;
+    surface.mark_pixel_alpha(off, alpha.clamp(0, 255) as u8);
 }
 
 /// The NSEW face letters of a collision cell, one per blocked face at the
@@ -348,7 +373,7 @@ fn plot_glyph(surface: &mut Pix2D, x: i32, y: i32, glyph: [u8; 5], colour: i32, 
             if px < 0 || py < 0 || px >= width || py >= height {
                 continue;
             }
-            blend_pixel(surface, py * width + px, colour, alpha);
+            plot_overlay(surface, py * width + px, colour, alpha);
         }
     }
 }
@@ -386,7 +411,7 @@ fn stroke_line(surface: &mut Pix2D, x0: i32, y0: i32, x1: i32, y1: i32, colour: 
     let mut err = dx + dy;
     loop {
         if x >= 0 && y >= 0 && x < width && y < height {
-            blend_pixel(surface, y * width + x, colour, alpha);
+            plot_overlay(surface, y * width + x, colour, alpha);
         }
         if x == x1 && y == y1 {
             break;
@@ -504,6 +529,7 @@ fn draw_hull(client: &mut Client, r: &mut Renderer, surface: &mut Pix2D, hull: &
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graphics::Pix2D;
 
     #[test]
     fn face_only_cell_has_letters_but_no_fill() {
@@ -558,5 +584,18 @@ mod tests {
         assert_eq!((south.1, south.2), (10 * TILE + TILE / 2, 20 * TILE));
         assert_eq!((east.1, east.2), (11 * TILE, 20 * TILE + TILE / 2));
         assert_eq!((west.1, west.2), (10 * TILE, 20 * TILE + TILE / 2));
+    }
+
+    #[test]
+    fn overlay_pixel_writes_source_rgb_and_coverage_alpha() {
+        let mut pix = vec![0i32; 4];
+        let mut cov = vec![0u8; 4];
+        let _g = crate::graphics::pix2d::coverage_guard(&mut cov, 2, 2);
+        {
+            let mut s = Pix2D::with_pixels(&mut pix, 2, 2);
+            plot_overlay(&mut s, 0, 0x00ff0000, WALK_FILL_ALPHA);
+        }
+        assert_eq!(pix[0], 0x00ff0000, "do not pre-blend onto black");
+        assert_eq!(cov[0], WALK_FILL_ALPHA as u8);
     }
 }

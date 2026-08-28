@@ -26,8 +26,8 @@
 //! the occluder tests are skipped (the depth buffer
 //! occludes), and the 2D chrome draws on the CPU into the persistent
 //! `draw_area`, which `finish` uploads as one RGBA8 texture and composites
-//! over the scene (a black pixel inside the scene window is the scene's
-//! transparent hole; see [`draw_area_rgba`]).
+//! over the scene. Scene-window overlay alpha is the coverage byte
+//! (255 = opaque chrome, 0 = the 3D hole, 1..=254 = translucent nav paint).
 
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -1061,10 +1061,10 @@ impl RenderBackend for GpuBackend {
         r.world.remove_sprites(&mut core.world);
 
         // Nav debug paint (host tiles/hulls) over the 3D world, clipped to
-        // the game viewport like the other overlay passes. Its pixel
-        // writes mark coverage, so the paint stays opaque over the scene
-        // composite. CpuPix3D / skip-paint never reach this stage: the
-        // store is a no-op draw.
+        // the game viewport like the other overlay passes. Fill coverage
+        // is the overlay alpha so translucent tiles composite over the
+        // scene (rs2b0t pathScenePaint). CpuPix3D / skip-paint never
+        // reach this stage: the store is a no-op draw.
         let mut game = r.area_game.take();
         if let Some(game) = game.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
@@ -1110,11 +1110,10 @@ impl RenderBackend for GpuBackend {
     /// clear the frame, copy the GPU scene at (4, 4) when it was
     /// rendered, then upload the CPU-drawn `draw_area` as one RGBA8
     /// texture and draw it over the frame with alpha blending. The upload
-    /// is opaque chrome except inside the scene window, where the
-    /// overlay-coverage buffer keys the transparency: a pixel the overlay
-    /// pass wrote is opaque regardless of colour (a black minimenu bar or
-    /// glyph shadow stays opaque); an uncovered pixel is the scene's hole
-    /// (see [`draw_area_rgba`]). No readback.
+    /// is opaque chrome except inside the scene window, where overlay
+    /// alpha is the coverage byte (255 = opaque chrome including black
+    /// minimenu bars, 0 = 3D hole, 1..=254 = translucent nav paint; see
+    /// [`draw_area_rgba`]). No readback.
     fn finish(&mut self, r: &mut Renderer) -> FrameOutput {
         let mut encoder =
             self.context
@@ -1232,10 +1231,10 @@ impl RenderBackend for GpuBackend {
 /// Build the RGBA8 upload bytes from the CPU-drawn `draw_area` (opaque
 /// `0x00RRGGBB` pixels), one row padded to `bytes_per_row` (wgpu's 256-byte
 /// row alignment; the padding is zero-filled). When the scene was rendered,
-/// the scene window — the fixed rect x∈[4,516), y∈[4,338) — is the
-/// transparent hole: a pixel the overlay pass wrote (per the coverage
-/// buffer) is opaque *regardless of colour*, an uncovered pixel is the
-/// scene's hole. Outside the scene window the chrome is opaque; with no
+/// the scene window — the fixed rect x∈[4,516), y∈[4,338) — takes overlay
+/// alpha from the coverage byte: 255 is opaque chrome (minimenu black
+/// bars stay black), 0 is the 3D hole, 1..=254 is translucent nav paint
+/// over the scene. Outside the scene window the chrome is opaque; with no
 /// scene (title screen) the whole frame is opaque.
 fn draw_area_rgba(
     draw_area: &PixMap,
@@ -1251,13 +1250,7 @@ fn draw_area_rgba(
                 && (4..516).contains(&(x as i32))
                 && (4..338).contains(&(y as i32))
             {
-                // The scene window: covered overlay pixels are opaque, the
-                // uncovered rest is the scene's hole.
-                if coverage[((y - 4) * SCENE_W + (x - 4)) as usize] != 0 {
-                    255
-                } else {
-                    0
-                }
+                coverage[((y - 4) * SCENE_W + (x - 4)) as usize]
             } else {
                 255
             };
@@ -1269,4 +1262,30 @@ fn draw_area_rgba(
         bytes.resize(bytes.len() + (bytes_per_row - FRAME_W * 4) as usize, 0);
     }
     bytes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{draw_area_rgba, FRAME_H, FRAME_W, SCENE_H, SCENE_W};
+    use crate::graphics::PixMap;
+
+    #[test]
+    fn draw_area_rgba_uses_coverage_as_scene_window_alpha() {
+        let mut draw = PixMap::new(FRAME_W as i32, FRAME_H as i32);
+        draw.pixels[(4 * FRAME_W + 4) as usize] = 0x00ff0000;
+        draw.pixels[(4 * FRAME_W + 5) as usize] = 0x000000ff;
+        let mut coverage = vec![0u8; (SCENE_W * SCENE_H) as usize];
+        coverage[0] = 255;
+        coverage[1] = 82;
+        let bytes_per_row = ((FRAME_W * 4 + 255) / 256) * 256;
+        let bytes = draw_area_rgba(&draw, &coverage, true, bytes_per_row);
+        let px = |x: u32, y: u32| {
+            let o = (y * bytes_per_row + x * 4) as usize;
+            (bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3])
+        };
+        assert_eq!(px(4, 4), (255, 0, 0, 255), "opaque overlay keeps A=255");
+        assert_eq!(px(5, 4), (0, 0, 255, 82), "nav fill coverage is the overlay alpha");
+        assert_eq!(px(6, 4).3, 0, "uncovered scene pixel is the 3D hole");
+        assert_eq!(px(0, 0).3, 255, "chrome outside the scene window is opaque");
+    }
 }

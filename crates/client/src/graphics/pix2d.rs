@@ -330,11 +330,19 @@ impl<'a> Pix2D<'a> {
         }
     }
 
-    /// Mark one written pixel covered (the sprite/glyph writers; a no-op
-    /// when no coverage buffer is attached).
+    /// Mark one written pixel fully opaque (chat, minimenu, glyphs). The
+    /// GPU chrome composite uses this byte as the overlay alpha: 255 is
+    /// solid over the scene. A no-op when no coverage buffer is attached.
     pub(crate) fn mark_pixel(&mut self, off: i32) {
+        self.mark_pixel_alpha(off, 255);
+    }
+
+    /// Mark one written pixel with overlay alpha `a` (0 = scene hole).
+    /// Nav debug fills use this so translucent path tiles composite over
+    /// the 3D world instead of stamping opaque dark quads.
+    pub(crate) fn mark_pixel_alpha(&mut self, off: i32, a: u8) {
         if let Some(cov) = &mut self.coverage {
-            cov[off as usize] = 1;
+            cov[off as usize] = a;
         }
     }
 
@@ -345,7 +353,7 @@ impl<'a> Pix2D<'a> {
             for cy in 0..h {
                 let row = (y + cy) * self.width;
                 for cx in 0..w {
-                    cov[(row + x + cx) as usize] = 1;
+                    cov[(row + x + cx) as usize] = 255;
                 }
             }
         }
@@ -355,7 +363,7 @@ impl<'a> Pix2D<'a> {
     fn mark_row(&mut self, off: i32, len: i32) {
         if let Some(cov) = &mut self.coverage {
             for i in 0..len {
-                cov[(off + i) as usize] = 1;
+                cov[(off + i) as usize] = 255;
             }
         }
     }
@@ -364,8 +372,28 @@ impl<'a> Pix2D<'a> {
     fn mark_col(&mut self, off: i32, len: i32) {
         if let Some(cov) = &mut self.coverage {
             for i in 0..len {
-                cov[(off + i * self.width) as usize] = 1;
+                cov[(off + i * self.width) as usize] = 255;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{coverage_guard, Pix2D};
+
+    #[test]
+    fn mark_pixel_is_opaque_and_alpha_is_the_coverage_byte() {
+        let mut pix = vec![0i32; 4];
+        let mut cov = vec![0u8; 4];
+        let _g = coverage_guard(&mut cov, 2, 2);
+        {
+            let mut s = Pix2D::with_pixels(&mut pix, 2, 2);
+            s.mark_pixel(0);
+            s.mark_pixel_alpha(1, 82);
+        }
+        assert_eq!(cov[0], 255, "chat/minimenu coverage is opaque");
+        assert_eq!(cov[1], 82, "nav fill coverage is the overlay alpha");
+        assert_eq!(cov[2], 0);
     }
 }
