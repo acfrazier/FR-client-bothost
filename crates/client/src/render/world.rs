@@ -4300,9 +4300,10 @@ fn emit_scene_model(
                     let ty = t & 0x3;
                     if ty == 2 || ty == 3 {
                         sample.push(format!(
-                            "(ty{ty} tex{} shade{})",
+                            "(ty{ty} tex{} shade{} pr{})",
                             fc.get(f).copied().unwrap_or(-1),
-                            fca.get(f).copied().unwrap_or(-1)
+                            fca.get(f).copied().unwrap_or(-1),
+                            model.face_priority.as_ref().and_then(|p| p.get(f)).copied().unwrap_or(-1)
                         ));
                     }
                 }
