@@ -2262,7 +2262,7 @@ impl RenderWorld {
                 .as_ref()
                 .map(|m| m.min_y())
                 .unwrap_or(0);
-            if self.sprite_occluded2(
+            let occluded = self.sprite_occluded2(
                 world,
                 level,
                 min_tile_x,
@@ -2270,7 +2270,14 @@ impl RenderWorld {
                 min_tile_z,
                 max_tile_z,
                 model_min_y,
-            ) {
+            );
+            if crate::debug_enabled() {
+                let name = cache.locs.get(((typecode >> 14) & 0x7fff) as usize).map(|l| l.name.as_str()).unwrap_or("");
+                eprintln!(
+                    "[sprite-occl] loc {name} tiles ({min_tile_x},{min_tile_z})..({max_tile_x},{max_tile_z}) occluded={occluded}"
+                );
+            }
+            if occluded {
                 if let Some(sprite) = world.sprites.get_mut(index).and_then(|s| s.as_mut()) {
                     sprite.cycle = cycle_no;
                 }
