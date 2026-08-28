@@ -29,6 +29,10 @@ pub struct NavDebugCell {
     /// Packed N/S/E/W face-block bits (`FACE_N` | `FACE_S` | `FACE_E` |
     /// `FACE_W`).
     pub bits: u8,
+    /// Blanket blocked ground. Only blocked tiles paint the collision
+    /// fill; a face-only cell (bare `W_*` flag) keeps its NSEW letters
+    /// but draws no fill quad.
+    pub blocked: bool,
 }
 
 /// A live loc hull target: the model at scene tile (`scene_x`, `scene_z`)
@@ -154,6 +158,9 @@ pub(crate) fn draw(client: &mut Client, r: &mut Renderer, surface: &mut Pix2D) {
     let mut quads: Vec<Quad> = Vec::new();
     if paint.show_collision {
         for cell in &paint.collision {
+            if !collision_fill_cell(cell) {
+                continue;
+            }
             if let Some(quad) =
                 tile_quad(client, r, cell.lx, cell.lz, rgb(paint.colors.collision), WALK_FILL_ALPHA)
             {
@@ -295,15 +302,8 @@ fn blend_pixel(surface: &mut Pix2D, off: i32, rgb: i32, alpha: i32) {
 /// The NSEW face letters of a collision cell, one per blocked face at the
 /// face-centre projection (`project_overlay`).
 fn draw_nsew(client: &Client, r: &Renderer, surface: &mut Pix2D, cell: &NavDebugCell, colour: i32) {
-    let x = cell.lx.wrapping_mul(TILE);
-    let z = cell.lz.wrapping_mul(TILE);
-    let faces = [
-        (FACE_N, x + TILE / 2, z, GLYPH_N),
-        (FACE_S, x + TILE / 2, z + TILE, GLYPH_S),
-        (FACE_E, x + TILE, z + TILE / 2, GLYPH_E),
-        (FACE_W, x, z + TILE / 2, GLYPH_W),
-    ];
-    for (bit, fx, fz, glyph) in faces {
+    let glyphs = [GLYPH_N, GLYPH_S, GLYPH_E, GLYPH_W];
+    for ((bit, fx, fz), glyph) in nsew_centres(cell).into_iter().zip(glyphs) {
         if cell.bits & bit == 0 {
             continue;
         }
@@ -313,6 +313,26 @@ fn draw_nsew(client: &Client, r: &Renderer, surface: &mut Pix2D, cell: &NavDebug
         }
         plot_glyph(surface, px - 2, py - 2, glyph, colour, STROKE_ALPHA);
     }
+}
+
+/// A collision cell paints its fill quad only when the ground is blocked:
+/// face-only cells (bare `W_*` flags) keep their NSEW letters but no fill.
+fn collision_fill_cell(cell: &NavDebugCell) -> bool {
+    cell.blocked
+}
+
+/// NSEW letter centres in scene coords. +z is north: the N letter sits on
+/// the far (`z + TILE`) edge, S on the near (`z`) edge, E/W on the +x/−x
+/// mid edges.
+fn nsew_centres(cell: &NavDebugCell) -> [(u8, i32, i32); 4] {
+    let x = cell.lx.wrapping_mul(TILE);
+    let z = cell.lz.wrapping_mul(TILE);
+    [
+        (FACE_N, x + TILE / 2, z + TILE),
+        (FACE_S, x + TILE / 2, z),
+        (FACE_E, x + TILE, z + TILE / 2),
+        (FACE_W, x, z + TILE / 2),
+    ]
 }
 
 fn plot_glyph(surface: &mut Pix2D, x: i32, y: i32, glyph: [u8; 5], colour: i32, alpha: i32) {
@@ -478,5 +498,65 @@ fn draw_hull(client: &mut Client, r: &mut Renderer, surface: &mut Pix2D, hull: &
         let (ax, ay) = screen[a];
         let (bx, by) = screen[b];
         stroke_line(surface, ax, ay, bx, by, colour, HOP_STROKE_ALPHA);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn face_only_cell_has_letters_but_no_fill() {
+        // A W_S-only tile: standable ground with a south wall face. It
+        // stays in the NSEW set yet must never paint the collision fill.
+        let cell = NavDebugCell {
+            lx: 0,
+            lz: 0,
+            bits: FACE_S,
+            blocked: false,
+        };
+        assert_ne!(cell.bits & FACE_S, 0, "face-only cell keeps its letters");
+        assert!(
+            !collision_fill_cell(&cell),
+            "face-only cells never paint the collision fill"
+        );
+        let blocked = NavDebugCell {
+            blocked: true,
+            ..cell
+        };
+        assert!(collision_fill_cell(&blocked));
+    }
+
+    #[test]
+    fn nsew_letters_sit_on_the_right_edges() {
+        // +z is north: N on the far (z+TILE) edge, S on the near (z) edge.
+        let cell = NavDebugCell {
+            lx: 10,
+            lz: 20,
+            ..Default::default()
+        };
+        let centres = nsew_centres(&cell);
+        let (north, south, east, west) = (
+            centres
+                .iter()
+                .find(|(bit, _, _)| *bit == FACE_N)
+                .expect("N centre"),
+            centres
+                .iter()
+                .find(|(bit, _, _)| *bit == FACE_S)
+                .expect("S centre"),
+            centres
+                .iter()
+                .find(|(bit, _, _)| *bit == FACE_E)
+                .expect("E centre"),
+            centres
+                .iter()
+                .find(|(bit, _, _)| *bit == FACE_W)
+                .expect("W centre"),
+        );
+        assert_eq!((north.1, north.2), (10 * TILE + TILE / 2, 21 * TILE));
+        assert_eq!((south.1, south.2), (10 * TILE + TILE / 2, 20 * TILE));
+        assert_eq!((east.1, east.2), (11 * TILE, 20 * TILE + TILE / 2));
+        assert_eq!((west.1, west.2), (10 * TILE, 20 * TILE + TILE / 2));
     }
 }
