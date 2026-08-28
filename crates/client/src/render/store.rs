@@ -254,6 +254,65 @@ mod tests {
         );
     }
 
+    /// A dynamic sprite (player/NPC) stepping onto a tile must not invalidate
+    /// the tile's already-resolved wall: sprites resolve from the sprite's
+    /// own `model_stamp` (and dynamic sprites attach via `set_sprite_model`),
+    /// not the tile stamp. Bumping the tile stamp on sprite placement made a
+    /// moving player/NPC re-decode the tile's lit wall as an unlit model
+    /// (`face_colour_a` absent), which emitted no faces — the black-wall bug.
+    #[test]
+    fn dynamic_sprite_does_not_reresolve_wall() {
+        let _guard = lock_caches();
+        store().clear();
+        Model::unpack(100, Some(MODEL));
+
+        let cache = Cache {
+            locs: {
+                let mut locs: Vec<LocType> =
+                    std::iter::repeat_with(LocType::default).take(101).collect();
+                locs[100] = LocType {
+                    id: 100,
+                    model: Some(vec![100]),
+                    shape: Some(vec![LocShape::WALL_STRAIGHT]),
+                    ..LocType::default()
+                };
+                locs
+            },
+            ..Cache::default()
+        };
+        let mut world = World::new(vec![vec![vec![0; 3]; 3]; 1], 2, 1, 2);
+        world.fill_base_level(0);
+        world.set_wall(0, 0, 0, 0, 0, 0, 100 << 14, 0, 0, 0, 0, 0);
+        let mut rw = RenderWorld::new();
+        rw.resolve_tile(&world, &cache, 0, 0, 0, 0);
+
+        // Mark the resolved wall with a sentinel shade so a re-decode (which
+        // rebuilds an unlit model) is observable through the wall accessor.
+        let mut marked = Model::load(100).expect("model 100 decodes");
+        marked.face_colour_a = Some(vec![12345]);
+        rw.set_wall_model(
+            &world,
+            0,
+            0,
+            0,
+            Some(SceneModel::Model(marked)),
+            None,
+        );
+
+        // A dynamic sprite steps onto the tile (the player/NPC movement path).
+        let index = world.add_dynamic(0, 64, 0, 64, 0, 0, 0, false);
+        assert!(index.is_some(), "a dynamic sprite places on the tile");
+
+        match rw.wall_model1(&world, &cache, 0, 0, 0, 0) {
+            Some(SceneModel::Model(m)) => assert_eq!(
+                m.face_colour_a.as_ref().map(Vec::as_slice),
+                Some(&[12345][..]),
+                "a dynamic sprite must not re-resolve the tile wall"
+            ),
+            other => panic!("the tile wall was re-resolved/replaced: {}", other.is_some()),
+        }
+    }
+
     /// The resolved wall model's vertex count (0 when none).
     fn wall_points(rw: &mut RenderWorld, world: &World, cache: &Cache) -> i32 {
         model_points(rw.wall_model1(world, cache, 0, 0, 0, 0))

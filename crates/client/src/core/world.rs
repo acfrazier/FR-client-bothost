@@ -926,7 +926,14 @@ impl World {
                     tile.sprite_span[tile.sprite_count as usize] = spans;
                     tile.sprite_spans |= spans;
                     tile.sprite_count += 1;
-                    tile.model_stamp = tile.model_stamp.wrapping_add(1);
+                    // A sprite does not invalidate the tile's wall/decor/
+                    // ground-decor/obj model cache: those resolve from the
+                    // tile typecodes, while scene sprites resolve from the
+                    // sprite's own `model_stamp` (dynamic sprites attach via
+                    // `set_sprite_model`). Bumping here made a moving
+                    // player/NPC re-decode the tile's already-lit wall as an
+                    // unlit model, which emitted no faces — the black-wall
+                    // bug.
                 }
             }
         }
