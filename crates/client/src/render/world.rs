@@ -2243,6 +2243,7 @@ impl RenderWorld {
             return;
         }
         let (yaw, typecode, x, y, z) = (sprite.yaw, sprite.typecode, sprite.x, sprite.y, sprite.z);
+        let info = sprite.typecode2 & 0xff;
         let (level, min_tile_x, max_tile_x, min_tile_z, max_tile_z) = (
             sprite.level,
             sprite.min_tile_x,
@@ -2275,7 +2276,8 @@ impl RenderWorld {
             if crate::debug_enabled() {
                 let name = cache.locs.get(((typecode >> 14) & 0x7fff) as usize).map(|l| l.name.as_str()).unwrap_or("");
                 eprintln!(
-                    "[sprite-occl] loc {name} tiles ({min_tile_x},{min_tile_z})..({max_tile_x},{max_tile_z}) occluded={occluded}"
+                    "[sprite-occl] loc {name} tiles ({min_tile_x},{min_tile_z})..({max_tile_x},{max_tile_z}) angle={} yaw={yaw} occluded={occluded}",
+                    info >> 6
                 );
             }
             if occluded {
