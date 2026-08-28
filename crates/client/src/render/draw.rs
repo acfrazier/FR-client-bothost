@@ -3943,6 +3943,12 @@ impl Renderer {
     /// loading splash and the minimap *image* build; `Client::check_minimap`
     /// runs the scene build on the sim loop) and `follow_camera`.
     pub fn mainredraw(&mut self, client: &mut Client) -> FrameOutput {
+        // A live lowmem/highmem flip updates `Client.config.lowmem`; keep the
+        // raster flag in step so the ground/water path picks the texture
+        // vs average-colour branch without a respawn. `set_lowmem` only
+        // touches the client, and `Renderer` constructed at spawn holds the
+        // original flag.
+        self.pix3d.low_mem = client.config.lowmem;
         if !client.draw {
             return FrameOutput::PixMap(self.draw_area.clone());
         }
