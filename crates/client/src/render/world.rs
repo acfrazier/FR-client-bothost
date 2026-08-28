@@ -4721,8 +4721,21 @@ fn emit_ground(
         // or the face's own corners for a non-flat ground, exactly like
         // the CPU `texture_triangle` calls.
         let face_texture = ground.face_texture.as_ref().and_then(|t| t.get(f)).copied();
+        // Low-mem textured ground is flat-shaded from the texture's average
+        // colour, exactly like the CPU `render_ground` (`get_table` over
+        // `TEXTURE_AVERAGE[texture]`) — it does not sample the atlas. The
+        // water/lava edge tiles are the visible case: CPU low-mem paints a
+        // shade of blue where GPU was still sampling the texture.
+        let tex_average = if pix.low_mem {
+            match face_texture {
+                Some(t) if t != -1 => Some(TEXTURE_AVERAGE.get(t as usize).copied().unwrap_or(41)),
+                _ => None,
+            }
+        } else {
+            None
+        };
         let textured = match face_texture {
-            Some(t) if t != -1 && t < 50 => Some(t as u32),
+            Some(t) if t != -1 && t < 50 && tex_average.is_none() => Some(t as u32),
             _ => None,
         };
         if let Some(tex) = textured {
@@ -4760,10 +4773,14 @@ fn emit_ground(
                 false,
             );
         } else {
+            let shade_of = |c: i32| match tex_average {
+                Some(avg) => get_table(avg, c),
+                None => c,
+            };
             mesh.push(
-                GpuVertex::new(x0, y0, z0, colour_a, 255, 0),
-                GpuVertex::new(x1, y1, z1, colour_b, 255, 0),
-                GpuVertex::new(x2, y2, z2, colour_c, 255, 0),
+                GpuVertex::new(x0, y0, z0, shade_of(colour_a), 255, 0),
+                GpuVertex::new(x1, y1, z1, shade_of(colour_b), 255, 0),
+                GpuVertex::new(x2, y2, z2, shade_of(colour_c), 255, 0),
                 false,
             );
         }

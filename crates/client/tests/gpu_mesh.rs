@@ -315,6 +315,82 @@ fn lowmem_textured_quick_ground_shades_with_the_texture_average() {
     );
 }
 
+/// A low-mem *non-quick* textured ground face (the water/lava edge tiles
+/// that build a `Ground` rather than a `QuickGround`) must flat-shade with
+/// the texture average, not sample the atlas — the GPU `emit_ground` bug
+/// textured those edges where the CPU paints a shade of blue. Shape 2
+/// (`LEFT_SEMI_DIAGONAL_SMALL`) has one primary (untextured) face and one
+/// secondary (texture 1) face, so both the raw and the average shade must
+/// appear, and no textured vertex may.
+#[test]
+fn lowmem_textured_ground_face_shades_with_the_texture_average() {
+    Pix3D::init_colour_table(0.6);
+    let max_level: i32 = 1;
+    let max_tile_x: i32 = 3;
+    let max_tile_z: i32 = 3;
+    let groundh = vec![
+        vec![vec![2000i32; max_tile_z as usize + 1]; max_tile_x as usize + 1];
+        max_level as usize
+    ];
+    let mut world = World::new(groundh, max_tile_z, max_level, max_tile_x);
+    world.fill_base_level(0);
+    world.set_ground(
+        0,
+        1,
+        2,
+        TerrainOverlayShape::LEFT_SEMI_DIAGONAL_SMALL,
+        0,
+        1, // water texture
+        2000,
+        2000,
+        2000,
+        2000,
+        WALL_SHADE,
+        WALL_SHADE,
+        WALL_SHADE,
+        WALL_SHADE,
+        SHADE,
+        SHADE,
+        SHADE,
+        SHADE,
+        0,
+        0,
+    );
+
+    let mut rw = RenderWorld::new();
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let mut pix = Pix3DDraw::default();
+    pix.set_clipping(512, 334);
+    pix.low_mem = true;
+    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
+    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
+
+    let expected_average = get_table(39248, SHADE);
+    let mut found_average = false;
+    let mut found_raw = false;
+    for v in mesh.vertices() {
+        assert_eq!(
+            v.uv_tex, 0,
+            "a low-mem textured ground face must stay flat (no atlas sample)"
+        );
+        let shade = (v.abhsl & 0xffff) as i32;
+        if shade == expected_average {
+            found_average = true;
+        }
+        if shade == WALL_SHADE {
+            found_raw = true;
+        }
+    }
+    assert!(
+        found_average,
+        "the low-mem textured ground face must shade with the texture average"
+    );
+    assert!(
+        found_raw,
+        "the low-mem primary ground face must keep its raw shade"
+    );
+}
+
 /// The WGSL `hslToRgb` (the `build_colour_table` / `hsl_to_rgb.glsl` port)
 /// mirrored in Rust so the cross-check below stays GPU-free. `shade` is the
 /// raw 16-bit colour-table index; the returned channels are 0..1, i.e.
