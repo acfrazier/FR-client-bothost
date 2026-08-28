@@ -2242,6 +2242,42 @@ impl RenderWorld {
             return;
         }
         let (yaw, typecode, x, y, z) = (sprite.yaw, sprite.typecode, sprite.x, sprite.y, sprite.z);
+        let (level, min_tile_x, max_tile_x, min_tile_z, max_tile_z) = (
+            sprite.level,
+            sprite.min_tile_x,
+            sprite.max_tile_x,
+            sprite.min_tile_z,
+            sprite.max_tile_z,
+        );
+        let scene_sprite = (typecode >> 29) & 0x3 == 2;
+
+        // Scene sprites are occluded exactly like the CPU fill: skip one
+        // fully behind a wall so the depth buffer does not let a scenery
+        // model's back face poke through the wall it stands against (the
+        // bank booth through the bank wall). Dynamic sprites are attached
+        // by the entity passes and are never occluder-tested.
+        if scene_sprite {
+            let model_min_y = self
+                .sprite_model_mut(&*world, cache, loop_cycle, index)
+                .as_ref()
+                .map(|m| m.min_y())
+                .unwrap_or(0);
+            if self.sprite_occluded2(
+                world,
+                level,
+                min_tile_x,
+                max_tile_x,
+                min_tile_z,
+                max_tile_z,
+                model_min_y,
+            ) {
+                if let Some(sprite) = world.sprites.get_mut(index).and_then(|s| s.as_mut()) {
+                    sprite.cycle = cycle_no;
+                }
+                return;
+            }
+        }
+
         if let Some(model) = self.sprite_model_mut(&*world, cache, loop_cycle, index).as_mut() {
             emit_scene_model(
                 model,
