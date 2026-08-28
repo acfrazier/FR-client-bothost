@@ -2496,6 +2496,18 @@ impl RenderWorld {
                 self.num_active_occluders += 1;
             }
         }
+
+        if crate::debug_enabled() {
+            let mut tiles = Vec::new();
+            for i in 0..self.num_active_occluders as usize {
+                if let Some(index) = self.active_occluders.get(i).copied().flatten() {
+                    if let Some(o) = world.occluders.get(index).and_then(|o| o.as_ref()) {
+                        tiles.push((o.min_tile_x, o.min_tile_z, o.max_tile_x, o.max_tile_z));
+                    }
+                }
+            }
+            eprintln!("[occluder] active={} tiles={tiles:?}", self.num_active_occluders);
+        }
     }
 
     /// Java/TS `LinkList.push`: if the square is already queued, unlink it
