@@ -467,6 +467,11 @@ pub struct Client {
     pub dist_map: Vec<i32>,
     pub route_x: Vec<i32>,
     pub route_z: Vec<i32>,
+    /// Every scene tile of the last successful `tryMove` BFS (src → dest).
+    /// The `route_x`/`route_z` lists below that are only direction-change
+    /// waypoints for the MOVE packet (capped at 25). Nav debug paints this
+    /// full path; it is empty until the first accepted click.
+    pub try_move_path: Vec<(i32, i32)>,
     pub try_move_nearest: i32,
     pub minimap_flag_x: i32,
     pub minimap_flag_z: i32,
@@ -980,6 +985,7 @@ impl Client {
             dist_map: vec![0; BUILD_AREA_TILES],
             route_x: vec![0; ROUTE_BUFFER],
             route_z: vec![0; ROUTE_BUFFER],
+            try_move_path: Vec::new(),
             try_move_nearest: 0,
             minimap_flag_x: 0,
             minimap_flag_z: 0,
@@ -2081,6 +2087,64 @@ impl Client {
     /// Linear build-area index, `CollisionMap.index(x, z) = x * SIZE + z`.
     fn collision_index(x: i32, z: i32) -> usize {
         (x * BUILD_AREA_SIZE + z) as usize
+    }
+
+    /// Walk `dir_map` from dest back to src, recording every tile, then
+    /// reverse so the path is src → dest. This is the BFS the click
+    /// actually walked, not the direction-change waypoints in `route_x`.
+    fn try_move_tiles(
+        dir_map: &[i32],
+        mut x: i32,
+        mut z: i32,
+        src_x: i32,
+        src_z: i32,
+    ) -> Vec<(i32, i32)> {
+        let cap = (BUILD_AREA_SIZE * BUILD_AREA_SIZE) as usize;
+        let mut tiles = Vec::with_capacity(64);
+        tiles.push((x, z));
+        while (x != src_x || z != src_z) && tiles.len() < cap {
+            let prev = (x, z);
+            let next = dir_map[Self::collision_index(x, z)];
+            if next & DirectionFlag::EAST != 0 {
+                x += 1;
+            } else if next & DirectionFlag::WEST != 0 {
+                x -= 1;
+            }
+            if next & DirectionFlag::NORTH != 0 {
+                z += 1;
+            } else if next & DirectionFlag::SOUTH != 0 {
+                z -= 1;
+            }
+            if (x, z) == prev {
+                break;
+            }
+            tiles.push((x, z));
+        }
+        tiles.reverse();
+        tiles
+    }
+
+    /// 274 pack `option_run` (`varp.pack` 173, `clientcode=7`). Same id as
+    /// OSRS TOGGLE_RUN. 1 = run on.
+    pub const RUN_VARP: usize = 173;
+    /// Controls overlay: run-off orb (`controls:com_4`).
+    const RUN_ORB_OFF: usize = 152;
+    /// Controls overlay: run-on orb (`controls:com_5`).
+    const RUN_ORB_ON: usize = 153;
+
+    /// Run toggle for nav debug two-tone trail. Prefers varp 173; falls
+    /// back to the 274 orb hide flags (visible off-orb means run is on).
+    /// Not the run animation — that is only true while a run cycle plays.
+    pub fn run_enabled(&self) -> bool {
+        if self.var.get(Self::RUN_VARP).copied() == Some(1) {
+            return true;
+        }
+        let off = self.ifaces.get(Self::RUN_ORB_OFF).and_then(|s| s.as_ref());
+        let on = self.ifaces.get(Self::RUN_ORB_ON).and_then(|s| s.as_ref());
+        match (off, on) {
+            (Some(off), Some(on)) if off.hide != on.hide => !off.hide,
+            _ => false,
+        }
     }
 
     /// Menu dispatch, port of client-ts `Client.ts` `doAction` (8548-9273).
@@ -3231,6 +3295,11 @@ impl Client {
                 return false;
             }
         }
+
+        // Full BFS tile list (every step dest→src, reversed to src→dest)
+        // for nav debug. The waypoint loop below only records direction
+        // changes for the MOVE packet.
+        self.try_move_path = Self::try_move_tiles(&self.dir_map, x, z, src_x, src_z);
 
         length = 0;
         self.route_x[length] = x;
@@ -10764,6 +10833,80 @@ mod zone_post_build {
         }
         assert_eq!(n, 1);
         assert_eq!(c.loc_changes.head().unwrap().start_time, 0);
+    }
+}
+
+#[cfg(test)]
+mod try_move_path {
+    use super::*;
+
+    #[test]
+    fn try_move_tiles_records_every_step_src_to_dest() {
+        // src (0,0) → dest (3,0) walking east: reverse dir on dest cells is WEST.
+        let mut dir_map = vec![0; (BUILD_AREA_SIZE * BUILD_AREA_SIZE) as usize];
+        for x in 1..=3 {
+            dir_map[(x * BUILD_AREA_SIZE) as usize] = DirectionFlag::WEST;
+        }
+        dir_map[0] = 99;
+        let path = Client::try_move_tiles(&dir_map, 3, 0, 0, 0);
+        assert_eq!(path, vec![(0, 0), (1, 0), (2, 0), (3, 0)]);
+    }
+
+    #[test]
+    fn try_move_tiles_records_a_long_bfs_not_nine() {
+        // Entity walk buffer is 9; MOVE waypoints cap at 25. The paint
+        // trail is every BFS tile (a 20-step click is 21 tiles).
+        let mut dir_map = vec![0; (BUILD_AREA_SIZE * BUILD_AREA_SIZE) as usize];
+        let dest = 20;
+        for x in 1..=dest {
+            dir_map[(x * BUILD_AREA_SIZE) as usize] = DirectionFlag::WEST;
+        }
+        dir_map[0] = 99;
+        let path = Client::try_move_tiles(&dir_map, dest, 0, 0, 0);
+        assert_eq!(path.len(), dest as usize + 1);
+        assert_eq!(path.first(), Some(&(0, 0)));
+        assert_eq!(path.last(), Some(&(dest, 0)));
+    }
+
+    fn empty_client() -> Client {
+        Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        })
+    }
+
+    #[test]
+    fn run_enabled_reads_varp_173() {
+        let mut c = empty_client();
+        assert!(!c.run_enabled());
+        if c.var.len() <= Client::RUN_VARP {
+            c.var.resize(Client::RUN_VARP + 1, 0);
+        }
+        c.var[Client::RUN_VARP] = 1;
+        assert!(c.run_enabled());
+    }
+
+    #[test]
+    fn run_enabled_reads_visible_run_off_orb() {
+        // 274 controls overlay: visible off-orb (152) + hidden on-orb (153)
+        // means run is on (host `run_echo`).
+        let mut c = empty_client();
+        c.ifaces.resize(154, None);
+        c.ifaces[152] = Some(IfType {
+            hide: false,
+            ..IfType::default()
+        });
+        c.ifaces[153] = Some(IfType {
+            hide: true,
+            ..IfType::default()
+        });
+        assert!(c.run_enabled());
+        c.ifaces[152].as_mut().unwrap().hide = true;
+        c.ifaces[153].as_mut().unwrap().hide = false;
+        assert!(!c.run_enabled());
     }
 }
 
