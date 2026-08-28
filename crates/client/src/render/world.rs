@@ -4575,6 +4575,7 @@ fn emit_model_faces(
     let face_colour_c = model.face_colour_c.as_ref();
 
     let mut winding_culled = 0usize;
+    let mut emitted_min_z = f32::MAX;
     for f in 0..model.num_faces as usize {
         if model
             .face_render_type
@@ -4719,6 +4720,7 @@ fn emit_model_faces(
         let translucent = alpha != 255;
         for i in 1..clipped.len() - 1 {
             let (v0, v1, v2) = (clipped[0], clipped[i], clipped[i + 1]);
+            emitted_min_z = emitted_min_z.min(v0.z.min(v1.z).min(v2.z));
             if let Some((tex_id_plus_1, _, _)) = textured {
                 mesh.push(
                     GpuVertex::textured(v0.x, v0.y, v0.z, v0.u, v0.v, v0.shade, alpha, bias, tex_id_plus_1),
@@ -4741,7 +4743,7 @@ fn emit_model_faces(
         let loc_id = (typecode >> 14) & 0x7fff;
         if matches!(loc_id, 1602 | 2213 | 2215) {
             eprintln!(
-                "[winding] loc {loc_id}: faces={} winding_culled={winding_culled}",
+                "[winding] loc {loc_id}: faces={} winding_culled={winding_culled} min_z={emitted_min_z}",
                 model.num_faces
             );
         }
