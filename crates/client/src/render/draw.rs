@@ -1293,8 +1293,9 @@ impl Renderer {
     }
 
     /// The `getOverlayPos` math (Java 2031-2056) as a pure read, so
-    /// `entity_overlays` can project while holding entity borrows.
-    fn project_overlay(&self, client: &Client, x: i32, z: i32, height: i32) -> (i32, i32) {
+    /// `entity_overlays` can project while holding entity borrows. The
+    /// nav-debug paint reuses it for the tile/hull projections.
+    pub(crate) fn project_overlay(&self, client: &Client, x: i32, z: i32, height: i32) -> (i32, i32) {
         if x < 128 || z < 128 || x > 13056 || z > 13056 {
             return (-1, -1);
         }

@@ -6,10 +6,12 @@
 // colour table to one brightness, and `Renderer::new` (which re-inits the
 // table at 0.8) must not run in the same process — so the backend-selection
 // tests live in `gpu_backend.rs` instead.
+use client::client::{Client, ClientConfig};
 use client::config::Cache;
 use client::core::World;
 use client::dash3d::{SceneModel, TerrainOverlayShape};
 use client::graphics::{Pix3D, Pix3DDraw};
+use client::render::nav_debug::{NavDebugHull, NavDebugPaint};
 use client::render::RenderWorld;
 
 const SHADE: i32 = 200 * 128 + 100;
@@ -698,4 +700,127 @@ fn gpu_loc_pick_is_per_face_not_aabb() {
         gpu_pix.picked_count, 0,
         "GPU loc pick must be per-face like the CPU; AABB-only opens doors on walk-by clicks"
     );
+}
+
+/// The nav-debug paint must never enable AABB loc picking: with a hull
+/// paint stored for the door, the CPU per-face pick and the GPU mesh pick
+/// still miss beside the door. The loc's `use_aabb_mouse_check` stays
+/// false — AABB-only loc picks open doors on walk-by clicks.
+#[test]
+fn nav_debug_paint_does_not_enable_aabb_loc_pick() {
+    Pix3D::init_colour_table(0.6);
+
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    c.set_nav_debug_paint(Some(NavDebugPaint {
+        hulls: vec![NavDebugHull {
+            loc_id: 1530,
+            scene_x: 1,
+            scene_z: 2,
+        }],
+        show_hulls: true,
+        ..Default::default()
+    }));
+
+    let mut world = flat_world();
+    world.set_wall(0, 1, 2, 2000, 8, 0, DOOR_TYPECODE, 0, 0, 0, 0, 0);
+    let mut rw = RenderWorld::new();
+    rw.set_wall_model(
+        &world,
+        0,
+        1,
+        2,
+        Some(SceneModel::Model(angled_door_model())),
+        None,
+    );
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
+
+    // The hull paint's model resolution (the draw's hull path) must not
+    // set the AABB pick flag on the loc.
+    let (x, y, z, _yaw, model) = rw
+        .loc_model_at(&world, &Cache::default(), 0, 0, 1, 2, 1530)
+        .expect("the door hull must resolve to the live loc model");
+    assert!(
+        !model.use_aabb_mouse_check,
+        "nav-debug hull paint must never set use_aabb_mouse_check on a loc"
+    );
+    assert!(model.num_points >= 4, "the hull AABB needs the model points");
+    assert!(x >= 0 && y > 0 && z >= 0, "the hull must carry a scene position");
+
+    // Mouse beside the door still must miss.
+    let door = angled_door_model();
+    let mut pix = Pix3DDraw::default();
+    let mut map = client::graphics::PixMap::new(512, 334);
+    {
+        let mut surface =
+            client::graphics::Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        pix.set_render_clipping(&surface);
+        pix.mouse_check = true;
+        pix.mouse_x = DOOR_BESIDE_MOUSE_X;
+        pix.mouse_y = DOOR_BESIDE_MOUSE_Y;
+        door.world_render(
+            &mut pix,
+            &mut surface,
+            0,
+            0,
+            65536,
+            0,
+            65536,
+            DOOR_REL_X,
+            0,
+            DOOR_REL_Z,
+            DOOR_TYPECODE,
+        );
+    }
+    assert_eq!(
+        pix.picked_count, 0,
+        "CPU loc pick is per-face even with a hull paint stored"
+    );
+
+    let mut gpu_pix = Pix3DDraw::default();
+    gpu_pix.set_clipping(512, 334);
+    gpu_pix.mouse_check = true;
+    gpu_pix.mouse_x = 256;
+    gpu_pix.mouse_y = 160;
+    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut gpu_pix);
+    assert!(
+        mesh.vertices()
+            .iter()
+            .any(|v| (v.abhsl & 0xffff) as i32 == WALL_SHADE),
+        "the door loc must actually be in the GPU mesh or the pick miss is a vis false-pass"
+    );
+    assert_eq!(
+        gpu_pix.picked_count, 0,
+        "GPU loc pick must stay per-face with a hull paint stored"
+    );
+}
+
+/// `set_nav_debug_paint` round-trips on the client: the paint stores and
+/// clears (the host publishes `None` by default so the tree builds).
+#[test]
+fn set_nav_debug_paint_roundtrips_on_client() {
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    assert!(
+        c.nav_debug_paint().is_none(),
+        "a fresh client has no nav debug paint"
+    );
+    c.set_nav_debug_paint(Some(NavDebugPaint {
+        show_path: true,
+        ..Default::default()
+    }));
+    assert!(c.nav_debug_paint().is_some_and(|p| p.show_path));
+    c.set_nav_debug_paint(None);
+    assert!(c.nav_debug_paint().is_none());
 }

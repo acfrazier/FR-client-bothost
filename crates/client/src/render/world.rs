@@ -1035,6 +1035,64 @@ impl RenderWorld {
         &mut self.slot(world, level, x, z).gd_model
     }
 
+    /// The live loc model at scene tile (`tile_x`, `tile_z`) whose loc id
+    /// is `loc_id` — the nav-debug hull target. Resolves the
+    /// wall/decor/ground-decor slot exactly like the draw pass (Task 3b
+    /// cache) and returns the placement scene position, the render yaw
+    /// index and a copy of the current temp model. Reads the AABB only;
+    /// the loc's `use_aabb_mouse_check` flag is never touched, so hull
+    /// paint cannot change loc picking.
+    pub fn loc_model_at(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        level: i32,
+        tile_x: i32,
+        tile_z: i32,
+        loc_id: i32,
+    ) -> Option<(i32, i32, i32, i32, Model)> {
+        let tile = tile_at(&world.squares, level, tile_x, tile_z)?;
+        if let Some(wall) = tile.wall.as_ref() {
+            if (wall.typecode >> 14) & 0x7fff == loc_id {
+                let (model1, model2) =
+                    self.wall_models_mut(world, cache, loop_cycle, level, tile_x, tile_z);
+                for model in [model1, model2] {
+                    if let Some(model) = model {
+                        if let Some(model) = model.get_temp_model(cache, loop_cycle) {
+                            return Some((wall.x, wall.y, wall.z, 0, model));
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(decor) = tile.decor.as_ref() {
+            if (decor.typecode >> 14) & 0x7fff == loc_id {
+                if let Some(model) = self
+                    .decor_model_mut(world, cache, loop_cycle, level, tile_x, tile_z)
+                    .as_mut()
+                {
+                    if let Some(model) = model.get_temp_model(cache, loop_cycle) {
+                        return Some((decor.x, decor.y, decor.z, decor.angle, model));
+                    }
+                }
+            }
+        }
+        if let Some(gd) = tile.ground_decor.as_ref() {
+            if (gd.typecode >> 14) & 0x7fff == loc_id {
+                if let Some(model) = self
+                    .gd_model_mut(world, cache, loop_cycle, level, tile_x, tile_z)
+                    .as_mut()
+                {
+                    if let Some(model) = model.get_temp_model(cache, loop_cycle) {
+                        return Some((gd.x, gd.y, gd.z, 0, model));
+                    }
+                }
+            }
+        }
+        None
+    }
+
     fn obj_models_mut(
         &mut self,
         world: &World,

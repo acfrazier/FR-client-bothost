@@ -48,6 +48,7 @@ use crate::io::{
     ClientProt, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt, SERVER_PROT_SIZES,
 };
 use crate::login_rsa::{LOGIN_RSAE, LOGIN_RSAN};
+use crate::render::nav_debug::NavDebugPaint;
 use crate::render::Renderer;
 use crate::sound::{Fade, JagFX, Midi};
 use crate::util::JString;
@@ -300,6 +301,11 @@ pub struct Client {
     /// render. Independent of the window: `client-play` sets it true after
     /// `WindowTarget::open`; headless bots keep it false.
     pub draw: bool,
+    /// The nav-debug paint the host publishes (`set_nav_debug_paint`);
+    /// drawn by the wgpu scene stage after the 3D world. `None` by
+    /// default — a skip-paint slot or a CPU-only client never paints, but
+    /// the store is always accepted.
+    pub nav_debug_paint: Option<NavDebugPaint>,
     pub scene_state: i32,
     /// `inMultizone` from client-ts (TS 132): set by `SET_MULTIWAY`.
     pub in_multizone: i32,
@@ -866,6 +872,7 @@ impl Client {
 
             ingame: false,
             draw: false,
+            nav_debug_paint: None,
             scene_state: 0,
             in_multizone: 0,
             build_minusedlevel: 0,
@@ -10168,6 +10175,18 @@ impl Client {
     /// Re-homed onto `Renderer` (task 2b); kept here as the doc anchor.
     pub fn set_draw(&mut self, draw: bool) {
         self.draw = draw;
+    }
+
+    /// Publish the host's nav-debug paint for this frame. Always stores —
+    /// CpuPix3D and skip-paint slots never paint, the wgpu scene stage
+    /// draws the stored paint after the 3D world.
+    pub fn set_nav_debug_paint(&mut self, paint: Option<NavDebugPaint>) {
+        self.nav_debug_paint = paint;
+    }
+
+    /// The nav-debug paint published for the current frame.
+    pub fn nav_debug_paint(&self) -> Option<&NavDebugPaint> {
+        self.nav_debug_paint.as_ref()
     }
 
     /// Flip the client's `lowmem` mode live (the panel's Music/SFX toggle):

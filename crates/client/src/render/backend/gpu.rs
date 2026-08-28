@@ -1059,6 +1059,20 @@ impl RenderBackend for GpuBackend {
         let _cov_guard = coverage_guard(&mut self.overlay_coverage, SCENE_W, SCENE_H);
 
         r.world.remove_sprites(&mut core.world);
+
+        // Nav debug paint (host tiles/hulls) over the 3D world, clipped to
+        // the game viewport like the other overlay passes. Its pixel
+        // writes mark coverage, so the paint stays opaque over the scene
+        // composite. CpuPix3D / skip-paint never reach this stage: the
+        // store is a no-op draw.
+        let mut game = r.area_game.take();
+        if let Some(game) = game.as_mut() {
+            let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
+            r.pix3d.set_clipping(game.width, game.height);
+            crate::render::nav_debug::draw(&mut *core, r, &mut surface);
+        }
+        r.area_game = game;
+
         r.entity_overlays(core);
         r.coord_arrow(core);
         r.texture_run_anims(core, cycle);
