@@ -363,9 +363,8 @@ fn side_inv_fixture(c: &mut Client) {
     inv.height = 1;
     inv.link_obj_type = Some(vec![2]); // obj id 1
     inv.link_obj_number = Some(vec![1]);
-    c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(inv));
+    c.set_iface(1, layer);
+    c.set_iface(2, inv);
     if c.cache.objs.len() < 2 {
         Arc::get_mut(&mut c.cache).unwrap().objs.resize(2, ObjType::default());
         Arc::get_mut(&mut c.cache).unwrap().objs[1].name = "Rune".into();
@@ -416,7 +415,7 @@ fn inv_slot_obj_iop_and_component_iop_options() {
 let _r = Renderer::new(false);
     let mut c = client();
     side_inv_fixture(&mut c);
-    let inv = c.ifaces[2].as_mut().unwrap();
+    let inv = c.iface_mut(2).unwrap();
     inv.iop[0] = Some("Bank".into());
     if c.cache.objs.len() < 2 {
         Arc::get_mut(&mut c.cache).unwrap().objs.resize(2, ObjType::default());
@@ -492,8 +491,7 @@ let _r = Renderer::new(false);
     layer.children = Some(vec![2, 3, 4, 5, 6, 7]);
     layer.child_x = Some(vec![0, 0, 0, 0, 0, 0]);
     layer.child_y = Some(vec![0, 0, 0, 0, 0, 0]);
-    c.ifaces.resize(8, None);
-    c.ifaces[1] = Some(Box::new(layer));
+    c.set_iface(1, layer);
     let button = |id: i32, button_type: i32| IfType {
         id,
         r#type: ComponentType::TYPE_RECT,
@@ -504,21 +502,21 @@ let _r = Renderer::new(false);
     };
     let mut ok = button(2, ButtonType::BUTTON_OK);
     ok.button_text = "Ok".into();
-    c.ifaces[2] = Some(Box::new(ok));
-    c.ifaces[3] = Some(Box::new(button(3, ButtonType::BUTTON_CLOSE)));
+    c.set_iface(2, ok);
+    c.set_iface(3, button(3, ButtonType::BUTTON_CLOSE));
     let mut toggle = button(4, ButtonType::BUTTON_TOGGLE);
     toggle.button_text = "Trade".into();
-    c.ifaces[4] = Some(Box::new(toggle));
+    c.set_iface(4, toggle);
     let mut select = button(5, ButtonType::BUTTON_SELECT);
     select.button_text = "Deposit".into();
-    c.ifaces[5] = Some(Box::new(select));
+    c.set_iface(5, select);
     let mut cont = button(6, ButtonType::BUTTON_CONTINUE);
     cont.button_text = "Continue".into();
-    c.ifaces[6] = Some(Box::new(cont));
+    c.set_iface(6, cont);
     let mut target = button(7, ButtonType::BUTTON_TARGET);
     target.target_verb = "Cast on".into();
     target.target_base = "Tree".into();
-    c.ifaces[7] = Some(Box::new(target));
+    c.set_iface(7, target);
     c.shell.mouse_x = 553 + 10;
     c.shell.mouse_y = 205 + 10;
     c.build_minimenu();
@@ -555,9 +553,8 @@ let _r = Renderer::new(false);
     layer.children = Some(vec![2]);
     layer.child_x = Some(vec![0]);
     layer.child_y = Some(vec![0]);
-    c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(IfType {
+    c.set_iface(1, layer);
+    c.set_iface(2, IfType {
         id: 2,
         r#type: ComponentType::TYPE_GRAPHIC,
         width: 36,
@@ -565,7 +562,7 @@ let _r = Renderer::new(false);
         button_type: ButtonType::BUTTON_OK,
         button_text: String::new(),
         ..IfType::default()
-    }));
+    });
     c.shell.mouse_x = 553 + 10;
     c.shell.mouse_y = 205 + 10;
     c.build_minimenu();
@@ -608,10 +605,9 @@ let _r = Renderer::new(false);
     target.button_type = ButtonType::BUTTON_TARGET;
     target.target_verb = "Cast".into();
     target.target_base = "Tree".into();
-    c.ifaces.resize(4, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(cont));
-    c.ifaces[3] = Some(Box::new(target));
+    c.set_iface(1, layer);
+    c.set_iface(2, cont);
+    c.set_iface(3, target);
     c.shell.mouse_x = 553 + 10;
     c.shell.mouse_y = 205 + 10;
     c.resumed_pause_button = true;
@@ -793,9 +789,8 @@ let _r = Renderer::new(false);
     button.client_code = 1; // CC_FRIENDS_START → friendUsername[0]
     button.width = 50;
     button.height = 15;
-    c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(button));
+    c.set_iface(1, layer);
+    c.set_iface(2, button);
     c.side_modal_id = -1;
     c.side_icon[3] = 1;
     c.active_icon = 3;

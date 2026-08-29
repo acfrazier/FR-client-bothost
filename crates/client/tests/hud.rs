@@ -272,9 +272,8 @@ let mut r = Renderer::new(false);
         font: 0, // p11
         ..IfType::default()
     };
-    c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(text));
+    c.set_iface(1, layer);
+    c.set_iface(2, text);
 
     let mut map = PixMap::new(100, 50);
     let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
@@ -343,9 +342,8 @@ let mut r = Renderer::new(false);
         graphic_name: "miscgraphics,0".into(),
         ..IfType::default()
     };
-    c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(graphic));
+    c.set_iface(1, layer);
+    c.set_iface(2, graphic);
 
     let mut map = PixMap::new(190, 261);
     let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
@@ -393,9 +391,8 @@ let mut r = Renderer::new(false);
         colour: 0xffffff,
         ..IfType::default()
     };
-    c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(text));
+    c.set_iface(1, layer);
+    c.set_iface(2, text);
     c.side_icon[3] = 1;
     c.redraw_side = true;
     r.game_draw(&mut c);
@@ -820,9 +817,8 @@ fn draw_text(mut c: &mut Client, r: &mut Renderer, text: &IfType) -> PixMap {
         child_y: Some(vec![0]),
         ..IfType::default()
     };
-    c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(text.clone()));
+    c.set_iface(1, layer);
+    c.set_iface(2, text.clone());
     let mut map = PixMap::new(100, 50);
     let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
     r.draw_interface(&mut c, 1, 0, 0, 0, &mut surface);
@@ -939,11 +935,9 @@ fn bind_side(c: &mut Client, root: i32, components: Vec<IfType>) {
     c.ingame = true;
     c.side_icon[3] = root;
     c.active_icon = 3;
-    let max = components.iter().map(|com| com.id).max().unwrap_or(0) as usize;
-    c.ifaces.resize(max + 1, None);
     for com in components {
         let id = com.id as usize;
-        c.ifaces[id] = Some(Box::new(com));
+        c.set_iface(id, com);
     }
 }
 
@@ -1366,11 +1360,10 @@ let _r = Renderer::new(false);
     com.height = 77;
     com.scroll_pos = 40;
     com.width = 100;
-    c.ifaces.resize(1, None);
-    c.ifaces[0] = Some(Box::new(com));
+    c.set_iface(0, com);
     // x,y inside the top 16×16 at left=463 top=0 → pass x=463 y=0
     c.do_scrollbar(463, 0, 200, 77, true, 463, 0, 0);
-    assert_eq!(c.ifaces[0].as_ref().unwrap().scroll_pos, 36); // - scroll_cycle*4
+    assert_eq!(c.if_(0).unwrap().scroll_pos, 36); // - scroll_cycle*4
     assert!(c.redraw_side);
 }
 
@@ -1442,9 +1435,8 @@ let mut r = Renderer::new(false);
     inv.link_obj_type = Some(vec![1]); // obj id 0 + 1
     inv.link_obj_number = Some(vec![1]);
     inv.colour = 0xffffff;
-    c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(inv));
+    c.set_iface(1, layer);
+    c.set_iface(2, inv);
     if c.cache.objs.is_empty() {
         return;
     }
@@ -1478,9 +1470,8 @@ let _r = Renderer::new(false);
     rect.width = 40;
     rect.height = 10;
     rect.colour = 0x00ff00;
-    c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(rect));
+    c.set_iface(1, layer);
+    c.set_iface(2, rect);
     c.redraw_chat = true;
     r.game_draw(&mut c);
     let chat = r.area_chat.as_ref().expect("prepare_game allocates area_chat");
@@ -1535,9 +1526,8 @@ let mut r = Renderer::new(false);
     rect.width = 40;
     rect.height = 10;
     rect.colour = 0x00ff00;
-    c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(rect));
+    c.set_iface(1, layer);
+    c.set_iface(2, rect);
     c.redraw_chat = true;
     r.game_draw(&mut c);
     let chat = r.area_chat.as_ref().unwrap();
@@ -1573,9 +1563,8 @@ let _r = Renderer::new(false);
     btn.button_text = "Continue".into();
     btn.width = 80;
     btn.height = 20;
-    c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(btn));
+    c.set_iface(1, layer);
+    c.set_iface(2, btn);
     // the menu path: build_minimenu pushes the button's IF_BUTTON option,
     // mouse_loop fires the last entry (build_minimenu needs the live
     // pointer at the click position)
@@ -1622,9 +1611,8 @@ let _r = Renderer::new(false);
     model.model_anim = 0;
     model.anim_frame = 0;
     model.anim_cycle = 0;
-    c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(model));
+    c.set_iface(1, layer);
+    c.set_iface(2, model);
     Arc::get_mut(&mut c.cache).unwrap().seqs.resize(1, SeqType::default());
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].num_frames = 2;
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].frames = Some(vec![0, 0]);
@@ -1632,7 +1620,7 @@ let _r = Renderer::new(false);
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].delay = Some(vec![1, 1]);
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].loops = 2;
     assert!(r.animate_interface(&mut c, 1, 2));
-    assert_eq!(c.ifaces[2].as_ref().unwrap().anim_frame, 1);
+    assert_eq!(c.if_(2).unwrap().anim_frame, 1);
 }
 
 #[test]
@@ -1650,13 +1638,12 @@ let _r = Renderer::new(false);
     model.r#type = ComponentType::TYPE_MODEL;
     model.anim_frame = 4;
     model.anim_cycle = 9;
-    c.ifaces.resize(4, None);
-    c.ifaces[1] = Some(Box::new(root));
-    c.ifaces[2] = Some(Box::new(inner));
-    c.ifaces[3] = Some(Box::new(model));
+    c.set_iface(1, root);
+    c.set_iface(2, inner);
+    c.set_iface(3, model);
     c.if_anim_reset(1);
-    assert_eq!(c.ifaces[3].as_ref().unwrap().anim_frame, 0);
-    assert_eq!(c.ifaces[3].as_ref().unwrap().anim_cycle, 0);
+    assert_eq!(c.if_(3).unwrap().anim_frame, 0);
+    assert_eq!(c.if_(3).unwrap().anim_cycle, 0);
 }
 
 #[test]
@@ -1682,11 +1669,10 @@ let _r = Renderer::new(false);
     let mut chat_model = IfType::default();
     chat_model.r#type = ComponentType::TYPE_MODEL;
     chat_model.model_anim = 0;
-    c.ifaces.resize(5, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(model));
-    c.ifaces[3] = Some(Box::new(chat_layer));
-    c.ifaces[4] = Some(Box::new(chat_model));
+    c.set_iface(1, layer);
+    c.set_iface(2, model);
+    c.set_iface(3, chat_layer);
+    c.set_iface(4, chat_model);
     Arc::get_mut(&mut c.cache).unwrap().seqs.resize(1, SeqType::default());
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].num_frames = 2;
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].frames = Some(vec![0, 0]);
@@ -1699,8 +1685,8 @@ let _r = Renderer::new(false);
     c.redraw_side = false;
     c.redraw_chat = false;
     r.game_draw(&mut c);
-    assert_eq!(c.ifaces[2].as_ref().unwrap().anim_frame, 1);
-    assert_eq!(c.ifaces[4].as_ref().unwrap().anim_frame, 1);
+    assert_eq!(c.if_(2).unwrap().anim_frame, 1);
+    assert_eq!(c.if_(4).unwrap().anim_frame, 1);
 }
 
 #[test]
@@ -1784,9 +1770,8 @@ let _r = Renderer::new(false);
     child.height = 20;
     child.colour_over = 0xff0000;
     child.over_layer_id = -1;
-    c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(child));
+    c.set_iface(1, layer);
+    c.set_iface(2, child);
     c.shell.mouse_x = 553 + 5;
     c.shell.mouse_y = 205 + 5;
     c.update_if_pointer();
@@ -1815,9 +1800,8 @@ let _r = Renderer::new(false);
     rect.width = 20;
     rect.height = 20;
     rect.colour = 0x112233;
-    c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(rect));
+    c.set_iface(1, layer);
+    c.set_iface(2, rect);
     let mut pixels = vec![0i32; 20 * 20];
     let mut surface = Pix2D::with_pixels(&mut pixels, 20, 20);
     r.draw_interface(&mut c, 1, 0, 0, 0, &mut surface);
@@ -1836,9 +1820,8 @@ let _r = Renderer::new(false);
     child.width = 200;
     child.height = 200;
     child.colour_over = 0xff0000;
-    c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(child));
+    c.set_iface(1, layer);
+    c.set_iface(2, child);
     c.shell.mouse_x = 100;
     c.shell.mouse_y = 100;
     c.update_if_pointer();
@@ -1857,9 +1840,8 @@ let _r = Renderer::new(false);
     child.width = 190;
     child.height = 96;
     child.colour_over = 0xff0000;
-    c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(child));
+    c.set_iface(1, layer);
+    c.set_iface(2, child);
     c.shell.mouse_x = 200;
     c.shell.mouse_y = 400;
     c.update_if_pointer();
@@ -1894,9 +1876,8 @@ let _r = Renderer::new(false);
     rect.height = 20;
     rect.colour = 0x112233;
     rect.colour_over = 0xff0000;
-    c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(rect));
+    c.set_iface(1, layer);
+    c.set_iface(2, rect);
 
     let mut plain = vec![0i32; 20 * 20];
     let mut plain_surface = Pix2D::with_pixels(&mut plain, 20, 20);
@@ -1931,17 +1912,16 @@ let _r = Renderer::new(false);
     button.r#type = ComponentType::TYPE_RECT;
     button.width = 100;
     button.height = 20;
-    c.ifaces.resize(4, None);
-    c.ifaces[1] = Some(Box::new(root));
-    c.ifaces[2] = Some(Box::new(scroller));
-    c.ifaces[3] = Some(Box::new(button));
+    c.set_iface(1, root);
+    c.set_iface(2, scroller);
+    c.set_iface(3, button);
     // the scroller's scrollbar sits at left = 553 + 100 = 653, top =
     // 205 + 30 = 235; its down arrow is x 653..669, y 319..335.
     c.scroll_cycle = 1;
     c.shell.mouse_x = 660;
     c.shell.mouse_y = 327;
     c.update_if_pointer();
-    assert_eq!(c.ifaces[2].as_ref().unwrap().scroll_pos, 4); // + scroll_cycle*4
+    assert_eq!(c.if_(2).unwrap().scroll_pos, 4); // + scroll_cycle*4
     assert!(c.redraw_side);
 }
 
@@ -1958,9 +1938,8 @@ let _r = Renderer::new(false);
     inv.height = 1; // one row
     inv.margin_x = 0;
     inv.margin_y = 0;
-    c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(Box::new(root));
-    c.ifaces[2] = Some(Box::new(inv));
+    c.set_iface(1, root);
+    c.set_iface(2, inv);
     c.shell.mouse_x = 553 + 5;
     c.shell.mouse_y = 205 + 5;
     c.update_if_pointer();
@@ -2090,9 +2069,8 @@ let _r = Renderer::new(false);
         link_obj_number: Some(vec![1, 0]),
         ..IfType::default()
     };
-    c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(inv));
+    c.set_iface(1, layer);
+    c.set_iface(2, inv);
     // the slot holds obj id 5, so `build_minimenu` can name it for the
     // Examine entry (the drag-start target)
     if c.cache.objs.len() < 5 {
@@ -2124,7 +2102,7 @@ let _r = Renderer::new(false);
     c.handle_obj_drag();
     assert_eq!(c.obj_drag_area, 0);
     assert_eq!(
-        c.ifaces[2].as_ref().unwrap().link_obj_type.as_ref().unwrap()[1],
+        c.if_(2).unwrap().link_obj_type.as_ref().unwrap()[1],
         5
     );
     // INV_BUTTOND (id 93): p1_enc(93) p2(com) p2(src) p2(dst) p1(mode),
@@ -2167,9 +2145,8 @@ let _r = Renderer::new(false);
         link_obj_number: Some(vec![1, 0]),
         ..IfType::default()
     };
-    c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(inv));
+    c.set_iface(1, layer);
+    c.set_iface(2, inv);
     // the slot holds obj id 5, so `build_minimenu` can name it for the
     // Examine entry (the drag-start target)
     if c.cache.objs.len() < 5 {
@@ -2196,7 +2173,7 @@ let _r = Renderer::new(false);
     assert_eq!(c.obj_drag_area, 0);
     assert_eq!(c.out.pos, 0, "a quick release must not send INV_BUTTOND");
     assert_eq!(
-        c.ifaces[2].as_ref().unwrap().link_obj_type.as_ref().unwrap(),
+        c.if_(2).unwrap().link_obj_type.as_ref().unwrap(),
         &vec![5, 0],
         "a quick release must not move the item"
     );
@@ -2228,7 +2205,7 @@ let _r = Renderer::new(false);
     assert_eq!(c.obj_drag_area, 0);
     assert_eq!(c.out.pos, 0, "a same-slot drop must not send INV_BUTTOND");
     assert_eq!(
-        c.ifaces[2].as_ref().unwrap().link_obj_type.as_ref().unwrap(),
+        c.if_(2).unwrap().link_obj_type.as_ref().unwrap(),
         &vec![5, 0],
         "a same-slot drop must not move the item"
     );

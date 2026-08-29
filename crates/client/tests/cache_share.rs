@@ -32,10 +32,9 @@ fn two_clients_share_type_tables_and_not_ifaces() {
     assert_eq!(b.cache.obj(0).name, "Coins");
     // ifaces stay per-client: b's slot 1 must not reflect a's mutation
     // (the /tmp cache may or may not have unpacked real components).
-    let b_before = b.ifaces.get(1).and_then(|s| s.as_ref()).map(|s| (s.id, s.hide));
-    a.ifaces.resize(2, None);
-    a.ifaces[1] = Some(Box::new(IfType::default()));
-    a.ifaces[1].as_mut().unwrap().hide = true;
-    let b_after = b.ifaces.get(1).and_then(|s| s.as_ref()).map(|s| (s.id, s.hide));
+    let b_before = b.if_(1).map(|s| (s.id, s.hide));
+    a.set_iface(1, IfType::default());
+    a.iface_mut(1).unwrap().hide = true;
+    let b_after = b.if_(1).map(|s| (s.id, s.hide));
     assert_eq!(b_after, b_before);
 }

@@ -178,14 +178,13 @@ fn headless_client_core_runs_sim_without_renderer() {
     assert_eq!(c.world.wall_type(0, 45, 45), 0, "empty tile stays empty");
 
     // Packet apply: UPDATE_INV_FULL resolves into the iface's inv arrays.
-    c.ifaces.resize(11, None);
-    c.ifaces[10] = Some(Box::new(IfType {
+    c.set_iface(10, IfType {
         width: 4,
         height: 4,
         link_obj_type: Some(vec![0; 16]),
         link_obj_number: Some(vec![0; 16]),
         ..IfType::default()
-    }));
+    });
     let mut inv = Packet::alloc(0);
     inv.p2(10); // com id
     inv.p1(2); // slot count
@@ -195,7 +194,7 @@ fn headless_client_core_runs_sim_without_renderer() {
     inv.p1(1); // slot 1: count
     inv.pos = 0;
     c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut inv);
-    let iface = c.ifaces[10].as_ref().unwrap();
+    let iface = c.if_(10).unwrap();
     let types = iface.link_obj_type.as_ref().unwrap();
     let counts = iface.link_obj_number.as_ref().unwrap();
     assert_eq!(types[0], 415);

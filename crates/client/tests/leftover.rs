@@ -742,16 +742,15 @@ let _r = Renderer::new(false);
 fn design_preview_sets_rotation_and_caches_temp_model() {
 let _r = Renderer::new(false);
     let mut c = client();
-    c.ifaces.resize(328, None);
-    c.ifaces[327] = Some(Box::new(IfType {
+    c.set_iface(327, IfType {
         id: 327,
         client_code: 327, // CC_DESIGN_PREVIEW
         ..IfType::default()
-    }));
+    });
     c.loop_cycle = 40;
     c.idk_design_redraw = true; // empty idk table + parts -1 -> empty model
     c.client_component(327);
-    let com = c.ifaces[327].as_ref().unwrap();
+    let com = c.if_(327).unwrap();
     assert_eq!(com.model_xan, 150);
     assert_eq!(com.model_yan, 215); // sin(40/40)*256 | 0 = 215, & 0x7ff
     assert_eq!(com.model1_type, 5);
@@ -765,21 +764,20 @@ let _r = Renderer::new(false);
 fn design_switch_buttons_swap_graphic_names() {
 let _r = Renderer::new(false);
     let mut c = client();
-    c.ifaces.resize(2, None);
-    c.ifaces[1] = Some(Box::new(IfType {
+    c.set_iface(1, IfType {
         id: 1,
         client_code: 324, // CC_SWITCH_TO_MALE
         graphic_name: "male".into(),
         graphic2_name: "female".into(),
         ..IfType::default()
-    }));
+    });
     c.idk_design_gender = true;
     c.client_component(1);
     // male + already male: shows the female snapshot (the button to press).
-    assert_eq!(c.ifaces[1].as_ref().unwrap().graphic_name, "female");
+    assert_eq!(c.if_(1).unwrap().graphic_name, "female");
     c.idk_design_gender = false;
     c.client_component(1);
-    assert_eq!(c.ifaces[1].as_ref().unwrap().graphic_name, "male");
+    assert_eq!(c.if_(1).unwrap().graphic_name, "male");
 }
 
 /// Java `Client.java` 3682-3686 / Client.ts 1883-1887: the cold-login

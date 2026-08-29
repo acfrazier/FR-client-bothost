@@ -51,16 +51,22 @@ fn serve_login(s: &mut std::net::TcpStream, opcode: u8, grant: &[u8]) {
 #[test]
 fn from_shared_reuses_one_arc_without_unpack() {
     let tables = Arc::new(Cache::default());
-    let template = vec![None, Some(Box::new(IfType::default()))];
-    let mut a = Client::from_shared(cfg(), Arc::clone(&tables), template.clone());
-    let b = Client::from_shared(cfg(), Arc::clone(&tables), template);
+    let template = Arc::new(vec![None, Some(Box::new(IfType::default()))]);
+    let mut a = Client::from_shared(cfg(), Arc::clone(&tables), Arc::clone(&template));
+    let b = Client::from_shared(cfg(), Arc::clone(&tables), Arc::clone(&template));
     assert!(Arc::ptr_eq(&a.cache, &b.cache));
     assert!(Arc::ptr_eq(&a.cache, &tables));
+    // One decode table for every client: both clients point at the same
+    // `Arc`, and the template Arc is the only strong owner of the decode.
+    assert!(Arc::ptr_eq(&a.ifaces, &b.ifaces));
+    assert!(Arc::ptr_eq(&a.ifaces, &template));
     assert!(!a.error_loading);
     assert!(!b.error_loading);
-    // ifaces stay per-client: b's slot 1 must not reflect a's mutation.
-    a.ifaces[1].as_mut().unwrap().hide = true;
-    assert!(!b.ifaces[1].as_ref().unwrap().hide);
+    // hide stays per-client: a's mutation materializes a's overlay, so
+    // b's slot 1 must not reflect it (the shared decode is untouched).
+    a.iface_mut(1).unwrap().hide = true;
+    assert!(a.if_(1).unwrap().hide);
+    assert!(!b.if_(1).unwrap().hide);
 }
 
 /// The channel-head tune: `head` logs in cold, hands its live socket +
@@ -108,7 +114,7 @@ fn adopt_reconnects_opcode_18_without_tcp_drop() {
 
     // the tune: a fresh sim `Client` over the shared cache adopts the
     // live stream + ISAAC cursors; the source must not touch the socket.
-    let mut sim = Client::from_shared(cfg(), Arc::new(Cache::default()), vec![]);
+    let mut sim = Client::from_shared(cfg(), Arc::new(Cache::default()), Arc::new(vec![]));
     sim.config.host = addr.ip().to_string();
     sim.config.port = addr.port();
     assert!(sim.adopt_from(&mut head).is_some());

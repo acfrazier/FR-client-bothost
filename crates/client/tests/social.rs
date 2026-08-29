@@ -344,10 +344,9 @@ fn client_component_fills_friend_name() {
     let mut com = client::config::IfType::default();
     com.id = 2;
     com.client_code = 1; // CC_FRIENDS_START → index 0 after -1
-    c.ifaces.resize(3, None);
-    c.ifaces[2] = Some(Box::new(com));
+    c.set_iface(2, com);
     c.client_component(2);
-    assert_eq!(c.ifaces[2].as_ref().unwrap().text, "Bob");
+    assert_eq!(c.if_(2).unwrap().text, "Bob");
 }
 
 #[test]
@@ -360,10 +359,9 @@ fn client_component_update_range_writes_world_text() {
     let mut com = client::config::IfType::default();
     com.id = 2;
     com.client_code = 101; // CC_FRIENDS_UPDATE_START → index 0 after -101
-    c.ifaces.resize(3, None);
-    c.ifaces[2] = Some(Box::new(com));
+    c.set_iface(2, com);
     c.client_component(2);
-    assert_eq!(c.ifaces[2].as_ref().unwrap().text, "@gre@World-1");
+    assert_eq!(c.if_(2).unwrap().text, "@gre@World-1");
 }
 
 #[test]

@@ -46,6 +46,12 @@ impl ButtonType {
 
 #[derive(Clone)]
 pub struct IfType {
+    /// NOTE: a decoded `IfType` is immutable once unpacked. The decode
+    /// table lives on a process-shared `Arc` (`Client.ifaces`); per-client
+    /// mutations (hide, scroll_pos, anim_frame/cycle, link_obj_*, live
+    /// text, server `IF_SET*` writes) copy the slot into `Client.ifaces_mut`
+    /// on first write, so fifty clients share one decode and only mutated
+    /// slots cost a per-client copy.
     pub anim_frame: i32,
     pub anim_cycle: i32,
     pub id: i32,

@@ -2026,7 +2026,7 @@ impl Renderer {
     /// The caller binds `pix3d` to the target surface once
     /// (`set_clipping`); the `clientComponent` scripts load with Task 14.
     pub fn draw_interface(&mut self, client: &mut Client, com_id: i32, x: i32, y: i32, scroll_y: i32, surface: &mut Pix2D) {
-        let Some(com) = client.ifaces.get(com_id as usize).and_then(|o| o.as_ref()) else {
+        let Some(com) = client.if_(com_id as usize) else {
             return;
         };
         // TS 9901-9905: only TYPE_LAYER draws; a hidden layer still draws
@@ -2065,7 +2065,15 @@ impl Renderer {
             // TS 9926: `clientComponent(child)` fills the friend/ignore
             // text/button/scroll fields before the child plots.
             client.client_component(child_id as i32);
-            let Some(child) = client.ifaces.get(child_id).and_then(|o| o.as_ref()) else {
+            // Field-scoped borrows (overlay then shared decode): the TYPE_INV
+            // arm writes `client.obj_grab_y` mid-iteration, so the whole-
+            // client `if_()` borrow cannot span the arm.
+            let Some(child) = client
+                .ifaces_mut
+                .get(child_id)
+                .and_then(|o| o.as_deref())
+                .or_else(|| client.ifaces.get(child_id).and_then(|o| o.as_deref()))
+            else {
                 continue;
             };
             let child_x = child_x[i] + x + child.x;
@@ -2083,7 +2091,8 @@ impl Renderer {
                         scroll_pos = 0;
                     }
                     if scroll_pos != child.scroll_pos {
-                        if let Some(c) = client.ifaces.get_mut(child_id).and_then(|o| o.as_mut()) {
+                        client.ensure_iface_mut(child_id);
+                        if let Some(c) = client.ifaces_mut.get_mut(child_id).and_then(|o| o.as_mut()) {
                             c.scroll_pos = scroll_pos;
                         }
                     }
@@ -2091,9 +2100,7 @@ impl Renderer {
                     // drawScrollbar (TS 9941): a scrollable layer draws its
                     // scrollbar after the recurse.
                     let (child_w, child_h, child_sh) = client
-                        .ifaces
-                        .get(child_id)
-                        .and_then(|o| o.as_ref())
+                        .if_(child_id)
                         .map(|c| (c.width, c.height, c.scroll_height))
                         .unwrap_or((0, 0, 0));
                     if child_sh > child_h {
@@ -2565,7 +2572,8 @@ impl Renderer {
 
         // write back the drag-autoscrolled layer scroll (TS 9990-10017).
         if layer_scroll != base_scroll {
-            if let Some(c) = client.ifaces.get_mut(com_id as usize).and_then(|o| o.as_mut()) {
+            client.ensure_iface_mut(com_id as usize);
+            if let Some(c) = client.ifaces_mut.get_mut(com_id as usize).and_then(|o| o.as_mut()) {
                 c.scroll_pos = layer_scroll;
             }
         }
@@ -2724,8 +2732,7 @@ impl Renderer {
                     let obj = obj + 1;
                     // TS `IfType.list[id]` on an out-of-range id throws,
                     // which the catch maps to -1.
-                    let Some(com) = client.ifaces.get(com_id as usize).and_then(|o| o.as_ref())
-                    else {
+                    let Some(com) = client.if_(com_id as usize) else {
                         return Some(-1);
                     };
                     if let (Some(link_obj_type), Some(link_obj_number)) =
@@ -2789,8 +2796,7 @@ impl Renderer {
                         return Some(-1);
                     };
                     let obj = obj + 1;
-                    let Some(com) = client.ifaces.get(com_id as usize).and_then(|o| o.as_ref())
-                    else {
+                    let Some(com) = client.if_(com_id as usize) else {
                         return Some(-1);
                     };
                     if let Some(link_obj_type) = &com.link_obj_type {
@@ -3987,9 +3993,8 @@ impl Renderer {
     /// whether any child frame advanced. Re-homed onto `Renderer` (task 2b)
     /// so it can select the seq via `get_if_active`.
     pub fn animate_interface(&mut self, client: &mut Client, id: i32, delta: i32) -> bool {
-        let Some(children) = client.ifaces
-            .get(id as usize)
-            .and_then(|o| o.as_ref())
+        let Some(children) = client
+            .if_(id as usize)
             .and_then(|com| com.children.clone())
         else {
             return false;
@@ -4001,10 +4006,7 @@ impl Renderer {
             if child_id == -1 {
                 break;
             }
-            let Some(child) = client.ifaces
-                .get(child_id as usize)
-                .and_then(|o| o.as_ref())
-            else {
+            let Some(child) = client.if_(child_id as usize) else {
                 break;
             };
             let child = child.clone();
@@ -4036,7 +4038,8 @@ impl Renderer {
                         }
                         advanced = true;
                     }
-                    if let Some(com) = client.ifaces
+                    client.ensure_iface_mut(child_id as usize);
+                    if let Some(com) = client.ifaces_mut
                         .get_mut(child_id as usize)
                         .and_then(|o| o.as_mut())
                     {

@@ -126,10 +126,10 @@ fn from_shared_maininit_keeps_injected_cache_and_skips_reunpack() {
     let mut c = Client::from_shared(
         cfg(&dir),
         Arc::clone(&injected),
-        vec![Some(Box::new(IfType {
+        Arc::new(vec![Some(Box::new(IfType {
             id: 42,
             ..IfType::default()
-        }))],
+        }))]),
     );
     c.http_port = port;
     c.fetch_retry_wait = Duration::from_millis(1);
@@ -151,7 +151,7 @@ fn from_shared_maininit_keeps_injected_cache_and_skips_reunpack() {
     );
     assert_eq!(c.cache.obj(0).name, "Coins", "injected tables stay live");
     assert_eq!(
-        c.ifaces[0].as_ref().unwrap().id,
+        c.if_(0).unwrap().id,
         42,
         "injected iface template stays per-client"
     );

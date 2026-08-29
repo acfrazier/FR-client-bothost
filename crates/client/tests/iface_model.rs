@@ -40,9 +40,8 @@ let mut r = Renderer::new(false);
     model.model1_type = 1;
     model.model1_id = 999999; // not loaded
     model.model_zoom = 800;
-    c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(Box::new(layer));
-    c.ifaces[2] = Some(Box::new(model));
+    c.set_iface(1, layer);
+    c.set_iface(2, model);
     let mut pixels = vec![0i32; 50 * 50];
     let mut surface = client::graphics::Pix2D::with_pixels(&mut pixels, 50, 50);
     r.pix3d.set_clipping(50, 50);
@@ -128,7 +127,7 @@ fn gpu_draw_does_not_crash_on_mysterious_cube_modal() {
     });
     r.game_draw(&mut c);
     assert!(
-        c.ifaces.get(6554).and_then(|o| o.as_ref()).is_some(),
+        c.if_(6554).is_some(),
         "macro_cube interface 6554 must unpack from the 274 interface jag"
     );
 
@@ -143,7 +142,7 @@ fn gpu_draw_does_not_crash_on_mysterious_cube_modal() {
         } else {
             (0, 0, 0)
         };
-        if let Some(com) = c.ifaces.get_mut(com_id).and_then(|o| o.as_mut()) {
+        if let Some(com) = c.iface_mut(com_id) {
             com.model1_type = 4;
             com.model1_id = obj_id;
             com.model_xan = xan2d;

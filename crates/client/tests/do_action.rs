@@ -44,15 +44,14 @@ fn walk_menu_arms_mouse_picking() {
 #[test]
 fn tgt_button_arms_spell_target_mode() {
     let mut c = client();
-    c.ifaces.resize(8, None);
-    c.ifaces[7] = Some(Box::new(IfType {
+    c.set_iface(7, IfType {
         id: 7,
         button_type: ButtonType::BUTTON_TARGET,
         target_verb: "Cast on".into(),
         target_base: "Wind strike".into(),
         target_mask: 3,
         ..IfType::default()
-    }));
+    });
     c.menu_action[0] = MiniMenuAction::TGT_BUTTON;
     c.menu_param_c[0] = 7;
     c.doAction(0);
