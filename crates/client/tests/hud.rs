@@ -273,8 +273,8 @@ let mut r = Renderer::new(false);
         ..IfType::default()
     };
     c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(text);
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(text));
 
     let mut map = PixMap::new(100, 50);
     let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
@@ -344,8 +344,8 @@ let mut r = Renderer::new(false);
         ..IfType::default()
     };
     c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(graphic);
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(graphic));
 
     let mut map = PixMap::new(190, 261);
     let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
@@ -394,8 +394,8 @@ let mut r = Renderer::new(false);
         ..IfType::default()
     };
     c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(text);
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(text));
     c.side_icon[3] = 1;
     c.redraw_side = true;
     r.game_draw(&mut c);
@@ -821,8 +821,8 @@ fn draw_text(mut c: &mut Client, r: &mut Renderer, text: &IfType) -> PixMap {
         ..IfType::default()
     };
     c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(text.clone());
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(text.clone()));
     let mut map = PixMap::new(100, 50);
     let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
     r.draw_interface(&mut c, 1, 0, 0, 0, &mut surface);
@@ -943,7 +943,7 @@ fn bind_side(c: &mut Client, root: i32, components: Vec<IfType>) {
     c.ifaces.resize(max + 1, None);
     for com in components {
         let id = com.id as usize;
-        c.ifaces[id] = Some(com);
+        c.ifaces[id] = Some(Box::new(com));
     }
 }
 
@@ -1367,7 +1367,7 @@ let _r = Renderer::new(false);
     com.scroll_pos = 40;
     com.width = 100;
     c.ifaces.resize(1, None);
-    c.ifaces[0] = Some(com);
+    c.ifaces[0] = Some(Box::new(com));
     // x,y inside the top 16×16 at left=463 top=0 → pass x=463 y=0
     c.do_scrollbar(463, 0, 200, 77, true, 463, 0, 0);
     assert_eq!(c.ifaces[0].as_ref().unwrap().scroll_pos, 36); // - scroll_cycle*4
@@ -1443,8 +1443,8 @@ let mut r = Renderer::new(false);
     inv.link_obj_number = Some(vec![1]);
     inv.colour = 0xffffff;
     c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(inv);
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(inv));
     if c.cache.objs.is_empty() {
         return;
     }
@@ -1479,8 +1479,8 @@ let _r = Renderer::new(false);
     rect.height = 10;
     rect.colour = 0x00ff00;
     c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(rect);
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(rect));
     c.redraw_chat = true;
     r.game_draw(&mut c);
     let chat = r.area_chat.as_ref().expect("prepare_game allocates area_chat");
@@ -1536,8 +1536,8 @@ let mut r = Renderer::new(false);
     rect.height = 10;
     rect.colour = 0x00ff00;
     c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(rect);
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(rect));
     c.redraw_chat = true;
     r.game_draw(&mut c);
     let chat = r.area_chat.as_ref().unwrap();
@@ -1574,8 +1574,8 @@ let _r = Renderer::new(false);
     btn.width = 80;
     btn.height = 20;
     c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(btn);
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(btn));
     // the menu path: build_minimenu pushes the button's IF_BUTTON option,
     // mouse_loop fires the last entry (build_minimenu needs the live
     // pointer at the click position)
@@ -1623,8 +1623,8 @@ let _r = Renderer::new(false);
     model.anim_frame = 0;
     model.anim_cycle = 0;
     c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(model);
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(model));
     Arc::get_mut(&mut c.cache).unwrap().seqs.resize(1, SeqType::default());
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].num_frames = 2;
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].frames = Some(vec![0, 0]);
@@ -1651,9 +1651,9 @@ let _r = Renderer::new(false);
     model.anim_frame = 4;
     model.anim_cycle = 9;
     c.ifaces.resize(4, None);
-    c.ifaces[1] = Some(root);
-    c.ifaces[2] = Some(inner);
-    c.ifaces[3] = Some(model);
+    c.ifaces[1] = Some(Box::new(root));
+    c.ifaces[2] = Some(Box::new(inner));
+    c.ifaces[3] = Some(Box::new(model));
     c.if_anim_reset(1);
     assert_eq!(c.ifaces[3].as_ref().unwrap().anim_frame, 0);
     assert_eq!(c.ifaces[3].as_ref().unwrap().anim_cycle, 0);
@@ -1683,10 +1683,10 @@ let _r = Renderer::new(false);
     chat_model.r#type = ComponentType::TYPE_MODEL;
     chat_model.model_anim = 0;
     c.ifaces.resize(5, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(model);
-    c.ifaces[3] = Some(chat_layer);
-    c.ifaces[4] = Some(chat_model);
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(model));
+    c.ifaces[3] = Some(Box::new(chat_layer));
+    c.ifaces[4] = Some(Box::new(chat_model));
     Arc::get_mut(&mut c.cache).unwrap().seqs.resize(1, SeqType::default());
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].num_frames = 2;
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].frames = Some(vec![0, 0]);
@@ -1785,8 +1785,8 @@ let _r = Renderer::new(false);
     child.colour_over = 0xff0000;
     child.over_layer_id = -1;
     c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(child);
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(child));
     c.shell.mouse_x = 553 + 5;
     c.shell.mouse_y = 205 + 5;
     c.update_if_pointer();
@@ -1816,8 +1816,8 @@ let _r = Renderer::new(false);
     rect.height = 20;
     rect.colour = 0x112233;
     c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(rect);
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(rect));
     let mut pixels = vec![0i32; 20 * 20];
     let mut surface = Pix2D::with_pixels(&mut pixels, 20, 20);
     r.draw_interface(&mut c, 1, 0, 0, 0, &mut surface);
@@ -1837,8 +1837,8 @@ let _r = Renderer::new(false);
     child.height = 200;
     child.colour_over = 0xff0000;
     c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(child);
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(child));
     c.shell.mouse_x = 100;
     c.shell.mouse_y = 100;
     c.update_if_pointer();
@@ -1858,8 +1858,8 @@ let _r = Renderer::new(false);
     child.height = 96;
     child.colour_over = 0xff0000;
     c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(child);
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(child));
     c.shell.mouse_x = 200;
     c.shell.mouse_y = 400;
     c.update_if_pointer();
@@ -1895,8 +1895,8 @@ let _r = Renderer::new(false);
     rect.colour = 0x112233;
     rect.colour_over = 0xff0000;
     c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(rect);
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(rect));
 
     let mut plain = vec![0i32; 20 * 20];
     let mut plain_surface = Pix2D::with_pixels(&mut plain, 20, 20);
@@ -1932,9 +1932,9 @@ let _r = Renderer::new(false);
     button.width = 100;
     button.height = 20;
     c.ifaces.resize(4, None);
-    c.ifaces[1] = Some(root);
-    c.ifaces[2] = Some(scroller);
-    c.ifaces[3] = Some(button);
+    c.ifaces[1] = Some(Box::new(root));
+    c.ifaces[2] = Some(Box::new(scroller));
+    c.ifaces[3] = Some(Box::new(button));
     // the scroller's scrollbar sits at left = 553 + 100 = 653, top =
     // 205 + 30 = 235; its down arrow is x 653..669, y 319..335.
     c.scroll_cycle = 1;
@@ -1959,8 +1959,8 @@ let _r = Renderer::new(false);
     inv.margin_x = 0;
     inv.margin_y = 0;
     c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(root);
-    c.ifaces[2] = Some(inv);
+    c.ifaces[1] = Some(Box::new(root));
+    c.ifaces[2] = Some(Box::new(inv));
     c.shell.mouse_x = 553 + 5;
     c.shell.mouse_y = 205 + 5;
     c.update_if_pointer();
@@ -2091,8 +2091,8 @@ let _r = Renderer::new(false);
         ..IfType::default()
     };
     c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(inv);
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(inv));
     // the slot holds obj id 5, so `build_minimenu` can name it for the
     // Examine entry (the drag-start target)
     if c.cache.objs.len() < 5 {
@@ -2168,8 +2168,8 @@ let _r = Renderer::new(false);
         ..IfType::default()
     };
     c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(inv);
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(inv));
     // the slot holds obj id 5, so `build_minimenu` can name it for the
     // Examine entry (the drag-start target)
     if c.cache.objs.len() < 5 {

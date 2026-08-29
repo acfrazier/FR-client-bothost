@@ -126,10 +126,10 @@ fn from_shared_maininit_keeps_injected_cache_and_skips_reunpack() {
     let mut c = Client::from_shared(
         cfg(&dir),
         Arc::clone(&injected),
-        vec![Some(IfType {
+        vec![Some(Box::new(IfType {
             id: 42,
             ..IfType::default()
-        })],
+        }))],
     );
     c.http_port = port;
     c.fetch_retry_wait = Duration::from_millis(1);

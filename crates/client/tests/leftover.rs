@@ -743,11 +743,11 @@ fn design_preview_sets_rotation_and_caches_temp_model() {
 let _r = Renderer::new(false);
     let mut c = client();
     c.ifaces.resize(328, None);
-    c.ifaces[327] = Some(IfType {
+    c.ifaces[327] = Some(Box::new(IfType {
         id: 327,
         client_code: 327, // CC_DESIGN_PREVIEW
         ..IfType::default()
-    });
+    }));
     c.loop_cycle = 40;
     c.idk_design_redraw = true; // empty idk table + parts -1 -> empty model
     c.client_component(327);
@@ -766,13 +766,13 @@ fn design_switch_buttons_swap_graphic_names() {
 let _r = Renderer::new(false);
     let mut c = client();
     c.ifaces.resize(2, None);
-    c.ifaces[1] = Some(IfType {
+    c.ifaces[1] = Some(Box::new(IfType {
         id: 1,
         client_code: 324, // CC_SWITCH_TO_MALE
         graphic_name: "male".into(),
         graphic2_name: "female".into(),
         ..IfType::default()
-    });
+    }));
     c.idk_design_gender = true;
     c.client_component(1);
     // male + already male: shows the female snapshot (the button to press).

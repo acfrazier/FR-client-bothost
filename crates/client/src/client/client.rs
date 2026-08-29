@@ -286,7 +286,7 @@ pub struct Client {
     pub cache: Arc<Cache>,
     /// Interface components (`IfType`, hide/scroll/anim/inv slots),
     /// unpacked from the `interface` jag; per-client mutable.
-    pub ifaces: Vec<Option<IfType>>,
+    pub ifaces: Vec<Option<Box<IfType>>>,
     /// True when the cache was injected already-unpacked via `from_shared`
     /// (host-side `load_cache`). `maininit` skips its `load_cache` re-unpack
     /// so the shared `Arc<Cache>` survives; `Client::new` stays false and
@@ -843,7 +843,7 @@ impl Client {
     pub fn from_shared(
         config: ClientConfig,
         cache: Arc<Cache>,
-        ifaces: Vec<Option<IfType>>,
+        ifaces: Vec<Option<Box<IfType>>>,
     ) -> Self {
         let jag_checksum = Self::read_jag_checksums(&config.cache_dir);
         let mut client = Self::construct(config, cache, ifaces, false, jag_checksum);
@@ -854,7 +854,7 @@ impl Client {
     fn construct(
         config: ClientConfig,
         cache: Arc<Cache>,
-        ifaces: Vec<Option<IfType>>,
+        ifaces: Vec<Option<Box<IfType>>>,
         error_loading: bool,
         jag_checksum: [i32; 9],
     ) -> Self {
@@ -1177,7 +1177,7 @@ impl Client {
     /// Interface component by id (the old `Cache::if_`), from the
     /// per-client `ifaces` table.
     pub fn if_(&self, id: usize) -> Option<&IfType> {
-        self.ifaces.get(id).and_then(|o| o.as_ref())
+        self.ifaces.get(id).and_then(|o| o.as_deref())
     }
 
     /// TS maininit 1168-1171: unpack `sounds.dat` from the `sounds` jag
@@ -1206,7 +1206,7 @@ impl Client {
     /// ifaces. A real cache missing the required `config` jag — or one whose
     /// bytes are not a valid jag (dummy test files) — is `Err`, which
     /// becomes `errorLoading`.
-    fn load_cache(cache_dir: &str) -> Result<(Cache, Vec<Option<IfType>>), ()> {
+    fn load_cache(cache_dir: &str) -> Result<(Cache, Vec<Option<Box<IfType>>>), ()> {
         let cache_present = JAG_FILES
             .iter()
             .any(|name| Path::new(&format!("{cache_dir}/{name}")).is_file());
@@ -2145,8 +2145,8 @@ impl Client {
         if self.var.get(Self::RUN_VARP).copied() == Some(1) {
             return true;
         }
-        let off = self.ifaces.get(Self::RUN_ORB_OFF).and_then(|s| s.as_ref());
-        let on = self.ifaces.get(Self::RUN_ORB_ON).and_then(|s| s.as_ref());
+        let off = self.ifaces.get(Self::RUN_ORB_OFF).and_then(|s| s.as_deref());
+        let on = self.ifaces.get(Self::RUN_ORB_ON).and_then(|s| s.as_deref());
         match (off, on) {
             (Some(off), Some(on)) if off.hide != on.hide => !off.hide,
             _ => false,
@@ -2654,7 +2654,7 @@ impl Client {
             let examine = self
                 .ifaces
                 .get(c as usize)
-                .and_then(|o| o.as_ref())
+                .and_then(|o| o.as_deref())
                 .and_then(|com| com.link_obj_number.as_ref())
                 .and_then(|numbers| numbers.get(b as usize).copied())
                 .filter(|&n| n >= 100000)
@@ -2692,7 +2692,7 @@ impl Client {
             let com = self
                 .ifaces
                 .get(c as usize)
-                .and_then(|o| o.as_ref())
+                .and_then(|o| o.as_deref())
                 .cloned();
             self.target_mode = 1;
             self.target_com_id = c;
@@ -2789,7 +2789,7 @@ impl Client {
             let com = self
                 .ifaces
                 .get(c as usize)
-                .and_then(|o| o.as_ref())
+                .and_then(|o| o.as_deref())
                 .cloned();
             let mut notify = true;
             if let Some(com) = &com {
@@ -2809,7 +2809,7 @@ impl Client {
             let com = self
                 .ifaces
                 .get(c as usize)
-                .and_then(|o| o.as_ref())
+                .and_then(|o| o.as_deref())
                 .cloned();
             if let Some(com) = com {
                 // TS 9163-9169: scripts[0][0] == 5 flips varp scripts[0][1].
@@ -2831,7 +2831,7 @@ impl Client {
             let com = self
                 .ifaces
                 .get(c as usize)
-                .and_then(|o| o.as_ref())
+                .and_then(|o| o.as_deref())
                 .cloned();
             if let Some(com) = com {
                 // TS 9172-9183: scripts[0][0] == 5 sets varp scripts[0][1]
@@ -3048,7 +3048,7 @@ impl Client {
         let layer_id = self
             .ifaces
             .get(c as usize)
-            .and_then(|o| o.as_ref())
+            .and_then(|o| o.as_deref())
             .map(|com| com.layer_id);
         if layer_id == Some(self.main_modal_id) {
             self.selected_area = 1;
@@ -3796,7 +3796,7 @@ impl Client {
         let Some(children) = self
             .ifaces
             .get(id as usize)
-            .and_then(|o| o.as_ref())
+            .and_then(|o| o.as_deref())
             .and_then(|com| com.children.clone())
         else {
             return;
@@ -3805,7 +3805,7 @@ impl Client {
             if child_id == -1 {
                 return;
             }
-            let Some(child) = self.ifaces.get(child_id as usize).and_then(|o| o.as_ref()) else {
+            let Some(child) = self.ifaces.get(child_id as usize).and_then(|o| o.as_deref()) else {
                 return;
             };
             if child.r#type == ComponentType::TYPE_LAYER {
@@ -3814,7 +3814,7 @@ impl Client {
             if let Some(com) = self
                 .ifaces
                 .get_mut(child_id as usize)
-                .and_then(|o| o.as_mut())
+                .and_then(|o| o.as_deref_mut())
             {
                 com.anim_frame = 0;
                 com.anim_cycle = 0;
@@ -4437,7 +4437,7 @@ impl Client {
                 let com_id = self.obj_drag_com_id as usize;
                 let src = self.obj_drag_slot as usize;
                 let dst = self.hovered_slot as usize;
-                if let Some(com) = self.ifaces.get_mut(com_id).and_then(|o| o.as_mut()) {
+                if let Some(com) = self.ifaces.get_mut(com_id).and_then(|o| o.as_deref_mut()) {
                     let mut mode = 0;
                     if self.bank_arrange_mode == 1 && com.client_code == CC_BANKMODE {
                         mode = 1;
@@ -4510,7 +4510,7 @@ impl Client {
     /// `obj_replace`) grabs it. Returns true when a drag started so the
     /// click handler returns without hitting `IF_BUTTON`.
     fn obj_drag_start(&mut self, com_id: i32, slot: i32, x: i32, y: i32) -> bool {
-        let Some(com) = self.ifaces.get(com_id as usize).and_then(|o| o.as_ref()) else {
+        let Some(com) = self.ifaces.get(com_id as usize).and_then(|o| o.as_deref()) else {
             return false;
         };
         if !(com.obj_swap || com.obj_replace) {
@@ -4752,7 +4752,7 @@ impl Client {
         let preview_model = match self
             .ifaces
             .get(com_id as usize)
-            .and_then(|o| o.as_ref())
+            .and_then(|o| o.as_deref())
             .map(|com| com.client_code)
         {
             Some(CC_DESIGN_PREVIEW) => self.design_preview_model(),
@@ -4761,7 +4761,7 @@ impl Client {
         let Some(com) = self
             .ifaces
             .get_mut(com_id as usize)
-            .and_then(|o| o.as_mut())
+            .and_then(|o| o.as_deref_mut())
         else {
             return;
         };
@@ -5261,7 +5261,7 @@ impl Client {
         y: i32,
         scroll: i32,
     ) {
-        let Some(com) = self.ifaces.get(com_id as usize).and_then(|o| o.as_ref()) else {
+        let Some(com) = self.ifaces.get(com_id as usize).and_then(|o| o.as_deref()) else {
             return;
         };
         if com.r#type != ComponentType::TYPE_LAYER
@@ -5321,7 +5321,7 @@ impl Client {
                     let (child_w, child_h, child_sh) = self
                         .ifaces
                         .get(child_id as usize)
-                        .and_then(|o| o.as_ref())
+                        .and_then(|o| o.as_deref())
                         .map(|c| (c.width, c.height, c.scroll_height))
                         .unwrap_or((0, 0, 0));
                     if child_sh > child_h {
@@ -5871,7 +5871,7 @@ impl Client {
                 if let Some(com) = self
                     .ifaces
                     .get_mut(com_id as usize)
-                    .and_then(|o| o.as_mut())
+                    .and_then(|o| o.as_deref_mut())
                 {
                     com.colour = (r << 19) + (g << 11) + (b << 3);
                 }
@@ -5885,7 +5885,7 @@ impl Client {
                 if let Some(com) = self
                     .ifaces
                     .get_mut(com_id as usize)
-                    .and_then(|o| o.as_mut())
+                    .and_then(|o| o.as_deref_mut())
                 {
                     com.hide = hide;
                 }
@@ -5907,7 +5907,7 @@ impl Client {
                 if let Some(com) = self
                     .ifaces
                     .get_mut(com_id as usize)
-                    .and_then(|o| o.as_mut())
+                    .and_then(|o| o.as_deref_mut())
                 {
                     com.model1_type = 4;
                     com.model1_id = obj_id;
@@ -5926,7 +5926,7 @@ impl Client {
                 if let Some(com) = self
                     .ifaces
                     .get_mut(com_id as usize)
-                    .and_then(|o| o.as_mut())
+                    .and_then(|o| o.as_deref_mut())
                 {
                     com.model1_type = 1;
                     com.model1_id = model_id;
@@ -5941,7 +5941,7 @@ impl Client {
                 if let Some(com) = self
                     .ifaces
                     .get_mut(com_id as usize)
-                    .and_then(|o| o.as_mut())
+                    .and_then(|o| o.as_deref_mut())
                 {
                     com.model_anim = seq_id;
                     if seq_id == -1 {
@@ -5958,7 +5958,7 @@ impl Client {
                 if let (Some(com), Some(local)) = (
                     self.ifaces
                         .get_mut(com_id as usize)
-                        .and_then(|o| o.as_mut()),
+                        .and_then(|o| o.as_deref_mut()),
                     self.local_player.as_ref(),
                 ) {
                     com.model1_type = 3;
@@ -5978,7 +5978,7 @@ impl Client {
                 if let Some(com) = self
                     .ifaces
                     .get_mut(com_id as usize)
-                    .and_then(|o| o.as_mut())
+                    .and_then(|o| o.as_deref_mut())
                 {
                     com.text = text;
                     // TS 6164: redraw the side when the edited text sits on
@@ -5997,7 +5997,7 @@ impl Client {
                 if let Some(com) = self
                     .ifaces
                     .get_mut(com_id as usize)
-                    .and_then(|o| o.as_mut())
+                    .and_then(|o| o.as_deref_mut())
                 {
                     com.model1_type = 2;
                     com.model1_id = npc_id;
@@ -6013,7 +6013,7 @@ impl Client {
                 if let Some(com) = self
                     .ifaces
                     .get_mut(com_id as usize)
-                    .and_then(|o| o.as_mut())
+                    .and_then(|o| o.as_deref_mut())
                 {
                     com.x = x;
                     com.y = y;
@@ -6028,7 +6028,7 @@ impl Client {
                 if let Some(com) = self
                     .ifaces
                     .get_mut(com_id as usize)
-                    .and_then(|o| o.as_mut())
+                    .and_then(|o| o.as_deref_mut())
                 {
                     if com.r#type == ComponentType::TYPE_LAYER {
                         if pos < 0 {
@@ -6051,7 +6051,7 @@ impl Client {
                 if let Some(inv) = self
                     .ifaces
                     .get_mut(com_id as usize)
-                    .and_then(|o| o.as_mut())
+                    .and_then(|o| o.as_deref_mut())
                 {
                     if let Some(link_types) = inv.link_obj_type.as_mut() {
                         // [sic] TS writes -1 then 0; the final value is 0
@@ -6079,7 +6079,7 @@ impl Client {
                 if let Some(inv) = self
                     .ifaces
                     .get_mut(com_id as usize)
-                    .and_then(|o| o.as_mut())
+                    .and_then(|o| o.as_deref_mut())
                 {
                     if let (Some(link_types), Some(link_numbers)) =
                         (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut())
@@ -6112,7 +6112,7 @@ impl Client {
                     if let Some(inv) = self
                         .ifaces
                         .get_mut(com_id as usize)
-                        .and_then(|o| o.as_mut())
+                        .and_then(|o| o.as_deref_mut())
                     {
                         if let (Some(link_types), Some(link_numbers)) =
                             (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut())
@@ -7797,7 +7797,7 @@ impl Client {
         } else {
             self.ifaces
                 .get_mut(com_id as usize)
-                .and_then(|o| o.as_mut())
+                .and_then(|o| o.as_deref_mut())
         };
         let Some(com) = com else {
             return;
@@ -10905,14 +10905,14 @@ mod try_move_path {
         // means run is on (host `run_echo`).
         let mut c = empty_client();
         c.ifaces.resize(154, None);
-        c.ifaces[152] = Some(IfType {
+        c.ifaces[152] = Some(Box::new(IfType {
             hide: false,
             ..IfType::default()
-        });
-        c.ifaces[153] = Some(IfType {
+        }));
+        c.ifaces[153] = Some(Box::new(IfType {
             hide: true,
             ..IfType::default()
-        });
+        }));
         assert!(c.run_enabled());
         c.ifaces[152].as_mut().unwrap().hide = true;
         c.ifaces[153].as_mut().unwrap().hide = false;

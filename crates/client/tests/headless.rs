@@ -179,13 +179,13 @@ fn headless_client_core_runs_sim_without_renderer() {
 
     // Packet apply: UPDATE_INV_FULL resolves into the iface's inv arrays.
     c.ifaces.resize(11, None);
-    c.ifaces[10] = Some(IfType {
+    c.ifaces[10] = Some(Box::new(IfType {
         width: 4,
         height: 4,
         link_obj_type: Some(vec![0; 16]),
         link_obj_number: Some(vec![0; 16]),
         ..IfType::default()
-    });
+    }));
     let mut inv = Packet::alloc(0);
     inv.p2(10); // com id
     inv.p1(2); // slot count

@@ -364,8 +364,8 @@ fn side_inv_fixture(c: &mut Client) {
     inv.link_obj_type = Some(vec![2]); // obj id 1
     inv.link_obj_number = Some(vec![1]);
     c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(inv);
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(inv));
     if c.cache.objs.len() < 2 {
         Arc::get_mut(&mut c.cache).unwrap().objs.resize(2, ObjType::default());
         Arc::get_mut(&mut c.cache).unwrap().objs[1].name = "Rune".into();
@@ -493,7 +493,7 @@ let _r = Renderer::new(false);
     layer.child_x = Some(vec![0, 0, 0, 0, 0, 0]);
     layer.child_y = Some(vec![0, 0, 0, 0, 0, 0]);
     c.ifaces.resize(8, None);
-    c.ifaces[1] = Some(layer);
+    c.ifaces[1] = Some(Box::new(layer));
     let button = |id: i32, button_type: i32| IfType {
         id,
         r#type: ComponentType::TYPE_RECT,
@@ -504,21 +504,21 @@ let _r = Renderer::new(false);
     };
     let mut ok = button(2, ButtonType::BUTTON_OK);
     ok.button_text = "Ok".into();
-    c.ifaces[2] = Some(ok);
-    c.ifaces[3] = Some(button(3, ButtonType::BUTTON_CLOSE));
+    c.ifaces[2] = Some(Box::new(ok));
+    c.ifaces[3] = Some(Box::new(button(3, ButtonType::BUTTON_CLOSE)));
     let mut toggle = button(4, ButtonType::BUTTON_TOGGLE);
     toggle.button_text = "Trade".into();
-    c.ifaces[4] = Some(toggle);
+    c.ifaces[4] = Some(Box::new(toggle));
     let mut select = button(5, ButtonType::BUTTON_SELECT);
     select.button_text = "Deposit".into();
-    c.ifaces[5] = Some(select);
+    c.ifaces[5] = Some(Box::new(select));
     let mut cont = button(6, ButtonType::BUTTON_CONTINUE);
     cont.button_text = "Continue".into();
-    c.ifaces[6] = Some(cont);
+    c.ifaces[6] = Some(Box::new(cont));
     let mut target = button(7, ButtonType::BUTTON_TARGET);
     target.target_verb = "Cast on".into();
     target.target_base = "Tree".into();
-    c.ifaces[7] = Some(target);
+    c.ifaces[7] = Some(Box::new(target));
     c.shell.mouse_x = 553 + 10;
     c.shell.mouse_y = 205 + 10;
     c.build_minimenu();
@@ -556,8 +556,8 @@ let _r = Renderer::new(false);
     layer.child_x = Some(vec![0]);
     layer.child_y = Some(vec![0]);
     c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(IfType {
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(IfType {
         id: 2,
         r#type: ComponentType::TYPE_GRAPHIC,
         width: 36,
@@ -565,7 +565,7 @@ let _r = Renderer::new(false);
         button_type: ButtonType::BUTTON_OK,
         button_text: String::new(),
         ..IfType::default()
-    });
+    }));
     c.shell.mouse_x = 553 + 10;
     c.shell.mouse_y = 205 + 10;
     c.build_minimenu();
@@ -609,9 +609,9 @@ let _r = Renderer::new(false);
     target.target_verb = "Cast".into();
     target.target_base = "Tree".into();
     c.ifaces.resize(4, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(cont);
-    c.ifaces[3] = Some(target);
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(cont));
+    c.ifaces[3] = Some(Box::new(target));
     c.shell.mouse_x = 553 + 10;
     c.shell.mouse_y = 205 + 10;
     c.resumed_pause_button = true;
@@ -794,8 +794,8 @@ let _r = Renderer::new(false);
     button.width = 50;
     button.height = 15;
     c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(button);
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(button));
     c.side_modal_id = -1;
     c.side_icon[3] = 1;
     c.active_icon = 3;

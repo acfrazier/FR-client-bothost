@@ -97,7 +97,7 @@ fn bind_side(c: &mut Client, root: i32, components: Vec<IfType>) {
     c.ifaces.resize(max + 1, None);
     for com in components {
         let id = com.id as usize;
-        c.ifaces[id] = Some(com);
+        c.ifaces[id] = Some(Box::new(com));
     }
 }
 

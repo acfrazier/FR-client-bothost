@@ -34,7 +34,7 @@ fn two_clients_share_type_tables_and_not_ifaces() {
     // (the /tmp cache may or may not have unpacked real components).
     let b_before = b.ifaces.get(1).and_then(|s| s.as_ref()).map(|s| (s.id, s.hide));
     a.ifaces.resize(2, None);
-    a.ifaces[1] = Some(IfType::default());
+    a.ifaces[1] = Some(Box::new(IfType::default()));
     a.ifaces[1].as_mut().unwrap().hide = true;
     let b_after = b.ifaces.get(1).and_then(|s| s.as_ref()).map(|s| (s.id, s.hide));
     assert_eq!(b_after, b_before);

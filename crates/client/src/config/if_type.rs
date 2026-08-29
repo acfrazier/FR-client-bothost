@@ -192,16 +192,17 @@ impl IfType {
         n.swap(src, dst);
     }
 
-    /// Component ids are sparse, so this returns `Vec<Option<IfType>>`
-    /// indexed by component id (the TS `list` array grows the same way).
-    pub fn unpack(jag: &JagFile) -> Vec<Option<IfType>> {
+    /// Component ids are sparse, so this returns `Vec<Option<Box<IfType>>>`
+    /// indexed by component id. Unused ids are 8-byte Nones (not a 688-byte
+    /// `IfType`); ~11k slots × 50 clients was the fat-hole clone cost.
+    pub fn unpack(jag: &JagFile) -> Vec<Option<Box<IfType>>> {
         let Some(data) = jag.read("data") else {
             return Vec::new();
         };
         let mut dat = Packet::new(data);
         let mut layer = -1;
         let _count = dat.g2();
-        let mut list: Vec<Option<IfType>> = Vec::new();
+        let mut list: Vec<Option<Box<IfType>>> = Vec::new();
         while dat.pos < dat.length() {
             let mut id = dat.g2();
             if id == 65535 {
@@ -425,7 +426,7 @@ impl IfType {
             if list.len() <= id as usize {
                 list.resize(id as usize + 1, None);
             }
-            list[id as usize] = Some(com);
+            list[id as usize] = Some(Box::new(com));
         }
         list
     }
@@ -527,5 +528,26 @@ impl IfType {
         }
         tmp.calculate_normals(64, 768, -50, -10, -50, true);
         Some(tmp)
+    }
+}
+
+#[cfg(test)]
+mod iface_size_tests {
+    use super::*;
+    use crate::io::JagFile;
+
+    #[test]
+    fn iface_holes_are_pointer_sized() {
+        assert_eq!(std::mem::size_of::<Option<Box<IfType>>>(), 8);
+        let n = match std::fs::read(crate::cache_dir().join("interface")) {
+            Ok(bytes) => IfType::unpack(&JagFile::new(bytes)).len(),
+            Err(_) => 0,
+        };
+        if n > 0 {
+            assert!(
+                n * 8 < 200_000,
+                "boxed iface table should be ~88 KB empty, n={n}"
+            );
+        }
     }
 }

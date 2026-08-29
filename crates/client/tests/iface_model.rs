@@ -41,8 +41,8 @@ let mut r = Renderer::new(false);
     model.model1_id = 999999; // not loaded
     model.model_zoom = 800;
     c.ifaces.resize(3, None);
-    c.ifaces[1] = Some(layer);
-    c.ifaces[2] = Some(model);
+    c.ifaces[1] = Some(Box::new(layer));
+    c.ifaces[2] = Some(Box::new(model));
     let mut pixels = vec![0i32; 50 * 50];
     let mut surface = client::graphics::Pix2D::with_pixels(&mut pixels, 50, 50);
     r.pix3d.set_clipping(50, 50);

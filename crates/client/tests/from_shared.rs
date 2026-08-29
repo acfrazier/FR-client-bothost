@@ -51,7 +51,7 @@ fn serve_login(s: &mut std::net::TcpStream, opcode: u8, grant: &[u8]) {
 #[test]
 fn from_shared_reuses_one_arc_without_unpack() {
     let tables = Arc::new(Cache::default());
-    let template = vec![None, Some(IfType::default())];
+    let template = vec![None, Some(Box::new(IfType::default()))];
     let mut a = Client::from_shared(cfg(), Arc::clone(&tables), template.clone());
     let b = Client::from_shared(cfg(), Arc::clone(&tables), template);
     assert!(Arc::ptr_eq(&a.cache, &b.cache));
