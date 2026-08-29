@@ -141,7 +141,7 @@ fn update_runenergy_sets_energy() {
 #[test]
 fn reset_anims_clears_primary_anims() {
     let mut c = client();
-    c.players[1] = Some(ClientPlayer::at(0, 0));
+    c.players[1] = Some(Box::new(ClientPlayer::at(0, 0)));
     c.players[1].as_mut().unwrap().primary_anim = 7;
     let mut p = Packet::alloc(0);
     c.handle_packet(ServerProt::RESET_ANIMS, &mut p);

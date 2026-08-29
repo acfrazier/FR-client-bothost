@@ -72,7 +72,7 @@ fn op_npc2_writes_opnpc2() {
                             // the OP_NPC branches guard on the scene entity and walk to it first:
                             // both stand on (5,5), so the walk is a zero-step MOVE_OPCLICK
     c.local_player = Some(ClientPlayer::at(5, 5));
-    c.npc[42] = Some(ClientNpc::at(5, 5));
+    c.npc[42] = Some(Box::new(ClientNpc::at(5, 5)));
     c.doAction(0);
     // MOVE_OPCLICK id 138: (138 + -621246914) & 0xff
     let walk_enc = (ClientProt::MOVE_OPCLICK.id.wrapping_add(-621246914)) as u8;

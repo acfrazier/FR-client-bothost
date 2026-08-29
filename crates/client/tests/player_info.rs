@@ -32,7 +32,7 @@ fn player_info_appearance_lands_on_local_player() {
     slot.entity.z = 4 * 128 + 64;
     slot.entity.route_x[0] = 3;
     slot.entity.route_z[0] = 4;
-    c.players[2047] = Some(slot);
+    c.players[2047] = Some(Box::new(slot));
     let mut local = ClientPlayer::at(10, 10);
     local.entity.x = 10 * 128 + 64;
     local.entity.z = 10 * 128 + 64;

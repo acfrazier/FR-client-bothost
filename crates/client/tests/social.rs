@@ -68,7 +68,7 @@ fn player_chat_mask_unpacks_and_adds_chat() {
     let mut player = ClientPlayer::at(0, 0);
     player.name = Some("Bob".into());
     player.ready = true;
-    c.players[0] = Some(player);
+    c.players[0] = Some(Box::new(player));
 
     let frame = chat_frame(&[0x61, 0xbb, 0x40]); // WordPack "hello"
     c.psize = frame.len() as i32;
@@ -95,7 +95,7 @@ fn player_chat_mask_skips_payload_when_disabled() {
     let mut player = ClientPlayer::at(0, 0);
     player.name = Some("Bob".into());
     player.ready = true;
-    c.players[0] = Some(player);
+    c.players[0] = Some(Box::new(player));
     c.chat_disabled = 1;
 
     let frame = chat_frame(&[0x61, 0xbb, 0x40]);
@@ -222,14 +222,14 @@ fn timeout_chat_expires_tracked_player_and_npc() {
     let mut other = ClientPlayer::at(2, 2);
     other.chat_message = Some("Yo".into());
     other.chat_timer = 1;
-    c.players[0] = Some(other);
+    c.players[0] = Some(Box::new(other));
     c.player_count = 1;
     c.player_ids[0] = 0;
 
     let mut npc = ClientNpc::at(3, 3);
     npc.chat_message = Some("grr".into());
     npc.chat_timer = 1;
-    c.npc[5] = Some(npc);
+    c.npc[5] = Some(Box::new(npc));
     c.npc_count = 1;
     c.npc_ids[0] = 5;
 

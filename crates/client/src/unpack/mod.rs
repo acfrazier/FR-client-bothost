@@ -9,6 +9,7 @@ use std::fmt;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::sync::Mutex;
 
 use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
@@ -290,6 +291,32 @@ pub fn load_snapshot(cache_dir: &str, out_dir: &str) -> Result<Loaded, UnpackErr
     Ok(Loaded { models, anim_records })
 }
 
+/// Process-wide snapshot inject: the first caller unpacks; later clients
+/// (50-head wall) must not re-read `models.bin` / wipe the stores.
+/// Returns `(loaded, first)` so `maininit` prints once.
+pub fn load_snapshot_once(cache_dir: &str, out_dir: &str) -> Result<(Loaded, bool), UnpackError> {
+    {
+        let g = SNAPSHOT_INJECT.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(loaded) = *g {
+            return Ok((loaded, false));
+        }
+    }
+    let loaded = load_snapshot(cache_dir, out_dir)?;
+    let mut g = SNAPSHOT_INJECT.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(existing) = *g {
+        return Ok((existing, false));
+    }
+    *g = Some(loaded);
+    Ok((loaded, true))
+}
+
+static SNAPSHOT_INJECT: Mutex<Option<Loaded>> = Mutex::new(None);
+
+#[cfg(test)]
+pub fn reset_snapshot_inject_for_tests() {
+    *SNAPSHOT_INJECT.lock().unwrap_or_else(|p| p.into_inner()) = None;
+}
+
 /// Read every `[id][len][raw]` record from `path` and hand each to `apply`.
 /// Returns the record count; a truncated header or body, or an empty file, is
 /// a hard error (Task 1 never writes partial or empty archives).
@@ -339,6 +366,46 @@ mod tests {
     use super::*;
 
     use crate::io::jagfile::JagFile;
+
+    #[test]
+    fn load_snapshot_once_injects_only_the_first_call() {
+        reset_snapshot_inject_for_tests();
+        let pid = std::process::id();
+        let cache = std::env::temp_dir().join(format!("274bot-once-cache-{pid}"));
+        let out = std::env::temp_dir().join(format!("274bot-once-out-{pid}"));
+        let _ = std::fs::remove_dir_all(&cache);
+        let _ = std::fs::remove_dir_all(&out);
+        std::fs::create_dir_all(&cache).unwrap();
+        let versionlist = b"once-inject versionlist";
+        std::fs::write(cache.join("versionlist"), versionlist).unwrap();
+        let version = version_hash(versionlist);
+        let dir = out.join(&version);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut models = Vec::new();
+        encode_record(&mut models, 1, &[0u8; 18]).unwrap();
+        std::fs::write(dir.join("models.bin"), &models).unwrap();
+        // One empty-ish anim record is still a truncated error; write a
+        // minimal valid frame stream (same layout as tests/inject.rs).
+        let anim_data: [u8; 15] = [
+            0x00, 0x01, 0x75, 0x31, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x01,
+        ];
+        let mut anims = Vec::new();
+        encode_record(&mut anims, 0, &anim_data).unwrap();
+        std::fs::write(dir.join("anims.bin"), &anims).unwrap();
+        crate::dash3d::AnimFrame::init(16);
+
+        let (a, first) =
+            load_snapshot_once(cache.to_str().unwrap(), out.to_str().unwrap()).unwrap();
+        assert!(first);
+        assert_eq!(a.models, 1);
+        let (b, first) =
+            load_snapshot_once(cache.to_str().unwrap(), out.to_str().unwrap()).unwrap();
+        assert!(!first);
+        assert_eq!(a, b);
+        let _ = std::fs::remove_dir_all(&cache);
+        let _ = std::fs::remove_dir_all(&out);
+    }
 
     #[test]
     fn record_round_trip() {

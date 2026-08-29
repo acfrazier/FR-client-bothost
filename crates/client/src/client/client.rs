@@ -311,8 +311,10 @@ pub struct Client {
     /// compares it against `self.minusedlevel`.
     pub build_minusedlevel: i32,
     pub local_player: Option<ClientPlayer>,
-    pub players: Vec<Option<ClientPlayer>>,
-    pub npc: Vec<Option<ClientNpc>>,
+    /// Boxed so 2048 empty slots are 16 KB, not ~2 MB of `ClientPlayer`.
+    pub players: Vec<Option<Box<ClientPlayer>>>,
+    /// Boxed so 16384 empty slots are 128 KB, not ~6 MB of `ClientNpc`.
+    pub npc: Vec<Option<Box<ClientNpc>>>,
 
     /// `PLAYER_INFO`/`NPC_INFO` bookkeeping from client-ts: `playerCount`/
     /// `playerIds`, `npcCount`/`npcIds`, the removal/update id lists, and
@@ -1518,15 +1520,17 @@ impl Client {
         // so every model/anim is available before the scene places its locs.
         // Non-fatal: a missing/empty snapshot falls back to the live-cache
         // unpack and the OnDemand floods below unchanged.
-        let snapshot_loaded = match crate::unpack::load_snapshot(
+        let snapshot_loaded = match crate::unpack::load_snapshot_once(
             &self.config.cache_dir,
             &Self::unpack_snapshot_dir(),
         ) {
-            Ok(loaded) => {
-                eprintln!(
-                    "274bot: loaded snapshot ({} models, {} anim records)",
-                    loaded.models, loaded.anim_records
-                );
+            Ok((loaded, first)) => {
+                if first {
+                    eprintln!(
+                        "274bot: loaded snapshot ({} models, {} anim records)",
+                        loaded.models, loaded.anim_records
+                    );
+                }
                 true
             }
             Err(e) => {
@@ -1619,30 +1623,36 @@ impl Client {
                 thread::sleep(Duration::from_millis(100));
             }
 
-            let members = self.config.members;
-            let lowmem = self.config.lowmem;
-            self.on_demand
-                .as_mut()
-                .unwrap()
-                .prefetch_extra_files(members, lowmem);
-            // Prefetch is not in remaining(). Cache-hit extra models post
-            // Completed on the worker; drain them so CLI login (no title
-            // extra-files window) still unpacks before the first frame.
-            let started = Instant::now();
-            let deadline = started + Duration::from_secs(2);
-            let mut idle = 0;
-            while Instant::now() < deadline {
-                self.report_progress(&mut progress, "Loading extra files", 70);
-                let n = self.on_demand_loop();
-                if n == 0 {
-                    idle += 1;
-                } else {
-                    idle = 0;
+            // Snapshot already injected every model/anim. Prefetching the
+            // rest of the map archive on every slot is ~15 MB × N clients
+            // sitting in OnDemand worker queues (skip-paint heads still
+            // paid it). Lumbridge urgent maps above are enough to scene 2.
+            if !snapshot_loaded {
+                let members = self.config.members;
+                let lowmem = self.config.lowmem;
+                self.on_demand
+                    .as_mut()
+                    .unwrap()
+                    .prefetch_extra_files(members, lowmem);
+                // Prefetch is not in remaining(). Cache-hit extra models post
+                // Completed on the worker; drain them so CLI login (no title
+                // extra-files window) still unpacks before the first frame.
+                let started = Instant::now();
+                let deadline = started + Duration::from_secs(2);
+                let mut idle = 0;
+                while Instant::now() < deadline {
+                    self.report_progress(&mut progress, "Loading extra files", 70);
+                    let n = self.on_demand_loop();
+                    if n == 0 {
+                        idle += 1;
+                    } else {
+                        idle = 0;
+                    }
+                    if idle >= 5 && started.elapsed() > Duration::from_millis(150) {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(20));
                 }
-                if idle >= 5 && started.elapsed() > Duration::from_millis(150) {
-                    break;
-                }
-                thread::sleep(Duration::from_millis(20));
             }
         }
 
@@ -1967,7 +1977,7 @@ impl Client {
             self.player_op_priority = Default::default();
             // Client.ts:1853 — localPlayer = players[LOCAL_PLAYER_INDEX] = new
             let player = ClientPlayer::default();
-            self.players[LOCAL_PLAYER_INDEX as usize] = Some(player.clone());
+            self.players[LOCAL_PLAYER_INDEX as usize] = Some(Box::new(player.clone()));
             self.local_player = Some(player);
             // Java `Client.java` 3700: `prepareGame()` rebuilds the game
             // frame the title draw consumed (Task 4b nulls the game areas,
@@ -6672,7 +6682,7 @@ impl Client {
             let index = index as usize;
 
             if self.players[index].is_none() {
-                self.players[index] = Some(ClientPlayer::default());
+                self.players[index] = Some(Box::new(ClientPlayer::default()));
 
                 if let Some(appearance) = self.player_appearance_buffer[index].take() {
                     if let Some(player) = self.players[index].as_mut() {
@@ -6748,7 +6758,7 @@ impl Client {
         let mut player = if index == LOCAL_PLAYER_INDEX as usize {
             self.local_player.as_mut()
         } else {
-            self.players[index].as_mut()
+            self.players[index].as_deref_mut()
         };
 
         if mask & player_update::APPEARANCE != 0 {
@@ -6899,7 +6909,7 @@ impl Client {
             let player = if index == LOCAL_PLAYER_INDEX as usize {
                 self.local_player.as_mut()
             } else {
-                self.players[index].as_mut()
+                self.players[index].as_deref_mut()
             };
             if let Some(filtered) = filtered {
                 if let Some(player) = player {
@@ -6917,7 +6927,7 @@ impl Client {
         let mut player = if index == LOCAL_PLAYER_INDEX as usize {
             self.local_player.as_mut()
         } else {
-            self.players[index].as_mut()
+            self.players[index].as_deref_mut()
         };
 
         if mask & player_update::SPOTANIM != 0 {
@@ -7114,7 +7124,7 @@ impl Client {
             let index = index as usize;
 
             if self.npc[index].is_none() {
-                self.npc[index] = Some(ClientNpc::default());
+                self.npc[index] = Some(Box::new(ClientNpc::default()));
             }
 
             let npc = self.npc[index].as_mut().unwrap();
@@ -7689,12 +7699,12 @@ impl Client {
                             let player = if pid == self.self_slot {
                                 self.local_player.as_mut()
                             } else {
-                                self.players.get_mut(pid as usize).and_then(|p| p.as_mut())
+                                self.players.get_mut(pid as usize).and_then(|p| p.as_deref_mut())
                             };
                             if let Some(player) = player {
                                 player.loc_start_cycle = t1 + self.loop_cycle;
                                 player.loc_stop_cycle = t2 + self.loop_cycle;
-                                player.loc_model = Some(model);
+                                player.loc_model = Some(Box::new(model));
 
                                 player.loc_offset_x = x * 128 + width * 64;
                                 player.loc_offset_z = z * 128 + length * 64;
@@ -9263,6 +9273,10 @@ impl Client {
             &self.groundh,
             &self.mapl,
         );
+        // Land/loc bytes are decoded into the sim world; keep them out of
+        // the 50-head RSS (rebuild uses typecodes, not these buffers).
+        self.map_build_ground_data.clear();
+        self.map_build_location_data.clear();
 
         // The world is now re-stamped with this build's locs. The snapshot's
         // loc family is gated on `gens.scene`, which the server bumps on the

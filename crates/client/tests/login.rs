@@ -112,9 +112,9 @@ let _r = Renderer::new(false);
     // dirty state a previous session left behind (Java logout keeps the
     // tables in place; response 2 is where they are cleared)
     c.npc_count = 3;
-    c.npc[1] = Some(ClientNpc::default());
+    c.npc[1] = Some(Box::new(ClientNpc::default()));
     c.player_count = 2;
-    c.players[5] = Some(ClientPlayer::default());
+    c.players[5] = Some(Box::new(ClientPlayer::default()));
     c.player_appearance_buffer[5] = Some(Packet::new(vec![]));
     let mut local = ClientPlayer::default();
     local.ready = true;

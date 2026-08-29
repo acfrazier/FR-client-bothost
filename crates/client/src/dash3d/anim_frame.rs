@@ -36,13 +36,17 @@ fn store() -> &'static Mutex<AnimFrameStore> {
 
 impl AnimFrame {
     /// `AnimFrame.init(total)` from client-ts.
+    ///
+    /// Grow-only: a later client's `maininit` must not drop already-unpacked
+    /// frames (the store is process-wide).
     pub fn init(total: i32) {
         let mut s = store().lock().unwrap();
-        s.list = Vec::with_capacity(total as usize + 1);
-        s.opaque = Vec::with_capacity(total as usize + 1);
-        for _ in 0..=total {
-            s.list.push(None);
-            s.opaque.push(true);
+        let need = total as usize + 1;
+        if s.list.len() < need {
+            s.list.resize(need, None);
+        }
+        if s.opaque.len() < need {
+            s.opaque.resize(need, true);
         }
     }
 

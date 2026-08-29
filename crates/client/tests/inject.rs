@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use client::dash3d::model::ModelProvider;
 use client::dash3d::{AnimFrame, Model};
 use client::unpack::{load_snapshot, unpack_cache, version_hash};
 
@@ -53,12 +54,11 @@ fn tmp_dir(name: &str) -> PathBuf {
 }
 
 fn cache_dir() -> Option<String> {
-    let home = std::env::var("HOME").ok()?;
-    let cache = format!("{home}/experiments/Server/engine/data/pack/client");
-    Path::new(&cache)
+    let cache = client::cache_dir();
+    cache
         .join("versionlist")
         .is_file()
-        .then_some(cache)
+        .then(|| cache.display().to_string())
 }
 
 fn lock() -> std::sync::MutexGuard<'static, ()> {
@@ -169,4 +169,37 @@ fn real_cache_round_trip() {
     let bytes = std::fs::read(Path::new(&manifest.dir).join("models.bin")).unwrap();
     let first_id = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as i32;
     assert!(Model::load(first_id).is_some(), "model {first_id} loadable");
+}
+
+struct NoopProvider;
+impl ModelProvider for NoopProvider {
+    fn request_model(&mut self, _id: i32) {}
+}
+
+#[test]
+fn model_init_does_not_drop_unpacked_meta() {
+    let _guard = lock();
+    Model::init(16, Box::new(NoopProvider));
+    Model::unpack(3, Some(&[0u8; 18]));
+    assert!(Model::load(3).is_some(), "unpacked before second init");
+    Model::init(16, Box::new(NoopProvider));
+    assert!(
+        Model::load(3).is_some(),
+        "a later client's Model::init must not wipe the process-wide snapshot"
+    );
+}
+
+#[test]
+fn anim_init_does_not_drop_unpacked_frames() {
+    let _guard = lock();
+    AnimFrame::init(16);
+    let rec = anim_record();
+    let len = u32::from_le_bytes(rec[4..8].try_into().unwrap()) as usize;
+    AnimFrame::unpack(&rec[8..8 + len]);
+    assert!(AnimFrame::get(30001).is_some());
+    AnimFrame::init(16);
+    assert!(
+        AnimFrame::get(30001).is_some(),
+        "a later client's AnimFrame::init must not wipe unpacked frames"
+    );
 }

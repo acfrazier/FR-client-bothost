@@ -183,7 +183,7 @@ let _r = Renderer::new(false);
     npc.r#type = Some(2);
     npc.x = x * 128 + 64;
     npc.z = z * 128 + 64;
-    c.npc[npc_slot as usize] = Some(npc);
+    c.npc[npc_slot as usize] = Some(Box::new(npc));
     c.add_world_options();
     let actions: Vec<i32> =
         (0..c.menu_num_entries).map(|i| c.menu_action[i as usize]).collect();
@@ -225,7 +225,7 @@ let _r = Renderer::new(false);
     player.skill_level = 0;
     player.x = x * 128 + 64;
     player.z = z * 128 + 64;
-    c.players[player_slot as usize] = Some(player);
+    c.players[player_slot as usize] = Some(Box::new(player));
     c.player_op[1] = Some("Trade with".into());
     c.player_op[2] = Some("Attack".into());
     // playerOpPriority only pins non-attack ops (TS 9640-9644)
@@ -329,7 +329,7 @@ let _r = Renderer::new(false);
     let mut p = ClientPlayer::default();
     p.name = Some("Bob".into());
     p.skill_level = 1; // no combat suffix: (skill-1) tooltip
-    c.players[9] = Some(p);
+    c.players[9] = Some(Box::new(p));
     c.player_op[1] = Some("Attack".into());
     c.add_player_options(9, 2, 3);
     let actions: Vec<i32> =

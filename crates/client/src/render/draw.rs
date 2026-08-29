@@ -728,7 +728,7 @@ impl Renderer {
                 (player, crate::client::client::LOCAL_PLAYER_INDEX << 14)
             } else {
                 let player_id = client.player_ids[i];
-                let Some(player) = client.players.get_mut(player_id as usize).and_then(|p| p.as_mut())
+                let Some(player) = client.players.get_mut(player_id as usize).and_then(|p| p.as_deref_mut())
                 else {
                     continue;
                 };
@@ -812,7 +812,7 @@ impl Renderer {
         for i in 0..client.npc_count as usize {
             let npc_id = client.npc_ids[i];
             let typecode = (npc_id << 14) + 0x2000_0000;
-            let Some(npc) = client.npc.get_mut(npc_id as usize).and_then(|n| n.as_mut()) else {
+            let Some(npc) = client.npc.get_mut(npc_id as usize).and_then(|n| n.as_deref_mut()) else {
                 continue;
             };
             let Some(npc_type_id) = npc.r#type else {
@@ -870,7 +870,7 @@ impl Renderer {
             } else if client.loop_cycle >= proj.t1 {
                 if proj.target > 0 {
                     let index = (proj.target - 1) as usize;
-                    if let Some(npc) = client.npc.get(index).and_then(|n| n.as_ref()) {
+                    if let Some(npc) = client.npc.get(index).and_then(|n| n.as_deref()) {
                         let h2 = proj.h2;
                         let level = proj.level;
                         let y = get_av_h(&client.groundh, &client.mapl, npc.x, npc.z, level) - h2;
@@ -883,7 +883,7 @@ impl Renderer {
                     let player = if index == client.self_slot {
                         client.local_player.as_ref()
                     } else {
-                        client.players.get(index as usize).and_then(|p| p.as_ref())
+                        client.players.get(index as usize).and_then(|p| p.as_deref())
                     };
                     if let Some(player) = player {
                         let h2 = proj.h2;
@@ -3362,7 +3362,7 @@ impl Renderer {
         // TS 11327-11335: NPCs with a minimap flag.
         for i in 0..client.npc_count as usize {
             let npc_id = client.npc_ids[i];
-            let Some(npc) = client.npc.get(npc_id as usize).and_then(|n| n.as_ref()) else {
+            let Some(npc) = client.npc.get(npc_id as usize).and_then(|n| n.as_deref()) else {
                 continue;
             };
             let Some(npc_type_id) = npc.r#type else {
@@ -3379,7 +3379,7 @@ impl Renderer {
         // is ported, so everyone draws dots3).
         for i in 0..client.player_count as usize {
             let player_id = client.player_ids[i];
-            let Some(p) = client.players.get(player_id as usize).and_then(|p| p.as_ref()) else {
+            let Some(p) = client.players.get(player_id as usize).and_then(|p| p.as_deref()) else {
                 continue;
             };
             if p.is_ready() && p.name.is_some() {

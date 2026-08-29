@@ -179,10 +179,15 @@ impl LinkableTrait for Model {
 
 impl Model {
     /// `Model.init(total, provider)` from client-ts.
+    ///
+    /// Grow-only: a second client must not throw away unpacked `meta` (the
+    /// snapshot inject is process-wide). The provider is replaced so a
+    /// later OnDemand can still fetch misses.
     pub fn init(total: i32, provider: Box<dyn ModelProvider + Send>) {
         let mut s = store().lock().unwrap();
-        s.meta = Vec::with_capacity(total as usize);
-        s.meta.resize_with(total as usize, || None);
+        if s.meta.len() < total as usize {
+            s.meta.resize_with(total as usize, || None);
+        }
         s.provider = Some(provider);
     }
 
@@ -192,6 +197,12 @@ impl Model {
         let mut s = store().lock().unwrap();
         if id as usize >= s.meta.len() {
             s.meta.resize_with(id as usize + 1, || None);
+        }
+        if s.meta[id as usize]
+            .as_ref()
+            .is_some_and(|m| m.src.is_some())
+        {
+            return;
         }
         let Some(src) = src else {
             let meta = ModelMeta {

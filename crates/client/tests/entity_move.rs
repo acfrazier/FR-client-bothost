@@ -80,7 +80,7 @@ fn move_npcs_steps_tracked_npc() {
     };
     npc.entity.teleport(&c.cache, true, 20, 20);
     npc.entity.teleport(&c.cache, false, 21, 20);
-    c.npc[3] = Some(npc);
+    c.npc[3] = Some(Box::new(npc));
     c.loop_cycle = 1;
     c.game_loop();
     let npc = c.npc[3].as_ref().unwrap();

@@ -78,7 +78,7 @@ pub struct ClientPlayer {
     pub loc_offset_x: i32,
     pub loc_offset_y: i32,
     pub loc_offset_z: i32,
-    pub loc_model: Option<Model>,
+    pub loc_model: Option<Box<Model>>,
     pub min_tile_x: i32,
     pub min_tile_z: i32,
     pub max_tile_x: i32,
@@ -288,7 +288,7 @@ impl ClientPlayer {
 
             if loop_cycle >= self.loc_start_cycle && loop_cycle < self.loc_stop_cycle {
                 if let Some(loc) = self.loc_model.clone() {
-                    let mut loc = loc;
+                    let mut loc = *loc;
                     loc.translate(
                         self.loc_offset_y - self.y,
                         self.loc_offset_x - self.x,
@@ -324,7 +324,7 @@ impl ClientPlayer {
                         self.x - self.loc_offset_x,
                         self.z - self.loc_offset_z,
                     );
-                    self.loc_model = Some(loc);
+                    self.loc_model = Some(Box::new(loc));
                 }
             }
         }
