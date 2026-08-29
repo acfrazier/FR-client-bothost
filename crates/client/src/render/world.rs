@@ -4462,7 +4462,7 @@ impl RenderWorld {
         sin_eye_yaw: i32,
         cos_eye_yaw: i32,
     ) {
-        let mut vertex_count = ground.vertex_x.len();
+        let mut vertex_count = ground.vertices();
 
         for i in 0..vertex_count {
             let mut x = ground.vertex_x[i] - self.cx;
@@ -4515,7 +4515,7 @@ impl RenderWorld {
 
         pix.trans = 0;
 
-        vertex_count = ground.face_vertex_a.len();
+        vertex_count = ground.faces();
         for v in 0..vertex_count {
             let a = ground.face_vertex_a[v] as usize;
             let b = ground.face_vertex_b[v] as usize;
@@ -6025,7 +6025,7 @@ fn emit_ground(
     tile_x: i32,
     tile_z: i32,
 ) {
-    let vertex_count = ground.vertex_x.len();
+    let vertex_count = ground.vertices();
     let mut cam_x = Vec::with_capacity(vertex_count);
     let mut cam_y = Vec::with_capacity(vertex_count);
     let mut cam_z = Vec::with_capacity(vertex_count);
@@ -6056,7 +6056,7 @@ fn emit_ground(
         cam_z.push(z);
     }
 
-    let face_count = ground.face_vertex_a.len();
+    let face_count = ground.faces();
     for f in 0..face_count {
         let a = ground.face_vertex_a[f] as usize;
         let b = ground.face_vertex_b[f] as usize;

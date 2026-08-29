@@ -45,18 +45,25 @@ const DEF_SHAPE_F: [&[i8]; 13] = [
     &[1, 0, 5, 4, 1, 0, 1, 5, 0, 0, 4, 3, 0, 4, 5, 3, 0, 5, 2, 3, 0, 1, 2, 5],
 ];
 
+/// Overlay ground is at most 6 vertices / 6 faces (`DEF_SHAPE_*`). Inline
+/// arrays avoid 9 heap Vecs per overlay tile (tens of thousands per scene
+/// × N clients — macOS malloc does not return those pages).
+const GROUND_MAX: usize = 6;
+
 #[derive(Clone)]
 pub struct Ground {
-    pub vertex_x: Vec<i32>,
-    pub vertex_y: Vec<i32>,
-    pub vertex_z: Vec<i32>,
-    pub face_colour_a: Vec<i32>,
-    pub face_colour_b: Vec<i32>,
-    pub face_colour_c: Vec<i32>,
-    pub face_vertex_a: Vec<i32>,
-    pub face_vertex_b: Vec<i32>,
-    pub face_vertex_c: Vec<i32>,
-    pub face_texture: Option<Vec<i32>>,
+    pub vertex_x: [i32; GROUND_MAX],
+    pub vertex_y: [i32; GROUND_MAX],
+    pub vertex_z: [i32; GROUND_MAX],
+    pub vertex_count: u8,
+    pub face_colour_a: [i32; GROUND_MAX],
+    pub face_colour_b: [i32; GROUND_MAX],
+    pub face_colour_c: [i32; GROUND_MAX],
+    pub face_vertex_a: [i32; GROUND_MAX],
+    pub face_vertex_b: [i32; GROUND_MAX],
+    pub face_vertex_c: [i32; GROUND_MAX],
+    pub face_count: u8,
+    pub face_texture: Option<[i32; GROUND_MAX]>,
     pub flat: bool,
     pub minimap_underlay: i32,
     pub minimap_overlay: i32,
@@ -66,6 +73,14 @@ pub struct Ground {
 
 #[allow(clippy::too_many_arguments)]
 impl Ground {
+    pub fn vertices(&self) -> usize {
+        self.vertex_count as usize
+    }
+
+    pub fn faces(&self) -> usize {
+        self.face_count as usize
+    }
+
     pub fn new(
         x: i32,
         z: i32,
@@ -96,11 +111,12 @@ impl Ground {
 
         let points = DEF_SHAPE_P[shape as usize];
         let vertex_count = points.len();
-        let mut vertex_x = vec![0i32; vertex_count];
-        let mut vertex_y = vec![0i32; vertex_count];
-        let mut vertex_z = vec![0i32; vertex_count];
-        let mut primary_colours = vec![0i32; vertex_count];
-        let mut secondary_colours = vec![0i32; vertex_count];
+        debug_assert!(vertex_count <= GROUND_MAX);
+        let mut vertex_x = [0i32; GROUND_MAX];
+        let mut vertex_y = [0i32; GROUND_MAX];
+        let mut vertex_z = [0i32; GROUND_MAX];
+        let mut primary_colours = [0i32; GROUND_MAX];
+        let mut secondary_colours = [0i32; GROUND_MAX];
 
         let scene_x = x * FULL_SQUARE;
         let scene_z = z * FULL_SQUARE;
@@ -224,15 +240,16 @@ impl Ground {
 
         let paths = DEF_SHAPE_F[shape as usize];
         let face_count = paths.len() / 4;
-        let mut face_vertex_a = vec![0i32; face_count];
-        let mut face_vertex_b = vec![0i32; face_count];
-        let mut face_vertex_c = vec![0i32; face_count];
-        let mut face_colour_a = vec![0i32; face_count];
-        let mut face_colour_b = vec![0i32; face_count];
-        let mut face_colour_c = vec![0i32; face_count];
+        debug_assert!(face_count <= GROUND_MAX);
+        let mut face_vertex_a = [0i32; GROUND_MAX];
+        let mut face_vertex_b = [0i32; GROUND_MAX];
+        let mut face_vertex_c = [0i32; GROUND_MAX];
+        let mut face_colour_a = [0i32; GROUND_MAX];
+        let mut face_colour_b = [0i32; GROUND_MAX];
+        let mut face_colour_c = [0i32; GROUND_MAX];
 
         let mut face_texture = if texture != -1 {
-            Some(vec![0i32; face_count])
+            Some([0i32; GROUND_MAX])
         } else {
             None
         };
@@ -280,12 +297,14 @@ impl Ground {
             vertex_x,
             vertex_y,
             vertex_z,
+            vertex_count: vertex_count as u8,
             face_colour_a,
             face_colour_b,
             face_colour_c,
             face_vertex_a,
             face_vertex_b,
             face_vertex_c,
+            face_count: face_count as u8,
             face_texture,
             flat,
             minimap_underlay,
