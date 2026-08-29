@@ -15,13 +15,10 @@
 use std::io;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
-use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-use num_bigint::BigUint;
 
 use crate::client::client_build::ClientBuild;
 use crate::client::client_draw::get_av_h;
@@ -47,7 +44,7 @@ use crate::graphics::Pix3D;
 use crate::io::{
     ClientProt, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt, SERVER_PROT_SIZES,
 };
-use crate::login_rsa::{LOGIN_RSAE, LOGIN_RSAN};
+use crate::login_rsa;
 use crate::render::nav_debug::NavDebugPaint;
 use crate::render::Renderer;
 use crate::sound::{Fade, JagFX, Midi};
@@ -1870,8 +1867,7 @@ impl Client {
             ];
 
             self.write_login_block(seed, username, password);
-            let n = BigUint::from_str(LOGIN_RSAN).unwrap();
-            let e = BigUint::from_str(LOGIN_RSAE).unwrap();
+            let (n, e) = login_rsa::active_biguints();
             self.out.rsaenc(&n, &e);
 
             let mut loginout = Packet::alloc(1);

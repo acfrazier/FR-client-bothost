@@ -49,7 +49,7 @@ let _r = Renderer::new(false);
         assert_eq!((buf[3] as usize) << 8 | buf[4] as usize, 274); // client version
         assert_eq!(buf[5], 0); // info: lowmem off
         assert_eq!(n, 2 + size);
-        if client::LOGIN_RSAN.starts_with("7162900525229798032761816791230527296329313291") {
+        if client::login_rsa::login_rsan().starts_with("7162900525229798032761816791230527296329313291") {
             // Java `Packet.rsaenc` writes `BigInteger.toByteArray()` length:
             // 64, or 65 with the leading 0x00 two's-complement byte when the
             // ciphertext MSB is set (random per login).

@@ -49,10 +49,7 @@ struct Args {
 }
 
 fn default_cache_dir() -> String {
-    match env::var("HOME") {
-        Ok(home) => format!("{home}/experiments/Server/engine/data/pack/client"),
-        Err(_) => "experiments/Server/engine/data/pack/client".into(),
-    }
+    client::cache_dir().display().to_string()
 }
 
 /// clap-free argv parse: `--key value` pairs plus the `--window`/`--audio`

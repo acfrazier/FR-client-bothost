@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [r274-bh-modular]
+  pull_request:
+    branches: [r274-bh-modular]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # Alpha: no `-D warnings`. Deny-warnings is a beta goal (same as 274bot).
+      # This tree is not rustfmt-gated; do not cargo fmt --check here.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --no-deps
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --workspace

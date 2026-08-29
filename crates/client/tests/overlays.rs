@@ -194,7 +194,7 @@ let _r = Renderer::new(false);
     Model::unpack(4096, Some(LIFTED_MODEL));
     let mut r = Renderer::new(false);
     let mut c = client();
-    while c.cache.idks.len() <= 0 {
+    while c.cache.idks.is_empty() {
         Arc::get_mut(&mut c.cache).unwrap().idks.push(IdkType::default());
     }
     Arc::get_mut(&mut c.cache).unwrap().idks[0].model = Some(vec![4096]);

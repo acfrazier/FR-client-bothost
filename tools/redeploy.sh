@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-ENGINE_DIR="${1:-$HOME/experiments/Server/engine}"
+ENGINE_DIR="${1:-${ENGINE_DIR:-$HOME/experiments/Server/engine}}"
 PRIVATE_KEY="$ENGINE_DIR/data/config/private.pem"
 
 if [ ! -f "$PRIVATE_KEY" ]; then
@@ -82,17 +82,9 @@ if [ -z "$LOGIN_RSAE" ]; then
     exit 1
 fi
 
-echo "→ RSA key extracted successfully."
+echo "→ RSA public half (runtime; 274bot does not bake this at compile):"
 echo "→ RSA exponent: $LOGIN_RSAE"
 echo "→ RSA modulus:  $LOGIN_RSAN..."
-
-echo "→ Building client-play with baked RSA key..."
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-cd "$PROJECT_ROOT"
-
-LOGIN_RSAE="$LOGIN_RSAE" \
-LOGIN_RSAN="$LOGIN_RSAN" \
-cargo build -p client-play
+echo "→ Stock Lost City Server already matches the Java default pair — no bake."
+echo "→ Rotated keys: leave this pem at \$ENGINE_DIR/data/config/private.pem"
+echo "  or export LOGIN_RSAN / LOGIN_RSAE in the process that runs panel-play."

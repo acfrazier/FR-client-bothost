@@ -1,3 +1,8 @@
+//! 274 client library for the 274bot host (`FR-client-bothost`
+//! `r274-bh-modular`). wgpu GPU 3D by default; `BOT_CPU=1` is CpuPix3D.
+//! No bot action API — packet timing and `doAction` stay Java-shaped.
+
+pub mod bot_target;
 pub mod client;
 pub mod config;
 pub mod core;
@@ -11,7 +16,12 @@ pub mod sound;
 pub mod unpack;
 pub mod util;
 pub mod wordfilter;
-pub use login_rsa::{LOGIN_RSAE, LOGIN_RSAN};
+pub use bot_target::{
+    bot_target, cache_dir, engine_dir, set_bot_target, world_host, BotTarget,
+};
+pub use login_rsa::{
+    active_pair, JAVA_LOGIN_RSAE, JAVA_LOGIN_RSAN, PROD_LOGIN_RSAE, PROD_LOGIN_RSAN,
+};
 
 /// Whether verbose client-side diagnostics are on (`BOT_DEBUG=1`), cached
 /// once per process. Used by the scene-build / on-demand paths to dump the

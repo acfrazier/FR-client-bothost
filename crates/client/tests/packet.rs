@@ -15,24 +15,20 @@ fn rsaenc_java_key_hi_1337() {
     let mut p = Packet::alloc(1);
     p.pjstr("hi");
     p.p4(1337);
-    let n = BigUint::from_str(client::LOGIN_RSAN).unwrap();
-    let e = BigUint::from_str(client::LOGIN_RSAE).unwrap();
-    // when env is default Java pair this matches client-ts; if redeploy baked a
-    // different key, skip the exact ciphertext and only check length prefix
+    let n = BigUint::from_str(client::JAVA_LOGIN_RSAN).unwrap();
+    let e = BigUint::from_str(client::JAVA_LOGIN_RSAE).unwrap();
     p.rsaenc(&n, &e);
     assert!(p.pos >= 2);
     assert_eq!(p.data()[0] as usize, p.pos - 1);
-    if client::LOGIN_RSAN.starts_with("7162900525229798032761816791230527296329313291") {
-        assert_eq!(
-            &p.data()[..p.pos],
-            &[
-                64, 86, 83, 87, 172, 26, 221, 24, 175, 132, 67, 99, 115, 197, 146, 98, 155, 170,
-                193, 109, 58, 8, 193, 175, 2, 236, 115, 37, 114, 49, 206, 94, 10, 55, 29, 205, 170,
-                223, 128, 245, 135, 72, 178, 150, 234, 153, 197, 241, 204, 145, 159, 190, 42, 207,
-                8, 85, 247, 113, 125, 158, 157, 214, 15, 100, 176
-            ]
-        );
-    }
+    assert_eq!(
+        &p.data()[..p.pos],
+        &[
+            64, 86, 83, 87, 172, 26, 221, 24, 175, 132, 67, 99, 115, 197, 146, 98, 155, 170, 193,
+            109, 58, 8, 193, 175, 2, 236, 115, 37, 114, 49, 206, 94, 10, 55, 29, 205, 170, 223, 128,
+            245, 135, 72, 178, 150, 234, 153, 197, 241, 204, 145, 159, 190, 42, 207, 8, 85, 247,
+            113, 125, 158, 157, 214, 15, 100, 176
+        ]
+    );
 }
 
 #[test]
