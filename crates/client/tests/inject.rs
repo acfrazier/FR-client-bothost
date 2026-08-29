@@ -99,6 +99,22 @@ fn loads_fake_snapshot_into_stores() {
     );
 }
 
+/// `AnimFrame.unpack` indexes `list[frame_id]`. The in-record `total` is
+/// the number of frames in that archive entry, not the global id space.
+/// Cube seq 1133 uses frame 8483; a table sized to `total` (e.g. 16) panics.
+#[test]
+fn unpack_grows_the_frame_table_to_fit_the_frame_id() {
+    let _guard = lock();
+    AnimFrame::init(16);
+    let rec = anim_record();
+    let len = u32::from_le_bytes(rec[4..8].try_into().unwrap()) as usize;
+    AnimFrame::unpack(&rec[8..8 + len]);
+    assert!(
+        AnimFrame::get(30001).is_some(),
+        "frame id 30001 must land even when init() was only 16 slots"
+    );
+}
+
 #[test]
 fn missing_snapshot_dir_is_an_error() {
     let _guard = lock();

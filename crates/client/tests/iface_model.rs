@@ -90,3 +90,84 @@ fn hud_client() -> client::client::Client {
         lowmem: false,
     })
 }
+
+/// GPU `game_draw` with the mysterious-cube main modal (`macro_cube` 6554)
+/// plus live `if_setobject` on the three spinning TYPE_MODEL children.
+#[test]
+fn gpu_draw_does_not_crash_on_mysterious_cube_modal() {
+    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    if !std::path::Path::new(&format!("{cache}/interface")).is_file() {
+        eprintln!("no client cache; skip cube GPU repro");
+        return;
+    }
+
+    struct NoopProvider;
+    impl client::dash3d::model::ModelProvider for NoopProvider {
+        fn request_model(&mut self, _id: i32) {}
+    }
+    client::dash3d::AnimFrame::init(40000);
+    client::dash3d::Model::init(70000, Box::new(NoopProvider));
+    let home = std::env::var("HOME").unwrap();
+    client::unpack::load_snapshot(&cache, &format!("{home}/.274bot/unpack"))
+        .expect("274 snapshot");
+
+    client::render::Renderer::set_prefer_gpu(true);
+    let mut r = client::render::Renderer::new(false);
+    if r.backend_kind() != client::render::backend::BackendKind::Gpu {
+        eprintln!("no adapter; skip cube GPU repro");
+        client::render::Renderer::set_prefer_gpu(false);
+        return;
+    }
+
+    let mut c = client::client::Client::new(client::client::ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache,
+        members: true,
+        lowmem: false,
+    });
+    r.game_draw(&mut c);
+    assert!(
+        c.ifaces.get(6554).and_then(|o| o.as_ref()).is_some(),
+        "macro_cube interface 6554 must unpack from the 274 interface jag"
+    );
+
+    c.set_draw(true);
+    c.ingame = true;
+    c.scene_state = 2;
+    c.main_modal_id = 6554;
+    for (com_id, obj_id) in [(6555, 3063), (6557, 3069), (6559, 3081)] {
+        let (xan2d, yan2d, zoom2d) = if (obj_id as usize) < c.cache.objs.len() {
+            let t = c.cache.obj(obj_id as usize);
+            (t.xan2d, t.yan2d, t.zoom2d)
+        } else {
+            (0, 0, 0)
+        };
+        if let Some(com) = c.ifaces.get_mut(com_id).and_then(|o| o.as_mut()) {
+            com.model1_type = 4;
+            com.model1_id = obj_id;
+            com.model_xan = xan2d;
+            com.model_yan = yan2d;
+            com.model_zoom = if 390 == 0 { 0 } else { (zoom2d * 100) / 390 };
+        }
+    }
+
+    let frame = r.game_draw(&mut c);
+    client::render::Renderer::set_prefer_gpu(false);
+    let client::render::backend::FrameOutput::Texture(handle) = frame else {
+        panic!("GPU cube frame must be a texture");
+    };
+    let pixels = handle.read_back();
+    let mut painted = 0usize;
+    for y in 130..160 {
+        for x in 250..280 {
+            if pixels[y * 765 + x] != 0 {
+                painted += 1;
+            }
+        }
+    }
+    assert!(
+        painted > 50,
+        "mysterious cube TYPE_MODEL must composite into the GPU frame (got {painted} px)"
+    );
+}

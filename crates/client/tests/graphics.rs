@@ -666,6 +666,26 @@ fn pix3d_gouraud_triangle_constant_shade() {
     assert_eq!(map.pixels[24], 0);
 }
 
+/// GPU overlay coverage is attached via `coverage_guard`. TYPE_MODEL
+/// (`obj_render` → gouraud/flat/texture rasters) must mark the same
+/// pixels it writes, or the cube random-event 3D is a hole in the scene
+/// window (and a wgpu validation/composite miss).
+#[test]
+fn pix3d_raster_marks_gpu_overlay_coverage() {
+    Pix3D::init_colour_table(0.6);
+    let mut d = Pix3DDraw::default();
+    let mut map = PixMap::new(5, 5);
+    let mut coverage = vec![0u8; 25];
+    {
+        let _g = client::graphics::pix2d::coverage_guard(&mut coverage, 5, 5);
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        d.set_render_clipping(&surface);
+        d.gouraud_triangle(&mut surface, 0, 4, 0, 0, 0, 4, 256, 256, 256);
+    }
+    assert_eq!(coverage[0], 255, "written TYPE_MODEL pixel must be opaque overlay");
+    assert_eq!(coverage[4], 0, "unwritten pixel stays a scene hole");
+}
+
 #[test]
 fn pix3d_flat_triangle_off_screen_writes_are_noops() {
     let mut d = Pix3DDraw::default();

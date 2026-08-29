@@ -649,6 +649,10 @@ impl Pix3DDraw {
     fn put_pixel(surface: &mut Pix2D, off: i32, rgb: i32) {
         if let Some(p) = surface.pixels.get_mut(off as usize) {
             *p = rgb;
+            // GPU overlay coverage: TYPE_MODEL rasters through Pix3D, not
+            // Pix2D fill/plot. Unmarked pixels are a 3D hole in the scene
+            // window (the mysterious-cube random event).
+            surface.mark_pixel(off);
         }
     }
 

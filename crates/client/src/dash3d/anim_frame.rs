@@ -86,12 +86,22 @@ impl AnimFrame {
         let mut temp_tz = [0i32; 500];
 
         let mut s = store().lock().unwrap();
+        // `total` is the number of frames in this archive entry, not the
+        // global frame-id space. Cube seq 1133's first frame is 8483.
+        // Grow to fit each `id` (and keep `opaque` in lockstep).
         if s.list.len() < total as usize + 1 {
             s.list.resize(total as usize + 1, None);
         }
 
         for _ in 0..total {
             let id = head.g2();
+            let need = id as usize + 1;
+            if s.list.len() < need {
+                s.list.resize(need, None);
+            }
+            if s.opaque.len() < need {
+                s.opaque.resize(need, true);
+            }
             let mut frame = AnimFrame {
                 delay: del.g1(),
                 base: Some(base.clone()),
