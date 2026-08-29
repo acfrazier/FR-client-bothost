@@ -384,6 +384,7 @@ pub struct GpuBackend {
     /// with no built scene, leaves `composite_scene` a no-op like the CPU
     /// path's frozen-frame blit).
     scene_ready: bool,
+    last_kind: FrameKind,
 }
 
 impl GpuBackend {
@@ -391,6 +392,9 @@ impl GpuBackend {
     /// pipeline. Returns `Err` on any init failure (or a cached one); the
     /// renderer logs and falls back to `CpuBackend`.
     pub fn try_new() -> Result<GpuBackend, String> {
+        if std::env::var("SKIP_GPU").ok().as_deref() == Some("1") {
+            return Err("SKIP_GPU=1".into());
+        }
         GPU_BACKEND_TRIED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let context = context().ok_or_else(|| "no GPU context".to_string())?;
 
@@ -720,6 +724,7 @@ impl GpuBackend {
             chrome_vertex_buf,
             overlay_coverage: vec![0; (SCENE_W * SCENE_H) as usize],
             scene_ready: false,
+            last_kind: FrameKind::Title,
         })
     }
 
@@ -922,6 +927,13 @@ impl RenderBackend for GpuBackend {
     /// chrome-strip blits and the frozen-frame blit) works exactly like
     /// the CPU path.
     fn begin(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
+        self.last_kind = kind;
+        if kind == FrameKind::Title {
+            // Left torch column sits inside the scene-window rect. A stale
+            // `scene_ready` from the last ingame frame would punch a 3D
+            // hole through the flames. Title has no scene.
+            self.scene_ready = false;
+        }
         self.cpu.begin(core, r, kind);
     }
 
@@ -1141,6 +1153,9 @@ impl RenderBackend for GpuBackend {
                 multiview_mask: None,
             });
         }
+        if self.last_kind == FrameKind::Title {
+            self.scene_ready = false;
+        }
         if self.scene_ready {
             encoder.copy_texture_to_texture(
                 wgpu::TexelCopyTextureInfo {
@@ -1287,5 +1302,20 @@ mod tests {
         assert_eq!(px(5, 4), (0, 0, 255, 82), "nav fill coverage is the overlay alpha");
         assert_eq!(px(6, 4).3, 0, "uncovered scene pixel is the 3D hole");
         assert_eq!(px(0, 0).3, 255, "chrome outside the scene window is opaque");
+    }
+
+    #[test]
+    fn draw_area_rgba_title_is_fully_opaque() {
+        let mut draw = PixMap::new(FRAME_W as i32, FRAME_H as i32);
+        draw.pixels[(4 * FRAME_W + 4) as usize] = 0x00ff8800;
+        let coverage = vec![0u8; (SCENE_W * SCENE_H) as usize];
+        let bytes_per_row = ((FRAME_W * 4 + 255) / 256) * 256;
+        let bytes = draw_area_rgba(&draw, &coverage, false, bytes_per_row);
+        let o = (4 * bytes_per_row + 4 * 4) as usize;
+        assert_eq!(
+            bytes[o + 3],
+            255,
+            "title (no scene) must not punch a hole through the left torch column"
+        );
     }
 }

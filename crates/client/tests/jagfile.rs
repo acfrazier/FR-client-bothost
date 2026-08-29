@@ -13,8 +13,7 @@ fn gen_hash_matches_java() {
 
 #[test]
 fn reads_unpacked_jag_from_engine_pack() {
-    let path = std::env::var("ENGINE_DIR")
-        .unwrap_or_else(|_| format!("{}/experiments/Server/engine", std::env::var("HOME").unwrap()));
+    let path = client::engine_dir().display().to_string();
     let bytes = std::fs::read(format!("{path}/data/pack/client/config"));
     let Ok(bytes) = bytes else { return; };
     let jag = JagFile::new(bytes);

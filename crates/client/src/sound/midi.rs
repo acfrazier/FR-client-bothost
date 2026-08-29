@@ -62,10 +62,19 @@ mod rusty {
             out.push(engine.join("public/client/SCC1_Florestan.sf2").display().to_string());
             out.push(engine.join("public/bot/SCC1_Florestan.sf2").display().to_string());
         }
-        if let Ok(home) = std::env::var("HOME") {
-            out.push(format!("{home}/experiments/Server/engine/public/client/SCC1_Florestan.sf2"));
-            out.push(format!("{home}/experiments/Server/engine/public/bot/SCC1_Florestan.sf2"));
-        }
+        let engine = crate::engine_dir();
+        out.push(
+            engine
+                .join("public/client/SCC1_Florestan.sf2")
+                .display()
+                .to_string(),
+        );
+        out.push(
+            engine
+                .join("public/bot/SCC1_Florestan.sf2")
+                .display()
+                .to_string(),
+        );
         out
     }
 

@@ -87,7 +87,7 @@ let _r = Renderer::new(false);
 #[test]
 fn unpack_models_from_cache_makes_a_random_event_model_loadable() {
 let _r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&format!("{cache}/versionlist")).is_file() {
         return;
     }
@@ -350,7 +350,7 @@ let _r = Renderer::new(false);
 #[test]
 fn bar_urgent_models_are_in_use_bit_only() {
 let _r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     let path = format!("{cache}/versionlist");
     if !std::path::Path::new(&path).is_file() {
         return;
@@ -390,7 +390,7 @@ let _r = Renderer::new(false);
 #[test]
 fn prefetch_cache_hit_posts_extra_model_for_unpack() {
 let _r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     let path = format!("{cache}/versionlist");
     if !std::path::Path::new(&path).is_file() {
         return;

@@ -95,7 +95,7 @@ fn hud_client() -> client::client::Client {
 /// plus live `if_setobject` on the three spinning TYPE_MODEL children.
 #[test]
 fn gpu_draw_does_not_crash_on_mysterious_cube_modal() {
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&format!("{cache}/interface")).is_file() {
         eprintln!("no client cache; skip cube GPU repro");
         return;

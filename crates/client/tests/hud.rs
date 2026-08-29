@@ -74,7 +74,7 @@ let _r = Renderer::new(false);
 #[test]
 fn sideicons_load_from_media() {
 let mut r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
     }
@@ -239,7 +239,7 @@ let _r = Renderer::new(false);
 #[test]
 fn draw_interface_text_writes_pixels() {
 let mut r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
         return;
     }
@@ -286,7 +286,7 @@ let mut r = Renderer::new(false);
 fn iftype_keeps_graphic_name() {
 let mut r = Renderer::new(false);
     // the logout tab's red button is a TYPE_GRAPHIC sibling of its text
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("interface").is_file() {
         return;
     }
@@ -311,7 +311,7 @@ let mut r = Renderer::new(false);
 #[test]
 fn draw_graphic_writes_pixels() {
 let mut r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
     }
@@ -359,7 +359,7 @@ let mut r = Renderer::new(false);
 #[test]
 fn draw_side_text_component_writes_pixels() {
 let mut r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("interface").is_file() {
         return;
     }
@@ -564,7 +564,7 @@ let _r = Renderer::new(false);
 #[test]
 fn draw_chat_renders_type0_line_and_input() {
 let mut r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
         return;
     }
@@ -631,7 +631,7 @@ fn chat_line_pixels(cache: &str, r: &mut Renderer, r#type: i32, sender: &str) ->
 #[test]
 fn prepare_game_depacks_mod_icons() {
 let mut r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
     }
@@ -649,7 +649,7 @@ let mut r = Renderer::new(false);
 #[test]
 fn draw_chat_plots_cr1_crown() {
 let mut r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
     }
@@ -675,7 +675,7 @@ fn draw_chat_plots_cr2_crown_for_private() {
 let mut r = Renderer::new(false);
     // types 3/7 with split_private_chat 0 draw the private line in the
     // chatbox: the silver crown plots after the "From" label.
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
     }
@@ -699,7 +699,7 @@ let mut r = Renderer::new(false);
 fn draw_private_messages_plots_cr1_crown() {
 let mut r = Renderer::new(false);
     // split private chat draws into area_game at y = 329 - line*13.
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
     }
@@ -731,7 +731,7 @@ let mut r = Renderer::new(false);
 #[test]
 fn draw_chat_social_overlay_draws_header_and_input() {
 let mut r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
         return;
     }
@@ -759,7 +759,7 @@ let mut r = Renderer::new(false);
 #[test]
 fn draw_chat_dialog_overlay_draws_header_and_input() {
 let mut r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
         return;
     }
@@ -787,7 +787,7 @@ let mut r = Renderer::new(false);
 #[test]
 fn draw_reboot_timer_overlay_draws_system_update() {
 let mut r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
         return;
     }
@@ -894,7 +894,7 @@ let _r = Renderer::new(false);
 #[test]
 fn draw_interface_substitutes_percent1() {
 let mut r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
         return;
     }
@@ -1249,7 +1249,7 @@ let _r = Renderer::new(false);
 #[test]
 fn side_click_real_logout_text_sends_if_button() {
 let mut r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("interface").is_file() {
         return;
     }
@@ -1324,7 +1324,7 @@ let mut r = Renderer::new(false);
 #[test]
 fn iftype_unpack_keeps_inv_background_names() {
 let _r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("interface").is_file() {
         return;
     }
@@ -1415,7 +1415,7 @@ let _r = Renderer::new(false);
 #[test]
 fn draw_interface_inv_text_writes_obj_name() {
 let mut r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
         return;
     }
@@ -1496,7 +1496,7 @@ let mut r = Renderer::new(false);
     // TS 11125-11146: chatback plots first, then the modal iface replaces
     // the chat lines — a modal opened after chat text must not keep the old
     // line pixels (regression: the modal branch used to early-return).
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
     }
@@ -1720,7 +1720,7 @@ let _r = Renderer::new(false);
 #[test]
 fn draw_icons_blinks_flashing_tab() {
 let mut r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
     }
@@ -1971,7 +1971,7 @@ let _r = Renderer::new(false);
 #[test]
 fn resumed_pause_button_text_is_please_wait() {
 let mut r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
         return;
     }
@@ -2012,7 +2012,7 @@ let mut r = Renderer::new(false);
 #[test]
 fn active_text_uses_text2() {
 let mut r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
         return;
     }

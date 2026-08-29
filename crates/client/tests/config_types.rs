@@ -8,24 +8,14 @@ use client::config::{Cache, ObjType};
 use client::io::JagFile;
 
 fn engine_config_jag() -> Option<JagFile> {
-    let path = std::env::var("ENGINE_DIR").unwrap_or_else(|_| {
-        format!(
-            "{}/experiments/Server/engine",
-            std::env::var("HOME").unwrap()
-        )
-    });
+    let path = client::engine_dir().display().to_string();
     let bytes = std::fs::read(format!("{path}/data/pack/client/config")).ok()?;
     Some(JagFile::new(bytes))
 }
 
 #[test]
 fn unpack_obj_from_engine_config_jag() {
-    let path = std::env::var("ENGINE_DIR").unwrap_or_else(|_| {
-        format!(
-            "{}/experiments/Server/engine",
-            std::env::var("HOME").unwrap()
-        )
-    });
+    let path = client::engine_dir().display().to_string();
     let bytes = match std::fs::read(format!("{path}/data/pack/client/config")) {
         Ok(b) => b,
         Err(_) => return,
@@ -99,12 +89,7 @@ fn client_owns_an_empty_cache_until_unpacked() {
 
 #[test]
 fn client_new_unpacks_config_from_cache_dir() {
-    let path = std::env::var("ENGINE_DIR").unwrap_or_else(|_| {
-        format!(
-            "{}/experiments/Server/engine",
-            std::env::var("HOME").unwrap()
-        )
-    });
+    let path = client::engine_dir().display().to_string();
     let cache_dir = format!("{path}/data/pack/client");
     if !std::path::Path::new(&format!("{cache_dir}/config")).is_file() {
         return;
@@ -144,12 +129,7 @@ fn missing_config_jag_sets_error_loading() {
 }
 
 fn engine_interface_jag() -> Option<JagFile> {
-    let path = std::env::var("ENGINE_DIR").unwrap_or_else(|_| {
-        format!(
-            "{}/experiments/Server/engine",
-            std::env::var("HOME").unwrap()
-        )
-    });
+    let path = client::engine_dir().display().to_string();
     let bytes = std::fs::read(format!("{path}/data/pack/client/interface")).ok()?;
     Some(JagFile::new(bytes))
 }

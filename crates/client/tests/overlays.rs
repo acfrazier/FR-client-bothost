@@ -98,7 +98,7 @@ let _r = Renderer::new(false);
 #[test]
 fn prepare_game_depacks_headicons() {
 let mut r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
     }
@@ -112,7 +112,7 @@ let mut r = Renderer::new(false);
 #[test]
 fn entity_overlays_plots_prayer_headicon() {
 let mut r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
     }
@@ -143,7 +143,7 @@ let mut r = Renderer::new(false);
 #[test]
 fn entity_overlays_collects_chat_bubble() {
 let mut r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
     }

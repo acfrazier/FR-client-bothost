@@ -90,7 +90,7 @@ fn logout_stops_midi_and_resets_song_state() {
 /// `--cache` / maininit must unpack `sounds.dat` into JagFX (TS 1168-1171).
 #[test]
 fn client_new_unpacks_sounds_jag() {
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("sounds").is_file() {
         return;
     }
@@ -149,8 +149,7 @@ fn synth_sound_queue_pushes_pcm_not_drops() {
 
 #[test]
 fn jagfx_init_and_generate_from_engine_sounds() {
-    let path = std::env::var("ENGINE_DIR")
-        .unwrap_or_else(|_| format!("{}/experiments/Server/engine", std::env::var("HOME").unwrap()));
+    let path = client::engine_dir().display().to_string();
     let bytes = std::fs::read(format!("{path}/data/pack/client/sounds"));
     let Ok(bytes) = bytes else { return; };
     let jag = client::io::JagFile::new(bytes);
@@ -242,12 +241,10 @@ mod rusty {
     /// mix toward the rail (e.g. re-enabling effects) is caught.
     #[test]
     fn scape_main_render_stays_below_i16_rail() {
-        let home = std::env::var("HOME").unwrap();
-        let engine = std::env::var("ENGINE_DIR")
-            .unwrap_or_else(|_| format!("{home}/experiments/Server/engine"));
-        let font = format!("{engine}/public/client/SCC1_Florestan.sf2");
-        let song = format!("{home}/experiments/Server/content/songs/scape main.mid");
-        let mut m = match RustyMidi::with_sound_font(&font) {
+        let engine = client::engine_dir();
+        let font = engine.join("public/client/SCC1_Florestan.sf2");
+        let song = client::content_dir().join("songs/scape main.mid");
+        let mut m = match RustyMidi::with_sound_font(&font.display().to_string()) {
             Some(m) => m,
             None => return, // no engine soundfont → nothing to render
         };

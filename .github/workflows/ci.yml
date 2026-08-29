@@ -32,4 +32,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Test
+        env:
+          # GitHub runners are not a GPU fidelity machine. Local `cargo test`
+          # still exercises wgpu when an adapter exists.
+          SKIP_GPU: "1"
         run: cargo test --workspace

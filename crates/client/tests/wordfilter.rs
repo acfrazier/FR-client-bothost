@@ -13,7 +13,7 @@ fn filter_without_unpack_is_identity() {
 
 #[test]
 fn unpack_wordenc_and_whitelist_cook() {
-    let path = "/Users/acfrazier/experiments/Server/engine/data/pack/client/wordenc";
+    let path = client::cache_dir().join("wordenc").display().to_string();
     let Ok(bytes) = fs::read(path) else {
         return;
     };

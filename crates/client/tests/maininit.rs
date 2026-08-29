@@ -73,10 +73,7 @@ let mut r = Renderer::new(false);
 #[test]
 fn draw_progress_headed_paints_stage_text_once_title_jag_exists() {
 let mut r = Renderer::new(false);
-    let cache = format!(
-        "{}/experiments/Server/engine/data/pack/client",
-        std::env::var("HOME").unwrap()
-    );
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&format!("{cache}/title")).is_file() {
         return;
     }
@@ -102,10 +99,7 @@ let mut r = Renderer::new(false);
 #[test]
 fn draw_progress_headed_paints_torch_columns() {
 let mut r = Renderer::new(false);
-    let cache = format!(
-        "{}/experiments/Server/engine/data/pack/client",
-        std::env::var("HOME").unwrap()
-    );
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&format!("{cache}/title")).is_file() {
         return;
     }

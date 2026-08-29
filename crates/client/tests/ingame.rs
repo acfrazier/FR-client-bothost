@@ -6,7 +6,7 @@ use client::dash3d::{ClientEntity, ClientPlayer, MapFlag, TerrainOverlayShape};
 use client::graphics::{Colour, PixMap};
 
 fn cache_dir() -> Option<String> {
-    let cache = std::env::var("HOME").ok()? + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if std::path::Path::new(&cache).join("media").is_file() {
         Some(cache)
     } else {
@@ -27,7 +27,7 @@ fn client(cache: String) -> Client {
 #[test]
 fn game_draw_headless_does_not_panic() {
 let mut r = Renderer::new(false);
-    let cache = std::env::var("HOME").unwrap() + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
     }

@@ -329,8 +329,10 @@ fn cache_model(cache_dir: &str, id: i32) -> Option<Vec<u8>> {
 /// its placements decode to `SceneModel::LocAnim` and the share-light pass
 /// skips them. Its base frame model is unpacked from the file store.
 fn portal_fixture() -> Option<Cache> {
-    let home = std::env::var("HOME").ok()?;
-    let cache_dir = format!("{home}/experiments/Server/engine/data/pack");
+    let cache_dir = client::engine_dir()
+        .join("data/pack")
+        .display()
+        .to_string();
     let config = std::fs::read(format!("{cache_dir}/client/config")).ok()?;
     let cache = Cache::unpack(&JagFile::new(config));
     let base = *cache.locs[1812].model.as_ref()?.first()?;
@@ -568,10 +570,11 @@ fn share_light_does_not_delete_adjacent_south_walls() {
 /// Real `basic_wall_1` loc (shape 0 / SOUTH) must cover pixels from the
 /// outdoor camera. Live Draynor: stone missing from outside, shutters remain.
 fn loc_ob2(rel: &str) -> Option<Vec<u8>> {
-    let home = std::env::var("HOME").ok()?;
-    std::fs::read(format!(
-        "{home}/experiments/Server/content/models/_sort/basic/{rel}"
-    ))
+    std::fs::read(
+        client::content_dir()
+            .join("models/_sort/basic")
+            .join(rel),
+    )
     .ok()
 }
 
@@ -582,14 +585,10 @@ fn basic_wall_ob2() -> Option<Vec<u8>> {
 fn textured_pix() -> Pix3DDraw {
     let mut pix = Pix3DDraw::default();
     pix.low_mem = false;
-    if let Ok(home) = std::env::var("HOME") {
-        if let Ok(bytes) = std::fs::read(format!(
-            "{home}/experiments/Server/engine/data/pack/client/textures"
-        )) {
-            pix.unpack_textures(&JagFile::new(bytes));
-            pix.init_pool(20);
-            pix.init_texture_palettes(0.8);
-        }
+    if let Ok(bytes) = std::fs::read(client::cache_dir().join("textures")) {
+        pix.unpack_textures(&JagFile::new(bytes));
+        pix.init_pool(20);
+        pix.init_texture_palettes(0.8);
     }
     pix
 }
@@ -1280,19 +1279,15 @@ fn camera_facing_box_faces_draw_as_2x2_scenery() {
 }
 
 fn pack_config() -> Option<Cache> {
-    let home = std::env::var("HOME").ok()?;
-    let bytes = std::fs::read(format!(
-        "{home}/experiments/Server/engine/data/pack/client/config"
-    ))
-    .ok()?;
+    let bytes = std::fs::read(client::cache_dir().join("config")).ok()?;
     Some(Cache::unpack(&JagFile::new(bytes)))
 }
 
 fn fountain_ob2() -> Option<Vec<u8>> {
-    let home = std::env::var("HOME").ok()?;
-    std::fs::read(format!(
-        "{home}/experiments/Server/content/models/_sort/outdoorfurniture/outdoorfurniture_fountain.ob2"
-    ))
+    std::fs::read(
+        client::content_dir()
+            .join("models/_sort/outdoorfurniture/outdoorfurniture_fountain.ob2"),
+    )
     .ok()
 }
 

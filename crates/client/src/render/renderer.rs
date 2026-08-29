@@ -262,6 +262,12 @@ impl Renderer {
     /// fatal). Headless builds and tests never set the preference, so the
     /// CPU path stays the default and the fidelity path.
     pub fn new(lowmem: bool) -> Self {
+        Self::new_prefer(lowmem, prefer_gpu())
+    }
+
+    /// Like [`Self::new`] but the GPU/CPU choice is per-slot, not the
+    /// process `BOT_CPU` / `set_prefer_gpu` latch.
+    pub fn new_prefer(lowmem: bool, prefer_gpu: bool) -> Self {
         RENDERER_CONSTRUCTED.fetch_add(1, Ordering::Relaxed);
         let mut renderer = Renderer {
             world: RenderWorld::new(),
@@ -365,7 +371,7 @@ impl Renderer {
         };
         Pix3D::init_colour_table(0.8);
         renderer.pix3d.low_mem = lowmem;
-        renderer.backend = Some(if prefer_gpu() {
+        renderer.backend = Some(if prefer_gpu {
             match GpuBackend::try_new() {
                 Ok(backend) => Box::new(backend),
                 Err(_) => Box::new(CpuBackend),

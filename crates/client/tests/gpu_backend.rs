@@ -53,7 +53,7 @@ fn client() -> client::client::Client {
 /// The real client cache (`title`/`media` jags), when present — the title
 /// chrome (sprites + fonts) needs it, the same skip pattern as title.rs.
 fn real_cache() -> Option<String> {
-    let cache = std::env::var("HOME").ok()? + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if std::path::Path::new(&cache).join("title").is_file() {
         Some(cache)
     } else {

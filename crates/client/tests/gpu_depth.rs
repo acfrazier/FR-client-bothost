@@ -31,7 +31,7 @@ const SCENE_H: usize = 334;
 
 fn cache_dir() -> Option<String> {
     let home = std::env::var("HOME").ok()?;
-    let cache = format!("{home}/experiments/Server/engine/data/pack/client");
+    let cache = client::cache_dir().display().to_string();
     Path::new(&cache)
         .join("versionlist")
         .is_file()

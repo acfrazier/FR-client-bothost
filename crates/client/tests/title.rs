@@ -5,7 +5,7 @@ use client::graphics::Pix32;
 use client::io::JagFile;
 
 fn cache_dir() -> Option<String> {
-    let cache = std::env::var("HOME").ok()? + "/experiments/Server/engine/data/pack/client";
+    let cache = client::cache_dir().display().to_string();
     if std::path::Path::new(&cache).join("title").is_file() {
         Some(cache)
     } else {
@@ -95,6 +95,36 @@ let mut r = Renderer::new(false);
     }
     let after = &r.image_title0.as_ref().expect("image_title0").pixels;
     assert_ne!(&before, after, "torch flame pixels should change across frames");
+}
+
+/// GPU title chrome still ticks the torch columns into `draw_area` (and
+/// the composited frame, when wgpu is up). `SKIP_GPU=1` / no adapter
+/// falls back to CPU — then this is the same as the CPU flame test.
+#[test]
+fn gpu_title_flames_tick_left_strip() {
+    if std::env::var("SKIP_GPU").ok().as_deref() == Some("1") {
+        return;
+    }
+    let mut r = Renderer::new_prefer(false, true);
+    let Some(cache) = cache_dir() else {
+        return;
+    };
+    let mut c = client(cache);
+    r.title_screen_draw(&mut c);
+    let any = (0..265).any(|y| {
+        (0..128).any(|x| r.draw_area.pixels[(y * r.draw_area.width + x) as usize] != 0)
+    });
+    assert!(any, "GPU title left torch column must not be black");
+    let before = r.image_title0.as_ref().expect("image_title0").pixels.clone();
+    for _ in 0..8 {
+        c.loop_cycle += 1;
+        r.title_screen_draw(&mut c);
+    }
+    let after = &r.image_title0.as_ref().expect("image_title0").pixels;
+    assert_ne!(
+        &before, after,
+        "GPU title torch flame pixels should change across frames"
+    );
 }
 
 #[cfg(feature = "audio")]
