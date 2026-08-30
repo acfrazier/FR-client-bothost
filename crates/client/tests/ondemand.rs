@@ -40,6 +40,214 @@ let _r = Renderer::new(false);
     assert_eq!(od.remaining(), 2);
 }
 
+fn tiny_versionlist() -> JagFile {
+    let files: Vec<(&str, Vec<u8>)> = vec![
+        ("model_version", vec![0, 1]),
+        ("anim_version", vec![0, 1]),
+        ("midi_version", vec![0, 1]),
+        ("map_version", vec![0, 1]),
+        ("model_crc", vec![0, 0, 0, 0]),
+        ("anim_crc", vec![0, 0, 0, 0]),
+        ("midi_crc", vec![0, 0, 0, 0]),
+        ("map_crc", vec![0, 0, 0, 0]),
+    ];
+    let entries: Vec<(&str, &[u8])> = files.iter().map(|(n, d)| (*n, d.as_slice())).collect();
+    JagFile::new(jag(&entries))
+}
+
+#[test]
+fn two_handles_share_one_worker_on_the_same_port() {
+    let _r = Renderer::new(false);
+    let versionlist = tiny_versionlist();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let host = "127.0.0.1";
+    let od1 = OnDemand::new(
+        &versionlist,
+        host,
+        port,
+        "/tmp",
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    let od2 = OnDemand::new(
+        &versionlist,
+        host,
+        port,
+        "/tmp",
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    assert_eq!(OnDemand::live_workers_for(host, port), 1);
+    drop(od1);
+    assert_eq!(
+        OnDemand::live_workers_for(host, port),
+        1,
+        "first drop must not Stop the hub"
+    );
+    drop(od2);
+    assert_eq!(OnDemand::live_workers_for(host, port), 0);
+}
+
+/// Fifty slots requesting the same map must not open fifty update sockets.
+#[test]
+fn two_handles_dedupe_the_same_request_on_the_wire() {
+    let _r = Renderer::new(false);
+    use std::io::Read;
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+    let versionlist = tiny_versionlist();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let accepts = Arc::new(AtomicUsize::new(0));
+    let accepts_t = Arc::clone(&accepts);
+    let payload: &'static [u8] = b"midi bytes";
+    listener.set_nonblocking(true).unwrap();
+    let server = thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut served = false;
+        while Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut sock, _)) => {
+                    accepts_t.fetch_add(1, AtomicOrdering::Relaxed);
+                    sock.set_nonblocking(false).unwrap();
+                    let mut b = [0u8; 1];
+                    sock.read_exact(&mut b).unwrap();
+                    assert_eq!(b[0], 15);
+                    sock.write_all(&[0; 8]).unwrap();
+                    let mut req = [0u8; 4];
+                    sock.read_exact(&mut req).unwrap();
+                    assert_eq!(req[0], 2);
+                    let mut body = gz(payload);
+                    body.extend_from_slice(&[0, 1]);
+                    let len = body.len() as u16;
+                    let mut chunk = vec![2, 0, 0, (len >> 8) as u8, len as u8, 0];
+                    chunk.extend_from_slice(&body);
+                    sock.write_all(&chunk).unwrap();
+                    served = true;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(e) => panic!("{e}"),
+            }
+        }
+        assert!(served, "ondemand worker never connected");
+    });
+
+    let mut od1 = OnDemand::new(
+        &versionlist,
+        "127.0.0.1",
+        port,
+        "/tmp",
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    let mut od2 = OnDemand::new(
+        &versionlist,
+        "127.0.0.1",
+        port,
+        "/tmp",
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    od1.request(2, 0);
+    od2.request(2, 0);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut got1 = false;
+    let mut got2 = false;
+    while Instant::now() < deadline && !(got1 && got2) {
+        od1.run(false);
+        od2.run(false);
+        if od1.loop_request().is_some() {
+            got1 = true;
+        }
+        if od2.loop_request().is_some() {
+            got2 = true;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    drop(od1);
+    drop(od2);
+    server.join().unwrap();
+    assert!(got1 && got2, "both handles must complete the shared download");
+    assert_eq!(
+        accepts.load(AtomicOrdering::Relaxed),
+        1,
+        "one OnDemand socket for both handles"
+    );
+}
+
+#[test]
+fn drop_socket_on_one_handle_does_not_kill_the_hub() {
+    let _r = Renderer::new(false);
+    use std::io::Read;
+    use std::net::TcpListener;
+
+    let versionlist = tiny_versionlist();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let payload: &'static [u8] = b"midi bytes";
+    let server = thread::spawn(move || {
+        let (mut sock, _) = listener.accept().unwrap();
+        let mut b = [0u8; 1];
+        sock.read_exact(&mut b).unwrap();
+        assert_eq!(b[0], 15);
+        sock.write_all(&[0; 8]).unwrap();
+        let mut req = [0u8; 4];
+        sock.read_exact(&mut req).unwrap();
+        let mut body = gz(payload);
+        body.extend_from_slice(&[0, 1]);
+        let len = body.len() as u16;
+        let mut chunk = vec![2, 0, 0, (len >> 8) as u8, len as u8, 0];
+        chunk.extend_from_slice(&body);
+        sock.write_all(&chunk).unwrap();
+        // A second accept would mean drop_socket tore the hub down.
+        listener.set_nonblocking(true).unwrap();
+        thread::sleep(Duration::from_millis(200));
+        match listener.accept() {
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Ok(_) => panic!("drop_socket on one handle reopened the update socket"),
+            Err(e) => panic!("{e}"),
+        }
+    });
+
+    let od1 = OnDemand::new(
+        &versionlist,
+        "127.0.0.1",
+        port,
+        "/tmp",
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    let mut od2 = OnDemand::new(
+        &versionlist,
+        "127.0.0.1",
+        port,
+        "/tmp",
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    od1.drop_socket();
+    od2.request(2, 0);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let got = loop {
+        od2.run(false);
+        if let Some(req) = od2.loop_request() {
+            break req.data;
+        }
+        if Instant::now() > deadline {
+            panic!("hub request died after the other handle drop_socket");
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    drop(od1);
+    drop(od2);
+    server.join().unwrap();
+    assert_eq!(got.as_deref(), Some(payload));
+}
+
 /// The bot host prefetches every model on boot, not just the `model_use & 1`
 /// "in-use" subset — so a random-event model (the Maze walls) is already
 /// fetched when its loc is placed and `Model::load` never misses.

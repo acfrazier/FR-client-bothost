@@ -5,10 +5,10 @@
 //! owns the engine ondemand socket pump — a second connection to the game
 //! port, Java `Client.portOff + 43594` — and posts completed files back.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::{self, Read};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -100,15 +100,33 @@ enum WorkerCommand {
 }
 
 /// Worker → client messages (TS `onmessage` outbound messages).
+#[derive(Clone)]
 enum WorkerMessage {
     Completed {
         archive: i32,
         file: i32,
         urgent: bool,
-        data: Option<Vec<u8>>,
+        data: Option<Arc<Vec<u8>>>,
     },
     Message(String),
     FailCount(i32),
+}
+
+/// One OnDemand OS thread + byte-15 socket per `(host, port)`. Fifty
+/// `Client`s subscribe; they do not each open an update connection.
+struct OnDemandHub {
+    cmd: mpsc::Sender<WorkerCommand>,
+    subs: Arc<Mutex<Vec<mpsc::Sender<WorkerMessage>>>>,
+    clients: AtomicUsize,
+    running: Arc<AtomicBool>,
+    ingame: Arc<AtomicBool>,
+    handle: Mutex<Option<JoinHandle<()>>>,
+}
+
+static HUBS: Mutex<Option<HashMap<(String, u16), Arc<OnDemandHub>>>> = Mutex::new(None);
+
+fn hubs() -> std::sync::MutexGuard<'static, Option<HashMap<(String, u16), Arc<OnDemandHub>>>> {
+    HUBS.lock().unwrap_or_else(|p| p.into_inner())
 }
 
 pub struct OnDemand {
@@ -155,6 +173,8 @@ pub struct OnDemand {
     /// no-timeout keepalive (TS `setIngame`).
     ingame: Arc<AtomicBool>,
     worker_running: Arc<AtomicBool>,
+    /// Hub this handle is subscribed to (`None` for `new_unconnected`).
+    hub_key: Option<(String, u16)>,
 }
 
 /// The Java `OnDemand.run` loop + socket pump, one OS thread per OnDemand.
@@ -190,7 +210,7 @@ struct Worker {
     /// Some when the `main_file_cache` file store is present (Java
     /// `app.fileStreams[0] != null`).
     cache_dir: Option<String>,
-    tx: mpsc::Sender<WorkerMessage>,
+    subs: Arc<Mutex<Vec<mpsc::Sender<WorkerMessage>>>>,
     running: Arc<AtomicBool>,
     ingame: Arc<AtomicBool>,
 }
@@ -226,6 +246,17 @@ impl OnDemand {
             worker: None,
             ingame: Arc::new(AtomicBool::new(false)),
             worker_running: Arc::new(AtomicBool::new(false)),
+            hub_key: None,
+        }
+    }
+
+    /// How many live hub workers exist for `(host, port)` (0 or 1). Tests
+    /// prove fifty slots share one update socket.
+    pub fn live_workers_for(host: &str, port: u16) -> usize {
+        let map = hubs();
+        match map.as_ref() {
+            Some(m) if m.contains_key(&(host.to_string(), port)) => 1,
+            _ => 0,
         }
     }
 
@@ -238,7 +269,7 @@ impl OnDemand {
         host: &str,
         port: u16,
         cache_dir: &str,
-        ingame: Arc<AtomicBool>,
+        _ingame: Arc<AtomicBool>,
     ) -> Option<Self> {
         let versions = read_table(
             versionlist,
@@ -285,42 +316,8 @@ impl OnDemand {
         let anim_frame_index = read_raw_table(versionlist, "anim_index", 2, |buf| buf.g2());
         let midi_jingle = read_raw_table(versionlist, "midi_index", 1, |buf| buf.g1());
 
-        let (command_tx, command_rx) = mpsc::channel();
-        let (message_tx, message_rx) = mpsc::channel();
-        let worker_running = Arc::new(AtomicBool::new(true));
-        let worker = Worker {
-            commands: command_rx,
-            versions: versions.clone(),
-            crcs: crcs.clone(),
-            priorities: versions.iter().map(|v| vec![0; v.len()]).collect(),
-            top_priority: 0,
-            queue: VecDeque::new(),
-            missing: VecDeque::new(),
-            pending: Vec::new(),
-            prefetches: VecDeque::new(),
-            message: String::new(),
-            fail_count: 0,
-            urgent_count: 0,
-            request_count: 0,
-            loaded_prefetch_files: 0,
-            total_prefetch_files: 0,
-            buf: [0; 500],
-            part_offset: 0,
-            part_available: 0,
-            packet_cycle: 0,
-            no_timeout_cycle: 0,
-            active: false,
-            socket_open_time: Instant::now() - SOCKET_OPEN_GATE,
-            current: None,
-            stream: None,
-            host: host.to_string(),
-            port,
-            cache_dir: resolve_file_store(cache_dir),
-            tx: message_tx,
-            running: worker_running.clone(),
-            ingame: ingame.clone(),
-        };
-        let handle = thread::spawn(move || worker_main(worker));
+        let (cmd, message_rx, worker_running, hub_ingame) =
+            subscribe_hub(host, port, cache_dir, &versions, &crcs)?;
 
         let mut arena = Arena::new();
         let requests = LinkList2::new(&mut arena);
@@ -342,31 +339,65 @@ impl OnDemand {
             arena,
             requests,
             completed: LinkList::new(),
-            tx: Some(command_tx),
+            tx: Some(cmd),
             rx: message_rx,
-            worker: Some(handle),
-            ingame,
+            worker: None,
+            ingame: hub_ingame,
             worker_running,
+            hub_key: Some((host.to_string(), port)),
         })
     }
 
-    /// TS `OnDemand.stop()`: stop the worker and close its socket.
+    /// TS `OnDemand.stop()`: detach this handle. The hub worker stays up
+    /// while other slots are subscribed; the last detach Stops it.
     pub fn stop(&mut self) {
         self.running = false;
-        self.worker_running.store(false, Ordering::Relaxed);
-        if let Some(tx) = &self.tx {
-            let _ = tx.send(WorkerCommand::Stop);
+        self.detach_hub();
+        if self.hub_key.is_none() && self.tx.is_none() {
+            // new_unconnected
         }
-        if let Some(handle) = self.worker.take() {
-            let _ = handle.join();
+        if self.worker.is_some() {
+            self.worker_running.store(false, Ordering::Relaxed);
+            if let Some(tx) = &self.tx {
+                let _ = tx.send(WorkerCommand::Stop);
+            }
+            if let Some(handle) = self.worker.take() {
+                let _ = handle.join();
+            }
         }
     }
 
-    /// `logout` path: the engine dropped the update connection, so the
-    /// worker drops its stream and resets the reopen gate. The worker and
-    /// the version tables stay alive (Java `unload` stops OnDemand, not
-    /// `logout`); a no-op when there is no worker (`new_unconnected`).
+    fn detach_hub(&mut self) {
+        let Some(key) = self.hub_key.take() else {
+            return;
+        };
+        let mut guard = hubs();
+        let map = guard.get_or_insert_with(HashMap::new);
+        let Some(hub) = map.get(&key).cloned() else {
+            return;
+        };
+        let prev = hub.clients.fetch_sub(1, Ordering::Relaxed);
+        if prev == 1 {
+            hub.running.store(false, Ordering::Relaxed);
+            let _ = hub.cmd.send(WorkerCommand::Stop);
+            if let Some(handle) = hub.handle.lock().unwrap_or_else(|p| p.into_inner()).take() {
+                let _ = handle.join();
+            }
+            map.remove(&key);
+        }
+    }
+
+    /// `logout` path: only the **last** slot may drop the process update
+    /// socket. A sibling still in game must keep the byte-15 connection.
     pub fn drop_socket(&self) {
+        if let Some(key) = &self.hub_key {
+            let guard = hubs();
+            if let Some(hub) = guard.as_ref().and_then(|m| m.get(key)) {
+                if hub.clients.load(Ordering::Relaxed) > 1 {
+                    return;
+                }
+            }
+        }
         if let Some(tx) = &self.tx {
             let _ = tx.send(WorkerCommand::DropSocket);
         }
@@ -625,7 +656,7 @@ impl OnDemand {
                     // is independent of the requests arena.
                     let mut req = OnDemandRequest::new(archive, file);
                     req.urgent = urgent;
-                    req.data = data;
+                    req.data = data.map(|d| (*d).clone());
                     self.completed.push(req);
                 }
                 WorkerMessage::Message(m) => self.message = m,
@@ -646,6 +677,88 @@ impl Drop for OnDemand {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+fn subscribe_hub(
+    host: &str,
+    port: u16,
+    cache_dir: &str,
+    versions: &[Vec<i32>],
+    crcs: &[Vec<i32>],
+) -> Option<(
+    mpsc::Sender<WorkerCommand>,
+    mpsc::Receiver<WorkerMessage>,
+    Arc<AtomicBool>,
+    Arc<AtomicBool>,
+)> {
+    let key = (host.to_string(), port);
+    let (msg_tx, msg_rx) = mpsc::channel();
+    let mut guard = hubs();
+    let map = guard.get_or_insert_with(HashMap::new);
+    if let Some(hub) = map.get(&key) {
+        hub.clients.fetch_add(1, Ordering::Relaxed);
+        hub.subs
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(msg_tx);
+        return Some((
+            hub.cmd.clone(),
+            msg_rx,
+            hub.running.clone(),
+            hub.ingame.clone(),
+        ));
+    }
+    let (cmd_tx, cmd_rx) = mpsc::channel();
+    let subs = Arc::new(Mutex::new(vec![msg_tx]));
+    let running = Arc::new(AtomicBool::new(true));
+    let ingame = Arc::new(AtomicBool::new(false));
+    let worker = Worker {
+        commands: cmd_rx,
+        versions: versions.to_vec(),
+        crcs: crcs.to_vec(),
+        priorities: versions.iter().map(|v| vec![0; v.len()]).collect(),
+        top_priority: 0,
+        queue: VecDeque::new(),
+        missing: VecDeque::new(),
+        pending: Vec::new(),
+        prefetches: VecDeque::new(),
+        message: String::new(),
+        fail_count: 0,
+        urgent_count: 0,
+        request_count: 0,
+        loaded_prefetch_files: 0,
+        total_prefetch_files: 0,
+        buf: [0; 500],
+        part_offset: 0,
+        part_available: 0,
+        packet_cycle: 0,
+        no_timeout_cycle: 0,
+        active: false,
+        socket_open_time: Instant::now() - SOCKET_OPEN_GATE,
+        current: None,
+        stream: None,
+        host: host.to_string(),
+        port,
+        cache_dir: resolve_file_store(cache_dir),
+        subs: Arc::clone(&subs),
+        running: Arc::clone(&running),
+        ingame: Arc::clone(&ingame),
+    };
+    let handle = thread::Builder::new()
+        .name("ondemand".into())
+        .stack_size(1024 * 1024)
+        .spawn(move || worker_main(worker))
+        .ok()?;
+    let hub = Arc::new(OnDemandHub {
+        cmd: cmd_tx.clone(),
+        subs,
+        clients: AtomicUsize::new(1),
+        running: Arc::clone(&running),
+        ingame: Arc::clone(&ingame),
+        handle: Mutex::new(Some(handle)),
+    });
+    map.insert(key, hub);
+    Some((cmd_tx, msg_rx, running, ingame))
 }
 
 /// Worker thread body: Java `OnDemand.run` with the command channel drained
@@ -669,7 +782,7 @@ impl Worker {
         while let Ok(cmd) = self.commands.try_recv() {
             match cmd {
                 WorkerCommand::Request { archive, file } => {
-                    if self.valid_file(archive, file) {
+                    if self.valid_file(archive, file) && !self.has_inflight(archive, file) {
                         self.queue.push_back(OnDemandRequest::new(archive, file));
                     }
                 }
@@ -689,9 +802,23 @@ impl Worker {
                     self.current = None;
                     self.socket_open_time = Instant::now() - SOCKET_OPEN_GATE;
                 }
-                WorkerCommand::Stop => return,
+                WorkerCommand::Stop => {
+                    self.running.store(false, Ordering::Relaxed);
+                }
             }
         }
+    }
+
+    fn has_inflight(&self, archive: i32, file: i32) -> bool {
+        let pred = |r: &OnDemandRequest| r.archive == archive && r.file == file;
+        self.queue.iter().any(pred)
+            || self.missing.iter().any(pred)
+            || self.pending.iter().any(pred)
+    }
+
+    fn emit(&self, msg: WorkerMessage) {
+        let mut subs = self.subs.lock().unwrap_or_else(|p| p.into_inner());
+        subs.retain(|s| s.send(msg.clone()).is_ok());
     }
 
     fn valid_file(&self, archive: i32, file: i32) -> bool {
@@ -903,7 +1030,7 @@ impl Worker {
                     let req = self.pending.remove(ci);
                     self.current = None;
                     if req.urgent {
-                        let _ = self.tx.send(WorkerMessage::Completed {
+                        self.emit(WorkerMessage::Completed {
                             archive: req.archive,
                             file: req.file,
                             urgent: true,
@@ -1039,11 +1166,11 @@ impl Worker {
             req.archive = 93;
         }
         if req.urgent || req.archive == 0 {
-            let _ = self.tx.send(WorkerMessage::Completed {
+            self.emit(WorkerMessage::Completed {
                 archive: req.archive,
                 file: req.file,
                 urgent: req.urgent,
-                data: req.data,
+                data: req.data.map(Arc::new),
             });
         }
     }
@@ -1134,7 +1261,7 @@ impl Worker {
             return;
         }
         self.message = message;
-        let _ = self.tx.send(WorkerMessage::Message(self.message.clone()));
+        self.emit(WorkerMessage::Message(self.message.clone()));
     }
 
     fn set_fail_count(&mut self, fail_count: i32) {
@@ -1142,7 +1269,7 @@ impl Worker {
             return;
         }
         self.fail_count = fail_count;
-        let _ = self.tx.send(WorkerMessage::FailCount(fail_count));
+        self.emit(WorkerMessage::FailCount(fail_count));
     }
 }
 
