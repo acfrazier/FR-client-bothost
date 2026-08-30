@@ -10361,6 +10361,11 @@ impl Client {
     /// Re-homed onto `Renderer` (task 2b); kept here as the doc anchor.
     pub fn set_draw(&mut self, draw: bool) {
         self.draw = draw;
+        // `map_build` copies `draw` into `overlay_mesh` at rebuild time.
+        // Live attach (panel `set_draw(true)` after an unheaded first
+        // scene) must flip the same flag so later `set_ground` writes
+        // overlay verts, not stamps-only.
+        self.world.overlay_mesh = draw;
     }
 
     /// Publish the host's nav-debug paint for this frame. Always stores —

@@ -522,6 +522,22 @@ fn unheaded_build_keeps_stamp_but_no_mesh_until_materialize() {
     );
 }
 
+/// Live attach: `map_build` copies `draw` into `overlay_mesh`. If `set_draw(true)`
+/// does not flip that flag, later `set_ground` (zone/rebuild while headed)
+/// keeps writing stamps only and the scene looks empty/broken.
+#[test]
+fn set_draw_true_enables_overlay_mesh_for_later_set_ground() {
+    let mut c = client();
+    c.set_draw(false);
+    c.world.overlay_mesh = c.draw;
+    assert!(!c.world.overlay_mesh);
+    c.set_draw(true);
+    assert!(
+        c.world.overlay_mesh,
+        "headed attach must flip overlay_mesh so live set_ground writes verts"
+    );
+}
+
 /// Task 5: the materialized mesh must be exactly what a headed build
 /// wrote at `set_ground` time, for a non-quick overlay shape too.
 #[test]
