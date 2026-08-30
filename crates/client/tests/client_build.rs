@@ -411,7 +411,6 @@ fn ground_src(tiles: &[(i32, i32, i32, &[u8])]) -> Vec<u8> {
 /// the planted tile is what makes "at least one tile" true.
 #[test]
 fn finish_build_sets_quick_ground_after_load_ground() {
-let _r = Renderer::new(false);
     let _r = Renderer::new(false);
     let mut c = client();
     Arc::get_mut(&mut c.cache).unwrap().flos.push(FloType {

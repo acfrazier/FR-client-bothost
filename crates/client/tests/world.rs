@@ -909,18 +909,19 @@ fn overlay_edge_ground_keeps_dirt_and_grass_face_colours() {
         0,
         0,
     );
+    let colours = &g.face_colour_a[..g.faces()];
     assert!(
-        g.face_colour_a.iter().any(|&c| c == 100),
+        colours.iter().any(|&c| c == 100),
         "underlay faces must keep grass colour, got {:?}",
-        g.face_colour_a
+        colours
     );
     assert!(
-        g.face_colour_a.iter().any(|&c| c == 200),
+        colours.iter().any(|&c| c == 200),
         "overlay faces must keep dirt colour (not black), got {:?}",
-        g.face_colour_a
+        colours
     );
     assert!(
-        g.face_colour_a.iter().all(|&c| c != 0),
+        colours.iter().all(|&c| c != 0),
         "no overlay-edge face may be colour 0 (black)"
     );
 }
