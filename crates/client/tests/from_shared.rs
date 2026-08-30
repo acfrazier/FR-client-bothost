@@ -77,6 +77,44 @@ fn from_shared_reuses_one_arc_without_unpack() {
     assert!(!b.if_(1).unwrap().hide);
 }
 
+/// Fifty slots share one IfTypeMut template Arc until a slot writes;
+/// `iface_mut` copy-on-writes that slot's vec and leaves siblings on the
+/// template.
+#[test]
+fn mut_overlay_template_is_arc_until_first_write() {
+    let tables = Arc::new(Cache::default());
+    let template = Arc::new(vec![None, Some(Box::new(IfType::default()))]);
+    let mut_template = Arc::new(vec![None, Some(Box::new(IfTypeMut::default()))]);
+    let mut a = Client::from_shared(
+        cfg(),
+        Arc::clone(&tables),
+        Arc::clone(&template),
+        Arc::clone(&mut_template),
+    );
+    let b = Client::from_shared(
+        cfg(),
+        Arc::clone(&tables),
+        Arc::clone(&template),
+        Arc::clone(&mut_template),
+    );
+    assert!(
+        Arc::ptr_eq(&a.ifaces_mut, &mut_template),
+        "from_shared must clone the Arc, not the vec"
+    );
+    assert!(Arc::ptr_eq(&a.ifaces_mut, &b.ifaces_mut));
+    a.iface_mut(1).unwrap().hide = true;
+    assert!(
+        !Arc::ptr_eq(&a.ifaces_mut, &mut_template),
+        "first write must COW A's overlay"
+    );
+    assert!(
+        Arc::ptr_eq(&b.ifaces_mut, &mut_template),
+        "sibling must stay on the template"
+    );
+    assert!(a.if_(1).unwrap().hide);
+    assert!(!b.if_(1).unwrap().hide);
+}
+
 /// The per-client mut overlay is a small dense struct, not a decode copy:
 /// writing hide and an inv slot must never clone the decode's scripts/
 /// children/strings onto the overlay (the `Arc` stays the same object and

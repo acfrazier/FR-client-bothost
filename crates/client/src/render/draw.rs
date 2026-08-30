@@ -1946,7 +1946,7 @@ impl Renderer {
                         scroll_pos = 0;
                     }
                     if scroll_pos != child.scroll_pos {
-                        if let Some(c) = client.ifaces_mut.get_mut(child_id).and_then(|o| o.as_mut()) {
+                        if let Some(c) = client.overlay_mut(child_id) {
                             c.scroll_pos = scroll_pos;
                         }
                     }
@@ -2425,7 +2425,7 @@ impl Renderer {
 
         // write back the drag-autoscrolled layer scroll (TS 9990-10017).
         if layer_scroll != base_scroll {
-            if let Some(c) = client.ifaces_mut.get_mut(com_id as usize).and_then(|o| o.as_mut()) {
+            if let Some(c) = client.overlay_mut(com_id as usize) {
                 c.scroll_pos = layer_scroll;
             }
         }
@@ -3902,9 +3902,7 @@ impl Renderer {
                         }
                         advanced = true;
                     }
-                    if let Some(com) = client.ifaces_mut
-                        .get_mut(child_id as usize)
-                        .and_then(|o| o.as_mut())
+                    if let Some(com) = client.overlay_mut(child_id as usize)
                     {
                         com.anim_cycle = anim_cycle;
                         com.anim_frame = anim_frame;
