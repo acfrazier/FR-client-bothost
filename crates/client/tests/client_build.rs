@@ -413,6 +413,7 @@ fn ground_src(tiles: &[(i32, i32, i32, &[u8])]) -> Vec<u8> {
 fn finish_build_sets_quick_ground_after_load_ground() {
     let _r = Renderer::new(false);
     let mut c = client();
+    c.set_draw(true);
     Arc::get_mut(&mut c.cache).unwrap().flos.push(FloType {
         chroma: 10,
         underlay_hue: 5,
@@ -546,6 +547,7 @@ fn ground_stamp_materializes_the_mesh_a_headed_build_writes() {
     let mut unheaded = client();
     unheaded.world.overlay_mesh = false;
     let mut headed = client();
+    headed.set_draw(true);
 
     for (x, z) in [(2, 2), (3, 3)] {
         let args = (
@@ -677,6 +679,7 @@ fn finish_build_push_down_link_below() {
 let _r = Renderer::new(false);
     let _r = Renderer::new(false);
     let mut c = client();
+    c.set_draw(true);
     c.world.fill_base_level(0);
     // a level-1 PLAIN tile at (2,2); LinkBelow pushes it down to level 0
     // (TS 333-339 + World.pushDown)
@@ -791,6 +794,7 @@ fn finish_build_magenta_overlay_floor() {
 let _r = Renderer::new(false);
     let _r = Renderer::new(false);
     let mut c = client();
+    c.set_draw(true);
     Arc::get_mut(&mut c.cache).unwrap().flos.push(FloType {
         colour: Colour::MAGENTA,
         ..FloType::default()

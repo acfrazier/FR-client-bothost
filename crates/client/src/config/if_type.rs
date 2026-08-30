@@ -709,4 +709,45 @@ mod iface_size_tests {
             std::mem::size_of::<IfType>()
         );
     }
+
+    /// Spawn clones the mut template once per Client. A single TYPE_INV
+    /// with a huge width*height would be tens of MB × 50 heads.
+    #[test]
+    fn mut_template_inv_arrays_are_bounded() {
+        let Ok(bytes) = std::fs::read(crate::cache_dir().join("interface")) else {
+            return;
+        };
+        let (decode, muts) = IfType::unpack(&JagFile::new(bytes));
+        let mut occupied = 0usize;
+        let mut inv_slots = 0usize;
+        let mut max_inv = 0usize;
+        let mut max_inv_id = -1i32;
+        let mut text_bytes = 0usize;
+        for (id, slot) in muts.iter().enumerate() {
+            let Some(m) = slot else { continue };
+            occupied += 1;
+            text_bytes += m.text.len() + m.graphic_name.len();
+            let n = m.link_obj_type.as_ref().map(|v| v.len()).unwrap_or(0);
+            inv_slots += n;
+            if n > max_inv {
+                max_inv = n;
+                max_inv_id = id as i32;
+            }
+        }
+        let inv_bytes = inv_slots * 8 * 2; // type + number i32s
+        eprintln!(
+            "ifaces n={} occupied={} inv_slots={} max_inv={}@{} inv_bytes={} text_bytes={}",
+            decode.len(),
+            occupied,
+            inv_slots,
+            max_inv,
+            max_inv_id,
+            inv_bytes,
+            text_bytes
+        );
+        assert!(
+            inv_bytes < 8 * 1024 * 1024,
+            "mut template inv arrays {inv_bytes} B would clone per Client"
+        );
+    }
 }

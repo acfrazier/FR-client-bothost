@@ -1191,6 +1191,11 @@ impl Client {
         if client.error_loading {
             client.shell.set_framerate(1);
         }
+        // World::new defaults overlay_mesh on for direct set_ground tests.
+        // A host Client starts unheaded (`draw` false); keep the mesh gate
+        // in lockstep so a first map_build before observe cannot write
+        // headed overlay verts.
+        client.world.overlay_mesh = client.draw;
         client
     }
 

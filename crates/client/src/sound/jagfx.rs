@@ -35,15 +35,25 @@ impl Default for JagFX {
         JagFX {
             synth: (0..SYNTH_CAPACITY).map(|_| None).collect(),
             delays: vec![0; SYNTH_CAPACITY],
-            // `JagFX.waveBuffer` from TS wraps the shared `waveBytes`; the
-            // packet owns that storage here.
-            wave_buffer: Packet::new(vec![0u8; WAVE_BYTES]),
-            tone_buf: vec![0; TONE_BUF],
+            // Scratch is allocated on first `generate` — 50 unheaded
+            // clients must not pay 441 KB + 882 KB of zeroed wave/tone
+            // buffers each (~65 MB) before any synth runs.
+            wave_buffer: Packet::new(Vec::new()),
+            tone_buf: Vec::new(),
         }
     }
 }
 
 impl JagFX {
+    fn ensure_scratch(&mut self) {
+        if self.wave_buffer.length() < WAVE_BYTES {
+            self.wave_buffer = Packet::new(vec![0u8; WAVE_BYTES]);
+        }
+        if self.tone_buf.len() < TONE_BUF {
+            self.tone_buf.resize(TONE_BUF, 0);
+        }
+    }
+
     /// `JagFX.init(buf)` from TS: read `sounds.dat` into the synth table.
     pub fn init(&mut self, buf: &mut Packet) {
         loop {
@@ -61,6 +71,7 @@ impl JagFX {
     /// `JagFX.generate(id, loopCount)` from TS: synth the sound as a WAV
     /// packet, or `None` when the id is not in the table.
     pub fn generate(&mut self, id: i32, loop_count: i32) -> Option<&Packet> {
+        self.ensure_scratch();
         let sound = self.synth.get_mut(id as usize)?.as_mut()?;
         let wave = self.wave_buffer.data_mut();
         let length = Self::make_sound(sound, &mut self.tone_buf, wave, loop_count);
@@ -208,5 +219,17 @@ impl Sound {
         }
 
         start
+    }
+}
+
+#[cfg(test)]
+mod jagfx_size_tests {
+    use super::*;
+
+    #[test]
+    fn default_does_not_allocate_wave_scratch() {
+        let j = JagFX::default();
+        assert_eq!(j.wave_buffer.length(), 0);
+        assert!(j.tone_buf.is_empty());
     }
 }

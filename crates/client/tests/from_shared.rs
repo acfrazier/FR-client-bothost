@@ -64,6 +64,11 @@ fn from_shared_reuses_one_arc_without_unpack() {
     assert!(Arc::ptr_eq(&a.ifaces, &template));
     assert!(!a.error_loading);
     assert!(!b.error_loading);
+    assert!(!a.draw, "host construct starts unheaded");
+    assert!(
+        !a.world.overlay_mesh,
+        "unheaded construct must not default overlay_mesh on (World::new does for unit tests)"
+    );
     // hide stays per-client: a's write goes to a's dense `IfTypeMut`
     // overlay, so b's slot 1 must not reflect it (the shared decode and
     // the overlay template are both untouched).
