@@ -130,7 +130,7 @@ fn from_shared_maininit_keeps_injected_cache_and_skips_reunpack() {
             id: 42,
             ..IfType::default()
         }))]),
-        vec![None, Some(Box::new(IfTypeMut::default()))],
+        vec![None, Some(Arc::new(IfTypeMut::default()))],
     );
     c.http_port = port;
     c.fetch_retry_wait = Duration::from_millis(1);

@@ -53,7 +53,7 @@ fn serve_login(s: &mut std::net::TcpStream, opcode: u8, grant: &[u8]) {
 fn from_shared_reuses_one_arc_without_unpack() {
     let tables = Arc::new(Cache::default());
     let template = Arc::new(vec![None, Some(Box::new(IfType::default()))]);
-    let mut_template = vec![None, Some(Box::new(IfTypeMut::default()))];
+    let mut_template = vec![None, Some(Arc::new(IfTypeMut::default()))];
     let mut a = Client::from_shared(cfg(), Arc::clone(&tables), Arc::clone(&template), mut_template.clone());
     let b = Client::from_shared(cfg(), Arc::clone(&tables), Arc::clone(&template), mut_template);
     assert!(Arc::ptr_eq(&a.cache, &b.cache));
@@ -84,7 +84,7 @@ fn from_shared_reuses_one_arc_without_unpack() {
 fn mut_overlay_template_is_arc_until_first_write() {
     let tables = Arc::new(Cache::default());
     let template = Arc::new(vec![None, Some(Box::new(IfType::default()))]);
-    let mut_template = Arc::new(vec![None, Some(Box::new(IfTypeMut::default()))]);
+    let mut_template = Arc::new(vec![None, Some(Arc::new(IfTypeMut::default()))]);
     let mut a = Client::from_shared(
         cfg(),
         Arc::clone(&tables),
@@ -115,6 +115,51 @@ fn mut_overlay_template_is_arc_until_first_write() {
     assert!(!b.if_(1).unwrap().hide);
 }
 
+/// A slot write must clone only the written overlay slot, not the whole
+/// template: after A's first write, A's unwritten overlay slots still
+/// alias the template's `IfTypeMut` allocations (per-slot COW), and B
+/// still sees the template defaults.
+#[test]
+fn slot_write_cows_only_the_written_overlay_slot() {
+    let tables = Arc::new(Cache::default());
+    let template = Arc::new(vec![None, Some(Box::new(IfType::default()))]);
+    let mut_template = Arc::new(vec![
+        None,
+        Some(Arc::new(IfTypeMut::default())),
+        Some(Arc::new(IfTypeMut::default())),
+    ]);
+    let mut a = Client::from_shared(
+        cfg(),
+        Arc::clone(&tables),
+        Arc::clone(&template),
+        Arc::clone(&mut_template),
+    );
+    let b = Client::from_shared(
+        cfg(),
+        Arc::clone(&tables),
+        Arc::clone(&template),
+        Arc::clone(&mut_template),
+    );
+    a.iface_mut(1).unwrap().hide = true;
+    // The write must not deep-clone the unwritten slot 2: A's overlay
+    // still aliases the template's allocation there.
+    assert!(
+        std::ptr::eq(
+            a.ifaces_mut[2].as_deref().unwrap(),
+            mut_template[2].as_deref().unwrap(),
+        ),
+        "unwritten overlay slots must stay shared after a COW"
+    );
+    // The written slot is per-client now; its template sibling is a
+    // different allocation.
+    assert!(!std::ptr::eq(
+        a.ifaces_mut[1].as_deref().unwrap(),
+        mut_template[1].as_deref().unwrap(),
+    ));
+    assert!(a.if_(1).unwrap().hide);
+    assert!(!b.if_(1).unwrap().hide);
+}
+
 /// The per-client mut overlay is a small dense struct, not a decode copy:
 /// writing hide and an inv slot must never clone the decode's scripts/
 /// children/strings onto the overlay (the `Arc` stays the same object and
@@ -134,7 +179,7 @@ fn mut_overlay_is_small_and_decode_stays_ptr_eq_after_writes() {
         children: Some(vec![2]),
         ..IfType::default()
     }))]);
-    let mut_template = vec![None, Some(Box::new(IfTypeMut::default()))];
+    let mut_template = vec![None, Some(Arc::new(IfTypeMut::default()))];
     let mut a = Client::from_shared(cfg(), Arc::clone(&tables), Arc::clone(&template), mut_template.clone());
     let b = Client::from_shared(cfg(), Arc::clone(&tables), Arc::clone(&template), mut_template);
     // mutate hide + one inv slot
