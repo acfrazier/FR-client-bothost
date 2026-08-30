@@ -84,28 +84,60 @@ mod rusty {
 
     const SAMPLE_RATE: i32 = 22050;
 
-    /// The `audio` backend: one rustysynth sequencer and one SF2. The SF2 is
-    /// picked up from `cache_dir` (`soundfont.sf2` / `Florestan.sf2`) or the
-    /// current directory; without one the backend stays silent. The fade and
-    /// the `midivol` ladder live entirely on the output `Fade`, so the
-    /// backend plays raw. The synthesizer keeps its own `Arc<SoundFont>` and
-    /// the sequencer keeps its own `Arc<MidiFile>`, so neither is stored
-    /// here after construction.
-    pub struct RustyMidi {
-        sequencer: Option<MidiFileSequencer>,
-    }
-
-    impl RustyMidi {
-        pub fn new(cache_dir: &str) -> Self {
+    fn shared_sound_font(cache_dir: &str) -> Option<Arc<SoundFont>> {
+        static FONT: std::sync::OnceLock<Option<Arc<SoundFont>>> = std::sync::OnceLock::new();
+        FONT.get_or_init(|| {
             for candidate in sound_font_candidates(cache_dir) {
-                if let Some(midi) = Self::with_sound_font(&candidate) {
-                    return midi;
+                if let Ok(mut file) = File::open(&candidate) {
+                    if let Ok(font) = SoundFont::new(&mut file) {
+                        return Some(Arc::new(font));
+                    }
                 }
             }
             eprintln!(
                 "audio: no soundfont (looked for Florestan.sf2 / SCC1_Florestan.sf2 under {cache_dir} and engine/public); midi silent"
             );
-            Self { sequencer: None }
+            None
+        })
+        .clone()
+    }
+
+    fn sequencer_from_font(sound_font: &Arc<SoundFont>) -> Option<MidiFileSequencer> {
+        let mut settings = SynthesizerSettings::new(SAMPLE_RATE);
+        // 274 has no chorus/reverb engine (Java plays midi dry), and
+        // rustysynth defaults both on; the reverb tail pushes dense
+        // songs like scape_main toward the i16 rail. Keep master_volume
+        // at rustysynth's default 0.5.
+        settings.enable_reverb_and_chorus = false;
+        let synthesizer = Synthesizer::new(sound_font, &settings).ok()?;
+        Some(MidiFileSequencer::new(synthesizer))
+    }
+
+    /// The `audio` backend: one rustysynth sequencer per slot that actually
+    /// plays, sharing one process `Arc<SoundFont>`. `new` does not load the
+    /// SF2 or build a synthesizer — fifty unheaded Clients were each paying
+    /// tens of MB at spawn.
+    pub struct RustyMidi {
+        cache_dir: String,
+        sequencer: Option<MidiFileSequencer>,
+    }
+
+    impl RustyMidi {
+        pub fn new(cache_dir: &str) -> Self {
+            Self {
+                cache_dir: cache_dir.to_string(),
+                sequencer: None,
+            }
+        }
+
+        fn ensure_sequencer(&mut self) {
+            if self.sequencer.is_some() {
+                return;
+            }
+            let Some(font) = shared_sound_font(&self.cache_dir) else {
+                return;
+            };
+            self.sequencer = sequencer_from_font(&font);
         }
 
         /// True when an SF2 loaded and rustysynth can render.
@@ -119,15 +151,11 @@ mod rusty {
             let file = File::open(path).ok()?;
             let mut file = file;
             let sound_font = Arc::new(SoundFont::new(&mut file).ok()?);
-            let mut settings = SynthesizerSettings::new(SAMPLE_RATE);
-            // 274 has no chorus/reverb engine (Java plays midi dry), and
-            // rustysynth defaults both on; the reverb tail pushes dense
-            // songs like scape_main toward the i16 rail. Keep master_volume
-            // at rustysynth's default 0.5.
-            settings.enable_reverb_and_chorus = false;
-            let synthesizer = Synthesizer::new(&sound_font, &settings).ok()?;
-            let sequencer = MidiFileSequencer::new(synthesizer);
-            Some(Self { sequencer: Some(sequencer) })
+            let sequencer = sequencer_from_font(&sound_font)?;
+            Some(Self {
+                cache_dir: String::new(),
+                sequencer: Some(sequencer),
+            })
         }
 
         /// Render one block of stereo f32. The output is raw here: the 274
@@ -142,6 +170,7 @@ mod rusty {
 
     impl Midi for RustyMidi {
         fn play(&mut self, data: &[u8], _volume: i32, _fading: bool) -> bool {
+            self.ensure_sequencer();
             let Some(sequencer) = &mut self.sequencer else {
                 // No soundfont: the backend accepts (and stays silent), like
                 // `NullMidi`; there is nothing to leave playing.

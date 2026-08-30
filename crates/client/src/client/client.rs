@@ -221,14 +221,12 @@ fn midi_backend(cache_dir: &str) -> Arc<Mutex<dyn Midi>> {
 }
 
 /// `groundObj` grid from client-ts (`new Array(4)` of `new Array(104)` of
-/// null rows), every cell `None`. Assembled through `Vec` because the
-/// `array::from_fn` / const-repeat forms materialize the 3.8 MB grid in a
-/// stack temporary, which overflows the 2 MB test-thread stack. The flat
-/// row form also avoids the `levels.push(*level)` by-value argument (a
-/// 930 KB stack copy) that kept `Client::new` within ~16 KB of the same
-/// limit.
-fn empty_ground_obj() -> Box<[[[Option<LinkList<ClientObj>>; 104]; 104]; 4]> {
-    let mut rows: Vec<[Option<LinkList<ClientObj>>; 104]> = Vec::with_capacity(104 * 4);
+/// null rows), every cell `None`. Empty cells are a fat pointer, not an
+/// inline `LinkList` (that was 3.8 MB × N clients). Assembled through
+/// `Vec` because the `array::from_fn` / const-repeat forms materialize the
+/// grid in a stack temporary, which overflows the 2 MB test-thread stack.
+fn empty_ground_obj() -> Box<[[[Option<Box<LinkList<ClientObj>>>; 104]; 104]; 4]> {
+    let mut rows: Vec<[Option<Box<LinkList<ClientObj>>>; 104]> = Vec::with_capacity(104 * 4);
     for _ in 0..104 * 4 {
         rows.push([const { None }; 104]);
     }
@@ -236,14 +234,31 @@ fn empty_ground_obj() -> Box<[[[Option<LinkList<ClientObj>>; 104]; 104]; 4]> {
     // rows each. `[[T; 104]; 416]` and `[[[T; 104]; 104]; 4]` have the same
     // size and alignment, so the sole-owner allocation can be re-typed
     // without copying.
-    let boxed: Box<[[Option<LinkList<ClientObj>>; 104]; 416]> =
+    let boxed: Box<[[Option<Box<LinkList<ClientObj>>>; 104]; 416]> =
         rows.into_boxed_slice().try_into().map_err(|_| ()).unwrap();
     // SAFETY: the box holds exactly 416 row arrays, which is the same
     // memory (size, alignment, cell layout) as 4 levels of 104 rows; the
     // re-typed box keeps sole ownership and its drop glue walks the same
     // cells.
     unsafe {
-        Box::from_raw(Box::into_raw(boxed) as *mut [[[Option<LinkList<ClientObj>>; 104]; 104]; 4])
+        Box::from_raw(
+            Box::into_raw(boxed) as *mut [[[Option<Box<LinkList<ClientObj>>>; 104]; 104]; 4],
+        )
+    }
+}
+
+#[cfg(test)]
+mod ground_obj_size_tests {
+    use super::empty_ground_obj;
+
+    #[test]
+    fn empty_ground_obj_grid_is_under_400kb() {
+        let g = empty_ground_obj();
+        let bytes = std::mem::size_of_val(&*g);
+        assert!(
+            bytes < 400_000,
+            "empty ground-obj cells must be fat-pointers, not inline LinkLists; got {bytes} B"
+        );
     }
 }
 
@@ -356,7 +371,7 @@ pub struct Client {
     /// `groundObj` from client-ts: per-level tile grid of loc-change
     /// object lists, sized `[LEVELS][SIZE][SIZE]`, every cell initially
     /// `None`. Populated by the zone task.
-    pub ground_obj: Box<[[[Option<LinkList<ClientObj>>; 104]; 104]; 4]>,
+    pub ground_obj: Box<[[[Option<Box<LinkList<ClientObj>>>; 104]; 104]; 4]>,
     pub loc_changes: LinkList<LocChange>,
     pub projectiles: LinkList<ClientProj>,
     pub spotanims: LinkList<MapSpotAnim>,
@@ -7588,7 +7603,7 @@ impl Client {
                     let level = self.minusedlevel as usize;
                     {
                         let objs = self.ground_obj[level][x as usize][z as usize]
-                            .get_or_insert_with(LinkList::new);
+                            .get_or_insert_with(|| Box::new(LinkList::new()));
                         objs.push(ClientObj::new(obj_type, count));
                     }
                     self.show_object(x, z);
@@ -7693,7 +7708,7 @@ impl Client {
                     let level = self.minusedlevel as usize;
                     {
                         let objs = self.ground_obj[level][x as usize][z as usize]
-                            .get_or_insert_with(LinkList::new);
+                            .get_or_insert_with(|| Box::new(LinkList::new()));
                         objs.push(ClientObj::new(id, count));
                     }
                     self.show_object(x, z);

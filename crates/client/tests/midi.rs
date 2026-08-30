@@ -221,6 +221,19 @@ fn jagfx_fixture_matches_ts_reference() {
 mod rusty {
     use client::sound::{Midi, RustyMidi};
 
+    /// Fifty Clients construct a midi backend. Loading the SF2 + rustysynth
+    /// sequencer at `new` is ~50–80 MB each and is why a headless 50-bot
+    /// panel sat at 4 GB. Spawn must stay silent until `play`.
+    #[test]
+    fn new_does_not_load_soundfont() {
+        let cache = client::engine_dir().join("data/pack/client");
+        let m = RustyMidi::new(&cache.display().to_string());
+        assert!(
+            !m.has_sound_font(),
+            "RustyMidi::new must not construct a synthesizer"
+        );
+    }
+
     #[test]
     fn no_font_stays_silent() {
         let mut m = RustyMidi::new("/nonexistent");

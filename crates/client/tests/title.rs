@@ -130,13 +130,18 @@ fn gpu_title_flames_tick_left_strip() {
 #[cfg(feature = "audio")]
 #[test]
 fn title_loads_engine_soundfont() {
-let mut r = Renderer::new(false);
-    let Some(cache) = cache_dir() else {
+    let _r = Renderer::new(false);
+    let Some(_cache) = cache_dir() else {
         return;
     };
-    let midi = client::sound::RustyMidi::new(&cache);
+    let midi = client::sound::RustyMidi::with_sound_font(
+        &client::engine_dir()
+            .join("public/client/SCC1_Florestan.sf2")
+            .display()
+            .to_string(),
+    );
     assert!(
-        midi.has_sound_font(),
+        midi.is_some_and(|m| m.has_sound_font()),
         "SCC1_Florestan.sf2 should load from engine/public"
     );
 }
