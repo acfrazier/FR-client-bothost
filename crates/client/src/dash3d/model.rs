@@ -191,6 +191,21 @@ impl Model {
         s.provider = Some(provider);
     }
 
+    /// Drop packed metadata, the OnDemand provider, and decoded geometry.
+    /// Integration tests that assert "missing id → None" must call this
+    /// after a sibling in the same binary has snapshot-injected
+    /// `models.bin` into the process-wide stores. Not `cfg(test)`: those
+    /// tests are a separate crate and see the lib's public API only.
+    pub fn reset_for_tests() {
+        {
+            let mut s = store().lock().unwrap();
+            s.meta.clear();
+            s.provider = None;
+            s.loaded = 0;
+        }
+        GeometryStore::instance().lock().unwrap().clear();
+    }
+
     /// `Model.unpack(id, src)` from client-ts; parses the 18-byte trailer and
     /// stores the section offsets so `load` can decode lazily.
     pub fn unpack(id: i32, src: Option<&[u8]>) {

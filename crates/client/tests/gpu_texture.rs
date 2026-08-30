@@ -25,6 +25,10 @@ const SHADE: i32 = 200 * 128 + 100;
 const TEX_SHADE: i32 = 0;
 const TEXTURE_RED: i32 = 7;
 const TEXTURE_BLUE: i32 = 12;
+/// Distinct from [`TEXTURE_RED`]: `GpuAssets::ensure_model_textures` uploads
+/// each id once per process. Sibling tests bake id 7 as solid red first, so
+/// a quadrant texture on 7 never reaches the GPU and this test only sees red.
+const TEXTURE_QUAD: i32 = 31;
 
 /// 3×3 flat world at height 2000 with a plain-coloured tile on every cell
 /// (same fixture as gpu_mesh.rs).
@@ -516,14 +520,15 @@ fn gpu_lowmem_texture_samples_the_full_128px_layer() {
     pix.set_clipping(512, 334);
     pix.low_mem = true;
     let tex = quadrant_texture();
-    pix.textures[7] = Some(tex.clone());
-    pix.tex_pal[7] = Some(vec![0, 0xff0000, 0x00ff00, 0x0000ff, 0xffff00]);
+    pix.textures[TEXTURE_QUAD as usize] = Some(tex.clone());
+    pix.tex_pal[TEXTURE_QUAD as usize] =
+        Some(vec![0, 0xff0000, 0x00ff00, 0x0000ff, 0xffff00]);
 
     let mut world = flat_world();
     world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
     let mut rw = RenderWorld::new();
     let mut model = textured_wall_model();
-    model.face_colour = Some(vec![7, 7]); // both faces use the quadrant texture
+    model.face_colour = Some(vec![TEXTURE_QUAD, TEXTURE_QUAD]);
     rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
@@ -534,7 +539,12 @@ fn gpu_lowmem_texture_samples_the_full_128px_layer() {
     // at 64, i.e. u/v ≤ 128 here).
     let mut max_u = 0u32;
     let mut max_v = 0u32;
-    for v in mesh.clone().vertices().iter().filter(|v| (v.uv_tex & 0xffff) == 8) {
+    for v in mesh
+        .clone()
+        .vertices()
+        .iter()
+        .filter(|v| (v.uv_tex & 0xffff) == (TEXTURE_QUAD as u32 + 1))
+    {
         max_u = max_u.max(v.uv_tex >> 16);
         max_v = max_v.max(v.v);
     }

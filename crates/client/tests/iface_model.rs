@@ -16,7 +16,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn obj_get_model_unlit_none_without_model() {
-let _r = Renderer::new(false);
+    Model::reset_for_tests();
     let obj = ObjType::default();
     let cache = client::config::Cache::default();
     assert!(obj.get_model_unlit(&cache, 50).is_none());
@@ -52,7 +52,7 @@ let mut r = Renderer::new(false);
 
 #[test]
 fn npc_get_head_queues_every_missing_head_id() {
-let _r = Renderer::new(false);
+    Model::reset_for_tests();
     use client::dash3d::model::ModelProvider;
     use std::sync::{Arc, Mutex};
 
