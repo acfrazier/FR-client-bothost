@@ -728,7 +728,14 @@ impl OnDemand {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 WorkerMessage::Completed { archive, file, urgent, data } => {
-                    if !self.want.remove(&(archive, file)) {
+                    // `want` is the per-handle request/prefetch set. Archive 0/1
+                    // Completeds also arrive from `Model::request_download` via
+                    // the process provider, which never touches `want` — drop
+                    // those and `check_scene` stays on scene 1 (-3, loc models).
+                    let keep = archive == 0
+                        || archive == 1
+                        || self.want.remove(&(archive, file));
+                    if !keep {
                         continue;
                     }
                     let mut req = OnDemandRequest::new(archive, file);
@@ -865,9 +872,13 @@ impl Worker {
         while let Ok(cmd) = self.commands.try_recv() {
             match cmd {
                 WorkerCommand::Request { archive, file } => {
-                    if self.valid_file(archive, file) && !self.has_inflight(archive, file) {
-                        self.queue.push_back(OnDemandRequest::new(archive, file));
+                    if !self.valid_file(archive, file) {
+                        continue;
                     }
+                    if self.promote_urgent(archive, file) {
+                        continue;
+                    }
+                    self.queue.push_back(OnDemandRequest::new(archive, file));
                 }
                 WorkerCommand::PrefetchPriority { archive, file, priority } => {
                     self.prefetch_priority(archive, file, priority);
@@ -892,11 +903,23 @@ impl Worker {
         }
     }
 
-    fn has_inflight(&self, archive: i32, file: i32) -> bool {
-        let pred = |r: &OnDemandRequest| r.archive == archive && r.file == file;
-        self.queue.iter().any(pred)
-            || self.missing.iter().any(pred)
-            || self.pending.iter().any(pred)
+    /// A later urgent `request` must not be dropped just because a
+    /// prefetch of the same file is already queued: `complete` remaps
+    /// non-urgent archive-3 to 93, and `check_scene` would wait forever
+    /// for the map square.
+    fn promote_urgent(&mut self, archive: i32, file: i32) -> bool {
+        let bump = |r: &mut OnDemandRequest| {
+            if r.archive == archive && r.file == file {
+                r.urgent = true;
+                true
+            } else {
+                false
+            }
+        };
+        self.queue.iter_mut().any(bump)
+            || self.missing.iter_mut().any(bump)
+            || self.pending.iter_mut().any(bump)
+            || self.prefetches.iter_mut().any(bump)
     }
 
     fn emit(&self, msg: WorkerMessage) {

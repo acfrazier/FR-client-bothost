@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use client::dash3d::Model;
 use client::io::{JagFile, OnDemand};
 
 #[test]
@@ -155,6 +156,69 @@ fn sibling_does_not_complete_a_file_it_did_not_request() {
     drop(idle);
     server.join().unwrap();
     assert!(got_asked, "the requesting handle must still complete");
+}
+
+/// `check_scene` waits on loc models via `Model::request_download` (the
+/// process provider), not `OnDemand::request`. Completeds must still land
+/// on the handle or scene_state stays 1.
+#[test]
+fn provider_model_request_completes_without_ondemand_request() {
+    let _r = Renderer::new(false);
+    use std::io::Read;
+    use std::net::TcpListener;
+
+    Model::reset_for_tests();
+    let versionlist = tiny_versionlist();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let payload: &'static [u8] = b"model bytes";
+    let server = thread::spawn(move || {
+        let (mut sock, _) = listener.accept().unwrap();
+        let mut b = [0u8; 1];
+        sock.read_exact(&mut b).unwrap();
+        sock.write_all(&[0; 8]).unwrap();
+        let mut req = [0u8; 4];
+        sock.read_exact(&mut req).unwrap();
+        assert_eq!(req[0], 0, "provider must request archive 0");
+        let mut body = gz(payload);
+        body.extend_from_slice(&[0, 1]);
+        let len = body.len() as u16;
+        let mut chunk = vec![0, 0, 0, (len >> 8) as u8, len as u8, 0];
+        chunk.extend_from_slice(&body);
+        sock.write_all(&chunk).unwrap();
+    });
+
+    let mut od = OnDemand::new(
+        &versionlist,
+        "127.0.0.1",
+        port,
+        "/tmp",
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    Model::init(1, od.model_provider().expect("wired worker"));
+    assert!(
+        !Model::request_download(0),
+        "missing model must queue through the provider"
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut got = false;
+    while Instant::now() < deadline {
+        od.run(false);
+        if let Some(req) = od.loop_request() {
+            assert_eq!(req.archive, 0);
+            assert_eq!(req.file, 0);
+            got = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    drop(od);
+    server.join().unwrap();
+    assert!(
+        got,
+        "Model::request_download Completeds must reach loop_request (scene-1 loc wait)"
+    );
 }
 
 /// Title-screen and in-game slots share one worker flag: any in-game slot
