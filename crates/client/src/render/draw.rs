@@ -27,7 +27,6 @@
 //! (`TYPE_LAYER`/`TYPE_RECT`/`TYPE_TEXT`/`TYPE_GRAPHIC`).
 
 use std::collections::HashMap;
-use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::client::client::{level_experience, Client};
 use crate::client::client_build::random_float;
@@ -39,16 +38,12 @@ use crate::core::world::LevelHeightmaps;
 use crate::core::World;
 use crate::dash3d::client_entity::ClientEntity;
 use crate::dash3d::{BuildArea, CollisionFlag, LocAngle, LocShape, MapFlag, SceneModel};
-use crate::graphics::{Colour, Pix2D, Pix3D, Pix32, Pix8, PixFont, PixMap};
+use crate::graphics::{Colour, Pix2D, Pix3D, Pix32, Pix8, PixMap};
 use crate::io::{ClientProt, JagFile};
 use crate::render::backend::FrameOutput;
+use crate::render::media::Media;
 use crate::render::Renderer;
 use crate::util::JString;
-
-fn try_title_jag(cache_dir: &str) -> Option<JagFile> {
-    let bytes = std::fs::read(format!("{cache_dir}/title")).ok()?;
-    catch_unwind(AssertUnwindSafe(|| JagFile::new(bytes))).ok()
-}
 
 fn plot_title_bg(map: &mut Option<PixMap>, background: &Pix32, x: i32, y: i32) {
     if let Some(map) = map {
@@ -147,7 +142,7 @@ impl Renderer {
                 30,
                 Colour::BLACK,
             );
-            if let Some(b12) = self.b12.as_ref() {
+            if let Some(b12) = self.media.b12.as_ref() {
                 b12.centre_string(&mut surface, Some(message), mid_x, y + 22, Colour::WHITE);
             }
             self.present_progress(client);
@@ -160,7 +155,7 @@ impl Renderer {
         let offset_y = 20;
         if let Some(map4) = self.image_title4.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut map4.pixels, w, h);
-            if let Some(b12) = self.b12.as_ref() {
+            if let Some(b12) = self.media.b12.as_ref() {
                 b12.centre_string(
                     &mut surface,
                     Some("RuneScape is loading - please wait..."),
@@ -180,7 +175,7 @@ impl Renderer {
                 30,
                 Colour::BLACK,
             );
-            if let Some(b12) = self.b12.as_ref() {
+            if let Some(b12) = self.media.b12.as_ref() {
                 b12.centre_string(
                     &mut surface,
                     Some(message),
@@ -289,70 +284,53 @@ impl Renderer {
         self.image_title7 = Some(PixMap::new(74, 94));
         self.image_title8 = Some(PixMap::new(75, 94));
 
-        if self.title.is_none() {
-            self.title = try_title_jag(&client.config.cache_dir);
-        }
-
-        // `take` so the jag outlives the `&mut self` loads (TS loads it in
-        // `maininit` and passes it around freely).
-        self.load_fonts(client);
-        if let Some(jag) = self.title.take() {
-            self.load_title_background(&jag);
-            self.load_title_images(&jag);
-            self.title = Some(jag);
-        }
+        // The fonts + title content are the process-wide `Media` (task 6):
+        // the first title draw decoded them once; each head re-plots its
+        // own regions from the shared decodes.
+        self.media = Media::process(&client.config.cache_dir);
+        self.load_title_background();
+        self.load_title_images();
 
         client.redraw_frame = true;
     }
 
-    /// Fonts from the `title` jag, loaded once (TS `maininit` 848 loads the
-    /// four fonts before both title and game draw). Loads the jag from the
-    /// cache when `prepare_title` has not run yet, so an in-game client that
-    /// never drew the title still has `p12` for the chat-mode labels.
+    /// The fonts live on the process-wide `Media` (task 6): resolve the
+    /// shared copy. TS `maininit` 848 loads the four fonts before both
+    /// title and game draw, so an in-game client that never drew the title
+    /// still has `p12` for the chat-mode labels.
     fn load_fonts(&mut self, client: &mut Client) {
-        if self.p11.is_some() {
-            return;
-        }
-        if self.title.is_none() {
-            self.title = try_title_jag(&client.config.cache_dir);
-        }
-        if let Some(jag) = self.title.take() {
-            self.p11 = PixFont::depack(&jag, "p11_full", false).ok();
-            self.p12 = PixFont::depack(&jag, "p12_full", false).ok();
-            self.b12 = PixFont::depack(&jag, "b12_full", false).ok();
-            self.q8 = PixFont::depack(&jag, "q8_full", true).ok();
-            self.title = Some(jag);
-        }
+        self.media = Media::process(&client.config.cache_dir);
     }
 
     /// `loadTitleBackground` from client-ts (1627): JPEG `title.dat` tiled
-    /// across the 9 title regions, mirrored, then the `logo` sprite.
-    fn load_title_background(&mut self, jag: &JagFile) {
-        if let Ok(mut background) = Pix32::from_jpeg(jag, "title.dat") {
-            plot_title_bg(&mut self.image_title0, &background, 0, 0);
-            plot_title_bg(&mut self.image_title1, &background, -637, 0);
-            plot_title_bg(&mut self.image_title2, &background, -128, 0);
-            plot_title_bg(&mut self.image_title3, &background, -202, -371);
-            plot_title_bg(&mut self.image_title4, &background, -202, -171);
-            plot_title_bg(&mut self.image_title5, &background, 0, -265);
-            plot_title_bg(&mut self.image_title6, &background, -562, -265);
-            plot_title_bg(&mut self.image_title7, &background, -128, -171);
-            plot_title_bg(&mut self.image_title8, &background, -562, -171);
-
-            background.hflip();
-
-            plot_title_bg(&mut self.image_title0, &background, 382, 0);
-            plot_title_bg(&mut self.image_title1, &background, -255, 0);
-            plot_title_bg(&mut self.image_title2, &background, 254, 0);
-            plot_title_bg(&mut self.image_title3, &background, 180, -371);
-            plot_title_bg(&mut self.image_title4, &background, 180, -171);
-            plot_title_bg(&mut self.image_title5, &background, 382, -265);
-            plot_title_bg(&mut self.image_title6, &background, -180, -265);
-            plot_title_bg(&mut self.image_title7, &background, 254, -171);
-            plot_title_bg(&mut self.image_title8, &background, -180, -171);
+    /// across the 9 title regions, mirrored, then the `logo` sprite. The
+    /// JPEG + mirror are the shared `Media` decodes; the regions are this
+    /// head's copies (the torch flames paint into 0/1).
+    fn load_title_background(&mut self) {
+        if let Some(background) = &self.media.title_dat {
+            plot_title_bg(&mut self.image_title0, background, 0, 0);
+            plot_title_bg(&mut self.image_title1, background, -637, 0);
+            plot_title_bg(&mut self.image_title2, background, -128, 0);
+            plot_title_bg(&mut self.image_title3, background, -202, -371);
+            plot_title_bg(&mut self.image_title4, background, -202, -171);
+            plot_title_bg(&mut self.image_title5, background, 0, -265);
+            plot_title_bg(&mut self.image_title6, background, -562, -265);
+            plot_title_bg(&mut self.image_title7, background, -128, -171);
+            plot_title_bg(&mut self.image_title8, background, -562, -171);
+        }
+        if let Some(background) = &self.media.title_dat_flipped {
+            plot_title_bg(&mut self.image_title0, background, 382, 0);
+            plot_title_bg(&mut self.image_title1, background, -255, 0);
+            plot_title_bg(&mut self.image_title2, background, 254, 0);
+            plot_title_bg(&mut self.image_title3, background, 180, -371);
+            plot_title_bg(&mut self.image_title4, background, 180, -171);
+            plot_title_bg(&mut self.image_title5, background, 382, -265);
+            plot_title_bg(&mut self.image_title6, background, -180, -265);
+            plot_title_bg(&mut self.image_title7, background, 254, -171);
+            plot_title_bg(&mut self.image_title8, background, -180, -171);
         }
 
-        if let Ok(logo) = Pix32::depack(jag, "logo", 0) {
+        if let Some(logo) = &self.media.logo {
             if let Some(map2) = self.image_title2.as_mut() {
                 let w = map2.width;
                 let h = map2.height;
@@ -367,20 +345,13 @@ impl Renderer {
     }
 
     /// `loadTitleImages` from client-ts (1697): the `titlebox` and
-    /// `titlebutton` sprites plus the 12 `runes` sprites (`fl_icon` param
-    /// default 0 → sprites 0..11).
-    fn load_title_images(&mut self, jag: &JagFile) {
-        self.image_titlebox = Pix8::depack(jag, "titlebox", 0).ok();
-        self.image_titlebutton = Pix8::depack(jag, "titlebutton", 0).ok();
+    /// `titlebutton` sprites plus the 12 `runes` sprites, cloned from the
+    /// shared `Media` decodes (the shared copies are immutable).
+    fn load_title_images(&mut self) {
+        self.image_titlebox = self.media.titlebox.clone();
+        self.image_titlebutton = self.media.titlebutton.clone();
 
-        // TS: `flameIcon = this.getIntParam('fl_icon')` — no param plumbing,
-        // the fallback 0 means sprites 0..11.
-        self.image_runes.clear();
-        for i in 0..12 {
-            if let Ok(rune) = Pix8::depack(jag, "runes", i) {
-                self.image_runes.push(rune);
-            }
-        }
+        self.image_runes = self.media.runes.clone();
         if self.title_flames.is_none() {
             if let (Some(left), Some(right)) = (&self.image_title0, &self.image_title1) {
                 let mut flames = TitleFlames::new(self.image_runes.clone());
@@ -438,25 +409,25 @@ impl Renderer {
             {
                 let y = 329 - line_offset * 13;
                 let mut x = 4;
-                if let Some(font) = self.p12.as_ref() {
+                if let Some(font) = self.media.p12.as_ref() {
                     font.draw_string(surface, Some("From"), 4, y, Colour::BLACK);
                     font.draw_string(surface, Some("From"), 4, y - 1, Colour::CYAN);
                     x += font.string_wid(Some("From "));
                 }
                 // Java 6215-6221: the crown plots after the "From " label.
                 if modlevel == 1 {
-                    if let Some(sprite) = &self.mod_icons[0] {
+                    if let Some(sprite) = &self.media.mod_icons[0] {
                         sprite.plot_sprite(surface, x, y - 12);
                     }
                     x += 14;
                 }
                 if modlevel == 2 {
-                    if let Some(sprite) = &self.mod_icons[1] {
+                    if let Some(sprite) = &self.media.mod_icons[1] {
                         sprite.plot_sprite(surface, x, y - 12);
                     }
                     x += 14;
                 }
-                if let Some(font) = self.p12.as_ref() {
+                if let Some(font) = self.media.p12.as_ref() {
                     font.draw_string(surface, Some(&format!("{sender}: {}", client.chat_text[i])), x, y, Colour::BLACK);
                     font.draw_string(surface, Some(&format!("{sender}: {}", client.chat_text[i])), x, y - 1, Colour::CYAN);
                 }
@@ -466,7 +437,7 @@ impl Renderer {
                 }
             } else if r#type == 5 && client.chat_private_mode < 2 {
                 let y = 329 - line_offset * 13;
-                if let Some(font) = self.p12.as_ref() {
+                if let Some(font) = self.media.p12.as_ref() {
                     font.draw_string(surface, Some(&client.chat_text[i]), 4, y, Colour::BLACK);
                     font.draw_string(surface, Some(&client.chat_text[i]), 4, y - 1, Colour::CYAN);
                 }
@@ -476,7 +447,7 @@ impl Renderer {
                 }
             } else if r#type == 6 && client.chat_private_mode < 2 {
                 let y = 329 - line_offset * 13;
-                if let Some(font) = self.p12.as_ref() {
+                if let Some(font) = self.media.p12.as_ref() {
                     font.draw_string(surface, Some(&format!("To {sender}: {}", client.chat_text[i])), 4, y, Colour::BLACK);
                     font.draw_string(surface, Some(&format!("To {sender}: {}", client.chat_text[i])), 4, y - 1, Colour::CYAN);
                 }
@@ -508,12 +479,12 @@ impl Renderer {
             // `cross_cycle/100` picks the sprite, missing media is a no-op.
             if client.cross_mode == 1 {
                 let idx = (client.cross_cycle / 100) as usize;
-                if let Some(s) = self.cross.get(idx).and_then(|o| o.as_ref()) {
+                if let Some(s) = self.media.cross.get(idx).and_then(|o| o.as_ref()) {
                     s.plot_sprite(&mut surface, client.cross_x - 8 - 4, client.cross_y - 8 - 4);
                 }
             } else if client.cross_mode == 2 {
                 let idx = (client.cross_cycle / 100) as usize + 4;
-                if let Some(s) = self.cross.get(idx).and_then(|o| o.as_ref()) {
+                if let Some(s) = self.media.cross.get(idx).and_then(|o| o.as_ref()) {
                     s.plot_sprite(&mut surface, client.cross_x - 8 - 4, client.cross_y - 8 - 4);
                 }
             }
@@ -534,7 +505,7 @@ impl Renderer {
                 let mut seconds = client.reboot_timer / 50;
                 let minutes = seconds / 60;
                 seconds %= 60;
-                if let Some(p12) = self.p12.as_ref() {
+                if let Some(p12) = self.media.p12.as_ref() {
                     if seconds < 10 {
                         p12.draw_string(
                             &mut surface,
@@ -573,7 +544,7 @@ impl Renderer {
         // Task 2b: `open_menu` (sim) measures without the `b12` font (it
         // lives here); re-measure from the font and re-clamp `menu_x`/
         // `menu_width` so the box and click rows use the real widths.
-        if let Some(b12) = &self.b12 {
+        if let Some(b12) = &self.media.b12 {
             let mut width = b12.string_wid(Some("Choose Option"));
             for i in 0..client.menu_num_entries {
                 let w = b12.string_wid(Some(&client.menu_option[i as usize]));
@@ -623,7 +594,7 @@ impl Renderer {
             mouse_y -= 357;
         }
 
-        if let Some(b12) = &mut self.b12 {
+        if let Some(b12) = &self.media.b12 {
             b12.draw_string(surface, Some("Choose Option"), x + 3, y + 14, background);
 
             for i in 0..client.menu_num_entries {
@@ -679,7 +650,7 @@ impl Renderer {
         let mut game = self.area_game.take();
         if let Some(game) = game.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
-            if let Some(b12) = &mut self.b12 {
+            if let Some(b12) = &self.media.b12 {
                 b12.draw_string_anti_macro(
                     &mut surface,
                     &tooltip,
@@ -1402,7 +1373,7 @@ impl Renderer {
                                 self.project_x = px;
                                 self.project_y = py;
                                 if self.project_x > -1 {
-                                    if let Some(sprite) = self.headicons
+                                    if let Some(sprite) = self.media.headicons
                                         .get(headicon as usize)
                                         .and_then(|o| o.as_ref())
                                     {
@@ -1417,7 +1388,7 @@ impl Renderer {
                         self.project_x = px;
                         self.project_y = py;
                         if self.project_x > -1 {
-                            if let Some(sprite) = self.headicons.get(2).and_then(|o| o.as_ref()) {
+                            if let Some(sprite) = self.media.headicons.get(2).and_then(|o| o.as_ref()) {
                                 sprite.plot_sprite(&mut surface, px - 12, py - 28);
                             }
                         }
@@ -1434,7 +1405,7 @@ impl Renderer {
                         if self.project_x > -1 {
                             for icon in 0..8 {
                                 if (player_headicons & (1 << icon)) != 0 {
-                                    if let Some(sprite) = self.headicons
+                                    if let Some(sprite) = self.media.headicons
                                         .get(icon as usize)
                                         .and_then(|o| o.as_ref())
                                     {
@@ -1450,7 +1421,7 @@ impl Renderer {
                         self.project_x = px;
                         self.project_y = py;
                         if self.project_x > -1 {
-                            if let Some(sprite) = self.headicons.get(7).and_then(|o| o.as_ref()) {
+                            if let Some(sprite) = self.media.headicons.get(7).and_then(|o| o.as_ref()) {
                                 sprite.plot_sprite(&mut surface, px - 12, py - y);
                             }
                         }
@@ -1473,7 +1444,7 @@ impl Renderer {
                     // Java NPEs without the b12 font; the Option guard skips
                     // the collect instead.
                     if self.project_x > -1 && self.chat_count < 50 {
-                        if let Some(b12) = &self.b12 {
+                        if let Some(b12) = &self.media.b12 {
                             let message = entity.chat_message.as_deref().unwrap_or("");
                             let idx = self.chat_count as usize;
                             self.chat_width[idx] = b12.string_wid(Some(message)) / 2;
@@ -1535,13 +1506,13 @@ impl Renderer {
                                 px += 15;
                                 py -= 10;
                             }
-                            if let Some(sprite) = self.hitmarks
+                            if let Some(sprite) = self.media.hitmarks
                                 .get(entity.damage_types[i] as usize)
                                 .and_then(|o| o.as_ref())
                             {
                                 sprite.plot_sprite(&mut surface, px - 12, py - 12);
                             }
-                            if let Some(p11) = &self.p11 {
+                            if let Some(p11) = &self.media.p11 {
                                 let text = format!("{}", entity.damage_values[i]);
                                 p11.centre_string(&mut surface, Some(&text), px, py + 4, Colour::BLACK);
                                 p11.centre_string(&mut surface, Some(&text), px - 1, py + 3, Colour::WHITE);
@@ -1580,7 +1551,7 @@ impl Renderer {
                 if chat_effects != 0 {
                     // TS 4721-4723: global wave effects force the yellow
                     // fallback.
-                    if let Some(b12) = &self.b12 {
+                    if let Some(b12) = &self.media.b12 {
                         b12.centre_string(
                             &mut surface,
                             Some(&message),
@@ -1640,7 +1611,7 @@ impl Renderer {
                             colour = Colour::WHITE - (delta - 100) * 327680;
                         }
                     }
-                    if let Some(b12) = &self.b12 {
+                    if let Some(b12) = &self.media.b12 {
                         match self.chat_effect[i] {
                             1 => {
                                 b12.centre_string_wave(
@@ -1715,19 +1686,18 @@ impl Renderer {
     pub(crate) fn texture_run_anims(&mut self, _client: &mut Client, _cycle: i32) {}
 
     /// `prepareGame` from client-ts (2001): allocate the in-game `PixMap`
-    /// areas and load the `media` jag sprites, lazily on the first
-    /// `game_draw` (TS calls it after a successful login; this crate has no
-    /// game-loading flow yet). Sized as TS: `area_game` 512×334 and the
-    /// constructor-sized areas as `prepareGame`, the `areaBack*` strips at
-    /// their sprites with `quickPlotSprite` (0, 0) as 1098. `area_map`
-    /// gets the `mapback` ring plotted at (0, 0) as TS 2022-2023, and the
-    /// minimap/compass scanline masks are built from `mapback.data` as TS
-    /// 1180-1216 (TS builds them in maininit; the depacks live here in this
-    /// port). A missing `media` pack skips the sprite loads — `game_draw`
-    /// still draws the panels that are present. The title is unloaded and
-    /// `image_title2` nulled as Java `prepareGame` (`Client.java` 6919);
-    /// `title_screen_draw`'s logout teardown nulls it again so a later
-    /// `prepare_title` reallocates the regions from the `title` jag.
+    /// areas, lazily on the first `game_draw` (TS calls it after a
+    /// successful login; this crate has no game-loading flow yet). Sized
+    /// as TS: `area_game` 512×334 and the constructor-sized areas as
+    /// `prepareGame` (the `areaBack*` strips themselves are the shared
+    /// `Media` copy). `area_map` gets the `mapback` ring plotted at (0, 0)
+    /// as TS 2022-2023, and the minimap/compass scanline masks are built
+    /// from the shared `mapback.data` as TS 1180-1216. A missing `media`
+    /// pack leaves the sprites `None` — `game_draw` still draws the panels
+    /// that are present. The title is unloaded and `image_title2` nulled
+    /// as Java `prepareGame` (`Client.java` 6919); `title_screen_draw`'s
+    /// logout teardown nulls it again so a later `prepare_title`
+    /// reallocates the regions from the shared `title` jag.
     pub(crate) fn prepare_game(&mut self, client: &mut Client) {
         if self.area_chat.is_some() {
             return;
@@ -1745,119 +1715,14 @@ impl Renderer {
         self.area_backbase2 = Some(PixMap::new(269, 37));
         self.area_backhmid1 = Some(PixMap::new(249, 45));
 
-        let path = format!("{}/media", client.config.cache_dir);
-        if let Ok(bytes) = std::fs::read(&path) {
-            let jag = JagFile::new(bytes);
-            self.invback = Pix8::depack(&jag, "invback", 0).ok();
-            self.scrollbar1 = Pix8::depack(&jag, "scrollbar", 0).ok();
-            self.scrollbar2 = Pix8::depack(&jag, "scrollbar", 1).ok();
-            self.chatback = Pix8::depack(&jag, "chatback", 0).ok();
-            self.backbase1 = Pix8::depack(&jag, "backbase1", 0).ok();
-            self.backbase2 = Pix8::depack(&jag, "backbase2", 0).ok();
-            self.backhmid1 = Pix8::depack(&jag, "backhmid1", 0).ok();
-            for i in 0..13 {
-                self.sideicons[i] = Pix8::depack(&jag, "sideicons", i as i32).ok();
-            }
-            // `modIcons` as Java 5353-5355 / TS 1095-1097.
-            for i in 0..2 {
-                self.mod_icons[i] = Pix8::depack(&jag, "mod_icons", i as i32).ok();
-            }
-            // TS 1056-1058: the click-crosshair frames are Pix32, not Pix8.
-            for i in 0..8 {
-                self.cross[i] = Pix32::depack(&jag, "cross", i as i32).ok();
-            }
-            // redstone1..2hv as Client.ts 1068-1093: the flipped copies are
-            // fresh depacks of the base sprite, hflip/vflip'd in place.
-            self.redstone1 = Pix8::depack(&jag, "redstone1", 0).ok();
-            self.redstone2 = Pix8::depack(&jag, "redstone2", 0).ok();
-            self.redstone3 = Pix8::depack(&jag, "redstone3", 0).ok();
-            self.redstone1h = self.redstone1.clone();
-            if let Some(s) = self.redstone1h.as_mut() {
-                s.hflip();
-            }
-            self.redstone2h = self.redstone2.clone();
-            if let Some(s) = self.redstone2h.as_mut() {
-                s.hflip();
-            }
-            self.redstone1v = self.redstone1.clone();
-            if let Some(s) = self.redstone1v.as_mut() {
-                s.vflip();
-            }
-            self.redstone2v = self.redstone2.clone();
-            if let Some(s) = self.redstone2v.as_mut() {
-                s.vflip();
-            }
-            self.redstone3v = self.redstone3.clone();
-            if let Some(s) = self.redstone3v.as_mut() {
-                s.vflip();
-            }
-            self.redstone1hv = self.redstone1.clone();
-            if let Some(s) = self.redstone1hv.as_mut() {
-                s.hflip();
-            }
-            if let Some(s) = self.redstone1hv.as_mut() {
-                s.vflip();
-            }
-            self.redstone2hv = self.redstone2.clone();
-            if let Some(s) = self.redstone2hv.as_mut() {
-                s.hflip();
-            }
-            if let Some(s) = self.redstone2hv.as_mut() {
-                s.vflip();
-            }
-            self.area_backleft1 = Self::chrome_area(&jag, "backleft1");
-            self.area_backleft2 = Self::chrome_area(&jag, "backleft2");
-            self.area_backright1 = Self::chrome_area(&jag, "backright1");
-            self.area_backright2 = Self::chrome_area(&jag, "backright2");
-            self.area_backtop1 = Self::chrome_area(&jag, "backtop1");
-            self.area_backvmid1 = Self::chrome_area(&jag, "backvmid1");
-            self.area_backvmid2 = Self::chrome_area(&jag, "backvmid2");
-            self.area_backvmid3 = Self::chrome_area(&jag, "backvmid3");
-            self.area_backhmid2 = Self::chrome_area(&jag, "backhmid2");
-
-            // Minimap sprites (TS maininit 1006-1063): the `mapback` ring
-            // (the scanline mask), the composed-map/compass/edge sprites and
-            // the map dots/markers. `minimap` itself was allocated in
-            // `Client::new` as TS maininit 868.
-            self.mapback = Pix8::depack(&jag, "mapback", 0).ok();
-            self.compass = Pix32::depack(&jag, "compass", 0).ok();
-            self.mapedge = Pix32::depack(&jag, "mapedge", 0).ok();
-            if let Some(edge) = self.mapedge.as_mut() {
-                edge.trim();
-            }
-            self.mapmarker1 = Pix32::depack(&jag, "mapmarker", 0).ok();
-            self.mapmarker2 = Pix32::depack(&jag, "mapmarker", 1).ok();
-            self.mapdots1 = Pix32::depack(&jag, "mapdots", 0).ok();
-            self.mapdots2 = Pix32::depack(&jag, "mapdots", 1).ok();
-            self.mapdots3 = Pix32::depack(&jag, "mapdots", 2).ok();
-            self.mapdots4 = Pix32::depack(&jag, "mapdots", 3).ok();
-
-            // TS maininit 1020-1035: the minimap wall/scene icons; a sprite
-            // the jag lacks stays `None` and `draw_detail` skips its plot.
-            for i in 0..50 {
-                self.mapscene[i] = Pix8::depack(&jag, "mapscene", i as i32).ok();
-            }
-            for i in 0..50 {
-                self.mapfunction[i] = Pix32::depack(&jag, "mapfunction", i as i32).ok();
-            }
-
-            // `hitmarks`/`headicons` as Java 5311-5320: try 20 each; a
-            // missing sprite is skipped per-entry (Java catches the loop).
-            for i in 0..20 {
-                self.hitmarks[i] = Pix32::depack(&jag, "hitmarks", i as i32).ok();
-            }
-            for i in 0..20 {
-                self.headicons[i] = Pix32::depack(&jag, "headicons", i as i32).ok();
-            }
-
-            // TS prepareGame 2022-2023: `area_map` starts as the `mapback`
-            // ring (a fresh `PixMap` is already zeroed, so the `cls()` is a
-            // no-op here). `minimapDraw` rotates the map inside the ring.
-            if let Some(map) = self.area_map.as_mut() {
-                let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
-                if let Some(mapback) = &self.mapback {
-                    mapback.plot_sprite(&mut surface, 0, 0);
-                }
+        // TS prepareGame 2022-2023: `area_map` starts as the `mapback`
+        // ring (a fresh `PixMap` is already zeroed, so the `cls()` is a
+        // no-op here). `minimapDraw` rotates the map inside the ring. The
+        // ring sprite is the shared `Media` copy (task 6).
+        if let Some(map) = self.area_map.as_mut() {
+            let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+            if let Some(mapback) = &self.media.mapback {
+                mapback.plot_sprite(&mut surface, 0, 0);
             }
         }
 
@@ -1888,16 +1753,6 @@ impl Renderer {
         client.redraw_frame = true;
     }
 
-    /// TS 1098 construction for the `areaBack*` strips: a `PixMap` at the
-    /// sprite's own size with the sprite `quickPlotSprite`d at (0, 0).
-    fn chrome_area(jag: &JagFile, name: &str) -> Option<PixMap> {
-        let sprite = Pix32::depack(jag, name, 0).ok()?;
-        let mut area = PixMap::new(sprite.wi, sprite.hi);
-        let mut surface = Pix2D::with_pixels(&mut area.pixels, area.width, area.height);
-        sprite.quick_plot_sprite(&mut surface, 0, 0);
-        Some(area)
-    }
-
     /// TS 1180-1216: the per-row scanline masks from `mapback.data` that
     /// `scanlineRotatePlotSprite` plots through — the compass rows 0..32
     /// over columns 0..33, and the minimap rows 5..155 over columns 25..171
@@ -1913,7 +1768,7 @@ impl Renderer {
         self.compass_mask_line_lengths = vec![0; 33];
         self.minimap_mask_line_offsets = vec![0; 151];
         self.minimap_mask_line_lengths = vec![0; 151];
-        let Some(mapback) = &self.mapback else {
+        let Some(mapback) = &self.media.mapback else {
             return;
         };
         for y in 0..33 {
@@ -1962,7 +1817,7 @@ impl Renderer {
             // `draw_interface`'s TYPE_MODEL arm rasters into this surface:
             // bind `pix3d` clipping to it once before drawing.
             self.pix3d.set_clipping(surface.width, surface.height);
-            if let Some(invback) = &self.invback {
+            if let Some(invback) = &self.media.invback {
                 invback.plot_sprite(&mut surface, 0, 0);
             }
             if client.side_modal_id != -1 {
@@ -2214,10 +2069,10 @@ impl Renderer {
                     }
 
                     let font = match child.font {
-                        1 => self.p12.as_mut(),
-                        2 => self.b12.as_mut(),
-                        3 => self.q8.as_mut(),
-                        _ => self.p11.as_mut(),
+                        1 => self.media.p12.as_ref(),
+                        2 => self.media.b12.as_ref(),
+                        3 => self.media.q8.as_ref(),
+                        _ => self.media.p11.as_ref(),
                     };
                     let Some(font) = font else {
                         continue;
@@ -2398,7 +2253,7 @@ impl Renderer {
                                         // follows the icon (TS 10027-10029).
                                         if sprite.owi == 33 || count != 1 {
                                             let text = self.inv_number(client, count);
-                                            if let Some(p11) = self.p11.as_mut() {
+                                            if let Some(p11) = self.media.p11.as_ref() {
                                                 p11.draw_string_tag(
                                                     surface,
                                                     &text,
@@ -2472,10 +2327,10 @@ impl Renderer {
                                 let text_x = child_x + col * (child.margin_x + 115);
                                 let text_y = child_y + row * (child.margin_y + 12);
                                 let font = match child.font {
-                                    1 => self.p12.as_mut(),
-                                    2 => self.b12.as_mut(),
-                                    3 => self.q8.as_mut(),
-                                    _ => self.p11.as_mut(),
+                                    1 => self.media.p12.as_ref(),
+                                    2 => self.media.b12.as_ref(),
+                                    3 => self.media.q8.as_ref(),
+                                    _ => self.media.p11.as_ref(),
                                 };
                                 if let Some(font) = font {
                                     if child.centre {
@@ -2592,10 +2447,10 @@ impl Renderer {
         scroll_height: i32,
         height: i32,
     ) {
-        if let Some(sprite) = &self.scrollbar1 {
+        if let Some(sprite) = &self.media.scrollbar1 {
             sprite.plot_sprite(surface, x, y);
         }
-        if let Some(sprite) = &self.scrollbar2 {
+        if let Some(sprite) = &self.media.scrollbar2 {
             sprite.plot_sprite(surface, x, y + height - 16);
         }
         surface.fill_rect(x, y + 16, 16, height - 32, 0x23201b);
@@ -2932,19 +2787,19 @@ impl Renderer {
             let w = chat.width;
             let h = chat.height;
             let mut surface = Pix2D::with_pixels(&mut chat.pixels, w, h);
-            if let Some(chatback) = &self.chatback {
+            if let Some(chatback) = &self.media.chatback {
                 chatback.plot_sprite(&mut surface, 0, 0);
             }
             if client.social_input_open {
                 // TS 11133-11135: the social prompt replaces the chat lines.
-                if let Some(b12) = self.b12.as_ref() {
+                if let Some(b12) = self.media.b12.as_ref() {
                     b12.centre_string(&mut surface, Some(&client.social_input_header), 239, 40, Colour::BLACK);
                     b12.centre_string(&mut surface, Some(&format!("{}*", client.social_input)), 239, 60, Colour::DARKBLUE);
                 }
             } else if client.dialog_input_open {
                 // TS 11136-11138: the enter-amount prompt replaces the chat
                 // lines.
-                if let Some(b12) = self.b12.as_ref() {
+                if let Some(b12) = self.media.b12.as_ref() {
                     b12.centre_string(&mut surface, Some("Enter amount:"), 239, 40, Colour::BLACK);
                     b12.centre_string(&mut surface, Some(&format!("{}*", client.dialog_input)), 239, 60, Colour::DARKBLUE);
                 }
@@ -2980,7 +2835,7 @@ impl Renderer {
 
                     if r#type == 0 {
                         if y > 0 && y < 110 {
-                            if let Some(font) = self.p12.as_ref() {
+                            if let Some(font) = self.media.p12.as_ref() {
                                 font.draw_string(&mut surface, Some(&message), 4, y, Colour::BLACK);
                             }
                         }
@@ -2995,18 +2850,18 @@ impl Renderer {
                             // Java 5000-5007: plot the mod_icons crown at
                             // y - 12, then advance the 14px gutter.
                             if modlevel == 1 {
-                                if let Some(sprite) = &self.mod_icons[0] {
+                                if let Some(sprite) = &self.media.mod_icons[0] {
                                     sprite.plot_sprite(&mut surface, x, y - 12);
                                 }
                                 x += 14;
                             }
                             if modlevel == 2 {
-                                if let Some(sprite) = &self.mod_icons[1] {
+                                if let Some(sprite) = &self.media.mod_icons[1] {
                                     sprite.plot_sprite(&mut surface, x, y - 12);
                                 }
                                 x += 14;
                             }
-                            if let Some(font) = self.p12.as_ref() {
+                            if let Some(font) = self.media.p12.as_ref() {
                                 font.draw_string(&mut surface, Some(&format!("{sender}:")), x, y, Colour::BLACK);
                                 x += font.string_wid(Some(&sender)) + 8;
                                 font.draw_string(&mut surface, Some(&message), x, y, Colour::BLUE);
@@ -3021,25 +2876,25 @@ impl Renderer {
                     {
                         if y > 0 && y < 110 {
                             let mut x = 4;
-                            if let Some(font) = self.p12.as_ref() {
+                            if let Some(font) = self.media.p12.as_ref() {
                                 font.draw_string(&mut surface, Some("From"), x, y, Colour::BLACK);
                                 x += font.string_wid(Some("From "));
                             }
                             // Java 5019-5026: the crown plots after the
                             // "From " label.
                             if modlevel == 1 {
-                                if let Some(sprite) = &self.mod_icons[0] {
+                                if let Some(sprite) = &self.media.mod_icons[0] {
                                     sprite.plot_sprite(&mut surface, x, y - 12);
                                 }
                                 x += 14;
                             }
                             if modlevel == 2 {
-                                if let Some(sprite) = &self.mod_icons[1] {
+                                if let Some(sprite) = &self.media.mod_icons[1] {
                                     sprite.plot_sprite(&mut surface, x, y - 12);
                                 }
                                 x += 14;
                             }
-                            if let Some(font) = self.p12.as_ref() {
+                            if let Some(font) = self.media.p12.as_ref() {
                                 font.draw_string(&mut surface, Some(&format!("{sender}:")), x, y, Colour::BLACK);
                                 x += font.string_wid(Some(&sender)) + 8;
                                 font.draw_string(&mut surface, Some(&message), x, y, Colour::DARKRED);
@@ -3048,21 +2903,21 @@ impl Renderer {
                         line += 1;
                     } else if r#type == 4 && (client.chat_trade_mode == 0 || (client.chat_trade_mode == 1 && client.is_friend(&sender))) {
                         if y > 0 && y < 110 {
-                            if let Some(font) = self.p12.as_ref() {
+                            if let Some(font) = self.media.p12.as_ref() {
                                 font.draw_string(&mut surface, Some(&format!("{sender} {message}")), 4, y, 0x800080);
                             }
                         }
                         line += 1;
                     } else if r#type == 5 && client.split_private_chat == 0 && client.chat_private_mode < 2 {
                         if y > 0 && y < 110 {
-                            if let Some(font) = self.p12.as_ref() {
+                            if let Some(font) = self.media.p12.as_ref() {
                                 font.draw_string(&mut surface, Some(&message), 4, y, Colour::DARKRED);
                             }
                         }
                         line += 1;
                     } else if r#type == 6 && client.split_private_chat == 0 && client.chat_private_mode < 2 {
                         if y > 0 && y < 110 {
-                            if let Some(font) = self.p12.as_ref() {
+                            if let Some(font) = self.media.p12.as_ref() {
                                 font.draw_string(&mut surface, Some(&format!("To {sender}:")), 4, y, Colour::BLACK);
                                 font.draw_string(
                                     &mut surface,
@@ -3076,7 +2931,7 @@ impl Renderer {
                         line += 1;
                     } else if r#type == 8 && (client.chat_trade_mode == 0 || (client.chat_trade_mode == 1 && client.is_friend(&sender))) {
                         if y > 0 && y < 110 {
-                            if let Some(font) = self.p12.as_ref() {
+                            if let Some(font) = self.media.p12.as_ref() {
                                 font.draw_string(&mut surface, Some(&format!("{sender} {message}")), 4, y, 0x7e3200);
                             }
                         }
@@ -3106,7 +2961,7 @@ impl Renderer {
                     None => JString::to_screen_name(&client.login_user),
                 };
 
-                if let Some(font) = self.p12.as_ref() {
+                if let Some(font) = self.media.p12.as_ref() {
                     font.draw_string(&mut surface, Some(&format!("{username}:")), 4, 90, Colour::BLACK);
                     let input_x = font.string_wid(Some(&format!("{username}: "))) + 6;
                     font.draw_string(&mut surface, Some(&format!("{}*", client.chat_input)), input_x, 90, Colour::BLUE);
@@ -3146,7 +3001,7 @@ impl Renderer {
             client.out.p1(client.active_icon);
         }
         if let Some(area) = self.area_backhmid1.as_mut() {
-            if let Some(backhmid1) = &self.backhmid1 {
+            if let Some(backhmid1) = &self.media.backhmid1 {
                 let w = area.width;
                 let h = area.height;
                 let mut surface = Pix2D::with_pixels(&mut area.pixels, w, h);
@@ -3158,13 +3013,13 @@ impl Renderer {
                         // redstone for the top row, tabs 0-6 (4018-4034);
                         // tabs 7-13 plot on `area_backbase2` below.
                         let (redstone, x, y) = match client.active_icon {
-                            0 => (&self.redstone1, 22, 10),
-                            1 => (&self.redstone2, 54, 8),
-                            2 => (&self.redstone2, 82, 8),
-                            3 => (&self.redstone3, 110, 8),
-                            4 => (&self.redstone2h, 153, 8),
-                            5 => (&self.redstone2h, 181, 8),
-                            6 => (&self.redstone1h, 209, 9),
+                            0 => (&self.media.redstone1, 22, 10),
+                            1 => (&self.media.redstone2, 54, 8),
+                            2 => (&self.media.redstone2, 82, 8),
+                            3 => (&self.media.redstone3, 110, 8),
+                            4 => (&self.media.redstone2h, 153, 8),
+                            5 => (&self.media.redstone2h, 181, 8),
+                            6 => (&self.media.redstone1h, 209, 9),
                             _ => (&None, 0, 0),
                         };
                         if let Some(s) = redstone {
@@ -3185,7 +3040,7 @@ impl Renderer {
                         if client.side_icon[icon] != -1
                             && (client.tut_flash_icon != icon as i32 || client.loop_cycle % 20 < 10)
                         {
-                            if let Some(s) = &self.sideicons[icon] {
+                            if let Some(s) = &self.media.sideicons[icon] {
                                 s.plot_sprite(&mut surface, x, y);
                             }
                         }
@@ -3198,7 +3053,7 @@ impl Renderer {
         }
 
         if let Some(area) = self.area_backbase2.as_mut() {
-            if let Some(backbase2) = &self.backbase2 {
+            if let Some(backbase2) = &self.media.backbase2 {
                 let w = area.width;
                 let h = area.height;
                 let mut surface = Pix2D::with_pixels(&mut area.pixels, w, h);
@@ -3207,13 +3062,13 @@ impl Renderer {
                     // redstone for the bottom row, tabs 7-13 (4072-4088).
                     if client.side_icon.get(client.active_icon as usize).copied() != Some(-1) {
                         let (redstone, x, y) = match client.active_icon {
-                            7 => (&self.redstone1v, 42, 0),
-                            8 => (&self.redstone2v, 74, 0),
-                            9 => (&self.redstone2v, 102, 0),
-                            10 => (&self.redstone3v, 130, 1),
-                            11 => (&self.redstone2hv, 173, 0),
-                            12 => (&self.redstone2hv, 201, 0),
-                            13 => (&self.redstone1hv, 229, 0),
+                            7 => (&self.media.redstone1v, 42, 0),
+                            8 => (&self.media.redstone2v, 74, 0),
+                            9 => (&self.media.redstone2v, 102, 0),
+                            10 => (&self.media.redstone3v, 130, 1),
+                            11 => (&self.media.redstone2hv, 173, 0),
+                            12 => (&self.media.redstone2hv, 201, 0),
+                            13 => (&self.media.redstone1hv, 229, 0),
                             _ => (&None, 0, 0),
                         };
                         if let Some(s) = redstone {
@@ -3234,7 +3089,7 @@ impl Renderer {
                         if client.side_icon[guard] != -1
                             && (client.tut_flash_icon != guard as i32 || client.loop_cycle % 20 < 10)
                         {
-                            if let Some(s) = &self.sideicons[sprite] {
+                            if let Some(s) = &self.media.sideicons[sprite] {
                                 s.plot_sprite(&mut surface, x, y);
                             }
                         }
@@ -3268,7 +3123,7 @@ impl Renderer {
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
 
         if client.minimap_state == 2 {
-            if let Some(mapback) = &self.mapback {
+            if let Some(mapback) = &self.media.mapback {
                 let mask = &mapback.data;
                 let pixels = &mut surface.pixels;
                 // `min` keeps a mismatched mask from writing past the map
@@ -3279,7 +3134,7 @@ impl Renderer {
                     }
                 }
             }
-            if let Some(compass) = &self.compass {
+            if let Some(compass) = &self.media.compass {
                 compass.scanline_rotate_plot_sprite(
                     &mut surface,
                     0,
@@ -3316,7 +3171,7 @@ impl Renderer {
                 &self.minimap_mask_line_lengths,
             );
         }
-        if let Some(compass) = &self.compass {
+        if let Some(compass) = &self.media.compass {
             compass.scanline_rotate_plot_sprite(
                 &mut surface,
                 0,
@@ -3334,10 +3189,10 @@ impl Renderer {
 
         let dot_angle = angle;
         let dot_zoom = client.macro_minimap_zoom + 256;
-        let mapback = self.mapback.as_ref();
-        let mapdots1 = self.mapdots1.as_ref();
-        let mapdots2 = self.mapdots2.as_ref();
-        let mapdots3 = self.mapdots3.as_ref();
+        let mapback = self.media.mapback.as_ref();
+        let mapdots1 = self.media.mapdots1.as_ref();
+        let mapdots2 = self.media.mapdots2.as_ref();
+        let mapdots3 = self.media.mapdots3.as_ref();
 
         // TS 11310-11316: map functions (filled by `minimap_build_buffer`;
         // a `mapfunction` entry that is `None` skips the dot).
@@ -3410,9 +3265,9 @@ impl Renderer {
                         &mut surface,
                         arrow_x,
                         arrow_y,
-                        self.mapmarker2.as_ref(),
+                        self.media.mapmarker2.as_ref(),
                         mapback,
-                        self.mapedge.as_ref(),
+                        self.media.mapedge.as_ref(),
                         dot_angle,
                         dot_zoom,
                     );
@@ -3424,9 +3279,9 @@ impl Renderer {
                     &mut surface,
                     arrow_x,
                     arrow_y,
-                    self.mapmarker2.as_ref(),
+                    self.media.mapmarker2.as_ref(),
                     mapback,
-                    self.mapedge.as_ref(),
+                    self.media.mapedge.as_ref(),
                     dot_angle,
                     dot_zoom,
                 );
@@ -3441,9 +3296,9 @@ impl Renderer {
                         &mut surface,
                         arrow_x,
                         arrow_y,
-                        self.mapmarker2.as_ref(),
+                        self.media.mapmarker2.as_ref(),
                         mapback,
-                        self.mapedge.as_ref(),
+                        self.media.mapedge.as_ref(),
                         dot_angle,
                         dot_zoom,
                     );
@@ -3458,7 +3313,7 @@ impl Renderer {
             minimap_draw_dot(
                 &mut surface,
                 dot_y,
-                self.mapmarker1.as_ref(),
+                self.media.mapmarker1.as_ref(),
                 dot_x,
                 mapback,
                 dot_angle,
@@ -3728,7 +3583,7 @@ impl Renderer {
     pub(crate) fn scene_loading_splash(&mut self, client: &mut Client) {
         if let Some(ag) = self.area_game.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut ag.pixels, ag.width, ag.height);
-            if let Some(p12) = self.p12.as_ref() {
+            if let Some(p12) = self.media.p12.as_ref() {
                 p12.centre_string(&mut surface, Some("Loading - please wait."), 257, 151, Colour::BLACK);
                 p12.centre_string(&mut surface, Some("Loading - please wait."), 256, 150, Colour::WHITE);
             }
@@ -3816,7 +3671,7 @@ impl Renderer {
                     draw_detail(
                         &client.world,
                         &client.cache,
-                        &self.mapscene,
+                        &self.media.mapscene,
                         &mut surface,
                         level,
                         x,
@@ -3834,7 +3689,7 @@ impl Renderer {
                     draw_detail(
                         &client.world,
                         &client.cache,
-                        &self.mapscene,
+                        &self.media.mapscene,
                         &mut surface,
                         level + 1,
                         x,
@@ -3922,7 +3777,7 @@ impl Renderer {
                 let count = self.active_map_function_count as usize;
                 if count < self.active_map_functions.len() {
                     self.active_map_functions[count] =
-                        self.mapfunction.get(func as usize).and_then(|s| s.clone());
+                        self.media.mapfunction.get(func as usize).and_then(|s| s.clone());
                     self.active_map_function_x[count] = stx;
                     self.active_map_function_z[count] = stz;
                     self.active_map_function_count += 1;

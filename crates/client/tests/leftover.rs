@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use client::client::{Client, ClientConfig, ClientPlayer};
 use client::render::Renderer;
+use client::render::Media;
 use client::config::idk_type::IdkType;
 use client::config::if_type::{IfType, IfTypeMut};
 use client::graphics::{Pix3D, Pix32};
@@ -524,7 +525,7 @@ let mut r = Renderer::new(false);
     c.scene_state = 2;
     r.game_draw(&mut c);
     for i in 0..8 {
-        let s = r.cross[i]
+        let s = r.media.cross[i]
             .as_ref()
             .unwrap_or_else(|| panic!("cross[{i}] missing after prepare_game"));
         assert!(s.wi > 0 && s.hi > 0, "cross[{i}] empty size");
@@ -557,7 +558,11 @@ let mut r = Renderer::new(false);
     r.game_draw(&mut c); // prepare_game loads the media sprites
     let mut s = Pix32::new(16, 16);
     s.data[0] = 0x123456; // known top-left pixel: verifies the plot origin
-    r.cross[0] = Some(s);
+    // The media sprites are the shared process copy; swap in a media that
+    // carries the known crosshair frame instead of mutating the shared one.
+    let mut media = Media::empty();
+    media.cross[0] = Some(s);
+    r.media = Arc::new(media);
     c.cross_x = 100;
     c.cross_y = 80;
     c.cross_mode = 1;
@@ -588,7 +593,9 @@ let mut r = Renderer::new(false);
     r.game_draw(&mut c);
     let mut s = Pix32::new(16, 16);
     s.data[0] = 0x654321;
-    r.cross[4] = Some(s); // mode 2, cycle 0 -> index 4
+    let mut media = Media::empty();
+    media.cross[4] = Some(s); // mode 2, cycle 0 -> index 4
+    r.media = Arc::new(media);
     c.cross_x = 100;
     c.cross_y = 80;
     c.cross_mode = 2;

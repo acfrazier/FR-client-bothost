@@ -3,6 +3,10 @@
 // so the font is a plain struct; drawing targets a `&mut Pix2D`. `depack`
 // returns `Result`. Char codes index the 256-slot arrays through `.get()`
 // (TS out-of-range `charCodeAt` results read `undefined`).
+//
+// The tag/anti-macro draws are `&self`: the fonts are the process-wide
+// shared `Media` copy, and their transient per-call state (`strikeout`,
+// the reseeded `rand`) is local to the draw call.
 
 use super::colour::Colour;
 use super::pix2d::Pix2D;
@@ -16,9 +20,6 @@ pub struct PixFont {
     pub char_offset_x: [i32; 256],
     pub char_offset_y: [i32; 256],
     pub char_advance: [i32; 256],
-
-    pub rand: JavaRandom,
-    pub strikeout: bool,
     pub height: i32,
 }
 
@@ -31,8 +32,6 @@ impl PixFont {
             char_offset_x: [0; 256],
             char_offset_y: [0; 256],
             char_advance: [0; 256],
-            rand: JavaRandom::now(),
-            strikeout: false,
             height: 0,
         }
     }
@@ -146,7 +145,7 @@ impl PixFont {
         self.draw_string(surface, Some(str), x - self.string_wid(Some(str)) / 2, y, rgb);
     }
 
-    pub fn centre_string_tag(&mut self, surface: &mut Pix2D, str: &str, x: i32, y: i32, rgb: i32, shadowed: bool) {
+    pub fn centre_string_tag(&self, surface: &mut Pix2D, str: &str, x: i32, y: i32, rgb: i32, shadowed: bool) {
         self.draw_string_tag(surface, str, x - self.string_wid(Some(str)) / 2, y, rgb, shadowed);
     }
 
@@ -204,8 +203,11 @@ impl PixFont {
         }
     }
 
-    pub fn draw_string_tag(&mut self, surface: &mut Pix2D, str: &str, mut x: i32, mut y: i32, mut rgb: i32, shadowed: bool) {
-        self.strikeout = false;
+    pub fn draw_string_tag(&self, surface: &mut Pix2D, str: &str, mut x: i32, mut y: i32, mut rgb: i32, shadowed: bool) {
+        // The strikeout flag is per-call scratch (the fonts are the shared
+        // `Media` copy): the `@str@` tag sets it, the end-of-line hline
+        // reads it.
+        let mut strikeout = false;
         let start_x = x;
         let chars: Vec<char> = str.chars().collect();
         let length = chars.len();
@@ -214,9 +216,13 @@ impl PixFont {
         while i < length {
             if chars[i] == '@' && i + 4 < length && chars[i + 4] == '@' {
                 let tag: String = chars[i + 1..i + 4].iter().collect();
-                let tag = self.update_state(&tag);
-                if tag != -1 {
-                    rgb = tag;
+                if tag == "str" {
+                    strikeout = true;
+                } else {
+                    let tag = self.update_state(&tag);
+                    if tag != -1 {
+                        rgb = tag;
+                    }
                 }
                 i += 4;
             } else {
@@ -232,14 +238,17 @@ impl PixFont {
             }
             i += 1;
         }
-        if self.strikeout {
+        if strikeout {
             surface.hline(start_x, y + (self.height as f64 * 0.7) as i32, x - start_x, Colour::DARKRED);
         }
     }
 
-    pub fn draw_string_anti_macro(&mut self, surface: &mut Pix2D, str: &str, mut x: i32, y: i32, mut rgb: i32, shadowed: bool, seed: i32) {
-        self.rand.set_seed(seed as i64);
-        let rand = (self.rand.next_int() & 0x1f) + 192;
+    pub fn draw_string_anti_macro(&self, surface: &mut Pix2D, str: &str, mut x: i32, y: i32, mut rgb: i32, shadowed: bool, seed: i32) {
+        // `self.rand` is reseeded at every call, so a local instance
+        // reproduces the exact draw sequence (the shared fonts hold no
+        // per-call state).
+        let mut rand = JavaRandom::new(seed as i64);
+        let rand_alpha = (rand.next_int() & 0x1f) + 192;
         let off_y = y - self.height;
         let chars: Vec<char> = str.chars().collect();
         let length = chars.len();
@@ -247,9 +256,11 @@ impl PixFont {
         while i < length {
             if chars[i] == '@' && i + 4 < length && chars[i + 4] == '@' {
                 let tag: String = chars[i + 1..i + 4].iter().collect();
-                let tag = self.update_state(&tag);
-                if tag != -1 {
-                    rgb = tag;
+                if tag != "str" {
+                    let tag = self.update_state(&tag);
+                    if tag != -1 {
+                        rgb = tag;
+                    }
                 }
                 i += 4;
             } else {
@@ -259,10 +270,10 @@ impl PixFont {
                     if shadowed {
                         self.plot_letter_trans(surface, mask, x + ox + 1, off_y + oy + 1, w, h, Colour::BLACK, 192);
                     }
-                    self.plot_letter_trans(surface, mask, x + ox, off_y + oy, w, h, rgb, rand);
+                    self.plot_letter_trans(surface, mask, x + ox, off_y + oy, w, h, rgb, rand_alpha);
                 }
                 x += self.char_advance.get(code as usize).copied().unwrap_or(0);
-                if (self.rand.next_int() & 0x3) == 0 {
+                if (rand.next_int() & 0x3) == 0 {
                     x += 1;
                 }
             }
@@ -270,7 +281,7 @@ impl PixFont {
         }
     }
 
-    pub fn update_state(&mut self, tag: &str) -> i32 {
+    pub fn update_state(&self, tag: &str) -> i32 {
         match tag {
             "red" => Colour::RED,
             "gre" => Colour::GREEN,
@@ -289,10 +300,7 @@ impl PixFont {
             "gr1" => Colour::GREEN1,
             "gr2" => Colour::GREEN2,
             "gr3" => Colour::GREEN3,
-            "str" => {
-                self.strikeout = true;
-                -1
-            }
+            // `@str@` (strikeout) is handled by the tag draws' local flag.
             _ => -1,
         }
     }

@@ -86,7 +86,7 @@ let mut r = Renderer::new(false);
     });
     c.set_draw(true);
     r.draw_progress(&mut c, "Loading models - 50%", 70);
-    assert!(r.b12.is_some(), "messageBox prepareTitle loads b12 from title jag");
+    assert!(r.media.b12.is_some(), "messageBox prepareTitle loads b12 from title jag");
     assert!(
         r.draw_area.pixels.iter().any(|&p| p == 0xffffff),
         "stage text must be plotted in white (Java b12.centreString)"

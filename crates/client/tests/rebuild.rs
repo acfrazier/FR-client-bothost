@@ -245,7 +245,7 @@ let _r = Renderer::new(false);
     c.handle_packet(ServerProt::REBUILD_NORMAL, &mut payload);
     assert_eq!(c.scene_state, 1);
     let ag = r.area_game.as_ref().expect("area_game");
-    if r.p12.is_none() {
+    if r.media.p12.is_none() {
         // no font: the frame stays frozen — no cls, no text overlay
         assert!(ag.pixels.iter().all(|&p| p == 0x123456), "area_game not frozen");
     } else {

@@ -63,14 +63,7 @@ static CONTEXT: OnceLock<Result<Arc<GpuContext>, String>> = OnceLock::new();
 /// no-op, so a slot renderer can never create its own device once the host
 /// injected. The headless host never injects and falls back to `init_gpu`.
 pub fn inject_device(device: wgpu::Device, queue: wgpu::Queue) {
-    CONTEXT.get_or_init(|| {
-        let assets = Arc::new(Mutex::new(GpuAssets::new(&device, &queue)));
-        Ok(Arc::new(GpuContext {
-            device,
-            queue,
-            assets,
-        }))
-    });
+    CONTEXT.get_or_init(|| Ok(GpuContext::new(device, queue)));
 }
 
 /// Whether the init failure has been logged (once per process).
@@ -81,12 +74,178 @@ static FAILURE_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 /// keeps it at 0.
 static GPU_BACKEND_TRIED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+/// How many times the shared context built its shader modules / pipelines
+/// (task 6): the `OnceLock` means the first `GpuContext::new` builds them
+/// and a second `GpuBackend::try_new` reuses them, so two heads pay one
+/// `create_shader_module` batch.
+static SHADER_MODULES_CREATED: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// The process-wide wgpu state (one per process): the device/queue, the
+/// shared asset store, and the immutable scene/chrome shader modules and
+/// pipelines (task 6 — `GpuBackend::try_new` must not build a pipeline per
+/// head). `GpuBackend` keeps only the per-view textures + vertex buffer.
 struct GpuContext {
     device: wgpu::Device,
     queue: wgpu::Queue,
     /// The shared asset store (model texture array; the chrome atlases in
     /// the later slices). Uploads happen once per process on first use.
     assets: Arc<Mutex<GpuAssets>>,
+    /// The scene-uniforms bind group layout (the per-backend brightness
+    /// buffer binds against it).
+    scene_brightness_layout: wgpu::BindGroupLayout,
+    /// The scene pass pipelines (opaque first with depth writes, then the
+    /// translucent faces alpha-blended). The pipelines hold the scene
+    /// shader module (created once, here), so no field keeps it.
+    pipeline_opaque: wgpu::RenderPipeline,
+    pipeline_translucent: wgpu::RenderPipeline,
+    /// The chrome composite pipeline (the CPU `draw_area` upload draws
+    /// over the scene); holds the chrome shader module.
+    chrome_layout: wgpu::BindGroupLayout,
+    chrome_pipeline: wgpu::RenderPipeline,
+}
+
+impl GpuContext {
+    /// Build the process-wide context: the shared assets plus the scene
+    /// and chrome shader modules / pipelines, exactly once (the `CONTEXT`
+    /// `OnceLock` wins — a second `GpuBackend::try_new` reuses these).
+    fn new(device: wgpu::Device, queue: wgpu::Queue) -> Arc<GpuContext> {
+        SHADER_MODULES_CREATED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let assets = Arc::new(Mutex::new(GpuAssets::new(&device, &queue)));
+
+        let scene_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("r274 scene shader"),
+            source: wgpu::ShaderSource::Wgsl(SCENE_SHADER.into()),
+        });
+
+        let scene_brightness_layout =
+            device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("r274 scene uniforms layout"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: wgpu::BufferSize::new(16),
+                        },
+                        count: None,
+                    }],
+                });
+
+        let assets_lock = assets.lock().unwrap();
+        let scene_pipeline_layout =
+            device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("r274 scene layout"),
+                    bind_group_layouts: &[
+                        Some(&assets_lock.model_bind_group_layout),
+                        Some(&scene_brightness_layout),
+                    ],
+                    immediate_size: 0,
+                });
+        let pipeline_opaque = make_pipeline(&device, &scene_pipeline_layout, &scene_shader, true);
+        let pipeline_translucent =
+            make_pipeline(&device, &scene_pipeline_layout, &scene_shader, false);
+        drop(assets_lock);
+
+        let chrome_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("r274 chrome composite shader"),
+            source: wgpu::ShaderSource::Wgsl(CHROME_SHADER.into()),
+        });
+        let chrome_layout =
+            device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("r274 chrome composite layout"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                });
+        let chrome_pipeline_layout =
+            device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("r274 chrome composite pipeline layout"),
+                    bind_group_layouts: &[Some(&chrome_layout)],
+                    immediate_size: 0,
+                });
+        let chrome_pipeline =
+            device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("r274 chrome composite"),
+                    layout: Some(&chrome_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &chrome_shader,
+                        entry_point: Some("vs_main"),
+                        compilation_options: Default::default(),
+                        buffers: &[wgpu::VertexBufferLayout {
+                            array_stride: std::mem::size_of::<ChromeVertex>() as u64,
+                            step_mode: wgpu::VertexStepMode::Vertex,
+                            attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2],
+                        }],
+                    },
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        strip_index_format: None,
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: None,
+                        unclipped_depth: false,
+                        polygon_mode: wgpu::PolygonMode::Fill,
+                        conservative: false,
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState {
+                        count: 1,
+                        mask: !0,
+                        alpha_to_coverage_enabled: false,
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &chrome_shader,
+                        entry_point: Some("fs_main"),
+                        compilation_options: Default::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba8Unorm,
+                            blend: Some(wgpu::BlendState {
+                                color: wgpu::BlendComponent {
+                                    src_factor: wgpu::BlendFactor::SrcAlpha,
+                                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                    operation: wgpu::BlendOperation::Add,
+                                },
+                                alpha: wgpu::BlendComponent::OVER,
+                            }),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
+                });
+
+        Arc::new(GpuContext {
+            device,
+            queue,
+            assets,
+            scene_brightness_layout,
+            pipeline_opaque,
+            pipeline_translucent,
+            chrome_layout,
+            chrome_pipeline,
+        })
+    }
 }
 
 /// The process-wide GPU context, or `None` on a (cached) init failure.
@@ -125,12 +284,7 @@ fn init_gpu() -> Result<Arc<GpuContext>, String> {
         trace: wgpu::Trace::default(),
     }))
     .map_err(|e| format!("device: {e}"))?;
-    let assets = Arc::new(Mutex::new(GpuAssets::new(&device, &queue)));
-    Ok(Arc::new(GpuContext {
-        device,
-        queue,
-        assets,
-    }))
+    Ok(GpuContext::new(device, queue))
 }
 
 /// The scene pipeline: a passthrough projection (camera-space vertices,
@@ -353,12 +507,12 @@ pub struct GpuBackend {
     /// texture `finish` returns.
     frame_texture: wgpu::Texture,
     frame_view: wgpu::TextureView,
-    pipeline_opaque: wgpu::RenderPipeline,
-    pipeline_translucent: wgpu::RenderPipeline,
     /// The shared model-texture-array bind group, bound each scene pass.
     model_bind_group: wgpu::BindGroup,
     /// The scene-shader brightness uniform (group 1): the current
     /// `Pix3D::colour_table` gamma, so `hslToRgb` matches the CPU table.
+    /// Per-backend because `render_scene` writes the current brightness
+    /// every frame (the layout + pipelines are the shared `GpuContext`).
     brightness_bind_group: wgpu::BindGroup,
     brightness_buf: wgpu::Buffer,
     /// Streaming vertex buffer (grows on demand; the mesh is re-uploaded
@@ -370,10 +524,11 @@ pub struct GpuBackend {
     cpu: CpuBackend,
     /// The CPU `draw_area` uploaded as one RGBA8 texture each frame (the
     /// RuneLite canvas-upload composite), drawn over the frame with alpha
-    /// blending.
+    /// blending. The texture + bind group are per-backend (each frame's
+    /// upload); the composite shader/layout/pipeline are the shared
+    /// `GpuContext`.
     chrome_texture: wgpu::Texture,
     chrome_bind_group: wgpu::BindGroup,
-    chrome_pipeline: wgpu::RenderPipeline,
     /// The full-frame quad (six `ChromeVertex`es, uploaded once).
     chrome_vertex_buf: wgpu::Buffer,
     /// The overlay-coverage marks (one byte per scene-window pixel): the
@@ -388,9 +543,10 @@ pub struct GpuBackend {
 }
 
 impl GpuBackend {
-    /// Initialise the process-wide device/queue and build the scene
-    /// pipeline. Returns `Err` on any init failure (or a cached one); the
-    /// renderer logs and falls back to `CpuBackend`.
+    /// Initialise the process-wide device/queue + shared pipelines (once)
+    /// and build the per-backend view textures + vertex buffer. Returns
+    /// `Err` on any init failure (or a cached one); the renderer logs and
+    /// falls back to `CpuBackend`.
     pub fn try_new() -> Result<GpuBackend, String> {
         if std::env::var("SKIP_GPU").ok().as_deref() == Some("1") {
             return Err("SKIP_GPU=1".into());
@@ -451,29 +607,6 @@ impl GpuBackend {
         });
         let frame_view = frame_texture.create_view(&Default::default());
 
-        let shader = context
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("r274 scene shader"),
-                source: wgpu::ShaderSource::Wgsl(SCENE_SHADER.into()),
-            });
-
-        let brightness_layout =
-            context
-                .device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("r274 scene uniforms layout"),
-                    entries: &[wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(16),
-                        },
-                        count: None,
-                    }],
-                });
         let brightness_buf = context.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("r274 scene uniforms"),
             size: 16,
@@ -484,7 +617,7 @@ impl GpuBackend {
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("r274 scene uniforms group"),
-                layout: &brightness_layout,
+                layout: &context.scene_brightness_layout,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
@@ -495,21 +628,9 @@ impl GpuBackend {
                 }],
             });
 
-        let assets = context.assets.lock().unwrap();
-        let layout = context
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("r274 scene layout"),
-                bind_group_layouts: &[
-                    Some(&assets.model_bind_group_layout),
-                    Some(&brightness_layout),
-                ],
-                immediate_size: 0,
-            });
-        let pipeline_opaque = make_pipeline(&context.device, &layout, &shader, true);
-        let pipeline_translucent = make_pipeline(&context.device, &layout, &shader, false);
-        let model_bind_group = assets.model_bind_group.clone();
-        drop(assets);
+        // The scene shader/layout/pipelines are the shared `GpuContext`
+        // (task 6): a second backend reuses them instead of rebuilding.
+        let model_bind_group = context.assets.lock().unwrap().model_bind_group.clone();
 
         let vertex_buf_capacity = 1 << 20; // 1 MiB of vertices to start
         let vertex_buf = context.device.create_buffer(&wgpu::BufferDescriptor {
@@ -520,98 +641,10 @@ impl GpuBackend {
         });
 
         // The chrome composite (the RuneLite canvas-upload pattern): the
-        // CPU `draw_area` uploads as one RGBA8 texture each frame and a
-        // passthrough full-frame quad draws it over the scene with alpha
-        // blending (SrcAlpha/OneMinusSrcAlpha).
-        let chrome_shader = context
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("r274 chrome composite shader"),
-                source: wgpu::ShaderSource::Wgsl(CHROME_SHADER.into()),
-            });
-        let chrome_layout =
-            context
-                .device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("r274 chrome composite layout"),
-                    entries: &[
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture {
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                                view_dimension: wgpu::TextureViewDimension::D2,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                            count: None,
-                        },
-                    ],
-                });
-        let chrome_pipeline_layout =
-            context
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("r274 chrome composite pipeline layout"),
-                    bind_group_layouts: &[Some(&chrome_layout)],
-                    immediate_size: 0,
-                });
-        let chrome_pipeline =
-            context
-                .device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("r274 chrome composite"),
-                    layout: Some(&chrome_pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &chrome_shader,
-                        entry_point: Some("vs_main"),
-                        compilation_options: Default::default(),
-                        buffers: &[wgpu::VertexBufferLayout {
-                            array_stride: std::mem::size_of::<ChromeVertex>() as u64,
-                            step_mode: wgpu::VertexStepMode::Vertex,
-                            attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2],
-                        }],
-                    },
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        strip_index_format: None,
-                        front_face: wgpu::FrontFace::Ccw,
-                        cull_mode: None,
-                        unclipped_depth: false,
-                        polygon_mode: wgpu::PolygonMode::Fill,
-                        conservative: false,
-                    },
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState {
-                        count: 1,
-                        mask: !0,
-                        alpha_to_coverage_enabled: false,
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &chrome_shader,
-                        entry_point: Some("fs_main"),
-                        compilation_options: Default::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba8Unorm,
-                            blend: Some(wgpu::BlendState {
-                                color: wgpu::BlendComponent {
-                                    src_factor: wgpu::BlendFactor::SrcAlpha,
-                                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                    operation: wgpu::BlendOperation::Add,
-                                },
-                                alpha: wgpu::BlendComponent::OVER,
-                            }),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
-                });
+        // CPU `draw_area` uploads as one RGBA8 texture each frame and the
+        // shared chrome pipeline draws it over the scene. The texture +
+        // bind group are per-backend (each frame's upload); the
+        // shader/layout/pipeline are the shared `GpuContext`.
         let chrome_texture = context.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("r274 chrome upload"),
             size: wgpu::Extent3d {
@@ -641,7 +674,7 @@ impl GpuBackend {
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("r274 chrome upload group"),
-                layout: &chrome_layout,
+                layout: &context.chrome_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -710,8 +743,6 @@ impl GpuBackend {
             depth_view,
             frame_texture,
             frame_view,
-            pipeline_opaque,
-            pipeline_translucent,
             model_bind_group,
             brightness_bind_group,
             brightness_buf,
@@ -720,7 +751,6 @@ impl GpuBackend {
             cpu: CpuBackend,
             chrome_texture,
             chrome_bind_group,
-            chrome_pipeline,
             chrome_vertex_buf,
             overlay_coverage: vec![0; (SCENE_W * SCENE_H) as usize],
             scene_ready: false,
@@ -732,6 +762,13 @@ impl GpuBackend {
     /// headless counter; a cached failure still counts one attempt).
     pub fn tried() -> usize {
         GPU_BACKEND_TRIED.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// How many times the shared context built its shader modules /
+    /// pipelines (task 6): two `try_new` must count one — the second
+    /// backend reuses the process-wide `GpuContext`.
+    pub fn shader_modules_created() -> usize {
+        SHADER_MODULES_CREATED.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Test hook: the device the process-wide context renders on (the
@@ -829,11 +866,11 @@ impl GpuBackend {
             pass.set_bind_group(0, &self.model_bind_group, &[]);
             pass.set_bind_group(1, &self.brightness_bind_group, &[]);
             if opaque_len > 0 {
-                pass.set_pipeline(&self.pipeline_opaque);
+                pass.set_pipeline(&self.context.pipeline_opaque);
                 pass.draw(0..opaque_len as u32, 0..1);
             }
             if opaque_len < vertices.len() {
-                pass.set_pipeline(&self.pipeline_translucent);
+                pass.set_pipeline(&self.context.pipeline_translucent);
                 pass.draw(opaque_len as u32..vertices.len() as u32, 0..1);
             }
         }
@@ -1223,7 +1260,7 @@ impl RenderBackend for GpuBackend {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.chrome_pipeline);
+            pass.set_pipeline(&self.context.chrome_pipeline);
             pass.set_bind_group(0, &self.chrome_bind_group, &[]);
             pass.set_vertex_buffer(0, self.chrome_vertex_buf.slice(..));
             pass.draw(0..6, 0..1);

@@ -121,7 +121,7 @@ let mut r = Renderer::new(false);
     let i = (8 * r.draw_area.width + 520) as usize;
     let chrome = r.draw_area.pixels[i];
     assert_ne!(chrome, 0, "chrome ring must sit on top of area_map, not a black square");
-    if let Some(backvmid1) = &r.area_backvmid1 {
+    if let Some(backvmid1) = &r.media.area_backvmid1 {
         let expected = backvmid1.pixels[(4 * backvmid1.width + 4) as usize];
         assert_eq!(chrome, expected, "backvmid1 pixel must survive the area_map blit");
     }

@@ -572,8 +572,9 @@ fn pixfont_update_state_tags() {
     assert_eq!(font.update_state("gr2"), Colour::GREEN2);
     assert_eq!(font.update_state("gr3"), Colour::GREEN3);
     assert_eq!(font.update_state("str"), -1);
-    assert!(font.strikeout);
     assert_eq!(font.update_state("nope"), -1);
+    // `@str@` strikeout is per-call scratch (the shared fonts hold no
+    // per-call state); `draw_string_tag` handles it locally.
 }
 
 #[test]

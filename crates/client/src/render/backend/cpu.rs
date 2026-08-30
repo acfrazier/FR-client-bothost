@@ -57,31 +57,31 @@ impl RenderBackend for CpuBackend {
             if core.redraw_frame {
                 core.redraw_frame = false;
 
-                if let Some(b) = &r.area_backleft1 {
+                if let Some(b) = &r.media.area_backleft1 {
                     b.blit_into(&mut r.draw_area, 0, 4);
                 }
-                if let Some(b) = &r.area_backleft2 {
+                if let Some(b) = &r.media.area_backleft2 {
                     b.blit_into(&mut r.draw_area, 0, 357);
                 }
-                if let Some(b) = &r.area_backright1 {
+                if let Some(b) = &r.media.area_backright1 {
                     b.blit_into(&mut r.draw_area, 722, 4);
                 }
-                if let Some(b) = &r.area_backright2 {
+                if let Some(b) = &r.media.area_backright2 {
                     b.blit_into(&mut r.draw_area, 743, 205);
                 }
-                if let Some(b) = &r.area_backtop1 {
+                if let Some(b) = &r.media.area_backtop1 {
                     b.blit_into(&mut r.draw_area, 0, 0);
                 }
-                if let Some(b) = &r.area_backvmid1 {
+                if let Some(b) = &r.media.area_backvmid1 {
                     b.blit_into(&mut r.draw_area, 516, 4);
                 }
-                if let Some(b) = &r.area_backvmid2 {
+                if let Some(b) = &r.media.area_backvmid2 {
                     b.blit_into(&mut r.draw_area, 516, 205);
                 }
-                if let Some(b) = &r.area_backvmid3 {
+                if let Some(b) = &r.media.area_backvmid3 {
                     b.blit_into(&mut r.draw_area, 496, 357);
                 }
-                if let Some(b) = &r.area_backhmid2 {
+                if let Some(b) = &r.media.area_backhmid2 {
                     b.blit_into(&mut r.draw_area, 0, 338);
                 }
 
@@ -101,7 +101,7 @@ impl RenderBackend for CpuBackend {
                     // borders the 172×156 rect. In the 274 layout the strips do
                     // not overlap it, so this re-blit is a no-op guard that
                     // keeps an opaque `area_map` from covering the chrome.
-                    if let Some(b) = &r.area_backvmid1 {
+                    if let Some(b) = &r.media.area_backvmid1 {
                         b.blit_into(&mut r.draw_area, 516, 4);
                     }
                 }
@@ -278,12 +278,12 @@ impl RenderBackend for CpuBackend {
 
                     if core.on_demand.is_some() {
                         let message = core.on_demand.as_ref().unwrap().message.clone();
-                        if let Some(p11) = r.p11.as_mut() {
+                        if let Some(p11) = r.media.p11.as_ref() {
                             p11.centre_string_tag(&mut surface, &message, w / 2, extra_y, 0x75a9a9, true);
                         }
                     }
 
-                    if let Some(b12) = r.b12.as_mut() {
+                    if let Some(b12) = r.media.b12.as_ref() {
                         b12.centre_string_tag(&mut surface, "Welcome to RuneScape", w / 2, y, Colour::YELLOW, true);
                     }
 
@@ -292,7 +292,7 @@ impl RenderBackend for CpuBackend {
                     if let Some(button) = &r.image_titlebutton {
                         button.plot_sprite(&mut surface, x - 73, y - 20);
                     }
-                    if let Some(b12) = r.b12.as_mut() {
+                    if let Some(b12) = r.media.b12.as_ref() {
                         b12.centre_string_tag(&mut surface, "New User", x, y + 5, Colour::WHITE, true);
                     }
 
@@ -300,12 +300,12 @@ impl RenderBackend for CpuBackend {
                     if let Some(button) = &r.image_titlebutton {
                         button.plot_sprite(&mut surface, x - 73, y - 20);
                     }
-                    if let Some(b12) = r.b12.as_mut() {
+                    if let Some(b12) = r.media.b12.as_ref() {
                         b12.centre_string_tag(&mut surface, "Existing User", x, y + 5, Colour::WHITE, true);
                     }
                 } else if core.loginscreen == 2 {
                     let mut y = (h / 2) - 40;
-                    if let Some(b12) = r.b12.as_mut() {
+                    if let Some(b12) = r.media.b12.as_ref() {
                         if core.login_mes1.is_empty() {
                             b12.centre_string_tag(&mut surface, &core.login_mes2, w / 2, y - 7, Colour::YELLOW, true);
                         } else {
@@ -335,7 +335,7 @@ impl RenderBackend for CpuBackend {
                     if let Some(button) = &r.image_titlebutton {
                         button.plot_sprite(&mut surface, x - 73, y - 20);
                     }
-                    if let Some(b12) = r.b12.as_mut() {
+                    if let Some(b12) = r.media.b12.as_ref() {
                         b12.centre_string_tag(&mut surface, "Login", x, y + 5, Colour::WHITE, true);
                     }
 
@@ -343,13 +343,13 @@ impl RenderBackend for CpuBackend {
                     if let Some(button) = &r.image_titlebutton {
                         button.plot_sprite(&mut surface, x - 73, y - 20);
                     }
-                    if let Some(b12) = r.b12.as_mut() {
+                    if let Some(b12) = r.media.b12.as_ref() {
                         b12.centre_string_tag(&mut surface, "Cancel", x, y + 5, Colour::WHITE, true);
                     }
                 } else if core.loginscreen == 3 {
                     let x = w / 2;
                     let mut y = (h / 2) - 60;
-                    if let Some(b12) = r.b12.as_mut() {
+                    if let Some(b12) = r.media.b12.as_ref() {
                         b12.centre_string_tag(&mut surface, "Create a free account", x, y, Colour::YELLOW, true);
 
                         y = (h / 2) - 35;
@@ -367,7 +367,7 @@ impl RenderBackend for CpuBackend {
                     if let Some(button) = &r.image_titlebutton {
                         button.plot_sprite(&mut surface, x - 73, y - 20);
                     }
-                    if let Some(b12) = r.b12.as_mut() {
+                    if let Some(b12) = r.media.b12.as_ref() {
                         b12.centre_string_tag(&mut surface, "Cancel", x, y + 5, Colour::WHITE, true);
                     }
                 }
@@ -504,7 +504,7 @@ impl RenderBackend for CpuBackend {
                 if let Some(m) = &r.area_map {
                     m.blit_into(&mut r.draw_area, 550, 4);
                 }
-                if let Some(b) = &r.area_backvmid1 {
+                if let Some(b) = &r.media.area_backvmid1 {
                     b.blit_into(&mut r.draw_area, 516, 4);
                 }
             }
@@ -527,10 +527,10 @@ impl RenderBackend for CpuBackend {
                     let w = base.width;
                     let h = base.height;
                     let mut surface = Pix2D::with_pixels(&mut base.pixels, w, h);
-                    if let Some(backbase1) = &r.backbase1 {
+                    if let Some(backbase1) = &r.media.backbase1 {
                         backbase1.plot_sprite(&mut surface, 0, 0);
                     }
-                    if let Some(p12) = r.p12.as_mut() {
+                    if let Some(p12) = r.media.p12.as_ref() {
                         p12.centre_string_tag(&mut surface, "Public chat", 55, 28, Colour::WHITE, true);
                         let (label, rgb) = match core.chat_public_mode {
                             1 => ("Friends", Colour::YELLOW),

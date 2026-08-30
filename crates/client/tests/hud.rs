@@ -87,9 +87,9 @@ let mut r = Renderer::new(false);
     });
     c.ingame = true;
     r.game_draw(&mut c);
-    assert!(r.sideicons.iter().any(|s| s.is_some()));
-    assert!(r.redstone1.is_some() && r.redstone2.is_some() && r.redstone3.is_some());
-    assert!(r.redstone1h.is_some() && r.redstone2hv.is_some());
+    assert!(r.media.sideicons.iter().any(|s| s.is_some()));
+    assert!(r.media.redstone1.is_some() && r.media.redstone2.is_some() && r.media.redstone3.is_some());
+    assert!(r.media.redstone1h.is_some() && r.media.redstone2hv.is_some());
 }
 
 #[test]
@@ -644,11 +644,11 @@ let mut r = Renderer::new(false);
     }
     let _c = chat_client(&cache, &mut r);
     assert!(
-        r.mod_icons[0].is_some(),
+        r.media.mod_icons[0].is_some(),
         "mod_icons[0] (gold @cr1@ crown) must depack from the media jag"
     );
     assert!(
-        r.mod_icons[1].is_some(),
+        r.media.mod_icons[1].is_some(),
         "mod_icons[1] (silver @cr2@ crown) must depack from the media jag"
     );
 }
@@ -662,7 +662,7 @@ let mut r = Renderer::new(false);
     }
     let crown_colour = {
         let _c = chat_client(&cache, &mut r);
-        sprite_fill_colour(r.mod_icons[0].as_ref().expect("mod_icons[0] depacked"))
+        sprite_fill_colour(r.media.mod_icons[0].as_ref().expect("mod_icons[0] depacked"))
     };
     assert_ne!(crown_colour, 0, "the gold crown sprite must have drawn pixels");
     // control: the same line without the @cr1@ prefix
@@ -688,7 +688,7 @@ let mut r = Renderer::new(false);
     }
     let silver_colour = {
         let _c = chat_client(&cache, &mut r);
-        sprite_fill_colour(r.mod_icons[1].as_ref().expect("mod_icons[1] depacked"))
+        sprite_fill_colour(r.media.mod_icons[1].as_ref().expect("mod_icons[1] depacked"))
     };
     assert_ne!(silver_colour, 0, "the silver crown sprite must have drawn pixels");
     let control = chat_line_pixels(&cache, &mut r, 7, "Eve");
@@ -715,7 +715,7 @@ let mut r = Renderer::new(false);
     c.split_private_chat = 1;
     let gold_colour = {
         let _c = chat_client(&cache, &mut r);
-        sprite_fill_colour(r.mod_icons[0].as_ref().expect("mod_icons[0] depacked"))
+        sprite_fill_colour(r.media.mod_icons[0].as_ref().expect("mod_icons[0] depacked"))
     };
     assert_ne!(gold_colour, 0, "the gold crown sprite must have drawn pixels");
     c.add_chat(3, "hello", "Eve");

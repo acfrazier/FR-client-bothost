@@ -103,10 +103,10 @@ let mut r = Renderer::new(false);
         return;
     }
     let _c = overlay_client(&cache, &mut r);
-    assert!(r.headicons[3].is_some(), "protect-melee headicon must depack");
-    assert!(r.headicons[4].is_some(), "protect-missiles headicon must depack");
-    assert!(r.headicons[5].is_some(), "protect-magic headicon must depack");
-    assert!(r.hitmarks.iter().take(4).any(|s| s.is_some()));
+    assert!(r.media.headicons[3].is_some(), "protect-melee headicon must depack");
+    assert!(r.media.headicons[4].is_some(), "protect-missiles headicon must depack");
+    assert!(r.media.headicons[5].is_some(), "protect-magic headicon must depack");
+    assert!(r.media.hitmarks.iter().take(4).any(|s| s.is_some()));
 }
 
 #[test]
@@ -117,7 +117,7 @@ let mut r = Renderer::new(false);
         return;
     }
     let mut c = overlay_client(&cache, &mut r);
-    let melee = sprite_fill_colour(r.headicons[3].as_ref().expect("headicons[3] depacked"));
+    let melee = sprite_fill_colour(r.media.headicons[3].as_ref().expect("headicons[3] depacked"));
     assert_ne!(melee, 0, "the protect-melee headicon must have drawn pixels");
     look_down_z(&mut c);
     let mut player = ClientPlayer::default();
