@@ -977,6 +977,31 @@ impl World {
         }
     }
 
+    /// Drop the render-only overlay meshes (`Square.ground`/
+    /// `quick_ground`) a headed build or attach wrote, keeping the compact
+    /// `overlay_stamp` typecodes (rule 6 of the head design): a head
+    /// detach (`draw` off) must not leave headed data on the sim. Re-arms
+    /// `overlay_pending` so the next attach's `prepare_scene` re-runs
+    /// `materialize_overlay` from the stamps. Idempotent — a stamp-less
+    /// tile (no overlay) and a repeated call are no-ops.
+    pub fn dematerialize_overlay(&mut self) {
+        for level in 0..self.max_tile_level {
+            for x in 0..self.max_tile_x {
+                for z in 0..self.max_tile_z {
+                    let mut cursor = self.squares[level as usize][x as usize][z as usize].as_mut();
+                    while let Some(tile) = cursor {
+                        if tile.overlay_stamp.is_some() {
+                            tile.ground = None;
+                            tile.quick_ground = None;
+                        }
+                        cursor = tile.linked_square.as_mut();
+                    }
+                }
+            }
+        }
+        self.overlay_pending = true;
+    }
+
     pub(crate) fn del_sprite(&mut self, index: usize) {
         let Some(sprite) = self.sprites.get(index).and_then(|s| s.as_ref()) else {
             return;
