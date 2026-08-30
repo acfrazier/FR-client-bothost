@@ -10,13 +10,16 @@
 // The finishBuild tests (TS 75-541) drive real ground data: the src packets
 // carry opcode-0 tiles (perlin fallback heights) plus one planted floor
 // tile, so the blend pass has something to lay down.
-use std::sync::{Arc, Mutex};
 use client::render::{RenderWorld, Renderer};
+use std::mem::size_of;
+use std::sync::{Arc, Mutex};
 
 use client::client::{Client, ClientBuild, ClientConfig};
 use client::config::{Cache, FloType, LocType};
 use client::dash3d::model::ModelProvider;
-use client::dash3d::{BuildArea, CollisionFlag, LocAngle, MapFlag, Model, SceneModel, TerrainOverlayShape};
+use client::dash3d::{
+    BuildArea, CollisionFlag, Ground, LocAngle, MapFlag, Model, SceneModel, TerrainOverlayShape,
+};
 use client::graphics::Colour;
 use client::io::{OnDemand, Packet};
 
@@ -441,6 +444,177 @@ let _r = Renderer::new(false);
         }
     }
     assert!(any, "finishBuild must setGround at least one tile");
+}
+
+/// Task 5 rule 6: an unheaded build (`overlay_mesh == false`, what
+/// `Client::map_build` mirrors from `draw == false`) keeps the sim data —
+/// typecodes, heights, collision — but writes no overlay
+/// `Ground`/`QuickGround` meshes; the first headed paint materializes
+/// them from the stamps.
+#[test]
+fn unheaded_build_keeps_stamp_but_no_mesh_until_materialize() {
+    let _r = Renderer::new(false);
+    let mut c = client();
+    c.world.overlay_mesh = false;
+    Arc::get_mut(&mut c.cache).unwrap().flos.push(FloType {
+        chroma: 10,
+        underlay_hue: 5,
+        saturation: 100,
+        lightness: 128,
+        ..FloType::default()
+    });
+    let mut build = ClientBuild::new();
+    let src = ground_src(&[(0, 2, 2, &[82])]);
+    build.load_ground(&mut c.groundh, &mut c.mapl, &src, 0, 0, 0, 0);
+    // load_ground zeroes mapl per tile; plant the block flag after it
+    c.mapl[0][5][5] = MapFlag::BLOCK as u8;
+    c.world.fill_base_level(0);
+    build.finish_build(
+        &c.cache,
+        &c.tex_average,
+        &mut c.world,
+        &mut c.collision,
+        &c.groundh,
+        &c.mapl,
+    );
+
+    // the sim kept the overlay typecodes ...
+    let sq = c.world.square(0, 2, 2).expect("floor tile square");
+    assert!(
+        sq.overlay_stamp.is_some(),
+        "unheaded finishBuild must record the overlay stamp"
+    );
+    // ... but no square holds an overlay mesh
+    let mut any_mesh = false;
+    for level in 0..BuildArea::LEVELS {
+        for x in 0..BuildArea::SIZE {
+            for z in 0..BuildArea::SIZE {
+                if let Some(sq) = c.world.square(level, x, z) {
+                    if sq.quick_ground.is_some() || sq.ground.is_some() {
+                        any_mesh = true;
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        !any_mesh,
+        "unheaded finishBuild must not write overlay meshes"
+    );
+
+    // collision is still stamped as usual (mapl BLOCK -> WR_GRND)
+    assert_ne!(
+        c.collision[0].flags[5][5] & CollisionFlag::WR_GRND,
+        0,
+        "unheaded build must still block collision"
+    );
+
+    // the renderer's first paint after the build consumes the pending
+    // flag and materializes the mesh from the stamp
+    assert!(
+        c.world.take_overlay_pending(),
+        "finishBuild must flag the overlay materialize"
+    );
+    c.world.materialize_overlay();
+    let sq = c.world.square(0, 2, 2).expect("floor tile square");
+    assert!(
+        sq.quick_ground.is_some(),
+        "materialize_overlay must build the quick ground"
+    );
+}
+
+/// Task 5: the materialized mesh must be exactly what a headed build
+/// wrote at `set_ground` time, for a non-quick overlay shape too.
+#[test]
+fn ground_stamp_materializes_the_mesh_a_headed_build_writes() {
+    let _r = Renderer::new(false);
+    let mut unheaded = client();
+    unheaded.world.overlay_mesh = false;
+    let mut headed = client();
+
+    for (x, z) in [(2, 2), (3, 3)] {
+        let args = (
+            0,
+            x,
+            z,
+            TerrainOverlayShape::TRAPEZIUM,
+            1,
+            7,
+            1000,
+            1004,
+            1010,
+            1006,
+            0x111111,
+            0x222222,
+            0x333333,
+            0x444444,
+            0x555555,
+            0x666666,
+            0x777777,
+            0x888888,
+            0x99,
+            0xaa,
+        );
+        unheaded.world.set_ground(
+            args.0, args.1, args.2, args.3, args.4, args.5, args.6, args.7, args.8, args.9,
+            args.10, args.11, args.12, args.13, args.14, args.15, args.16, args.17, args.18,
+            args.19,
+        );
+        headed.world.set_ground(
+            args.0, args.1, args.2, args.3, args.4, args.5, args.6, args.7, args.8, args.9,
+            args.10, args.11, args.12, args.13, args.14, args.15, args.16, args.17, args.18,
+            args.19,
+        );
+    }
+
+    assert!(unheaded
+        .world
+        .square(0, 2, 2)
+        .expect("stamp tile")
+        .ground
+        .is_none());
+    unheaded.world.materialize_overlay();
+
+    for (x, z) in [(2, 2), (3, 3)] {
+        let got = unheaded
+            .world
+            .square(0, x, z)
+            .expect("materialized tile")
+            .ground
+            .as_deref()
+            .expect("overlay mesh");
+        let want = headed
+            .world
+            .square(0, x, z)
+            .expect("headed tile")
+            .ground
+            .as_deref()
+            .expect("overlay mesh");
+        assert_eq!(got.vertex_count, want.vertex_count);
+        assert_eq!(got.vertex_x, want.vertex_x);
+        assert_eq!(got.vertex_y, want.vertex_y);
+        assert_eq!(got.vertex_z, want.vertex_z);
+        assert_eq!(got.face_count, want.face_count);
+        assert_eq!(got.face_vertex_a, want.face_vertex_a);
+        assert_eq!(got.face_vertex_b, want.face_vertex_b);
+        assert_eq!(got.face_vertex_c, want.face_vertex_c);
+        assert_eq!(got.face_colour_a, want.face_colour_a);
+        assert_eq!(got.face_colour_b, want.face_colour_b);
+        assert_eq!(got.face_colour_c, want.face_colour_c);
+        assert_eq!(got.face_texture, want.face_texture);
+        assert_eq!(got.flat, want.flat);
+        assert_eq!(got.minimap_overlay, want.minimap_overlay);
+        assert_eq!(got.minimap_underlay, want.minimap_underlay);
+        assert_eq!(got.overlay_shape, want.overlay_shape);
+        assert_eq!(got.overlay_rotation, want.overlay_rotation);
+    }
+}
+
+/// Task 5 spec contract: `Option<Box<Ground>>` is 8 bytes — the
+/// occupied-tile hole for a headed world whose overlay is present.
+#[test]
+fn ground_hole_is_one_fat_pointer() {
+    assert_eq!(size_of::<Option<Box<Ground>>>(), 8);
 }
 
 #[test]

@@ -3,7 +3,7 @@
 // slots are indices into the `World` sprite arena: the TS shares one sprite
 // object across every tile it spans, which an arena reproduces with plain
 // indices (`Send`, no `Rc`).
-use crate::dash3d::{Decor, Ground, GroundDecor, GroundObject, QuickGround, Wall};
+use crate::dash3d::{Decor, Ground, GroundDecor, GroundObject, GroundStamp, QuickGround, Wall};
 
 pub struct Square {
     pub level: i32,
@@ -13,7 +13,15 @@ pub struct Square {
     pub sprites: [Option<usize>; 5],
     pub sprite_span: [i32; 5],
     pub quick_ground: Option<QuickGround>,
-    pub ground: Option<Ground>,
+    /// Boxed so an overlay-free tile stays 8 bytes (task 5: the
+    /// occupied-tile hole for when overlay is present on a headed world).
+    /// The render fill clones the inner `Ground` by value
+    /// (`as_deref().cloned()`), never `Box::clone`.
+    pub ground: Option<Box<Ground>>,
+    /// Compact record of the tile's `set_ground` overlay inputs (rule 6 of
+    /// the head design): an unheaded build keeps this stamp instead of the
+    /// render-only mesh; `World::materialize_overlay` applies it on attach.
+    pub overlay_stamp: Option<GroundStamp>,
     pub wall: Option<Wall>,
     pub decor: Option<Decor>,
     pub ground_decor: Option<GroundDecor>,
@@ -53,6 +61,7 @@ impl Square {
             sprite_span: [0; 5],
             quick_ground: None,
             ground: None,
+            overlay_stamp: None,
             wall: None,
             decor: None,
             ground_decor: None,

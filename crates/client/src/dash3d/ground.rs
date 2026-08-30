@@ -2,6 +2,13 @@
 // draw buffers are static in the TS and only used by the render pass (the
 // `World` instance carries them in this port).
 //
+// `GroundStamp` is the sim-side record of one `set_ground` call (rule 6 of
+// the head design): the raw overlay inputs a headed build turns into a
+// render-only `Ground`/`QuickGround` mesh. Unheaded builds store only this
+// compact stamp (17 i32s, no heap); the renderer materializes the mesh from
+// it on first paint after a build.
+use crate::dash3d::{QuickGround, Square, TerrainOverlayShape};
+//
 // `Clone` is for the render pass: `World::fill` hands the tile's ground to
 // `render_ground` by value because the scene borrow would otherwise
 // outlive the `&mut self` raster call (the TS passes the shared object).
@@ -311,6 +318,130 @@ impl Ground {
             minimap_overlay,
             overlay_shape,
             overlay_rotation,
+        }
+    }
+}
+
+/// The sim-side record of one `set_ground` call: the raw overlay inputs
+/// `Ground::new`/`QuickGround::new` need to build the render-only mesh.
+/// Unheaded `map_build` (rule 6 of the head design) writes only this stamp
+/// per overlay tile — no `Ground` verts, no heap — and the first headed
+/// paint calls `apply_to` to materialize the mesh from it. Heights are
+/// kept here (not re-read from `groundh`) because a `push_down` moves the
+/// tile to a level whose `groundh` row holds different values.
+#[derive(Clone, Copy)]
+pub struct GroundStamp {
+    pub shape: i32,
+    pub rotation: i32,
+    pub texture: i32,
+    pub height_sw: i32,
+    pub height_se: i32,
+    pub height_ne: i32,
+    pub height_nw: i32,
+    pub colour_sw: i32,
+    pub colour_se: i32,
+    pub colour_ne: i32,
+    pub colour_nw: i32,
+    pub colour2_sw: i32,
+    pub colour2_se: i32,
+    pub colour2_ne: i32,
+    pub colour2_nw: i32,
+    pub overlay: i32,
+    pub underlay: i32,
+}
+
+#[allow(clippy::too_many_arguments)]
+impl GroundStamp {
+    /// Mirror of `World::set_ground`'s arguments; `x`/`z` are omitted
+    /// because the owning `Square` already carries them.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        shape: i32,
+        rotation: i32,
+        texture: i32,
+        height_sw: i32,
+        height_se: i32,
+        height_ne: i32,
+        height_nw: i32,
+        colour_sw: i32,
+        colour_se: i32,
+        colour_ne: i32,
+        colour_nw: i32,
+        colour2_sw: i32,
+        colour2_se: i32,
+        colour2_ne: i32,
+        colour2_nw: i32,
+        overlay: i32,
+        underlay: i32,
+    ) -> Self {
+        GroundStamp {
+            shape,
+            rotation,
+            texture,
+            height_sw,
+            height_se,
+            height_ne,
+            height_nw,
+            colour_sw,
+            colour_se,
+            colour_ne,
+            colour_nw,
+            colour2_sw,
+            colour2_se,
+            colour2_ne,
+            colour2_nw,
+            overlay,
+            underlay,
+        }
+    }
+
+    /// Build the render-only overlay mesh for `tile` from this stamp — the
+    /// exact branch headed `set_ground` runs. Idempotent: a tile that
+    /// already carries a mesh is left alone (a headed build wrote it
+    /// directly, or an earlier attach materialized it).
+    pub fn apply_to(&self, tile: &mut Square) {
+        if tile.quick_ground.is_some() || tile.ground.is_some() {
+            return;
+        }
+        let Self {
+            shape,
+            rotation,
+            texture,
+            height_sw,
+            height_se,
+            height_ne,
+            height_nw,
+            colour_sw,
+            colour_se,
+            colour_ne,
+            colour_nw,
+            colour2_sw,
+            colour2_se,
+            colour2_ne,
+            colour2_nw,
+            overlay,
+            underlay,
+        } = *self;
+        if shape == TerrainOverlayShape::PLAIN {
+            tile.quick_ground = Some(QuickGround::new(
+                colour_sw, colour_se, colour_ne, colour_nw, -1, overlay, false,
+            ));
+        } else if shape == TerrainOverlayShape::DIAGONAL {
+            tile.quick_ground = Some(QuickGround::new(
+                colour2_sw,
+                colour2_se,
+                colour2_ne,
+                colour2_nw,
+                texture,
+                underlay,
+                height_sw == height_se && height_sw == height_ne && height_sw == height_nw,
+            ));
+        } else {
+            tile.ground = Some(Box::new(Ground::new(
+                tile.x, tile.z, shape, rotation, texture, height_sw, height_se, height_ne,
+                height_nw, colour_sw, colour_se, colour_ne, colour_nw, colour2_sw, colour2_se,
+                colour2_ne, colour2_nw, overlay, underlay,
+            )));
         }
     }
 }

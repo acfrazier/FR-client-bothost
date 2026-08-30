@@ -9283,6 +9283,11 @@ impl Client {
         self.projectiles.clear();
         self.world.reset_map();
 
+        // Task 5 rule 6: build the render-only overlay meshes only when
+        // headed; an unheaded slot keeps the tile stamps and materializes
+        // on attach (the first paint consumes `overlay_pending`).
+        self.world.overlay_mesh = self.draw;
+
         for level in 0..BuildArea::LEVELS {
             self.collision[level as usize].reset();
         }

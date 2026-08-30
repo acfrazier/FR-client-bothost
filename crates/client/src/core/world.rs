@@ -25,10 +25,7 @@
 #![allow(clippy::manual_range_contains)]
 #![allow(clippy::too_many_arguments)]
 
-use crate::dash3d::TerrainOverlayShape;
-use crate::dash3d::{
-    Decor, Ground, GroundDecor, GroundObject, Occlude, QuickGround, Sprite, Square, Wall,
-};
+use crate::dash3d::{Decor, GroundDecor, GroundObject, GroundStamp, Occlude, Sprite, Square, Wall};
 
 pub const OCCLUDER_LEVELS: usize = 4;
 pub const MAX_OCCLUDERS: usize = 500;
@@ -90,6 +87,18 @@ pub struct World {
     /// (`render_all` consumes it via `take_share_light_pending`). A
     /// headless client never consumes it and never decodes a model.
     pub share_light_pending: bool,
+    /// `set_ground` mesh gate (rule 6 of the head design): when false, the
+    /// overlay `Ground`/`QuickGround` meshes are not built — unheaded slots
+    /// keep only the compact `Square.overlay_stamp` typecodes.
+    /// `Client::map_build` mirrors `Client.draw` here before `finish_build`.
+    /// Defaults true so direct `set_ground` callers (tests) build the mesh
+    /// as before.
+    pub overlay_mesh: bool,
+    /// Set by `ClientBuild::finish_build` next to `share_light_pending`;
+    /// the render side materializes the overlay meshes from the tile stamps
+    /// on its first frame after a build (`prepare_scene` consumes it via
+    /// `take_overlay_pending`). A headless client leaves it pending forever.
+    pub overlay_pending: bool,
 }
 
 impl World {
@@ -132,6 +141,8 @@ impl World {
             // constructor needs no reset (all grids are already empty).
             build_generation: 0,
             share_light_pending: false,
+            overlay_mesh: true,
+            overlay_pending: false,
         }
     }
 
@@ -282,48 +293,17 @@ impl World {
         let tile = &mut self.squares[level as usize][x as usize][z as usize];
         let Some(tile) = tile else { return };
 
-        if shape == TerrainOverlayShape::PLAIN {
-            tile.quick_ground = Some(QuickGround::new(
-                colour_sw,
-                colour_se,
-                colour_ne,
-                colour_nw,
-                -1,
-                overlay,
-                false,
-            ));
-        } else if shape == TerrainOverlayShape::DIAGONAL {
-            tile.quick_ground = Some(QuickGround::new(
-                colour2_sw,
-                colour2_se,
-                colour2_ne,
-                colour2_nw,
-                texture,
-                underlay,
-                height_sw == height_se && height_sw == height_ne && height_sw == height_nw,
-            ));
-        } else {
-            tile.ground = Some(Ground::new(
-                x,
-                z,
-                shape,
-                rotation,
-                texture,
-                height_sw,
-                height_se,
-                height_ne,
-                height_nw,
-                colour_sw,
-                colour_se,
-                colour_ne,
-                colour_nw,
-                colour2_sw,
-                colour2_se,
-                colour2_ne,
-                colour2_nw,
-                overlay,
-                underlay,
-            ));
+        // Rule 6 of the head design: the sim always records the overlay
+        // typecodes (`overlay_stamp`); the render-only mesh is built now
+        // only when headed. An unheaded build materializes it on attach.
+        let stamp = GroundStamp::new(
+            shape, rotation, texture, height_sw, height_se, height_ne, height_nw, colour_sw,
+            colour_se, colour_ne, colour_nw, colour2_sw, colour2_se, colour2_ne, colour2_nw,
+            overlay, underlay,
+        );
+        tile.overlay_stamp = Some(stamp);
+        if self.overlay_mesh {
+            stamp.apply_to(tile);
         }
     }
 
@@ -964,6 +944,37 @@ impl World {
         let pending = self.share_light_pending;
         self.share_light_pending = false;
         pending
+    }
+
+    /// The render side's pending overlay-materialize flag (set by
+    /// `finish_build`); consumed by the first `prepare_scene` after a
+    /// build, which then runs `materialize_overlay`.
+    pub fn take_overlay_pending(&mut self) -> bool {
+        let pending = self.overlay_pending;
+        self.overlay_pending = false;
+        pending
+    }
+
+    /// Materialize the render-only overlay meshes from the tile stamps
+    /// (`Square.overlay_stamp`) an unheaded `set_ground` recorded, so an
+    /// attached renderer paints the same overlay a headed build wrote.
+    /// Idempotent: tiles that already carry a mesh (headed build or an
+    /// earlier attach) are left alone, as are their pushed-down linked
+    /// squares (a `push_down` moves the old level-0 tile off the grid).
+    pub fn materialize_overlay(&mut self) {
+        for level in 0..self.max_tile_level {
+            for x in 0..self.max_tile_x {
+                for z in 0..self.max_tile_z {
+                    let mut cursor = self.squares[level as usize][x as usize][z as usize].as_mut();
+                    while let Some(tile) = cursor {
+                        if let Some(stamp) = tile.overlay_stamp {
+                            stamp.apply_to(tile);
+                        }
+                        cursor = tile.linked_square.as_mut();
+                    }
+                }
+            }
+        }
     }
 
     pub(crate) fn del_sprite(&mut self, index: usize) {

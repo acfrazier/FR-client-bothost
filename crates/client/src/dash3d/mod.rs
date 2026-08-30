@@ -61,6 +61,7 @@ pub use collision_map::{BuildArea, CollisionMap};
 pub use decor::Decor;
 pub use direction_flag::DirectionFlag;
 pub use ground::Ground;
+pub use ground::GroundStamp;
 pub use ground_decor::GroundDecor;
 pub use ground_object::GroundObject;
 pub use loc_angle::LocAngle;

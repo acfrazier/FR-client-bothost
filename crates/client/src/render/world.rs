@@ -2039,6 +2039,11 @@ impl RenderWorld {
             self.run_share_light(world, cache, loop_cycle);
             self.apply_share_light(world, 64, 768, -50, -10, -50);
         }
+        // Task 5 rule 6: an unheaded build recorded only the tile stamps;
+        // the first paint after the build materializes the overlay meshes.
+        if world.take_overlay_pending() {
+            world.materialize_overlay();
+        }
 
         if eye_x < 0 {
             eye_x = 0;
@@ -2451,7 +2456,7 @@ impl RenderWorld {
             .and_then(|ls| ls.quick_ground);
         let linked_ground = tile_at(&world.squares, level, tile_x, tile_z)
             .and_then(|t| t.linked_square.as_ref())
-            .and_then(|ls| ls.ground.clone());
+            .and_then(|ls| ls.ground.as_deref().cloned());
         let linked_wall = tile_at(&world.squares, level, tile_x, tile_z)
             .and_then(|t| t.linked_square.as_ref())
             .and_then(|ls| ls.wall.as_ref())
@@ -2492,8 +2497,8 @@ impl RenderWorld {
         let quick = tile_at(&world.squares, level, tile_x, tile_z).and_then(|t| t.quick_ground);
         if let Some(quick) = quick {
             emit_quick_ground(world, pix, mesh, cam, quick, original_level, tile_x, tile_z);
-        } else if let Some(ground) =
-            tile_at(&world.squares, level, tile_x, tile_z).and_then(|t| t.ground.clone())
+        } else if let Some(ground) = tile_at(&world.squares, level, tile_x, tile_z)
+            .and_then(|t| t.ground.as_deref().cloned())
         {
             emit_ground(world, pix, mesh, cam, ground, tile_x, tile_z);
         }
@@ -3174,7 +3179,7 @@ impl RenderWorld {
                 } else {
                     let linked_ground = tile_at(&world.squares, level, tile_x, tile_z)
                         .and_then(|t| t.linked_square.as_ref())
-                        .and_then(|ls| ls.ground.clone());
+                        .and_then(|ls| ls.ground.as_deref().cloned());
                     if let Some(ground) = linked_ground {
                         if !self.ground_occluded(world, 0, tile_x, tile_z) {
                             self.render_ground(
@@ -3264,7 +3269,7 @@ impl RenderWorld {
                     }
                 } else {
                     let ground = tile_at(&world.squares, level, tile_x, tile_z)
-                        .and_then(|t| t.ground.clone());
+                        .and_then(|t| t.ground.as_deref().cloned());
                     if let Some(ground) = ground {
                         if !self.ground_occluded(world, original_level, tile_x, tile_z) {
                             tile_drawn = true;

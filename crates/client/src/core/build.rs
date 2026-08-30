@@ -1438,6 +1438,12 @@ impl ClientBuild {
         // leaves the flag pending and never decodes a model.
         world.share_light_pending = true;
 
+        // Task 5 rule 6: the overlay meshes were only built when headed
+        // (`World.overlay_mesh`); the renderer materializes them from the
+        // tile stamps on its first frame after the build. A headless
+        // client leaves the flag pending and never pays the mesh.
+        world.overlay_pending = true;
+
         // TS 333-339: `LinkBelow` tiles are pushed down a level.
         for x in 0..BuildArea::SIZE {
             for z in 0..BuildArea::SIZE {
