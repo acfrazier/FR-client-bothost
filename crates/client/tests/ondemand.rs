@@ -89,6 +89,119 @@ fn two_handles_share_one_worker_on_the_same_port() {
     assert_eq!(OnDemand::live_workers_for(host, port), 0);
 }
 
+/// A sibling that never requested the file must not see it on loop_request
+/// (fan-out used to enqueue every Completed on every handle, including
+/// archive-93 map prefetches).
+#[test]
+fn sibling_does_not_complete_a_file_it_did_not_request() {
+    let _r = Renderer::new(false);
+    use std::io::Read;
+    use std::net::TcpListener;
+
+    let versionlist = tiny_versionlist();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let payload: &'static [u8] = b"midi bytes";
+    let server = thread::spawn(move || {
+        let (mut sock, _) = listener.accept().unwrap();
+        let mut b = [0u8; 1];
+        sock.read_exact(&mut b).unwrap();
+        sock.write_all(&[0; 8]).unwrap();
+        let mut req = [0u8; 4];
+        sock.read_exact(&mut req).unwrap();
+        let mut body = gz(payload);
+        body.extend_from_slice(&[0, 1]);
+        let len = body.len() as u16;
+        let mut chunk = vec![2, 0, 0, (len >> 8) as u8, len as u8, 0];
+        chunk.extend_from_slice(&body);
+        sock.write_all(&chunk).unwrap();
+    });
+
+    let mut asked = OnDemand::new(
+        &versionlist,
+        "127.0.0.1",
+        port,
+        "/tmp",
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    let mut idle = OnDemand::new(
+        &versionlist,
+        "127.0.0.1",
+        port,
+        "/tmp",
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    asked.request(2, 0);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut got_asked = false;
+    while Instant::now() < deadline {
+        asked.run(false);
+        idle.run(false);
+        if asked.loop_request().is_some() {
+            got_asked = true;
+        }
+        assert!(
+            idle.loop_request().is_none(),
+            "idle handle must not complete a file it never requested"
+        );
+        if got_asked {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    drop(asked);
+    drop(idle);
+    server.join().unwrap();
+    assert!(got_asked, "the requesting handle must still complete");
+}
+
+/// Title-screen and in-game slots share one worker flag: any in-game slot
+/// keeps keepalive on. A trailing run(false) must not clear it.
+#[test]
+fn hub_ingame_is_or_of_live_handles() {
+    let _r = Renderer::new(false);
+    let versionlist = tiny_versionlist();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let host = "127.0.0.1";
+    let mut title = OnDemand::new(
+        &versionlist,
+        host,
+        port,
+        "/tmp",
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    let mut game = OnDemand::new(
+        &versionlist,
+        host,
+        port,
+        "/tmp",
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    title.run(false);
+    game.run(true);
+    assert!(
+        OnDemand::hub_ingame_for(host, port),
+        "one in-game handle must keep hub ingame"
+    );
+    title.run(false);
+    assert!(
+        OnDemand::hub_ingame_for(host, port),
+        "a title-screen run(false) must not clear an in-game sibling"
+    );
+    game.run(false);
+    assert!(
+        !OnDemand::hub_ingame_for(host, port),
+        "hub ingame clears when no handle is in game"
+    );
+    drop(title);
+    drop(game);
+}
+
 /// Fifty slots requesting the same map must not open fifty update sockets.
 #[test]
 fn two_handles_dedupe_the_same_request_on_the_wire() {

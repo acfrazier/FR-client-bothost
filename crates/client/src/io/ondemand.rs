@@ -5,7 +5,7 @@
 //! owns the engine ondemand socket pump — a second connection to the game
 //! port, Java `Client.portOff + 43594` — and posts completed files back.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Read};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -116,12 +116,15 @@ enum WorkerMessage {
 /// `Client`s subscribe; they do not each open an update connection.
 struct OnDemandHub {
     cmd: mpsc::Sender<WorkerCommand>,
-    subs: Arc<Mutex<Vec<mpsc::Sender<WorkerMessage>>>>,
+    subs: Arc<Mutex<HashMap<u64, mpsc::Sender<WorkerMessage>>>>,
     clients: AtomicUsize,
+    ingame_n: AtomicUsize,
     running: Arc<AtomicBool>,
     ingame: Arc<AtomicBool>,
     handle: Mutex<Option<JoinHandle<()>>>,
 }
+
+static NEXT_SLOT: AtomicUsize = AtomicUsize::new(1);
 
 static HUBS: Mutex<Option<HashMap<(String, u16), Arc<OnDemandHub>>>> = Mutex::new(None);
 
@@ -175,6 +178,11 @@ pub struct OnDemand {
     worker_running: Arc<AtomicBool>,
     /// Hub this handle is subscribed to (`None` for `new_unconnected`).
     hub_key: Option<(String, u16)>,
+    slot_id: Option<u64>,
+    /// Files this handle `request`ed or prefetched; drain ignores Completeds
+    /// for files a sibling asked for (archive-93 map prefetches included).
+    want: HashSet<(i32, i32)>,
+    reported_ingame: bool,
 }
 
 /// The Java `OnDemand.run` loop + socket pump, one OS thread per OnDemand.
@@ -210,7 +218,7 @@ struct Worker {
     /// Some when the `main_file_cache` file store is present (Java
     /// `app.fileStreams[0] != null`).
     cache_dir: Option<String>,
-    subs: Arc<Mutex<Vec<mpsc::Sender<WorkerMessage>>>>,
+    subs: Arc<Mutex<HashMap<u64, mpsc::Sender<WorkerMessage>>>>,
     running: Arc<AtomicBool>,
     ingame: Arc<AtomicBool>,
 }
@@ -247,6 +255,9 @@ impl OnDemand {
             ingame: Arc::new(AtomicBool::new(false)),
             worker_running: Arc::new(AtomicBool::new(false)),
             hub_key: None,
+            slot_id: None,
+            want: HashSet::new(),
+            reported_ingame: false,
         }
     }
 
@@ -258,6 +269,15 @@ impl OnDemand {
             Some(m) if m.contains_key(&(host.to_string(), port)) => 1,
             _ => 0,
         }
+    }
+
+    /// Worker keepalive flag: true if any subscribed handle last `run` with
+    /// `ingame == true`.
+    pub fn hub_ingame_for(host: &str, port: u16) -> bool {
+        let map = hubs();
+        map.as_ref()
+            .and_then(|m| m.get(&(host.to_string(), port)))
+            .is_some_and(|h| h.ingame.load(Ordering::Relaxed))
     }
 
     /// Parse the version/crc/index tables from the versionlist jag and spawn
@@ -316,7 +336,7 @@ impl OnDemand {
         let anim_frame_index = read_raw_table(versionlist, "anim_index", 2, |buf| buf.g2());
         let midi_jingle = read_raw_table(versionlist, "midi_index", 1, |buf| buf.g1());
 
-        let (cmd, message_rx, worker_running, hub_ingame) =
+        let (cmd, message_rx, worker_running, hub_ingame, slot_id) =
             subscribe_hub(host, port, cache_dir, &versions, &crcs)?;
 
         let mut arena = Arena::new();
@@ -345,6 +365,9 @@ impl OnDemand {
             ingame: hub_ingame,
             worker_running,
             hub_key: Some((host.to_string(), port)),
+            slot_id: Some(slot_id),
+            want: HashSet::new(),
+            reported_ingame: false,
         })
     }
 
@@ -353,9 +376,6 @@ impl OnDemand {
     pub fn stop(&mut self) {
         self.running = false;
         self.detach_hub();
-        if self.hub_key.is_none() && self.tx.is_none() {
-            // new_unconnected
-        }
         if self.worker.is_some() {
             self.worker_running.store(false, Ordering::Relaxed);
             if let Some(tx) = &self.tx {
@@ -371,19 +391,40 @@ impl OnDemand {
         let Some(key) = self.hub_key.take() else {
             return;
         };
-        let mut guard = hubs();
-        let map = guard.get_or_insert_with(HashMap::new);
-        let Some(hub) = map.get(&key).cloned() else {
-            return;
-        };
-        let prev = hub.clients.fetch_sub(1, Ordering::Relaxed);
-        if prev == 1 {
-            hub.running.store(false, Ordering::Relaxed);
-            let _ = hub.cmd.send(WorkerCommand::Stop);
-            if let Some(handle) = hub.handle.lock().unwrap_or_else(|p| p.into_inner()).take() {
-                let _ = handle.join();
+        let slot_id = self.slot_id.take();
+        let clear_ingame = self.reported_ingame;
+        self.reported_ingame = false;
+        let join_handle;
+        {
+            let mut guard = hubs();
+            let map = guard.get_or_insert_with(HashMap::new);
+            let Some(hub) = map.get(&key).cloned() else {
+                return;
+            };
+            if let Some(id) = slot_id {
+                hub.subs
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .remove(&id);
             }
-            map.remove(&key);
+            if clear_ingame {
+                let prev = hub.ingame_n.fetch_sub(1, Ordering::Relaxed);
+                if prev == 1 {
+                    hub.ingame.store(false, Ordering::Relaxed);
+                }
+            }
+            let prev = hub.clients.fetch_sub(1, Ordering::Relaxed);
+            if prev == 1 {
+                hub.running.store(false, Ordering::Relaxed);
+                let _ = hub.cmd.send(WorkerCommand::Stop);
+                join_handle = hub.handle.lock().unwrap_or_else(|p| p.into_inner()).take();
+                map.remove(&key);
+            } else {
+                join_handle = None;
+            }
+        }
+        if let Some(handle) = join_handle {
+            let _ = handle.join();
         }
     }
 
@@ -558,6 +599,7 @@ impl OnDemand {
     /// which validates against the local cache before raising the priority
     /// (Java does the same read on its thread).
     pub fn prefetch_priority(&mut self, archive: i32, file: i32, priority: i32) {
+        self.want_file(archive, file);
         if let Some(tx) = &self.tx {
             let _ = tx.send(WorkerCommand::PrefetchPriority { archive, file, priority });
         }
@@ -572,6 +614,7 @@ impl OnDemand {
 
     /// `prefetch(archive, file)`.
     pub fn prefetch(&mut self, archive: i32, file: i32) {
+        self.want_file(archive, file);
         if let Some(tx) = &self.tx {
             let _ = tx.send(WorkerCommand::Prefetch { archive, file });
         }
@@ -587,6 +630,7 @@ impl OnDemand {
         if self.find_request_id(archive, file).is_some() {
             return;
         }
+        self.want_file(archive, file);
         let id = self.arena.alloc(OnDemandRequest::new(archive, file));
         self.requests.push(&mut self.arena, id);
         if let Some(tx) = &self.tx {
@@ -622,9 +666,42 @@ impl OnDemand {
         if !self.running {
             return;
         }
-        self.ingame.store(ingame, Ordering::Relaxed);
+        self.set_reported_ingame(ingame);
         self.cycle += 1;
         self.drain_worker();
+    }
+
+    fn want_file(&mut self, archive: i32, file: i32) {
+        self.want.insert((archive, file));
+        // Worker remaps non-urgent archive-3 completions to 93.
+        if archive == 3 {
+            self.want.insert((93, file));
+        }
+    }
+
+    fn set_reported_ingame(&mut self, ingame: bool) {
+        if self.hub_key.is_none() {
+            self.ingame.store(ingame, Ordering::Relaxed);
+            return;
+        }
+        if ingame == self.reported_ingame {
+            return;
+        }
+        self.reported_ingame = ingame;
+        let Some(key) = &self.hub_key else { return };
+        let guard = hubs();
+        let Some(hub) = guard.as_ref().and_then(|m| m.get(key)) else {
+            return;
+        };
+        if ingame {
+            hub.ingame_n.fetch_add(1, Ordering::Relaxed);
+            hub.ingame.store(true, Ordering::Relaxed);
+        } else {
+            let prev = hub.ingame_n.fetch_sub(1, Ordering::Relaxed);
+            if prev == 1 {
+                hub.ingame.store(false, Ordering::Relaxed);
+            }
+        }
     }
 
     fn valid_file(&self, archive: i32, file: i32) -> bool {
@@ -651,9 +728,9 @@ impl OnDemand {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 WorkerMessage::Completed { archive, file, urgent, data } => {
-                    // TS reuses the tracked request node when found; the
-                    // completed list here holds an owned copy so the payload
-                    // is independent of the requests arena.
+                    if !self.want.remove(&(archive, file)) {
+                        continue;
+                    }
                     let mut req = OnDemandRequest::new(archive, file);
                     req.urgent = urgent;
                     req.data = data.map(|d| (*d).clone());
@@ -690,8 +767,10 @@ fn subscribe_hub(
     mpsc::Receiver<WorkerMessage>,
     Arc<AtomicBool>,
     Arc<AtomicBool>,
+    u64,
 )> {
     let key = (host.to_string(), port);
+    let slot_id = NEXT_SLOT.fetch_add(1, Ordering::Relaxed) as u64;
     let (msg_tx, msg_rx) = mpsc::channel();
     let mut guard = hubs();
     let map = guard.get_or_insert_with(HashMap::new);
@@ -700,16 +779,19 @@ fn subscribe_hub(
         hub.subs
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .push(msg_tx);
+            .insert(slot_id, msg_tx);
         return Some((
             hub.cmd.clone(),
             msg_rx,
             hub.running.clone(),
             hub.ingame.clone(),
+            slot_id,
         ));
     }
     let (cmd_tx, cmd_rx) = mpsc::channel();
-    let subs = Arc::new(Mutex::new(vec![msg_tx]));
+    let mut first = HashMap::new();
+    first.insert(slot_id, msg_tx);
+    let subs = Arc::new(Mutex::new(first));
     let running = Arc::new(AtomicBool::new(true));
     let ingame = Arc::new(AtomicBool::new(false));
     let worker = Worker {
@@ -753,12 +835,13 @@ fn subscribe_hub(
         cmd: cmd_tx.clone(),
         subs,
         clients: AtomicUsize::new(1),
+        ingame_n: AtomicUsize::new(0),
         running: Arc::clone(&running),
         ingame: Arc::clone(&ingame),
         handle: Mutex::new(Some(handle)),
     });
     map.insert(key, hub);
-    Some((cmd_tx, msg_rx, running, ingame))
+    Some((cmd_tx, msg_rx, running, ingame, slot_id))
 }
 
 /// Worker thread body: Java `OnDemand.run` with the command channel drained
@@ -818,7 +901,7 @@ impl Worker {
 
     fn emit(&self, msg: WorkerMessage) {
         let mut subs = self.subs.lock().unwrap_or_else(|p| p.into_inner());
-        subs.retain(|s| s.send(msg.clone()).is_ok());
+        subs.retain(|_, s| s.send(msg.clone()).is_ok());
     }
 
     fn valid_file(&self, archive: i32, file: i32) -> bool {
