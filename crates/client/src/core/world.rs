@@ -173,13 +173,6 @@ impl World {
 
     pub fn fill_base_level(&mut self, level: i32) {
         self.min_level = level;
-
-        for stx in 0..self.max_tile_x {
-            for stz in 0..self.max_tile_z {
-                self.squares[level as usize][stx as usize][stz as usize] =
-                    Some(Box::new(Square::new(level, stx, stz)));
-            }
-        }
     }
 
     pub fn push_down(&mut self, stx: i32, stz: i32) {
@@ -1104,6 +1097,7 @@ pub(crate) fn ground_h(world: &World, level: i32, x: i32, z: i32) -> i32 {
 
 #[cfg(test)]
 mod size_tests {
+    use super::World;
     use crate::dash3d::Square;
 
     #[test]
@@ -1119,5 +1113,28 @@ mod size_tests {
             grid < 400_000,
             "boxed empty grid should be ~346 KB, got {grid}"
         );
+    }
+
+    #[test]
+    fn fill_base_level_does_not_materialize_empty_squares() {
+        let max_level = 1;
+        let max_tile_x = 104;
+        let max_tile_z = 104;
+        let groundh = vec![
+            vec![vec![0i32; max_tile_z as usize + 1]; max_tile_x as usize + 1];
+            max_level as usize
+        ];
+        let mut w = World::new(groundh, max_tile_z, max_level, max_tile_x);
+        w.fill_base_level(0);
+        let mut n = 0usize;
+        for x in 0..max_tile_x {
+            for z in 0..max_tile_z {
+                if w.square(0, x, z).is_some() {
+                    n += 1;
+                }
+            }
+        }
+        assert_eq!(n, 0, "empty plane must stay None holes, got {n}");
+        assert_eq!(w.min_level, 0);
     }
 }
