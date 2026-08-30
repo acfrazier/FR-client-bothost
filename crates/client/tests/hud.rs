@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use client::client::{Client, ClientConfig, ClientPlayer};
 use client::render::Renderer;
-use client::config::if_type::{ButtonType, ComponentType, IfType};
+use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::config::{ObjType, SeqType, VarpType};
 use client::graphics::{Colour, Pix2D, Pix8, PixMap};
 use client::io::{ClientProt, JagFile, Packet};
@@ -267,13 +267,17 @@ let mut r = Renderer::new(false);
     let text = IfType {
         id: 2,
         r#type: ComponentType::TYPE_TEXT,
+        font: 0,
+        ..IfType::default()
+    };
+    let text_mut = IfTypeMut {
         text: "Hi".into(),
         colour: 0xffffff,
-        font: 0, // p11
-        ..IfType::default()
+        ..IfTypeMut::default()
     };
     c.set_iface(1, layer);
     c.set_iface(2, text);
+    c.set_iface_mut(2, text_mut);
 
     let mut map = PixMap::new(100, 50);
     let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
@@ -299,9 +303,7 @@ let mut r = Renderer::new(false);
     c.ingame = true;
     r.game_draw(&mut c);
     assert!(
-        c.ifaces
-            .iter()
-            .flatten()
+        c.ifaces_merged()
             .any(|i| i.r#type == ComponentType::TYPE_GRAPHIC && !i.graphic_name.is_empty()),
         "the interface jag should hold a TYPE_GRAPHIC with a graphic_name"
     );
@@ -339,11 +341,15 @@ let mut r = Renderer::new(false);
     let graphic = IfType {
         id: 2,
         r#type: ComponentType::TYPE_GRAPHIC,
-        graphic_name: "miscgraphics,0".into(),
         ..IfType::default()
+    };
+    let graphic_mut = IfTypeMut {
+        graphic_name: "miscgraphics,0".into(),
+        ..IfTypeMut::default()
     };
     c.set_iface(1, layer);
     c.set_iface(2, graphic);
+    c.set_iface_mut(2, graphic_mut);
 
     let mut map = PixMap::new(190, 261);
     let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
@@ -387,12 +393,16 @@ let mut r = Renderer::new(false);
     let text = IfType {
         id: 2,
         r#type: ComponentType::TYPE_TEXT,
+        ..IfType::default()
+    };
+    let text_mut = IfTypeMut {
         text: "Logout".into(),
         colour: 0xffffff,
-        ..IfType::default()
+        ..IfTypeMut::default()
     };
     c.set_iface(1, layer);
     c.set_iface(2, text);
+    c.set_iface_mut(2, text_mut);
     c.side_icon[3] = 1;
     c.redraw_side = true;
     r.game_draw(&mut c);
@@ -806,7 +816,7 @@ let mut r = Renderer::new(false);
 }
 
 /// draw a single TYPE_TEXT child under a fixed layer; returns the pixmap.
-fn draw_text(mut c: &mut Client, r: &mut Renderer, text: &IfType) -> PixMap {
+fn draw_text(mut c: &mut Client, r: &mut Renderer, text: &IfType, m: &IfTypeMut) -> PixMap {
     let layer = IfType {
         id: 1,
         r#type: ComponentType::TYPE_LAYER,
@@ -819,6 +829,7 @@ fn draw_text(mut c: &mut Client, r: &mut Renderer, text: &IfType) -> PixMap {
     };
     c.set_iface(1, layer);
     c.set_iface(2, text.clone());
+    c.set_iface_mut(2, m.clone());
     let mut map = PixMap::new(100, 50);
     let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
     r.draw_interface(&mut c, 1, 0, 0, 0, &mut surface);
@@ -829,11 +840,17 @@ fn text_com(text: &str, scripts: Option<Vec<Vec<i32>>>) -> IfType {
     IfType {
         id: 2,
         r#type: ComponentType::TYPE_TEXT,
-        text: text.into(),
         scripts,
-        colour: 0xffffff,
         font: 0, // p11
         ..IfType::default()
+    }
+}
+
+fn text_com_mut(text: &str) -> IfTypeMut {
+    IfTypeMut {
+        text: text.into(),
+        colour: 0xffffff,
+        ..IfTypeMut::default()
     }
 }
 
@@ -843,11 +860,11 @@ let _r = Renderer::new(false);
     let r = Renderer::new(false);
     let mut c = client();
     c.stat_effective_level[0] = 12;
-    let com = IfType {
-        scripts: Some(vec![vec![1, 0, 0]]), // opcode 1 stat_effective, skill 0, halt
+    c.set_iface(9, IfType {
+                scripts: Some(vec![vec![1, 0, 0]]), // opcode 1 stat_effective, skill 0, halt
         ..IfType::default()
-    };
-    assert_eq!(r.get_if_var(&c, &com, 0), Some(12));
+    });
+    assert_eq!(r.get_if_var(&c, 9, 0), Some(12));
 }
 
 #[test]
@@ -856,35 +873,35 @@ let _r = Renderer::new(false);
     let r = Renderer::new(false);
     let mut c = client();
     c.var = vec![0, 0, 0, 42];
-    let com = IfType {
-        scripts: Some(vec![vec![5, 3, 0]]), // opcode 5 pushvar 3, halt
+    c.set_iface(9, IfType {
+                scripts: Some(vec![vec![5, 3, 0]]), // opcode 5 pushvar 3, halt
         ..IfType::default()
-    };
-    assert_eq!(r.get_if_var(&c, &com, 0), Some(42));
+    });
+    assert_eq!(r.get_if_var(&c, 9, 0), Some(42));
 }
 
 #[test]
 fn get_if_var_missing_scripts_is_none() {
 let _r = Renderer::new(false);
     let r = Renderer::new(false);
-    let c = client();
-    let com = IfType {
-        scripts: None,
+    let mut c = client();
+    c.set_iface(9, IfType {
+                scripts: None,
         ..IfType::default()
-    };
-    assert_eq!(r.get_if_var(&c, &com, 0), None);
+    });
+    assert_eq!(r.get_if_var(&c, 9, 0), None);
 }
 
 #[test]
 fn get_if_var_out_of_range_script_id_is_none() {
 let _r = Renderer::new(false);
     let r = Renderer::new(false);
-    let c = client();
-    let com = IfType {
-        scripts: Some(vec![vec![0]]),
+    let mut c = client();
+    c.set_iface(9, IfType {
+                scripts: Some(vec![vec![0]]),
         ..IfType::default()
-    };
-    assert_eq!(r.get_if_var(&c, &com, 1), None);
+    });
+    assert_eq!(r.get_if_var(&c, 9, 1), None);
 }
 
 #[test]
@@ -905,23 +922,23 @@ let mut r = Renderer::new(false);
     r.game_draw(&mut c); // loads the p11/p12/b12/q8 fonts from the title jag
     c.stat_effective_level[0] = 12;
 
-    let literal = draw_text(&mut c, &mut r, &text_com("%1", None));
-    let substituted = draw_text(&mut c, &mut r, &text_com("%1", Some(vec![vec![1, 0, 0]])));
+    let literal = draw_text(&mut c, &mut r, &text_com("%1", None), &text_com_mut("%1"));
+    let substituted = draw_text(&mut c, &mut r, &text_com("%1", Some(vec![vec![1, 0, 0]])), &text_com_mut("%1"));
     assert_ne!(
         substituted.pixels, literal.pixels,
         "a %1 script must substitute, not draw the literal text"
     );
     assert_eq!(
         substituted.pixels,
-        draw_text(&mut c, &mut r, &text_com("12", None)).pixels,
+        draw_text(&mut c, &mut r, &text_com("12", None), &text_com_mut("12")).pixels,
         "substituted %1 must render exactly like the literal value"
     );
 
     // inf: values >= 999_999_999 render as '*'
-    let star = draw_text(&mut c, &mut r, &text_com("%1", Some(vec![vec![20, 999_999_999, 0]])));
+    let star = draw_text(&mut c, &mut r, &text_com("%1", Some(vec![vec![20, 999_999_999, 0]])), &text_com_mut("%1"));
     assert_eq!(
         star.pixels,
-        draw_text(&mut c, &mut r, &text_com("*", None)).pixels,
+        draw_text(&mut c, &mut r, &text_com("*", None), &text_com_mut("*")).pixels,
         "a %1 of 999_999_999 must render as '*'"
     );
 }
@@ -931,13 +948,14 @@ let mut r = Renderer::new(false);
 // menu entry's `doAction` (IF_BUTTON/CLOSE/TOGGLE/SELECT/PAUSE arms).
 
 /// Bind `components` into the cache and `root` onto the active side tab (3).
-fn bind_side(c: &mut Client, root: i32, components: Vec<IfType>) {
+fn bind_side(c: &mut Client, root: i32, components: Vec<(IfType, IfTypeMut)>) {
     c.ingame = true;
     c.side_icon[3] = root;
     c.active_icon = 3;
-    for com in components {
+    for (com, m) in components {
         let id = com.id as usize;
         c.set_iface(id, com);
+        c.set_iface_mut(id, m);
     }
 }
 
@@ -990,18 +1008,23 @@ fn side_button(
     y: i32,
     width: i32,
     height: i32,
-) -> IfType {
-    IfType {
-        id,
-        r#type: ComponentType::TYPE_RECT,
-        button_type,
-        button_text: text.into(),
-        x,
-        y,
-        width,
-        height,
-        ..IfType::default()
-    }
+) -> (IfType, IfTypeMut) {
+    (
+        IfType {
+            id,
+            r#type: ComponentType::TYPE_RECT,
+            button_text: text.into(),
+            width,
+            height,
+            ..IfType::default()
+        },
+        IfTypeMut {
+            button_type,
+            x,
+            y,
+            ..IfTypeMut::default()
+        },
+    )
 }
 
 #[test]
@@ -1011,7 +1034,7 @@ let _r = Renderer::new(false);
     // the panel is blitted at (553, 205); a click at (560, 210) is local (7, 5)
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 20);
     let button = side_button(2, ButtonType::BUTTON_OK, "OK", 0, 0, 190, 20);
-    bind_side(&mut c, 1, vec![root, button]);
+    bind_side(&mut c, 1, vec![(root, IfTypeMut::default()), button]);
     click_side(&mut c, 560, 210);
     // random is None at Client::new, so p1_enc writes the plain opcode
     assert_eq!(out_bytes(&c), &[9, 0, 2]); // IF_BUTTON (id 9) + child 2 big-endian
@@ -1023,7 +1046,7 @@ let _r = Renderer::new(false);
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
     let button = side_button(2, ButtonType::BUTTON_CLOSE, "", 0, 0, 190, 20);
-    bind_side(&mut c, 1, vec![root, button]);
+    bind_side(&mut c, 1, vec![(root, IfTypeMut::default()), button]);
     click_side(&mut c, 560, 210);
     // CLOSE_MODAL (opcode 51, length 0): the opcode only, no p2 payload
     assert_eq!(out_bytes(&c), &[51]);
@@ -1036,7 +1059,7 @@ let _r = Renderer::new(false);
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
     let button = side_button(2, ButtonType::BUTTON_CLOSE, "", 0, 0, 190, 20);
-    bind_side(&mut c, 1, vec![root, button]);
+    bind_side(&mut c, 1, vec![(root, IfTypeMut::default()), button]);
     c.resumed_pause_button = true;
     click_side(&mut c, 560, 210);
     assert_eq!(c.side_modal_id, -1);
@@ -1051,15 +1074,18 @@ let _r = Renderer::new(false);
     let toggle = IfType {
         id: 2,
         r#type: ComponentType::TYPE_RECT,
-        button_type: ButtonType::BUTTON_TOGGLE,
         button_text: "Toggle".into(),
         width: 190,
         height: 20,
-        scripts: Some(vec![vec![5, 7, 0]]), // scripts[0][0] == 5: varp 7
+        scripts: Some(vec![vec![5, 7, 0]]),
         ..IfType::default()
     };
+    let toggle_mut = IfTypeMut {
+        button_type: ButtonType::BUTTON_TOGGLE,
+        ..IfTypeMut::default()
+    };
     c.var = vec![0, 0, 0, 0, 0, 0, 0, 1];
-    bind_side(&mut c, 1, vec![root, toggle]);
+    bind_side(&mut c, 1, vec![(root, IfTypeMut::default()), (toggle, toggle_mut)]);
     click_side(&mut c, 560, 210);
     assert_eq!(out_bytes(&c), &[9, 0, 2]);
     assert_eq!(c.var[7], 0);
@@ -1073,7 +1099,7 @@ let _r = Renderer::new(false);
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
     let toggle = side_button(2, ButtonType::BUTTON_TOGGLE, "Toggle", 0, 0, 190, 20);
     c.var = vec![1];
-    bind_side(&mut c, 1, vec![root, toggle]);
+    bind_side(&mut c, 1, vec![(root, IfTypeMut::default()), toggle]);
     click_side(&mut c, 560, 210);
     assert_eq!(out_bytes(&c), &[9, 0, 2]);
     assert_eq!(c.var, vec![1]);
@@ -1095,14 +1121,17 @@ let _r = Renderer::new(false);
     let toggle = IfType {
         id: 2,
         r#type: ComponentType::TYPE_RECT,
-        button_type: ButtonType::BUTTON_TOGGLE,
         button_text: "Music".into(),
         width: 190,
         height: 20,
-        scripts: Some(vec![vec![5, 0, 0]]), // varp 0
+        scripts: Some(vec![vec![5, 0, 0]]),
         ..IfType::default()
     };
-    bind_side(&mut c, 1, vec![root, toggle]);
+    let toggle_mut = IfTypeMut {
+        button_type: ButtonType::BUTTON_TOGGLE,
+        ..IfTypeMut::default()
+    };
+    bind_side(&mut c, 1, vec![(root, IfTypeMut::default()), (toggle, toggle_mut)]);
     click_side(&mut c, 560, 210);
     assert_eq!(out_bytes(&c), &[9, 0, 2]);
     assert_eq!(c.var[0], 0);
@@ -1118,7 +1147,6 @@ let _r = Renderer::new(false);
     let select = IfType {
         id: 2,
         r#type: ComponentType::TYPE_RECT,
-        button_type: ButtonType::BUTTON_SELECT,
         button_text: "Select".into(),
         width: 190,
         height: 20,
@@ -1126,8 +1154,12 @@ let _r = Renderer::new(false);
         script_operand: Some(vec![42]),
         ..IfType::default()
     };
+    let select_mut = IfTypeMut {
+        button_type: ButtonType::BUTTON_SELECT,
+        ..IfTypeMut::default()
+    };
     c.var = vec![0, 0, 0, 0, 0, 0, 0, 1];
-    bind_side(&mut c, 1, vec![root, select]);
+    bind_side(&mut c, 1, vec![(root, IfTypeMut::default()), (select, select_mut)]);
     c.redraw_side = false;
     click_side(&mut c, 560, 210);
     assert_eq!(out_bytes(&c), &[9, 0, 2]);
@@ -1150,7 +1182,7 @@ let _r = Renderer::new(false);
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
     let button = side_button(2, ButtonType::BUTTON_OK, "OK", 0, 0, 190, 20);
-    bind_side(&mut c, 1, vec![root, button]);
+    bind_side(&mut c, 1, vec![(root, IfTypeMut::default()), button]);
     // a right click opens the menu instead of pressing the button
     c.shell.mouse_x = 560;
     c.shell.mouse_y = 210;
@@ -1182,7 +1214,7 @@ let _r = Renderer::new(false);
         ..IfType::default()
     };
     let button = side_button(3, ButtonType::BUTTON_OK, "OK", 0, 0, 190, 20);
-    bind_side(&mut c, 1, vec![root, text, button]);
+    bind_side(&mut c, 1, vec![(root, IfTypeMut::default()), (text, IfTypeMut::default()), button]);
     click_side(&mut c, 560, 210);
     assert_eq!(out_bytes(&c), &[9, 0, 3]);
 }
@@ -1198,7 +1230,12 @@ let _r = Renderer::new(false);
     bind_side(
         &mut c,
         1,
-        vec![tab_root, tab_button, modal_root, modal_button],
+        vec![
+            (tab_root, IfTypeMut::default()),
+            tab_button,
+            (modal_root, IfTypeMut::default()),
+            modal_button,
+        ],
     );
     c.side_modal_id = 4;
     c.chat_modal_id = 9;
@@ -1224,15 +1261,18 @@ let _r = Renderer::new(false);
         r#type: ComponentType::TYPE_LAYER,
         width: 190,
         height: 100,
-        scroll_height: 120,
-        scroll_pos: 20,
         children: Some(vec![3]),
         child_x: Some(vec![0]),
         child_y: Some(vec![30]),
         ..IfType::default()
     };
+    let scroller_mut = IfTypeMut {
+        scroll_height: 120,
+        scroll_pos: 20,
+        ..IfTypeMut::default()
+    };
     let button = side_button(3, ButtonType::BUTTON_OK, "OK", 0, 0, 190, 20);
-    bind_side(&mut c, 1, vec![root, scroller, button]);
+    bind_side(&mut c, 1, vec![(root, IfTypeMut::default()), (scroller, scroller_mut), button]);
     click_side(&mut c, 558, 217); // local (5, 12)
     assert_eq!(out_bytes(&c), &[9, 0, 3]);
     c.out.pos = 0;
@@ -1260,9 +1300,7 @@ let mut r = Renderer::new(false);
     // the "Click here to logout" control: a BUTTON_OK text child of the
     // logout interface's root layer (id/offset come from the real pack)
     let Some(logout) = c
-        .ifaces
-        .iter()
-        .flatten()
+        .ifaces_merged()
         .find(|com| com.text == "Click here to logout")
     else {
         return; // pack layout changed; the hand-built tests still cover this
@@ -1272,11 +1310,7 @@ let mut r = Renderer::new(false);
     let layer_id = logout.layer_id;
     let (mut click_x, mut click_y) = (0, 0);
     let mut placed = false;
-    if let Some(layer) = c
-        .ifaces
-        .get(layer_id as usize)
-        .and_then(|o| o.as_ref())
-    {
+    if let Some(layer) = c.if_(layer_id as usize) {
         if let (Some(children), Some(child_x), Some(child_y)) =
             (&layer.children, &layer.child_x, &layer.child_y)
         {
@@ -1323,7 +1357,7 @@ let _r = Renderer::new(false);
         return;
     }
     let jag = JagFile::new(std::fs::read(format!("{cache}/interface")).unwrap());
-    let ifaces = IfType::unpack(&jag);
+    let (ifaces, _mut_template) = IfType::unpack(&jag);
     assert!(
         ifaces.iter().flatten().any(|c| c
             .inv_background_name
@@ -1356,11 +1390,13 @@ let _r = Renderer::new(false);
     c.scroll_cycle = 1;
     let mut com = IfType::default();
     com.r#type = ComponentType::TYPE_LAYER;
-    com.scroll_height = 200;
+    let mut com_mut = IfTypeMut::default();
+    com_mut.scroll_height = 200;
     com.height = 77;
-    com.scroll_pos = 40;
+    com_mut.scroll_pos = 40;
     com.width = 100;
     c.set_iface(0, com);
+    c.set_iface_mut(0, com_mut);
     // x,y inside the top 16×16 at left=463 top=0 → pass x=463 y=0
     c.do_scrollbar(463, 0, 200, 77, true, 463, 0, 0);
     assert_eq!(c.if_(0).unwrap().scroll_pos, 36); // - scroll_cycle*4
@@ -1432,11 +1468,13 @@ let mut r = Renderer::new(false);
     inv.r#type = ComponentType::TYPE_INV_TEXT;
     inv.width = 1;
     inv.height = 1;
-    inv.link_obj_type = Some(vec![1]); // obj id 0 + 1
-    inv.link_obj_number = Some(vec![1]);
-    inv.colour = 0xffffff;
+    let mut inv_mut = IfTypeMut::default();
+    inv_mut.link_obj_type = Some(vec![1]); // obj id 0 + 1
+    inv_mut.link_obj_number = Some(vec![1]);
+    inv_mut.colour = 0xffffff;
     c.set_iface(1, layer);
     c.set_iface(2, inv);
+    c.set_iface_mut(2, inv_mut);
     if c.cache.objs.is_empty() {
         return;
     }
@@ -1469,9 +1507,11 @@ let _r = Renderer::new(false);
     rect.fill = true;
     rect.width = 40;
     rect.height = 10;
-    rect.colour = 0x00ff00;
+    let mut rect_mut = IfTypeMut::default();
+    rect_mut.colour = 0x00ff00;
     c.set_iface(1, layer);
     c.set_iface(2, rect);
+    c.set_iface_mut(2, rect_mut);
     c.redraw_chat = true;
     r.game_draw(&mut c);
     let chat = r.area_chat.as_ref().expect("prepare_game allocates area_chat");
@@ -1525,9 +1565,11 @@ let mut r = Renderer::new(false);
     rect.fill = true;
     rect.width = 40;
     rect.height = 10;
-    rect.colour = 0x00ff00;
+    let mut rect_mut = IfTypeMut::default();
+    rect_mut.colour = 0x00ff00;
     c.set_iface(1, layer);
     c.set_iface(2, rect);
+    c.set_iface_mut(2, rect_mut);
     c.redraw_chat = true;
     r.game_draw(&mut c);
     let chat = r.area_chat.as_ref().unwrap();
@@ -1559,12 +1601,14 @@ let _r = Renderer::new(false);
     let mut btn = IfType::default();
     btn.id = 2;
     btn.r#type = ComponentType::TYPE_TEXT;
-    btn.button_type = ButtonType::BUTTON_OK;
+    let mut btn_mut = IfTypeMut::default();
+    btn_mut.button_type = ButtonType::BUTTON_OK;
     btn.button_text = "Continue".into();
     btn.width = 80;
     btn.height = 20;
     c.set_iface(1, layer);
     c.set_iface(2, btn);
+    c.set_iface_mut(2, btn_mut);
     // the menu path: build_minimenu pushes the button's IF_BUTTON option,
     // mouse_loop fires the last entry (build_minimenu needs the live
     // pointer at the click position)
@@ -1608,11 +1652,13 @@ let _r = Renderer::new(false);
     layer.child_y = Some(vec![0]);
     let mut model = IfType::default();
     model.r#type = ComponentType::TYPE_MODEL;
-    model.model_anim = 0;
-    model.anim_frame = 0;
-    model.anim_cycle = 0;
+    let mut model_mut = IfTypeMut::default();
+    model_mut.model_anim = 0;
+    model_mut.anim_frame = 0;
+    model_mut.anim_cycle = 0;
     c.set_iface(1, layer);
     c.set_iface(2, model);
+    c.set_iface_mut(2, model_mut);
     Arc::get_mut(&mut c.cache).unwrap().seqs.resize(1, SeqType::default());
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].num_frames = 2;
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].frames = Some(vec![0, 0]);
@@ -1636,11 +1682,13 @@ let _r = Renderer::new(false);
     inner.children = Some(vec![3]);
     let mut model = IfType::default();
     model.r#type = ComponentType::TYPE_MODEL;
-    model.anim_frame = 4;
-    model.anim_cycle = 9;
+    let mut model_mut = IfTypeMut::default();
+    model_mut.anim_frame = 4;
+    model_mut.anim_cycle = 9;
     c.set_iface(1, root);
     c.set_iface(2, inner);
     c.set_iface(3, model);
+    c.set_iface_mut(3, model_mut);
     c.if_anim_reset(1);
     assert_eq!(c.if_(3).unwrap().anim_frame, 0);
     assert_eq!(c.if_(3).unwrap().anim_cycle, 0);
@@ -1660,7 +1708,8 @@ let _r = Renderer::new(false);
     layer.child_y = Some(vec![0]);
     let mut model = IfType::default();
     model.r#type = ComponentType::TYPE_MODEL;
-    model.model_anim = 0;
+    let mut model_mut = IfTypeMut::default();
+    model_mut.model_anim = 0;
     let mut chat_layer = IfType::default();
     chat_layer.r#type = ComponentType::TYPE_LAYER;
     chat_layer.children = Some(vec![4]);
@@ -1668,11 +1717,14 @@ let _r = Renderer::new(false);
     chat_layer.child_y = Some(vec![0]);
     let mut chat_model = IfType::default();
     chat_model.r#type = ComponentType::TYPE_MODEL;
-    chat_model.model_anim = 0;
+    let mut chat_model_mut = IfTypeMut::default();
+    chat_model_mut.model_anim = 0;
     c.set_iface(1, layer);
     c.set_iface(2, model);
+    c.set_iface_mut(2, model_mut);
     c.set_iface(3, chat_layer);
     c.set_iface(4, chat_model);
+    c.set_iface_mut(4, chat_model_mut);
     Arc::get_mut(&mut c.cache).unwrap().seqs.resize(1, SeqType::default());
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].num_frames = 2;
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].frames = Some(vec![0, 0]);
@@ -1788,7 +1840,8 @@ let _r = Renderer::new(false);
     let mut layer = IfType::default();
     layer.id = 1;
     layer.r#type = ComponentType::TYPE_LAYER;
-    layer.hide = true;
+    let mut layer_mut = IfTypeMut::default();
+    layer_mut.hide = true;
     layer.width = 20;
     layer.height = 20;
     layer.children = Some(vec![2]);
@@ -1799,9 +1852,12 @@ let _r = Renderer::new(false);
     rect.fill = true;
     rect.width = 20;
     rect.height = 20;
-    rect.colour = 0x112233;
+    let mut rect_mut = IfTypeMut::default();
+    rect_mut.colour = 0x112233;
     c.set_iface(1, layer);
+    c.set_iface_mut(1, layer_mut);
     c.set_iface(2, rect);
+    c.set_iface_mut(2, rect_mut);
     let mut pixels = vec![0i32; 20 * 20];
     let mut surface = Pix2D::with_pixels(&mut pixels, 20, 20);
     r.draw_interface(&mut c, 1, 0, 0, 0, &mut surface);
@@ -1874,10 +1930,12 @@ let _r = Renderer::new(false);
     rect.fill = true;
     rect.width = 20;
     rect.height = 20;
-    rect.colour = 0x112233;
+    let mut rect_mut = IfTypeMut::default();
+    rect_mut.colour = 0x112233;
     rect.colour_over = 0xff0000;
     c.set_iface(1, layer);
     c.set_iface(2, rect);
+    c.set_iface_mut(2, rect_mut);
 
     let mut plain = vec![0i32; 20 * 20];
     let mut plain_surface = Pix2D::with_pixels(&mut plain, 20, 20);
@@ -1903,7 +1961,8 @@ let _r = Renderer::new(false);
     scroller.r#type = ComponentType::TYPE_LAYER;
     scroller.width = 100;
     scroller.height = 100;
-    scroller.scroll_height = 120;
+    let mut scroller_mut = IfTypeMut::default();
+    scroller_mut.scroll_height = 120;
     scroller.children = Some(vec![3]);
     scroller.child_x = Some(vec![0]);
     scroller.child_y = Some(vec![0]);
@@ -1914,6 +1973,7 @@ let _r = Renderer::new(false);
     button.height = 20;
     c.set_iface(1, root);
     c.set_iface(2, scroller);
+    c.set_iface_mut(2, scroller_mut);
     c.set_iface(3, button);
     // the scroller's scrollbar sits at left = 553 + 100 = 653, top =
     // 205 + 30 = 235; its down arrow is x 653..669, y 319..335.
@@ -1967,17 +2027,20 @@ let mut r = Renderer::new(false);
     let cont = IfType {
         id: 2,
         r#type: ComponentType::TYPE_TEXT,
+        font: 0,
+        ..IfType::default()
+    };
+    let cont_mut = IfTypeMut {
         text: "Hello".into(),
         button_type: ButtonType::BUTTON_CONTINUE,
         colour: 0xffffff,
-        font: 0, // p11
-        ..IfType::default()
+        ..IfTypeMut::default()
     };
     c.resumed_pause_button = true;
-    let waiting = draw_text(&mut c, &mut r, &cont);
+    let waiting = draw_text(&mut c, &mut r, &cont, &cont_mut);
     c.resumed_pause_button = false;
-    let plain = draw_text(&mut c, &mut r, &cont);
-    let literal = draw_text(&mut c, &mut r, &text_com("Please wait...", None));
+    let plain = draw_text(&mut c, &mut r, &cont, &cont_mut);
+    let literal = draw_text(&mut c, &mut r, &text_com("Please wait...", None), &text_com_mut("Please wait..."));
     assert_eq!(
         waiting.pixels, literal.pixels,
         "BUTTON_CONTINUE + resumed_pause_button must render 'Please wait...'"
@@ -2009,19 +2072,22 @@ let mut r = Renderer::new(false);
     let active = IfType {
         id: 2,
         r#type: ComponentType::TYPE_TEXT,
-        text: "Hello".into(),
         text2: "Over".into(),
-        colour: 0xffffff,
         colour2: 0xffffff,
-        font: 0, // p11
-        scripts: Some(vec![vec![0]]), // halt with acc 0
+        font: 0,
+        scripts: Some(vec![vec![0]]),
         script_comparator: Some(vec![1]),
         script_operand: Some(vec![0]),
         ..IfType::default()
     };
+    let active_mut = IfTypeMut {
+        text: "Hello".into(),
+        colour: 0xffffff,
+        ..IfTypeMut::default()
+    };
     assert_eq!(
-        draw_text(&mut c, &mut r, &active).pixels,
-        draw_text(&mut c, &mut r, &text_com("Over", None)).pixels,
+        draw_text(&mut c, &mut r, &active, &IfTypeMut::default()).pixels,
+        draw_text(&mut c, &mut r, &text_com("Over", None), &text_com_mut("Over")).pixels,
         "an active text must render text2, not text"
     );
 }
@@ -2031,14 +2097,14 @@ let mut r = Renderer::new(false);
 #[test]
 fn swap_slots_exchanges_type_and_count() {
 let _r = Renderer::new(false);
-    let mut com = IfType {
+    let mut com_mut = IfTypeMut {
         link_obj_type: Some(vec![10, 20]),
         link_obj_number: Some(vec![1, 5]),
-        ..IfType::default()
+        ..IfTypeMut::default()
     };
-    com.swap_slots(0, 1);
-    assert_eq!(com.link_obj_type.as_ref().unwrap(), &vec![20, 10]);
-    assert_eq!(com.link_obj_number.as_ref().unwrap(), &vec![5, 1]);
+    com_mut.swap_slots(0, 1);
+    assert_eq!(com_mut.link_obj_type.as_ref().unwrap(), &vec![20, 10]);
+    assert_eq!(com_mut.link_obj_number.as_ref().unwrap(), &vec![5, 1]);
 }
 
 #[test]
@@ -2065,12 +2131,16 @@ let _r = Renderer::new(false);
         height: 1,
         margin_x: 0,
         margin_y: 0,
+        ..IfType::default()
+    };
+    let inv_mut = IfTypeMut {
         link_obj_type: Some(vec![5, 0]),
         link_obj_number: Some(vec![1, 0]),
-        ..IfType::default()
+        ..IfTypeMut::default()
     };
     c.set_iface(1, layer);
     c.set_iface(2, inv);
+    c.set_iface_mut(2, inv_mut);
     // the slot holds obj id 5, so `build_minimenu` can name it for the
     // Examine entry (the drag-start target)
     if c.cache.objs.len() < 5 {
@@ -2141,12 +2211,16 @@ let _r = Renderer::new(false);
         height: 1,
         margin_x: 0,
         margin_y: 0,
+        ..IfType::default()
+    };
+    let inv_mut = IfTypeMut {
         link_obj_type: Some(vec![5, 0]),
         link_obj_number: Some(vec![1, 0]),
-        ..IfType::default()
+        ..IfTypeMut::default()
     };
     c.set_iface(1, layer);
     c.set_iface(2, inv);
+    c.set_iface_mut(2, inv_mut);
     // the slot holds obj id 5, so `build_minimenu` can name it for the
     // Examine entry (the drag-start target)
     if c.cache.objs.len() < 5 {

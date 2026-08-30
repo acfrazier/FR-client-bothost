@@ -31,9 +31,9 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::client::client::{level_experience, Client};
 use crate::client::client_build::random_float;
+use crate::config::if_type::{default_mut, ButtonType, ComponentType, IfTypeMut, IfTypeView};
 use crate::client::skill::Skill;
 use crate::client::title_flames::TitleFlames;
-use crate::config::if_type::{ButtonType, ComponentType, IfType};
 use crate::config::{Cache, ObjType};
 use crate::core::world::LevelHeightmaps;
 use crate::core::World;
@@ -2065,15 +2065,15 @@ impl Renderer {
             // TS 9926: `clientComponent(child)` fills the friend/ignore
             // text/button/scroll fields before the child plots.
             client.client_component(child_id as i32);
-            // Field-scoped borrows (overlay then shared decode): the TYPE_INV
-            // arm writes `client.obj_grab_y` mid-iteration, so the whole-
-            // client `if_()` borrow cannot span the arm.
-            let Some(child) = client
-                .ifaces_mut
-                .get(child_id)
-                .and_then(|o| o.as_deref())
-                .or_else(|| client.ifaces.get(child_id).and_then(|o| o.as_deref()))
-            else {
+            // Field-scoped view (shared decode + this client's overlay):
+            // the TYPE_INV arm writes `client.obj_grab_y` mid-iteration, so
+            // the whole-client `if_()` borrow cannot span the arm.
+            let base = client.ifaces.get(child_id).and_then(|o| o.as_deref());
+            let ov: &IfTypeMut = match client.ifaces_mut.get(child_id).and_then(|o| o.as_deref()) {
+                Some(ov) => ov,
+                None => default_mut(),
+            };
+            let Some(child) = base.map(|base| IfTypeView::new(base, ov)) else {
                 continue;
             };
             let child_x = child_x[i] + x + child.x;
@@ -2091,7 +2091,6 @@ impl Renderer {
                         scroll_pos = 0;
                     }
                     if scroll_pos != child.scroll_pos {
-                        client.ensure_iface_mut(child_id);
                         if let Some(c) = client.ifaces_mut.get_mut(child_id).and_then(|o| o.as_mut()) {
                             c.scroll_pos = scroll_pos;
                         }
@@ -2120,7 +2119,7 @@ impl Renderer {
                     let hovered = client.over_main_com_id == child.id
                         || client.over_side_com_id == child.id
                         || client.over_chat_com_id == child.id;
-                    let colour = if self.get_if_active(client, child) {
+                    let colour = if self.get_if_active(client, child.id) {
                         if hovered && child.colour2_over != 0 {
                             child.colour2_over
                         } else {
@@ -2159,8 +2158,8 @@ impl Renderer {
                     }
                 }
                 ComponentType::TYPE_TEXT => {
-                    let active = self.get_if_active(client, child);
-                    let mut text = child.text.clone();
+                    let active = self.get_if_active(client, child.id);
+                    let mut text = child.text.to_string();
                     // TS 10077-10098: hovered picks `colour_over`/
                     // `colour2_over`; an active text renders `text2`.
                     let hovered = client.over_main_com_id == child.id
@@ -2203,7 +2202,7 @@ impl Renderer {
                         for n in 0..5 {
                             let token = format!("%{}", n + 1);
                             while let Some(index) = text.find(token.as_str()) {
-                                let value = self.get_if_var(client, child, n).unwrap_or(-2);
+                                let value = self.get_if_var(client, child.id, n).unwrap_or(-2);
                                 text = format!(
                                     "{}{}{}",
                                     &text[..index],
@@ -2242,10 +2241,10 @@ impl Renderer {
                     // TS 10187-10190: `getIfActive` picks graphic2, else
                     // graphic.
                     let graphic_name =
-                        if self.get_if_active(client, child) && !child.graphic2_name.is_empty() {
-                            &child.graphic2_name
+                        if self.get_if_active(client, child.id) && !child.graphic2_name.is_empty() {
+                            child.graphic2_name.as_str()
                         } else {
-                            &child.graphic_name
+                            child.graphic_name
                         };
                     // "name,index" as unpacked from IfType.ts 251-262.
                     if let Some((name, index)) = graphic_name.rsplit_once(',') {
@@ -2508,7 +2507,6 @@ impl Renderer {
                     // Java Client.java 9944-9970 / TS 10200-10217: the 3D
                     // model centred on the component. Save/restore the
                     // raster origin; a missing/unloaded model skips.
-                    let child = child.clone();
                     let saved_origin_x = self.pix3d.origin_x;
                     let saved_origin_y = self.pix3d.origin_y;
                     self.pix3d.origin_x = child_x + child.width / 2;
@@ -2525,7 +2523,7 @@ impl Renderer {
                     let eye_y = sin_xan.wrapping_mul(child.model_zoom) >> 16;
                     let eye_z = cos_xan.wrapping_mul(child.model_zoom) >> 16;
 
-                    let active = self.get_if_active(client, &child);
+                    let active = self.get_if_active(client, child.id);
                     let model_anim = if active { child.model_anim2 } else { child.model_anim };
                     let local_player = client.local_player.as_ref();
                     let model = if model_anim == -1 {
@@ -2572,7 +2570,6 @@ impl Renderer {
 
         // write back the drag-autoscrolled layer scroll (TS 9990-10017).
         if layer_scroll != base_scroll {
-            client.ensure_iface_mut(com_id as usize);
             if let Some(c) = client.ifaces_mut.get_mut(com_id as usize).and_then(|o| o.as_mut()) {
                 c.scroll_pos = layer_scroll;
             }
@@ -2639,7 +2636,10 @@ impl Renderer {
     /// through `get_if_var`; a component without scripts reads inactive.
     /// `pub(crate)` so `client.rs`'s `animate_interface` can select the
     /// active model anim.
-    pub(crate) fn get_if_active(&self, client: &Client, com: &IfType) -> bool {
+    pub(crate) fn get_if_active(&self, client: &Client, com_id: i32) -> bool {
+        let Some(com) = client.if_(com_id as usize) else {
+            return false;
+        };
         let Some(comparator) = &com.script_comparator else {
             return false;
         };
@@ -2647,7 +2647,7 @@ impl Renderer {
             return false;
         };
         for i in 0..comparator.len() {
-            let Some(value) = self.get_if_var(client, com, i as i32) else {
+            let Some(value) = self.get_if_var(client, com_id, i as i32) else {
                 return false;
             };
             match comparator[i] {
@@ -2681,7 +2681,8 @@ impl Renderer {
     /// TS `-2` (no scripts / script id out of range), which keeps
     /// `get_if_active` treating such components as inactive; malformed
     /// scripts map to TS `-1` (the catch).
-    pub fn get_if_var(&self, client: &Client, com: &IfType, script_id: i32) -> Option<i32> {
+    pub fn get_if_var(&self, client: &Client, com_id: i32, script_id: i32) -> Option<i32> {
+        let com = client.if_(com_id as usize)?;
         let scripts = com.scripts.as_ref()?;
         if script_id < 0 || script_id as usize >= scripts.len() {
             return None;
@@ -4006,26 +4007,34 @@ impl Renderer {
             if child_id == -1 {
                 break;
             }
+            // Copy the fields the recursion/write-back needs, so the view
+            // borrow ends before the recursive `&mut client` calls (the
+            // old code cloned the whole component for the same reason).
             let Some(child) = client.if_(child_id as usize) else {
                 break;
             };
-            let child = child.clone();
-            if child.r#type == ComponentType::TYPE_LAYER {
-                updated |= self.animate_interface(client, child.id, delta);
+            let is_layer = child.r#type == ComponentType::TYPE_LAYER;
+            let is_model = child.r#type == ComponentType::TYPE_MODEL;
+            let model_anim = child.model_anim;
+            let model_anim2 = child.model_anim2;
+            let mut anim_cycle = child.anim_cycle + delta;
+            let mut anim_frame = child.anim_frame;
+            let active = if is_model && (model_anim != -1 || model_anim2 != -1) {
+                self.get_if_active(client, child_id)
+            } else {
+                false
+            };
+            if is_layer {
+                updated |= self.animate_interface(client, child_id, delta);
             }
 
-            if child.r#type == ComponentType::TYPE_MODEL
-                && (child.model_anim != -1 || child.model_anim2 != -1)
-            {
-                let active = self.get_if_active(client, &child);
-                let seq_id = if active { child.model_anim2 } else { child.model_anim };
+            if is_model && (model_anim != -1 || model_anim2 != -1) {
+                let seq_id = if active { model_anim2 } else { model_anim };
                 if seq_id != -1 && (seq_id as usize) < client.cache.seqs.len() {
                     let seq = &client.cache.seqs[seq_id as usize];
                     // TS 10569: `animCycle += delta` accumulates even when
                     // no frame advances; the cycle/frame write-back below is
                     // the in-place mutation of the TS `child`.
-                    let mut anim_cycle = child.anim_cycle + delta;
-                    let mut anim_frame = child.anim_frame;
                     let mut advanced = false;
                     while anim_cycle > seq.get_delay(anim_frame) {
                         anim_cycle -= seq.get_delay(anim_frame) + 1;
@@ -4038,7 +4047,6 @@ impl Renderer {
                         }
                         advanced = true;
                     }
-                    client.ensure_iface_mut(child_id as usize);
                     if let Some(com) = client.ifaces_mut
                         .get_mut(child_id as usize)
                         .and_then(|o| o.as_mut())

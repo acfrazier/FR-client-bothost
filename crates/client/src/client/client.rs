@@ -27,7 +27,9 @@ use crate::client::game_shell::GameShell;
 use crate::client::login_error::LoginError;
 use crate::client::mini_menu_action::MiniMenuAction;
 use crate::client::skill::Skill;
-use crate::config::if_type::{ButtonType, ComponentType, IfType};
+use crate::config::if_type::{
+    default_mut, ButtonType, ComponentType, IfType, IfTypeMut, IfTypeOwned, IfTypeView,
+};
 use crate::config::seq_type::{RESTART_RESET, RESTART_RESETLOOP};
 use crate::config::{Cache, ObjType};
 use crate::core::world::LevelHeightmaps;
@@ -287,14 +289,13 @@ pub struct Client {
     /// Interface components (`IfType` decode: type, scripts, children,
     /// names, colours, model ids), unpacked from the `interface` jag.
     /// Shared by every client via `Arc` — the host unpacks once per
-    /// `cache_dir` and fifty slots point at the same table. Immutable:
-    /// per-client mutations materialize a copy in `ifaces_mut`.
+    /// `cache_dir` and fifty slots point at the same immutable table.
     pub ifaces: Arc<Vec<Option<Box<IfType>>>>,
-    /// Per-client copy-on-write overlay over `ifaces`: a slot is copied
-    /// here the first time this client mutates it (`ensure_iface_mut` /
-    /// `iface_mut`), so `if_` sees this client's live hide/scroll/anim/
-    /// inv state while untouched slots stay on the shared decode.
-    pub ifaces_mut: Vec<Option<Box<IfType>>>,
+    /// The per-client mutable overlay: one small dense `IfTypeMut` per
+    /// slot (hide, scroll, anim frames, inv slot arrays, live text,
+    /// `IF_SET*` writes). Built from the unpack template, so touching a
+    /// slot never copies the decode's scripts/children/strings.
+    pub ifaces_mut: Vec<Option<Box<IfTypeMut>>>,
     /// True when the cache was injected already-unpacked via `from_shared`
     /// (host-side `load_cache`). `maininit` skips its `load_cache` re-unpack
     /// so the shared `Arc<Cache>` survives; `Client::new` stays false and
@@ -642,7 +643,7 @@ pub struct Client {
     /// `chatInterface` from client-ts (480): the synthetic IfType the chat
     /// scrollbar reads/writes (not in the jag), synced to the chat scroll
     /// state by `game_draw`/`draw_chat`.
-    pub chat_interface: IfType,
+    pub chat_interface: IfTypeMut,
     /// Scrollbar input state (`scrollGrabbed`/`scrollInputPadding`/
     /// `scrollCycle` from client-ts 338-340): `scroll_grabbed` widens the
     /// track hit area to 32 px while held, and `scroll_cycle` is the
@@ -836,25 +837,34 @@ impl Client {
         // to files for tests without a web server.
         let jag_checksum = Self::get_jag_checksums(&config.host, 80)
             .unwrap_or_else(|_| Self::read_jag_checksums(&config.cache_dir));
-        let (cache, ifaces, error_loading) = match Self::load_cache(&config.cache_dir) {
-            Ok((cache, ifaces)) => (cache, ifaces, false),
-            Err(()) => (Cache::default(), Vec::new(), true),
+        let (cache, ifaces, ifaces_mut, error_loading) = match Self::load_cache(&config.cache_dir) {
+            Ok((cache, ifaces, ifaces_mut)) => (cache, ifaces, ifaces_mut, false),
+            Err(()) => (Cache::default(), Vec::new(), Vec::new(), true),
         };
-        Self::construct(config, Arc::new(cache), Arc::new(ifaces), error_loading, jag_checksum)
+        Self::construct(
+            config,
+            Arc::new(cache),
+            Arc::new(ifaces),
+            ifaces_mut,
+            error_loading,
+            jag_checksum,
+        )
     }
 
-    /// Host construct: inject a process-wide `Arc<Cache>` and the shared
-    /// iface decode `Arc`. Skips `load_cache` and the `/crc` probe; the
-    /// host unpacks once per `cache_dir` and every client short-circuits
-    /// the `maininit` re-unpack via `cache_from_shared`. `error_loading`
-    /// is false so `mainloop` is not a no-op after a successful inject.
+    /// Host construct: inject a process-wide `Arc<Cache>`, the shared
+    /// iface decode `Arc` and the per-client mut-overlay template. Skips
+    /// `load_cache` and the `/crc` probe; the host unpacks once per
+    /// `cache_dir` and every client short-circuits the `maininit` re-unpack
+    /// via `cache_from_shared`. `error_loading` is false so `mainloop` is
+    /// not a no-op after a successful inject.
     pub fn from_shared(
         config: ClientConfig,
         cache: Arc<Cache>,
         ifaces: Arc<Vec<Option<Box<IfType>>>>,
+        ifaces_mut: Vec<Option<Box<IfTypeMut>>>,
     ) -> Self {
         let jag_checksum = Self::read_jag_checksums(&config.cache_dir);
-        let mut client = Self::construct(config, cache, ifaces, false, jag_checksum);
+        let mut client = Self::construct(config, cache, ifaces, ifaces_mut, false, jag_checksum);
         client.cache_from_shared = true;
         client
     }
@@ -863,6 +873,7 @@ impl Client {
         config: ClientConfig,
         cache: Arc<Cache>,
         ifaces: Arc<Vec<Option<Box<IfType>>>>,
+        ifaces_mut: Vec<Option<Box<IfTypeMut>>>,
         error_loading: bool,
         jag_checksum: [i32; 9],
     ) -> Self {
@@ -880,7 +891,7 @@ impl Client {
             config,
             cache,
             ifaces,
-            ifaces_mut: Vec::new(),
+            ifaces_mut,
             cache_from_shared: false,
 
             ingame: false,
@@ -1081,7 +1092,7 @@ impl Client {
             pick_typecodes: vec![0; 1000],
             pending_brightness: None,
             tex_average: [0; 50],
-            chat_interface: IfType::default(),
+            chat_interface: IfTypeMut::default(),
             scroll_grabbed: false,
             scroll_input_padding: 0,
             scroll_cycle: 0,
@@ -1183,53 +1194,55 @@ impl Client {
         client
     }
 
-    /// Interface component by id (the old `Cache::if_`), combined view:
-    /// this client's `ifaces_mut` overlay when the slot was mutated here,
-    /// else the shared decode. Read-only; see [`Client::iface_mut`] for
-    /// per-client mutation.
-    pub fn if_(&self, id: usize) -> Option<&IfType> {
-        self.ifaces_mut
-            .get(id)
-            .and_then(|o| o.as_deref())
-            .or_else(|| self.ifaces.get(id).and_then(|o| o.as_deref()))
+    /// Interface component by id (the old `Cache::if_`), as the combined
+    /// view: the shared decode (`Deref` fields) plus this client's
+    /// `IfTypeMut` overlay (hide/scroll/anim/inv/text/`IF_SET*` values).
+    pub fn if_(&self, id: usize) -> Option<IfTypeView<'_>> {
+        let base = self.ifaces.get(id).and_then(|o| o.as_deref())?;
+        let ov: &IfTypeMut = match self.ifaces_mut.get(id).and_then(|o| o.as_deref()) {
+            Some(ov) => ov,
+            None => default_mut(),
+        };
+        Some(IfTypeView::new(base, ov))
     }
 
-    /// Materialize slot `id` into this client's `ifaces_mut` overlay (the
-    /// shared decode is immutable), so the caller can mutate it without
-    /// touching the decode other clients see. A no-op for ids the shared
-    /// decode does not have. Borrows only the overlay field, so callers
-    /// may keep reading other `self` state while the returned borrow
-    /// lives; use the [`Client::ifaces_mut`] field for the `&mut` itself.
-    pub fn ensure_iface_mut(&mut self, id: usize) {
+    /// Mutable interface component by id, from this client's dense
+    /// `IfTypeMut` overlay (never the shared decode, so `hide` on A never
+    /// reaches B). Missing slots get a default overlay (test seeding).
+    /// Holds `&mut self`, so prefer `self.ifaces_mut.get_mut(id)` inside
+    /// code that also reads other `self` state.
+    pub fn iface_mut(&mut self, id: usize) -> Option<&mut IfTypeMut> {
         if self.ifaces_mut.len() <= id {
             self.ifaces_mut.resize(id + 1, None);
         }
         if self.ifaces_mut[id].is_none() {
-            self.ifaces_mut[id] = self.ifaces.get(id).and_then(|o| o.clone());
+            self.ifaces_mut[id] = Some(Box::new(IfTypeMut::default()));
         }
-    }
-
-    /// Mutable interface component by id: the shared decode is copied
-    /// into this client's overlay on first mutation (`hide` on A never
-    /// reaches B). Holds `&mut self`, so prefer `ensure_iface_mut` +
-    /// `self.ifaces_mut.get_mut(id)` inside code that also reads other
-    /// `self` state.
-    pub fn iface_mut(&mut self, id: usize) -> Option<&mut IfType> {
-        self.ensure_iface_mut(id);
         self.ifaces_mut[id].as_deref_mut()
     }
 
-    /// Seed/test helper: place `com` at `id` in this client's overlay
-    /// (the shared decode is immutable); `if_` reads it back.
+    /// Seed/test helper: place the decode part of `com` at `id` and a
+    /// default `IfTypeMut` beside it. Only valid for a client that owns
+    /// its table (tests — `Client::new`); the shared decode is immutable
+    /// once several clients share the `Arc`.
     pub fn set_iface(&mut self, id: usize, com: IfType) {
+        if self.ifaces.len() <= id {
+            Arc::make_mut(&mut self.ifaces).resize(id + 1, None);
+        }
+        Arc::make_mut(&mut self.ifaces)[id] = Some(Box::new(com));
+        self.set_iface_mut(id, IfTypeMut::default());
+    }
+
+    /// Seed/test helper: put `m` at `id` in this client's overlay.
+    pub fn set_iface_mut(&mut self, id: usize, m: IfTypeMut) {
         if self.ifaces_mut.len() <= id {
             self.ifaces_mut.resize(id + 1, None);
         }
-        self.ifaces_mut[id] = Some(Box::new(com));
+        self.ifaces_mut[id] = Some(Box::new(m));
     }
 
-    /// Seed/test helper: append `com` to this client's overlay, returning
-    /// the id it landed on (the shared decode is immutable).
+    /// Seed/test helper: append the decode part of `com` (and a default
+    /// overlay) at the next free id.
     pub fn push_iface(&mut self, com: IfType) -> usize {
         let id = self.ifaces_mut.len();
         self.set_iface(id, com);
@@ -1237,11 +1250,11 @@ impl Client {
     }
 
     /// The id of the first component satisfying `pred` in the combined
-    /// view (overlay first, shared decode for untouched slots), in id
-    /// order including holes — the old `ifaces.iter().position(...)`.
+    /// view, in id order including holes — the old
+    /// `ifaces.iter().position(...)`.
     pub fn iface_id(&self, pred: impl Fn(&IfType) -> bool) -> Option<usize> {
-        let n = self.ifaces.len().max(self.ifaces_mut.len());
-        (0..n).find(|&id| self.if_(id).is_some_and(&pred))
+        let n = self.ifaces_len();
+        (0..n).find(|&id| self.if_(id).is_some_and(|v| pred(&v)))
     }
 
     /// The combined component count (max of overlay and shared decode),
@@ -1252,7 +1265,7 @@ impl Client {
 
     /// Every component in the combined view, in id order (the old
     /// `ifaces.iter().flatten()` walk over the per-client copy).
-    pub fn ifaces_merged(&self) -> impl Iterator<Item = &IfType> {
+    pub fn ifaces_merged(&self) -> impl Iterator<Item = IfTypeView<'_>> {
         let n = self.ifaces_len();
         (0..n).filter_map(|id| self.if_(id))
     }
@@ -1278,31 +1291,35 @@ impl Client {
     }
 
     /// Unpack `config` (and `interface` when present) from `cache_dir`,
-    /// returning the shared `Cache` tables and the iface decode (`Client`
-    /// wraps the latter in the shared `Arc`). An empty dir (tests, no
-    /// pack) yields `Cache::default()` with empty ifaces. A real cache
-    /// missing the required `config` jag — or one whose
-    /// bytes are not a valid jag (dummy test files) — is `Err`, which
-    /// becomes `errorLoading`.
-    fn load_cache(cache_dir: &str) -> Result<(Cache, Vec<Option<Box<IfType>>>), ()> {
+    /// returning the shared `Cache` tables, the iface decode (`Client`
+    /// wraps the latter in the shared `Arc`) and the per-client
+    /// mut-overlay template. An empty dir (tests, no pack) yields
+    /// `Cache::default()` with empty ifaces. A real cache missing the
+    /// required `config` jag — or one whose bytes are not a valid jag
+    /// (dummy test files) — is `Err`, which becomes `errorLoading`.
+    fn load_cache(
+        cache_dir: &str,
+    ) -> Result<(Cache, Vec<Option<Box<IfType>>>, Vec<Option<Box<IfTypeMut>>>), ()> {
         let cache_present = JAG_FILES
             .iter()
             .any(|name| Path::new(&format!("{cache_dir}/{name}")).is_file());
         if !cache_present {
-            return Ok((Cache::default(), Vec::new()));
+            return Ok((Cache::default(), Vec::new(), Vec::new()));
         }
         let bytes = std::fs::read(format!("{cache_dir}/config")).map_err(|_| ())?;
         let cache = catch_unwind(AssertUnwindSafe(|| Cache::unpack(&JagFile::new(bytes))))
             .map_err(|_| ())?;
         let mut ifaces = Vec::new();
+        let mut ifaces_mut = Vec::new();
         if let Ok(iface_bytes) = std::fs::read(format!("{cache_dir}/interface")) {
-            if let Ok(unpacked) = catch_unwind(AssertUnwindSafe(|| {
+            if let Ok((unpacked, unpacked_mut)) = catch_unwind(AssertUnwindSafe(|| {
                 IfType::unpack(&JagFile::new(iface_bytes))
             })) {
                 ifaces = unpacked;
+                ifaces_mut = unpacked_mut;
             }
         }
-        Ok((cache, ifaces))
+        Ok((cache, ifaces, ifaces_mut))
     }
 
     /// HTTP/1.0 `GET {path}` returning the response body, headers split on
@@ -1528,10 +1545,10 @@ impl Client {
         // intentional and must not be skipped.
         if !self.cache_from_shared {
             match Self::load_cache(&self.config.cache_dir) {
-                Ok((cache, ifaces)) => {
+                Ok((cache, ifaces, ifaces_mut)) => {
                     self.cache = Arc::new(cache);
                     self.ifaces = Arc::new(ifaces);
-                    self.ifaces_mut.clear();
+                    self.ifaces_mut = ifaces_mut;
                 }
                 Err(()) => {
                     self.error_loading = true;
@@ -2765,16 +2782,12 @@ impl Client {
 
         if action == MiniMenuAction::TGT_BUTTON {
             // TS 9024-9050: target mode for the spell, `targetOp` from the
-            // verb prefix/suffix and base; returns before the wipe.
-            let com = self.if_(c as usize).cloned();
-            self.target_mode = 1;
-            self.target_com_id = c;
-            self.target_mask = com.as_ref().map(|com| com.target_mask).unwrap_or(0);
-            self.use_mode = 0;
-            self.redraw_side = true;
-
-            let (prefix, suffix) = com
-                .as_ref()
+            // verb prefix/suffix and base; returns before the wipe. The
+            // reads run before the stores below (a view borrows the whole
+            // client).
+            let target_mask = self.if_(c as usize).map(|com| com.target_mask).unwrap_or(0);
+            let (prefix, suffix) = self
+                .if_(c as usize)
                 .map(|com| {
                     let verb = com.target_verb.clone();
                     match verb.find(' ') {
@@ -2783,10 +2796,15 @@ impl Client {
                     }
                 })
                 .unwrap_or_default();
-            let base = com
-                .as_ref()
-                .map(|com| com.target_base.as_str())
-                .unwrap_or("");
+            let base = self
+                .if_(c as usize)
+                .map(|com| com.target_base.clone())
+                .unwrap_or_default();
+            self.target_mode = 1;
+            self.target_com_id = c;
+            self.target_mask = target_mask;
+            self.use_mode = 0;
+            self.redraw_side = true;
             self.target_op = format!("{prefix} {base} {suffix}");
 
             if self.target_mask == 0x10 {
@@ -2859,12 +2877,10 @@ impl Client {
             // prompt (social), arm a timer (logout) or cycle the design
             // kit; the logout/accept-design arms return `true` so the
             // click is sent, everything else returns `false`.
-            let com = self.if_(c as usize).cloned();
+            let client_code = self.if_(c as usize).map(|com| com.client_code).unwrap_or(-1);
             let mut notify = true;
-            if let Some(com) = &com {
-                if com.client_code > 0 {
-                    notify = self.client_button(com);
-                }
+            if client_code > 0 {
+                notify = self.client_button(c);
             }
             if notify {
                 self.out.p1_enc(ClientProt::IF_BUTTON.id);
@@ -2875,17 +2891,19 @@ impl Client {
         if action == MiniMenuAction::TOGGLE_BUTTON {
             self.out.p1_enc(ClientProt::IF_BUTTON.id);
             self.out.p2(c);
-            let com = self.if_(c as usize).cloned();
-            if let Some(com) = com {
+            // An owned script copy: the varp writes below need `&mut self`
+            // while the script is read (the view borrow would conflict).
+            let script = self
+                .if_(c as usize)
+                .and_then(|com| com.scripts.as_ref().and_then(|s| s.first()).cloned());
+            if let Some(script) = script {
                 // TS 9163-9169: scripts[0][0] == 5 flips varp scripts[0][1].
-                if let Some(script) = com.scripts.as_ref().and_then(|s| s.first()) {
-                    if script.first() == Some(&5) {
-                        let varp = script.get(1).copied().unwrap_or(0);
-                        let current = self.var.get(varp as usize).copied().unwrap_or(0);
-                        grow_write(&mut self.var, varp, 1 - current);
-                        self.client_var(varp);
-                        self.redraw_side = true;
-                    }
+                if script.first() == Some(&5) {
+                    let varp = script.get(1).copied().unwrap_or(0);
+                    let current = self.var.get(varp as usize).copied().unwrap_or(0);
+                    grow_write(&mut self.var, varp, 1 - current);
+                    self.client_var(varp);
+                    self.redraw_side = true;
                 }
             }
         }
@@ -2893,21 +2911,22 @@ impl Client {
         if action == MiniMenuAction::SELECT_BUTTON {
             self.out.p1_enc(ClientProt::IF_BUTTON.id);
             self.out.p2(c);
-            let com = self.if_(c as usize).cloned();
-            if let Some(com) = com {
+            let script = self
+                .if_(c as usize)
+                .and_then(|com| com.scripts.as_ref().and_then(|s| s.first()).cloned());
+            let operand = self
+                .if_(c as usize)
+                .and_then(|com| com.script_operand.as_ref().and_then(|o| o.first()).copied());
+            if let Some(script) = script {
                 // TS 9172-9183: scripts[0][0] == 5 sets varp scripts[0][1]
                 // to scriptOperand[0] when it differs.
-                if let Some(script) = com.scripts.as_ref().and_then(|s| s.first()) {
-                    if script.first() == Some(&5) {
-                        let varp = script.get(1).copied().unwrap_or(0);
-                        if let Some(operand) =
-                            com.script_operand.as_ref().and_then(|o| o.first()).copied()
-                        {
-                            if self.var.get(varp as usize).copied() != Some(operand) {
-                                grow_write(&mut self.var, varp, operand);
-                                self.client_var(varp);
-                                self.redraw_side = true;
-                            }
+                if script.first() == Some(&5) {
+                    let varp = script.get(1).copied().unwrap_or(0);
+                    if let Some(operand) = operand {
+                        if self.var.get(varp as usize).copied() != Some(operand) {
+                            grow_write(&mut self.var, varp, operand);
+                            self.client_var(varp);
+                            self.redraw_side = true;
                         }
                     }
                 }
@@ -3865,7 +3884,6 @@ impl Client {
             if child.r#type == ComponentType::TYPE_LAYER {
                 self.if_anim_reset(child.id);
             }
-            self.ensure_iface_mut(child_id as usize);
             if let Some(com) = self
                 .ifaces_mut
                 .get_mut(child_id as usize)
@@ -4492,10 +4510,13 @@ impl Client {
                 let com_id = self.obj_drag_com_id as usize;
                 let src = self.obj_drag_slot as usize;
                 let dst = self.hovered_slot as usize;
-                self.ensure_iface_mut(com_id);
+                // Decode reads (bank flag, replace flag) before the overlay
+                // borrow below.
+                let client_code = self.if_(com_id).map(|com| com.client_code).unwrap_or(-1);
+                let obj_replace = self.if_(com_id).map(|com| com.obj_replace).unwrap_or(false);
                 if let Some(com) = self.ifaces_mut.get_mut(com_id).and_then(|o| o.as_deref_mut()) {
                     let mut mode = 0;
-                    if self.bank_arrange_mode == 1 && com.client_code == CC_BANKMODE {
+                    if self.bank_arrange_mode == 1 && client_code == CC_BANKMODE {
                         mode = 1;
                     }
                     if com
@@ -4509,7 +4530,7 @@ impl Client {
                     // then clear src); bank arrange inserts by bubbling the
                     // item toward dst; otherwise the two slots swap.
                     match (
-                        com.obj_replace,
+                        obj_replace,
                         com.link_obj_type.as_mut(),
                         com.link_obj_number.as_mut(),
                     ) {
@@ -4609,16 +4630,19 @@ impl Client {
     /// `false` so the `doAction` IF_BUTTON arm skips the send (TS sets the
     /// prompt and falls through); logout and accept-design return `true`
     /// and the click is sent.
-    pub fn client_button(&mut self, com: &IfType) -> bool {
+    pub fn client_button(&mut self, com_id: i32) -> bool {
+        let Some(client_code) = self.if_(com_id as usize).map(|com| com.client_code) else {
+            return false;
+        };
         if self.friend_server_status == 2 {
-            if com.client_code == CC_ADD_FRIEND {
+            if client_code == CC_ADD_FRIEND {
                 self.redraw_chat = true;
                 self.dialog_input_open = false;
                 self.social_input_open = true;
                 self.social_input = String::new();
                 self.social_input_type = 1;
                 self.social_input_header = "Enter name of friend to add to list".into();
-            } else if com.client_code == CC_DEL_FRIEND {
+            } else if client_code == CC_DEL_FRIEND {
                 self.redraw_chat = true;
                 self.dialog_input_open = false;
                 self.social_input_open = true;
@@ -4628,30 +4652,30 @@ impl Client {
             }
         }
 
-        if com.client_code == CC_LOGOUT {
+        if client_code == CC_LOGOUT {
             self.logout_timer = 250;
             return true;
-        } else if com.client_code == CC_ADD_IGNORE {
+        } else if client_code == CC_ADD_IGNORE {
             self.redraw_chat = true;
             self.dialog_input_open = false;
             self.social_input_open = true;
             self.social_input = String::new();
             self.social_input_type = 4;
             self.social_input_header = "Enter name of player to add to list".into();
-        } else if com.client_code == CC_DEL_IGNORE {
+        } else if client_code == CC_DEL_IGNORE {
             self.redraw_chat = true;
             self.dialog_input_open = false;
             self.social_input_open = true;
             self.social_input = String::new();
             self.social_input_type = 5;
             self.social_input_header = "Enter name of player to delete from list".into();
-        } else if (CC_CHANGE_HEAD_L..=CC_CHANGE_FEET_R).contains(&com.client_code) {
+        } else if (CC_CHANGE_HEAD_L..=CC_CHANGE_FEET_R).contains(&client_code) {
             // TS 10998-11025: the 7 kit arrows step the current kit up/down
             // to the next non-disabled kit of the gender's part. The TS
             // `while(true)` is bounded by the table size here (a real table
             // always has a match; an empty one must not spin forever).
-            let part = ((com.client_code - CC_CHANGE_HEAD_L) / 2) as usize;
-            let direction = com.client_code & 0x1;
+            let part = ((client_code - CC_CHANGE_HEAD_L) / 2) as usize;
+            let direction = client_code & 0x1;
             let mut kit = self.idk_design_part[part];
             if kit != -1 {
                 let want = part as i32 + if self.idk_design_gender { 0 } else { 7 };
@@ -4676,11 +4700,11 @@ impl Client {
                     }
                 }
             }
-        } else if (CC_RECOLOUR_HAIR_L..=CC_RECOLOUR_SKIN_R).contains(&com.client_code) {
+        } else if (CC_RECOLOUR_HAIR_L..=CC_RECOLOUR_SKIN_R).contains(&client_code) {
             // TS 11026-11046: the 5 colour arrows step the colour index
             // around the `recol1d` table for the part.
-            let part = ((com.client_code - CC_RECOLOUR_HAIR_L) / 2) as usize;
-            let direction = com.client_code & 0x1;
+            let part = ((client_code - CC_RECOLOUR_HAIR_L) / 2) as usize;
+            let direction = client_code & 0x1;
             let mut colour = self.idk_design_colour[part];
             if direction == 0 {
                 colour -= 1;
@@ -4695,13 +4719,13 @@ impl Client {
             }
             self.idk_design_colour[part] = colour;
             self.idk_design_redraw = true;
-        } else if com.client_code == CC_SWITCH_TO_MALE && !self.idk_design_gender {
+        } else if client_code == CC_SWITCH_TO_MALE && !self.idk_design_gender {
             self.idk_design_gender = true;
             self.validate_idk_design();
-        } else if com.client_code == CC_SWITCH_TO_FEMALE && self.idk_design_gender {
+        } else if client_code == CC_SWITCH_TO_FEMALE && self.idk_design_gender {
             self.idk_design_gender = false;
             self.validate_idk_design();
-        } else if com.client_code == CC_ACCEPT_DESIGN {
+        } else if client_code == CC_ACCEPT_DESIGN {
             // TS 11053-11065: IDK_SAVEDESIGN (id 125, length 13) carries
             // the gender byte, 7 kit bytes and 5 colour bytes.
             self.out.p1_enc(ClientProt::IDK_SAVEDESIGN.id);
@@ -4807,13 +4831,23 @@ impl Client {
     /// `draw_interface` before each child plots (TS 9926).
     pub fn client_component(&mut self, com_id: i32) {
         // The CC_DESIGN_PREVIEW build needs the idk/seq tables while `com`
-        // is borrowed from the same `ifaces`, so it runs before the
-        // borrow (TS 10777-10819; `com.model_xan/yan` are set after).
+        // is read, so it runs before the overlay borrow (TS 10777-10819;
+        // `com.model_xan/yan` are set after). `height` (decode) and the
+        // client code are read before the borrow too.
         let preview_model = match self.if_(com_id as usize).map(|com| com.client_code) {
             Some(CC_DESIGN_PREVIEW) => self.design_preview_model(),
             _ => None,
         };
-        self.ensure_iface_mut(com_id as usize);
+        let Some(mut client_code) = self.if_(com_id as usize).map(|com| com.client_code) else {
+            return;
+        };
+        let height = self.if_(com_id as usize).map(|com| com.height).unwrap_or(0);
+        // Decode read for the switch-button arms (graphic2 lives on the
+        // shared table; the overlay borrow below cannot see it).
+        let graphic2_name = self
+            .if_(com_id as usize)
+            .map(|com| com.graphic2_name.clone())
+            .unwrap_or_default();
         let Some(com) = self
             .ifaces_mut
             .get_mut(com_id as usize)
@@ -4821,7 +4855,6 @@ impl Client {
         else {
             return;
         };
-        let mut client_code = com.client_code;
         if (CC_FRIENDS_START..=CC_FRIENDS_END).contains(&client_code)
             || (CC_FRIENDS2_START..=CC_FRIENDS2_END).contains(&client_code)
         {
@@ -4889,8 +4922,8 @@ impl Client {
                 count = 0;
             }
             com.scroll_height = count * 15 + 20;
-            if com.scroll_height <= com.height {
-                com.scroll_height = com.height + 1;
+            if com.scroll_height <= height {
+                com.scroll_height = height + 1;
             }
         } else if (CC_IGNORES_START..=CC_IGNORES_END).contains(&client_code) {
             client_code -= CC_IGNORES_START;
@@ -4905,8 +4938,8 @@ impl Client {
             }
         } else if client_code == CC_IGNORES_SIZE {
             com.scroll_height = self.ignore_count * 15 + 20;
-            if com.scroll_height <= com.height {
-                com.scroll_height = com.height + 1;
+            if com.scroll_height <= height {
+                com.scroll_height = height + 1;
             }
         } else if client_code == CC_DESIGN_PREVIEW {
             // TS 10773-10820: spin the preview model around the y axis
@@ -4924,7 +4957,7 @@ impl Client {
             // then show the one for the gender being switched to.
             if self.idk_design_button1.is_none() {
                 self.idk_design_button1 = Some(com.graphic_name.clone());
-                self.idk_design_button2 = Some(com.graphic2_name.clone());
+                self.idk_design_button2 = Some(graphic2_name.clone());
             }
             if self.idk_design_gender {
                 com.graphic_name = self.idk_design_button2.clone().unwrap_or_default();
@@ -4935,7 +4968,7 @@ impl Client {
             // TS 10832-10842.
             if self.idk_design_button1.is_none() {
                 self.idk_design_button1 = Some(com.graphic_name.clone());
-                self.idk_design_button2 = Some(com.graphic2_name.clone());
+                self.idk_design_button2 = Some(graphic2_name.clone());
             }
             if self.idk_design_gender {
                 com.graphic_name = self.idk_design_button1.clone().unwrap_or_default();
@@ -5343,9 +5376,10 @@ impl Client {
         };
         for i in 0..children.len() {
             let child_id = children[i];
-            // An owned copy: the option pushes below call `push_option`
-            // (`&mut self`) while the walk reads the child fields.
-            let Some(child) = self.if_(child_id as usize).cloned() else {
+            // An owned merged snapshot: the option pushes below call
+            // `push_option` (`&mut self`) while the walk reads the child
+            // fields (a view borrow of the whole client cannot span them).
+            let Some(child) = self.if_(child_id as usize).map(|v| IfTypeOwned::from(&v)) else {
                 continue;
             };
             let child_x = child_x[i] + x + child.x;
@@ -5393,7 +5427,7 @@ impl Client {
                 }
                 ComponentType::TYPE_INV => {
                     let child_id = child.id;
-                    let inv_iop = child.iop;
+                    let inv_iop = child.iop.clone();
                     let obj_ops = child.obj_ops;
                     let obj_use = child.obj_use;
                     let mut slot = 0;
@@ -5646,7 +5680,7 @@ impl Client {
     /// offsets); the ignore range (401..=500) pushes Remove with the
     /// component's own text. Returns true when the button text is
     /// overridden, false otherwise.
-    fn add_social_options(&mut self, component: &IfType) -> bool {
+    fn add_social_options(&mut self, component: &IfTypeOwned) -> bool {
         let mut client_code = component.client_code;
         if (CC_FRIENDS_START..=CC_FRIENDS_UPDATE_END).contains(&client_code)
             || (CC_FRIENDS2_START..=CC_FRIENDS2_UPDATE_END).contains(&client_code)
@@ -5922,7 +5956,6 @@ impl Client {
                 let g = (colour >> 5) & 0x1f;
                 let b = colour & 0x1f;
 
-                self.ensure_iface_mut(com_id as usize);
                 if let Some(com) = self
                     .ifaces_mut
                     .get_mut(com_id as usize)
@@ -5937,7 +5970,6 @@ impl Client {
                 let com_id = payload.g2();
                 let hide = payload.g1() == 1;
 
-                self.ensure_iface_mut(com_id as usize);
                 if let Some(com) = self
                     .ifaces_mut
                     .get_mut(com_id as usize)
@@ -5960,7 +5992,6 @@ impl Client {
                     (0, 0, 0)
                 };
 
-                self.ensure_iface_mut(com_id as usize);
                 if let Some(com) = self
                     .ifaces_mut
                     .get_mut(com_id as usize)
@@ -5980,7 +6011,6 @@ impl Client {
                 let com_id = payload.g2();
                 let model_id = payload.g2();
 
-                self.ensure_iface_mut(com_id as usize);
                 if let Some(com) = self
                     .ifaces_mut
                     .get_mut(com_id as usize)
@@ -5996,7 +6026,6 @@ impl Client {
                 let com_id = payload.g2();
                 let seq_id = payload.g2b();
 
-                self.ensure_iface_mut(com_id as usize);
                 if let Some(com) = self
                     .ifaces_mut
                     .get_mut(com_id as usize)
@@ -6021,7 +6050,6 @@ impl Client {
                         | local.appearance[11] as i32
                 });
 
-                self.ensure_iface_mut(com_id as usize);
                 if let (Some(com), Some(model1_id)) = (
                     self.ifaces_mut
                         .get_mut(com_id as usize)
@@ -6037,8 +6065,11 @@ impl Client {
             ServerProt::IF_SETTEXT => {
                 let com_id = payload.g2();
                 let text = payload.gjstr();
+                // Decode read (`layer_id`) before the overlay borrow.
+                let on_active_tab = self
+                    .if_(com_id as usize)
+                    .is_some_and(|com| com.layer_id == self.side_icon[self.active_icon as usize]);
 
-                self.ensure_iface_mut(com_id as usize);
                 if let Some(com) = self
                     .ifaces_mut
                     .get_mut(com_id as usize)
@@ -6047,7 +6078,7 @@ impl Client {
                     com.text = text;
                     // TS 6164: redraw the side when the edited text sits on
                     // the active tab's interface.
-                    if com.layer_id == self.side_icon[self.active_icon as usize] {
+                    if on_active_tab {
                         self.redraw_side = true;
                     }
                 }
@@ -6058,7 +6089,6 @@ impl Client {
                 let com_id = payload.g2();
                 let npc_id = payload.g2();
 
-                self.ensure_iface_mut(com_id as usize);
                 if let Some(com) = self
                     .ifaces_mut
                     .get_mut(com_id as usize)
@@ -6075,7 +6105,6 @@ impl Client {
                 let x = payload.g2b();
                 let y = payload.g2b();
 
-                self.ensure_iface_mut(com_id as usize);
                 if let Some(com) = self
                     .ifaces_mut
                     .get_mut(com_id as usize)
@@ -6090,19 +6119,23 @@ impl Client {
             ServerProt::IF_SETSCROLLPOS => {
                 let com_id = payload.g2();
                 let mut pos = payload.g2();
+                // Decode reads (type, height) before the overlay borrow.
+                let layer = self
+                    .if_(com_id as usize)
+                    .map(|com| (com.r#type, com.height))
+                    .unwrap_or((-1, 0));
 
-                self.ensure_iface_mut(com_id as usize);
                 if let Some(com) = self
                     .ifaces_mut
                     .get_mut(com_id as usize)
                     .and_then(|o| o.as_deref_mut())
                 {
-                    if com.r#type == ComponentType::TYPE_LAYER {
+                    if layer.0 == ComponentType::TYPE_LAYER {
                         if pos < 0 {
                             pos = 0;
                         }
-                        if pos > com.scroll_height - com.height {
-                            pos = com.scroll_height - com.height;
+                        if pos > com.scroll_height - layer.1 {
+                            pos = com.scroll_height - layer.1;
                         }
                         com.scroll_pos = pos;
                     }
@@ -6115,7 +6148,6 @@ impl Client {
             ServerProt::UPDATE_INV_STOP_TRANSMIT => {
                 let com_id = payload.g2();
 
-                self.ensure_iface_mut(com_id as usize);
                 if let Some(inv) = self
                     .ifaces_mut
                     .get_mut(com_id as usize)
@@ -6144,7 +6176,6 @@ impl Client {
                     slots.push(Self::read_inv_count(payload));
                 }
 
-                self.ensure_iface_mut(com_id as usize);
                 if let Some(inv) = self
                     .ifaces_mut
                     .get_mut(com_id as usize)
@@ -6178,7 +6209,6 @@ impl Client {
                     let slot = payload.g1();
                     let (id, count) = Self::read_inv_count(payload);
 
-                    self.ensure_iface_mut(com_id as usize);
                     if let Some(inv) = self
                         .ifaces_mut
                         .get_mut(com_id as usize)
@@ -7862,9 +7892,6 @@ impl Client {
         }
         self.scroll_grabbed = false;
 
-        if com_id >= 0 {
-            self.ensure_iface_mut(com_id as usize);
-        }
         let com = if com_id < 0 {
             Some(&mut self.chat_interface)
         } else {
@@ -10977,22 +11004,14 @@ mod try_move_path {
     #[test]
     fn run_enabled_reads_visible_run_off_orb() {
         // 274 controls overlay: visible off-orb (152) + hidden on-orb (153)
-        // means run is on (host `run_echo`).
+        // means run is on (host `run_echo`). hide is per-client mut, so it
+        // seeds the overlay (`set_iface` puts a default overlay beside the
+        // decode slot).
         let mut c = empty_client();
-        c.set_iface(
-            152,
-            IfType {
-                hide: false,
-                ..IfType::default()
-            },
-        );
-        c.set_iface(
-            153,
-            IfType {
-                hide: true,
-                ..IfType::default()
-            },
-        );
+        c.set_iface(152, IfType::default());
+        c.set_iface(153, IfType::default());
+        c.iface_mut(152).unwrap().hide = false;
+        c.iface_mut(153).unwrap().hide = true;
         assert!(c.run_enabled());
         c.iface_mut(152).unwrap().hide = true;
         c.iface_mut(153).unwrap().hide = false;
@@ -11119,6 +11138,7 @@ mod audio_toggle {
             },
             Arc::new(Cache::default()),
             Arc::new(Vec::new()),
+            Vec::new(),
         )
     }
 

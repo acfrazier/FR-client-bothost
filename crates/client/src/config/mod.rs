@@ -18,7 +18,7 @@ pub mod varp_type;
 
 pub use flo_type::FloType;
 pub use idk_type::IdkType;
-pub use if_type::IfType;
+pub use if_type::{IfType, IfTypeMut};
 pub use loc_type::LocType;
 pub use npc_type::NpcType;
 pub use obj_type::ObjType;

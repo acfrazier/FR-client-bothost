@@ -6,7 +6,7 @@
 //! (TS 9144-9154), and the non-OK button arms never call it.
 use client::client::{Client, ClientConfig, APPLET_H, APPLET_W};
 use client::render::Renderer;
-use client::config::if_type::{ButtonType, ComponentType, IfType};
+use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::graphics::PixMap;
 
 fn client() -> Client {
@@ -23,17 +23,17 @@ fn client() -> Client {
 fn cc_logout_arms_logout_timer() {
 let _r = Renderer::new(false);
     let mut c = client();
-    let com = IfType {
+    c.set_iface(9, IfType {
         client_code: 205,
         ..IfType::default()
-    };
-    assert!(c.client_button(&com));
+    });
+    assert!(c.client_button(9));
     assert_eq!(c.logout_timer, 250);
-    let other = IfType {
+    c.set_iface(9, IfType {
         client_code: 3,
         ..IfType::default()
-    };
-    assert!(!c.client_button(&other), "Java clientButton returns false for non-205 codes");
+    });
+    assert!(!c.client_button(9), "Java clientButton returns false for non-205 codes");
     assert_eq!(c.logout_timer, 250); // unchanged for unported codes
 }
 
@@ -42,11 +42,11 @@ fn cc_add_friend_opens_social_input_without_if_button() {
 let _r = Renderer::new(false);
     let mut c = client();
     c.friend_server_status = 2;
-    let com = IfType {
+    c.set_iface(9, IfType {
         client_code: 201, // CC_ADD_FRIEND
         ..IfType::default()
-    };
-    assert!(!c.client_button(&com), "social codes do not send IF_BUTTON");
+    });
+    assert!(!c.client_button(9), "social codes do not send IF_BUTTON");
     assert!(c.social_input_open);
     assert_eq!(c.social_input_type, 1);
     assert_eq!(c.social_input_header, "Enter name of friend to add to list");
@@ -56,11 +56,11 @@ let _r = Renderer::new(false);
 fn cc_add_ignore_opens_social_input_without_friend_server() {
 let _r = Renderer::new(false);
     let mut c = client();
-    let com = IfType {
+    c.set_iface(9, IfType {
         client_code: 501, // CC_ADD_IGNORE
         ..IfType::default()
-    };
-    assert!(!c.client_button(&com));
+    });
+    assert!(!c.client_button(9));
     assert!(c.social_input_open);
     assert_eq!(c.social_input_type, 4);
 }
@@ -75,27 +75,31 @@ let _r = Renderer::new(false);
     let toggle = IfType {
         id: 2,
         r#type: ComponentType::TYPE_RECT,
-        button_type: ButtonType::BUTTON_TOGGLE,
         button_text: "Toggle".into(),
         client_code: 205,
         width: 190,
         height: 20,
         ..IfType::default()
     };
-    bind_side(&mut c, 1, vec![root, toggle]);
+    let toggle_mut = IfTypeMut {
+        button_type: ButtonType::BUTTON_TOGGLE,
+        ..IfTypeMut::default()
+    };
+    bind_side(&mut c, 1, vec![(root, IfTypeMut::default()), (toggle, toggle_mut)]);
     click_side(&mut c, 560, 210);
     // the TOGGLE_BUTTON arm sends IF_BUTTON but never calls clientButton
     assert_eq!(c.logout_timer, 0);
 }
 
 /// Bind `components` into the cache and `root` onto the active side tab (3).
-fn bind_side(c: &mut Client, root: i32, components: Vec<IfType>) {
+fn bind_side(c: &mut Client, root: i32, components: Vec<(IfType, IfTypeMut)>) {
     c.ingame = true;
     c.side_icon[3] = root;
     c.active_icon = 3;
-    for com in components {
+    for (com, m) in components {
         let id = com.id as usize;
         c.set_iface(id, com);
+        c.set_iface_mut(id, m);
     }
 }
 

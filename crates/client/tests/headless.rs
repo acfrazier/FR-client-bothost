@@ -20,7 +20,7 @@ use std::thread;
 use std::time::Duration;
 
 use client::client::{Client, ClientConfig, MiniMenuAction};
-use client::config::IfType;
+use client::config::{IfType, IfTypeMut};
 use client::config::LocType;
 use client::dash3d::store::ModelStore;
 use client::dash3d::ClientEntity;
@@ -178,13 +178,22 @@ fn headless_client_core_runs_sim_without_renderer() {
     assert_eq!(c.world.wall_type(0, 45, 45), 0, "empty tile stays empty");
 
     // Packet apply: UPDATE_INV_FULL resolves into the iface's inv arrays.
-    c.set_iface(10, IfType {
-        width: 4,
-        height: 4,
-        link_obj_type: Some(vec![0; 16]),
-        link_obj_number: Some(vec![0; 16]),
-        ..IfType::default()
-    });
+    c.set_iface(
+        10,
+        IfType {
+            width: 4,
+            height: 4,
+            ..IfType::default()
+        },
+    );
+    c.set_iface_mut(
+        10,
+        IfTypeMut {
+            link_obj_type: Some(vec![0; 16]),
+            link_obj_number: Some(vec![0; 16]),
+            ..IfTypeMut::default()
+        },
+    );
     let mut inv = Packet::alloc(0);
     inv.p2(10); // com id
     inv.p1(2); // slot count

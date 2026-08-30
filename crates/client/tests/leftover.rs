@@ -9,7 +9,7 @@ use std::sync::Arc;
 use client::client::{Client, ClientConfig, ClientPlayer};
 use client::render::Renderer;
 use client::config::idk_type::IdkType;
-use client::config::if_type::IfType;
+use client::config::if_type::{IfType, IfTypeMut};
 use client::graphics::{Pix3D, Pix32};
 use client::io::{ClientProt, Packet, ServerProt};
 use client::util::JavaRandom;
@@ -385,11 +385,11 @@ let _r = Renderer::new(false);
     let r = Renderer::new(false);
     let mut c = client();
     c.runweight = 42;
-    let com = IfType {
+    c.set_iface(9, IfType {
         scripts: Some(vec![vec![12, 0]]), // opcode 12 runweight, halt
         ..IfType::default()
-    };
-    assert_eq!(r.get_if_var(&c, &com, 0), Some(42));
+    });
+    assert_eq!(r.get_if_var(&c, 9, 0), Some(42));
 }
 
 #[test]
@@ -605,11 +605,11 @@ let mut r = Renderer::new(false);
 fn cc_logout_still_returns_true() {
 let _r = Renderer::new(false);
     let mut c = client();
-    let com = IfType {
+    c.set_iface(9, IfType {
         client_code: 205,
         ..IfType::default()
-    };
-    assert!(c.client_button(&com));
+    });
+    assert!(c.client_button(9));
 }
 
 #[test]
@@ -617,24 +617,24 @@ fn design_switch_male_female_toggles() {
 let _r = Renderer::new(false);
     let mut c = client();
     c.idk_design_gender = true;
-    let com = IfType {
+    c.set_iface(9, IfType {
         client_code: 325,
         ..IfType::default()
-    }; // CC_SWITCH_TO_FEMALE
-    assert!(!c.client_button(&com));
+    }); // CC_SWITCH_TO_FEMALE
+    assert!(!c.client_button(9));
     assert!(!c.idk_design_gender);
     // already female: a second switch is a no-op
-    assert!(!c.client_button(&com));
+    assert!(!c.client_button(9));
     assert!(!c.idk_design_gender);
     // switch back to male
-    let male = IfType {
+    c.set_iface(9, IfType {
         client_code: 324,
         ..IfType::default()
-    };
-    assert!(!c.client_button(&male));
+    });
+    assert!(!c.client_button(9));
     assert!(c.idk_design_gender);
     // already male: no-op
-    assert!(!c.client_button(&male));
+    assert!(!c.client_button(9));
     assert!(c.idk_design_gender);
 }
 
@@ -664,35 +664,39 @@ let _r = Renderer::new(false);
     ];
     c.idk_design_gender = true;
     c.idk_design_part[0] = 0;
-    let left = IfType {
+    c.set_iface(9, IfType {
         client_code: 300,
         ..IfType::default()
-    }; // CC_CHANGE_HEAD_L
-    assert!(!c.client_button(&left));
+    }); // CC_CHANGE_HEAD_L
+    assert!(!c.client_button(9));
     assert!(c.idk_design_redraw);
     // male needs part 0: down from 0 wraps 3 -> 2 (female, skip) ->
     // 1 (disabled) -> 0, the only match.
     assert_eq!(c.idk_design_part[0], 0);
 
     // switch to female: validate picks the first female head (part 7).
-    let female = IfType {
+    c.set_iface(9, IfType {
         client_code: 325,
         ..IfType::default()
-    };
-    assert!(!c.client_button(&female));
+    });
+    assert!(!c.client_button(9));
     assert!(!c.idk_design_gender);
     assert_eq!(c.idk_design_part[0], 2);
 
     // down from 2: 1 disabled, 0 male, wraps to 3 (female).
-    assert!(!c.client_button(&left));
+    c.set_iface(9, IfType {
+        client_code: 300,
+        ..IfType::default()
+    });
+    assert!(!c.client_button(9));
     assert_eq!(c.idk_design_part[0], 3);
 
     // switch back to male: validate picks the first male head.
-    let male = IfType {
+    c.set_iface(9, IfType {
         client_code: 324,
         ..IfType::default()
-    };
-    assert!(!c.client_button(&male));
+    });
+    assert!(!c.client_button(9));
     assert!(c.idk_design_gender);
     assert_eq!(c.idk_design_part[0], 0);
 }
@@ -702,20 +706,20 @@ fn design_colour_cycle_wraps_hair_table() {
 let _r = Renderer::new(false);
     let mut c = client();
     c.idk_design_colour[0] = 0;
-    let com = IfType {
+    c.set_iface(9, IfType {
         client_code: 314,
         ..IfType::default()
-    }; // CC_RECOLOUR_HAIR_L
-    assert!(!c.client_button(&com));
+    }); // CC_RECOLOUR_HAIR_L
+    assert!(!c.client_button(9));
     // the hair recol table has 12 entries: 0 - 1 wraps to 11.
     assert_eq!(c.idk_design_colour[0], 11);
     assert!(c.idk_design_redraw);
     // right arrow from 11 wraps to 0.
-    let right = IfType {
+    c.set_iface(9, IfType {
         client_code: 315,
         ..IfType::default()
-    };
-    assert!(!c.client_button(&right));
+    });
+    assert!(!c.client_button(9));
     assert_eq!(c.idk_design_colour[0], 0);
 }
 
@@ -726,11 +730,11 @@ let _r = Renderer::new(false);
     c.idk_design_gender = false;
     c.idk_design_part = [0, 1, 2, 3, 4, 5, 6];
     c.idk_design_colour = [7, 8, 9, 10, 11];
-    let com = IfType {
+    c.set_iface(9, IfType {
         client_code: 326,
         ..IfType::default()
-    }; // CC_ACCEPT_DESIGN
-    assert!(c.client_button(&com));
+    }); // CC_ACCEPT_DESIGN
+    assert!(c.client_button(9));
     assert_eq!(c.out.pos, 14); // p1_enc + 1 gender + 7 parts + 5 colours
     assert_eq!(c.out.data()[0], ClientProt::IDK_SAVEDESIGN.id as u8);
     assert_eq!(c.out.data()[1], 1); // female
@@ -764,13 +768,22 @@ let _r = Renderer::new(false);
 fn design_switch_buttons_swap_graphic_names() {
 let _r = Renderer::new(false);
     let mut c = client();
-    c.set_iface(1, IfType {
-        id: 1,
-        client_code: 324, // CC_SWITCH_TO_MALE
-        graphic_name: "male".into(),
-        graphic2_name: "female".into(),
-        ..IfType::default()
-    });
+    c.set_iface(
+        1,
+        IfType {
+            id: 1,
+            client_code: 324, // CC_SWITCH_TO_MALE
+            graphic2_name: "female".into(),
+            ..IfType::default()
+        },
+    );
+    c.set_iface_mut(
+        1,
+        IfTypeMut {
+            graphic_name: "male".into(),
+            ..IfTypeMut::default()
+        },
+    );
     c.idk_design_gender = true;
     c.client_component(1);
     // male + already male: shows the female snapshot (the button to press).

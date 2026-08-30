@@ -14,7 +14,7 @@ use std::thread;
 use std::time::Duration;
 
 use client::client::{Client, ClientConfig};
-use client::config::{Cache, IfType};
+use client::config::{Cache, IfType, IfTypeMut};
 
 fn cfg() -> ClientConfig {
     ClientConfig {
@@ -46,14 +46,16 @@ fn serve_login(s: &mut std::net::TcpStream, opcode: u8, grant: &[u8]) {
     s.write_all(grant).unwrap();
 }
 
-/// Host construct: one `Arc<Cache>` and iface template for every client —
-/// no `load_cache` unpack, no `/crc` probe, `error_loading` false.
+/// Host construct: one `Arc<Cache>`, the shared iface decode `Arc` and a
+/// per-client mut-overlay template for every client — no `load_cache`
+/// unpack, no `/crc` probe, `error_loading` false.
 #[test]
 fn from_shared_reuses_one_arc_without_unpack() {
     let tables = Arc::new(Cache::default());
     let template = Arc::new(vec![None, Some(Box::new(IfType::default()))]);
-    let mut a = Client::from_shared(cfg(), Arc::clone(&tables), Arc::clone(&template));
-    let b = Client::from_shared(cfg(), Arc::clone(&tables), Arc::clone(&template));
+    let mut_template = vec![None, Some(Box::new(IfTypeMut::default()))];
+    let mut a = Client::from_shared(cfg(), Arc::clone(&tables), Arc::clone(&template), mut_template.clone());
+    let b = Client::from_shared(cfg(), Arc::clone(&tables), Arc::clone(&template), mut_template);
     assert!(Arc::ptr_eq(&a.cache, &b.cache));
     assert!(Arc::ptr_eq(&a.cache, &tables));
     // One decode table for every client: both clients point at the same
@@ -62,11 +64,51 @@ fn from_shared_reuses_one_arc_without_unpack() {
     assert!(Arc::ptr_eq(&a.ifaces, &template));
     assert!(!a.error_loading);
     assert!(!b.error_loading);
-    // hide stays per-client: a's mutation materializes a's overlay, so
-    // b's slot 1 must not reflect it (the shared decode is untouched).
+    // hide stays per-client: a's write goes to a's dense `IfTypeMut`
+    // overlay, so b's slot 1 must not reflect it (the shared decode and
+    // the overlay template are both untouched).
     a.iface_mut(1).unwrap().hide = true;
     assert!(a.if_(1).unwrap().hide);
     assert!(!b.if_(1).unwrap().hide);
+}
+
+/// The per-client mut overlay is a small dense struct, not a decode copy:
+/// writing hide and an inv slot must never clone the decode's scripts/
+/// children/strings onto the overlay (the `Arc` stays the same object and
+/// `IfTypeMut` has no room for them).
+#[test]
+fn mut_overlay_is_small_and_decode_stays_ptr_eq_after_writes() {
+    use std::sync::Arc;
+    assert!(
+        std::mem::size_of::<IfTypeMut>() * 3 < std::mem::size_of::<IfType>(),
+        "the mut overlay must stay far smaller than the decode"
+    );
+    let tables = Arc::new(Cache::default());
+    let template = Arc::new(vec![None, Some(Box::new(IfType {
+        id: 1,
+        r#type: 0,
+        scripts: Some(vec![vec![1, 2, 3]]),
+        children: Some(vec![2]),
+        ..IfType::default()
+    }))]);
+    let mut_template = vec![None, Some(Box::new(IfTypeMut::default()))];
+    let mut a = Client::from_shared(cfg(), Arc::clone(&tables), Arc::clone(&template), mut_template.clone());
+    let b = Client::from_shared(cfg(), Arc::clone(&tables), Arc::clone(&template), mut_template);
+    // mutate hide + one inv slot
+    {
+        let m = a.iface_mut(1).unwrap();
+        m.hide = true;
+        m.link_obj_type = Some(vec![1, 0]);
+        m.link_obj_number = Some(vec![7, 0]);
+    }
+    // the shared decode is untouched: same Arc, same component, and b sees
+    // the decoded hide/scripts (not a's writes).
+    assert!(Arc::ptr_eq(&a.ifaces, &b.ifaces));
+    assert!(Arc::ptr_eq(&a.ifaces, &template));
+    assert_eq!(a.if_(1).unwrap().scripts.as_ref().unwrap()[0], vec![1, 2, 3]);
+    assert!(a.if_(1).unwrap().hide);
+    assert!(!b.if_(1).unwrap().hide);
+    assert_eq!(b.if_(1).unwrap().link_obj_type, &None);
 }
 
 /// The channel-head tune: `head` logs in cold, hands its live socket +
@@ -114,7 +156,7 @@ fn adopt_reconnects_opcode_18_without_tcp_drop() {
 
     // the tune: a fresh sim `Client` over the shared cache adopts the
     // live stream + ISAAC cursors; the source must not touch the socket.
-    let mut sim = Client::from_shared(cfg(), Arc::new(Cache::default()), Arc::new(vec![]));
+    let mut sim = Client::from_shared(cfg(), Arc::new(Cache::default()), Arc::new(vec![]), vec![]);
     sim.config.host = addr.ip().to_string();
     sim.config.port = addr.port();
     assert!(sim.adopt_from(&mut head).is_some());

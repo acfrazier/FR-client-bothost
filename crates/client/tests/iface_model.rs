@@ -37,11 +37,13 @@ let mut r = Renderer::new(false);
     model.r#type = client::config::if_type::ComponentType::TYPE_MODEL;
     model.width = 50;
     model.height = 50;
-    model.model1_type = 1;
-    model.model1_id = 999999; // not loaded
-    model.model_zoom = 800;
+    let mut model_mut = client::config::if_type::IfTypeMut::default();
+    model_mut.model1_type = 1;
+    model_mut.model1_id = 999999; // not loaded
+    model_mut.model_zoom = 800;
     c.set_iface(1, layer);
     c.set_iface(2, model);
+    c.set_iface_mut(2, model_mut);
     let mut pixels = vec![0i32; 50 * 50];
     let mut surface = client::graphics::Pix2D::with_pixels(&mut pixels, 50, 50);
     r.pix3d.set_clipping(50, 50);

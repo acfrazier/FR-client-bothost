@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer, MiniMenuAction};
-use client::config::if_type::{ButtonType, IfType};
+use client::config::if_type::{ButtonType, IfType, IfTypeMut};
 use client::config::ObjType;
 use client::io::{ClientProt, Isaac};
 
@@ -44,14 +44,23 @@ fn walk_menu_arms_mouse_picking() {
 #[test]
 fn tgt_button_arms_spell_target_mode() {
     let mut c = client();
-    c.set_iface(7, IfType {
-        id: 7,
-        button_type: ButtonType::BUTTON_TARGET,
-        target_verb: "Cast on".into(),
-        target_base: "Wind strike".into(),
-        target_mask: 3,
-        ..IfType::default()
-    });
+    c.set_iface(
+        7,
+        IfType {
+            id: 7,
+            target_verb: "Cast on".into(),
+            target_base: "Wind strike".into(),
+            target_mask: 3,
+            ..IfType::default()
+        },
+    );
+    c.set_iface_mut(
+        7,
+        IfTypeMut {
+            button_type: ButtonType::BUTTON_TARGET,
+            ..IfTypeMut::default()
+        },
+    );
     c.menu_action[0] = MiniMenuAction::TGT_BUTTON;
     c.menu_param_c[0] = 7;
     c.doAction(0);

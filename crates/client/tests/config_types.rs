@@ -139,7 +139,7 @@ fn iftype_unpack_keeps_inv_background_names() {
     let Some(jag) = engine_interface_jag() else {
         return;
     };
-    let ifaces = IfType::unpack(&jag);
+    let (ifaces, _ifaces_mut) = IfType::unpack(&jag);
     assert!(
         ifaces.iter().flatten().any(|c| c
             .inv_background_name

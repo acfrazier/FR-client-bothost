@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use client::client::{Client, ClientConfig, MiniMenuAction};
 use client::render::Renderer;
-use client::config::if_type::{ButtonType, ComponentType, IfType};
+use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::config::{LocType, NpcType, ObjType};
 use client::dash3d::{ClientNpc, ClientObj, ClientPlayer};
 use client::datastruct::LinkList;
@@ -361,10 +361,12 @@ fn side_inv_fixture(c: &mut Client) {
     inv.obj_ops = true;
     inv.width = 1;
     inv.height = 1;
-    inv.link_obj_type = Some(vec![2]); // obj id 1
-    inv.link_obj_number = Some(vec![1]);
+    let mut inv_mut = IfTypeMut::default();
+    inv_mut.link_obj_type = Some(vec![2]); // obj id 1
+    inv_mut.link_obj_number = Some(vec![1]);
     c.set_iface(1, layer);
     c.set_iface(2, inv);
+    c.set_iface_mut(2, inv_mut);
     if c.cache.objs.len() < 2 {
         Arc::get_mut(&mut c.cache).unwrap().objs.resize(2, ObjType::default());
         Arc::get_mut(&mut c.cache).unwrap().objs[1].name = "Rune".into();
@@ -415,8 +417,22 @@ fn inv_slot_obj_iop_and_component_iop_options() {
 let _r = Renderer::new(false);
     let mut c = client();
     side_inv_fixture(&mut c);
-    let inv = c.iface_mut(2).unwrap();
+    let mut inv = IfType::default();
+    inv.id = 2;
+    inv.r#type = ComponentType::TYPE_INV;
+    inv.obj_ops = true;
+    inv.width = 1;
+    inv.height = 1;
     inv.iop[0] = Some("Bank".into());
+    c.set_iface(2, inv);
+    c.set_iface_mut(
+        2,
+        IfTypeMut {
+            link_obj_type: Some(vec![2]),
+            link_obj_number: Some(vec![1]),
+            ..IfTypeMut::default()
+        },
+    );
     if c.cache.objs.len() < 2 {
         Arc::get_mut(&mut c.cache).unwrap().objs.resize(2, ObjType::default());
     }
@@ -492,31 +508,45 @@ let _r = Renderer::new(false);
     layer.child_x = Some(vec![0, 0, 0, 0, 0, 0]);
     layer.child_y = Some(vec![0, 0, 0, 0, 0, 0]);
     c.set_iface(1, layer);
-    let button = |id: i32, button_type: i32| IfType {
-        id,
-        r#type: ComponentType::TYPE_RECT,
-        width: 50,
-        height: 15,
-        button_type,
-        ..IfType::default()
+    let button = |id: i32, button_type: i32| -> (IfType, IfTypeMut) {
+        (
+            IfType {
+                id,
+                r#type: ComponentType::TYPE_RECT,
+                width: 50,
+                height: 15,
+                ..IfType::default()
+            },
+            IfTypeMut {
+                button_type,
+                ..IfTypeMut::default()
+            },
+        )
     };
-    let mut ok = button(2, ButtonType::BUTTON_OK);
+    let (mut ok, ok_mut) = button(2, ButtonType::BUTTON_OK);
     ok.button_text = "Ok".into();
     c.set_iface(2, ok);
-    c.set_iface(3, button(3, ButtonType::BUTTON_CLOSE));
-    let mut toggle = button(4, ButtonType::BUTTON_TOGGLE);
+    c.set_iface_mut(2, ok_mut);
+    let (close, close_mut) = button(3, ButtonType::BUTTON_CLOSE);
+    c.set_iface(3, close);
+    c.set_iface_mut(3, close_mut);
+    let (mut toggle, toggle_mut) = button(4, ButtonType::BUTTON_TOGGLE);
     toggle.button_text = "Trade".into();
     c.set_iface(4, toggle);
-    let mut select = button(5, ButtonType::BUTTON_SELECT);
+    c.set_iface_mut(4, toggle_mut);
+    let (mut select, select_mut) = button(5, ButtonType::BUTTON_SELECT);
     select.button_text = "Deposit".into();
     c.set_iface(5, select);
-    let mut cont = button(6, ButtonType::BUTTON_CONTINUE);
+    c.set_iface_mut(5, select_mut);
+    let (mut cont, cont_mut) = button(6, ButtonType::BUTTON_CONTINUE);
     cont.button_text = "Continue".into();
     c.set_iface(6, cont);
-    let mut target = button(7, ButtonType::BUTTON_TARGET);
+    c.set_iface_mut(6, cont_mut);
+    let (mut target, target_mut) = button(7, ButtonType::BUTTON_TARGET);
     target.target_verb = "Cast on".into();
     target.target_base = "Tree".into();
     c.set_iface(7, target);
+    c.set_iface_mut(7, target_mut);
     c.shell.mouse_x = 553 + 10;
     c.shell.mouse_y = 205 + 10;
     c.build_minimenu();
@@ -554,15 +584,23 @@ let _r = Renderer::new(false);
     layer.child_x = Some(vec![0]);
     layer.child_y = Some(vec![0]);
     c.set_iface(1, layer);
-    c.set_iface(2, IfType {
-        id: 2,
-        r#type: ComponentType::TYPE_GRAPHIC,
-        width: 36,
-        height: 25,
-        button_type: ButtonType::BUTTON_OK,
-        button_text: String::new(),
-        ..IfType::default()
-    });
+    c.set_iface(
+        2,
+        IfType {
+            id: 2,
+            r#type: ComponentType::TYPE_GRAPHIC,
+            width: 36,
+            height: 25,
+            ..IfType::default()
+        },
+    );
+    c.set_iface_mut(
+        2,
+        IfTypeMut {
+            button_type: ButtonType::BUTTON_OK,
+            ..IfTypeMut::default()
+        },
+    );
     c.shell.mouse_x = 553 + 10;
     c.shell.mouse_y = 205 + 10;
     c.build_minimenu();
@@ -595,19 +633,23 @@ let _r = Renderer::new(false);
     cont.r#type = ComponentType::TYPE_RECT;
     cont.width = 50;
     cont.height = 15;
-    cont.button_type = ButtonType::BUTTON_CONTINUE;
     cont.button_text = "Continue".into();
+    let mut cont_mut = IfTypeMut::default();
+    cont_mut.button_type = ButtonType::BUTTON_CONTINUE;
     let mut target = IfType::default();
     target.id = 3;
     target.r#type = ComponentType::TYPE_RECT;
     target.width = 50;
     target.height = 15;
-    target.button_type = ButtonType::BUTTON_TARGET;
     target.target_verb = "Cast".into();
     target.target_base = "Tree".into();
+    let mut target_mut = IfTypeMut::default();
+    target_mut.button_type = ButtonType::BUTTON_TARGET;
     c.set_iface(1, layer);
     c.set_iface(2, cont);
+    c.set_iface_mut(2, cont_mut);
     c.set_iface(3, target);
+    c.set_iface_mut(3, target_mut);
     c.shell.mouse_x = 553 + 10;
     c.shell.mouse_y = 205 + 10;
     c.resumed_pause_button = true;
@@ -784,13 +826,15 @@ let _r = Renderer::new(false);
     let mut button = IfType::default();
     button.id = 2;
     button.r#type = ComponentType::TYPE_RECT;
-    button.button_type = ButtonType::BUTTON_OK;
     button.button_text = "OK".into();
     button.client_code = 1; // CC_FRIENDS_START → friendUsername[0]
     button.width = 50;
     button.height = 15;
+    let mut button_mut = IfTypeMut::default();
+    button_mut.button_type = ButtonType::BUTTON_OK;
     c.set_iface(1, layer);
     c.set_iface(2, button);
+    c.set_iface_mut(2, button_mut);
     c.side_modal_id = -1;
     c.side_icon[3] = 1;
     c.active_icon = 3;
