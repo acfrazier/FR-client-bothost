@@ -34,6 +34,11 @@ pub struct NavDebugCell {
     /// fill; a face-only cell (bare `W_*` flag) keeps its NSEW letters
     /// but draws no fill quad.
     pub blocked: bool,
+    /// Whether the transport network reaches the tile (the host's paint-
+    /// only reach bitset; `true` when the host has no bitset). A standable
+    /// cell the network never reaches (`!reach`) draws the optional reach
+    /// fill under `show_collision` — the walled-courtyard puddle.
+    pub reach: bool,
 }
 
 /// A live loc hull target: the model at scene tile (`scene_x`, `scene_z`)
@@ -66,6 +71,10 @@ pub struct NavDebugColors {
     pub hull: [u8; 3],
     /// Click-target outline on the current walk tile.
     pub click: [u8; 3],
+    /// Reach overlay fill for standable tiles the transport network never
+    /// reaches (the flood-unreachable `#C828F0`; the host leaves this at
+    /// the default — no nav setting drives it yet).
+    pub reach: [u8; 3],
 }
 
 impl Default for NavDebugColors {
@@ -79,6 +88,7 @@ impl Default for NavDebugColors {
             trail_run: [0xff, 0xff, 0x00],
             hull: [0x00, 0xff, 0x00],
             click: [0xff, 0xff, 0xff],
+            reach: [0xc8, 0x28, 0xf0],
         }
     }
 }
@@ -160,16 +170,16 @@ pub(crate) fn draw(client: &mut Client, r: &mut Renderer, surface: &mut Pix2D) {
     let mut quads: Vec<Quad> = Vec::new();
     if paint.show_collision {
         for cell in &paint.collision {
-            if !collision_fill_cell(cell) {
+            let Some((colour, fill_alpha)) = cell_fill(cell, &paint.colors) else {
                 continue;
-            }
+            };
             if let Some(quad) = tile_quad(
                 client,
                 r,
                 cell.lx,
                 cell.lz,
-                rgb(paint.colors.collision),
-                WALK_FILL_ALPHA,
+                colour,
+                fill_alpha,
                 STROKE_ALPHA,
             ) {
                 quads.push(quad);
@@ -340,10 +350,18 @@ fn draw_nsew(client: &Client, r: &Renderer, surface: &mut Pix2D, cell: &NavDebug
     }
 }
 
-/// A collision cell paints its fill quad only when the ground is blocked:
-/// face-only cells (bare `W_*` flags) keep their NSEW letters but no fill.
-fn collision_fill_cell(cell: &NavDebugCell) -> bool {
-    cell.blocked
+/// The fill a collision cell draws under `show_collision`: blocked ground
+/// keeps the collision colour; standable ground the host's reach bitset
+/// never marks (`!reach`) draws the optional reach colour (the walled-
+/// courtyard puddle); a reached standable cell draws nothing.
+fn cell_fill(cell: &NavDebugCell, colors: &NavDebugColors) -> Option<(i32, i32)> {
+    if cell.blocked {
+        Some((rgb(colors.collision), WALK_FILL_ALPHA))
+    } else if !cell.reach {
+        Some((rgb(colors.reach), WALK_FILL_ALPHA))
+    } else {
+        None
+    }
 }
 
 /// NSEW letter centres in scene coords. +z is north: the N letter sits on
@@ -535,22 +553,65 @@ mod tests {
     fn face_only_cell_has_letters_but_no_fill() {
         // A W_S-only tile: standable ground with a south wall face. It
         // stays in the NSEW set yet must never paint the collision fill.
+        let colors = NavDebugColors::default();
         let cell = NavDebugCell {
             lx: 0,
             lz: 0,
             bits: FACE_S,
             blocked: false,
+            reach: false,
         };
         assert_ne!(cell.bits & FACE_S, 0, "face-only cell keeps its letters");
-        assert!(
-            !collision_fill_cell(&cell),
+        assert_ne!(
+            cell_fill(&cell, &colors),
+            Some((rgb(colors.collision), WALK_FILL_ALPHA)),
             "face-only cells never paint the collision fill"
         );
         let blocked = NavDebugCell {
             blocked: true,
             ..cell
         };
-        assert!(collision_fill_cell(&blocked));
+        assert_eq!(
+            cell_fill(&blocked, &colors),
+            Some((rgb(colors.collision), WALK_FILL_ALPHA)),
+            "blocked cells paint the collision fill"
+        );
+    }
+
+    #[test]
+    fn reach_fill_colours_only_unreached_standable_cells() {
+        let colors = NavDebugColors::default();
+        // A reached standable cell (open ground) draws no fill.
+        let open = NavDebugCell {
+            reach: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            cell_fill(&open, &colors),
+            None,
+            "reached ground has no fill"
+        );
+        // The walled-courtyard puddle: standable, unreached → reach fill.
+        let yard = NavDebugCell {
+            reach: false,
+            ..Default::default()
+        };
+        assert_eq!(
+            cell_fill(&yard, &colors),
+            Some((rgb(colors.reach), WALK_FILL_ALPHA)),
+            "unreached standable cells draw the reach fill"
+        );
+        // Blocked ground keeps the collision colour even when unreached.
+        let wall = NavDebugCell {
+            blocked: true,
+            reach: false,
+            ..Default::default()
+        };
+        assert_eq!(
+            cell_fill(&wall, &colors),
+            Some((rgb(colors.collision), WALK_FILL_ALPHA)),
+            "walls keep the collision fill"
+        );
     }
 
     #[test]
