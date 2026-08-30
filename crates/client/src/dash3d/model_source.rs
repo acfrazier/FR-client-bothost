@@ -3,6 +3,8 @@
 // `ClientNpc`) are not inheritance here; the scene graph stores them in the
 // `SceneModel` enum, which dispatches `getTempModel`. `worldRender` is part
 // of the deferred render pass.
+use std::sync::Arc;
+
 use crate::config::Cache;
 use crate::dash3d::{
     ClientLocAnim, ClientNpc, ClientObj, ClientPlayer, ClientProj, MapSpotAnim, Model,
@@ -12,10 +14,12 @@ use crate::graphics::{Pix2D, Pix3DDraw};
 
 /// Any model that can be placed in the `World` scene graph. The `Model`
 /// variant carries the full geometry, so variants differ widely in size (the
-/// TS heap-allocates subclasses).
+/// TS heap-allocates subclasses). `Shared` is the headed loc cache: one
+/// `Arc` from the loc LRU / GeometryStore, not a per-tile owned clone.
 #[allow(clippy::large_enum_variant)]
 pub enum SceneModel {
     Model(Model),
+    Shared(Arc<Model>),
     Obj(ClientObj),
     LocAnim(ClientLocAnim),
     Player(ClientPlayer),
@@ -25,11 +29,28 @@ pub enum SceneModel {
 }
 
 impl SceneModel {
+    pub fn as_model(&self) -> Option<&Model> {
+        match self {
+            SceneModel::Model(model) => Some(model),
+            SceneModel::Shared(model) => Some(model.as_ref()),
+            _ => None,
+        }
+    }
+
+    pub fn as_model_mut(&mut self) -> Option<&mut Model> {
+        match self {
+            SceneModel::Model(model) => Some(model),
+            SceneModel::Shared(model) => Some(Arc::make_mut(model)),
+            _ => None,
+        }
+    }
+
     /// `ModelSource.getTempModel()` from client-ts, dispatched over the
     /// concrete model source held by the scene slot.
     pub fn get_temp_model(&mut self, cache: &Cache, loop_cycle: i32) -> Option<Model> {
         match self {
             SceneModel::Model(model) => Some(model.clone()),
+            SceneModel::Shared(model) => Some((**model).clone()),
             SceneModel::Obj(obj) => obj.get_temp_model(cache, loop_cycle),
             SceneModel::LocAnim(anim) => anim.get_temp_model(cache, loop_cycle),
             SceneModel::Player(player) => player.get_temp_model(cache, loop_cycle),
@@ -44,6 +65,7 @@ impl SceneModel {
     pub fn min_y(&self) -> i32 {
         match self {
             SceneModel::Model(model) => model.min_y,
+            SceneModel::Shared(model) => model.min_y,
             SceneModel::Obj(obj) => obj.min_y,
             SceneModel::LocAnim(anim) => anim.min_y,
             SceneModel::Player(player) => player.min_y,
@@ -73,8 +95,8 @@ impl SceneModel {
         relative_z: i32,
         typecode: i32,
     ) {
-        match self {
-            SceneModel::Model(model) => model.world_render(
+        if let Some(model) = self.as_model() {
+            model.world_render(
                 pix,
                 surface,
                 yaw,
@@ -86,34 +108,33 @@ impl SceneModel {
                 relative_y,
                 relative_z,
                 typecode,
-            ),
-            _ => {
-                if let Some(model) = self.get_temp_model(cache, loop_cycle) {
-                    let min_y = model.min_y;
-                    match self {
-                        SceneModel::Obj(obj) => obj.min_y = min_y,
-                        SceneModel::LocAnim(anim) => anim.min_y = min_y,
-                        SceneModel::Player(player) => player.min_y = min_y,
-                        SceneModel::Npc(npc) => npc.min_y = min_y,
-                        SceneModel::Proj(proj) => proj.min_y = min_y,
-                        SceneModel::SpotAnim(anim) => anim.min_y = min_y,
-                        SceneModel::Model(_) => unreachable!(),
-                    }
-                    model.world_render(
-                        pix,
-                        surface,
-                        yaw,
-                        sin_eye_pitch,
-                        cos_eye_pitch,
-                        sin_eye_yaw,
-                        cos_eye_yaw,
-                        relative_x,
-                        relative_y,
-                        relative_z,
-                        typecode,
-                    );
-                }
+            );
+            return;
+        }
+        if let Some(model) = self.get_temp_model(cache, loop_cycle) {
+            let min_y = model.min_y;
+            match self {
+                SceneModel::Obj(obj) => obj.min_y = min_y,
+                SceneModel::LocAnim(anim) => anim.min_y = min_y,
+                SceneModel::Player(player) => player.min_y = min_y,
+                SceneModel::Npc(npc) => npc.min_y = min_y,
+                SceneModel::Proj(proj) => proj.min_y = min_y,
+                SceneModel::SpotAnim(anim) => anim.min_y = min_y,
+                SceneModel::Model(_) | SceneModel::Shared(_) => unreachable!(),
             }
+            model.world_render(
+                pix,
+                surface,
+                yaw,
+                sin_eye_pitch,
+                cos_eye_pitch,
+                sin_eye_yaw,
+                cos_eye_yaw,
+                relative_x,
+                relative_y,
+                relative_z,
+                typecode,
+            );
         }
     }
 }

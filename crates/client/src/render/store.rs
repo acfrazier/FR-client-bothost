@@ -123,6 +123,21 @@ mod tests {
         // both renderers resolved a wall model for the tile.
         assert!(rw1.wall_model1(&world, &cache, 0, 0, 0, 0).is_some());
         assert!(rw2.wall_model1(&world, &cache, 0, 0, 0, 0).is_some());
+
+        // Task 6: the cached loc is one GeometryStore Arc, not a per-head
+        // owned clone sitting in TileModels.
+        let a = match rw1.wall_model1(&world, &cache, 0, 0, 0, 0) {
+            Some(SceneModel::Shared(m)) => Arc::clone(m),
+            _ => panic!("wall 0 must decode to a shared loc Arc"),
+        };
+        let b = match rw2.wall_model1(&world, &cache, 0, 0, 0, 0) {
+            Some(SceneModel::Shared(m)) => Arc::clone(m),
+            _ => panic!("wall 1 must decode to a shared loc Arc"),
+        };
+        assert!(
+            Arc::ptr_eq(&a, &b),
+            "two RenderWorlds must share the loc Arc, not two owned clones"
+        );
     }
 
     /// The `model_stamp` tripwire (mid-branch review): every model-bearing
@@ -331,10 +346,7 @@ mod tests {
     }
 
     fn model_points(model: Option<&SceneModel>) -> i32 {
-        match model {
-            Some(SceneModel::Model(m)) => m.num_points,
-            _ => 0,
-        }
+        model.and_then(|m| m.as_model()).map(|m| m.num_points).unwrap_or(0)
     }
 
     /// A second synthetic model: a 4-point quad (two triangles), so the

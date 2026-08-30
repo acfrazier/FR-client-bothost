@@ -558,7 +558,7 @@ impl RenderWorld {
     ) -> Option<SceneModel> {
         let loc = loc?;
         if loc.anim == -1 {
-            let model = loc.get_model(cache, shape, angle, h_sw, h_se, h_ne, h_nw, -1);
+            let model = loc.get_model_shared(cache, shape, angle, h_sw, h_se, h_ne, h_nw, -1);
             if crate::render_debug_enabled() {
                 if let Some(m) = &model {
                     if let (Some(rt), Some(fc)) = (&m.face_render_type, &m.face_colour) {
@@ -575,7 +575,7 @@ impl RenderWorld {
                     }
                 }
             }
-            model.map(SceneModel::Model)
+            model.map(SceneModel::Shared)
         } else {
             Some(SceneModel::LocAnim(ClientLocAnim::new(
                 cache,
@@ -814,7 +814,7 @@ impl RenderWorld {
             )))
         } else if let Some(loc) = Self::loc_at(cache, loc_id) {
             if loc.anim == -1 {
-                loc.get_model(
+                loc.get_model_shared(
                     cache,
                     LocShape::GROUND_DECOR,
                     angle,
@@ -824,7 +824,7 @@ impl RenderWorld {
                     gd.h_nw,
                     -1,
                 )
-                .map(SceneModel::Model)
+                .map(SceneModel::Shared)
             } else {
                 // [sic] `addLoc` passes the shape as the `ClientLocAnim`
                 // angle for animated ground decor.
@@ -1202,9 +1202,10 @@ impl RenderWorld {
             let Some(index) = tile.sprite(i) else {
                 continue;
             };
-            if let Some(SceneModel::Model(model)) = self
+            if let Some(model) = self
                 .sprite_model_mut(world, cache, loop_cycle, index)
                 .as_ref()
+                .and_then(|s| s.as_model())
             {
                 if model.obj_raise > stack_offset {
                     stack_offset = model.obj_raise;
@@ -1458,10 +1459,13 @@ impl RenderWorld {
                     let mut tile = self.tile_models.get_mut(index).and_then(|t| t.take());
 
                     if let Some(tile) = tile.as_mut() {
-                        if let Some(SceneModel::Model(model1)) = tile.wall_model1.as_mut() {
+                        if let Some(model1) = tile.wall_model1.as_mut().and_then(|m| m.as_model_mut())
+                        {
                             if model1.point_normal.is_some() {
                                 self.share_light_loc(world, level, tile_x, tile_z, 1, 1, model1);
-                                if let Some(SceneModel::Model(model2)) = tile.wall_model2.as_mut() {
+                                if let Some(model2) =
+                                    tile.wall_model2.as_mut().and_then(|m| m.as_model_mut())
+                                {
                                     if model2.point_normal.is_some() {
                                         self.share_light_loc(
                                             world, level, tile_x, tile_z, 1, 1, model2,
@@ -1486,7 +1490,7 @@ impl RenderWorld {
                             }
                         }
 
-                        if let Some(SceneModel::Model(model)) = tile.gd_model.as_mut() {
+                        if let Some(model) = tile.gd_model.as_mut().and_then(|m| m.as_model_mut()) {
                             if model.point_normal.is_some() {
                                 self.share_light_gd(world, level, tile_x, tile_z, model);
                                 model.light(
@@ -1504,7 +1508,8 @@ impl RenderWorld {
                                 .wall_model1
                                 .as_ref()
                                 .map(|m| match m {
-                                    SceneModel::Model(model) => {
+                                    m if m.as_model().is_some() => {
+                                        let model = m.as_model().unwrap();
                                         let lit = model
                                             .face_colour_a
                                             .as_ref()
@@ -1548,7 +1553,7 @@ impl RenderWorld {
                                 .sprite_models
                                 .get_mut(sprite_index)
                                 .and_then(|s| s.take());
-                            if let Some(SceneModel::Model(model)) = sprite.as_mut() {
+                            if let Some(model) = sprite.as_mut().and_then(|m| m.as_model_mut()) {
                                 if model.point_normal.is_some() {
                                     if let Some(s) =
                                         world.sprites.get(sprite_index).and_then(|s| s.as_ref())
@@ -1592,10 +1597,10 @@ impl RenderWorld {
                 let index = self.tile_index(world, 0, tile_x, tile_z);
                 let mut tile = self.linked_models.get_mut(index).and_then(|t| t.take());
                 if let Some(tile) = tile.as_mut() {
-                    if let Some(SceneModel::Model(model1)) = tile.wall_model1.as_mut() {
+                    if let Some(model1) = tile.wall_model1.as_mut().and_then(|m| m.as_model_mut()) {
                         if model1.point_normal.is_some() {
                             self.share_light_loc(world, 0, tile_x, tile_z, 1, 1, model1);
-                            if let Some(SceneModel::Model(model2)) = tile.wall_model2.as_mut() {
+                            if let Some(model2) = tile.wall_model2.as_mut().and_then(|m| m.as_model_mut()) {
                                 if model2.point_normal.is_some() {
                                     self.share_light_loc(world, 0, tile_x, tile_z, 1, 1, model2);
                                     self.model_share_light(model1, model2, 0, 0, 0, false);
@@ -1630,7 +1635,7 @@ impl RenderWorld {
                         .sprite_models
                         .get_mut(sprite_index)
                         .and_then(|s| s.take());
-                    if let Some(SceneModel::Model(model)) = sprite.as_mut() {
+                    if let Some(model) = sprite.as_mut().and_then(|m| m.as_model_mut()) {
                         if model.point_normal.is_some() {
                             if let Some(s) =
                                 world.sprites.get(sprite_index).and_then(|s| s.as_ref())
@@ -1673,8 +1678,10 @@ impl RenderWorld {
         if tile_x < world.max_tile_x {
             let index = self.tile_index(world, level, tile_x + 1, tile_z);
             let mut tile = self.tile_models.get_mut(index).and_then(|t| t.take());
-            if let Some(SceneModel::Model(model_b)) =
-                tile.as_mut().and_then(|t| t.gd_model.as_mut())
+            if let Some(model_b) = tile
+                .as_mut()
+                .and_then(|t| t.gd_model.as_mut())
+                .and_then(|m| m.as_model_mut())
             {
                 if model_b.point_normal.is_some() {
                     self.model_share_light(model, model_b, 128, 0, 0, true);
@@ -1688,8 +1695,10 @@ impl RenderWorld {
         if tile_z < world.max_tile_x {
             let index = self.tile_index(world, level, tile_x, tile_z + 1);
             let mut tile = self.tile_models.get_mut(index).and_then(|t| t.take());
-            if let Some(SceneModel::Model(model_b)) =
-                tile.as_mut().and_then(|t| t.gd_model.as_mut())
+            if let Some(model_b) = tile
+                .as_mut()
+                .and_then(|t| t.gd_model.as_mut())
+                .and_then(|m| m.as_model_mut())
             {
                 if model_b.point_normal.is_some() {
                     self.model_share_light(model, model_b, 0, 0, 128, true);
@@ -1703,8 +1712,10 @@ impl RenderWorld {
         if tile_x < world.max_tile_x && tile_z < world.max_tile_z {
             let index = self.tile_index(world, level, tile_x + 1, tile_z + 1);
             let mut tile = self.tile_models.get_mut(index).and_then(|t| t.take());
-            if let Some(SceneModel::Model(model_b)) =
-                tile.as_mut().and_then(|t| t.gd_model.as_mut())
+            if let Some(model_b) = tile
+                .as_mut()
+                .and_then(|t| t.gd_model.as_mut())
+                .and_then(|m| m.as_model_mut())
             {
                 if model_b.point_normal.is_some() {
                     self.model_share_light(model, model_b, 128, 0, 128, true);
@@ -1718,8 +1729,10 @@ impl RenderWorld {
         if tile_x < world.max_tile_x && tile_z > 0 {
             let index = self.tile_index(world, level, tile_x + 1, tile_z - 1);
             let mut tile = self.tile_models.get_mut(index).and_then(|t| t.take());
-            if let Some(SceneModel::Model(model_b)) =
-                tile.as_mut().and_then(|t| t.gd_model.as_mut())
+            if let Some(model_b) = tile
+                .as_mut()
+                .and_then(|t| t.gd_model.as_mut())
+                .and_then(|m| m.as_model_mut())
             {
                 if model_b.point_normal.is_some() {
                     self.model_share_light(model, model_b, 128, 0, -128, true);
@@ -1796,7 +1809,7 @@ impl RenderWorld {
                         .and_then(|t| t.take());
 
                     if let Some(candidate) = candidate.as_mut() {
-                        if let Some(SceneModel::Model(model_b)) = candidate.wall_model1.as_mut() {
+                        if let Some(model_b) = candidate.wall_model1.as_mut().and_then(|m| m.as_model_mut()) {
                             if model_b.point_normal.is_some() {
                                 self.model_share_light(
                                     model_a,
@@ -1808,7 +1821,7 @@ impl RenderWorld {
                                 );
                             }
                         }
-                        if let Some(SceneModel::Model(model_b)) = candidate.wall_model2.as_mut() {
+                        if let Some(model_b) = candidate.wall_model2.as_mut().and_then(|m| m.as_model_mut()) {
                             if model_b.point_normal.is_some() {
                                 self.model_share_light(
                                     model_a,
@@ -1834,7 +1847,7 @@ impl RenderWorld {
                                 .sprite_models
                                 .get_mut(sprite_index)
                                 .and_then(|s| s.take());
-                            if let Some(SceneModel::Model(model_b)) = sprite.as_mut() {
+                            if let Some(model_b) = sprite.as_mut().and_then(|m| m.as_model_mut()) {
                                 if model_b.point_normal.is_some() {
                                     let (min_sx, min_sz, size_x, size_z) = if let Some(s) =
                                         world.sprites.get(sprite_index).and_then(|s| s.as_ref())
@@ -5476,6 +5489,7 @@ fn emit_scene_model(
         if seen.insert(loc_id) {
             let model = match model {
                 SceneModel::Model(m) => m.clone(),
+                SceneModel::Shared(m) => (**m).clone(),
                 _ => model.get_temp_model(cache, loop_cycle).unwrap_or_default(),
             };
             if let (Some(rt), Some(fc), Some(fca)) = (
@@ -5515,7 +5529,7 @@ fn emit_scene_model(
         // A static model that reaches the emitter unlit (`face_colour_a`
         // absent) emits no faces — the wall becomes the scene's black clear
         // colour. Report it once per loc id to trace the re-resolve path.
-        if let SceneModel::Model(m) = &*model {
+        if let Some(m) = model.as_model() {
             if m.face_colour_a.is_none() {
                 static UNLIT: std::sync::OnceLock<
                     std::sync::Mutex<std::collections::HashSet<i32>>,
@@ -5534,6 +5548,11 @@ fn emit_scene_model(
                 model, pix, mesh, cam, yaw, rel_x, rel_y, rel_z, typecode, wall,
             );
         }
+        SceneModel::Shared(model) => {
+            emit_model_faces(
+                model, pix, mesh, cam, yaw, rel_x, rel_y, rel_z, typecode, wall,
+            );
+        }
         _ => {
             if let Some(temp) = model.get_temp_model(cache, loop_cycle) {
                 let min_y = temp.min_y;
@@ -5544,7 +5563,7 @@ fn emit_scene_model(
                     SceneModel::Npc(npc) => npc.min_y = min_y,
                     SceneModel::Proj(proj) => proj.min_y = min_y,
                     SceneModel::SpotAnim(anim) => anim.min_y = min_y,
-                    SceneModel::Model(_) => unreachable!(),
+                    SceneModel::Model(_) | SceneModel::Shared(_) => unreachable!(),
                 }
                 emit_model_faces(
                     &temp, pix, mesh, cam, yaw, rel_x, rel_y, rel_z, typecode, wall,

@@ -2,25 +2,47 @@
 // init plus the `getModel`/`buildModel` loc-model pipeline that
 // `REBUILD_NORMAL` loc placement consumes). The TS statics `mc1`/`mc2` are
 // process-wide `Mutex<LruCache>`es so the port stays `Send`.
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::config::Cache;
 use crate::dash3d::loc_angle::LocAngle;
 use crate::dash3d::LocShape;
 use crate::dash3d::{AnimFrame, Model};
-use crate::datastruct::LruCache;
+use crate::datastruct::{LinkableTrait, Links, LruCache};
 use crate::io::{JagFile, OnDemand, Packet};
+
+/// LRU payload: the loc transform cache stores an `Arc` so two heads share
+/// the same decoded geometry instead of cloning `Model` on every `find`.
+struct CachedLoc {
+    model: Arc<Model>,
+    links: Links,
+}
+
+impl LinkableTrait for CachedLoc {
+    fn links(&self) -> &Links {
+        &self.links
+    }
+    fn links_mut(&mut self) -> &mut Links {
+        &mut self.links
+    }
+    fn sentinel() -> Self {
+        CachedLoc {
+            model: Arc::new(Model::default()),
+            links: Links::new(0),
+        }
+    }
+}
 
 // Process-wide by design: LRUs of decoded, immutable loc models shared by
 // every client (the TS `mc1`/`mc2` statics). Cache bookkeeping, not
 // per-client draw state; eviction is LRU so clients only contend on the lock.
-fn mc1() -> &'static Mutex<LruCache<Model>> {
-    static CACHE: OnceLock<Mutex<LruCache<Model>>> = OnceLock::new();
+fn mc1() -> &'static Mutex<LruCache<CachedLoc>> {
+    static CACHE: OnceLock<Mutex<LruCache<CachedLoc>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(LruCache::new(500)))
 }
 
-fn mc2() -> &'static Mutex<LruCache<Model>> {
-    static CACHE: OnceLock<Mutex<LruCache<Model>>> = OnceLock::new();
+fn mc2() -> &'static Mutex<LruCache<CachedLoc>> {
+    static CACHE: OnceLock<Mutex<LruCache<CachedLoc>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(LruCache::new(30)))
 }
 
@@ -377,20 +399,44 @@ impl LocType {
         height_nw: i32,
         transform_id: i32,
     ) -> Option<Model> {
+        self.get_model_shared(
+            _cache, shape, angle, height_sw, height_se, height_ne, height_nw, transform_id,
+        )
+        .map(|shared| (*shared).clone())
+    }
+
+    /// Shared form of `get_model`: hill-skew/sharelight still copy, but a
+    /// plain loc hits the process LRU as an `Arc` so two heads share it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn get_model_shared(
+        &self,
+        _cache: &Cache,
+        shape: i32,
+        angle: i32,
+        height_sw: i32,
+        height_se: i32,
+        height_ne: i32,
+        height_nw: i32,
+        transform_id: i32,
+    ) -> Option<Arc<Model>> {
         let mut modified = self.build_model(shape, angle, transform_id)?;
 
         if self.hillskew || self.sharelight {
-            modified = Model::hill_skew_copy(&modified, self.hillskew, self.sharelight);
+            modified = Arc::new(Model::hill_skew_copy(
+                &modified,
+                self.hillskew,
+                self.sharelight,
+            ));
         }
 
         if self.hillskew {
             let ground_y = (height_sw + height_se + height_ne + height_nw) / 4;
-
-            let points = modified.point_y.as_ref()?;
+            let m = Arc::make_mut(&mut modified);
+            let points = m.point_y.as_ref()?;
             let mut points = points.clone();
-            let num_points = modified.num_points as usize;
-            let x = modified.point_x.as_ref()?;
-            let z = modified.point_z.as_ref()?;
+            let num_points = m.num_points as usize;
+            let x = m.point_x.as_ref()?;
+            let z = m.point_z.as_ref()?;
 
             for i in 0..num_points {
                 let height_s = height_sw + (((height_se - height_sw) * (x[i] + 64)) / 128);
@@ -399,8 +445,8 @@ impl LocType {
                 points[i] += y - ground_y;
             }
 
-            modified.point_y = Some(points);
-            modified.recalc_bounding_cylinder();
+            m.point_y = Some(points);
+            m.recalc_bounding_cylinder();
         }
 
         Some(modified)
@@ -409,7 +455,7 @@ impl LocType {
     /// `buildModel(shape, angle, transformId)` from client-ts. `typecode`
     /// (the `mc2` key) is computed once up front; the TS computes it in each
     /// branch with the same result.
-    fn build_model(&self, shape: i32, angle: i32, transform_id: i32) -> Option<Model> {
+    fn build_model(&self, shape: i32, angle: i32, transform_id: i32) -> Option<Arc<Model>> {
         let typecode = if let Some(shapes) = &self.shape {
             let mut index = 0i64;
             for (i, &s) in shapes.iter().enumerate() {
@@ -426,7 +472,7 @@ impl LocType {
             (((transform_id as i64) + 1) << 32) + ((self.id as i64) << 6) + angle as i64
         };
 
-        let mut model: Option<Model> = None;
+        let mut model: Option<Arc<Model>> = None;
 
         if self.shape.is_none() {
             if shape != LocShape::CENTREPIECE_STRAIGHT {
@@ -436,7 +482,7 @@ impl LocType {
             {
                 let mut cache = mc2().lock().unwrap();
                 if let Some(cached) = cache.find(typecode) {
-                    return Some(cached.clone());
+                    return Some(Arc::clone(&cached.model));
                 }
             }
 
@@ -453,26 +499,33 @@ impl LocType {
                 let loaded = {
                     let mut cache = mc1().lock().unwrap();
                     if let Some(m) = cache.find(model_id as i64) {
-                        m.clone()
+                        Arc::clone(&m.model)
                     } else {
                         let mut m = Model::load(model_id & 0xffff)?;
                         if flip {
                             m.mirror();
                         }
-                        cache.put(m.clone(), model_id as i64);
-                        m
+                        let arc = Arc::new(m);
+                        cache.put(
+                            CachedLoc {
+                                model: Arc::clone(&arc),
+                                links: Links::new(model_id as i64),
+                            },
+                            model_id as i64,
+                        );
+                        arc
                     }
                 };
 
                 if model_count > 1 {
-                    temp.push(Some(loaded));
+                    temp.push(Some((*loaded).clone()));
                 } else {
                     model = Some(loaded);
                 }
             }
 
             if model_count > 1 {
-                model = Some(Model::combine_for_anim(&temp, model_count));
+                model = Some(Arc::new(Model::combine_for_anim(&temp, model_count)));
             }
         } else {
             let mut index = -1;
@@ -490,7 +543,7 @@ impl LocType {
             {
                 let mut cache = mc2().lock().unwrap();
                 if let Some(cached) = cache.find(typecode) {
-                    return Some(cached.clone());
+                    return Some(Arc::clone(&cached.model));
                 }
             }
 
@@ -512,14 +565,21 @@ impl LocType {
             {
                 let mut cache = mc1().lock().unwrap();
                 if let Some(m) = cache.find(model_id as i64) {
-                    model = Some(m.clone());
+                    model = Some(Arc::clone(&m.model));
                 } else {
                     let mut m = Model::load(model_id & 0xffff)?;
                     if flip {
                         m.mirror();
                     }
-                    cache.put(m.clone(), model_id as i64);
-                    model = Some(m);
+                    let arc = Arc::new(m);
+                    cache.put(
+                        CachedLoc {
+                            model: Arc::clone(&arc),
+                            links: Links::new(model_id as i64),
+                        },
+                        model_id as i64,
+                    );
+                    model = Some(arc);
                 }
             }
         }
@@ -574,7 +634,14 @@ impl LocType {
             modified.obj_raise = modified.min_y;
         }
 
-        mc2().lock().unwrap().put(modified.clone(), typecode);
-        Some(modified)
+        let arc = Arc::new(modified);
+        mc2().lock().unwrap().put(
+            CachedLoc {
+                model: Arc::clone(&arc),
+                links: Links::new(typecode),
+            },
+            typecode,
+        );
+        Some(arc)
     }
 }

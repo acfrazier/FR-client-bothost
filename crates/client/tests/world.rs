@@ -267,12 +267,11 @@ fn render_all_lights_pending_sharelight_scene_sprites() {
     // The pending pass resolved the scene sprite and lit it: normals
     // consumed, vertices carry lit colours.
     let index = world.scene_sprite_index(0, 1, 1).expect("sprite placed");
-    let SceneModel::Model(model) = rw
+    let model = rw
         .sprite_model(&world, &cache, 0, index)
         .expect("sprite model")
-    else {
-        panic!("sprite model must be a Model")
-    };
+        .as_model()
+        .expect("sprite model must be a static Model");
     assert!(
         model.point_normal.is_none(),
         "render_all's pending share_light must consume the scene sprite's point normals"
