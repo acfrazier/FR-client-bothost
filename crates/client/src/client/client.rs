@@ -1308,21 +1308,7 @@ impl Client {
     /// TS maininit 1168-1171: unpack `sounds.dat` from the `sounds` jag
     /// unless lowmem. Missing/corrupt file stays an empty table.
     fn unpack_jagfx(cache_dir: &str, lowmem: bool) -> JagFX {
-        let mut jagfx = JagFX::default();
-        if lowmem {
-            return jagfx;
-        }
-        let Ok(bytes) = std::fs::read(format!("{cache_dir}/sounds")) else {
-            return jagfx;
-        };
-        let Some(dat) = catch_unwind(AssertUnwindSafe(|| JagFile::new(bytes)))
-            .ok()
-            .and_then(|jag| jag.read("sounds.dat"))
-        else {
-            return jagfx;
-        };
-        jagfx.init(&mut Packet::new(dat));
-        jagfx
+        JagFX::load_shared(cache_dir, lowmem)
     }
 
     /// Unpack `config` (and `interface` when present) from `cache_dir`,

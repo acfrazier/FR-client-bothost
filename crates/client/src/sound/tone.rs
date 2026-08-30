@@ -66,6 +66,7 @@ impl Default for Envelope {
 
 /// `Envelope.ts`: a 2D shape played by `genNext`. `amplitude`/`delta` stay
 /// f64 like the JS Numbers; the `| 0` truncations happen where TS has them.
+#[derive(Clone)]
 pub struct Envelope {
     length: i32,
     shape_delta: Vec<i32>,
@@ -149,6 +150,7 @@ impl Envelope {
 
 /// `Filter.ts`: an IIR filter whose coefficients are recomputed every 128
 /// samples as the `filterRange` envelope plays.
+#[derive(Clone)]
 pub struct Filter {
     pairs: [i32; 2],
     frequencies: [[[i32; 4]; 2]; 2],
@@ -298,6 +300,7 @@ impl Filter {
 }
 
 /// `Tone.ts`: one voice of a `JagFX` sound.
+#[derive(Clone)]
 pub struct Tone {
     frequency_base: Envelope,
     amplitude_base: Envelope,

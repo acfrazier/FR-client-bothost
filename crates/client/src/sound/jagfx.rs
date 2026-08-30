@@ -1,8 +1,11 @@
 //! Port of `~/experiments/Server/webclient/src/sound/JagFX.ts`. The TS
-//! `JagFX.synth`/`delays` statics and the shared `waveBytes`/`waveBuffer`/
-//! `Tone.buf` scratch live on the `Client`-owned table (design: mutable
-//! statics on the client). Writes past the fixed-size TS buffers are silently
-//! dropped there, so the byte writes here are bounds-guarded the same way.
+//! `JagFX.synth`/`delays` statics are one process table (Arc, keyed by
+//! cache_dir); `waveBytes`/`waveBuffer`/`Tone.buf` scratch stay per-client.
+//! Writes past the fixed-size TS buffers are silently dropped there, so the
+//! byte writes here are bounds-guarded the same way.
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::io::Packet;
 use crate::sound::Tone;
@@ -15,7 +18,7 @@ const TONE_BUF: usize = 22050 * 10;
 
 /// One synthesized sound (a `JagFX` instance in TS). The fields are public
 /// like the TS `tones`/`loopBegin`/`loopEnd`.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Sound {
     pub tones: [Option<Tone>; 10],
     pub loop_begin: i32,
@@ -24,17 +27,36 @@ pub struct Sound {
 
 /// The `JagFX` table: every sound plus the shared generation scratch.
 pub struct JagFX {
-    pub synth: Vec<Option<Sound>>,
-    pub delays: Vec<i32>,
+    pub synth: Arc<Vec<Option<Sound>>>,
+    pub delays: Arc<Vec<i32>>,
     wave_buffer: Packet,
     tone_buf: Vec<i32>,
 }
 
+fn empty_table() -> (Arc<Vec<Option<Sound>>>, Arc<Vec<i32>>) {
+    static EMPTY: OnceLock<(Arc<Vec<Option<Sound>>>, Arc<Vec<i32>>)> = OnceLock::new();
+    EMPTY
+        .get_or_init(|| {
+            (
+                Arc::new((0..SYNTH_CAPACITY).map(|_| None).collect()),
+                Arc::new(vec![0; SYNTH_CAPACITY]),
+            )
+        })
+        .clone()
+}
+
+fn unpacked_tables() -> &'static Mutex<HashMap<String, (Arc<Vec<Option<Sound>>>, Arc<Vec<i32>>)>> {
+    static TABLES: OnceLock<Mutex<HashMap<String, (Arc<Vec<Option<Sound>>>, Arc<Vec<i32>>)>>> =
+        OnceLock::new();
+    TABLES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 impl Default for JagFX {
     fn default() -> Self {
+        let (synth, delays) = empty_table();
         JagFX {
-            synth: (0..SYNTH_CAPACITY).map(|_| None).collect(),
-            delays: vec![0; SYNTH_CAPACITY],
+            synth,
+            delays,
             // Scratch is allocated on first `generate` — 50 unheaded
             // clients must not pay 441 KB + 882 KB of zeroed wave/tone
             // buffers each (~65 MB) before any synth runs.
@@ -55,7 +77,10 @@ impl JagFX {
     }
 
     /// `JagFX.init(buf)` from TS: read `sounds.dat` into the synth table.
+    /// COWs the process empty table so a test fixture does not fill it.
     pub fn init(&mut self, buf: &mut Packet) {
+        let delays = Arc::make_mut(&mut self.delays);
+        let synth = Arc::make_mut(&mut self.synth);
         loop {
             let id = buf.g2();
             if id == 65535 {
@@ -63,18 +88,63 @@ impl JagFX {
             }
             let mut sound = Sound::default();
             sound.load(buf);
-            self.delays[id as usize] = sound.optimise_start();
-            self.synth[id as usize] = Some(sound);
+            delays[id as usize] = sound.optimise_start();
+            synth[id as usize] = Some(sound);
         }
     }
 
+    /// Process-wide synth table for `cache_dir` (one unpack of `sounds.dat`).
+    /// Lowmem / missing file stays on the shared empty table.
+    pub fn load_shared(cache_dir: &str, lowmem: bool) -> Self {
+        if lowmem {
+            return Self::default();
+        }
+        {
+            let tables = unpacked_tables().lock().expect("jagfx tables");
+            if let Some((synth, delays)) = tables.get(cache_dir) {
+                return JagFX {
+                    synth: Arc::clone(synth),
+                    delays: Arc::clone(delays),
+                    wave_buffer: Packet::new(Vec::new()),
+                    tone_buf: Vec::new(),
+                };
+            }
+        }
+        let mut jagfx = Self::default();
+        let Ok(bytes) = std::fs::read(format!("{cache_dir}/sounds")) else {
+            return jagfx;
+        };
+        let Some(dat) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::io::JagFile::new(bytes)
+        }))
+        .ok()
+        .and_then(|jag| jag.read("sounds.dat")) else {
+            return jagfx;
+        };
+        jagfx.init(&mut Packet::new(dat));
+        {
+            let mut tables = unpacked_tables().lock().expect("jagfx tables");
+            if let Some((synth, delays)) = tables.get(cache_dir) {
+                jagfx.synth = Arc::clone(synth);
+                jagfx.delays = Arc::clone(delays);
+            } else {
+                tables.insert(
+                    cache_dir.to_string(),
+                    (Arc::clone(&jagfx.synth), Arc::clone(&jagfx.delays)),
+                );
+            }
+        }
+        jagfx
+    }
+
     /// `JagFX.generate(id, loopCount)` from TS: synth the sound as a WAV
-    /// packet, or `None` when the id is not in the table.
+    /// packet, or `None` when the id is not in the table. Clones one `Sound`
+    /// so Tone generate can mutate without COWing the process table.
     pub fn generate(&mut self, id: i32, loop_count: i32) -> Option<&Packet> {
         self.ensure_scratch();
-        let sound = self.synth.get_mut(id as usize)?.as_mut()?;
+        let mut sound = self.synth.get(id as usize)?.clone()?;
         let wave = self.wave_buffer.data_mut();
-        let length = Self::make_sound(sound, &mut self.tone_buf, wave, loop_count);
+        let length = Self::make_sound(&mut sound, &mut self.tone_buf, wave, loop_count);
 
         self.wave_buffer.pos = 0;
         self.wave_buffer.p4(0x5249_4646); // "RIFF" ChunkID
@@ -231,5 +301,16 @@ mod jagfx_size_tests {
         let j = JagFX::default();
         assert_eq!(j.wave_buffer.length(), 0);
         assert!(j.tone_buf.is_empty());
+    }
+
+    #[test]
+    fn default_tables_are_one_process_arc() {
+        let a = JagFX::default();
+        let b = JagFX::default();
+        assert!(
+            std::sync::Arc::ptr_eq(&a.synth, &b.synth),
+            "empty synth table must be one process Arc"
+        );
+        assert!(std::sync::Arc::ptr_eq(&a.delays, &b.delays));
     }
 }
