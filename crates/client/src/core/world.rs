@@ -187,7 +187,7 @@ impl World {
                 tile.level -= 1;
 
                 for i in 0..tile.sprite_count as usize {
-                    if let Some(sprite_index) = tile.sprites[i] {
+                    if let Some(sprite_index) = tile.sprite(i) {
                         if let Some(sprite) = self.sprites[sprite_index].as_mut() {
                             if (sprite.typecode >> 29) & 0x3 == 2
                                 && sprite.min_tile_x == stx
@@ -294,7 +294,7 @@ impl World {
             colour_se, colour_ne, colour_nw, colour2_sw, colour2_se, colour2_ne, colour2_nw,
             overlay, underlay,
         );
-        tile.overlay_stamp = Some(stamp);
+        tile.overlay_stamp = Some(Box::new(stamp));
         if self.overlay_mesh {
             stamp.apply_to(tile);
         }
@@ -320,7 +320,7 @@ impl World {
 
         let tile = &mut self.squares[tile_level as usize][tile_x as usize][tile_z as usize];
         if let Some(tile) = tile {
-            tile.ground_decor = Some(GroundDecor::new(
+            tile.ground_decor = Some(Box::new(GroundDecor::new(
                 y,
                 tile_x * 128 + 64,
                 tile_z * 128 + 64,
@@ -330,7 +330,7 @@ impl World {
                 h_se,
                 h_ne,
                 h_nw,
-            ));
+            )));
             tile.model_stamp = tile.model_stamp.wrapping_add(1);
         }
     }
@@ -361,7 +361,7 @@ impl World {
 
         let tile = &mut self.squares[level as usize][stx as usize][stz as usize];
         if let Some(tile) = tile {
-            tile.ground_object = Some(GroundObject::new(
+            tile.ground_object = Some(Box::new(GroundObject::new(
                 y,
                 stx * 128 + 64,
                 stz * 128 + 64,
@@ -369,7 +369,7 @@ impl World {
                 top,
                 middle,
                 bottom,
-            ));
+            )));
             tile.model_stamp = tile.model_stamp.wrapping_add(1);
         }
     }
@@ -406,7 +406,7 @@ impl World {
 
         let tile = &mut self.squares[level as usize][tile_x as usize][tile_z as usize];
         if let Some(tile) = tile {
-            tile.wall = Some(Wall::new(
+            tile.wall = Some(Box::new(Wall::new(
                 y,
                 tile_x * 128 + 64,
                 tile_z * 128 + 64,
@@ -418,7 +418,7 @@ impl World {
                 h_se,
                 h_ne,
                 h_nw,
-            ));
+            )));
             tile.model_stamp = tile.model_stamp.wrapping_add(1);
         }
     }
@@ -457,7 +457,7 @@ impl World {
 
         let tile = &mut self.squares[level as usize][tile_x as usize][tile_z as usize];
         if let Some(tile) = tile {
-            tile.decor = Some(Decor::new(
+            tile.decor = Some(Box::new(Decor::new(
                 y,
                 tile_x * 128 + offset_x + 64,
                 tile_z * 128 + offset_z + 64,
@@ -469,7 +469,7 @@ impl World {
                 h_se,
                 h_ne,
                 h_nw,
-            ));
+            )));
             tile.model_stamp = tile.model_stamp.wrapping_add(1);
         }
     }
@@ -484,7 +484,7 @@ impl World {
     pub fn move_decor(&mut self, level: i32, x: i32, z: i32, offset: i32) {
         let tile = &mut self.squares[level as usize][x as usize][z as usize];
         let Some(tile) = tile else { return };
-        let Some(decor) = tile.decor.as_mut() else { return };
+        let Some(decor) = tile.decor.as_deref_mut() else { return };
 
         let sx = x * 128 + 64;
         let sz = z * 128 + 64;
@@ -602,7 +602,7 @@ impl World {
             let Some(tile) = tile else { return };
             let mut found = None;
             for l in 0..tile.sprite_count as usize {
-                if let Some(idx) = tile.sprites[l] {
+                if let Some(idx) = tile.sprite(l) {
                     if let Some(sprite) = &self.sprites[idx] {
                         if (sprite.typecode >> 29) & 0x3 == 2
                             && sprite.min_tile_x == x
@@ -642,31 +642,31 @@ impl World {
     pub fn get_wall(&self, level: i32, x: i32, z: i32) -> Option<&Wall> {
         self.squares[level as usize][x as usize][z as usize]
             .as_ref()
-            .and_then(|tile| tile.wall.as_ref())
+            .and_then(|tile| tile.wall.as_deref())
     }
 
     pub fn get_wall_mut(&mut self, level: i32, x: i32, z: i32) -> Option<&mut Wall> {
         self.squares[level as usize][x as usize][z as usize]
             .as_mut()
-            .and_then(|tile| tile.wall.as_mut())
+            .and_then(|tile| tile.wall.as_deref_mut())
     }
 
     pub fn get_decor(&self, level: i32, x: i32, z: i32) -> Option<&Decor> {
         self.squares[level as usize][x as usize][z as usize]
             .as_ref()
-            .and_then(|tile| tile.decor.as_ref())
+            .and_then(|tile| tile.decor.as_deref())
     }
 
     pub fn get_decor_mut(&mut self, level: i32, x: i32, z: i32) -> Option<&mut Decor> {
         self.squares[level as usize][x as usize][z as usize]
             .as_mut()
-            .and_then(|tile| tile.decor.as_mut())
+            .and_then(|tile| tile.decor.as_deref_mut())
     }
 
     pub fn get_scene(&self, level: i32, x: i32, z: i32) -> Option<&Sprite> {
         let tile = self.squares[level as usize][x as usize][z as usize].as_ref()?;
         for l in 0..tile.sprite_count as usize {
-            if let Some(idx) = tile.sprites[l] {
+            if let Some(idx) = tile.sprite(l) {
                 if let Some(sprite) = &self.sprites[idx] {
                     if (sprite.typecode >> 29) & 0x3 == 2
                         && sprite.min_tile_x == x
@@ -684,7 +684,7 @@ impl World {
         let tile = self.squares[level as usize][x as usize][z as usize].as_ref()?;
         let mut found = None;
         for l in 0..tile.sprite_count as usize {
-            if let Some(idx) = tile.sprites[l] {
+            if let Some(idx) = tile.sprite(l) {
                 if let Some(sprite) = &self.sprites[idx] {
                     if (sprite.typecode >> 29) & 0x3 == 2
                         && sprite.min_tile_x == x
@@ -702,33 +702,33 @@ impl World {
     pub fn get_gd(&self, level: i32, x: i32, z: i32) -> Option<&GroundDecor> {
         self.squares[level as usize][x as usize][z as usize]
             .as_ref()
-            .and_then(|tile| tile.ground_decor.as_ref())
+            .and_then(|tile| tile.ground_decor.as_deref())
     }
 
     pub fn get_gd_mut(&mut self, level: i32, x: i32, z: i32) -> Option<&mut GroundDecor> {
         self.squares[level as usize][x as usize][z as usize]
             .as_mut()
-            .and_then(|tile| tile.ground_decor.as_mut())
+            .and_then(|tile| tile.ground_decor.as_deref_mut())
     }
 
     pub fn wall_type(&self, level: i32, x: i32, z: i32) -> i32 {
         self.squares[level as usize][x as usize][z as usize]
             .as_ref()
-            .and_then(|tile| tile.wall.as_ref())
+            .and_then(|tile| tile.wall.as_deref())
             .map_or(0, |wall| wall.typecode)
     }
 
     pub fn decor_type(&self, level: i32, x: i32, z: i32) -> i32 {
         self.squares[level as usize][x as usize][z as usize]
             .as_ref()
-            .and_then(|tile| tile.decor.as_ref())
+            .and_then(|tile| tile.decor.as_deref())
             .map_or(0, |decor| decor.typecode)
     }
 
     /// `Client.groundObj[level][x][z]` presence for the minimap dots (TS
     /// minimapDraw 11317-11325). Bounds-checked like `tile_at`.
     pub fn ground_object_at(&self, level: i32, x: i32, z: i32) -> Option<&GroundObject> {
-        tile_at(&self.squares, level, x, z).and_then(|tile| tile.ground_object.as_ref())
+        tile_at(&self.squares, level, x, z).and_then(|tile| tile.ground_object.as_deref())
     }
 
     pub fn scene_type(&self, level: i32, x: i32, z: i32) -> i32 {
@@ -736,7 +736,7 @@ impl World {
             return 0;
         };
         for l in 0..tile.sprite_count as usize {
-            if let Some(idx) = tile.sprites[l] {
+            if let Some(idx) = tile.sprite(l) {
                 if let Some(sprite) = &self.sprites[idx] {
                     if (sprite.typecode >> 29) & 0x3 == 2
                         && sprite.min_tile_x == x
@@ -753,7 +753,7 @@ impl World {
     pub fn gd_type(&self, level: i32, x: i32, z: i32) -> i32 {
         self.squares[level as usize][x as usize][z as usize]
             .as_ref()
-            .and_then(|tile| tile.ground_decor.as_ref())
+            .and_then(|tile| tile.ground_decor.as_deref())
             .map_or(0, |gd| gd.typecode)
     }
 
@@ -777,7 +777,7 @@ impl World {
             }
         }
         for i in 0..tile.sprite_count as usize {
-            if let Some(idx) = tile.sprites[i] {
+            if let Some(idx) = tile.sprite(i) {
                 if let Some(sprite) = &self.sprites[idx] {
                     if sprite.typecode == typecode {
                         return sprite.typecode2 & 0xff;
@@ -794,7 +794,7 @@ impl World {
     pub fn scene_sprite_index(&self, level: i32, x: i32, z: i32) -> Option<usize> {
         let tile = self.squares[level as usize][x as usize][z as usize].as_ref()?;
         for l in 0..tile.sprite_count as usize {
-            if let Some(idx) = tile.sprites[l] {
+            if let Some(idx) = tile.sprite(l) {
                 if let Some(sprite) = &self.sprites[idx] {
                     if (sprite.typecode >> 29) & 0x3 == 2
                         && sprite.min_tile_x == x
@@ -899,7 +899,7 @@ impl World {
 
                 let tile = &mut self.squares[level as usize][tx as usize][tz as usize];
                 if let Some(tile) = tile {
-                    tile.sprites[tile.sprite_count as usize] = Some(index);
+                    tile.set_sprite(tile.sprite_count as usize, Some(index));
                     tile.sprite_span[tile.sprite_count as usize] = spans;
                     tile.sprite_spans |= spans;
                     tile.sprite_count += 1;
@@ -960,7 +960,7 @@ impl World {
                 for z in 0..self.max_tile_z {
                     let mut cursor = self.squares[level as usize][x as usize][z as usize].as_mut();
                     while let Some(tile) = cursor {
-                        if let Some(stamp) = tile.overlay_stamp {
+                        if let Some(stamp) = tile.overlay_stamp.as_deref().copied() {
                             stamp.apply_to(tile);
                         }
                         cursor = tile.linked_square.as_mut();
@@ -1012,13 +1012,13 @@ impl World {
                 };
 
                 for i in 0..tile.sprite_count as usize {
-                    if tile.sprites[i] == Some(index) {
+                    if tile.sprite(i) == Some(index) {
                         tile.sprite_count -= 1;
                         for j in i..tile.sprite_count as usize {
-                            tile.sprites[j] = tile.sprites[j + 1];
+                            tile.set_sprite(j, tile.sprite(j + 1));
                             tile.sprite_span[j] = tile.sprite_span[j + 1];
                         }
-                        tile.sprites[tile.sprite_count as usize] = None;
+                        tile.set_sprite(tile.sprite_count as usize, None);
                         break;
                     }
                 }
@@ -1108,6 +1108,11 @@ mod size_tests {
             std::mem::size_of::<Option<Box<Square>>>(),
             8,
             "empty tiles must be a pointer, not an inlined Square"
+        );
+        assert!(
+            std::mem::size_of::<Square>() < 200,
+            "occupied Square must stay compact, got {}",
+            std::mem::size_of::<Square>()
         );
         assert!(
             grid < 400_000,

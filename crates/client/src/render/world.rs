@@ -641,7 +641,7 @@ impl RenderWorld {
         x: i32,
         z: i32,
     ) {
-        let Some(wall) = tile_at(&world.squares, level, x, z).and_then(|t| t.wall.as_ref()) else {
+        let Some(wall) = tile_at(&world.squares, level, x, z).and_then(|t| t.wall.as_deref()) else {
             return;
         };
         let loc_id = (wall.typecode >> 14) & 0x7fff;
@@ -751,7 +751,7 @@ impl RenderWorld {
         x: i32,
         z: i32,
     ) {
-        let Some(decor) = tile_at(&world.squares, level, x, z).and_then(|t| t.decor.as_ref())
+        let Some(decor) = tile_at(&world.squares, level, x, z).and_then(|t| t.decor.as_deref())
         else {
             return;
         };
@@ -791,7 +791,7 @@ impl RenderWorld {
         x: i32,
         z: i32,
     ) {
-        let Some(gd) = tile_at(&world.squares, level, x, z).and_then(|t| t.ground_decor.as_ref())
+        let Some(gd) = tile_at(&world.squares, level, x, z).and_then(|t| t.ground_decor.as_deref())
         else {
             return;
         };
@@ -851,7 +851,7 @@ impl RenderWorld {
     /// Materialise the ground-object stack's `ClientObj` models from the
     /// `(id, count)` descriptors `showObject` stored on the sim tile.
     fn resolve_objs(&mut self, world: &World, level: i32, x: i32, z: i32) {
-        let Some(go) = tile_at(&world.squares, level, x, z).and_then(|t| t.ground_object.as_ref())
+        let Some(go) = tile_at(&world.squares, level, x, z).and_then(|t| t.ground_object.as_deref())
         else {
             return;
         };
@@ -944,7 +944,7 @@ impl RenderWorld {
     ) {
         let Some(wall) = tile_at(&world.squares, level, x, z)
             .and_then(|t| t.linked_square.as_ref())
-            .and_then(|ls| ls.wall.as_ref())
+            .and_then(|ls| ls.wall.as_deref())
         else {
             return;
         };
@@ -1055,7 +1055,7 @@ impl RenderWorld {
         loc_id: i32,
     ) -> Option<(i32, i32, i32, i32, Model)> {
         let tile = tile_at(&world.squares, level, tile_x, tile_z)?;
-        if let Some(wall) = tile.wall.as_ref() {
+        if let Some(wall) = tile.wall.as_deref() {
             if (wall.typecode >> 14) & 0x7fff == loc_id {
                 let (model1, model2) =
                     self.wall_models_mut(world, cache, loop_cycle, level, tile_x, tile_z);
@@ -1066,7 +1066,7 @@ impl RenderWorld {
                 }
             }
         }
-        if let Some(decor) = tile.decor.as_ref() {
+        if let Some(decor) = tile.decor.as_deref() {
             if (decor.typecode >> 14) & 0x7fff == loc_id {
                 if let Some(model) = self
                     .decor_model_mut(world, cache, loop_cycle, level, tile_x, tile_z)
@@ -1078,7 +1078,7 @@ impl RenderWorld {
                 }
             }
         }
-        if let Some(gd) = tile.ground_decor.as_ref() {
+        if let Some(gd) = tile.ground_decor.as_deref() {
             if (gd.typecode >> 14) & 0x7fff == loc_id {
                 if let Some(model) = self
                     .gd_model_mut(world, cache, loop_cycle, level, tile_x, tile_z)
@@ -1093,7 +1093,7 @@ impl RenderWorld {
         // Grounded tile locs: the tile's scene sprites (entity 2) carry
         // the loc id, resolved exactly like the draw pass.
         for i in 0..tile.sprite_count as usize {
-            let Some(index) = tile.sprites[i] else {
+            let Some(index) = tile.sprite(i) else {
                 continue;
             };
             let Some(sprite) = world.sprites.get(index).and_then(|s| s.as_ref()) else {
@@ -1199,7 +1199,7 @@ impl RenderWorld {
             return 0;
         };
         for i in 0..tile.sprite_count as usize {
-            let Some(index) = tile.sprites[i] else {
+            let Some(index) = tile.sprite(i) else {
                 continue;
             };
             if let Some(SceneModel::Model(model)) = self
@@ -1399,7 +1399,7 @@ impl RenderWorld {
                     if let Some(t) = tile_at(&world.squares, level, x, z) {
                         self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
                         for i in 0..t.sprite_count as usize {
-                            if let Some(index) = t.sprites[i] {
+                            if let Some(index) = t.sprite(i) {
                                 self.sprite_model_mut(world, cache, loop_cycle, index);
                             }
                         }
@@ -1421,7 +1421,7 @@ impl RenderWorld {
                         self.resolve_linked_wall(world, cache, loop_cycle, 0, x, z);
                     }
                     for i in 0..linked.sprite_count as usize {
-                        if let Some(sprite_index) = linked.sprites[i] {
+                        if let Some(sprite_index) = linked.sprite(i) {
                             self.sprite_model_mut(world, cache, loop_cycle, sprite_index);
                         }
                     }
@@ -1541,7 +1541,7 @@ impl RenderWorld {
                     // each of its footprint tiles as the TS does).
                     if let Some(t) = tile_at(&world.squares, level, tile_x, tile_z) {
                         for i in 0..t.sprite_count as usize {
-                            let Some(sprite_index) = t.sprites[i] else {
+                            let Some(sprite_index) = t.sprite(i) else {
                                 continue;
                             };
                             let mut sprite = self
@@ -1623,7 +1623,7 @@ impl RenderWorld {
                 }
 
                 for i in 0..linked.sprite_count as usize {
-                    let Some(sprite_index) = linked.sprites[i] else {
+                    let Some(sprite_index) = linked.sprite(i) else {
                         continue;
                     };
                     let mut sprite = self
@@ -1827,7 +1827,7 @@ impl RenderWorld {
 
                     if let Some(t) = tile_at(&world.squares, l, x, z) {
                         for i in 0..t.sprite_count as usize {
-                            let Some(sprite_index) = t.sprites[i] else {
+                            let Some(sprite_index) = t.sprite(i) else {
                                 continue;
                             };
                             let mut sprite = self
@@ -2459,13 +2459,13 @@ impl RenderWorld {
             .and_then(|ls| ls.ground.as_deref().cloned());
         let linked_wall = tile_at(&world.squares, level, tile_x, tile_z)
             .and_then(|t| t.linked_square.as_ref())
-            .and_then(|ls| ls.wall.as_ref())
+            .and_then(|ls| ls.wall.as_deref())
             .map(|w| (w.typecode, w.x, w.y, w.z));
         let linked_sprites: Vec<usize> = tile_at(&world.squares, level, tile_x, tile_z)
             .and_then(|t| t.linked_square.as_ref())
             .map(|ls| {
                 (0..ls.sprite_count as usize)
-                    .filter_map(|i| ls.sprites[i])
+                    .filter_map(|i| ls.sprite(i))
                     .collect()
             })
             .unwrap_or_default();
@@ -2508,7 +2508,7 @@ impl RenderWorld {
         // bucket so they draw *after* scenery — the CPU's back-wall pass
         // overwrites a same-tile booth that occupies the wall's thickness.
         let wall_data = tile_at(&world.squares, level, tile_x, tile_z)
-            .and_then(|t| t.wall.as_ref())
+            .and_then(|t| t.wall.as_deref())
             .map(|w| {
                 (
                     w.typecode,
@@ -2543,7 +2543,7 @@ impl RenderWorld {
         // Decor: the `fill` placement branches verbatim (front wall types
         // vs the DECORXOF/DECORXOF2 offset corners).
         let decor_data = tile_at(&world.squares, level, tile_x, tile_z)
-            .and_then(|t| t.decor.as_ref())
+            .and_then(|t| t.decor.as_deref())
             .map(|d| {
                 (
                     d.wshape,
@@ -2641,7 +2641,7 @@ impl RenderWorld {
 
         // Ground decor + ground objects (stack height 0).
         if let Some((typecode, gd_x, gd_y, gd_z)) = tile_at(&world.squares, level, tile_x, tile_z)
-            .and_then(|t| t.ground_decor.as_ref())
+            .and_then(|t| t.ground_decor.as_deref())
             .map(|gd| {
                 (
                     gd.typecode,
@@ -2661,7 +2661,7 @@ impl RenderWorld {
             }
         }
         if let Some((typecode, ox, oy, oz)) = tile_at(&world.squares, level, tile_x, tile_z)
-            .and_then(|t| t.ground_object.as_ref())
+            .and_then(|t| t.ground_object.as_deref())
             .map(|o| {
                 (
                     o.typecode,
@@ -2700,7 +2700,7 @@ impl RenderWorld {
         let sprite_indices: Vec<usize> = tile_at(&world.squares, level, tile_x, tile_z)
             .map(|t| {
                 (0..t.sprite_count as usize)
-                    .filter_map(|i| t.sprites[i])
+                    .filter_map(|i| t.sprite(i))
                     .collect()
             })
             .unwrap_or_default();
@@ -3193,7 +3193,7 @@ impl RenderWorld {
                 {
                     let linked = tile_at(&world.squares, level, tile_x, tile_z)
                         .and_then(|t| t.linked_square.as_ref())
-                        .and_then(|ls| ls.wall.as_ref())
+                        .and_then(|ls| ls.wall.as_deref())
                         .map(|w| (w.typecode, w.x - cx, w.y - cy, w.z - cz));
                     if let Some((typecode, wall_x, wall_y, wall_z)) = linked {
                         if let Some(model) = self
@@ -3215,7 +3215,7 @@ impl RenderWorld {
                     .and_then(|t| t.linked_square.as_ref())
                     .map(|ls| {
                         (0..ls.sprite_count as usize)
-                            .filter_map(|i| ls.sprites[i])
+                            .filter_map(|i| ls.sprite(i))
                             .collect()
                     })
                     .unwrap_or_default();
@@ -3309,7 +3309,7 @@ impl RenderWorld {
 
                 // Wall corner-sides bookkeeping and the front wall renders.
                 let wall_data = tile_at(&world.squares, level, tile_x, tile_z)
-                    .and_then(|t| t.wall.as_ref())
+                    .and_then(|t| t.wall.as_deref())
                     .map(|w| (w.angle1, w.angle2, w.typecode, w.x - cx, w.y - cy, w.z - cz));
                 if let Some((angle1, angle2, typecode, wall_x, wall_y, wall_z)) = wall_data {
                     if let Some(tile) = tile_at_mut(&mut world.squares, level, tile_x, tile_z) {
@@ -3367,7 +3367,7 @@ impl RenderWorld {
 
                 // Decor on the near side of the tile.
                 let decor_data = tile_at(&world.squares, level, tile_x, tile_z)
-                    .and_then(|t| t.decor.as_ref())
+                    .and_then(|t| t.decor.as_deref())
                     .map(|d| (d.wshape, d.angle, d.typecode, d.x - cx, d.y - cy, d.z - cz));
                 if let Some((wshape, angle, typecode, decor_x, decor_y, decor_z)) = decor_data {
                     let min_y = self
@@ -3463,7 +3463,7 @@ impl RenderWorld {
                 // Ground decor + ground objects (stack height 0) on a drawn tile.
                 if tile_drawn {
                     let ground_decor_data = tile_at(&world.squares, level, tile_x, tile_z)
-                        .and_then(|t| t.ground_decor.as_ref())
+                        .and_then(|t| t.ground_decor.as_deref())
                         .map(|gd| (gd.typecode, gd.x - cx, gd.y - cy, gd.z - cz));
                     if let Some((typecode, gd_x, gd_y, gd_z)) = ground_decor_data {
                         if let Some(model) = self
@@ -3478,7 +3478,7 @@ impl RenderWorld {
                     }
 
                     let ground_object_data = tile_at(&world.squares, level, tile_x, tile_z)
-                        .and_then(|t| t.ground_object.as_ref())
+                        .and_then(|t| t.ground_object.as_deref())
                         .map(|o| (o.typecode, o.x - cx, o.y - cy, o.z - cz));
                     if let Some((typecode, ox, oy, oz)) = ground_object_data {
                         let height = self.ground_object_height(
@@ -3554,7 +3554,7 @@ impl RenderWorld {
                         (
                             t.corner_sides,
                             (0..t.sprite_count as usize)
-                                .map(|i| (t.sprites[i], t.sprite_span[i]))
+                                .map(|i| (t.sprite(i), t.sprite_span[i]))
                                 .collect::<Vec<_>>(),
                             t.sides_before_corner,
                             t.sides_after_corner,
@@ -3580,7 +3580,7 @@ impl RenderWorld {
 
                 if draw {
                     let wall_data = tile_at(&world.squares, level, tile_x, tile_z)
-                        .and_then(|t| t.wall.as_ref())
+                        .and_then(|t| t.wall.as_deref())
                         .map(|w| (w.angle1, w.typecode, w.x - cx, w.y - cy, w.z - cz));
                     if let Some((angle1, typecode, wall_x, wall_y, wall_z)) = wall_data {
                         if !self.wall_occluded(world, original_level, tile_x, tile_z, angle1) {
@@ -3619,8 +3619,7 @@ impl RenderWorld {
 
                 'iterate_sprites: for i in 0..sprite_count as usize {
                     let sprite_index = tile_at(&world.squares, level, tile_x, tile_z)
-                        .and_then(|t| t.sprites.get(i).copied())
-                        .flatten();
+                        .and_then(|t| t.sprite(i));
                     let Some(sprite_index) = sprite_index else {
                         continue;
                     };
@@ -3890,7 +3889,7 @@ impl RenderWorld {
             // Stacked ground objects (height != 0) render once the tile
             // behind them is done.
             let ground_object_data = tile_at(&world.squares, level, tile_x, tile_z)
-                .and_then(|t| t.ground_object.as_ref())
+                .and_then(|t| t.ground_object.as_deref())
                 .map(|o| (o.typecode, o.x - cx, o.y - cy, o.z - cz));
             if let Some((typecode, ox, oy, oz)) = ground_object_data {
                 let height =
@@ -3960,7 +3959,7 @@ impl RenderWorld {
                 .unwrap_or(0);
             if back_wall_types != 0 {
                 let decor_data = tile_at(&world.squares, level, tile_x, tile_z)
-                    .and_then(|t| t.decor.as_ref())
+                    .and_then(|t| t.decor.as_deref())
                     .map(|d| (d.wshape, d.angle, d.typecode, d.x - cx, d.y - cy, d.z - cz));
                 if let Some((wshape, angle, typecode, decor_x, decor_y, decor_z)) = decor_data {
                     let min_y = self
@@ -4054,7 +4053,7 @@ impl RenderWorld {
                 }
 
                 let wall_data = tile_at(&world.squares, level, tile_x, tile_z)
-                    .and_then(|t| t.wall.as_ref())
+                    .and_then(|t| t.wall.as_deref())
                     .map(|w| (w.angle1, w.angle2, w.typecode, w.x - cx, w.y - cy, w.z - cz));
                 if let Some((angle1, angle2, typecode, wall_x, wall_y, wall_z)) = wall_data {
                     if (angle2 & back_wall_types) != 0
@@ -5428,7 +5427,7 @@ fn scenery_inward_nudge(
     let mut dz = 0i32;
     for tx in min_x..=max_x {
         for tz in min_z..=max_z {
-            let Some(wall) = tile_at(&world.squares, level, tx, tz).and_then(|t| t.wall.as_ref())
+            let Some(wall) = tile_at(&world.squares, level, tx, tz).and_then(|t| t.wall.as_deref())
             else {
                 continue;
             };

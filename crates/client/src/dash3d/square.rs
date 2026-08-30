@@ -5,12 +5,17 @@
 // indices (`Send`, no `Rc`).
 use crate::dash3d::{Decor, Ground, GroundDecor, GroundObject, GroundStamp, QuickGround, Wall};
 
+/// Sentinel in `Square.sprites`: no occupant in that slot.
+const SPRITE_NONE: u32 = u32::MAX;
+
 pub struct Square {
     pub level: i32,
     pub x: i32,
     pub z: i32,
     pub original_level: i32,
-    pub sprites: [Option<usize>; 5],
+    /// Packed arena indices; `SPRITE_NONE` is an empty slot. Use
+    /// `sprite`/`set_sprite` rather than indexing this array.
+    sprites: [u32; 5],
     pub sprite_span: [i32; 5],
     pub quick_ground: Option<QuickGround>,
     /// Boxed so an overlay-free tile stays 8 bytes (task 5: the
@@ -21,11 +26,11 @@ pub struct Square {
     /// Compact record of the tile's `set_ground` overlay inputs (rule 6 of
     /// the head design): an unheaded build keeps this stamp instead of the
     /// render-only mesh; `World::materialize_overlay` applies it on attach.
-    pub overlay_stamp: Option<GroundStamp>,
-    pub wall: Option<Wall>,
-    pub decor: Option<Decor>,
-    pub ground_decor: Option<GroundDecor>,
-    pub ground_object: Option<GroundObject>,
+    pub overlay_stamp: Option<Box<GroundStamp>>,
+    pub wall: Option<Box<Wall>>,
+    pub decor: Option<Box<Decor>>,
+    pub ground_decor: Option<Box<GroundDecor>>,
+    pub ground_object: Option<Box<GroundObject>>,
     pub linked_square: Option<Box<Square>>,
     pub sprite_count: i32,
     pub sprite_spans: i32,
@@ -57,7 +62,7 @@ impl Square {
             x,
             z,
             original_level: level,
-            sprites: [None; 5],
+            sprites: [SPRITE_NONE; 5],
             sprite_span: [0; 5],
             quick_ground: None,
             ground: None,
@@ -80,5 +85,17 @@ impl Square {
             fill_stamp: 0,
             model_stamp: 0,
         }
+    }
+
+    pub fn sprite(&self, slot: usize) -> Option<usize> {
+        let v = self.sprites[slot];
+        (v != SPRITE_NONE).then_some(v as usize)
+    }
+
+    pub fn set_sprite(&mut self, slot: usize, index: Option<usize>) {
+        self.sprites[slot] = match index {
+            Some(i) => i as u32,
+            None => SPRITE_NONE,
+        };
     }
 }
