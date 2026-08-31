@@ -55,16 +55,16 @@ impl Pix32 {
 
     /// `Pix32.fromJpeg(archive, name)`: decode a JPEG stored in the jag.
     /// Client-ts `decodeJpeg` patches a missing SOI (`data[0] !== 0xff`).
-    pub fn from_jpeg(jag: &JagFile, name: &str) -> Result<Self, ()> {
-        let mut bytes = jag.read(name).ok_or(())?;
+    pub fn from_jpeg(jag: &JagFile, name: &str) -> Option<Self> {
+        let mut bytes = jag.read(name)?;
         if bytes.first().copied() != Some(0xff) {
             if bytes.is_empty() {
-                return Err(());
+                return None;
             }
             bytes[0] = 0xff;
         }
         let decoded = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg)
-            .map_err(|_| ())?
+            .ok()?
             .to_rgb8();
         let wi = decoded.width() as i32;
         let hi = decoded.height() as i32;
@@ -73,7 +73,7 @@ impl Pix32 {
             let [r, g, b] = pixel.0;
             data.push(((r as i32) << 16) | ((g as i32) << 8) | (b as i32));
         }
-        Ok(Pix32 {
+        Some(Pix32 {
             data,
             wi,
             hi,
@@ -85,23 +85,23 @@ impl Pix32 {
         })
     }
 
-    pub fn depack(jag: &JagFile, name: &str, sprite: i32) -> Result<Self, ()> {
-        let mut dat = Packet::new(jag.read(&format!("{name}.dat")).ok_or(())?);
-        let mut index = Packet::new(jag.read("index.dat").ok_or(())?);
+    pub fn depack(jag: &JagFile, name: &str, sprite: i32) -> Option<Self> {
+        let mut dat = Packet::new(jag.read(&format!("{name}.dat"))?);
+        let mut index = Packet::new(jag.read("index.dat")?);
 
         if dat.available() < 2 {
-            return Err(());
+            return None;
         }
         index.pos = dat.g2() as usize;
 
         if index.available() < 5 {
-            return Err(());
+            return None;
         }
         let owi = index.g2();
         let ohi = index.g2();
         let bpal_count = index.g1();
         if index.available() < 3 * bpal_count.saturating_sub(1) as usize {
-            return Err(());
+            return None;
         }
         let mut bpal = vec![0i32; bpal_count as usize];
         for i in 0..bpal_count - 1 {
@@ -113,7 +113,7 @@ impl Pix32 {
 
         for _ in 0..sprite {
             if index.available() < 6 {
-                return Err(());
+                return None;
             }
             index.pos += 2;
             let a = index.g2();
@@ -123,11 +123,11 @@ impl Pix32 {
         }
 
         if dat.pos > dat.length() || index.pos > index.length() {
-            return Err(());
+            return None;
         }
 
         if index.available() < 1 + 1 + 2 + 2 + 1 {
-            return Err(());
+            return None;
         }
         let xof = index.g1();
         let yof = index.g1();
@@ -137,7 +137,7 @@ impl Pix32 {
 
         let pixel_len = (wi as i64 * hi as i64) as usize;
         if dat.available() < pixel_len {
-            return Err(());
+            return None;
         }
 
         let mut image = Pix32::new(wi, hi);
@@ -159,7 +159,7 @@ impl Pix32 {
             }
         }
 
-        Ok(image)
+        Some(image)
     }
 
     pub fn rgb_adjust(&mut self, r: i32, g: i32, b: i32) {
@@ -168,27 +168,15 @@ impl Pix32 {
             if rgb != 0 {
                 let mut red = (rgb >> 16) & 0xff;
                 red += r;
-                if red < 1 {
-                    red = 1;
-                } else if red > 255 {
-                    red = 255;
-                }
+                red = red.clamp(1, 255);
 
                 let mut green = (rgb >> 8) & 0xff;
                 green += g;
-                if green < 1 {
-                    green = 1;
-                } else if green > 255 {
-                    green = 255;
-                }
+                green = green.clamp(1, 255);
 
                 let mut blue = rgb & 0xff;
                 blue += b;
-                if blue < 1 {
-                    blue = 1;
-                } else if blue > 255 {
-                    blue = 255;
-                }
+                blue = blue.clamp(1, 255);
 
                 self.data[i] = (red << 16) + (green << 8) + blue;
             }
@@ -218,9 +206,7 @@ impl Pix32 {
             for x in 0..div {
                 let off1 = x + y * width;
                 let off2 = width - x - 1 + y * width;
-                let tmp = self.data[off1 as usize];
-                self.data[off1 as usize] = self.data[off2 as usize];
-                self.data[off2 as usize] = tmp;
+                self.data.swap(off1 as usize, off2 as usize);
             }
         }
     }
@@ -232,9 +218,7 @@ impl Pix32 {
             for x in 0..width {
                 let off1 = x + y * width;
                 let off2 = x + (height - y - 1) * width;
-                let tmp = self.data[off1 as usize];
-                self.data[off1 as usize] = self.data[off2 as usize];
-                self.data[off2 as usize] = tmp;
+                self.data.swap(off1 as usize, off2 as usize);
             }
         }
     }
@@ -285,6 +269,7 @@ impl Pix32 {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn plot_quick(
         &self,
         surface: &mut Pix2D,
@@ -368,6 +353,7 @@ impl Pix32 {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn plot(
         &self,
         surface: &mut Pix2D,
@@ -459,6 +445,7 @@ impl Pix32 {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn tran_sprite(
         &self,
         surface: &mut Pix2D,
@@ -497,6 +484,7 @@ impl Pix32 {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn scanline_rotate_plot_sprite(
         &self,
         surface: &mut Pix2D,
@@ -533,18 +521,18 @@ impl Pix32 {
 
         for i in 0..h {
             let dst_off = line_start[i as usize];
-            let mut dst_x = left_off + dst_off;
+            let dst_start = left_off + dst_off;
+            let width = line_width[i as usize];
 
             let mut src_x = left_x.wrapping_add(cos_zoom.wrapping_mul(dst_off));
             let mut src_y = left_y.wrapping_sub(sin_zoom.wrapping_mul(dst_off));
 
-            for _ in 0..line_width[i as usize] {
+            for dst_x in dst_start..dst_start + width {
                 let idx = (src_x >> 16) as i64 + (src_y >> 16) as i64 * self.wi as i64;
                 if let Some(p) = surface.pixels.get_mut(dst_x as usize) {
                     *p = self.data.get(idx as usize).copied().unwrap_or(0);
                     surface.mark_pixel(dst_x);
                 }
-                dst_x += 1;
                 src_x = src_x.wrapping_add(cos_zoom);
                 src_y = src_y.wrapping_sub(sin_zoom);
             }
@@ -555,6 +543,7 @@ impl Pix32 {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn rotate_plot_sprite(
         &self,
         surface: &mut Pix2D,
@@ -670,6 +659,7 @@ impl Pix32 {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn plot_scanline(
         &self,
         surface: &mut Pix2D,

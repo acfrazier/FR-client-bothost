@@ -13,18 +13,20 @@ use client::graphics::{Pix2D, Pix3D, Pix3DDraw, PixMap};
 const SHADE: i32 = 200 * 128 + 100;
 
 fn one_face_model() -> Model {
-    let mut model = Model::default();
-    model.num_points = 3;
-    model.point_x = Some(vec![-50, 50, 50]);
-    model.point_y = Some(vec![-50, -50, 50]);
-    model.point_z = Some(vec![0, 0, 0]);
-    model.num_faces = 1;
-    model.face_vertex_a = Some(vec![0]);
-    model.face_vertex_b = Some(vec![2]);
-    model.face_vertex_c = Some(vec![1]);
-    model.face_colour_a = Some(vec![SHADE]);
-    model.face_colour_b = Some(vec![SHADE]);
-    model.face_colour_c = Some(vec![SHADE]);
+    let mut model = Model {
+        num_points: 3,
+        point_x: Some(vec![-50, 50, 50]),
+        point_y: Some(vec![-50, -50, 50]),
+        point_z: Some(vec![0, 0, 0]),
+        num_faces: 1,
+        face_vertex_a: Some(vec![0]),
+        face_vertex_b: Some(vec![2]),
+        face_vertex_c: Some(vec![1]),
+        face_colour_a: Some(vec![SHADE]),
+        face_colour_b: Some(vec![SHADE]),
+        face_colour_c: Some(vec![SHADE]),
+        ..Default::default()
+    };
     model.calc_bounding_cylinder();
     model
 }
@@ -194,12 +196,14 @@ fn world_render_skips_faces_with_missing_colours() {
 #[test]
 fn obj_render_vertex_on_camera_plane_does_not_panic() {
     Pix3D::init_colour_table(0.6);
-    let mut model = Model::default();
-    model.num_points = 1;
-    model.point_x = Some(vec![10]);
-    model.point_y = Some(vec![10]);
-    model.point_z = Some(vec![0]);
-    model.num_faces = 0;
+    let mut model = Model {
+        num_points: 1,
+        point_x: Some(vec![10]),
+        point_y: Some(vec![10]),
+        point_z: Some(vec![0]),
+        num_faces: 0,
+        ..Default::default()
+    };
     model.calc_bounding_cylinder();
 
     let mut pix = Pix3DDraw::default();
@@ -218,22 +222,24 @@ fn obj_render_vertex_on_camera_plane_does_not_panic() {
 #[test]
 fn world_render_wide_winding_cross_does_not_overflow() {
     Pix3D::init_colour_table(0.6);
-    let mut model = Model::default();
+    let mut model = Model {
+        num_points: 3,
+        point_x: Some(vec![20000, -20000, 500]),
+        point_y: Some(vec![10000, -10000, 500]),
+        point_z: Some(vec![0, 0, 0]),
+        num_faces: 1,
+        face_vertex_a: Some(vec![0]),
+        face_vertex_b: Some(vec![2]),
+        face_vertex_c: Some(vec![1]),
+        face_colour_a: Some(vec![SHADE]),
+        face_colour_b: Some(vec![SHADE]),
+        face_colour_c: Some(vec![SHADE]),
+        ..Default::default()
+    };
     // Vertices far from the camera axis: projected screen coordinates reach
     // ±100k, so the winding cross product overflows i32 (TS computes it in
     // doubles). relative_x = 20 * 65536 wraps to mid_x = 0 in the eye
     // transform, keeping the model on screen while its vertices spread.
-    model.num_points = 3;
-    model.point_x = Some(vec![20000, -20000, 500]);
-    model.point_y = Some(vec![10000, -10000, 500]);
-    model.point_z = Some(vec![0, 0, 0]);
-    model.num_faces = 1;
-    model.face_vertex_a = Some(vec![0]);
-    model.face_vertex_b = Some(vec![2]);
-    model.face_vertex_c = Some(vec![1]);
-    model.face_colour_a = Some(vec![SHADE]);
-    model.face_colour_b = Some(vec![SHADE]);
-    model.face_colour_c = Some(vec![SHADE]);
     model.calc_bounding_cylinder();
 
     let mut pix = Pix3DDraw::default();
@@ -270,19 +276,21 @@ fn world_render_wide_winding_cross_does_not_overflow() {
 #[test]
 fn depth_bucket_overflow_does_not_spill_into_next_row() {
     Pix3D::init_colour_table(0.6);
-    let mut model = Model::default();
+    let mut model = Model {
+        num_points: 3,
+        point_x: Some(vec![-50, 50, 50]),
+        point_y: Some(vec![-50, -50, 50]),
+        point_z: Some(vec![0, 0, 0]),
+        num_faces: 600,
+        face_vertex_a: Some(vec![0; 600]),
+        face_vertex_b: Some(vec![2; 600]),
+        face_vertex_c: Some(vec![1; 600]),
+        face_colour_a: Some(vec![SHADE; 600]),
+        face_colour_b: Some(vec![SHADE; 600]),
+        face_colour_c: Some(vec![SHADE; 600]),
+        ..Default::default()
+    };
     // 600 identical faces at one depth: more than the 512-slot bucket row.
-    model.num_points = 3;
-    model.point_x = Some(vec![-50, 50, 50]);
-    model.point_y = Some(vec![-50, -50, 50]);
-    model.point_z = Some(vec![0, 0, 0]);
-    model.num_faces = 600;
-    model.face_vertex_a = Some(vec![0; 600]);
-    model.face_vertex_b = Some(vec![2; 600]);
-    model.face_vertex_c = Some(vec![1; 600]);
-    model.face_colour_a = Some(vec![SHADE; 600]);
-    model.face_colour_b = Some(vec![SHADE; 600]);
-    model.face_colour_c = Some(vec![SHADE; 600]);
     model.calc_bounding_cylinder();
 
     let mut pix = Pix3DDraw::default();
@@ -303,21 +311,23 @@ fn depth_bucket_overflow_does_not_spill_into_next_row() {
 #[test]
 fn world_render_priority_model_draws_via_merge_buckets() {
     Pix3D::init_colour_table(0.6);
-    let mut model = Model::default();
+    let mut model = Model {
+        num_points: 3,
+        point_x: Some(vec![-50, 50, 50]),
+        point_y: Some(vec![-50, -50, 50]),
+        point_z: Some(vec![0, 0, 0]),
+        num_faces: 2,
+        face_vertex_a: Some(vec![0, 0]),
+        face_vertex_b: Some(vec![2, 2]),
+        face_vertex_c: Some(vec![1, 1]),
+        face_colour_a: Some(vec![SHADE, SHADE]),
+        face_colour_b: Some(vec![SHADE, SHADE]),
+        face_colour_c: Some(vec![SHADE, SHADE]),
+        face_priority: Some(vec![10, 10]),
+        ..Default::default()
+    };
     // Two identical faces both at priority 10: they route through the
     // bucket-10 merge loop (and its rollover to bucket 11).
-    model.num_points = 3;
-    model.point_x = Some(vec![-50, 50, 50]);
-    model.point_y = Some(vec![-50, -50, 50]);
-    model.point_z = Some(vec![0, 0, 0]);
-    model.num_faces = 2;
-    model.face_vertex_a = Some(vec![0, 0]);
-    model.face_vertex_b = Some(vec![2, 2]);
-    model.face_vertex_c = Some(vec![1, 1]);
-    model.face_colour_a = Some(vec![SHADE, SHADE]);
-    model.face_colour_b = Some(vec![SHADE, SHADE]);
-    model.face_colour_c = Some(vec![SHADE, SHADE]);
-    model.face_priority = Some(vec![10, 10]);
     model.calc_bounding_cylinder();
 
     let mut pix = Pix3DDraw::default();

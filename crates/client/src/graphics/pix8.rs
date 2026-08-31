@@ -33,23 +33,23 @@ impl Pix8 {
         }
     }
 
-    pub fn depack(jag: &JagFile, name: &str, sprite: i32) -> Result<Self, ()> {
-        let mut dat = Packet::new(jag.read(&format!("{name}.dat")).ok_or(())?);
-        let mut index = Packet::new(jag.read("index.dat").ok_or(())?);
+    pub fn depack(jag: &JagFile, name: &str, sprite: i32) -> Option<Self> {
+        let mut dat = Packet::new(jag.read(&format!("{name}.dat"))?);
+        let mut index = Packet::new(jag.read("index.dat")?);
 
         if dat.available() < 2 {
-            return Err(());
+            return None;
         }
         index.pos = dat.g2() as usize;
 
         if index.available() < 5 {
-            return Err(());
+            return None;
         }
         let owi = index.g2();
         let ohi = index.g2();
         let bpal_count = index.g1();
         if index.available() < 3 * bpal_count.saturating_sub(1) as usize {
-            return Err(());
+            return None;
         }
         let mut bpal = vec![0i32; bpal_count as usize];
         for i in 0..bpal_count - 1 {
@@ -58,7 +58,7 @@ impl Pix8 {
 
         for _ in 0..sprite {
             if index.available() < 6 {
-                return Err(());
+                return None;
             }
             index.pos += 2;
             let a = index.g2();
@@ -68,11 +68,11 @@ impl Pix8 {
         }
 
         if dat.pos > dat.length() || index.pos > index.length() {
-            return Err(());
+            return None;
         }
 
         if index.available() < 1 + 1 + 2 + 2 + 1 {
-            return Err(());
+            return None;
         }
         let xof = index.g1();
         let yof = index.g1();
@@ -82,7 +82,7 @@ impl Pix8 {
 
         let pixel_len = (wi as i64 * hi as i64) as usize;
         if dat.available() < pixel_len {
-            return Err(());
+            return None;
         }
 
         let mut image = Pix8::new(wi, hi, bpal);
@@ -103,7 +103,7 @@ impl Pix8 {
             }
         }
 
-        Ok(image)
+        Some(image)
     }
 
     pub fn halve_size(&mut self) {
@@ -152,27 +152,15 @@ impl Pix8 {
         for i in 0..self.bpal.len() {
             let mut red = (self.bpal[i] >> 16) & 0xff;
             red += r;
-            if red < 0 {
-                red = 0;
-            } else if red > 255 {
-                red = 255;
-            }
+            red = red.clamp(0, 255);
 
             let mut green = (self.bpal[i] >> 8) & 0xff;
             green += g;
-            if green < 0 {
-                green = 0;
-            } else if green > 255 {
-                green = 255;
-            }
+            green = green.clamp(0, 255);
 
             let mut blue = self.bpal[i] & 0xff;
             blue += b;
-            if blue < 0 {
-                blue = 0;
-            } else if blue > 255 {
-                blue = 255;
-            }
+            blue = blue.clamp(0, 255);
 
             self.bpal[i] = (red << 16) + (green << 8) + blue;
         }
@@ -186,9 +174,7 @@ impl Pix8 {
             for x in 0..div {
                 let off1 = x + y * width;
                 let off2 = width - x - 1 + y * width;
-                let tmp = self.data[off1 as usize];
-                self.data[off1 as usize] = self.data[off2 as usize];
-                self.data[off2 as usize] = tmp;
+                self.data.swap(off1 as usize, off2 as usize);
             }
         }
     }
@@ -200,9 +186,7 @@ impl Pix8 {
             for x in 0..width {
                 let off1 = x + y * width;
                 let off2 = x + (height - y - 1) * width;
-                let tmp = self.data[off1 as usize];
-                self.data[off1 as usize] = self.data[off2 as usize];
-                self.data[off2 as usize] = tmp;
+                self.data.swap(off1 as usize, off2 as usize);
             }
         }
     }
@@ -251,6 +235,7 @@ impl Pix8 {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn plot(
         &self,
         surface: &mut Pix2D,
@@ -326,8 +311,8 @@ impl Pix8 {
         let local27 = self.ohi;
         let local33 = local24.wrapping_shl(16).checked_div(arg2).unwrap_or(0);
         let local39 = local27.wrapping_shl(16).checked_div(arg3).unwrap_or(0);
-        arg0 = (arg0 + (self.xof.wrapping_mul(arg2) + local24 - 1) / local24) | 0;
-        arg1 = (arg1 + (self.yof.wrapping_mul(arg3) + local27 - 1) / local27) | 0;
+        arg0 += (self.xof.wrapping_mul(arg2) + local24 - 1) / local24;
+        arg1 += (self.yof.wrapping_mul(arg3) + local27 - 1) / local27;
         if self.xof.wrapping_mul(arg2) % local24 != 0 {
             local7 = (local24.wrapping_sub(self.xof.wrapping_mul(arg2) % local24))
                 .wrapping_shl(16)
@@ -373,6 +358,7 @@ impl Pix8 {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn plot_scale(
         &self,
         surface: &mut Pix2D,

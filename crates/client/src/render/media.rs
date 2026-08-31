@@ -174,7 +174,8 @@ impl Media {
     /// temp dirs) gets its own copy per dir instead of poisoning the
     /// shared cell with the first dir's decode.
     pub fn process(cache_dir: &str) -> Arc<Media> {
-        static MEDIA: OnceLock<Mutex<Option<(String, Arc<Media>)>>> = OnceLock::new();
+        type MediaCell = Mutex<Option<(String, Arc<Media>)>>;
+        static MEDIA: OnceLock<MediaCell> = OnceLock::new();
         let cell = MEDIA.get_or_init(|| Mutex::new(None));
         let mut guard = cell.lock().unwrap();
         if let Some((dir, media)) = &*guard {
@@ -203,25 +204,25 @@ impl Media {
             if let Ok(jag) =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| JagFile::new(bytes)))
             {
-                media.p11 = PixFont::depack(&jag, "p11_full", false).ok();
-                media.p12 = PixFont::depack(&jag, "p12_full", false).ok();
-                media.b12 = PixFont::depack(&jag, "b12_full", false).ok();
-                media.q8 = PixFont::depack(&jag, "q8_full", true).ok();
+                media.p11 = PixFont::depack(&jag, "p11_full", false);
+                media.p12 = PixFont::depack(&jag, "p12_full", false);
+                media.b12 = PixFont::depack(&jag, "b12_full", false);
+                media.q8 = PixFont::depack(&jag, "q8_full", true);
                 // `loadTitleBackground`: the tiled JPEG (plus the mirrored
                 // copy for the second pass) and the logo.
-                if let Ok(background) = Pix32::from_jpeg(&jag, "title.dat") {
+                if let Some(background) = Pix32::from_jpeg(&jag, "title.dat") {
                     let mut flipped = background.clone();
                     flipped.hflip();
                     media.title_dat = Some(background);
                     media.title_dat_flipped = Some(flipped);
                 }
-                media.logo = Pix32::depack(&jag, "logo", 0).ok();
+                media.logo = Pix32::depack(&jag, "logo", 0);
                 // `loadTitleImages`: the titlebox/titlebutton sprites and
                 // the 12 runes (`fl_icon` param default 0 → sprites 0..11).
-                media.titlebox = Pix8::depack(&jag, "titlebox", 0).ok();
-                media.titlebutton = Pix8::depack(&jag, "titlebutton", 0).ok();
+                media.titlebox = Pix8::depack(&jag, "titlebox", 0);
+                media.titlebutton = Pix8::depack(&jag, "titlebutton", 0);
                 for i in 0..12 {
-                    if let Ok(rune) = Pix8::depack(&jag, "runes", i) {
+                    if let Some(rune) = Pix8::depack(&jag, "runes", i) {
                         media.runes.push(rune);
                     }
                 }
@@ -231,29 +232,29 @@ impl Media {
         // The `media` jag sprites (TS prepareGame 2001 / maininit).
         if let Ok(bytes) = std::fs::read(format!("{cache_dir}/media")) {
             let jag = JagFile::new(bytes);
-            media.invback = Pix8::depack(&jag, "invback", 0).ok();
-            media.scrollbar1 = Pix8::depack(&jag, "scrollbar", 0).ok();
-            media.scrollbar2 = Pix8::depack(&jag, "scrollbar", 1).ok();
-            media.chatback = Pix8::depack(&jag, "chatback", 0).ok();
-            media.backbase1 = Pix8::depack(&jag, "backbase1", 0).ok();
-            media.backbase2 = Pix8::depack(&jag, "backbase2", 0).ok();
-            media.backhmid1 = Pix8::depack(&jag, "backhmid1", 0).ok();
+            media.invback = Pix8::depack(&jag, "invback", 0);
+            media.scrollbar1 = Pix8::depack(&jag, "scrollbar", 0);
+            media.scrollbar2 = Pix8::depack(&jag, "scrollbar", 1);
+            media.chatback = Pix8::depack(&jag, "chatback", 0);
+            media.backbase1 = Pix8::depack(&jag, "backbase1", 0);
+            media.backbase2 = Pix8::depack(&jag, "backbase2", 0);
+            media.backhmid1 = Pix8::depack(&jag, "backhmid1", 0);
             for i in 0..13 {
-                media.sideicons[i] = Pix8::depack(&jag, "sideicons", i as i32).ok();
+                media.sideicons[i] = Pix8::depack(&jag, "sideicons", i as i32);
             }
             // `modIcons` as Java 5353-5355 / TS 1095-1097.
             for i in 0..2 {
-                media.mod_icons[i] = Pix8::depack(&jag, "mod_icons", i as i32).ok();
+                media.mod_icons[i] = Pix8::depack(&jag, "mod_icons", i as i32);
             }
             // TS 1056-1058: the click-crosshair frames are Pix32, not Pix8.
             for i in 0..8 {
-                media.cross[i] = Pix32::depack(&jag, "cross", i as i32).ok();
+                media.cross[i] = Pix32::depack(&jag, "cross", i as i32);
             }
             // redstone1..2hv as Client.ts 1068-1093: the flipped copies are
             // fresh depacks of the base sprite, hflip/vflip'd in place.
-            media.redstone1 = Pix8::depack(&jag, "redstone1", 0).ok();
-            media.redstone2 = Pix8::depack(&jag, "redstone2", 0).ok();
-            media.redstone3 = Pix8::depack(&jag, "redstone3", 0).ok();
+            media.redstone1 = Pix8::depack(&jag, "redstone1", 0);
+            media.redstone2 = Pix8::depack(&jag, "redstone2", 0);
+            media.redstone3 = Pix8::depack(&jag, "redstone3", 0);
             media.redstone1h = media.redstone1.clone();
             if let Some(s) = media.redstone1h.as_mut() {
                 s.hflip();
@@ -299,35 +300,35 @@ impl Media {
             media.area_backhmid2 = Self::chrome_area(&jag, "backhmid2");
 
             // Minimap sprites (TS maininit 1006-1063).
-            media.mapback = Pix8::depack(&jag, "mapback", 0).ok();
-            media.compass = Pix32::depack(&jag, "compass", 0).ok();
-            media.mapedge = Pix32::depack(&jag, "mapedge", 0).ok();
+            media.mapback = Pix8::depack(&jag, "mapback", 0);
+            media.compass = Pix32::depack(&jag, "compass", 0);
+            media.mapedge = Pix32::depack(&jag, "mapedge", 0);
             if let Some(edge) = media.mapedge.as_mut() {
                 edge.trim();
             }
-            media.mapmarker1 = Pix32::depack(&jag, "mapmarker", 0).ok();
-            media.mapmarker2 = Pix32::depack(&jag, "mapmarker", 1).ok();
-            media.mapdots1 = Pix32::depack(&jag, "mapdots", 0).ok();
-            media.mapdots2 = Pix32::depack(&jag, "mapdots", 1).ok();
-            media.mapdots3 = Pix32::depack(&jag, "mapdots", 2).ok();
-            media.mapdots4 = Pix32::depack(&jag, "mapdots", 3).ok();
+            media.mapmarker1 = Pix32::depack(&jag, "mapmarker", 0);
+            media.mapmarker2 = Pix32::depack(&jag, "mapmarker", 1);
+            media.mapdots1 = Pix32::depack(&jag, "mapdots", 0);
+            media.mapdots2 = Pix32::depack(&jag, "mapdots", 1);
+            media.mapdots3 = Pix32::depack(&jag, "mapdots", 2);
+            media.mapdots4 = Pix32::depack(&jag, "mapdots", 3);
 
             // TS maininit 1020-1035: the minimap wall/scene icons; a sprite
             // the jag lacks stays `None` and `draw_detail` skips its plot.
             for i in 0..50 {
-                media.mapscene[i] = Pix8::depack(&jag, "mapscene", i as i32).ok();
+                media.mapscene[i] = Pix8::depack(&jag, "mapscene", i as i32);
             }
             for i in 0..50 {
-                media.mapfunction[i] = Pix32::depack(&jag, "mapfunction", i as i32).ok();
+                media.mapfunction[i] = Pix32::depack(&jag, "mapfunction", i as i32);
             }
 
             // `hitmarks`/`headicons` as Java 5311-5320: try 20 each; a
             // missing sprite is skipped per-entry (Java catches the loop).
             for i in 0..20 {
-                media.hitmarks[i] = Pix32::depack(&jag, "hitmarks", i as i32).ok();
+                media.hitmarks[i] = Pix32::depack(&jag, "hitmarks", i as i32);
             }
             for i in 0..20 {
-                media.headicons[i] = Pix32::depack(&jag, "headicons", i as i32).ok();
+                media.headicons[i] = Pix32::depack(&jag, "headicons", i as i32);
             }
         }
 
@@ -337,7 +338,7 @@ impl Media {
     /// TS 1098 construction for the `areaBack*` strips: a `PixMap` at the
     /// sprite's own size with the sprite `quickPlotSprite`d at (0, 0).
     fn chrome_area(jag: &JagFile, name: &str) -> Option<PixMap> {
-        let sprite = Pix32::depack(jag, name, 0).ok()?;
+        let sprite = Pix32::depack(jag, name, 0)?;
         let mut area = PixMap::new(sprite.wi, sprite.hi);
         let mut surface = Pix2D::with_pixels(&mut area.pixels, area.width, area.height);
         sprite.quick_plot_sprite(&mut surface, 0, 0);

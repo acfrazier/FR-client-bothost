@@ -682,7 +682,7 @@ impl Renderer {
                     15,
                     Colour::WHITE,
                     true,
-                    (client.loop_cycle / 1000) as i32,
+                    client.loop_cycle / 1000,
                 );
             }
         }
@@ -746,7 +746,7 @@ impl Renderer {
 
             let stx = player.x >> 7;
             let stz = player.z >> 7;
-            if stx < 0 || stx >= BuildArea::SIZE || stz < 0 || stz >= BuildArea::SIZE {
+            if !(0..BuildArea::SIZE).contains(&stx) || !(0..BuildArea::SIZE).contains(&stz) {
                 continue;
             }
 
@@ -832,7 +832,7 @@ impl Renderer {
 
             let stx = npc.x >> 7;
             let stz = npc.z >> 7;
-            if stx < 0 || stx >= BuildArea::SIZE || stz < 0 || stz >= BuildArea::SIZE {
+            if !(0..BuildArea::SIZE).contains(&stx) || !(0..BuildArea::SIZE).contains(&stz) {
                 continue;
             }
 
@@ -929,7 +929,7 @@ impl Renderer {
                     self.world.set_sprite_model(&client.world, index, model);
                 }
             }
-            node = client.projectiles.next();
+            node = client.projectiles.next_node();
         }
 
         // TS 4387-4413: `cyclelogic1` anticheat every 1175 cycles.
@@ -984,12 +984,13 @@ impl Renderer {
                     }
                 }
             }
-            node = client.spotanims.next();
+            node = client.spotanims.next_node();
         }
     }
 
     /// `camFollow` from client-ts (4432): position the eye at `distance`
     /// along the inverse pitch/yaw from the target.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn cam_follow(
         &mut self,
         client: &mut Client,
@@ -1304,12 +1305,9 @@ impl Renderer {
     /// bounds (`BuildArea::SIZE` per side); out-of-range reads are "no
     /// flag".
     fn mapl_remove_roof(&self, client: &Client, level: i32, x: i32, z: i32) -> bool {
-        if level < 0
-            || level >= BuildArea::LEVELS
-            || x < 0
-            || x >= BuildArea::SIZE
-            || z < 0
-            || z >= BuildArea::SIZE
+        if !(0..BuildArea::LEVELS).contains(&level)
+            || !(0..BuildArea::SIZE).contains(&x)
+            || !(0..BuildArea::SIZE).contains(&z)
         {
             return false;
         }
@@ -2621,6 +2619,7 @@ impl Renderer {
     /// and the grip with its highlight/lowlight edges. Missing cap sprites
     /// (`scrollbar1`/`scrollbar2` are `None` without the `media` pack) skip
     /// the two Pix8 plots; the track and grip always fill.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_scrollbar(
         &mut self,
         _client: &mut Client,
@@ -2664,7 +2663,7 @@ impl Renderer {
         if !cache.contains_key(&key) {
             let sprite = std::fs::read(format!("{cache_dir}/media"))
                 .ok()
-                .and_then(|bytes| Pix32::depack(&JagFile::new(bytes), name, index).ok());
+                .and_then(|bytes| Pix32::depack(&JagFile::new(bytes), name, index));
             cache.insert(key.clone(), sprite);
         }
         cache.get(&key).and_then(|s| s.as_ref())
@@ -4037,46 +4036,47 @@ impl Renderer {
         // TS `this.minimap.setPixels()`: bind the buffer for `draw_detail`'s
         // plots. The `areaGame.setPixels()` rebinding is a no-op here — every
         // draw helper in this port takes its surface explicitly.
-        let mut surface = Pix2D::with_pixels(&mut mm.data, 512, 512);
-        for z in 1..BuildArea::SIZE - 1 {
-            for x in 1..BuildArea::SIZE - 1 {
-                if client.mapl[level as usize][x as usize][z as usize] as i32
-                    & (MapFlag::VIS_BELOW | MapFlag::FORCE_HIGH_DETAIL)
-                    == 0
-                {
-                    draw_detail(
-                        &client.world,
-                        &client.cache,
-                        &self.media.mapscene,
-                        &mut surface,
-                        level,
-                        x,
-                        z,
-                        inactive_rgb,
-                        active_rgb,
-                    );
-                }
+        {
+            let mut surface = Pix2D::with_pixels(&mut mm.data, 512, 512);
+            for z in 1..BuildArea::SIZE - 1 {
+                for x in 1..BuildArea::SIZE - 1 {
+                    if client.mapl[level as usize][x as usize][z as usize] as i32
+                        & (MapFlag::VIS_BELOW | MapFlag::FORCE_HIGH_DETAIL)
+                        == 0
+                    {
+                        draw_detail(
+                            &client.world,
+                            &client.cache,
+                            &self.media.mapscene,
+                            &mut surface,
+                            level,
+                            x,
+                            z,
+                            inactive_rgb,
+                            active_rgb,
+                        );
+                    }
 
-                if level < 3
-                    && client.mapl[level as usize + 1][x as usize][z as usize] as i32
-                        & MapFlag::VIS_BELOW
-                        != 0
-                {
-                    draw_detail(
-                        &client.world,
-                        &client.cache,
-                        &self.media.mapscene,
-                        &mut surface,
-                        level + 1,
-                        x,
-                        z,
-                        inactive_rgb,
-                        active_rgb,
-                    );
+                    if level < 3
+                        && client.mapl[level as usize + 1][x as usize][z as usize] as i32
+                            & MapFlag::VIS_BELOW
+                            != 0
+                    {
+                        draw_detail(
+                            &client.world,
+                            &client.cache,
+                            &self.media.mapscene,
+                            &mut surface,
+                            level + 1,
+                            x,
+                            z,
+                            inactive_rgb,
+                            active_rgb,
+                        );
+                    }
                 }
             }
         }
-        drop(surface);
 
         self.active_map_function_count = 0;
 

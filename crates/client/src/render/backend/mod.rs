@@ -47,7 +47,7 @@ impl TextureHandle {
     /// completes.
     pub fn read_back(&self) -> Vec<i32> {
         // `COPY_BYTES_PER_ROW_ALIGNMENT` 256: pad the row stride.
-        let bytes_per_row = ((self.width * 4 + 255) / 256) * 256;
+        let bytes_per_row = (self.width * 4).div_ceil(256) * 256;
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("r274 frame readback"),
             size: (bytes_per_row as u64) * (self.height as u64),

@@ -354,9 +354,11 @@ fn client_component_fills_friend_name() {
     c.friend_count = 1;
     c.friend_username[0] = "Bob".into();
     c.friend_node_id[0] = 0;
-    let mut com = client::config::IfType::default();
-    com.id = 2;
-    com.client_code = 1; // CC_FRIENDS_START → index 0 after -1
+    let com = client::config::IfType {
+        id: 2,
+        client_code: 1, // CC_FRIENDS_START → index 0 after -1
+        ..Default::default()
+    };
     c.set_iface(2, com);
     c.client_component(2);
     assert_eq!(c.if_(2).unwrap().text, "Bob");
@@ -369,9 +371,11 @@ fn client_component_update_range_writes_world_text() {
     c.friend_count = 1;
     c.friend_username[0] = "Bob".into();
     c.friend_node_id[0] = 10; // same world as node_id default 10
-    let mut com = client::config::IfType::default();
-    com.id = 2;
-    com.client_code = 101; // CC_FRIENDS_UPDATE_START → index 0 after -101
+    let com = client::config::IfType {
+        id: 2,
+        client_code: 101, // CC_FRIENDS_UPDATE_START → index 0 after -101
+        ..Default::default()
+    };
     c.set_iface(2, com);
     c.client_component(2);
     assert_eq!(c.if_(2).unwrap().text, "@gre@World-1");

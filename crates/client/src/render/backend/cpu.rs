@@ -291,8 +291,8 @@ impl RenderBackend for CpuBackend {
                     let extra_y = (h / 2) + 80;
                     let mut y = (h / 2) - 20;
 
-                    if core.on_demand.is_some() {
-                        let message = core.on_demand.as_ref().unwrap().message.clone();
+                    if let Some(od) = core.on_demand.as_ref() {
+                        let message = od.message.clone();
                         if let Some(p11) = r.media.p11.as_ref() {
                             p11.centre_string_tag(
                                 &mut surface,

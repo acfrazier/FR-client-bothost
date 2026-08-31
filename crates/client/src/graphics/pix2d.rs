@@ -237,14 +237,13 @@ impl<'a> Pix2D<'a> {
         let r0 = ((rgb >> 16) & 0xff) * alpha;
         let g0 = ((rgb >> 8) & 0xff) * alpha;
         let b0 = (rgb & 0xff) * alpha;
-        let mut offset = x + y * self.width;
-        for _ in 0..width {
+        let start = x + y * self.width;
+        for offset in start..start + width {
             let r1 = ((self.pixels[offset as usize] >> 16) & 0xff) * inv_alpha;
             let g1 = ((self.pixels[offset as usize] >> 8) & 0xff) * inv_alpha;
             let b1 = (self.pixels[offset as usize] & 0xff) * inv_alpha;
             self.pixels[offset as usize] =
                 (((r0 + r1) >> 8) << 16) + (((g0 + g1) >> 8) << 8) + ((b0 + b1) >> 8);
-            offset += 1;
         }
         self.mark_row(x + y * self.width, width);
     }
@@ -333,15 +332,13 @@ impl<'a> Pix2D<'a> {
                 x_end = self.width - 1;
             }
 
-            let mut offset = x_start + y * self.width;
-            let row_start = offset;
-            for _x in x_start..=x_end {
+            let row_start = x_start + y * self.width;
+            for offset in row_start..=x_end + y * self.width {
                 let r1 = ((self.pixels[offset as usize] >> 16) & 0xff) * inv_alpha;
                 let g1 = ((self.pixels[offset as usize] >> 8) & 0xff) * inv_alpha;
                 let b1 = (self.pixels[offset as usize] & 0xff) * inv_alpha;
                 self.pixels[offset as usize] =
                     (((r0 + r1) >> 8) << 16) + (((g0 + g1) >> 8) << 8) + ((b0 + b1) >> 8);
-                offset += 1;
             }
             self.mark_row(row_start, x_end - x_start + 1);
         }

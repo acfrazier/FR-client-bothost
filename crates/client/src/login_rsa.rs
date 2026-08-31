@@ -141,7 +141,7 @@ fn der_skip(der: &[u8], i: usize, tag: u8) -> Result<usize, String> {
 
 fn decode_base64(input: &str) -> Result<Vec<u8>, String> {
     let clean: String = input.chars().filter(|c| !c.is_ascii_whitespace()).collect();
-    if clean.len() % 4 != 0 {
+    if !clean.len().is_multiple_of(4) {
         return Err("base64 length".into());
     }
     let table = |c: u8| -> Option<u8> {

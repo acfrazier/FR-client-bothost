@@ -320,6 +320,8 @@ impl IfTypeMut {
     }
 }
 
+type UnpackedIfaces = (Vec<Option<Box<IfType>>>, Vec<Option<Box<IfTypeMut>>>);
+
 impl IfType {
     /// Component ids are sparse, so this returns the decode table and the
     /// mut-overlay template, both `Vec<Option<Box<_>>>` indexed by
@@ -327,7 +329,7 @@ impl IfType {
     /// ~11k slots × 50 clients was the fat-hole clone cost. The template's
     /// `IfTypeMut` carries the decoded initials (hide, text labels,
     /// colours, model ids, zero inv arrays) — the per-client live values.
-    pub fn unpack(jag: &JagFile) -> (Vec<Option<Box<IfType>>>, Vec<Option<Box<IfTypeMut>>>) {
+    pub fn unpack(jag: &JagFile) -> UnpackedIfaces {
         let Some(data) = jag.read("data") else {
             return (Vec::new(), Vec::new());
         };

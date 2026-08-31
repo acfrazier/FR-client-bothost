@@ -21,7 +21,7 @@ use client::unpack::version_hash;
 
 const SHADE: i32 = 200 * 128 + 100;
 /// Saturated red / green so a read-back can count them without a palette.
-const BOOTH_RED: i32 = (0 << 10) | (7 << 7) | 100;
+const BOOTH_RED: i32 = (7 << 7) | 100;
 const WALL_GREEN: i32 = (21 << 10) | (7 << 7) | 100;
 
 const WALL_MODEL: i32 = 2212; // loc 1602
@@ -30,7 +30,7 @@ const SCENE_W: usize = 512;
 const SCENE_H: usize = 334;
 
 fn cache_dir() -> Option<String> {
-    let home = std::env::var("HOME").ok()?;
+    let _home = std::env::var("HOME").ok()?;
     let cache = client::cache_dir().display().to_string();
     Path::new(&cache)
         .join("versionlist")
@@ -396,6 +396,7 @@ fn make_scene(booth_tile_x: i32, include_wall: bool, include_booth: bool) -> Sce
     Scene { world, rw }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn gpu_render(
     backend: &mut GpuBackend,
     scene: &mut Scene,
@@ -744,6 +745,7 @@ fn textured_pix(pack: &str) -> Pix3DDraw {
     pix
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cpu_render(
     scene: &mut Scene,
     cache: &Cache,
@@ -777,6 +779,7 @@ fn cpu_render(
     map.pixels
 }
 
+#[allow(clippy::too_many_arguments)]
 fn gpu_render_cache(
     backend: &mut GpuBackend,
     scene: &mut Scene,
@@ -894,14 +897,8 @@ fn sharelight_wall_run_cpu_vs_gpu() {
             let cr = (c >> 16) & 0xff;
             let cg = (c >> 8) & 0xff;
             let cb = c & 0xff;
-            if (gr as i32 - cr as i32).abs()
-                + (gg as i32 - cg as i32).abs()
-                + (gb as i32 - cb as i32).abs()
-                > 40
-            {
-                if g != 0 && c != 0 {
-                    gpu_only += 1;
-                } else if g != 0 {
+            if (gr - cr).abs() + (gg - cg).abs() + (gb - cb).abs() > 40 {
+                if g != 0 {
                     gpu_only += 1;
                 } else {
                     cpu_only += 1;
@@ -958,9 +955,9 @@ fn sharelight_wall_run_cpu_vs_gpu() {
             if g == c {
                 continue;
             }
-            let dr = ((g >> 16) & 0xff) as i32 - ((c >> 16) & 0xff) as i32;
-            let dg = ((g >> 8) & 0xff) as i32 - ((c >> 8) & 0xff) as i32;
-            let db = (g & 0xff) as i32 - (c & 0xff) as i32;
+            let dr = ((g >> 16) & 0xff) - ((c >> 16) & 0xff);
+            let dg = ((g >> 8) & 0xff) - ((c >> 8) & 0xff);
+            let db = (g & 0xff) - (c & 0xff);
             if dr.abs() + dg.abs() + db.abs() > 40 {
                 strong += 1;
             }
@@ -1102,9 +1099,9 @@ fn sharelight_wall_run_cpu_vs_gpu() {
     for i in 0..gpu.len() {
         let g = gpu[i];
         let c = cpu[i];
-        let dr = ((g >> 16) & 0xff) as i32 - ((c >> 16) & 0xff) as i32;
-        let dg = ((g >> 8) & 0xff) as i32 - ((c >> 8) & 0xff) as i32;
-        let db = (g & 0xff) as i32 - (c & 0xff) as i32;
+        let dr = ((g >> 16) & 0xff) - ((c >> 16) & 0xff);
+        let dg = ((g >> 8) & 0xff) - ((c >> 8) & 0xff);
+        let db = (g & 0xff) - (c & 0xff);
         if dr.abs() + dg.abs() + db.abs() > 40 {
             strong += 1;
         }
@@ -1180,9 +1177,9 @@ fn sharelight_wall_run_cpu_vs_gpu() {
     for i in 0..gpu_w.len() {
         let g = gpu_w[i];
         let c = cpu_w[i];
-        let dr = ((g >> 16) & 0xff) as i32 - ((c >> 16) & 0xff) as i32;
-        let dg = ((g >> 8) & 0xff) as i32 - ((c >> 8) & 0xff) as i32;
-        let db = (g & 0xff) as i32 - (c & 0xff) as i32;
+        let dr = ((g >> 16) & 0xff) - ((c >> 16) & 0xff);
+        let dg = ((g >> 8) & 0xff) - ((c >> 8) & 0xff);
+        let db = (g & 0xff) - (c & 0xff);
         if dr.abs() + dg.abs() + db.abs() > 40 {
             strong += 1;
         }
@@ -1326,6 +1323,7 @@ fn make_same_tile_west(include_wall: bool, include_booth: bool) -> Scene {
     Scene { world, rw }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn overlap_counts(
     backend: &mut GpuBackend,
     wall_only: &mut Scene,

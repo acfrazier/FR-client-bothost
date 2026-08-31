@@ -114,10 +114,11 @@ impl ClientBuild {
     /// the build base (`(centreZone - 6) * 8`); `xOffset`/`zOffset` are the
     /// square's local tiles. Out-of-area tiles still consume the packet
     /// bytes.
+    #[allow(clippy::too_many_arguments)]
     pub fn load_ground(
         &mut self,
         groundh: &mut LevelHeightmaps,
-        mapl: &mut Vec<Vec<Vec<u8>>>,
+        mapl: &mut [Vec<Vec<u8>>],
         src: &[u8],
         origin_x: i32,
         origin_z: i32,

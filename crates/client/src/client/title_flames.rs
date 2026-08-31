@@ -67,8 +67,8 @@ impl TitleFlames {
         self.flame_right = Some(flame_right);
 
         let mut g0 = vec![0i32; 256];
-        for index in 0..64 {
-            g0[index] = index as i32 * 262144;
+        for (index, slot) in g0.iter_mut().enumerate().take(64) {
+            *slot = index as i32 * 262144;
         }
         for index in 0..64 {
             g0[index + 64] = index as i32 * 1024 + Colour::RED;
@@ -81,8 +81,8 @@ impl TitleFlames {
         }
 
         let mut g1 = vec![0i32; 256];
-        for index in 0..64 {
-            g1[index] = index as i32 * 1024;
+        for (index, slot) in g1.iter_mut().enumerate().take(64) {
+            *slot = index as i32 * 1024;
         }
         for index in 0..64 {
             g1[index + 64] = index as i32 * 4 + Colour::GREEN;
@@ -95,8 +95,8 @@ impl TitleFlames {
         }
 
         let mut g2 = vec![0i32; 256];
-        for index in 0..64 {
-            g2[index] = index as i32 * 4;
+        for (index, slot) in g2.iter_mut().enumerate().take(64) {
+            *slot = index as i32 * 4;
         }
         for index in 0..64 {
             g2[index + 64] = index as i32 * 262144 + Colour::BLUE;
@@ -386,13 +386,18 @@ impl TitleFlames {
     }
 
     fn do_blend(&mut self, cycle: i32, target: &[i32]) {
-        for i in 0..256 {
-            self.flame_gradient[i] = if cycle > 768 {
-                Self::merge(self.flame_gradient0[i], target[i], 1024 - cycle)
+        for (slot, (&g0, &t)) in self
+            .flame_gradient
+            .iter_mut()
+            .zip(self.flame_gradient0.iter().zip(target.iter()))
+            .take(256)
+        {
+            *slot = if cycle > 768 {
+                Self::merge(g0, t, 1024 - cycle)
             } else if cycle > 256 {
-                target[i]
+                t
             } else {
-                Self::merge(target[i], self.flame_gradient0[i], 256 - cycle)
+                Self::merge(t, g0, 256 - cycle)
             };
         }
     }

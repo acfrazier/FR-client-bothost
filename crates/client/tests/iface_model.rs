@@ -26,21 +26,27 @@ fn obj_get_model_unlit_none_without_model() {
 fn draw_interface_type_model_missing_does_not_panic() {
     let mut r = Renderer::new(false);
     let mut c = hud_client();
-    let mut layer = client::config::if_type::IfType::default();
-    layer.r#type = client::config::if_type::ComponentType::TYPE_LAYER;
-    layer.width = 50;
-    layer.height = 50;
-    layer.children = Some(vec![2]);
-    layer.child_x = Some(vec![0]);
-    layer.child_y = Some(vec![0]);
-    let mut model = client::config::if_type::IfType::default();
-    model.r#type = client::config::if_type::ComponentType::TYPE_MODEL;
-    model.width = 50;
-    model.height = 50;
-    let mut model_mut = client::config::if_type::IfTypeMut::default();
-    model_mut.model1_type = 1;
-    model_mut.model1_id = 999999; // not loaded
-    model_mut.model_zoom = 800;
+    let layer = client::config::if_type::IfType {
+        r#type: client::config::if_type::ComponentType::TYPE_LAYER,
+        width: 50,
+        height: 50,
+        children: Some(vec![2]),
+        child_x: Some(vec![0]),
+        child_y: Some(vec![0]),
+        ..Default::default()
+    };
+    let model = client::config::if_type::IfType {
+        r#type: client::config::if_type::ComponentType::TYPE_MODEL,
+        width: 50,
+        height: 50,
+        ..Default::default()
+    };
+    let model_mut = client::config::if_type::IfTypeMut {
+        model1_type: 1,
+        model1_id: 999999, // not loaded
+        model_zoom: 800,
+        ..Default::default()
+    };
     c.set_iface(1, layer);
     c.set_iface(2, model);
     c.set_iface_mut(2, model_mut);

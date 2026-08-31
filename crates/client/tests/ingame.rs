@@ -115,10 +115,12 @@ fn minimap_is_under_chrome_not_a_black_square_on_top() {
     let mut c = client(cache);
     c.set_draw(true);
     c.ingame = true;
-    let mut player = ClientPlayer::default();
-    player.ready = true;
-    player.name = Some("tester".into());
-    player.entity = ClientEntity::at(48, 48);
+    let mut player = ClientPlayer {
+        ready: true,
+        name: Some("tester".into()),
+        entity: ClientEntity::at(48, 48),
+        ..Default::default()
+    };
     player.entity.teleport(&c.cache, true, 48, 48);
     c.local_player = Some(player);
     c.scene_state = 2;
@@ -177,10 +179,12 @@ fn minimap_draw_without_media_does_not_panic() {
     let mut c = client(dir.to_string_lossy().into_owned());
     c.set_draw(true);
     c.ingame = true;
-    let mut player = ClientPlayer::default();
-    player.ready = true;
-    player.name = Some("tester".into());
-    player.entity = ClientEntity::at(48, 48);
+    let mut player = ClientPlayer {
+        ready: true,
+        name: Some("tester".into()),
+        entity: ClientEntity::at(48, 48),
+        ..Default::default()
+    };
     player.entity.teleport(&c.cache, true, 48, 48);
     c.local_player = Some(player);
     c.scene_state = 2;
@@ -292,10 +296,12 @@ fn follow_camera_moves_eye_above_local_player() {
     let mut c = client("/tmp".into());
     c.ingame = true;
     c.scene_state = 2;
-    let mut player = ClientPlayer::default();
-    player.ready = true;
-    player.name = Some("tester".into());
-    player.entity = ClientEntity::at(5, 7);
+    let mut player = ClientPlayer {
+        ready: true,
+        name: Some("tester".into()),
+        entity: ClientEntity::at(5, 7),
+        ..Default::default()
+    };
     player.entity.teleport(&c.cache, true, 5, 7);
     c.local_player = Some(player);
     c.game_loop();
@@ -328,10 +334,12 @@ fn get_av_h_link_below_reads_level_above() {
     let mut c = client("/tmp".into());
     c.ingame = true;
     c.scene_state = 2;
-    let mut player = ClientPlayer::default();
-    player.ready = true;
-    player.name = Some("tester".into());
-    player.entity = ClientEntity::at(2, 2);
+    let mut player = ClientPlayer {
+        ready: true,
+        name: Some("tester".into()),
+        entity: ClientEntity::at(2, 2),
+        ..Default::default()
+    };
     player.entity.teleport(&c.cache, true, 2, 2);
     c.local_player = Some(player);
     // tile (2,2): level 0 at 100, level 1 at 800 (player sits at (320, 320)).
@@ -534,8 +542,10 @@ fn first_headed_paint_builds_minimap_from_unheaded_stamps() {
 
 /// A ready local player on tile (3,3); scene coords are 128ths of a tile.
 fn roof_player() -> ClientPlayer {
-    let mut player = ClientPlayer::default();
-    player.ready = true;
+    let mut player = ClientPlayer {
+        ready: true,
+        ..Default::default()
+    };
     player.entity.x = 384; // tile 3
     player.entity.z = 384;
     player

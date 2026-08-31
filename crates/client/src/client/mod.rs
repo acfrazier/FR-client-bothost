@@ -1,3 +1,4 @@
+#[allow(clippy::module_inception)]
 pub mod client;
 pub use crate::core::build as client_build;
 pub use crate::render::draw as client_draw;

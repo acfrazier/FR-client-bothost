@@ -19,18 +19,20 @@ use client::render::RenderWorld;
 const SHADE: i32 = 200 * 128 + 100;
 
 fn one_face_model() -> Model {
-    let mut model = Model::default();
-    model.num_points = 3;
-    model.point_x = Some(vec![-50, 50, 50]);
-    model.point_y = Some(vec![-50, -50, 50]);
-    model.point_z = Some(vec![0, 0, 0]);
-    model.num_faces = 1;
-    model.face_vertex_a = Some(vec![0]);
-    model.face_vertex_b = Some(vec![2]);
-    model.face_vertex_c = Some(vec![1]);
-    model.face_colour_a = Some(vec![SHADE]);
-    model.face_colour_b = Some(vec![SHADE]);
-    model.face_colour_c = Some(vec![SHADE]);
+    let mut model = Model {
+        num_points: 3,
+        point_x: Some(vec![-50, 50, 50]),
+        point_y: Some(vec![-50, -50, 50]),
+        point_z: Some(vec![0, 0, 0]),
+        num_faces: 1,
+        face_vertex_a: Some(vec![0]),
+        face_vertex_b: Some(vec![2]),
+        face_vertex_c: Some(vec![1]),
+        face_colour_a: Some(vec![SHADE]),
+        face_colour_b: Some(vec![SHADE]),
+        face_colour_c: Some(vec![SHADE]),
+        ..Default::default()
+    };
     model.calc_bounding_cylinder();
     model
 }
@@ -77,6 +79,7 @@ fn flat_world() -> World {
 
 /// Task 3b: the sim world holds typecodes/placement only; the tests inject
 /// the synthetic models into the render side's lazy cache.
+#[allow(clippy::too_many_arguments)]
 fn place_wall(
     rw: &mut RenderWorld,
     world: &mut World,
@@ -97,6 +100,7 @@ fn place_wall(
     rw.set_wall_model(world, level, x, z, model1, model2);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn place_scenery(
     rw: &mut RenderWorld,
     world: &mut World,
@@ -123,16 +127,18 @@ fn place_scenery(
 /// `sharelight` path): `shared_point_normal` is retained for the
 /// `World.shareLight` merge, `face_colour_a` starts zeroed.
 fn normals_model() -> Model {
-    let mut model = Model::default();
-    model.num_points = 3;
-    model.point_x = Some(vec![-50, 50, 50]);
-    model.point_y = Some(vec![-50, -50, 50]);
-    model.point_z = Some(vec![0, 0, 0]);
-    model.num_faces = 1;
-    model.face_vertex_a = Some(vec![0]);
-    model.face_vertex_b = Some(vec![2]);
-    model.face_vertex_c = Some(vec![1]);
-    model.face_colour = Some(vec![SHADE]);
+    let mut model = Model {
+        num_points: 3,
+        point_x: Some(vec![-50, 50, 50]),
+        point_y: Some(vec![-50, -50, 50]),
+        point_z: Some(vec![0, 0, 0]),
+        num_faces: 1,
+        face_vertex_a: Some(vec![0]),
+        face_vertex_b: Some(vec![2]),
+        face_vertex_c: Some(vec![1]),
+        face_colour: Some(vec![SHADE]),
+        ..Default::default()
+    };
     model.calc_bounding_cylinder();
     model.calculate_normals(64, 768, -50, -10, -50, false);
     model
@@ -474,7 +480,6 @@ fn render_all_lights_animated_sharelight_loc_frames() {
 fn viewport(pix: &mut Pix3DDraw, surface: &mut Pix2D) {
     pix.set_render_clipping(surface);
     pix.trans = 0;
-    pix.low_mem = false;
 }
 
 /// Vertical south-facing wall (quad in X/Y at z=0). Y more-negative is up.
@@ -482,12 +487,14 @@ fn viewport(pix: &mut Pix3DDraw, surface: &mut Pix2D) {
 const WALL_SHADE: i32 = 40 * 128 + 80;
 
 fn south_wall_model(winding_ccw_from_south: bool) -> Model {
-    let mut model = Model::default();
-    model.num_points = 4;
-    model.point_x = Some(vec![-60, 60, 60, -60]);
-    model.point_y = Some(vec![0, 0, -180, -180]);
-    model.point_z = Some(vec![0, 0, 0, 0]);
-    model.num_faces = 2;
+    let mut model = Model {
+        num_points: 4,
+        point_x: Some(vec![-60, 60, 60, -60]),
+        point_y: Some(vec![0, 0, -180, -180]),
+        point_z: Some(vec![0, 0, 0, 0]),
+        num_faces: 2,
+        ..Default::default()
+    };
     // Viewed from -Z (camera south of the wall, looking north): CCW is
     // (0,1,2)+(0,2,3); CW is the reverse. Live walls being visible from
     // inside but eaten from outside is a winding/cull split.
@@ -748,7 +755,6 @@ fn basic_wall_ob2() -> Option<Vec<u8>> {
 
 fn textured_pix() -> Pix3DDraw {
     let mut pix = Pix3DDraw::default();
-    pix.low_mem = false;
     if let Ok(bytes) = std::fs::read(client::cache_dir().join("textures")) {
         pix.unpack_textures(&JagFile::new(bytes));
         pix.init_pool(20);
@@ -1249,12 +1255,12 @@ fn overlay_edge_ground_keeps_dirt_and_grass_face_colours() {
     );
     let colours = &g.face_colour_a[..g.faces()];
     assert!(
-        colours.iter().any(|&c| c == 100),
+        colours.contains(&100),
         "underlay faces must keep grass colour, got {:?}",
         colours
     );
     assert!(
-        colours.iter().any(|&c| c == 200),
+        colours.contains(&200),
         "overlay faces must keep dirt colour (not black), got {:?}",
         colours
     );
@@ -1450,7 +1456,6 @@ fn checkerboard_pix() -> Pix3DDraw {
         }
     }
     let mut pix = Pix3DDraw::default();
-    pix.low_mem = false;
     pix.textures[0] = Some(texture);
     pix.tex_pal[0] = Some(vec![0, 0xff0000, 0x0000ff]);
     pix.num_textures = 1;
@@ -1636,12 +1641,14 @@ const NORTH_SHADE: i32 = 90 * 128 + 40;
 /// uses the same CCW-from-south winding as `south_wall_model(true)`; north
 /// wall at z=+128 is the reverse so it faces +Z.
 fn ns_box_model(sharelight_cube: bool) -> Model {
-    let mut model = Model::default();
-    model.num_points = 8;
-    model.point_x = Some(vec![-128, 128, 128, -128, -128, 128, 128, -128]);
-    model.point_y = Some(vec![0, 0, -200, -200, 0, 0, -200, -200]);
-    model.point_z = Some(vec![-128, -128, -128, -128, 128, 128, 128, 128]);
-    model.num_faces = 4;
+    let mut model = Model {
+        num_points: 8,
+        point_x: Some(vec![-128, 128, 128, -128, -128, 128, 128, -128]),
+        point_y: Some(vec![0, 0, -200, -200, 0, 0, -200, -200]),
+        point_z: Some(vec![-128, -128, -128, -128, 128, 128, 128, 128]),
+        num_faces: 4,
+        ..Default::default()
+    };
     // South (z=-128): (0,1,2)+(0,2,3). North (z=+128): reversed (4,6,5)+(4,7,6).
     model.face_vertex_a = Some(vec![0, 0, 4, 4]);
     model.face_vertex_b = Some(vec![1, 2, 6, 7]);
@@ -1738,7 +1745,6 @@ fn render_box_in_world(sharelight_cube: bool, yaw: i32, pitch: i32) -> (usize, u
     );
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     let mut pix = Pix3DDraw::default();
-    pix.low_mem = false;
     let mut map = PixMap::new(512, 334);
     {
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
@@ -2206,7 +2212,7 @@ fn camera_facing_box_survives_full_vis_window() {
     );
     for x in 40..60 {
         for z in 42..62 {
-            if x >= 50 && x < 52 && z >= 52 && z < 54 {
+            if (50..52).contains(&x) && (52..54).contains(&z) {
                 continue;
             }
             place_scenery(
@@ -2228,7 +2234,6 @@ fn camera_facing_box_survives_full_vis_window() {
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     let (ex, ey, ez) = orbit_eye(51 * 128, groundh - 50, 52 * 128, pitch, 0, pitch * 3 + 600);
     let mut pix = Pix3DDraw::default();
-    pix.low_mem = false;
     let mut map = PixMap::new(512, 334);
     {
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);

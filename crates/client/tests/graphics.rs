@@ -553,7 +553,7 @@ fn pixfont_anti_macro_plot_trans_blends() {
 
 #[test]
 fn pixfont_update_state_tags() {
-    let mut font = PixFont::new();
+    let font = PixFont::new();
     assert_eq!(font.update_state("red"), Colour::RED);
     assert_eq!(font.update_state("gre"), Colour::GREEN);
     assert_eq!(font.update_state("blu"), Colour::BLUE);

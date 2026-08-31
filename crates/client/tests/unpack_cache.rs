@@ -14,7 +14,7 @@ use client::render::RenderWorld;
 use client::unpack::{unpack_cache, version_hash};
 
 fn cache_dir() -> Option<String> {
-    let home = std::env::var("HOME").ok()?;
+    let _home = std::env::var("HOME").ok()?;
     let cache = client::cache_dir().display().to_string();
     Path::new(&cache)
         .join("versionlist")
@@ -124,7 +124,7 @@ fn maze_wall_texture_ids_in_range_and_loaded() {
         model3693.face_colour.as_ref(),
     ) {
         for (&t, &c) in rt.iter().zip(fc.iter()) {
-            if t & 0x3 == 2 && (c < 0 || c >= 50) {
+            if t & 0x3 == 2 && !(0..50).contains(&c) {
                 missing_ids.insert(c);
             }
         }
@@ -149,7 +149,7 @@ fn maze_wall_texture_ids_in_range_and_loaded() {
                 for (&t, &c) in rt.iter().zip(fc.iter()) {
                     if t & 0x3 == 2 {
                         any = true;
-                        if c < 0 || c >= 50 {
+                        if !(0..50).contains(&c) {
                             out_of_range.entry(mid).or_default().insert(c);
                         }
                     }
@@ -298,12 +298,10 @@ fn flat_world() -> World {
 fn viewport(pix: &mut Pix3DDraw, surface: &mut Pix2D) {
     pix.set_render_clipping(surface);
     pix.trans = 0;
-    pix.low_mem = false;
 }
 
 fn textured_pix(textures: &JagFile) -> Pix3DDraw {
     let mut pix = Pix3DDraw::default();
-    pix.low_mem = false;
     pix.unpack_textures(textures);
     pix.init_pool(20);
     pix.init_texture_palettes(0.8);

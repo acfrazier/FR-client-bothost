@@ -220,13 +220,18 @@ fn midi_backend(cache_dir: &str) -> Arc<Mutex<dyn Midi>> {
     }
 }
 
+type GroundObjCell = Option<Box<LinkList<ClientObj>>>;
+type GroundObjGrid = Box<[[[GroundObjCell; 104]; 104]; 4]>;
+type LoadedCache = (Cache, Vec<Option<Box<IfType>>>, Vec<Option<Arc<IfTypeMut>>>);
+type ProgressCb<'a> = Option<&'a mut dyn FnMut(&mut Client, &str, i32)>;
+
 /// `groundObj` grid from client-ts (`new Array(4)` of `new Array(104)` of
 /// null rows), every cell `None`. Empty cells are a fat pointer, not an
 /// inline `LinkList` (that was 3.8 MB × N clients). Assembled through
 /// `Vec` because the `array::from_fn` / const-repeat forms materialize the
 /// grid in a stack temporary, which overflows the 2 MB test-thread stack.
-fn empty_ground_obj() -> Box<[[[Option<Box<LinkList<ClientObj>>>; 104]; 104]; 4]> {
-    let mut rows: Vec<[Option<Box<LinkList<ClientObj>>>; 104]> = Vec::with_capacity(104 * 4);
+fn empty_ground_obj() -> GroundObjGrid {
+    let mut rows: Vec<[GroundObjCell; 104]> = Vec::with_capacity(104 * 4);
     for _ in 0..104 * 4 {
         rows.push([const { None }; 104]);
     }
@@ -234,17 +239,13 @@ fn empty_ground_obj() -> Box<[[[Option<Box<LinkList<ClientObj>>>; 104]; 104]; 4]
     // rows each. `[[T; 104]; 416]` and `[[[T; 104]; 104]; 4]` have the same
     // size and alignment, so the sole-owner allocation can be re-typed
     // without copying.
-    let boxed: Box<[[Option<Box<LinkList<ClientObj>>>; 104]; 416]> =
+    let boxed: Box<[[GroundObjCell; 104]; 416]> =
         rows.into_boxed_slice().try_into().map_err(|_| ()).unwrap();
     // SAFETY: the box holds exactly 416 row arrays, which is the same
     // memory (size, alignment, cell layout) as 4 levels of 104 rows; the
     // re-typed box keeps sole ownership and its drop glue walks the same
     // cells.
-    unsafe {
-        Box::from_raw(
-            Box::into_raw(boxed) as *mut [[[Option<Box<LinkList<ClientObj>>>; 104]; 104]; 4]
-        )
-    }
+    unsafe { Box::from_raw(Box::into_raw(boxed) as *mut [[[GroundObjCell; 104]; 104]; 4]) }
 }
 
 #[cfg(test)]
@@ -372,7 +373,7 @@ pub struct Client {
     /// `groundObj` from client-ts: per-level tile grid of loc-change
     /// object lists, sized `[LEVELS][SIZE][SIZE]`, every cell initially
     /// `None`. Populated by the zone task.
-    pub ground_obj: Box<[[[Option<Box<LinkList<ClientObj>>>; 104]; 104]; 4]>,
+    pub ground_obj: GroundObjGrid,
     pub loc_changes: LinkList<LocChange>,
     pub projectiles: LinkList<ClientProj>,
     pub spotanims: LinkList<MapSpotAnim>,
@@ -1254,9 +1255,7 @@ impl Client {
     /// Mutable overlay slot if it already exists (no allocate). First
     /// write COWs the shared template; a missing id does not clone.
     pub fn overlay_mut(&mut self, id: usize) -> Option<&mut IfTypeMut> {
-        if self.ifaces_mut.get(id).and_then(|o| o.as_ref()).is_none() {
-            return None;
-        }
+        self.ifaces_mut.get(id).and_then(|o| o.as_ref())?;
         Arc::make_mut(&mut self.ifaces_mut)
             .get_mut(id)
             .and_then(|o| o.as_mut())
@@ -1326,9 +1325,7 @@ impl Client {
     /// `Cache::default()` with empty ifaces. A real cache missing the
     /// required `config` jag — or one whose bytes are not a valid jag
     /// (dummy test files) — is `Err`, which becomes `errorLoading`.
-    fn load_cache(
-        cache_dir: &str,
-    ) -> Result<(Cache, Vec<Option<Box<IfType>>>, Vec<Option<Arc<IfTypeMut>>>), ()> {
+    fn load_cache(cache_dir: &str) -> Result<LoadedCache, ()> {
         let cache_present = JAG_FILES
             .iter()
             .any(|name| Path::new(&format!("{cache_dir}/{name}")).is_file());
@@ -1409,9 +1406,7 @@ impl Client {
         index: usize,
         checksums: &[i32; 9],
     ) -> Option<Vec<u8>> {
-        let Some(&crc) = checksums.get(index) else {
-            return None;
-        };
+        let &crc = checksums.get(index)?;
         let cached = std::fs::read(format!("{cache_dir}/{filename}")).ok();
         if let Some(bytes) = cached {
             if Packet::getcrc(&bytes, 0, bytes.len()) == crc {
@@ -1483,12 +1478,7 @@ impl Client {
     /// callback is attached (headed `run` / client-play), notify it so the
     /// driver can draw the loading bar synchronously. Recording is
     /// sim-side, drawing is render-side.
-    fn report_progress(
-        &mut self,
-        progress: &mut Option<&mut dyn FnMut(&mut Client, &str, i32)>,
-        message: &str,
-        percent: i32,
-    ) {
+    fn report_progress(&mut self, progress: &mut ProgressCb<'_>, message: &str, percent: i32) {
         self.set_progress(message, percent);
         if let Some(cb) = progress.as_deref_mut() {
             cb(self, message, percent);
@@ -1515,10 +1505,7 @@ impl Client {
     /// via `set_progress` and, when `progress` is `Some`, invokes the
     /// callback so a headed driver can draw `Renderer::draw_progress`
     /// synchronously without `maininit` naming `Renderer`.
-    pub fn maininit_with_progress(
-        &mut self,
-        mut progress: Option<&mut dyn FnMut(&mut Client, &str, i32)>,
-    ) {
+    pub fn maininit_with_progress(&mut self, mut progress: ProgressCb<'_>) {
         if self.already_started {
             return;
         }
@@ -1803,10 +1790,7 @@ impl Client {
     /// `errorLoading` instead of hanging. Every countdown tick reports
     /// progress, so a headed driver pumps the window/audio through the wait
     /// instead of beachballing.
-    fn fetch_jag_checksums(
-        &mut self,
-        progress: &mut Option<&mut dyn FnMut(&mut Client, &str, i32)>,
-    ) -> Option<[i32; 9]> {
+    fn fetch_jag_checksums(&mut self, progress: &mut ProgressCb<'_>) -> Option<[i32; 9]> {
         let mut wait = self.fetch_retry_wait;
         let mut retries = 0;
         loop {
@@ -1835,7 +1819,7 @@ impl Client {
     /// `fetch_retry_wait` (the stubbed-HTTP tests) collapses to one tick.
     fn retry_countdown(
         &mut self,
-        progress: &mut Option<&mut dyn FnMut(&mut Client, &str, i32)>,
+        progress: &mut ProgressCb<'_>,
         wait: Duration,
         message: &str,
         pct: i32,
@@ -1864,7 +1848,7 @@ impl Client {
     /// text is the TS one (`Error loading - Will retry in N secs.`).
     fn fetch_jag_file(
         &mut self,
-        progress: &mut Option<&mut dyn FnMut(&mut Client, &str, i32)>,
+        progress: &mut ProgressCb<'_>,
         display: &str,
         pct: i32,
         filename: &str,
@@ -3758,11 +3742,7 @@ impl Client {
             self.cam_pitch = ((delta_y as f64).atan2(distance as f64) * 325.949) as i32 & 0x7ff;
             self.cam_yaw = ((delta_x as f64).atan2(delta_z as f64) * -325.949) as i32 & 0x7ff;
 
-            if self.cam_pitch < 128 {
-                self.cam_pitch = 128;
-            } else if self.cam_pitch > 383 {
-                self.cam_pitch = 383;
-            }
+            self.cam_pitch = self.cam_pitch.clamp(128, 383);
         }
     }
 
@@ -3933,14 +3913,6 @@ impl Client {
             }
         }
     }
-
-    /// `animateInterface` from client-ts (10552): advance the animation of
-    /// `id`'s children by `delta`, recursing `TYPE_LAYER` children (the layer
-    /// recursion is 0, not TS `type === 1`, matching `if_anim_reset`). A
-    /// `TYPE_MODEL` child with a model anim selects the active/inactive seq
-    /// (`get_if_active` picks `model_anim2` else `model_anim`), adds `delta`
-    /// to `anim_cycle`, and steps `anim_frame` while the cycle exceeds the
-    /// frame delay, wrapping with `loops` (TS 10571-10589). Missing children
 
     /// `IF_OPENCHAT` handler (Client.ts 5925): open `com_id` as the chat
     /// modal, closing any open side modal and the main modal (TS 5926-5938).
@@ -5210,10 +5182,7 @@ impl Client {
             let r#type = self.chat_type[i];
             let mut sender = self.chat_username[i].clone();
             let mut _mod = false;
-            if sender.starts_with("@cr1@") {
-                sender = sender[5..].to_string();
-                _mod = true;
-            } else if sender.starts_with("@cr2@") {
+            if sender.starts_with("@cr1@") || sender.starts_with("@cr2@") {
                 sender = sender[5..].to_string();
                 _mod = true;
             }
@@ -5288,10 +5257,7 @@ impl Client {
             }
             let mut sender = self.chat_username[i].clone();
             let mut _mod = false;
-            if sender.starts_with("@cr1@") {
-                sender = sender[5..].to_string();
-                _mod = true;
-            } else if sender.starts_with("@cr2@") {
+            if sender.starts_with("@cr1@") || sender.starts_with("@cr2@") {
                 sender = sender[5..].to_string();
                 _mod = true;
             }
@@ -5925,7 +5891,7 @@ impl Client {
                         {
                             self.loc_changes.unlink_last();
                         }
-                        node = self.loc_changes.next();
+                        node = self.loc_changes.next_node();
                     }
 
                     if self.minimap_flag_x != 0 {
@@ -6583,7 +6549,7 @@ impl Client {
                     {
                         loc.end_time = 0;
                     }
-                    node = self.loc_changes.next();
+                    node = self.loc_changes.next_node();
                 }
                 self.ptype = -1;
             }
@@ -7649,7 +7615,7 @@ impl Client {
                                     objs.unlink_last();
                                     break;
                                 }
-                                node = objs.next();
+                                node = objs.next_node();
                             }
                             Some(objs.head().is_none())
                         } else {
@@ -7894,7 +7860,7 @@ impl Client {
                                     o.count = count;
                                     break;
                                 }
-                                node = objs.next();
+                                node = objs.next_node();
                             }
                             true
                         } else {
@@ -7920,6 +7886,7 @@ impl Client {
     /// Stays on `Client` (task 2b): the sim's menu walk
     /// (`add_component_options`) applies the scrollbar input each frame;
     /// the renderer's `draw_side` calls it for the chat scrollbar.
+    #[allow(clippy::too_many_arguments)]
     pub fn do_scrollbar(
         &mut self,
         x: i32,
@@ -7979,11 +7946,6 @@ impl Client {
             self.scroll_grabbed = true;
         }
     }
-
-    /// `IfType.getSprite` from client-ts (IfType.ts 232): depack a `Pix32`
-    /// from the `media` jag on demand, cached per `(name, index)` so the
-    /// jag is only read on a miss. A failed depack caches as `None`, so a
-    /// sprite missing from the pack does not re-read the jag every draw.
 
     /// `logout()` from client-ts: close the stream and return to the login
     /// screen. Java also stops the midi and clears the music state, and
@@ -8299,7 +8261,6 @@ impl Client {
             .map(|e| e.layer_id);
         if let Some(layer_id) = report {
             self.main_modal_id = layer_id;
-            return;
         }
     }
 
@@ -8325,7 +8286,7 @@ impl Client {
             }
 
             if self.social_input_open {
-                if key >= 32 && key <= 122 && self.social_input.len() < 80 {
+                if (32..=122).contains(&key) && self.social_input.len() < 80 {
                     self.social_input.push(char::from_u32(key as u32).unwrap());
                     self.redraw_chat = true;
                 }
@@ -9298,7 +9259,7 @@ impl Client {
         for level in 0..BuildArea::LEVELS {
             for x in 0..BuildArea::SIZE {
                 for z in 0..BuildArea::SIZE {
-                    let mut cursor = self.world.square(level as i32, x as i32, z as i32);
+                    let mut cursor = self.world.square(level, x, z);
                     while let Some(tile) = cursor {
                         if let Some(w) = tile.wall.as_deref() {
                             mark(&mut used, w.typecode);
@@ -9538,7 +9499,7 @@ impl Client {
                     top_count = count;
                     has_top = true;
                 }
-                node = objs.next();
+                node = objs.next_node();
             }
             if !has_top {
                 return; // custom: TS 7591
@@ -9553,7 +9514,7 @@ impl Client {
                     objs.move_last_to_front();
                     break;
                 }
-                node = objs.next();
+                node = objs.next_node();
             }
 
             // Third walk from the head: the first other id is the bottom of
@@ -9570,7 +9531,7 @@ impl Client {
                 {
                     middle = Some(o.clone());
                 }
-                node = objs.next();
+                node = objs.next_node();
             }
             (top, middle, bottom)
         };
@@ -9608,7 +9569,7 @@ impl Client {
             } else {
                 self.loc_changes.unlink_last();
             }
-            node = self.loc_changes.next();
+            node = self.loc_changes.next_node();
         }
     }
 
@@ -9672,7 +9633,7 @@ impl Client {
                 loc.end_time = end_time;
                 return;
             }
-            next = self.loc_changes.next();
+            next = self.loc_changes.next_node();
         }
 
         let mut loc = LocChange::default();
@@ -9865,7 +9826,7 @@ impl Client {
                 self.loc_changes.unlink_last();
             }
 
-            node = self.loc_changes.next();
+            node = self.loc_changes.next_node();
         }
     }
 
@@ -9940,11 +9901,7 @@ impl Client {
         let mut pitch = ((dy as f64).atan2(distance as f64) * 325.949) as i32 & 0x7ff;
         let yaw = ((dx as f64).atan2(dz as f64) * -325.949) as i32 & 0x7ff;
 
-        if pitch < 128 {
-            pitch = 128;
-        } else if pitch > 383 {
-            pitch = 383;
-        }
+        pitch = pitch.clamp(128, 383);
 
         if self.cam_pitch < pitch {
             self.cam_pitch += self.cam_look_at_rate
@@ -10716,7 +10673,7 @@ impl Client {
                 let loops = self.wave_loops[wave];
                 if let Some(wav) = self.jagfx.generate(id, loops) {
                     let data = wav.data();
-                    let end = wav.pos as usize;
+                    let end = wav.pos;
                     // Convert off the lock: a looped generate can be up to
                     // 20 s of samples, and the audio callback needs the
                     // queue lock every buffer.
@@ -11004,7 +10961,7 @@ mod zone_post_build {
         if c.loc_changes.head().is_some() {
             n += 1;
         }
-        while c.loc_changes.next().is_some() {
+        while c.loc_changes.next_node().is_some() {
             n += 1;
         }
         assert_eq!(n, 1);

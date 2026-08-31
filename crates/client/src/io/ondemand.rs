@@ -139,9 +139,19 @@ struct OnDemandHub {
 
 static NEXT_SLOT: AtomicUsize = AtomicUsize::new(1);
 
-static HUBS: Mutex<Option<HashMap<(String, u16), Arc<OnDemandHub>>>> = Mutex::new(None);
+type HubMap = HashMap<(String, u16), Arc<OnDemandHub>>;
+type HubGuard = std::sync::MutexGuard<'static, Option<HubMap>>;
+type WorkerEnds = (
+    mpsc::Sender<WorkerCommand>,
+    mpsc::Receiver<WorkerMessage>,
+    Arc<AtomicBool>,
+    Arc<AtomicBool>,
+    u64,
+);
 
-fn hubs() -> std::sync::MutexGuard<'static, Option<HashMap<(String, u16), Arc<OnDemandHub>>>> {
+static HUBS: Mutex<Option<HubMap>> = Mutex::new(None);
+
+fn hubs() -> HubGuard {
     HUBS.lock().unwrap_or_else(|p| p.into_inner())
 }
 
@@ -806,13 +816,7 @@ fn subscribe_hub(
     cache_dir: &str,
     versions: &[Vec<i32>],
     crcs: &[Vec<i32>],
-) -> Option<(
-    mpsc::Sender<WorkerCommand>,
-    mpsc::Receiver<WorkerMessage>,
-    Arc<AtomicBool>,
-    Arc<AtomicBool>,
-    u64,
-)> {
+) -> Option<WorkerEnds> {
     let key = (host.to_string(), port);
     let slot_id = NEXT_SLOT.fetch_add(1, Ordering::Relaxed) as u64;
     let (msg_tx, msg_rx) = mpsc::channel();

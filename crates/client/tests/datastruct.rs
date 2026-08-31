@@ -63,7 +63,7 @@ fn link_list_for_each_leaves_mutable_cursor_untouched() {
     // the immutable walk must not disturb head/next cursor state
     let mut keys = Vec::new();
     keys.push(list.head().unwrap().key);
-    while let Some(n) = list.next() {
+    while let Some(n) = list.next_node() {
         keys.push(n.key);
     }
     assert_eq!(keys, [10, 20]);
@@ -78,7 +78,7 @@ fn link_list_head_next_iterates() {
     let mut keys = Vec::new();
     let first = list.head().unwrap();
     keys.push(first.key);
-    while let Some(n) = list.next() {
+    while let Some(n) = list.next_node() {
         keys.push(n.key);
     }
     assert_eq!(keys, [10, 20, 30]);
@@ -90,8 +90,8 @@ fn link_list_head_empty_and_cursor_exhaustion() {
     assert!(list.head().is_none());
     list.push(Linkable::new(7));
     assert_eq!(list.head().unwrap().key, 7);
-    assert!(list.next().is_none()); // cursor hit sentinel
-    assert!(list.next().is_none());
+    assert!(list.next_node().is_none()); // cursor hit sentinel
+    assert!(list.next_node().is_none());
 }
 
 #[test]
@@ -194,12 +194,12 @@ fn link_list_unlink_last_during_iterate() {
     list.push(Linkable::new(30));
     let first = list.head().unwrap();
     assert_eq!(first.key, 10);
-    let second = list.next().unwrap();
+    let second = list.next_node().unwrap();
     assert_eq!(second.key, 20);
     list.unlink_last();
     let mut keys = Vec::new();
     keys.push(list.head().unwrap().key);
-    while let Some(n) = list.next() {
+    while let Some(n) = list.next_node() {
         keys.push(n.key);
     }
     assert_eq!(keys, [10, 30]);
@@ -212,11 +212,11 @@ fn link_list_move_last_to_front() {
     list.push(Linkable::new(20));
     list.push(Linkable::new(30));
     let _ = list.head();
-    let _ = list.next(); // last = 20
+    let _ = list.next_node(); // last = 20
     list.move_last_to_front();
     let mut keys = Vec::new();
     keys.push(list.head().unwrap().key);
-    while let Some(n) = list.next() {
+    while let Some(n) = list.next_node() {
         keys.push(n.key);
     }
     assert_eq!(keys, [20, 10, 30]);

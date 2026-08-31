@@ -34,11 +34,13 @@ use client::dash3d::{
 #[test]
 fn rotate_x_axis_90_swaps_y_and_z() {
     let _r = Renderer::new(false);
-    let mut m = Model::default();
-    m.num_points = 1;
-    m.point_x = Some(vec![0]);
-    m.point_y = Some(vec![128]);
-    m.point_z = Some(vec![0]);
+    let mut m = Model {
+        num_points: 1,
+        point_x: Some(vec![0]),
+        point_y: Some(vec![128]),
+        point_z: Some(vec![0]),
+        ..Default::default()
+    };
     m.rotate_x_axis(512); // 90° in 2048-circle; sin≈65536, cos≈0
     let y = m.point_y.as_ref().unwrap()[0];
     let z = m.point_z.as_ref().unwrap()[0];
@@ -921,9 +923,11 @@ fn map_projanim_negative_target_retargets_to_local_player() {
     let mut c = client();
     seed_spot(&mut c, 0);
     c.self_slot = 5;
-    let mut player = ClientPlayer::default();
-    player.ready = true;
-    player.entity = ClientEntity::at(5, 5);
+    let mut player = ClientPlayer {
+        ready: true,
+        entity: ClientEntity::at(5, 5),
+        ..Default::default()
+    };
     player.entity.teleport(&c.cache, true, 5, 5); // scene x/z 704
     c.local_player = Some(player);
 
@@ -1083,7 +1087,7 @@ fn full_follows_clears_8x8_ground_obj_and_expires_locs() {
     c.ground_obj[0][3][4] = Some({
         let mut l = LinkList::new();
         l.push(ClientObj::new(1, 1));
-        l
+        Box::new(l)
     });
     c.loc_changes.push(LocChange {
         level: 0,
@@ -1119,7 +1123,7 @@ fn rebuild_normal_shifts_ground_obj_by_base_delta() {
     c.ground_obj[0][20][20] = Some({
         let mut l = LinkList::new();
         l.push(ClientObj::new(1, 1));
-        l
+        Box::new(l)
     });
     c.loc_changes.push(LocChange {
         x: 20,
@@ -1156,7 +1160,7 @@ fn rebuild_normal_zero_delta_preserves_ground_obj() {
     c.ground_obj[0][20][20] = Some({
         let mut l = LinkList::new();
         l.push(ClientObj::new(1, 1));
-        l
+        Box::new(l)
     });
     let mut p = Packet::alloc(0);
     p.p2(10); // same zone → base 32 → dx = 0, dz = 0
@@ -1187,7 +1191,7 @@ fn rebuild_normal_negative_dx_shifts_descending() {
     c.ground_obj[0][12][20] = Some({
         let mut l = LinkList::new();
         l.push(ClientObj::new(1, 1));
-        l
+        Box::new(l)
     });
     c.loc_changes.push(LocChange {
         x: 12,

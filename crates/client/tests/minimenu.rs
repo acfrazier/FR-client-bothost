@@ -9,7 +9,7 @@ use std::sync::Arc;
 use client::client::{Client, ClientConfig, MiniMenuAction};
 use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::config::{LocType, NpcType, ObjType};
-use client::dash3d::{ClientNpc, ClientObj, ClientPlayer};
+use client::dash3d::{ClientEntity, ClientNpc, ClientObj, ClientPlayer};
 use client::datastruct::LinkList;
 use client::render::Renderer;
 
@@ -187,13 +187,20 @@ fn add_world_options_npc_ops_from_pick() {
     Arc::get_mut(&mut c.cache).unwrap().npcs[2].vislevel = 10;
     Arc::get_mut(&mut c.cache).unwrap().npcs[2].op =
         vec![Some("Attack".into()), Some("Talk".into())];
-    let mut local = ClientPlayer::default();
-    local.combat_level = 3;
+    let local = ClientPlayer {
+        combat_level: 3,
+        ..Default::default()
+    };
     c.local_player = Some(local);
-    let mut npc = ClientNpc::default();
-    npc.r#type = Some(2);
-    npc.x = x * 128 + 64;
-    npc.z = z * 128 + 64;
+    let npc = ClientNpc {
+        r#type: Some(2),
+        entity: ClientEntity {
+            x: x * 128 + 64,
+            z: z * 128 + 64,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     c.npc[npc_slot as usize] = Some(Box::new(npc));
     c.add_world_options();
     let actions: Vec<i32> = (0..c.menu_num_entries)
@@ -228,14 +235,18 @@ fn add_world_options_player_ops_from_pick() {
     let player_slot = 3i32;
     let x = 6i32;
     let z = 7i32;
-    let typecode = (0 << 29) | ((player_slot & 0x7fff) << 14) | ((z & 0x7f) << 7) | (x & 0x7f);
+    let typecode = ((player_slot & 0x7fff) << 14) | ((z & 0x7f) << 7) | (x & 0x7f);
     c.pick_count = 1;
     c.pick_typecodes[0] = typecode;
-    let mut local = ClientPlayer::default();
-    local.combat_level = 10;
+    let local = ClientPlayer {
+        combat_level: 10,
+        ..Default::default()
+    };
     c.local_player = Some(local);
-    let mut player = ClientPlayer::default();
-    player.name = Some("Bob".into());
+    let mut player = ClientPlayer {
+        name: Some("Bob".into()),
+        ..Default::default()
+    };
     player.combat_level = 12; // outlevels the local player: Attack is pinned
     player.skill_level = 0;
     player.x = x * 128 + 64;
@@ -293,7 +304,7 @@ fn add_world_options_obj_take_and_examine_from_pick() {
     let mut objs = LinkList::new();
     objs.push(ClientObj::new(7, 1)); // tail
     objs.push(ClientObj::new(6, 1)); // head
-    c.ground_obj[0][x as usize][z as usize] = Some(objs);
+    c.ground_obj[0][x as usize][z as usize] = Some(Box::new(objs));
     c.add_world_options();
     let actions: Vec<i32> = (0..c.menu_num_entries)
         .map(|i| c.menu_action[i as usize])
@@ -335,7 +346,7 @@ fn add_world_options_skips_duplicate_typecodes() {
     Arc::get_mut(&mut c.cache).unwrap().objs[7].name = "Coins".into();
     let mut objs = LinkList::new();
     objs.push(ClientObj::new(7, 1));
-    c.ground_obj[0][4][5] = Some(objs);
+    c.ground_obj[0][4][5] = Some(Box::new(objs));
     c.add_world_options();
     let examines: i32 = (0..c.menu_num_entries)
         .filter(|&i| c.menu_action[i as usize] == MiniMenuAction::OP_OBJ6)
@@ -367,8 +378,10 @@ fn add_npc_options_and_add_player_options_callable_directly() {
     Arc::get_mut(&mut c.cache).unwrap().npcs[2].name = "Rat".into();
     Arc::get_mut(&mut c.cache).unwrap().npcs[2].op = vec![Some("Attack".into())];
     c.add_npc_options(2, 7, 3, 4);
-    let mut p = ClientPlayer::default();
-    p.name = Some("Bob".into());
+    let mut p = ClientPlayer {
+        name: Some("Bob".into()),
+        ..Default::default()
+    };
     p.skill_level = 1; // no combat suffix: (skill-1) tooltip
     c.players[9] = Some(Box::new(p));
     c.player_op[1] = Some("Attack".into());
@@ -393,22 +406,28 @@ fn side_inv_fixture(c: &mut Client) {
     c.side_modal_id = -1;
     c.side_icon[3] = 1;
     c.active_icon = 3;
-    let mut layer = IfType::default();
-    layer.r#type = ComponentType::TYPE_LAYER;
-    layer.width = 190;
-    layer.height = 261;
-    layer.children = Some(vec![2]);
-    layer.child_x = Some(vec![0]);
-    layer.child_y = Some(vec![0]);
-    let mut inv = IfType::default();
-    inv.id = 2;
-    inv.r#type = ComponentType::TYPE_INV;
-    inv.obj_ops = true;
-    inv.width = 1;
-    inv.height = 1;
-    let mut inv_mut = IfTypeMut::default();
-    inv_mut.link_obj_type = Some(vec![2]); // obj id 1
-    inv_mut.link_obj_number = Some(vec![1]);
+    let layer = IfType {
+        r#type: ComponentType::TYPE_LAYER,
+        width: 190,
+        height: 261,
+        children: Some(vec![2]),
+        child_x: Some(vec![0]),
+        child_y: Some(vec![0]),
+        ..Default::default()
+    };
+    let inv = IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_INV,
+        obj_ops: true,
+        width: 1,
+        height: 1,
+        ..Default::default()
+    };
+    let inv_mut = IfTypeMut {
+        link_obj_type: Some(vec![2]), // obj id 1
+        link_obj_number: Some(vec![1]),
+        ..Default::default()
+    };
     c.set_iface(1, layer);
     c.set_iface(2, inv);
     c.set_iface_mut(2, inv_mut);
@@ -474,12 +493,14 @@ fn inv_slot_obj_iop_and_component_iop_options() {
     let _r = Renderer::new(false);
     let mut c = client();
     side_inv_fixture(&mut c);
-    let mut inv = IfType::default();
-    inv.id = 2;
-    inv.r#type = ComponentType::TYPE_INV;
-    inv.obj_ops = true;
-    inv.width = 1;
-    inv.height = 1;
+    let mut inv = IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_INV,
+        obj_ops: true,
+        width: 1,
+        height: 1,
+        ..Default::default()
+    };
     inv.iop[0] = Some("Bank".into());
     c.set_iface(2, inv);
     c.set_iface_mut(
@@ -587,13 +608,15 @@ fn non_inv_buttons_push_button_actions() {
     c.side_modal_id = -1;
     c.side_icon[3] = 1;
     c.active_icon = 3;
-    let mut layer = IfType::default();
-    layer.r#type = ComponentType::TYPE_LAYER;
-    layer.width = 190;
-    layer.height = 261;
-    layer.children = Some(vec![2, 3, 4, 5, 6, 7]);
-    layer.child_x = Some(vec![0, 0, 0, 0, 0, 0]);
-    layer.child_y = Some(vec![0, 0, 0, 0, 0, 0]);
+    let layer = IfType {
+        r#type: ComponentType::TYPE_LAYER,
+        width: 190,
+        height: 261,
+        children: Some(vec![2, 3, 4, 5, 6, 7]),
+        child_x: Some(vec![0, 0, 0, 0, 0, 0]),
+        child_y: Some(vec![0, 0, 0, 0, 0, 0]),
+        ..Default::default()
+    };
     c.set_iface(1, layer);
     let button = |id: i32, button_type: i32| -> (IfType, IfTypeMut) {
         (
@@ -673,13 +696,15 @@ fn empty_ok_button_still_fires_if_button() {
     c.side_modal_id = -1;
     c.side_icon[13] = 1;
     c.active_icon = 13;
-    let mut layer = IfType::default();
-    layer.r#type = ComponentType::TYPE_LAYER;
-    layer.width = 190;
-    layer.height = 261;
-    layer.children = Some(vec![2]);
-    layer.child_x = Some(vec![0]);
-    layer.child_y = Some(vec![0]);
+    let layer = IfType {
+        r#type: ComponentType::TYPE_LAYER,
+        width: 190,
+        height: 261,
+        children: Some(vec![2]),
+        child_x: Some(vec![0]),
+        child_y: Some(vec![0]),
+        ..Default::default()
+    };
     c.set_iface(1, layer);
     c.set_iface(
         2,
@@ -719,30 +744,40 @@ fn paused_and_targeting_suppress_continue_and_target_buttons() {
     c.side_modal_id = -1;
     c.side_icon[3] = 1;
     c.active_icon = 3;
-    let mut layer = IfType::default();
-    layer.r#type = ComponentType::TYPE_LAYER;
-    layer.width = 190;
-    layer.height = 261;
-    layer.children = Some(vec![2, 3]);
-    layer.child_x = Some(vec![0, 0]);
-    layer.child_y = Some(vec![0, 0]);
-    let mut cont = IfType::default();
-    cont.id = 2;
-    cont.r#type = ComponentType::TYPE_RECT;
-    cont.width = 50;
-    cont.height = 15;
-    cont.button_text = "Continue".into();
-    let mut cont_mut = IfTypeMut::default();
-    cont_mut.button_type = ButtonType::BUTTON_CONTINUE;
-    let mut target = IfType::default();
-    target.id = 3;
-    target.r#type = ComponentType::TYPE_RECT;
-    target.width = 50;
-    target.height = 15;
-    target.target_verb = "Cast".into();
-    target.target_base = "Tree".into();
-    let mut target_mut = IfTypeMut::default();
-    target_mut.button_type = ButtonType::BUTTON_TARGET;
+    let layer = IfType {
+        r#type: ComponentType::TYPE_LAYER,
+        width: 190,
+        height: 261,
+        children: Some(vec![2, 3]),
+        child_x: Some(vec![0, 0]),
+        child_y: Some(vec![0, 0]),
+        ..Default::default()
+    };
+    let cont = IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_RECT,
+        width: 50,
+        height: 15,
+        button_text: "Continue".into(),
+        ..Default::default()
+    };
+    let cont_mut = IfTypeMut {
+        button_type: ButtonType::BUTTON_CONTINUE,
+        ..Default::default()
+    };
+    let target = IfType {
+        id: 3,
+        r#type: ComponentType::TYPE_RECT,
+        width: 50,
+        height: 15,
+        target_verb: "Cast".into(),
+        target_base: "Tree".into(),
+        ..Default::default()
+    };
+    let target_mut = IfTypeMut {
+        button_type: ButtonType::BUTTON_TARGET,
+        ..Default::default()
+    };
     c.set_iface(1, layer);
     c.set_iface(2, cont);
     c.set_iface_mut(2, cont_mut);
@@ -784,8 +819,10 @@ fn build_minimenu_returns_while_obj_drag_active() {
 fn chat_region_adds_report_abuse_for_staff() {
     let _r = Renderer::new(false);
     let mut c = client();
-    let mut local = ClientPlayer::default();
-    local.name = Some("Me".into());
+    let local = ClientPlayer {
+        name: Some("Me".into()),
+        ..Default::default()
+    };
     c.local_player = Some(local);
     c.staffmodlevel = 1;
     c.add_chat(1, "hello", "Bob");
@@ -885,8 +922,10 @@ fn left_click_on_open_menu_row_fires_option_and_closes() {
 fn chat_line_adds_friend_and_ignore_for_friend() {
     let _r = Renderer::new(false);
     let mut c = client();
-    let mut local = ClientPlayer::default();
-    local.name = Some("Me".into());
+    let local = ClientPlayer {
+        name: Some("Me".into()),
+        ..Default::default()
+    };
     c.local_player = Some(local);
     c.chat_public_mode = 1;
     c.friend_count = 1;
@@ -915,8 +954,10 @@ fn chat_line_adds_friend_and_ignore_for_friend() {
     // a non-friend's type-2 line in chatPublicMode 1 counts/hovers nothing
     let _r = Renderer::new(false);
     let mut c2 = client();
-    let mut local = ClientPlayer::default();
-    local.name = Some("Me".into());
+    let local = ClientPlayer {
+        name: Some("Me".into()),
+        ..Default::default()
+    };
     c2.local_player = Some(local);
     c2.chat_public_mode = 1;
     c2.friend_count = 1;
@@ -943,22 +984,28 @@ fn social_component_ok_override_pushes_remove_and_message() {
     let mut c = client();
     c.friend_count = 1;
     c.friend_username[0] = "Bob".into();
-    let mut layer = IfType::default();
-    layer.r#type = ComponentType::TYPE_LAYER;
-    layer.width = 190;
-    layer.height = 261;
-    layer.children = Some(vec![2]);
-    layer.child_x = Some(vec![0]);
-    layer.child_y = Some(vec![0]);
-    let mut button = IfType::default();
-    button.id = 2;
-    button.r#type = ComponentType::TYPE_RECT;
-    button.button_text = "OK".into();
+    let layer = IfType {
+        r#type: ComponentType::TYPE_LAYER,
+        width: 190,
+        height: 261,
+        children: Some(vec![2]),
+        child_x: Some(vec![0]),
+        child_y: Some(vec![0]),
+        ..Default::default()
+    };
+    let mut button = IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_RECT,
+        button_text: "OK".into(),
+        ..Default::default()
+    };
     button.client_code = 1; // CC_FRIENDS_START → friendUsername[0]
     button.width = 50;
     button.height = 15;
-    let mut button_mut = IfTypeMut::default();
-    button_mut.button_type = ButtonType::BUTTON_OK;
+    let button_mut = IfTypeMut {
+        button_type: ButtonType::BUTTON_OK,
+        ..Default::default()
+    };
     c.set_iface(1, layer);
     c.set_iface(2, button);
     c.set_iface_mut(2, button_mut);
@@ -993,8 +1040,10 @@ fn social_component_ok_override_pushes_remove_and_message() {
 fn left_click_add_friend_last_entry_opens_menu() {
     let _r = Renderer::new(false);
     let mut c = client();
-    let mut local = ClientPlayer::default();
-    local.name = Some("Me".into());
+    let local = ClientPlayer {
+        name: Some("Me".into()),
+        ..Default::default()
+    };
     c.local_player = Some(local);
     c.chat_public_mode = 1;
     c.friend_count = 1;

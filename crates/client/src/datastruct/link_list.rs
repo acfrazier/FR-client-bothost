@@ -136,7 +136,7 @@ impl<T: LinkableTrait> LinkList<T> {
         Some(self.arena.get_mut(tail))
     }
 
-    pub fn next(&mut self) -> Option<&mut T> {
+    pub fn next_node(&mut self) -> Option<&mut T> {
         let node = self.cursor?;
         let s = self.sentinel;
         if node == s {

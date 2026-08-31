@@ -75,15 +75,17 @@ fn flat_world() -> World {
 /// model textures (ids 7 and 12) — the multi-texture case. Each face maps
 /// the quad through texture-mapping vertices 0/1/2.
 fn textured_wall_model() -> client::dash3d::Model {
-    let mut model = client::dash3d::Model::default();
-    model.num_points = 4;
-    model.point_x = Some(vec![-60, 60, 60, -60]);
-    model.point_y = Some(vec![0, 0, -180, -180]);
-    model.point_z = Some(vec![0, 0, 0, 0]);
-    model.num_faces = 2;
-    model.face_vertex_a = Some(vec![0, 0]);
-    model.face_vertex_b = Some(vec![1, 2]);
-    model.face_vertex_c = Some(vec![2, 3]);
+    let mut model = client::dash3d::Model {
+        num_points: 4,
+        point_x: Some(vec![-60, 60, 60, -60]),
+        point_y: Some(vec![0, 0, -180, -180]),
+        point_z: Some(vec![0, 0, 0, 0]),
+        num_faces: 2,
+        face_vertex_a: Some(vec![0, 0]),
+        face_vertex_b: Some(vec![1, 2]),
+        face_vertex_c: Some(vec![2, 3]),
+        ..Default::default()
+    };
     // `renderType & 0x3 == 2` = textured; `>> 2` = texture-vertex index 0.
     model.face_render_type = Some(vec![2, 2]);
     model.face_colour = Some(vec![TEXTURE_RED, TEXTURE_BLUE]);
@@ -282,18 +284,20 @@ fn wall_face_crossing_the_near_plane_still_emits() {
     let mut world = flat_world();
     world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
     let mut rw = RenderWorld::new();
-    let mut model = client::dash3d::Model::default();
-    model.num_points = 4;
-    model.point_x = Some(vec![-60, 60, 60, -60]);
-    model.point_y = Some(vec![0, 0, -180, -180]);
-    model.point_z = Some(vec![0, 0, 0, 0]);
-    model.num_faces = 2;
-    model.face_vertex_a = Some(vec![0, 0]);
-    model.face_vertex_b = Some(vec![1, 2]);
-    model.face_vertex_c = Some(vec![2, 3]);
-    model.face_colour_a = Some(vec![SHADE, SHADE]);
-    model.face_colour_b = Some(vec![SHADE, SHADE]);
-    model.face_colour_c = Some(vec![SHADE, SHADE]);
+    let mut model = client::dash3d::Model {
+        num_points: 4,
+        point_x: Some(vec![-60, 60, 60, -60]),
+        point_y: Some(vec![0, 0, -180, -180]),
+        point_z: Some(vec![0, 0, 0, 0]),
+        num_faces: 2,
+        face_vertex_a: Some(vec![0, 0]),
+        face_vertex_b: Some(vec![1, 2]),
+        face_vertex_c: Some(vec![2, 3]),
+        face_colour_a: Some(vec![SHADE, SHADE]),
+        face_colour_b: Some(vec![SHADE, SHADE]),
+        face_colour_c: Some(vec![SHADE, SHADE]),
+        ..Default::default()
+    };
     model.calc_bounding_cylinder();
     rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
@@ -329,18 +333,20 @@ fn gpu_gouraud_face_shades_like_the_colour_table() {
         return;
     };
     // A one-face gouraud wall with a known 16-bit shade.
-    let mut model = client::dash3d::Model::default();
-    model.num_points = 4;
-    model.point_x = Some(vec![-60, 60, 60, -60]);
-    model.point_y = Some(vec![0, 0, -180, -180]);
-    model.point_z = Some(vec![0, 0, 0, 0]);
-    model.num_faces = 2;
-    model.face_vertex_a = Some(vec![0, 0]);
-    model.face_vertex_b = Some(vec![1, 2]);
-    model.face_vertex_c = Some(vec![2, 3]);
-    model.face_colour_a = Some(vec![SHADE, SHADE]);
-    model.face_colour_b = Some(vec![SHADE, SHADE]);
-    model.face_colour_c = Some(vec![SHADE, SHADE]);
+    let mut model = client::dash3d::Model {
+        num_points: 4,
+        point_x: Some(vec![-60, 60, 60, -60]),
+        point_y: Some(vec![0, 0, -180, -180]),
+        point_z: Some(vec![0, 0, 0, 0]),
+        num_faces: 2,
+        face_vertex_a: Some(vec![0, 0]),
+        face_vertex_b: Some(vec![1, 2]),
+        face_vertex_c: Some(vec![2, 3]),
+        face_colour_a: Some(vec![SHADE, SHADE]),
+        face_colour_b: Some(vec![SHADE, SHADE]),
+        face_colour_c: Some(vec![SHADE, SHADE]),
+        ..Default::default()
+    };
     model.calc_bounding_cylinder();
 
     let mut world = flat_world();
@@ -365,9 +371,7 @@ fn gpu_gouraud_face_shades_like_the_colour_table() {
         let r = (rgb >> 16) & 0xff;
         let g = (rgb >> 8) & 0xff;
         let b = rgb & 0xff;
-        if (r as i32 - expected.0 as i32).abs() <= 2
-            && (g as i32 - expected.1 as i32).abs() <= 2
-            && (b as i32 - expected.2 as i32).abs() <= 2
+        if (r - expected.0).abs() <= 2 && (g - expected.1).abs() <= 2 && (b - expected.2).abs() <= 2
         {
             matched += 1;
         }
@@ -471,9 +475,9 @@ fn gpu_textured_shade_scales_texel_brightness() {
         // block/halving factor.
         let mut max_red = 0i32;
         for &rgb in &scene {
-            let r = ((rgb >> 16) & 0xff) as i32;
-            let g = ((rgb >> 8) & 0xff) as i32;
-            let b = (rgb & 0xff) as i32;
+            let r = (rgb >> 16) & 0xff;
+            let g = (rgb >> 8) & 0xff;
+            let b = rgb & 0xff;
             if r > g + 40 && r > b + 40 {
                 max_red = max_red.max(r);
             }

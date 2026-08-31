@@ -843,7 +843,7 @@ fn draw_reboot_timer_overlay_draws_system_update() {
 }
 
 /// draw a single TYPE_TEXT child under a fixed layer; returns the pixmap.
-fn draw_text(mut c: &mut Client, r: &mut Renderer, text: &IfType, m: &IfTypeMut) -> PixMap {
+fn draw_text(c: &mut Client, r: &mut Renderer, text: &IfType, m: &IfTypeMut) -> PixMap {
     let layer = IfType {
         id: 1,
         r#type: ComponentType::TYPE_LAYER,
@@ -859,11 +859,11 @@ fn draw_text(mut c: &mut Client, r: &mut Renderer, text: &IfType, m: &IfTypeMut)
     c.set_iface_mut(2, m.clone());
     let mut map = PixMap::new(100, 50);
     let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
-    r.draw_interface(&mut c, 1, 0, 0, 0, &mut surface);
+    r.draw_interface(c, 1, 0, 0, 0, &mut surface);
     map
 }
 
-fn text_com(text: &str, scripts: Option<Vec<Vec<i32>>>) -> IfType {
+fn text_com(_text: &str, scripts: Option<Vec<Vec<i32>>>) -> IfType {
     IfType {
         id: 2,
         r#type: ComponentType::TYPE_TEXT,
@@ -1465,10 +1465,14 @@ fn do_scrollbar_up_arrow_decreases_pos() {
     let _r = Renderer::new(false);
     let mut c = client();
     c.scroll_cycle = 1;
-    let mut com = IfType::default();
-    com.r#type = ComponentType::TYPE_LAYER;
-    let mut com_mut = IfTypeMut::default();
-    com_mut.scroll_height = 200;
+    let mut com = IfType {
+        r#type: ComponentType::TYPE_LAYER,
+        ..Default::default()
+    };
+    let mut com_mut = IfTypeMut {
+        scroll_height: 200,
+        ..Default::default()
+    };
     com.height = 77;
     com_mut.scroll_pos = 40;
     com.width = 100;
@@ -1537,21 +1541,27 @@ fn draw_interface_inv_text_writes_obj_name() {
     });
     c.ingame = true;
     r.game_draw(&mut c); // fonts
-    let mut layer = IfType::default();
-    layer.r#type = ComponentType::TYPE_LAYER;
-    layer.width = 200;
-    layer.height = 50;
-    layer.children = Some(vec![2]);
-    layer.child_x = Some(vec![0]);
-    layer.child_y = Some(vec![0]);
-    let mut inv = IfType::default();
-    inv.r#type = ComponentType::TYPE_INV_TEXT;
-    inv.width = 1;
-    inv.height = 1;
-    let mut inv_mut = IfTypeMut::default();
-    inv_mut.link_obj_type = Some(vec![1]); // obj id 0 + 1
-    inv_mut.link_obj_number = Some(vec![1]);
-    inv_mut.colour = 0xffffff;
+    let layer = IfType {
+        r#type: ComponentType::TYPE_LAYER,
+        width: 200,
+        height: 50,
+        children: Some(vec![2]),
+        child_x: Some(vec![0]),
+        child_y: Some(vec![0]),
+        ..Default::default()
+    };
+    let inv = IfType {
+        r#type: ComponentType::TYPE_INV_TEXT,
+        width: 1,
+        height: 1,
+        ..Default::default()
+    };
+    let inv_mut = IfTypeMut {
+        link_obj_type: Some(vec![1]),
+        link_obj_number: Some(vec![1]),
+        colour: 0xffffff,
+        ..Default::default()
+    };
     c.set_iface(1, layer);
     c.set_iface(2, inv);
     c.set_iface_mut(2, inv_mut);
@@ -1578,20 +1588,26 @@ fn draw_chat_uses_chat_modal_instead_of_lines() {
     r.game_draw(&mut c); // prepare_game allocates area_chat
     c.chat_text[0] = "hello".into();
     c.chat_modal_id = 1;
-    let mut layer = IfType::default();
-    layer.r#type = ComponentType::TYPE_LAYER;
-    layer.width = 479;
-    layer.height = 96;
-    layer.children = Some(vec![2]);
-    layer.child_x = Some(vec![0]);
-    layer.child_y = Some(vec![0]);
-    let mut rect = IfType::default();
-    rect.r#type = ComponentType::TYPE_RECT;
-    rect.fill = true;
-    rect.width = 40;
-    rect.height = 10;
-    let mut rect_mut = IfTypeMut::default();
-    rect_mut.colour = 0x00ff00;
+    let layer = IfType {
+        r#type: ComponentType::TYPE_LAYER,
+        width: 479,
+        height: 96,
+        children: Some(vec![2]),
+        child_x: Some(vec![0]),
+        child_y: Some(vec![0]),
+        ..Default::default()
+    };
+    let rect = IfType {
+        r#type: ComponentType::TYPE_RECT,
+        fill: true,
+        width: 40,
+        height: 10,
+        ..Default::default()
+    };
+    let rect_mut = IfTypeMut {
+        colour: 0x00ff00,
+        ..Default::default()
+    };
     c.set_iface(1, layer);
     c.set_iface(2, rect);
     c.set_iface_mut(2, rect_mut);
@@ -1642,20 +1658,26 @@ fn draw_chat_modal_clears_stale_chat_lines() {
     );
     // open a chat modal over the same area
     c.chat_modal_id = 1;
-    let mut layer = IfType::default();
-    layer.r#type = ComponentType::TYPE_LAYER;
-    layer.width = 479;
-    layer.height = 96;
-    layer.children = Some(vec![2]);
-    layer.child_x = Some(vec![0]);
-    layer.child_y = Some(vec![0]);
-    let mut rect = IfType::default();
-    rect.r#type = ComponentType::TYPE_RECT;
-    rect.fill = true;
-    rect.width = 40;
-    rect.height = 10;
-    let mut rect_mut = IfTypeMut::default();
-    rect_mut.colour = 0x00ff00;
+    let layer = IfType {
+        r#type: ComponentType::TYPE_LAYER,
+        width: 479,
+        height: 96,
+        children: Some(vec![2]),
+        child_x: Some(vec![0]),
+        child_y: Some(vec![0]),
+        ..Default::default()
+    };
+    let rect = IfType {
+        r#type: ComponentType::TYPE_RECT,
+        fill: true,
+        width: 40,
+        height: 10,
+        ..Default::default()
+    };
+    let rect_mut = IfTypeMut {
+        colour: 0x00ff00,
+        ..Default::default()
+    };
     c.set_iface(1, layer);
     c.set_iface(2, rect);
     c.set_iface_mut(2, rect_mut);
@@ -1680,18 +1702,24 @@ fn main_modal_click_sends_if_button() {
     let _r = Renderer::new(false);
     let mut c = client();
     c.main_modal_id = 1;
-    let mut layer = IfType::default();
-    layer.r#type = ComponentType::TYPE_LAYER;
-    layer.width = 512;
-    layer.height = 334;
-    layer.children = Some(vec![2]);
-    layer.child_x = Some(vec![10]);
-    layer.child_y = Some(vec![10]);
-    let mut btn = IfType::default();
-    btn.id = 2;
-    btn.r#type = ComponentType::TYPE_TEXT;
-    let mut btn_mut = IfTypeMut::default();
-    btn_mut.button_type = ButtonType::BUTTON_OK;
+    let layer = IfType {
+        r#type: ComponentType::TYPE_LAYER,
+        width: 512,
+        height: 334,
+        children: Some(vec![2]),
+        child_x: Some(vec![10]),
+        child_y: Some(vec![10]),
+        ..Default::default()
+    };
+    let mut btn = IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_TEXT,
+        ..Default::default()
+    };
+    let btn_mut = IfTypeMut {
+        button_type: ButtonType::BUTTON_OK,
+        ..Default::default()
+    };
     btn.button_text = "Continue".into();
     btn.width = 80;
     btn.height = 20;
@@ -1734,17 +1762,23 @@ fn animate_interface_advances_model_frame() {
     let _r = Renderer::new(false);
     let mut r = Renderer::new(false);
     let mut c = client();
-    let mut layer = IfType::default();
-    layer.r#type = ComponentType::TYPE_LAYER;
-    layer.children = Some(vec![2]);
-    layer.child_x = Some(vec![0]);
-    layer.child_y = Some(vec![0]);
-    let mut model = IfType::default();
-    model.r#type = ComponentType::TYPE_MODEL;
-    let mut model_mut = IfTypeMut::default();
-    model_mut.model_anim = 0;
-    model_mut.anim_frame = 0;
-    model_mut.anim_cycle = 0;
+    let layer = IfType {
+        r#type: ComponentType::TYPE_LAYER,
+        children: Some(vec![2]),
+        child_x: Some(vec![0]),
+        child_y: Some(vec![0]),
+        ..Default::default()
+    };
+    let model = IfType {
+        r#type: ComponentType::TYPE_MODEL,
+        ..Default::default()
+    };
+    let model_mut = IfTypeMut {
+        model_anim: 0,
+        anim_frame: 0,
+        anim_cycle: 0,
+        ..Default::default()
+    };
     c.set_iface(1, layer);
     c.set_iface(2, model);
     c.set_iface_mut(2, model_mut);
@@ -1765,18 +1799,26 @@ fn animate_interface_advances_model_frame() {
 fn if_anim_reset_zeros_nested_layer_child() {
     let _r = Renderer::new(false);
     let mut c = client();
-    let mut root = IfType::default();
-    root.r#type = ComponentType::TYPE_LAYER;
-    root.children = Some(vec![2]);
-    let mut inner = IfType::default();
-    inner.id = 2; // recursion follows child.id, so the layer must know it
-    inner.r#type = ComponentType::TYPE_LAYER;
-    inner.children = Some(vec![3]);
-    let mut model = IfType::default();
-    model.r#type = ComponentType::TYPE_MODEL;
-    let mut model_mut = IfTypeMut::default();
-    model_mut.anim_frame = 4;
-    model_mut.anim_cycle = 9;
+    let root = IfType {
+        r#type: ComponentType::TYPE_LAYER,
+        children: Some(vec![2]),
+        ..Default::default()
+    };
+    let inner = IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_LAYER,
+        children: Some(vec![3]),
+        ..Default::default()
+    };
+    let model = IfType {
+        r#type: ComponentType::TYPE_MODEL,
+        ..Default::default()
+    };
+    let model_mut = IfTypeMut {
+        anim_frame: 4,
+        anim_cycle: 9,
+        ..Default::default()
+    };
     c.set_iface(1, root);
     c.set_iface(2, inner);
     c.set_iface(3, model);
@@ -1793,24 +1835,36 @@ fn game_draw_redraws_side_and_chat_when_modal_anims() {
     let mut c = client();
     // separate model trees for the side and chat modals; world_update_num 2
     // must advance both frames through the game_draw animate triggers
-    let mut layer = IfType::default();
-    layer.r#type = ComponentType::TYPE_LAYER;
-    layer.children = Some(vec![2]);
-    layer.child_x = Some(vec![0]);
-    layer.child_y = Some(vec![0]);
-    let mut model = IfType::default();
-    model.r#type = ComponentType::TYPE_MODEL;
-    let mut model_mut = IfTypeMut::default();
-    model_mut.model_anim = 0;
-    let mut chat_layer = IfType::default();
-    chat_layer.r#type = ComponentType::TYPE_LAYER;
-    chat_layer.children = Some(vec![4]);
-    chat_layer.child_x = Some(vec![0]);
-    chat_layer.child_y = Some(vec![0]);
-    let mut chat_model = IfType::default();
-    chat_model.r#type = ComponentType::TYPE_MODEL;
-    let mut chat_model_mut = IfTypeMut::default();
-    chat_model_mut.model_anim = 0;
+    let layer = IfType {
+        r#type: ComponentType::TYPE_LAYER,
+        children: Some(vec![2]),
+        child_x: Some(vec![0]),
+        child_y: Some(vec![0]),
+        ..Default::default()
+    };
+    let model = IfType {
+        r#type: ComponentType::TYPE_MODEL,
+        ..Default::default()
+    };
+    let model_mut = IfTypeMut {
+        model_anim: 0,
+        ..Default::default()
+    };
+    let chat_layer = IfType {
+        r#type: ComponentType::TYPE_LAYER,
+        children: Some(vec![4]),
+        child_x: Some(vec![0]),
+        child_y: Some(vec![0]),
+        ..Default::default()
+    };
+    let chat_model = IfType {
+        r#type: ComponentType::TYPE_MODEL,
+        ..Default::default()
+    };
+    let chat_model_mut = IfTypeMut {
+        model_anim: 0,
+        ..Default::default()
+    };
     c.set_iface(1, layer);
     c.set_iface(2, model);
     c.set_iface_mut(2, model_mut);
@@ -1910,20 +1964,24 @@ fn update_if_pointer_sets_over_side_and_redraws() {
     let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = 1;
-    let mut layer = IfType::default();
-    layer.r#type = ComponentType::TYPE_LAYER;
-    layer.width = 190;
-    layer.height = 261;
-    layer.children = Some(vec![2]);
-    layer.child_x = Some(vec![0]);
-    layer.child_y = Some(vec![0]);
-    let mut child = IfType::default();
-    child.id = 2;
-    child.r#type = ComponentType::TYPE_TEXT;
-    child.width = 50;
-    child.height = 20;
-    child.colour_over = 0xff0000;
-    child.over_layer_id = -1;
+    let layer = IfType {
+        r#type: ComponentType::TYPE_LAYER,
+        width: 190,
+        height: 261,
+        children: Some(vec![2]),
+        child_x: Some(vec![0]),
+        child_y: Some(vec![0]),
+        ..Default::default()
+    };
+    let child = IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_TEXT,
+        width: 50,
+        height: 20,
+        colour_over: 0xff0000,
+        over_layer_id: -1,
+        ..Default::default()
+    };
     c.set_iface(1, layer);
     c.set_iface(2, child);
     c.shell.mouse_x = 553 + 5;
@@ -1939,23 +1997,31 @@ fn hidden_layer_draws_when_hovered() {
     let mut r = Renderer::new(false);
     let mut c = client();
     c.over_side_com_id = 1;
-    let mut layer = IfType::default();
-    layer.id = 1;
-    layer.r#type = ComponentType::TYPE_LAYER;
-    let mut layer_mut = IfTypeMut::default();
-    layer_mut.hide = true;
+    let mut layer = IfType {
+        id: 1,
+        r#type: ComponentType::TYPE_LAYER,
+        ..Default::default()
+    };
+    let layer_mut = IfTypeMut {
+        hide: true,
+        ..Default::default()
+    };
     layer.width = 20;
     layer.height = 20;
     layer.children = Some(vec![2]);
     layer.child_x = Some(vec![0]);
     layer.child_y = Some(vec![0]);
-    let mut rect = IfType::default();
-    rect.r#type = ComponentType::TYPE_RECT;
-    rect.fill = true;
-    rect.width = 20;
-    rect.height = 20;
-    let mut rect_mut = IfTypeMut::default();
-    rect_mut.colour = 0x112233;
+    let rect = IfType {
+        r#type: ComponentType::TYPE_RECT,
+        fill: true,
+        width: 20,
+        height: 20,
+        ..Default::default()
+    };
+    let rect_mut = IfTypeMut {
+        colour: 0x112233,
+        ..Default::default()
+    };
     c.set_iface(1, layer);
     c.set_iface_mut(1, layer_mut);
     c.set_iface(2, rect);
@@ -1972,12 +2038,14 @@ fn update_if_pointer_sets_over_main() {
     let mut c = client();
     c.main_modal_id = 1;
     let layer = hover_layer(1, 512, 334, vec![2], vec![0], vec![0]);
-    let mut child = IfType::default();
-    child.id = 2;
-    child.r#type = ComponentType::TYPE_TEXT;
-    child.width = 200;
-    child.height = 200;
-    child.colour_over = 0xff0000;
+    let child = IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_TEXT,
+        width: 200,
+        height: 200,
+        colour_over: 0xff0000,
+        ..Default::default()
+    };
     c.set_iface(1, layer);
     c.set_iface(2, child);
     c.shell.mouse_x = 100;
@@ -1992,12 +2060,14 @@ fn update_if_pointer_sets_over_chat_and_redraws_chat() {
     let mut c = client();
     c.chat_modal_id = 1;
     let layer = hover_layer(1, 479, 96, vec![2], vec![0], vec![0]);
-    let mut child = IfType::default();
-    child.id = 2;
-    child.r#type = ComponentType::TYPE_TEXT;
-    child.width = 190;
-    child.height = 96;
-    child.colour_over = 0xff0000;
+    let child = IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_TEXT,
+        width: 190,
+        height: 96,
+        colour_over: 0xff0000,
+        ..Default::default()
+    };
     c.set_iface(1, layer);
     c.set_iface(2, child);
     c.shell.mouse_x = 200;
@@ -2026,14 +2096,18 @@ fn hovered_rect_uses_colour_over() {
     let mut r = Renderer::new(false);
     let mut c = client();
     let layer = hover_layer(1, 20, 20, vec![2], vec![0], vec![0]);
-    let mut rect = IfType::default();
-    rect.id = 2;
-    rect.r#type = ComponentType::TYPE_RECT;
-    rect.fill = true;
-    rect.width = 20;
-    rect.height = 20;
-    let mut rect_mut = IfTypeMut::default();
-    rect_mut.colour = 0x112233;
+    let mut rect = IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_RECT,
+        fill: true,
+        width: 20,
+        height: 20,
+        ..Default::default()
+    };
+    let rect_mut = IfTypeMut {
+        colour: 0x112233,
+        ..Default::default()
+    };
     rect.colour_over = 0xff0000;
     c.set_iface(1, layer);
     c.set_iface(2, rect);
@@ -2058,21 +2132,27 @@ fn hover_walk_steps_scrollable_layer_scrollbar() {
     c.side_modal_id = 1;
     // the scroller sits at local (0, 30) of the side panel (553, 205)
     let root = hover_layer(1, 190, 261, vec![2], vec![0], vec![30]);
-    let mut scroller = IfType::default();
-    scroller.id = 2;
-    scroller.r#type = ComponentType::TYPE_LAYER;
-    scroller.width = 100;
-    scroller.height = 100;
-    let mut scroller_mut = IfTypeMut::default();
-    scroller_mut.scroll_height = 120;
+    let mut scroller = IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_LAYER,
+        width: 100,
+        height: 100,
+        ..Default::default()
+    };
+    let scroller_mut = IfTypeMut {
+        scroll_height: 120,
+        ..Default::default()
+    };
     scroller.children = Some(vec![3]);
     scroller.child_x = Some(vec![0]);
     scroller.child_y = Some(vec![0]);
-    let mut button = IfType::default();
-    button.id = 3;
-    button.r#type = ComponentType::TYPE_RECT;
-    button.width = 100;
-    button.height = 20;
+    let button = IfType {
+        id: 3,
+        r#type: ComponentType::TYPE_RECT,
+        width: 100,
+        height: 20,
+        ..Default::default()
+    };
     c.set_iface(1, root);
     c.set_iface(2, scroller);
     c.set_iface_mut(2, scroller_mut);
@@ -2093,13 +2173,15 @@ fn type_inv_hover_sets_hovered_slot_on_empty_slot() {
     let mut c = client();
     c.side_modal_id = 1;
     let root = hover_layer(1, 190, 261, vec![2], vec![0], vec![0]);
-    let mut inv = IfType::default();
-    inv.id = 2;
-    inv.r#type = ComponentType::TYPE_INV;
-    inv.width = 1; // one column
-    inv.height = 1; // one row
-    inv.margin_x = 0;
-    inv.margin_y = 0;
+    let inv = IfType {
+        id: 2,
+        r#type: ComponentType::TYPE_INV,
+        width: 1,
+        height: 1,
+        margin_x: 0,
+        margin_y: 0,
+        ..Default::default()
+    };
     c.set_iface(1, root);
     c.set_iface(2, inv);
     c.shell.mouse_x = 553 + 5;
@@ -2187,7 +2269,7 @@ fn active_text_uses_text2() {
         script_operand: Some(vec![0]),
         ..IfType::default()
     };
-    let active_mut = IfTypeMut {
+    let _active_mut = IfTypeMut {
         text: "Hello".into(),
         colour: 0xffffff,
         ..IfTypeMut::default()

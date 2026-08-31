@@ -1926,9 +1926,10 @@ impl RenderWorld {
             self.share_map2.resize(vertex_count_b as usize, 0);
         }
 
-        if model_a.point_normal.is_some() && model_a.shared_point_normal.is_some() {
-            let point_normal_a = model_a.point_normal.as_mut().unwrap();
-            let shared_normal_a = model_a.shared_point_normal.as_ref().unwrap();
+        if let (Some(point_normal_a), Some(shared_normal_a)) = (
+            model_a.point_normal.as_mut(),
+            model_a.shared_point_normal.as_ref(),
+        ) {
             let point_x_a = model_a.point_x.as_ref().unwrap();
             let point_y_a = model_a.point_y.as_ref().unwrap();
             let point_z_a = model_a.point_z.as_ref().unwrap();
@@ -1959,29 +1960,28 @@ impl RenderWorld {
                         continue;
                     }
 
-                    if model_b.point_normal.is_some() && model_b.shared_point_normal.is_some() {
-                        let point_normal_b = model_b.point_normal.as_mut().unwrap();
-                        let shared_normal_b = model_b.shared_point_normal.as_ref().unwrap();
+                    if let (Some(point_normal_b), Some(shared_normal_b)) = (
+                        model_b.point_normal.as_mut(),
+                        model_b.shared_point_normal.as_ref(),
+                    ) {
                         let point_x_b = model_b.point_x.as_ref().unwrap();
                         let point_y_b = model_b.point_y.as_ref().unwrap();
                         let point_z_b = model_b.point_z.as_ref().unwrap();
 
                         for vertex_b in 0..vertex_count_b as usize {
-                            let mut normal_b = point_normal_b[vertex_b].as_mut();
+                            let normal_b = point_normal_b[vertex_b].as_mut();
                             let original_normal_b = shared_normal_b[vertex_b].as_ref();
                             if x != point_x_b[vertex_b]
                                 || z != point_z_b[vertex_b]
                                 || y != point_y_b[vertex_b]
-                                || original_normal_b.map_or(false, |n| n.w == 0)
+                                || original_normal_b.is_some_and(|n| n.w == 0)
                             {
                                 continue;
                             }
 
-                            if let (Some(normal_a), Some(normal_b), Some(original_normal_b)) = (
-                                normal_a.as_deref_mut(),
-                                normal_b.as_deref_mut(),
-                                original_normal_b,
-                            ) {
+                            if let (Some(normal_a), Some(normal_b), Some(original_normal_b)) =
+                                (normal_a.as_deref_mut(), normal_b, original_normal_b)
+                            {
                                 normal_a.x += original_normal_b.x;
                                 normal_a.y += original_normal_b.y;
                                 normal_a.z += original_normal_b.z;
@@ -4684,9 +4684,9 @@ impl RenderWorld {
             .copied()
             .unwrap_or(0);
         if cycle == -self.cycle_no {
-            return false;
+            false
         } else if cycle == self.cycle_no {
-            return true;
+            true
         } else {
             let sx = x << 7;
             let sz = z << 7;
@@ -4713,12 +4713,12 @@ impl RenderWorld {
                 if let Some(slot) = world.occlusion_cycle.get_mut(index as usize) {
                     *slot = self.cycle_no;
                 }
-                return true;
+                true
             } else {
                 if let Some(slot) = world.occlusion_cycle.get_mut(index as usize) {
                     *slot = -self.cycle_no;
                 }
-                return false;
+                false
             }
         }
     }
@@ -4925,10 +4925,8 @@ impl RenderWorld {
             let z1 = (max_z << 7) - 1;
             if !self.occluded(world, z, y0, z1) {
                 return false;
-            } else if self.occluded(world, x1, y0, z1) {
-                return true;
             } else {
-                return false;
+                return self.occluded(world, x1, y0, z1);
             }
         } else if self.ground_occluded(world, level, min_x, min_z) {
             x = min_x << 7;
@@ -5355,7 +5353,7 @@ fn clip_near_intersection(inside: ClipVertex, outside: ClipVertex) -> ClipVertex
     let lerp = |a: i32, b: i32| -> i32 {
         let a = a as i64;
         let b = b as i64;
-        (a + ((b - a) * t >> 16)) as i32
+        (a + (((b - a) * t) >> 16)) as i32
     };
     ClipVertex {
         x: lerp(outside.x, inside.x),
@@ -5364,68 +5362,6 @@ fn clip_near_intersection(inside: ClipVertex, outside: ClipVertex) -> ClipVertex
         shade: lerp(outside.shade, inside.shade),
         u: lerp(outside.u as i32, inside.u as i32) as u32,
         v: lerp(outside.v as i32, inside.v as i32) as u32,
-    }
-}
-
-#[cfg(test)]
-mod near_plane_tests {
-    use super::{clip_near_intersection, clip_near_plane, ClipVertex};
-
-    fn v(x: i32, y: i32, z: i32) -> ClipVertex {
-        ClipVertex {
-            x,
-            y,
-            z,
-            shade: 0,
-            u: 0,
-            v: 0,
-        }
-    }
-
-    /// A triangle with one vertex behind the near plane: the clipped output
-    /// must match `render3_z_clip`'s A/B/C order — the winding test and the
-    /// triangle fan consume it, so the order is load-bearing.
-    #[test]
-    fn a_behind_clips_in_abc_order() {
-        // A behind, B and C in front.
-        let clipped = clip_near_plane([v(0, 0, 10), v(10, 0, 100), v(0, 10, 100)]);
-        assert_eq!(clipped.len(), 4, "one-behind clips to a quad");
-        // render3_z_clip order: clip(A→C), clip(A→B), B, C.
-        assert_eq!(clipped[0].z, 50);
-        assert_eq!(clipped[1].z, 50);
-        assert_eq!(clipped[2].z, 100);
-        assert_eq!(clipped[3].z, 100);
-        // The two intersections are distinct: on edge A→C and edge A→B.
-        let (i_ac, i_ab) = (clipped[0], clipped[1]);
-        assert!(
-            i_ab.x > 0 && i_ab.y == 0,
-            "A→B intersection lies on y=0, x>0"
-        );
-        assert!(
-            i_ac.x == 0 && i_ac.y > 0,
-            "A→C intersection lies on x=0, y>0"
-        );
-    }
-
-    #[test]
-    fn two_behind_clips_to_a_triangle() {
-        let clipped = clip_near_plane([v(0, 0, 10), v(10, 0, 10), v(0, 10, 100)]);
-        assert_eq!(clipped.len(), 3, "two-behind clips to a triangle");
-        assert!(clipped.iter().all(|p| p.z >= 50));
-    }
-
-    #[test]
-    fn all_behind_clips_to_nothing() {
-        let clipped = clip_near_plane([v(0, 0, 10), v(10, 0, 10), v(0, 10, 10)]);
-        assert!(clipped.is_empty(), "a fully-behind triangle is invisible");
-    }
-
-    #[test]
-    fn intersection_lands_on_the_near_plane_with_interpolated_xy() {
-        let p = clip_near_intersection(v(100, 0, 100), v(0, 0, 0));
-        assert_eq!(p.z, 50);
-        assert_eq!(p.x, 50, "half-way between x=0 and x=100");
-        assert_eq!(p.y, 0);
     }
 }
 
@@ -6424,5 +6360,67 @@ fn emit_quick_ground(
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod near_plane_tests {
+    use super::{clip_near_intersection, clip_near_plane, ClipVertex};
+
+    fn v(x: i32, y: i32, z: i32) -> ClipVertex {
+        ClipVertex {
+            x,
+            y,
+            z,
+            shade: 0,
+            u: 0,
+            v: 0,
+        }
+    }
+
+    /// A triangle with one vertex behind the near plane: the clipped output
+    /// must match `render3_z_clip`'s A/B/C order — the winding test and the
+    /// triangle fan consume it, so the order is load-bearing.
+    #[test]
+    fn a_behind_clips_in_abc_order() {
+        // A behind, B and C in front.
+        let clipped = clip_near_plane([v(0, 0, 10), v(10, 0, 100), v(0, 10, 100)]);
+        assert_eq!(clipped.len(), 4, "one-behind clips to a quad");
+        // render3_z_clip order: clip(A→C), clip(A→B), B, C.
+        assert_eq!(clipped[0].z, 50);
+        assert_eq!(clipped[1].z, 50);
+        assert_eq!(clipped[2].z, 100);
+        assert_eq!(clipped[3].z, 100);
+        // The two intersections are distinct: on edge A→C and edge A→B.
+        let (i_ac, i_ab) = (clipped[0], clipped[1]);
+        assert!(
+            i_ab.x > 0 && i_ab.y == 0,
+            "A→B intersection lies on y=0, x>0"
+        );
+        assert!(
+            i_ac.x == 0 && i_ac.y > 0,
+            "A→C intersection lies on x=0, y>0"
+        );
+    }
+
+    #[test]
+    fn two_behind_clips_to_a_triangle() {
+        let clipped = clip_near_plane([v(0, 0, 10), v(10, 0, 10), v(0, 10, 100)]);
+        assert_eq!(clipped.len(), 3, "two-behind clips to a triangle");
+        assert!(clipped.iter().all(|p| p.z >= 50));
+    }
+
+    #[test]
+    fn all_behind_clips_to_nothing() {
+        let clipped = clip_near_plane([v(0, 0, 10), v(10, 0, 10), v(0, 10, 10)]);
+        assert!(clipped.is_empty(), "a fully-behind triangle is invisible");
+    }
+
+    #[test]
+    fn intersection_lands_on_the_near_plane_with_interpolated_xy() {
+        let p = clip_near_intersection(v(100, 0, 100), v(0, 0, 0));
+        assert_eq!(p.z, 50);
+        assert_eq!(p.x, 50, "half-way between x=0 and x=100");
+        assert_eq!(p.y, 0);
     }
 }

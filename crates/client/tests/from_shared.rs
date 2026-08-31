@@ -3,7 +3,7 @@
 //! `login(..., reconnect = true)` sends wrapper opcode **18** (server
 //! response **15** keeps state) so a channel-head tune swaps net+sim
 //! without a TCP drop. `from_shared` constructs over a shared `Arc<Cache>`
-//! + iface template without a second unpack or `/crc` probe. The /tmp
+//! and iface template without a second unpack or `/crc` probe. The /tmp
 //! cache has no packs, so `Client::new` never touches the network beyond
 //! the listener planted here.
 use std::io::{self, Read, Write};

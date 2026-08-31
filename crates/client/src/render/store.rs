@@ -361,7 +361,7 @@ mod tests {
 
         match rw.wall_model1(&world, &cache, 0, 0, 0, 0) {
             Some(SceneModel::Model(m)) => assert_eq!(
-                m.face_colour_a.as_ref().map(Vec::as_slice),
+                m.face_colour_a.as_deref(),
                 Some(&[12345][..]),
                 "a dynamic sprite must not re-resolve the tile wall"
             ),

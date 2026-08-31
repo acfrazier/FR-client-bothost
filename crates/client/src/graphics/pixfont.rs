@@ -23,6 +23,12 @@ pub struct PixFont {
     pub height: i32,
 }
 
+impl Default for PixFont {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PixFont {
     pub fn new() -> Self {
         PixFont {
@@ -36,17 +42,17 @@ impl PixFont {
         }
     }
 
-    pub fn depack(archive: &JagFile, name: &str, quill: bool) -> Result<Self, ()> {
-        let mut dat = Packet::new(archive.read(&format!("{name}.dat")).ok_or(())?);
-        let mut idx = Packet::new(archive.read("index.dat").ok_or(())?);
+    pub fn depack(archive: &JagFile, name: &str, quill: bool) -> Option<Self> {
+        let mut dat = Packet::new(archive.read(&format!("{name}.dat"))?);
+        let mut idx = Packet::new(archive.read("index.dat")?);
 
         if dat.available() < 2 {
-            return Err(());
+            return None;
         }
         idx.pos = (dat.g2() + 4) as usize;
 
         if idx.available() < 1 {
-            return Err(());
+            return None;
         }
         let pal_count = idx.g1();
         if pal_count > 0 {
@@ -54,7 +60,7 @@ impl PixFont {
         }
 
         if idx.available() < 7 * 256 {
-            return Err(());
+            return None;
         }
 
         let mut font = PixFont::new();
@@ -69,7 +75,7 @@ impl PixFont {
 
             let len = (wi as i64 * hi as i64) as usize;
             if dat.available() < len {
-                return Err(());
+                return None;
             }
             font.char_mask[c] = vec![0i8; len];
 
@@ -113,7 +119,7 @@ impl PixFont {
             font.char_advance[32] = font.char_advance[105];
         }
 
-        Ok(font)
+        Some(font)
     }
 
     /// Sum of one row of a glyph mask; out-of-range reads stand in for the
@@ -317,6 +323,7 @@ impl PixFont {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_string_anti_macro(
         &self,
         surface: &mut Pix2D,
@@ -427,6 +434,7 @@ impl PixFont {
         self.draw_string(surface, Some(str), x - self.string_wid(Some(str)), y, rgb);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn plot_letter(
         &self,
         surface: &mut Pix2D,
@@ -479,6 +487,7 @@ impl PixFont {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn plot(
         &self,
         surface: &mut Pix2D,
@@ -526,6 +535,7 @@ impl PixFont {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn plot_letter_trans(
         &self,
         surface: &mut Pix2D,
@@ -579,6 +589,7 @@ impl PixFont {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn plot_trans(
         &self,
         surface: &mut Pix2D,

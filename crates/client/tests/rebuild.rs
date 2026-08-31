@@ -147,10 +147,7 @@ fn load_ground_writes_client_mapl_flags() {
     // opcode 49+1 = 50 → mapl bit (opcode-49) on tile (0,0) level 0 after
     // offsets; a 64×64×4 stream of opcode 0 still leaves mapl[0][x][z]==0
     // for in-area tiles.
-    let mut src = Vec::new();
-    for _ in 0..(4 * 64 * 64) {
-        src.push(0u8);
-    }
+    let mut src = vec![0u8; 4 * 64 * 64];
     ClientBuild::new().load_ground(&mut c.groundh, &mut c.mapl, &src, 0, 0, 0, 0);
     assert_eq!(c.mapl[0][0][0], 0);
 

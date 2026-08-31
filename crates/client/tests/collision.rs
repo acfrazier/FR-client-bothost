@@ -187,18 +187,22 @@ fn spot_recolour_guard_matches_ts() {
 
     // recol_s[0] == 0: the TS (`SpotType.ts` line 91) and Java 274 guard
     // skip the whole loop, so the face colour is untouched
-    let mut spot = SpotType::default();
-    spot.id = 71;
-    spot.model = 0;
+    let mut spot = SpotType {
+        id: 71,
+        model: 0,
+        ..Default::default()
+    };
     spot.recol_s[1] = 0x1122;
     spot.recol_d[1] = 0x9999;
     let model = spot.get_temp_model2(&Cache::default()).unwrap();
     assert_eq!(model.face_colour.as_ref().unwrap()[0], 0x1122);
 
     // recol_s[0] != 0: all six pairs apply, so 0x1122 recolours to 0x9999
-    let mut spot2 = SpotType::default();
-    spot2.id = 72;
-    spot2.model = 0;
+    let mut spot2 = SpotType {
+        id: 72,
+        model: 0,
+        ..Default::default()
+    };
     spot2.recol_s[0] = 0x1122;
     spot2.recol_d[0] = 0x9999;
     let model2 = spot2.get_temp_model2(&Cache::default()).unwrap();

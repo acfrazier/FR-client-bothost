@@ -33,8 +33,11 @@ pub struct JagFX {
     tone_buf: Vec<i32>,
 }
 
-fn empty_table() -> (Arc<Vec<Option<Sound>>>, Arc<Vec<i32>>) {
-    static EMPTY: OnceLock<(Arc<Vec<Option<Sound>>>, Arc<Vec<i32>>)> = OnceLock::new();
+type SoundPair = (Arc<Vec<Option<Sound>>>, Arc<Vec<i32>>);
+type SoundTables = HashMap<String, SoundPair>;
+
+fn empty_table() -> SoundPair {
+    static EMPTY: OnceLock<SoundPair> = OnceLock::new();
     EMPTY
         .get_or_init(|| {
             (
@@ -45,9 +48,8 @@ fn empty_table() -> (Arc<Vec<Option<Sound>>>, Arc<Vec<i32>>) {
         .clone()
 }
 
-fn unpacked_tables() -> &'static Mutex<HashMap<String, (Arc<Vec<Option<Sound>>>, Arc<Vec<i32>>)>> {
-    static TABLES: OnceLock<Mutex<HashMap<String, (Arc<Vec<Option<Sound>>>, Arc<Vec<i32>>)>>> =
-        OnceLock::new();
+fn unpacked_tables() -> &'static Mutex<SoundTables> {
+    static TABLES: OnceLock<Mutex<SoundTables>> = OnceLock::new();
     TABLES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 

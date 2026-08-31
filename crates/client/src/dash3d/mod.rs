@@ -95,12 +95,10 @@ mod wrapping_cross_tests {
     #[test]
     fn overflow_matches_java_int_not_i64() {
         // 50000² = 2.5e9 overflows i32 to a negative; i64 stays positive.
-        assert!(50000i64 * 50000 > 0);
         assert!(wrapping_cross(50000, 50000, 0, 0) < 0);
 
         // 50000 * -50000 overflows i32 to a positive; i64 stays negative.
         // Java draws this face; an i64 facing test would cull it (holes).
-        assert!(50000i64 * -50000 < 0);
         assert!(wrapping_cross(50000, -50000, 0, 0) > 0);
     }
 }

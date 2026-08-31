@@ -296,8 +296,7 @@ pub struct LayerAtlas {
 
 impl LayerAtlas {
     pub fn new(device: &wgpu::Device, label: &str, size: (u32, u32), max: u32) -> LayerAtlas {
-        let mut layers = Vec::new();
-        layers.push(GpuAtlas::new(device, label, size, max, 0));
+        let layers = vec![GpuAtlas::new(device, label, size, max, 0)];
         LayerAtlas {
             layers,
             free: Vec::new(),
@@ -1050,7 +1049,7 @@ impl GpuAssets {
                     for x in 0..MODEL_CELL as usize {
                         let data = texture
                             .data
-                            .get((x + y * MODEL_CELL as usize) as usize)
+                            .get(x + y * MODEL_CELL as usize)
                             .copied()
                             .unwrap_or(0);
                         let rgb = palette_lookup(palette, data);

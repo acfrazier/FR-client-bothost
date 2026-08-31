@@ -59,12 +59,12 @@ fn slot_brightness(slot: usize) -> f64 {
 fn trig() -> &'static TrigTables {
     TRIG.get_or_init(|| {
         let mut div_table = [0i32; 512];
-        for i in 1..512 {
-            div_table[i] = 32768 / i as i32;
+        for (i, slot) in div_table.iter_mut().enumerate().skip(1) {
+            *slot = 32768 / i as i32;
         }
         let mut div_table2 = [0i32; 2048];
-        for i in 1..2048 {
-            div_table2[i] = 65536 / i as i32;
+        for (i, slot) in div_table2.iter_mut().enumerate().skip(1) {
+            *slot = 65536 / i as i32;
         }
         let mut sin_table = [0i32; 2048];
         let mut cos_table = [0i32; 2048];
@@ -422,7 +422,7 @@ impl Pix3DDraw {
     pub fn unpack_textures(&mut self, textures: &JagFile) {
         self.num_textures = 0;
         for id in 0..50 {
-            if let Ok(mut texture) = Pix8::depack(textures, &id.to_string(), 0) {
+            if let Some(mut texture) = Pix8::depack(textures, &id.to_string(), 0) {
                 if self.low_mem && texture.owi == 128 {
                     texture.halve_size();
                 } else {
@@ -445,8 +445,8 @@ impl Pix3DDraw {
                 continue;
             };
             let mut pal = vec![0i32; texture.bpal.len()];
-            for i in 0..texture.bpal.len() {
-                pal[i] = Pix3D::gamma_correct(texture.bpal[i], brightness);
+            for (slot, &c) in pal.iter_mut().zip(texture.bpal.iter()) {
+                *slot = Pix3D::gamma_correct(c, brightness);
             }
             self.tex_pal[id] = Some(pal);
         }
@@ -506,7 +506,8 @@ impl Pix3DDraw {
     /// Unheaded slots never run `prepare_game`; they still need this
     /// before the first `map_build` or textured overlay rgb is 0.
     pub fn cached_averages(cache_dir: &str, low_mem: bool) -> [i32; 50] {
-        static CELL: OnceLock<Mutex<Option<(String, bool, [i32; 50])>>> = OnceLock::new();
+        type AvgCell = Mutex<Option<(String, bool, [i32; 50])>>;
+        static CELL: OnceLock<AvgCell> = OnceLock::new();
         let cell = CELL.get_or_init(|| Mutex::new(None));
         let mut guard = cell.lock().unwrap();
         if let Some((dir, mem, avg)) = &*guard {
@@ -514,8 +515,10 @@ impl Pix3DDraw {
                 return *avg;
             }
         }
-        let mut pix = Pix3DDraw::default();
-        pix.low_mem = low_mem;
+        let mut pix = Pix3DDraw {
+            low_mem,
+            ..Default::default()
+        };
         if let Ok(bytes) = std::fs::read(format!("{cache_dir}/textures")) {
             pix.unpack_textures(&JagFile::new(bytes));
             pix.init_texture_palettes(0.8);
@@ -532,16 +535,16 @@ impl Pix3DDraw {
             return;
         }
         let id = id as usize;
-        if self.active_texels[id].is_some() && self.texel_pool.is_some() {
-            let row = self.active_texels[id].take().unwrap();
-            let pool = self.texel_pool.as_mut().unwrap();
-            // TS writes `texelPool[poolSize++]` and ignores an out-of-bounds
-            // write while still bumping `poolSize`; guard the slot the same
-            // way (the invariant keeps poolSize within the pool anyway).
-            if let Some(slot) = pool.get_mut(self.pool_size as usize) {
-                *slot = row;
+        if let Some(pool) = self.texel_pool.as_mut() {
+            if let Some(row) = self.active_texels[id].take() {
+                // TS writes `texelPool[poolSize++]` and ignores an out-of-bounds
+                // write while still bumping `poolSize`; guard the slot the same
+                // way (the invariant keeps poolSize within the pool anyway).
+                if let Some(slot) = pool.get_mut(self.pool_size as usize) {
+                    *slot = row;
+                }
+                self.pool_size += 1;
             }
-            self.pool_size += 1;
         }
     }
 
@@ -591,9 +594,7 @@ impl Pix3DDraw {
                 texels = self.active_texels[selected as usize].take();
             }
         }
-        let Some(mut texels) = texels else {
-            return None;
-        };
+        let mut texels = texels?;
 
         if self.textures[id].is_none() || self.tex_pal[id].is_none() {
             // TS leaves the unfilled row in `activeTexels` and returns null.
@@ -625,13 +626,13 @@ impl Pix3DDraw {
                             .get((x >> 1) + ((y >> 1) << 6))
                             .copied()
                             .unwrap_or(0);
-                        texels[(x + (y << 7)) as usize] = Self::palette_lookup(palette, data);
+                        texels[x + (y << 7)] = Self::palette_lookup(palette, data);
                     }
                 }
             } else {
-                for i in 0..16384 {
+                for (i, slot) in texels.iter_mut().enumerate().take(16384) {
                     let data = texture.data.get(i).copied().unwrap_or(0);
-                    texels[i] = Self::palette_lookup(palette, data);
+                    *slot = Self::palette_lookup(palette, data);
                 }
             }
             self.tex_trans[id] = false;
@@ -1522,14 +1523,13 @@ impl Pix3DDraw {
             } else if x_a < x_b {
                 off += x_a;
                 let mut len = (x_b - x_a) >> 2;
-                let colour_step;
-                if len > 0 {
-                    colour_step = ((colour_b - colour_a)
+                let colour_step = if len > 0 {
+                    ((colour_b - colour_a)
                         .wrapping_mul(Pix3D::div_table().get(len as usize).copied().unwrap_or(0)))
-                        >> 15;
+                        >> 15
                 } else {
-                    colour_step = 0;
-                }
+                    0
+                };
                 if self.trans == 0 {
                     loop {
                         len -= 1;
@@ -1639,8 +1639,6 @@ impl Pix3DDraw {
                         off += 1;
                     }
                 }
-            } else {
-                return;
             }
         } else if x_a < x_b {
             let colour_step = (colour_b - colour_a) / (x_b - x_a);
@@ -3331,11 +3329,7 @@ impl Pix3DDraw {
             if cur_w != 0 {
                 cur_u = u.wrapping_div(cur_w);
                 cur_v = v.wrapping_div(cur_w);
-                if cur_u < 0 {
-                    cur_u = 0;
-                } else if cur_u > 4032 {
-                    cur_u = 4032;
-                }
+                cur_u = cur_u.clamp(0, 4032);
             }
 
             u = u.wrapping_add(u_stride);
@@ -3346,11 +3340,7 @@ impl Pix3DDraw {
             if cur_w != 0 {
                 next_u = u.wrapping_div(cur_w);
                 next_v = v.wrapping_div(cur_w);
-                if next_u < 7 {
-                    next_u = 7;
-                } else if next_u > 4032 {
-                    next_u = 4032;
-                }
+                next_u = next_u.clamp(7, 4032);
             }
 
             step_u = (next_u - cur_u) >> 3;
@@ -3385,11 +3375,7 @@ impl Pix3DDraw {
                     if cur_w != 0 {
                         next_u = u.wrapping_div(cur_w);
                         next_v = v.wrapping_div(cur_w);
-                        if next_u < 7 {
-                            next_u = 7;
-                        } else if next_u > 4032 {
-                            next_u = 4032;
-                        }
+                        next_u = next_u.clamp(7, 4032);
                     }
                     step_u = (next_u - cur_u) >> 3;
                     step_v = next_v.wrapping_sub(cur_v) >> 3;
@@ -3437,11 +3423,7 @@ impl Pix3DDraw {
                     if cur_w != 0 {
                         next_u = u.wrapping_div(cur_w);
                         next_v = v.wrapping_div(cur_w);
-                        if next_u < 7 {
-                            next_u = 7;
-                        } else if next_u > 4032 {
-                            next_u = 4032;
-                        }
+                        next_u = next_u.clamp(7, 4032);
                     }
                     step_u = (next_u - cur_u) >> 3;
                     step_v = next_v.wrapping_sub(cur_v) >> 3;
@@ -3481,11 +3463,7 @@ impl Pix3DDraw {
             if cur_w != 0 {
                 cur_u = u.wrapping_div(cur_w);
                 cur_v = v.wrapping_div(cur_w);
-                if cur_u < 0 {
-                    cur_u = 0;
-                } else if cur_u > 16256 {
-                    cur_u = 16256;
-                }
+                cur_u = cur_u.clamp(0, 16256);
             }
 
             u = u.wrapping_add(u_stride);
@@ -3496,11 +3474,7 @@ impl Pix3DDraw {
             if cur_w != 0 {
                 next_u = u.wrapping_div(cur_w);
                 next_v = v.wrapping_div(cur_w);
-                if next_u < 7 {
-                    next_u = 7;
-                } else if next_u > 16256 {
-                    next_u = 16256;
-                }
+                next_u = next_u.clamp(7, 16256);
             }
 
             step_u = (next_u - cur_u) >> 3;
@@ -3535,11 +3509,7 @@ impl Pix3DDraw {
                     if cur_w != 0 {
                         next_u = u.wrapping_div(cur_w);
                         next_v = v.wrapping_div(cur_w);
-                        if next_u < 7 {
-                            next_u = 7;
-                        } else if next_u > 16256 {
-                            next_u = 16256;
-                        }
+                        next_u = next_u.clamp(7, 16256);
                     }
                     step_u = (next_u - cur_u) >> 3;
                     step_v = next_v.wrapping_sub(cur_v) >> 3;
@@ -3587,11 +3557,7 @@ impl Pix3DDraw {
                     if cur_w != 0 {
                         next_u = u.wrapping_div(cur_w);
                         next_v = v.wrapping_div(cur_w);
-                        if next_u < 7 {
-                            next_u = 7;
-                        } else if next_u > 16256 {
-                            next_u = 16256;
-                        }
+                        next_u = next_u.clamp(7, 16256);
                     }
                     step_u = (next_u - cur_u) >> 3;
                     step_v = next_v.wrapping_sub(cur_v) >> 3;

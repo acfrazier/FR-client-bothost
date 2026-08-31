@@ -136,8 +136,10 @@ fn entity_overlays_plots_prayer_headicon() {
         "the protect-melee headicon must have drawn pixels"
     );
     look_down_z(&mut c);
-    let mut player = ClientPlayer::default();
-    player.ready = true;
+    let mut player = ClientPlayer {
+        ready: true,
+        ..Default::default()
+    };
     player.entity.x = 384;
     player.entity.z = 1280;
     player.entity.height = 100;
@@ -165,8 +167,10 @@ fn entity_overlays_collects_chat_bubble() {
     }
     let mut c = overlay_client(&cache, &mut r);
     look_down_z(&mut c);
-    let mut player = ClientPlayer::default();
-    player.ready = true;
+    let mut player = ClientPlayer {
+        ready: true,
+        ..Default::default()
+    };
     player.entity.x = 384;
     player.entity.z = 1280;
     player.entity.height = 100;
@@ -217,8 +221,10 @@ fn add_players_stamps_model_min_y_on_live_player() {
             .push(IdkType::default());
     }
     Arc::get_mut(&mut c.cache).unwrap().idks[0].model = Some(vec![4096]);
-    let mut player = ClientPlayer::default();
-    player.ready = true;
+    let mut player = ClientPlayer {
+        ready: true,
+        ..Default::default()
+    };
     player.entity.x = 384;
     player.entity.z = 384;
     player.appearance[0] = 256; // head = idk 0, whose model is LIFTED_MODEL

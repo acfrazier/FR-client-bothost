@@ -169,7 +169,7 @@ struct PickyMidi;
 
 impl Midi for PickyMidi {
     fn play(&mut self, data: &[u8], _volume: i32, _fading: bool) -> bool {
-        data != &[4, 5, 6] && data != &[7, 8, 9]
+        data != [4, 5, 6] && data != [7, 8, 9]
     }
     fn stop(&mut self) {}
     fn set_volume(&mut self, _volume: i32) {}

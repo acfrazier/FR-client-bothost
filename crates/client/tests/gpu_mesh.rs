@@ -59,18 +59,20 @@ fn flat_world() -> World {
 
 /// Vertical south-facing wall quad (X/Y at z=0), shaded WALL_SHADE.
 fn south_wall_model() -> client::dash3d::Model {
-    let mut model = client::dash3d::Model::default();
-    model.num_points = 4;
-    model.point_x = Some(vec![-60, 60, 60, -60]);
-    model.point_y = Some(vec![0, 0, -180, -180]);
-    model.point_z = Some(vec![0, 0, 0, 0]);
-    model.num_faces = 2;
-    model.face_vertex_a = Some(vec![0, 0]);
-    model.face_vertex_b = Some(vec![1, 2]);
-    model.face_vertex_c = Some(vec![2, 3]);
-    model.face_colour_a = Some(vec![WALL_SHADE, WALL_SHADE]);
-    model.face_colour_b = Some(vec![WALL_SHADE, WALL_SHADE]);
-    model.face_colour_c = Some(vec![WALL_SHADE, WALL_SHADE]);
+    let mut model = client::dash3d::Model {
+        num_points: 4,
+        point_x: Some(vec![-60, 60, 60, -60]),
+        point_y: Some(vec![0, 0, -180, -180]),
+        point_z: Some(vec![0, 0, 0, 0]),
+        num_faces: 2,
+        face_vertex_a: Some(vec![0, 0]),
+        face_vertex_b: Some(vec![1, 2]),
+        face_vertex_c: Some(vec![2, 3]),
+        face_colour_a: Some(vec![WALL_SHADE, WALL_SHADE]),
+        face_colour_b: Some(vec![WALL_SHADE, WALL_SHADE]),
+        face_colour_c: Some(vec![WALL_SHADE, WALL_SHADE]),
+        ..Default::default()
+    };
     model.calc_bounding_cylinder();
     model
 }
@@ -154,15 +156,17 @@ fn scene_mesh_builds_ground_and_wall_triangles() {
 /// out-of-range texture ids (60, past the 50-texture range, and -1): the
 /// GPU emitter must clamp the ids (49 and 0) and still emit the faces.
 fn out_of_range_texture_wall_model() -> client::dash3d::Model {
-    let mut model = client::dash3d::Model::default();
-    model.num_points = 4;
-    model.point_x = Some(vec![-60, 60, 60, -60]);
-    model.point_y = Some(vec![0, 0, -180, -180]);
-    model.point_z = Some(vec![0, 0, 0, 0]);
-    model.num_faces = 2;
-    model.face_vertex_a = Some(vec![0, 0]);
-    model.face_vertex_b = Some(vec![1, 2]);
-    model.face_vertex_c = Some(vec![2, 3]);
+    let mut model = client::dash3d::Model {
+        num_points: 4,
+        point_x: Some(vec![-60, 60, 60, -60]),
+        point_y: Some(vec![0, 0, -180, -180]),
+        point_z: Some(vec![0, 0, 0, 0]),
+        num_faces: 2,
+        face_vertex_a: Some(vec![0, 0]),
+        face_vertex_b: Some(vec![1, 2]),
+        face_vertex_c: Some(vec![2, 3]),
+        ..Default::default()
+    };
     // `renderType & 0x3 == 2` = textured; `>> 2` = texture-vertex index 0.
     model.face_render_type = Some(vec![2, 2]);
     model.face_colour = Some(vec![60, -1]);
@@ -237,11 +241,7 @@ fn textured_face_with_out_of_range_tex_id_still_emits() {
 fn get_table(hsl: i32, lightness: i32) -> i32 {
     let inv = 127 - lightness;
     let mut l = (inv * (hsl & 0x7f)) / 160;
-    if l < 2 {
-        l = 2;
-    } else if l > 126 {
-        l = 126;
-    }
+    l = l.clamp(2, 126);
     (hsl & 0xff80) + l
 }
 
@@ -474,11 +474,11 @@ fn hsl_to_rgb_wgsl(shade: u32, brightness: f32) -> [f32; 3] {
         var11 + sat - var11 * sat
     };
     let var21 = 2.0 * var11 - var19;
-    let mut var23 = hue + 0.3333333333333333;
+    let mut var23 = hue + 0.333_333_34;
     if var23 > 1.0 {
         var23 -= 1.0;
     }
-    let mut var27 = hue - 0.3333333333333333;
+    let mut var27 = hue - 0.333_333_34;
     if var27 < 0.0 {
         var27 += 1.0;
     }
@@ -489,7 +489,7 @@ fn hsl_to_rgb_wgsl(shade: u32, brightness: f32) -> [f32; 3] {
         } else if 2.0 * phase < 1.0 {
             var19
         } else if 3.0 * phase < 2.0 {
-            var21 + (var19 - var21) * (0.6666666666666666 - phase) * 6.0
+            var21 + (var19 - var21) * (0.666_666_7 - phase) * 6.0
         } else {
             var21
         }
@@ -546,18 +546,20 @@ fn hsl_to_rgb_matches_colour_table() {
 /// RuneLite's GPU plugin never replaces clickboxes, and the CPU path only
 /// AABB-pretests then requires the projected face to contain the mouse.
 fn angled_door_model() -> client::dash3d::Model {
-    let mut model = client::dash3d::Model::default();
-    model.num_points = 4;
-    model.point_x = Some(vec![-64, 64, 64, -64]);
-    model.point_y = Some(vec![0, 0, -180, -180]);
-    model.point_z = Some(vec![0, 0, 0, 0]);
-    model.num_faces = 2;
-    model.face_vertex_a = Some(vec![0, 0]);
-    model.face_vertex_b = Some(vec![1, 2]);
-    model.face_vertex_c = Some(vec![2, 3]);
-    model.face_colour_a = Some(vec![WALL_SHADE, WALL_SHADE]);
-    model.face_colour_b = Some(vec![WALL_SHADE, WALL_SHADE]);
-    model.face_colour_c = Some(vec![WALL_SHADE, WALL_SHADE]);
+    let mut model = client::dash3d::Model {
+        num_points: 4,
+        point_x: Some(vec![-64, 64, 64, -64]),
+        point_y: Some(vec![0, 0, -180, -180]),
+        point_z: Some(vec![0, 0, 0, 0]),
+        num_faces: 2,
+        face_vertex_a: Some(vec![0, 0]),
+        face_vertex_b: Some(vec![1, 2]),
+        face_vertex_c: Some(vec![2, 3]),
+        face_colour_a: Some(vec![WALL_SHADE, WALL_SHADE]),
+        face_colour_b: Some(vec![WALL_SHADE, WALL_SHADE]),
+        face_colour_c: Some(vec![WALL_SHADE, WALL_SHADE]),
+        ..Default::default()
+    };
     model.calc_bounding_cylinder();
     model
 }

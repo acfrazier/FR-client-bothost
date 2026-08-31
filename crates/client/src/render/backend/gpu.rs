@@ -1210,7 +1210,7 @@ impl RenderBackend for GpuBackend {
         // The CPU chrome body drew the 2D UI into the persistent
         // `draw_area`; upload it as one RGBA8 texture. The rows are padded
         // to wgpu's 256-byte `COPY_BYTES_PER_ROW_ALIGNMENT`.
-        let bytes_per_row = ((FRAME_W * 4 + 255) / 256) * 256;
+        let bytes_per_row = (FRAME_W * 4).div_ceil(256) * 256;
         let rgba = draw_area_rgba(
             &r.draw_area,
             &self.overlay_coverage,
@@ -1322,7 +1322,7 @@ mod tests {
         let mut coverage = vec![0u8; (SCENE_W * SCENE_H) as usize];
         coverage[0] = 255;
         coverage[1] = 82;
-        let bytes_per_row = ((FRAME_W * 4 + 255) / 256) * 256;
+        let bytes_per_row = (FRAME_W * 4).div_ceil(256) * 256;
         let bytes = draw_area_rgba(&draw, &coverage, true, bytes_per_row);
         let px = |x: u32, y: u32| {
             let o = (y * bytes_per_row + x * 4) as usize;
@@ -1343,7 +1343,7 @@ mod tests {
         let mut draw = PixMap::new(FRAME_W as i32, FRAME_H as i32);
         draw.pixels[(4 * FRAME_W + 4) as usize] = 0x00ff8800;
         let coverage = vec![0u8; (SCENE_W * SCENE_H) as usize];
-        let bytes_per_row = ((FRAME_W * 4 + 255) / 256) * 256;
+        let bytes_per_row = (FRAME_W * 4).div_ceil(256) * 256;
         let bytes = draw_area_rgba(&draw, &coverage, false, bytes_per_row);
         let o = (4 * bytes_per_row + 4 * 4) as usize;
         assert_eq!(

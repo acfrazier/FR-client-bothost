@@ -91,7 +91,7 @@ fn draw_progress_headed_paints_stage_text_once_title_jag_exists() {
         "messageBox prepareTitle loads b12 from title jag"
     );
     assert!(
-        r.draw_area.pixels.iter().any(|&p| p == 0xffffff),
+        r.draw_area.pixels.contains(&0xffffff),
         "stage text must be plotted in white (Java b12.centreString)"
     );
 }

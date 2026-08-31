@@ -118,9 +118,11 @@ fn cold_login_clears_entity_tables() {
     c.player_count = 2;
     c.players[5] = Some(Box::new(ClientPlayer::default()));
     c.player_appearance_buffer[5] = Some(Packet::new(vec![]));
-    let mut local = ClientPlayer::default();
-    local.ready = true;
-    local.name = Some("leftover".into());
+    let local = ClientPlayer {
+        ready: true,
+        name: Some("leftover".into()),
+        ..Default::default()
+    };
     c.local_player = Some(local);
 
     c.login("bob", "pw", false).unwrap();

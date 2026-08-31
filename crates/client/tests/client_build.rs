@@ -839,16 +839,18 @@ fn finish_build_hooks_share_light() {
         "finishBuild must flag the render-side share_light"
     );
 
-    let mut model = Model::default();
-    model.num_points = 3;
-    model.point_x = Some(vec![-50, 50, 50]);
-    model.point_y = Some(vec![-50, -50, 50]);
-    model.point_z = Some(vec![0, 0, 0]);
-    model.num_faces = 1;
-    model.face_vertex_a = Some(vec![0]);
-    model.face_vertex_b = Some(vec![2]);
-    model.face_vertex_c = Some(vec![1]);
-    model.face_colour = Some(vec![Colour::CYAN]);
+    let mut model = Model {
+        num_points: 3,
+        point_x: Some(vec![-50, 50, 50]),
+        point_y: Some(vec![-50, -50, 50]),
+        point_z: Some(vec![0, 0, 0]),
+        num_faces: 1,
+        face_vertex_a: Some(vec![0]),
+        face_vertex_b: Some(vec![2]),
+        face_vertex_c: Some(vec![1]),
+        face_colour: Some(vec![Colour::CYAN]),
+        ..Default::default()
+    };
     model.calc_bounding_cylinder();
     model.calculate_normals(64, 768, -50, -10, -50, false);
     let mut rw = RenderWorld::new();

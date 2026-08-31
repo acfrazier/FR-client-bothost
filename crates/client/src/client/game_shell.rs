@@ -42,6 +42,12 @@ pub struct GameShell {
     pub(crate) count: i32,
 }
 
+impl Default for GameShell {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GameShell {
     pub fn new() -> Self {
         GameShell {
