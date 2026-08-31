@@ -176,7 +176,10 @@ fn new_maininit_still_reunpacks_fresh_cache() {
     let mut c = Client::new(cfg(&dir));
     c.http_port = port;
     c.fetch_retry_wait = Duration::from_millis(1);
-    assert!(!c.cache_from_shared, "Client::new must leave the marker false");
+    assert!(
+        !c.cache_from_shared,
+        "Client::new must leave the marker false"
+    );
     let unpacked = Arc::clone(&c.cache);
 
     c.maininit();

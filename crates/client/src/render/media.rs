@@ -200,9 +200,9 @@ impl Media {
         // (the torch flames paint into them); they re-plot from the shared
         // decodes below.
         if let Ok(bytes) = std::fs::read(format!("{cache_dir}/title")) {
-            if let Ok(jag) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                JagFile::new(bytes)
-            })) {
+            if let Ok(jag) =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| JagFile::new(bytes)))
+            {
                 media.p11 = PixFont::depack(&jag, "p11_full", false).ok();
                 media.p12 = PixFont::depack(&jag, "p12_full", false).ok();
                 media.b12 = PixFont::depack(&jag, "b12_full", false).ok();

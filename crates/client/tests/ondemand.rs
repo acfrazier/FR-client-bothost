@@ -4,8 +4,8 @@
 //! thread; `request` queues into the client-side request list and
 //! `remaining` counts it, exactly as Java/TS track `requests`. The socket
 //! test drives the full worker pump against a mock engine ondemand socket.
-use std::io::Write;
 use client::render::Renderer;
+use std::io::Write;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::thread;
@@ -16,7 +16,7 @@ use client::io::{JagFile, OnDemand};
 
 #[test]
 fn request_increments_remaining() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut od = OnDemand::new_unconnected();
     assert_eq!(od.remaining(), 0);
     od.request(2, 0);
@@ -25,7 +25,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn duplicate_request_is_deduplicated() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut od = OnDemand::new_unconnected();
     od.request(2, 0);
     od.request(2, 0);
@@ -34,7 +34,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn different_files_both_queue() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut od = OnDemand::new_unconnected();
     od.request(2, 0);
     od.request(3, 100);
@@ -348,7 +348,10 @@ fn two_handles_dedupe_the_same_request_on_the_wire() {
     drop(od1);
     drop(od2);
     server.join().unwrap();
-    assert!(got1 && got2, "both handles must complete the shared download");
+    assert!(
+        got1 && got2,
+        "both handles must complete the shared download"
+    );
     assert_eq!(
         accepts.load(AtomicOrdering::Relaxed),
         1,
@@ -430,7 +433,7 @@ fn drop_socket_on_one_handle_does_not_kill_the_hub() {
 /// fetched when its loc is placed and `Model::load` never misses.
 #[test]
 fn request_all_models_requests_every_model() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     use std::net::TcpListener;
 
     // 3 models; only model 0 carries the "in-use" bit.
@@ -452,14 +455,26 @@ let _r = Renderer::new(false);
     let port = listener.local_addr().unwrap().port();
 
     let mut in_use = OnDemand::new(
-        &versionlist, "127.0.0.1", port, "/tmp", Arc::new(AtomicBool::new(false)),
+        &versionlist,
+        "127.0.0.1",
+        port,
+        "/tmp",
+        Arc::new(AtomicBool::new(false)),
     )
     .unwrap();
     in_use.request_in_use_models();
-    assert_eq!(in_use.remaining(), 1, "in-use prefetch requests only the flagged model");
+    assert_eq!(
+        in_use.remaining(),
+        1,
+        "in-use prefetch requests only the flagged model"
+    );
 
     let mut all = OnDemand::new(
-        &versionlist, "127.0.0.1", port, "/tmp", Arc::new(AtomicBool::new(false)),
+        &versionlist,
+        "127.0.0.1",
+        port,
+        "/tmp",
+        Arc::new(AtomicBool::new(false)),
     )
     .unwrap();
     all.request_all_models();
@@ -471,14 +486,18 @@ let _r = Renderer::new(false);
 /// loadable without any OnDemand request.
 #[test]
 fn unpack_models_from_cache_makes_a_random_event_model_loadable() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&format!("{cache}/versionlist")).is_file() {
         return;
     }
     let versionlist = JagFile::new(std::fs::read(format!("{cache}/versionlist")).unwrap());
     let od = OnDemand::new(
-        &versionlist, "127.0.0.1", 1, &cache, Arc::new(AtomicBool::new(false)),
+        &versionlist,
+        "127.0.0.1",
+        1,
+        &cache,
+        Arc::new(AtomicBool::new(false)),
     )
     .expect("engine versionlist");
 
@@ -498,7 +517,7 @@ let _r = Renderer::new(false);
 /// gzip + 2-byte version trailer, which the client gunzips on `loop_request`.
 #[test]
 fn worker_downloads_and_gunzips_from_ondemand_socket() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     use std::io::Read;
     use std::net::TcpListener;
 
@@ -569,7 +588,7 @@ let _r = Renderer::new(false);
 /// (a reconnect) is served right after.
 #[test]
 fn worker_reopens_socket_immediately_after_drop_socket() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     use std::io::Read;
     use std::net::TcpListener;
 
@@ -656,7 +675,7 @@ let _r = Renderer::new(false);
 /// login `get_temp_model` would still network-fetch.
 #[test]
 fn prefetched_archive0_model_posts_to_completed() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     use std::io::Read;
     use std::net::TcpListener;
 
@@ -734,7 +753,7 @@ let _r = Renderer::new(false);
 /// `prefetchPriority` and do not count in `remaining()`.
 #[test]
 fn bar_urgent_models_are_in_use_bit_only() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     let path = format!("{cache}/versionlist");
     if !std::path::Path::new(&path).is_file() {
@@ -774,7 +793,7 @@ let _r = Renderer::new(false);
 /// `pack/client`.
 #[test]
 fn prefetch_cache_hit_posts_extra_model_for_unpack() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     let path = format!("{cache}/versionlist");
     if !std::path::Path::new(&path).is_file() {
@@ -802,7 +821,9 @@ let _r = Renderer::new(false);
     while Instant::now() < deadline {
         od.run(false);
         while let Some(req) = od.loop_request() {
-            if req.archive == 0 && req.file == extra && req.data.as_ref().is_some_and(|d| !d.is_empty())
+            if req.archive == 0
+                && req.file == extra
+                && req.data.as_ref().is_some_and(|d| !d.is_empty())
             {
                 got = true;
             }

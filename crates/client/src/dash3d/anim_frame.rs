@@ -30,7 +30,10 @@ static STORE: OnceLock<Mutex<AnimFrameStore>> = OnceLock::new();
 
 fn store() -> &'static Mutex<AnimFrameStore> {
     STORE.get_or_init(|| {
-        Mutex::new(AnimFrameStore { list: Vec::new(), opaque: Vec::new() })
+        Mutex::new(AnimFrameStore {
+            list: Vec::new(),
+            opaque: Vec::new(),
+        })
     })
 }
 
@@ -142,7 +145,10 @@ impl AnimFrame {
                     temp_ti[current] = j as i32;
 
                     let mut default_value = 0;
-                    if base_type.get(temp_ti[current] as usize).copied().unwrap_or(0) as i32
+                    if base_type
+                        .get(temp_ti[current] as usize)
+                        .copied()
+                        .unwrap_or(0) as i32
                         == crate::dash3d::AnimTransform::SCALE
                     {
                         default_value = 128;

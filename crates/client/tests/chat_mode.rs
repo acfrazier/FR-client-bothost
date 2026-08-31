@@ -53,11 +53,14 @@ fn trade_button_cycles_trade_mode() {
 #[test]
 fn report_abuse_sends_close_modal_and_records_main_modal_id() {
     let mut c = client();
-    c.set_iface(600, IfType {
-        client_code: 600,
-        layer_id: 7,
-        ..IfType::default()
-    });
+    c.set_iface(
+        600,
+        IfType {
+            client_code: 600,
+            layer_id: 7,
+            ..IfType::default()
+        },
+    );
     click_chat(&mut c, 462, 480);
     // CLOSE_MODAL(51) was sent by close_modal
     assert!(c.out.pos > 0);

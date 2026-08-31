@@ -144,7 +144,10 @@ impl LocType {
         for id in 0..num {
             let size = idx.g2();
             dat.pos = offset;
-            let mut loc = LocType { id, ..LocType::default() };
+            let mut loc = LocType {
+                id,
+                ..LocType::default()
+            };
             loc.decode(&mut dat);
             list.push(loc);
             offset += size as usize;
@@ -400,7 +403,14 @@ impl LocType {
         transform_id: i32,
     ) -> Option<Model> {
         self.get_model_shared(
-            _cache, shape, angle, height_sw, height_se, height_ne, height_nw, transform_id,
+            _cache,
+            shape,
+            angle,
+            height_sw,
+            height_se,
+            height_ne,
+            height_nw,
+            transform_id,
         )
         .map(|shared| (*shared).clone())
     }

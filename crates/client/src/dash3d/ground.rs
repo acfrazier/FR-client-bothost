@@ -47,9 +47,15 @@ const DEF_SHAPE_F: [&[i8]; 13] = [
     &[0, 4, 1, 2, 0, 4, 2, 5, 1, 0, 4, 5, 1, 0, 5, 3],
     &[0, 4, 1, 2, 0, 4, 2, 3, 0, 4, 3, 5, 1, 0, 4, 5],
     &[0, 0, 4, 5, 1, 4, 1, 2, 1, 4, 2, 3, 1, 4, 3, 5],
-    &[0, 0, 1, 5, 0, 1, 4, 5, 0, 1, 2, 4, 1, 0, 5, 3, 1, 5, 4, 3, 1, 4, 2, 3],
-    &[1, 0, 1, 5, 1, 1, 4, 5, 1, 1, 2, 4, 0, 0, 5, 3, 0, 5, 4, 3, 0, 4, 2, 3],
-    &[1, 0, 5, 4, 1, 0, 1, 5, 0, 0, 4, 3, 0, 4, 5, 3, 0, 5, 2, 3, 0, 1, 2, 5],
+    &[
+        0, 0, 1, 5, 0, 1, 4, 5, 0, 1, 2, 4, 1, 0, 5, 3, 1, 5, 4, 3, 1, 4, 2, 3,
+    ],
+    &[
+        1, 0, 1, 5, 1, 1, 4, 5, 1, 1, 2, 4, 0, 0, 5, 3, 0, 5, 4, 3, 0, 4, 2, 3,
+    ],
+    &[
+        1, 0, 5, 4, 1, 0, 1, 5, 0, 0, 4, 3, 0, 4, 5, 3, 0, 5, 2, 3, 0, 1, 2, 5,
+    ],
 ];
 
 /// Overlay ground is at most 6 vertices / 6 faces (`DEF_SHAPE_*`). Inline
@@ -109,8 +115,7 @@ impl Ground {
         overlay: i32,
         underlay: i32,
     ) -> Self {
-        let flat =
-            !(height_sw != height_se || height_sw != height_ne || height_sw != height_nw);
+        let flat = !(height_sw != height_se || height_sw != height_ne || height_sw != height_nw);
         let overlay_shape = shape;
         let overlay_rotation = rotation;
         let minimap_overlay = overlay;
@@ -150,7 +155,13 @@ impl Ground {
                     (colour_sw + colour_se) >> 1,
                     (colour2_sw + colour2_se) >> 1,
                 ),
-                3 => (scene_x + FULL_SQUARE, scene_z, height_se, colour_se, colour2_se),
+                3 => (
+                    scene_x + FULL_SQUARE,
+                    scene_z,
+                    height_se,
+                    colour_se,
+                    colour2_se,
+                ),
                 4 => (
                     scene_x + FULL_SQUARE,
                     scene_z + HALF_SQUARE,
@@ -172,7 +183,13 @@ impl Ground {
                     (colour_ne + colour_nw) >> 1,
                     (colour2_ne + colour2_nw) >> 1,
                 ),
-                7 => (scene_x, scene_z + FULL_SQUARE, height_nw, colour_nw, colour2_nw),
+                7 => (
+                    scene_x,
+                    scene_z + FULL_SQUARE,
+                    height_nw,
+                    colour_nw,
+                    colour2_nw,
+                ),
                 8 => (
                     scene_x,
                     scene_z + HALF_SQUARE,

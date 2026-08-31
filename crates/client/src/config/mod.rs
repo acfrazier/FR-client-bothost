@@ -51,8 +51,8 @@ impl Cache {
         let seqs = SeqType::unpack(jag);
         let mut spots = SpotType::unpack(jag);
         for spot in &mut spots {
-            spot.seq = (spot.anim >= 0 && (spot.anim as usize) < seqs.len())
-                .then_some(spot.anim as usize);
+            spot.seq =
+                (spot.anim >= 0 && (spot.anim as usize) < seqs.len()).then_some(spot.anim as usize);
         }
         Cache {
             objs: ObjType::unpack(jag),

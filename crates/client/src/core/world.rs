@@ -102,12 +102,7 @@ pub struct World {
 }
 
 impl World {
-    pub fn new(
-        groundh: LevelHeightmaps,
-        max_tile_z: i32,
-        max_level: i32,
-        max_tile_x: i32,
-    ) -> Self {
+    pub fn new(groundh: LevelHeightmaps, max_tile_z: i32, max_level: i32, max_tile_x: i32) -> Self {
         let mut squares = Vec::with_capacity(max_level as usize);
         for _ in 0..max_level {
             let mut level = Vec::with_capacity(max_tile_x as usize);
@@ -202,8 +197,7 @@ impl World {
         }
 
         if self.squares[0][stx as usize][stz as usize].is_none() {
-            self.squares[0][stx as usize][stz as usize] =
-                Some(Box::new(Square::new(0, stx, stz)));
+            self.squares[0][stx as usize][stz as usize] = Some(Box::new(Square::new(0, stx, stz)));
         }
 
         let tile = &mut self.squares[0][stx as usize][stz as usize];
@@ -484,7 +478,9 @@ impl World {
     pub fn move_decor(&mut self, level: i32, x: i32, z: i32, offset: i32) {
         let tile = &mut self.squares[level as usize][x as usize][z as usize];
         let Some(tile) = tile else { return };
-        let Some(decor) = tile.decor.as_deref_mut() else { return };
+        let Some(decor) = tile.decor.as_deref_mut() else {
+            return;
+        };
 
         let sx = x * 128 + 64;
         let sz = z * 128 + 64;
@@ -512,8 +508,8 @@ impl World {
         let scene_x = tile_x * 128 + width * 64;
         let scene_z = tile_z * 128 + length * 64;
         self.set_sprite(
-            scene_x, scene_z, y, level, tile_x, tile_z, width, length, typecode, info, yaw,
-            false, h_sw, h_se, h_ne, h_nw,
+            scene_x, scene_z, y, level, tile_x, tile_z, width, length, typecode, info, yaw, false,
+            h_sw, h_se, h_ne, h_nw,
         )
         .is_some()
     }
@@ -559,7 +555,24 @@ impl World {
         x1 /= 128;
         z1 /= 128;
 
-        self.set_sprite(x, z, y, level, x0, z0, x1 + 1 - x0, z1 - z0 + 1, typecode, 0, yaw, true, 0, 0, 0, 0)
+        self.set_sprite(
+            x,
+            z,
+            y,
+            level,
+            x0,
+            z0,
+            x1 + 1 - x0,
+            z1 - z0 + 1,
+            typecode,
+            0,
+            yaw,
+            true,
+            0,
+            0,
+            0,
+            0,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]

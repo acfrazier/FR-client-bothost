@@ -13,7 +13,8 @@ use crate::bot_target::{bot_target, private_pem, BotTarget};
 /// Java Client-TS default pair. Unit tests and a cache-less `/tmp` client
 /// use this when no engine pem is present.
 pub const JAVA_LOGIN_RSAN: &str = "7162900525229798032761816791230527296329313291232324290237849263501208207972894053929065636522363163621000728841182238772712427862772219676577293600221789";
-pub const JAVA_LOGIN_RSAE: &str = "58778699976184461502525193738213253649000149147835990136706041084440742975821";
+pub const JAVA_LOGIN_RSAE: &str =
+    "58778699976184461502525193738213253649000149147835990136706041084440742975821";
 
 /// rs2b2t public modulus (scraped from `/client/client.js`, 250+ digit run).
 /// Exponent 65537. Baked so a prod bin does not rebuild when flipping worlds.
@@ -62,7 +63,10 @@ fn local_pair() -> (String, String) {
     if pem.is_file() {
         match rsa_from_pkcs1_pem_file(&pem) {
             Ok(pair) => return pair,
-            Err(e) => eprintln!("login RSA: {}: {e}; using Lost City defaults", pem.display()),
+            Err(e) => eprintln!(
+                "login RSA: {}: {e}; using Lost City defaults",
+                pem.display()
+            ),
         }
     }
     (JAVA_LOGIN_RSAN.to_string(), JAVA_LOGIN_RSAE.to_string())

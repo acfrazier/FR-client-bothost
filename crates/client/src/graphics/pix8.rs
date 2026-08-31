@@ -251,7 +251,16 @@ impl Pix8 {
         }
     }
 
-    fn plot(&self, surface: &mut Pix2D, w: i32, h: i32, mut src_off: i32, src_step: i32, mut dst_off: i32, dst_step: i32) {
+    fn plot(
+        &self,
+        surface: &mut Pix2D,
+        w: i32,
+        h: i32,
+        mut src_off: i32,
+        src_step: i32,
+        mut dst_off: i32,
+        dst_step: i32,
+    ) {
         let qw = w >> 2;
         let rem = w & 0x3;
 
@@ -264,7 +273,11 @@ impl Pix8 {
                         dst_off += 1;
                     } else {
                         if let Some(p) = surface.pixels.get_mut(dst_off as usize) {
-                            *p = self.bpal.get((pal_index as u8) as usize).copied().unwrap_or(0);
+                            *p = self
+                                .bpal
+                                .get((pal_index as u8) as usize)
+                                .copied()
+                                .unwrap_or(0);
                             surface.mark_pixel(dst_off);
                         }
                         dst_off += 1;
@@ -278,7 +291,11 @@ impl Pix8 {
                     dst_off += 1;
                 } else {
                     if let Some(p) = surface.pixels.get_mut(dst_off as usize) {
-                        *p = self.bpal.get((pal_index as u8) as usize).copied().unwrap_or(0);
+                        *p = self
+                            .bpal
+                            .get((pal_index as u8) as usize)
+                            .copied()
+                            .unwrap_or(0);
                         surface.mark_pixel(dst_off);
                     }
                     dst_off += 1;
@@ -291,7 +308,14 @@ impl Pix8 {
 
     // mapview applet:
 
-    pub fn scale_plot_sprite(&self, surface: &mut Pix2D, mut arg0: i32, mut arg1: i32, mut arg2: i32, mut arg3: i32) {
+    pub fn scale_plot_sprite(
+        &self,
+        surface: &mut Pix2D,
+        mut arg0: i32,
+        mut arg1: i32,
+        mut arg2: i32,
+        mut arg3: i32,
+    ) {
         let local2 = self.wi;
         let local5 = self.hi;
         let mut local7: i32 = 0;
@@ -344,10 +368,24 @@ impl Pix8 {
             arg2 -= local144;
             local137 += local144;
         }
-        self.plot_scale(surface, local7, local9, local133, local137, arg2, arg3, local33, local39, local2);
+        self.plot_scale(
+            surface, local7, local9, local133, local137, arg2, arg3, local33, local39, local2,
+        );
     }
 
-    fn plot_scale(&self, surface: &mut Pix2D, mut off_w: i32, mut off_h: i32, mut dst_off: i32, dst_step: i32, w: i32, h: i32, scale_crop_width: i32, scale_crop_height: i32, arg11: i32) {
+    fn plot_scale(
+        &self,
+        surface: &mut Pix2D,
+        mut off_w: i32,
+        mut off_h: i32,
+        mut dst_off: i32,
+        dst_step: i32,
+        w: i32,
+        h: i32,
+        scale_crop_width: i32,
+        scale_crop_height: i32,
+        arg11: i32,
+    ) {
         let last_off_w = off_w;
         for _ in 0..h {
             let off_y = (off_h >> 16) * arg11;

@@ -129,9 +129,9 @@ fn silence_watchdog_reconnects_with_response_15() {
     assert!(c.ingame);
     let p = c.local_player.as_mut().unwrap();
     p.y = 77; // marker: the reconnect must not replace localPlayer
-    // Age the watchdog past the fixed wall-clock bound, then one pass
-    // fires it — a parked host slot runs one `gameLoop` pass per ~600 ms,
-    // so 750 pass-counted frames would take ~450 s, not the ~15 s bound.
+              // Age the watchdog past the fixed wall-clock bound, then one pass
+              // fires it — a parked host slot runs one `gameLoop` pass per ~600 ms,
+              // so 750 pass-counted frames would take ~450 s, not the ~15 s bound.
     c.last_response = Some(Instant::now() - Duration::from_secs(16));
     c.game_loop();
     assert_eq!(c.last_login_reconnect, Some(true));

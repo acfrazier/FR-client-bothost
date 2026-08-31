@@ -118,7 +118,15 @@ impl<'a> Pix2D<'a> {
         self.pixels.fill(0);
     }
 
-    pub fn fill_rect_trans(&mut self, mut x: i32, mut y: i32, mut width: i32, mut height: i32, rgb: i32, alpha: i32) {
+    pub fn fill_rect_trans(
+        &mut self,
+        mut x: i32,
+        mut y: i32,
+        mut width: i32,
+        mut height: i32,
+        rgb: i32,
+        alpha: i32,
+    ) {
         if x < self.clip_min_x {
             width -= self.clip_min_x - x;
             x = self.clip_min_x;
@@ -288,7 +296,14 @@ impl<'a> Pix2D<'a> {
 
     // mapview applet:
 
-    pub fn fill_circle(&mut self, x_center: i32, y_center: i32, y_radius: i32, rgb: i32, alpha: i32) {
+    pub fn fill_circle(
+        &mut self,
+        x_center: i32,
+        y_center: i32,
+        y_radius: i32,
+        rgb: i32,
+        alpha: i32,
+    ) {
         let inv_alpha = 256 - alpha;
         let r0 = ((rgb >> 16) & 0xff) * alpha;
         let g0 = ((rgb >> 8) & 0xff) * alpha;
@@ -305,7 +320,9 @@ impl<'a> Pix2D<'a> {
 
         for y in y_start..=y_end {
             let midpoint = y - y_center;
-            let x_radius = ((y_radius as i64 * y_radius as i64 - midpoint as i64 * midpoint as i64) as f64).sqrt() as i32;
+            let x_radius = ((y_radius as i64 * y_radius as i64 - midpoint as i64 * midpoint as i64)
+                as f64)
+                .sqrt() as i32;
 
             let mut x_start = x_center - x_radius;
             if x_start < 0 {

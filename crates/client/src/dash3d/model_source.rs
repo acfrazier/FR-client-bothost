@@ -160,6 +160,9 @@ impl LinkableTrait for ModelSource {
 
 impl Default for ModelSource {
     fn default() -> Self {
-        ModelSource { links: Links::new(0), min_y: 1000 }
+        ModelSource {
+            links: Links::new(0),
+            min_y: 1000,
+        }
     }
 }

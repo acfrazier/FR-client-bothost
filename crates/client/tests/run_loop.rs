@@ -17,7 +17,7 @@ fn new_client() -> Client {
 /// `stop()` (state → -2), exactly like GameShell.run.
 #[test]
 fn run_stops_when_state_negative() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let mut c = new_client();
     // This test drives the run-loop stop contract, not the loading screen:
     // skip `maininit` so it stays hermetic (no web fetch into /tmp).

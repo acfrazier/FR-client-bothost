@@ -61,19 +61,7 @@ fn world_render_with_mouse_check_picks_the_face_in_front_of_camera() {
         pix.mouse_y = 160;
 
         // Camera at the origin looking +z (eye yaw/pitch 0, model 500 away).
-        model.world_render(
-            &mut pix,
-            &mut surface,
-            0,
-            0,
-            65536,
-            0,
-            65536,
-            0,
-            0,
-            500,
-            5,
-        );
+        model.world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 500, 5);
     }
 
     assert!(pix.picked_count >= 1, "mouse over the model must pick it");
@@ -99,19 +87,7 @@ fn world_render_with_aabb_mouse_check_picks_without_triangle_test() {
         pix.mouse_check = true;
         pix.mouse_x = 256;
         pix.mouse_y = 160;
-        model.world_render(
-            &mut pix,
-            &mut surface,
-            0,
-            0,
-            65536,
-            0,
-            65536,
-            0,
-            0,
-            500,
-            5,
-        );
+        model.world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 500, 5);
     }
 
     assert!(pix.picked_count >= 1, "AABB pick must append the typecode");
@@ -131,19 +107,7 @@ fn world_render_miss_leaves_pick_unchanged() {
         pix.mouse_check = true;
         pix.mouse_x = 0; // top-left corner, far from the model
         pix.mouse_y = 0;
-        model.world_render(
-            &mut pix,
-            &mut surface,
-            0,
-            0,
-            65536,
-            0,
-            65536,
-            0,
-            0,
-            500,
-            5,
-        );
+        model.world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 500, 5);
     }
 
     assert_eq!(pix.picked_count, 0, "a miss must not pick anything");
@@ -199,19 +163,7 @@ fn world_render_skips_models_with_missing_points() {
         pix.mouse_check = true;
         pix.mouse_x = 256;
         pix.mouse_y = 160;
-        model.world_render(
-            &mut pix,
-            &mut surface,
-            0,
-            0,
-            65536,
-            0,
-            65536,
-            0,
-            0,
-            500,
-            5,
-        );
+        model.world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 500, 5);
     }
 
     assert_eq!(pix.picked_count, 0);
@@ -232,19 +184,7 @@ fn world_render_skips_faces_with_missing_colours() {
         pix.mouse_check = true;
         pix.mouse_x = 256;
         pix.mouse_y = 160;
-        model.world_render(
-            &mut pix,
-            &mut surface,
-            0,
-            0,
-            65536,
-            0,
-            65536,
-            0,
-            0,
-            500,
-            5,
-        );
+        model.world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 500, 5);
     }
 
     assert!(pix.picked_count >= 1, "the geometric pick still fires");
@@ -320,7 +260,10 @@ fn world_render_wide_winding_cross_does_not_overflow() {
     }
 
     // No panic, and the (culled, clockwise-on-screen) face draws nothing.
-    assert_eq!(pix.picked_count, 1, "the pick pre-test fires before winding");
+    assert_eq!(
+        pix.picked_count, 1,
+        "the pick pre-test fires before winding"
+    );
     assert!(map.pixels.iter().all(|&p| p == 0));
 }
 

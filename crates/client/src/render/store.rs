@@ -24,7 +24,9 @@ mod tests {
     }
 
     fn store() -> MutexGuard<'static, ModelStore> {
-        ModelStore::instance().lock().unwrap_or_else(|e| e.into_inner())
+        ModelStore::instance()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
     /// One 3-vertex, 1-face triangle (the same synthetic model the
@@ -50,24 +52,49 @@ mod tests {
 
         // renderer 1 asks for model id 0: the store decodes it once.
         let a = store().model(0).expect("model 0 decodes");
-        assert_eq!(store().model_load_count(0), 1, "the first request decodes the model once");
+        assert_eq!(
+            store().model_load_count(0),
+            1,
+            "the first request decodes the model once"
+        );
 
         // renderer 2 asks for the same id: same Arc, no second decode.
         let b = store().model(0).expect("model 0 shared");
-        assert!(Arc::ptr_eq(&a, &b), "both renderers share the same decoded Arc");
-        assert_eq!(store().model_load_count(0), 1, "the store resolved the id once");
+        assert!(
+            Arc::ptr_eq(&a, &b),
+            "both renderers share the same decoded Arc"
+        );
+        assert_eq!(
+            store().model_load_count(0),
+            1,
+            "the store resolved the id once"
+        );
 
         // the render-side decode path (`RenderWorld::resolve_*` ->
         // `LocType::get_model` -> `Model::load`) serves from the store too:
         // a fresh `load` reuses the decode instead of re-running it.
         let via_load = Model::load(0).expect("render-path load");
-        assert_eq!(store().model_load_count(0), 1, "a renderer load reuses the store");
-        assert_eq!(via_load.num_points, a.num_points, "the renderer sees the decoded geometry");
+        assert_eq!(
+            store().model_load_count(0),
+            1,
+            "a renderer load reuses the store"
+        );
+        assert_eq!(
+            via_load.num_points, a.num_points,
+            "the renderer sees the decoded geometry"
+        );
 
         let shared_a = Model::load_shared(0).expect("shared lookup a");
         let shared_b = Model::load_shared(0).expect("shared lookup b");
-        assert!(Arc::ptr_eq(&shared_a, &shared_b), "load_shared hands out the same Arc");
-        assert_eq!(store().model_load_count(0), 1, "still one decode for the id");
+        assert!(
+            Arc::ptr_eq(&shared_a, &shared_b),
+            "load_shared hands out the same Arc"
+        );
+        assert_eq!(
+            store().model_load_count(0),
+            1,
+            "still one decode for the id"
+        );
     }
 
     /// Two `RenderWorld`s resolve tiles whose walls both build from the
@@ -109,7 +136,11 @@ mod tests {
         let mut rw1 = RenderWorld::new();
         rw1.resolve_tile(&world, &cache, 0, 0, 0, 0);
         rw1.resolve_tile(&world, &cache, 0, 0, 1, 0);
-        assert_eq!(store().model_load_count(0), 1, "both walls decode model 0 once");
+        assert_eq!(
+            store().model_load_count(0),
+            1,
+            "both walls decode model 0 once"
+        );
 
         let mut rw2 = RenderWorld::new();
         rw2.resolve_tile(&world, &cache, 0, 0, 0, 0);
@@ -208,7 +239,10 @@ mod tests {
             shape: Some(vec![LocShape::CENTREPIECE_STRAIGHT]),
             ..LocType::default()
         };
-        let cache = Cache { locs, ..Cache::default() };
+        let cache = Cache {
+            locs,
+            ..Cache::default()
+        };
 
         let mut world = World::new(vec![vec![vec![0; 3]; 3]; 1], 2, 1, 2);
         world.fill_base_level(0);
@@ -233,7 +267,11 @@ mod tests {
         // Decor.
         world.set_decor(0, 0, 0, 0, 0, 0, 102 << 14, 0, 0, 0, 0, 0, 0, 0);
         rw.resolve_tile(&world, &cache, 0, 0, 0, 0);
-        assert_eq!(decor_points(&mut rw, &world, &cache), 3, "set_decor resolves model 100");
+        assert_eq!(
+            decor_points(&mut rw, &world, &cache),
+            3,
+            "set_decor resolves model 100"
+        );
         world.set_decor(0, 0, 0, 0, 0, 0, 103 << 14, 0, 0, 0, 0, 0, 0, 0);
         rw.resolve_tile(&world, &cache, 0, 0, 0, 0);
         assert_eq!(
@@ -245,7 +283,11 @@ mod tests {
         // Ground decor.
         world.set_ground_decor(0, 0, 0, 0, 104 << 14, 0, 0, 0, 0, 0);
         rw.resolve_tile(&world, &cache, 0, 0, 0, 0);
-        assert_eq!(gd_points(&mut rw, &world, &cache), 3, "set_ground_decor resolves model 100");
+        assert_eq!(
+            gd_points(&mut rw, &world, &cache),
+            3,
+            "set_ground_decor resolves model 100"
+        );
         world.set_ground_decor(0, 0, 0, 0, 105 << 14, 0, 0, 0, 0, 0);
         rw.resolve_tile(&world, &cache, 0, 0, 0, 0);
         assert_eq!(
@@ -258,8 +300,14 @@ mod tests {
         // CENTREPIECE_STRAIGHT typecode2 (the `addLoc` encoding).
         let scene_typecode = |loc_id: i32| 0x4000_0000i32 | (loc_id << 14);
         assert!(world.add_scenery(0, 0, 0, 0, scene_typecode(106), 10, 1, 1, 0, 0, 0, 0, 0));
-        let sprite = world.last_sprite_index().expect("a scenery sprite was pushed");
-        assert_eq!(sprite_points(&mut rw, &world, &cache, sprite), 3, "the scenery resolves model 100");
+        let sprite = world
+            .last_sprite_index()
+            .expect("a scenery sprite was pushed");
+        assert_eq!(
+            sprite_points(&mut rw, &world, &cache, sprite),
+            3,
+            "the scenery resolves model 100"
+        );
         assert!(world.add_scenery(0, 0, 0, 0, scene_typecode(107), 10, 1, 1, 0, 0, 0, 0, 0));
         let sprite_b = world.last_sprite_index().expect("a second scenery sprite");
         assert_eq!(
@@ -305,14 +353,7 @@ mod tests {
         // rebuilds an unlit model) is observable through the wall accessor.
         let mut marked = Model::load(100).expect("model 100 decodes");
         marked.face_colour_a = Some(vec![12345]);
-        rw.set_wall_model(
-            &world,
-            0,
-            0,
-            0,
-            Some(SceneModel::Model(marked)),
-            None,
-        );
+        rw.set_wall_model(&world, 0, 0, 0, Some(SceneModel::Model(marked)), None);
 
         // A dynamic sprite steps onto the tile (the player/NPC movement path).
         let index = world.add_dynamic(0, 64, 0, 64, 0, 0, 0, false);
@@ -324,7 +365,10 @@ mod tests {
                 Some(&[12345][..]),
                 "a dynamic sprite must not re-resolve the tile wall"
             ),
-            other => panic!("the tile wall was re-resolved/replaced: {}", other.is_some()),
+            other => panic!(
+                "the tile wall was re-resolved/replaced: {}",
+                other.is_some()
+            ),
         }
     }
 
@@ -346,7 +390,10 @@ mod tests {
     }
 
     fn model_points(model: Option<&SceneModel>) -> i32 {
-        model.and_then(|m| m.as_model()).map(|m| m.num_points).unwrap_or(0)
+        model
+            .and_then(|m| m.as_model())
+            .map(|m| m.num_points)
+            .unwrap_or(0)
     }
 
     /// A second synthetic model: a 4-point quad (two triangles), so the
@@ -356,8 +403,7 @@ mod tests {
         1, 1, // face index order: fresh a/b/c per face
         // face index deltas (cumulative with the previous face's last):
         // face 0 = (0, 1, 2), face 1 = (0, 2, 3).
-        0x40, 0x41, 0x41, 0x3e, 0x42, 0x41,
-        0x00, 0xFF, 0x00, 0xFF, // face colours (HSL 255)
+        0x40, 0x41, 0x41, 0x3e, 0x42, 0x41, 0x00, 0xFF, 0x00, 0xFF, // face colours (HSL 255)
         0x40, 0x68, 0x18, 0x40, // vertexX deltas: 0, +40, -40, 0
         0x68, 0x40, 0x18, 0x40, // vertexY deltas: +40, 0, -40, 0
         0x40, 0x40, 0x40, 0x40, // vertexZ deltas: 0, 0, 0, 0

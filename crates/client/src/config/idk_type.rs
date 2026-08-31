@@ -68,7 +68,9 @@ impl IdkType {
 
     /// `checkModel()` from client-ts.
     pub fn check_model(&self) -> bool {
-        let Some(model) = &self.model else { return true };
+        let Some(model) = &self.model else {
+            return true;
+        };
 
         let mut ready = true;
         for &m in model {

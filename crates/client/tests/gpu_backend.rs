@@ -98,7 +98,11 @@ fn chrome_composites_from_the_cpu_draw_area() {
     // The composite: the full-frame texture carries the chrome — the login
     // box region (image_title4 blits at (202, 171)) must be non-black.
     let pixels = handle.read_back();
-    assert_eq!(pixels.len(), 765 * 503, "the composite is a full-frame texture");
+    assert_eq!(
+        pixels.len(),
+        765 * 503,
+        "the composite is a full-frame texture"
+    );
     let mut titlebox_pixels = 0;
     for y in 171..371 {
         for x in 202..562 {
@@ -167,14 +171,16 @@ fn draw_area_upload_carries_known_chrome_pixels() {
     for y in 210..242 {
         for x in 560..592 {
             assert_eq!(
-                pixels[y * 765 + x], 0xff0000,
+                pixels[y * 765 + x],
+                0xff0000,
                 "a CPU-drawn chrome rect must composite into the GPU frame at ({x}, {y})"
             );
         }
     }
     for x in 10..26 {
         assert_eq!(
-            pixels[460 * 765 + x], 0xffffff,
+            pixels[460 * 765 + x],
+            0xffffff,
             "a CPU-drawn chrome row must composite into the GPU frame at ({x}, 460)"
         );
     }

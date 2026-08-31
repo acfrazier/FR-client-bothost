@@ -1,9 +1,9 @@
 use client::client::{Client, ClientConfig};
-use client::core::World;
-use client::render::Renderer;
 use client::client::{APPLET_H, APPLET_W};
+use client::core::World;
 use client::dash3d::{ClientEntity, ClientPlayer, MapFlag, TerrainOverlayShape};
 use client::graphics::{Colour, PixMap};
+use client::render::Renderer;
 
 fn cache_dir() -> Option<String> {
     let cache = client::cache_dir().display().to_string();
@@ -26,7 +26,7 @@ fn client(cache: String) -> Client {
 
 #[test]
 fn game_draw_headless_does_not_panic() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
@@ -48,13 +48,19 @@ let mut r = Renderer::new(false);
     // empty, so the viewport stays black, but the pass must not panic.
     c.scene_state = 2;
     r.game_draw(&mut c);
-    assert_eq!(r.world.render_count(), 1, "gameDrawMain must call render_all");
+    assert_eq!(
+        r.world.render_count(),
+        1,
+        "gameDrawMain must call render_all"
+    );
     // with the media jag present the chrome panels plot non-zero pixels
     assert!(r.draw_area.pixels.iter().any(|&p| p != 0));
     // the icon-strip backgrounds (backhmid1 at (516, 160), backbase2 at
     // (496, 466)) blit non-zero pixels
     let region_nonzero = |x0: i32, y0: i32, x1: i32, y1: i32| {
-        (y0..y1).any(|y| (x0..x1).any(|x| r.draw_area.pixels[(y * r.draw_area.width + x) as usize] != 0))
+        (y0..y1).any(|y| {
+            (x0..x1).any(|x| r.draw_area.pixels[(y * r.draw_area.width + x) as usize] != 0)
+        })
     };
     assert!(region_nonzero(516, 160, 765, 205), "backhmid1 strip");
     assert!(region_nonzero(496, 466, 765, 503), "backbase2 strip");
@@ -68,7 +74,7 @@ let mut r = Renderer::new(false);
 /// player).
 #[test]
 fn game_draw_main_writes_viewport_pixels() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let Some(cache) = cache_dir() else {
         return;
     };
@@ -83,9 +89,16 @@ let mut r = Renderer::new(false);
     assert_eq!(g.height, 334);
     // after a real rebuild this is non-zero; without scene, at least not a
     // panic, and the 3D pass ran rather than the old fill-0 stub.
-    assert_eq!(r.world.render_count(), 1, "gameDrawMain must call render_all");
+    assert_eq!(
+        r.world.render_count(),
+        1,
+        "gameDrawMain must call render_all"
+    );
     assert_eq!(r.scene_cycle, 1);
-    assert!(r.vis_calc_done, "resetVisCalc must run before the first pass");
+    assert!(
+        r.vis_calc_done,
+        "resetVisCalc must run before the first pass"
+    );
 }
 
 /// `minimapDraw` (TS 11279) fills `area_map` and the map is blitted at
@@ -95,7 +108,7 @@ let mut r = Renderer::new(false);
 /// 2022-2023) and the white local-player square (minimapDraw 11390).
 #[test]
 fn minimap_is_under_chrome_not_a_black_square_on_top() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let Some(cache) = cache_dir() else {
         return;
     };
@@ -120,10 +133,16 @@ let mut r = Renderer::new(false);
     // blit at (550, 4) must not have covered it with an opaque rectangle.
     let i = (8 * r.draw_area.width + 520) as usize;
     let chrome = r.draw_area.pixels[i];
-    assert_ne!(chrome, 0, "chrome ring must sit on top of area_map, not a black square");
+    assert_ne!(
+        chrome, 0,
+        "chrome ring must sit on top of area_map, not a black square"
+    );
     if let Some(backvmid1) = &r.media.area_backvmid1 {
         let expected = backvmid1.pixels[(4 * backvmid1.width + 4) as usize];
-        assert_eq!(chrome, expected, "backvmid1 pixel must survive the area_map blit");
+        assert_eq!(
+            chrome, expected,
+            "backvmid1 pixel must survive the area_map blit"
+        );
     }
 
     // minimapDraw ran: the mapback ring is in area_map and on the canvas,
@@ -139,7 +158,10 @@ let mut r = Renderer::new(false);
         "minimapDraw must draw the local-player square"
     );
     let ring = (104 * r.draw_area.width + 560) as usize;
-    assert_ne!(r.draw_area.pixels[ring], 0, "mapback ring must be blitted at (550, 4)");
+    assert_ne!(
+        r.draw_area.pixels[ring], 0,
+        "mapback ring must be blitted at (550, 4)"
+    );
 }
 
 /// `minimapDraw` must not panic when the `media` pack (and so `mapback`) is
@@ -148,7 +170,7 @@ let mut r = Renderer::new(false);
 /// missing-media fallback.
 #[test]
 fn minimap_draw_without_media_does_not_panic() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let dir = std::env::temp_dir().join(format!("274-nomedia-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -175,7 +197,10 @@ let mut r = Renderer::new(false);
             if in_square {
                 assert_eq!(pixel, Colour::WHITE, "white square at ({x}, {y})");
             } else {
-                assert_eq!(pixel, 0, "no media → minimap black outside the player square");
+                assert_eq!(
+                    pixel, 0,
+                    "no media → minimap black outside the player square"
+                );
             }
         }
     }
@@ -236,7 +261,7 @@ fn flat_world() -> World {
 /// end up non-black.
 #[test]
 fn game_draw_renders_scene_without_manual_pix3d_init() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let mut c = client("/tmp".into());
     c.set_draw(true);
     c.ingame = true;
@@ -263,7 +288,7 @@ let mut r = Renderer::new(false);
 /// origin (plan Task 5).
 #[test]
 fn follow_camera_moves_eye_above_local_player() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let mut c = client("/tmp".into());
     c.ingame = true;
     c.scene_state = 2;
@@ -277,8 +302,14 @@ let mut r = Renderer::new(false);
     r.follow_camera(&mut c); // mainredraw runs follow_camera ahead of game_draw
     let player_x = c.local_player.as_ref().unwrap().x;
     let player_z = c.local_player.as_ref().unwrap().z;
-    assert_eq!(c.orbit_camera_x, player_x, "orbit x snaps to the local player");
-    assert_eq!(c.orbit_camera_z, player_z, "orbit z snaps to the local player");
+    assert_eq!(
+        c.orbit_camera_x, player_x,
+        "orbit x snaps to the local player"
+    );
+    assert_eq!(
+        c.orbit_camera_z, player_z,
+        "orbit z snaps to the local player"
+    );
     r.game_draw(&mut c);
     assert!(
         c.cam_x != 0 || c.cam_z != 0,
@@ -293,7 +324,7 @@ let mut r = Renderer::new(false);
 /// by exactly the 700 = 800 - 100 gap (`camFollow`'s `getAvH - 50` target).
 #[test]
 fn get_av_h_link_below_reads_level_above() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let mut c = client("/tmp".into());
     c.ingame = true;
     c.scene_state = 2;
@@ -331,7 +362,7 @@ let mut r = Renderer::new(false);
 /// `World.render_all` reads for the textured-ground branch.
 #[test]
 fn pix3d_low_mem_follows_config() {
-let r = Renderer::new(false);
+    let r = Renderer::new(false);
     let _c = client("/tmp".into());
     assert!(!r.pix3d.low_mem, "default config lowmem=false");
     let mut low_r = Renderer::new(true);
@@ -342,7 +373,10 @@ let r = Renderer::new(false);
         members: true,
         lowmem: true,
     });
-    assert!(low_r.pix3d.low_mem, "lowmem config must reach Pix3DDraw.low_mem");
+    assert!(
+        low_r.pix3d.low_mem,
+        "lowmem config must reach Pix3DDraw.low_mem"
+    );
     low.ingame = true;
     low.scene_state = 2;
     low.world = flat_world();
@@ -361,7 +395,7 @@ let r = Renderer::new(false);
 /// calling `init_colour_table`. Skipped without the pack.
 #[test]
 fn production_init_wires_textures_and_pool() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let Some(cache) = cache_dir() else {
         return;
     };
@@ -396,7 +430,7 @@ let mut r = Renderer::new(false);
 /// `check_minimap` path calls it internally.
 #[test]
 fn minimap_build_buffer_writes_pixels() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let mut c = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
@@ -409,17 +443,34 @@ let mut r = Renderer::new(false);
     // This fixture is a headed `set_ground`.
     c.world.overlay_mesh = true;
     c.world.set_ground(
-        0, 1, 1,
-        TerrainOverlayShape::PLAIN, 0, -1,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0x00aabb, 0,
+        0,
+        1,
+        1,
+        TerrainOverlayShape::PLAIN,
+        0,
+        -1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x00aabb,
+        0,
     );
     c.mapl = vec![vec![vec![0u8; 104]; 104]; 4];
     r.minimap_build_buffer(&mut c, 0);
     let mm = r.minimap.as_ref().unwrap();
-    assert!(mm.data.iter().any(|&p| p != 0), "minimap buffer must be non-black");
+    assert!(
+        mm.data.iter().any(|&p| p != 0),
+        "minimap buffer must be non-black"
+    );
 }
 
 /// Unheaded `map_build` parks overlay stamps and leaves `overlay_pending`.
@@ -440,12 +491,26 @@ fn first_headed_paint_builds_minimap_from_unheaded_stamps() {
     c.world.overlay_mesh = false;
     c.world.fill_base_level(0);
     c.world.set_ground(
-        0, 1, 1,
-        TerrainOverlayShape::PLAIN, 0, -1,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0, 0, 0, 0,
-        0x00aabb, 0,
+        0,
+        1,
+        1,
+        TerrainOverlayShape::PLAIN,
+        0,
+        -1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x00aabb,
+        0,
     );
     c.world.overlay_pending = true;
     assert!(
@@ -479,21 +544,25 @@ fn roof_player() -> ClientPlayer {
 /// No `RemoveRoof` flags anywhere on the ray: every level draws.
 #[test]
 fn roof_check_returns_3_outdoors() {
-let r = Renderer::new(false);
+    let r = Renderer::new(false);
     let mut c = client("/tmp".into());
     c.local_player = Some(roof_player());
     c.cam_pitch = 200; // < 310: the ray walks
     c.cam_x = 128; // camera tile (1,1)
     c.cam_z = 128;
     c.minusedlevel = 0;
-    assert_eq!(r.roof_check(&c), 3, "no RemoveRoof flags -> draw all levels");
+    assert_eq!(
+        r.roof_check(&c),
+        3,
+        "no RemoveRoof flags -> draw all levels"
+    );
 }
 
 /// The player standing on a `RemoveRoof` tile is the indoor case: the roof
 /// is dropped to `minusedlevel` even when every other tile is clean.
 #[test]
 fn roof_check_returns_minusedlevel_when_player_tile_has_remove_roof() {
-let r = Renderer::new(false);
+    let r = Renderer::new(false);
     let mut c = client("/tmp".into());
     c.local_player = Some(roof_player());
     c.cam_pitch = 200;
@@ -509,7 +578,7 @@ let r = Renderer::new(false);
 /// steps (2,2)->(6,2) and must hit the flag at (4,2).
 #[test]
 fn roof_check_ray_hits_remove_roof_between_cam_and_player() {
-let r = Renderer::new(false);
+    let r = Renderer::new(false);
     let mut c = client("/tmp".into());
     let mut player = roof_player();
     player.entity.x = 768; // tile 6
@@ -526,7 +595,7 @@ let r = Renderer::new(false);
 /// the roof, so the upper levels stay hidden.
 #[test]
 fn roof_check2_under_roof_and_low_cam_is_minusedlevel() {
-let r = Renderer::new(false);
+    let r = Renderer::new(false);
     let mut c = client("/tmp".into());
     c.cam_x = 384; // camera tile (3,3)
     c.cam_z = 384;
@@ -540,7 +609,7 @@ let r = Renderer::new(false);
 /// roof — all levels draw even though the camera tile carries the flag.
 #[test]
 fn roof_check2_high_cam_is_3() {
-let r = Renderer::new(false);
+    let r = Renderer::new(false);
     let mut c = client("/tmp".into());
     c.cam_x = 384; // camera tile (3,3)
     c.cam_z = 384;

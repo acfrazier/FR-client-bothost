@@ -205,7 +205,8 @@ pub(crate) fn draw(client: &mut Client, r: &mut Renderer, surface: &mut Pix2D) {
             } else {
                 rgb(paint.colors.trail)
             };
-            if let Some(quad) = tile_quad(client, r, lx, lz, colour, HOP_FILL_ALPHA, HOP_STROKE_ALPHA)
+            if let Some(quad) =
+                tile_quad(client, r, lx, lz, colour, HOP_FILL_ALPHA, HOP_STROKE_ALPHA)
             {
                 quads.push(quad);
             }
@@ -224,7 +225,15 @@ pub(crate) fn draw(client: &mut Client, r: &mut Renderer, surface: &mut Pix2D) {
     }
 
     if let Some((lx, lz)) = paint.click {
-        stroke_tile(client, r, surface, lx, lz, rgb(paint.colors.click), STROKE_ALPHA);
+        stroke_tile(
+            client,
+            r,
+            surface,
+            lx,
+            lz,
+            rgb(paint.colors.click),
+            STROKE_ALPHA,
+        );
     }
 
     if paint.show_hulls {
@@ -277,8 +286,13 @@ fn scene_depth(client: &Client, x: i32, z: i32, height: i32) -> i32 {
     let cos_pitch = Pix3D::cos_table()[(client.cam_pitch & 0x7ff) as usize];
     let sin_yaw = Pix3D::sin_table()[(client.cam_yaw & 0x7ff) as usize];
     let cos_yaw = Pix3D::cos_table()[(client.cam_yaw & 0x7ff) as usize];
-    let var14 = dz.wrapping_mul(cos_yaw).wrapping_sub(dx.wrapping_mul(sin_yaw)) >> 16;
-    dy.wrapping_mul(sin_pitch).wrapping_add(var14.wrapping_mul(cos_pitch)) >> 16
+    let var14 = dz
+        .wrapping_mul(cos_yaw)
+        .wrapping_sub(dx.wrapping_mul(sin_yaw))
+        >> 16;
+    dy.wrapping_mul(sin_pitch)
+        .wrapping_add(var14.wrapping_mul(cos_pitch))
+        >> 16
 }
 
 /// Scanline-fill a convex projected quad. RGB is the layer colour; overlay
@@ -290,7 +304,12 @@ fn fill_quad(surface: &mut Pix2D, quad: &Quad) {
     let min_y = y0.min(y1).min(y2).min(y3).max(0);
     let max_y = y0.max(y1).max(y2).max(y3).min(surface.height - 1);
     let width = surface.width;
-    let edges = [(x0, y0, x1, y1), (x1, y1, x2, y2), (x2, y2, x3, y3), (x3, y3, x0, y0)];
+    let edges = [
+        (x0, y0, x1, y1),
+        (x1, y1, x2, y2),
+        (x2, y2, x3, y3),
+        (x3, y3, x0, y0),
+    ];
     let mut hits = [0f32; 2];
     for y in min_y..=max_y {
         let mut n = 0usize;
@@ -397,7 +416,15 @@ fn plot_glyph(surface: &mut Pix2D, x: i32, y: i32, glyph: [u8; 5], colour: i32, 
 }
 
 /// Stroke a tile's projected outline (the click-target square).
-fn stroke_tile(client: &Client, r: &Renderer, surface: &mut Pix2D, lx: i32, lz: i32, colour: i32, alpha: i32) {
+fn stroke_tile(
+    client: &Client,
+    r: &Renderer,
+    surface: &mut Pix2D,
+    lx: i32,
+    lz: i32,
+    colour: i32,
+    alpha: i32,
+) {
     let x0 = lx.wrapping_mul(TILE);
     let z0 = lz.wrapping_mul(TILE);
     let p = [
@@ -449,7 +476,13 @@ fn stroke_line(surface: &mut Pix2D, x0: i32, y0: i32, x1: i32, y1: i32, colour: 
 /// Stroke a loc hull's eight-corner AABB from the live model at the hull's
 /// scene tile. Skips when the loc is not in the loaded scene; the loc's
 /// pick path is never touched.
-fn draw_hull(client: &mut Client, r: &mut Renderer, surface: &mut Pix2D, hull: &NavDebugHull, colour: i32) {
+fn draw_hull(
+    client: &mut Client,
+    r: &mut Renderer,
+    surface: &mut Pix2D,
+    hull: &NavDebugHull,
+    colour: i32,
+) {
     let Some((pos_x, pos_y, pos_z, yaw, model)) = r.world.loc_model_at(
         &client.world,
         &client.cache,
@@ -510,8 +543,14 @@ fn draw_hull(client: &mut Client, r: &mut Renderer, surface: &mut Pix2D, hull: &
         // The engine's model-space yaw rotate, then the scene translation.
         let (mut x, y, mut z) = (mx, my, mz);
         if yaw != 0 {
-            let temp = (z.wrapping_mul(sin_yaw).wrapping_add(x.wrapping_mul(cos_yaw))) >> 16;
-            z = (z.wrapping_mul(cos_yaw).wrapping_sub(x.wrapping_mul(sin_yaw))) >> 16;
+            let temp = (z
+                .wrapping_mul(sin_yaw)
+                .wrapping_add(x.wrapping_mul(cos_yaw)))
+                >> 16;
+            z = (z
+                .wrapping_mul(cos_yaw)
+                .wrapping_sub(x.wrapping_mul(sin_yaw)))
+                >> 16;
             x = temp;
         }
         let sx = x.wrapping_add(pos_x);

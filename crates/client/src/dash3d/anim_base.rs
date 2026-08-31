@@ -34,6 +34,10 @@ impl AnimBase {
             }
             labels.push(Some(group));
         }
-        AnimBase { size, r#type: Some(r#type), labels: Some(labels) }
+        AnimBase {
+            size,
+            r#type: Some(r#type),
+            labels: Some(labels),
+        }
     }
 }

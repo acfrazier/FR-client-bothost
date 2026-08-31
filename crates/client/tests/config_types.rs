@@ -214,7 +214,10 @@ fn get_sprite_resolves_engine_pack_obj() {
         .expect("a pack obj with a resolvable model must render a sprite");
     assert_eq!(s.owi, 32, "non-stackable -> owi 32");
     assert_eq!(s.ohi, -1, "countobj null forces ohi -1");
-    assert!(s.data.iter().any(|&p| p != 0), "the sprite must contain rendered pixels");
+    assert!(
+        s.data.iter().any(|&p| p != 0),
+        "the sprite must contain rendered pixels"
+    );
 
     // countco walk onto a stackable variant: owi comes from the *resolved*
     // obj (33) while ohi stays the requested count

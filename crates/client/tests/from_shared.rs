@@ -54,8 +54,18 @@ fn from_shared_reuses_one_arc_without_unpack() {
     let tables = Arc::new(Cache::default());
     let template = Arc::new(vec![None, Some(Box::new(IfType::default()))]);
     let mut_template = vec![None, Some(Arc::new(IfTypeMut::default()))];
-    let mut a = Client::from_shared(cfg(), Arc::clone(&tables), Arc::clone(&template), mut_template.clone());
-    let b = Client::from_shared(cfg(), Arc::clone(&tables), Arc::clone(&template), mut_template);
+    let mut a = Client::from_shared(
+        cfg(),
+        Arc::clone(&tables),
+        Arc::clone(&template),
+        mut_template.clone(),
+    );
+    let b = Client::from_shared(
+        cfg(),
+        Arc::clone(&tables),
+        Arc::clone(&template),
+        mut_template,
+    );
     assert!(Arc::ptr_eq(&a.cache, &b.cache));
     assert!(Arc::ptr_eq(&a.cache, &tables));
     // One decode table for every client: both clients point at the same
@@ -172,16 +182,29 @@ fn mut_overlay_is_small_and_decode_stays_ptr_eq_after_writes() {
         "the mut overlay must stay far smaller than the decode"
     );
     let tables = Arc::new(Cache::default());
-    let template = Arc::new(vec![None, Some(Box::new(IfType {
-        id: 1,
-        r#type: 0,
-        scripts: Some(vec![vec![1, 2, 3]]),
-        children: Some(vec![2]),
-        ..IfType::default()
-    }))]);
+    let template = Arc::new(vec![
+        None,
+        Some(Box::new(IfType {
+            id: 1,
+            r#type: 0,
+            scripts: Some(vec![vec![1, 2, 3]]),
+            children: Some(vec![2]),
+            ..IfType::default()
+        })),
+    ]);
     let mut_template = vec![None, Some(Arc::new(IfTypeMut::default()))];
-    let mut a = Client::from_shared(cfg(), Arc::clone(&tables), Arc::clone(&template), mut_template.clone());
-    let b = Client::from_shared(cfg(), Arc::clone(&tables), Arc::clone(&template), mut_template);
+    let mut a = Client::from_shared(
+        cfg(),
+        Arc::clone(&tables),
+        Arc::clone(&template),
+        mut_template.clone(),
+    );
+    let b = Client::from_shared(
+        cfg(),
+        Arc::clone(&tables),
+        Arc::clone(&template),
+        mut_template,
+    );
     // mutate hide + one inv slot
     {
         let m = a.iface_mut(1).unwrap();
@@ -193,7 +216,10 @@ fn mut_overlay_is_small_and_decode_stays_ptr_eq_after_writes() {
     // the decoded hide/scripts (not a's writes).
     assert!(Arc::ptr_eq(&a.ifaces, &b.ifaces));
     assert!(Arc::ptr_eq(&a.ifaces, &template));
-    assert_eq!(a.if_(1).unwrap().scripts.as_ref().unwrap()[0], vec![1, 2, 3]);
+    assert_eq!(
+        a.if_(1).unwrap().scripts.as_ref().unwrap()[0],
+        vec![1, 2, 3]
+    );
     assert!(a.if_(1).unwrap().hide);
     assert!(!b.if_(1).unwrap().hide);
     assert_eq!(b.if_(1).unwrap().link_obj_type, &None);

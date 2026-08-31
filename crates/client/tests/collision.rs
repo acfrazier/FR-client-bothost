@@ -14,8 +14,14 @@ fn block_ground_sets_flag() {
 fn reset_flags_bounds_and_open() {
     let map = CollisionMap::new();
     // the 104x104 build area edge is _BOUNDS, the interior _OPEN
-    assert_eq!(map.flags[0][0] & CollisionFlag::_BOUNDS, CollisionFlag::_BOUNDS);
-    assert_eq!(map.flags[103][103] & CollisionFlag::_BOUNDS, CollisionFlag::_BOUNDS);
+    assert_eq!(
+        map.flags[0][0] & CollisionFlag::_BOUNDS,
+        CollisionFlag::_BOUNDS
+    );
+    assert_eq!(
+        map.flags[103][103] & CollisionFlag::_BOUNDS,
+        CollisionFlag::_BOUNDS
+    );
     assert_eq!(map.flags[50][50], CollisionFlag::_OPEN);
 }
 
@@ -112,7 +118,10 @@ fn scenery_blocked_tile_not_arrived_at() {
     c.out.random = Some(client::io::Isaac::new(&[1, 2, 3, 4]));
     // a blockwalk scenery loc stamps WALK_SCENERY on its tile (addLoc 1x1)
     c.collision[0].add_loc(10, 10, 1, 1, LocAngle::WEST, false);
-    assert_ne!(c.collision[0].flags[10][10] & CollisionFlag::WALK_SCENERY, 0);
+    assert_ne!(
+        c.collision[0].flags[10][10] & CollisionFlag::WALK_SCENERY,
+        0
+    );
 
     // plain walk click onto the loc tile from the adjacent open tile: no route
     assert!(!c.tryMove(9, 10, 10, 10, false, 0, 0, 0, 0, 0, 0));
@@ -132,14 +141,19 @@ fn client_player_at_and_route_arrays() {
     assert_eq!(p.route_x[0], 3);
     assert_eq!(p.route_z[0], 4);
     // teleport without jumping queues the tile onto the route
-    p.teleport(&Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    })
-    .cache, false, 5, 6);
+    p.teleport(
+        &Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        })
+        .cache,
+        false,
+        5,
+        6,
+    );
     assert_eq!(p.route_x[0], 5);
     assert_eq!(p.route_z[0], 6);
 }

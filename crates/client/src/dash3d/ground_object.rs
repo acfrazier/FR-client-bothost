@@ -28,6 +28,14 @@ impl GroundObject {
         middle: Option<(i32, i32)>,
         bottom: Option<(i32, i32)>,
     ) -> Self {
-        GroundObject { y, x, z, typecode, top, middle, bottom }
+        GroundObject {
+            y,
+            x,
+            z,
+            typecode,
+            top,
+            middle,
+            bottom,
+        }
     }
 }

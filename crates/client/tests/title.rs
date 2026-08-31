@@ -1,8 +1,8 @@
 use client::client::Client;
-use client::render::Renderer;
 use client::client::ClientConfig;
 use client::graphics::Pix32;
 use client::io::JagFile;
+use client::render::Renderer;
 
 fn cache_dir() -> Option<String> {
     let cache = client::cache_dir().display().to_string();
@@ -25,7 +25,7 @@ fn client(cache: String) -> Client {
 
 #[test]
 fn title_draw_writes_pixels() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let Some(cache) = cache_dir() else {
         return;
     };
@@ -41,7 +41,7 @@ let mut r = Renderer::new(false);
 /// first, then midiSong = 0 + onDemand.request(2, 0)).
 #[test]
 fn title_requests_scape_main() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let Some(cache) = cache_dir() else {
         return;
     };
@@ -54,7 +54,7 @@ let _r = Renderer::new(false);
 /// title draw before that must leave `midi_song == -1`.
 #[test]
 fn prepare_title_does_not_request_scape_main() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let Some(cache) = cache_dir() else {
         return;
     };
@@ -67,34 +67,44 @@ let mut r = Renderer::new(false);
 /// title.dat JPEG is tiled into the left torch column (imageTitle0 at 0,0).
 #[test]
 fn title_background_fills_left_strip() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let Some(cache) = cache_dir() else {
         return;
     };
     let mut c = client(cache);
     r.title_screen_draw(&mut c);
-    let any = (0..265).any(|y| {
-        (0..128).any(|x| r.draw_area.pixels[(y * r.draw_area.width + x) as usize] != 0)
-    });
-    assert!(any, "left title strip (torch / background) should not be black");
+    let any = (0..265)
+        .any(|y| (0..128).any(|x| r.draw_area.pixels[(y * r.draw_area.width + x) as usize] != 0));
+    assert!(
+        any,
+        "left title strip (torch / background) should not be black"
+    );
 }
 
 /// TitleFlames.renderFlames mutates imageTitle0 across ticks.
 #[test]
 fn title_flames_tick_mutates_left_strip() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let Some(cache) = cache_dir() else {
         return;
     };
     let mut c = client(cache);
     r.title_screen_draw(&mut c);
-    let before = r.image_title0.as_ref().expect("image_title0").pixels.clone();
+    let before = r
+        .image_title0
+        .as_ref()
+        .expect("image_title0")
+        .pixels
+        .clone();
     for _ in 0..8 {
         c.loop_cycle += 1;
         r.title_screen_draw(&mut c);
     }
     let after = &r.image_title0.as_ref().expect("image_title0").pixels;
-    assert_ne!(&before, after, "torch flame pixels should change across frames");
+    assert_ne!(
+        &before, after,
+        "torch flame pixels should change across frames"
+    );
 }
 
 /// GPU title chrome still ticks the torch columns into `draw_area` (and
@@ -111,11 +121,15 @@ fn gpu_title_flames_tick_left_strip() {
     };
     let mut c = client(cache);
     r.title_screen_draw(&mut c);
-    let any = (0..265).any(|y| {
-        (0..128).any(|x| r.draw_area.pixels[(y * r.draw_area.width + x) as usize] != 0)
-    });
+    let any = (0..265)
+        .any(|y| (0..128).any(|x| r.draw_area.pixels[(y * r.draw_area.width + x) as usize] != 0));
     assert!(any, "GPU title left torch column must not be black");
-    let before = r.image_title0.as_ref().expect("image_title0").pixels.clone();
+    let before = r
+        .image_title0
+        .as_ref()
+        .expect("image_title0")
+        .pixels
+        .clone();
     for _ in 0..8 {
         c.loop_cycle += 1;
         r.title_screen_draw(&mut c);
@@ -148,7 +162,7 @@ fn title_loads_engine_soundfont() {
 
 #[test]
 fn from_jpeg_decodes_title_dat() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let Some(cache) = cache_dir() else {
         return;
     };

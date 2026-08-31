@@ -327,9 +327,7 @@ impl IfType {
     /// ~11k slots × 50 clients was the fat-hole clone cost. The template's
     /// `IfTypeMut` carries the decoded initials (hide, text labels,
     /// colours, model ids, zero inv arrays) — the per-client live values.
-    pub fn unpack(
-        jag: &JagFile,
-    ) -> (Vec<Option<Box<IfType>>>, Vec<Option<Box<IfTypeMut>>>) {
+    pub fn unpack(jag: &JagFile) -> (Vec<Option<Box<IfType>>>, Vec<Option<Box<IfTypeMut>>>) {
         let Some(data) = jag.read("data") else {
             return (Vec::new(), Vec::new());
         };
@@ -344,7 +342,11 @@ impl IfType {
                 layer = dat.g2();
                 id = dat.g2();
             }
-            let mut com = IfType { id, layer_id: layer, ..IfType::default() };
+            let mut com = IfType {
+                id,
+                layer_id: layer,
+                ..IfType::default()
+            };
             let mut m = IfTypeMut::default();
             com.r#type = dat.g1();
             m.button_type = dat.g1();
@@ -536,8 +538,7 @@ impl IfType {
                 }
             }
 
-            if m.button_type == ButtonType::BUTTON_TARGET || com.r#type == ComponentType::TYPE_INV
-            {
+            if m.button_type == ButtonType::BUTTON_TARGET || com.r#type == ComponentType::TYPE_INV {
                 com.target_verb = dat.gjstr();
                 com.target_base = dat.gjstr();
                 com.target_mask = dat.g2();
@@ -656,7 +657,8 @@ impl IfTypeView<'_> {
         let mut tmp = Model::copy_for_anim(
             &base,
             true,
-            AnimFrame::animate_transparencies(primary) && AnimFrame::animate_transparencies(secondary),
+            AnimFrame::animate_transparencies(primary)
+                && AnimFrame::animate_transparencies(secondary),
             false,
         );
         if primary != -1 || secondary != -1 {
@@ -672,8 +674,6 @@ impl IfTypeView<'_> {
         Some(tmp)
     }
 }
-
-
 
 #[cfg(test)]
 mod iface_size_tests {

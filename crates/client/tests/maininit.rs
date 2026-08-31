@@ -1,9 +1,9 @@
-use std::io::{Read, Write};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use client::client::present::PresentTarget;
 use client::render::backend::FrameOutput;
 use client::render::Renderer;
+use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -40,7 +40,7 @@ fn client_tmp() -> Client {
 
 #[test]
 fn draw_progress_headless_sets_fields_without_touching_pixels() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let mut c = client_tmp();
     assert!(!c.draw);
     let before = r.draw_area.pixels.clone();
@@ -52,7 +52,7 @@ let mut r = Renderer::new(false);
 
 #[test]
 fn draw_progress_headed_paints_red_bar() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let mut c = client_tmp();
     c.set_draw(true);
     r.draw_progress(&mut c, "Loading...", 10);
@@ -72,7 +72,7 @@ let mut r = Renderer::new(false);
 /// fallback bar (no fonts) and the operator sees a mute red bar.
 #[test]
 fn draw_progress_headed_paints_stage_text_once_title_jag_exists() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&format!("{cache}/title")).is_file() {
         return;
@@ -86,7 +86,10 @@ let mut r = Renderer::new(false);
     });
     c.set_draw(true);
     r.draw_progress(&mut c, "Loading models - 50%", 70);
-    assert!(r.media.b12.is_some(), "messageBox prepareTitle loads b12 from title jag");
+    assert!(
+        r.media.b12.is_some(),
+        "messageBox prepareTitle loads b12 from title jag"
+    );
     assert!(
         r.draw_area.pixels.iter().any(|&p| p == 0xffffff),
         "stage text must be plotted in white (Java b12.centreString)"
@@ -98,7 +101,7 @@ let mut r = Renderer::new(false);
 /// Java's flame thread, not inside messageBox.
 #[test]
 fn draw_progress_headed_paints_torch_columns() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&format!("{cache}/title")).is_file() {
         return;
@@ -113,10 +116,11 @@ let mut r = Renderer::new(false);
     c.set_draw(true);
     r.draw_progress(&mut c, "Loading models - 50%", 70);
     let w = r.draw_area.width;
-    let any = (0..265).any(|y| {
-        (0..128).any(|x| r.draw_area.pixels[(y * w + x) as usize] != 0)
-    });
-    assert!(any, "left torch column must not be black during the loading bar");
+    let any = (0..265).any(|y| (0..128).any(|x| r.draw_area.pixels[(y * w + x) as usize] != 0));
+    assert!(
+        any,
+        "left torch column must not be black during the loading bar"
+    );
 }
 
 /// Read the full HTTP request (headers) before responding: closing with
@@ -439,7 +443,10 @@ fn maininit_retries_jag_get_after_crc_mismatch() {
         .iter()
         .filter(|p| p.starts_with("/title"))
         .count();
-    assert_eq!(title_gets, 2, "CRC mismatch must discard and retry the fetch");
+    assert_eq!(
+        title_gets, 2,
+        "CRC mismatch must discard and retry the fetch"
+    );
     assert!(c.already_started);
     assert_eq!(c.last_progress_percent, 100);
     // the retried fetch persisted the fresh title
@@ -604,7 +611,10 @@ fn maininit_clears_error_loading_from_new_unpack() {
         members: true,
         lowmem: false,
     });
-    assert!(c.error_loading, "invalid config on disk sets errorLoading in new");
+    assert!(
+        c.error_loading,
+        "invalid config on disk sets errorLoading in new"
+    );
     // /crc, then /config{crc}: the only HTTP fetch, all other jags are hits.
     let (port, th, _seen) = serve_in_order(vec![crc_body(&checksums), valid_config.clone()]);
     c.http_port = port;
@@ -622,7 +632,7 @@ fn maininit_clears_error_loading_from_new_unpack() {
 
 #[test]
 fn get_jag_file_crc_hit_skips_http() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let dir = std::env::temp_dir().join("274-jag-hit");
     let _ = std::fs::create_dir_all(&dir);
     let bytes = b"not-a-real-jag-but-stable".to_vec();
@@ -631,13 +641,20 @@ let _r = Renderer::new(false);
     let mut checksums = [0i32; 9];
     checksums[1] = crc;
     // port 1 will fail if HTTP is attempted
-    let got = Client::get_jag_file(dir.to_str().unwrap(), "127.0.0.1", 1, "title", 1, &checksums);
+    let got = Client::get_jag_file(
+        dir.to_str().unwrap(),
+        "127.0.0.1",
+        1,
+        "title",
+        1,
+        &checksums,
+    );
     assert_eq!(got.as_deref(), Some(bytes.as_slice()));
 }
 
 #[test]
 fn get_jag_file_http_persists() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let dir = std::env::temp_dir().join("274-jag-http");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -646,7 +663,14 @@ let _r = Renderer::new(false);
     let (port, h) = serve_once(bytes.clone());
     let mut checksums = [0i32; 9];
     checksums[1] = crc;
-    let got = Client::get_jag_file(dir.to_str().unwrap(), "127.0.0.1", port, "title", 1, &checksums);
+    let got = Client::get_jag_file(
+        dir.to_str().unwrap(),
+        "127.0.0.1",
+        port,
+        "title",
+        1,
+        &checksums,
+    );
     h.join().unwrap();
     assert_eq!(got.as_deref(), Some(bytes.as_slice()));
     assert_eq!(std::fs::read(dir.join("title")).unwrap(), bytes);

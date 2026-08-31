@@ -102,7 +102,9 @@ impl TextureHandle {
             let row_start = row * bytes_per_row as usize;
             for x in 0..self.width as usize {
                 let i = row_start + x * 4;
-                pixels.push(((data[i] as i32) << 16) | ((data[i + 1] as i32) << 8) | (data[i + 2] as i32));
+                pixels.push(
+                    ((data[i] as i32) << 16) | ((data[i + 1] as i32) << 8) | (data[i + 2] as i32),
+                );
             }
         }
         drop(data);

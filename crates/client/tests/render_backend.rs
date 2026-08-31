@@ -116,12 +116,16 @@ impl TextureBackend {
 fn dummy_handle() -> Option<TextureHandle> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter =
-        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).ok()?;
-    let (device, queue) =
-        pollster::block_on(adapter.request_device(&Default::default())).ok()?;
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+            .ok()?;
+    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).ok()?;
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("r274 seam-test frame"),
-        size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -236,8 +240,13 @@ fn gpu_init_failure_falls_back_to_cpu() {
         matches!(output, FrameOutput::PixMap(_)),
         "the fallback renderer must still produce a frame"
     );
-    let FrameOutput::PixMap(frame) = output else { unreachable!() };
-    assert!(!frame.pixels.is_empty(), "the fallback frame must be painted");
+    let FrameOutput::PixMap(frame) = output else {
+        unreachable!()
+    };
+    assert!(
+        !frame.pixels.is_empty(),
+        "the fallback frame must be painted"
+    );
 
     Renderer::set_prefer_gpu(false);
     std::env::remove_var("R274_TEST_FORCE_NO_GPU");

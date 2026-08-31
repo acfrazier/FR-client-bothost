@@ -111,7 +111,9 @@ fn main() -> ExitCode {
     // control plane: refuse to run blind.
     #[cfg(not(feature = "window"))]
     if args.window {
-        eprintln!("window: feature not compiled in (build with --features window) - no control plane");
+        eprintln!(
+            "window: feature not compiled in (build with --features window) - no control plane"
+        );
         return ExitCode::FAILURE;
     }
 
@@ -184,8 +186,11 @@ fn main() -> ExitCode {
     let mut _audio_out: Option<AudioOut> = None;
     #[cfg(feature = "audio")]
     if args.window || args.audio {
-        match AudioOut::try_open(client.midi.clone(), client.waves.clone(), client.fade.clone())
-        {
+        match AudioOut::try_open(
+            client.midi.clone(),
+            client.waves.clone(),
+            client.fade.clone(),
+        ) {
             Ok(out) => {
                 eprintln!("audio: speaker {} Hz", out.sample_rate);
                 _audio_out = Some(out);

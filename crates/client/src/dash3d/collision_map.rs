@@ -142,14 +142,46 @@ impl CollisionMap {
         let x = tile_x - self.start_x;
         let z = tile_z - self.start_z;
 
-        let west = if blockrange { CollisionFlag::V_W } else { CollisionFlag::W_W };
-        let east = if blockrange { CollisionFlag::V_E } else { CollisionFlag::W_E };
-        let north = if blockrange { CollisionFlag::V_N } else { CollisionFlag::W_N };
-        let south = if blockrange { CollisionFlag::V_S } else { CollisionFlag::W_S };
-        let north_west = if blockrange { CollisionFlag::V_NW } else { CollisionFlag::W_NW };
-        let south_east = if blockrange { CollisionFlag::V_SE } else { CollisionFlag::W_SE };
-        let north_east = if blockrange { CollisionFlag::V_NE } else { CollisionFlag::W_NE };
-        let south_west = if blockrange { CollisionFlag::V_SW } else { CollisionFlag::W_SW };
+        let west = if blockrange {
+            CollisionFlag::V_W
+        } else {
+            CollisionFlag::W_W
+        };
+        let east = if blockrange {
+            CollisionFlag::V_E
+        } else {
+            CollisionFlag::W_E
+        };
+        let north = if blockrange {
+            CollisionFlag::V_N
+        } else {
+            CollisionFlag::W_N
+        };
+        let south = if blockrange {
+            CollisionFlag::V_S
+        } else {
+            CollisionFlag::W_S
+        };
+        let north_west = if blockrange {
+            CollisionFlag::V_NW
+        } else {
+            CollisionFlag::W_NW
+        };
+        let south_east = if blockrange {
+            CollisionFlag::V_SE
+        } else {
+            CollisionFlag::W_SE
+        };
+        let north_east = if blockrange {
+            CollisionFlag::V_NE
+        } else {
+            CollisionFlag::W_NE
+        };
+        let south_west = if blockrange {
+            CollisionFlag::V_SW
+        } else {
+            CollisionFlag::W_SW
+        };
 
         if shape == LocShape::WALL_STRAIGHT {
             if angle == LocAngle::WEST {
@@ -207,14 +239,46 @@ impl CollisionMap {
         let x = tile_x - self.start_x;
         let z = tile_z - self.start_z;
 
-        let west = if blockrange { CollisionFlag::V_W } else { CollisionFlag::W_W };
-        let east = if blockrange { CollisionFlag::V_E } else { CollisionFlag::W_E };
-        let north = if blockrange { CollisionFlag::V_N } else { CollisionFlag::W_N };
-        let south = if blockrange { CollisionFlag::V_S } else { CollisionFlag::W_S };
-        let north_west = if blockrange { CollisionFlag::V_NW } else { CollisionFlag::W_NW };
-        let south_east = if blockrange { CollisionFlag::V_SE } else { CollisionFlag::W_SE };
-        let north_east = if blockrange { CollisionFlag::V_NE } else { CollisionFlag::W_NE };
-        let south_west = if blockrange { CollisionFlag::V_SW } else { CollisionFlag::W_SW };
+        let west = if blockrange {
+            CollisionFlag::V_W
+        } else {
+            CollisionFlag::W_W
+        };
+        let east = if blockrange {
+            CollisionFlag::V_E
+        } else {
+            CollisionFlag::W_E
+        };
+        let north = if blockrange {
+            CollisionFlag::V_N
+        } else {
+            CollisionFlag::W_N
+        };
+        let south = if blockrange {
+            CollisionFlag::V_S
+        } else {
+            CollisionFlag::W_S
+        };
+        let north_west = if blockrange {
+            CollisionFlag::V_NW
+        } else {
+            CollisionFlag::W_NW
+        };
+        let south_east = if blockrange {
+            CollisionFlag::V_SE
+        } else {
+            CollisionFlag::W_SE
+        };
+        let north_east = if blockrange {
+            CollisionFlag::V_NE
+        } else {
+            CollisionFlag::W_NE
+        };
+        let south_west = if blockrange {
+            CollisionFlag::V_SW
+        } else {
+            CollisionFlag::W_SW
+        };
 
         if shape == LocShape::WALL_STRAIGHT {
             if angle == LocAngle::WEST {
@@ -292,15 +356,13 @@ impl CollisionMap {
                     return true;
                 } else if sx == dx
                     && sz == dz + 1
-                    && (self.flags[sx as usize][sz as usize]
-                        & CollisionFlag::PL_WALK_S)
+                    && (self.flags[sx as usize][sz as usize] & CollisionFlag::PL_WALK_S)
                         == CollisionFlag::_OPEN
                 {
                     return true;
                 } else if sx == dx
                     && sz == dz - 1
-                    && (self.flags[sx as usize][sz as usize]
-                        & CollisionFlag::PL_WALK_N)
+                    && (self.flags[sx as usize][sz as usize] & CollisionFlag::PL_WALK_N)
                         == CollisionFlag::_OPEN
                 {
                     return true;
@@ -310,15 +372,13 @@ impl CollisionMap {
                     return true;
                 } else if sx == dx - 1
                     && sz == dz
-                    && (self.flags[sx as usize][sz as usize]
-                        & CollisionFlag::PL_WALK_E)
+                    && (self.flags[sx as usize][sz as usize] & CollisionFlag::PL_WALK_E)
                         == CollisionFlag::_OPEN
                 {
                     return true;
                 } else if sx == dx + 1
                     && sz == dz
-                    && (self.flags[sx as usize][sz as usize]
-                        & CollisionFlag::PL_WALK_W)
+                    && (self.flags[sx as usize][sz as usize] & CollisionFlag::PL_WALK_W)
                         == CollisionFlag::_OPEN
                 {
                     return true;
@@ -328,15 +388,13 @@ impl CollisionMap {
                     return true;
                 } else if sx == dx
                     && sz == dz + 1
-                    && (self.flags[sx as usize][sz as usize]
-                        & CollisionFlag::PL_WALK_S)
+                    && (self.flags[sx as usize][sz as usize] & CollisionFlag::PL_WALK_S)
                         == CollisionFlag::_OPEN
                 {
                     return true;
                 } else if sx == dx
                     && sz == dz - 1
-                    && (self.flags[sx as usize][sz as usize]
-                        & CollisionFlag::PL_WALK_N)
+                    && (self.flags[sx as usize][sz as usize] & CollisionFlag::PL_WALK_N)
                         == CollisionFlag::_OPEN
                 {
                     return true;
@@ -346,15 +404,13 @@ impl CollisionMap {
                     return true;
                 } else if sx == dx - 1
                     && sz == dz
-                    && (self.flags[sx as usize][sz as usize]
-                        & CollisionFlag::PL_WALK_E)
+                    && (self.flags[sx as usize][sz as usize] & CollisionFlag::PL_WALK_E)
                         == CollisionFlag::_OPEN
                 {
                     return true;
                 } else if sx == dx + 1
                     && sz == dz
-                    && (self.flags[sx as usize][sz as usize]
-                        & CollisionFlag::PL_WALK_W)
+                    && (self.flags[sx as usize][sz as usize] & CollisionFlag::PL_WALK_W)
                         == CollisionFlag::_OPEN
                 {
                     return true;
@@ -368,15 +424,13 @@ impl CollisionMap {
                     return true;
                 } else if sx == dx + 1
                     && sz == dz
-                    && (self.flags[sx as usize][sz as usize]
-                        & CollisionFlag::PL_WALK_W)
+                    && (self.flags[sx as usize][sz as usize] & CollisionFlag::PL_WALK_W)
                         == CollisionFlag::_OPEN
                 {
                     return true;
                 } else if sx == dx
                     && sz == dz - 1
-                    && (self.flags[sx as usize][sz as usize]
-                        & CollisionFlag::PL_WALK_N)
+                    && (self.flags[sx as usize][sz as usize] & CollisionFlag::PL_WALK_N)
                         == CollisionFlag::_OPEN
                 {
                     return true;
@@ -384,8 +438,7 @@ impl CollisionMap {
             } else if angle == LocAngle::NORTH {
                 if sx == dx - 1
                     && sz == dz
-                    && (self.flags[sx as usize][sz as usize]
-                        & CollisionFlag::PL_WALK_E)
+                    && (self.flags[sx as usize][sz as usize] & CollisionFlag::PL_WALK_E)
                         == CollisionFlag::_OPEN
                 {
                     return true;
@@ -395,8 +448,7 @@ impl CollisionMap {
                     return true;
                 } else if sx == dx
                     && sz == dz - 1
-                    && (self.flags[sx as usize][sz as usize]
-                        & CollisionFlag::PL_WALK_N)
+                    && (self.flags[sx as usize][sz as usize] & CollisionFlag::PL_WALK_N)
                         == CollisionFlag::_OPEN
                 {
                     return true;
@@ -404,15 +456,13 @@ impl CollisionMap {
             } else if angle == LocAngle::EAST {
                 if sx == dx - 1
                     && sz == dz
-                    && (self.flags[sx as usize][sz as usize]
-                        & CollisionFlag::PL_WALK_E)
+                    && (self.flags[sx as usize][sz as usize] & CollisionFlag::PL_WALK_E)
                         == CollisionFlag::_OPEN
                 {
                     return true;
                 } else if sx == dx
                     && sz == dz + 1
-                    && (self.flags[sx as usize][sz as usize]
-                        & CollisionFlag::PL_WALK_S)
+                    && (self.flags[sx as usize][sz as usize] & CollisionFlag::PL_WALK_S)
                         == CollisionFlag::_OPEN
                 {
                     return true;
@@ -426,15 +476,13 @@ impl CollisionMap {
                     return true;
                 } else if sx == dx
                     && sz == dz + 1
-                    && (self.flags[sx as usize][sz as usize]
-                        & CollisionFlag::PL_WALK_S)
+                    && (self.flags[sx as usize][sz as usize] & CollisionFlag::PL_WALK_S)
                         == CollisionFlag::_OPEN
                 {
                     return true;
                 } else if sx == dx + 1
                     && sz == dz
-                    && (self.flags[sx as usize][sz as usize]
-                        & CollisionFlag::PL_WALK_W)
+                    && (self.flags[sx as usize][sz as usize] & CollisionFlag::PL_WALK_W)
                         == CollisionFlag::_OPEN
                 {
                     return true;

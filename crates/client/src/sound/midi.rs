@@ -58,9 +58,23 @@ mod rusty {
             "SCC1_Florestan.sf2".into(),
         ];
         // pack/client → engine/public/client (three parents up).
-        if let Some(engine) = Path::new(cache_dir).parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
-            out.push(engine.join("public/client/SCC1_Florestan.sf2").display().to_string());
-            out.push(engine.join("public/bot/SCC1_Florestan.sf2").display().to_string());
+        if let Some(engine) = Path::new(cache_dir)
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+        {
+            out.push(
+                engine
+                    .join("public/client/SCC1_Florestan.sf2")
+                    .display()
+                    .to_string(),
+            );
+            out.push(
+                engine
+                    .join("public/bot/SCC1_Florestan.sf2")
+                    .display()
+                    .to_string(),
+            );
         }
         let engine = crate::engine_dir();
         out.push(
@@ -78,7 +92,9 @@ mod rusty {
         out
     }
 
-    use rustysynth::{MidiFile, MidiFileLoopType, MidiFileSequencer, SoundFont, Synthesizer, SynthesizerSettings};
+    use rustysynth::{
+        MidiFile, MidiFileLoopType, MidiFileSequencer, SoundFont, Synthesizer, SynthesizerSettings,
+    };
 
     use super::Midi;
 
@@ -176,10 +192,9 @@ mod rusty {
                 // `NullMidi`; there is nothing to leave playing.
                 return true;
             };
-            let Ok(midi_file) = MidiFile::new_with_loop_type(
-                &mut Cursor::new(data),
-                MidiFileLoopType::RpgMaker,
-            ) else {
+            let Ok(midi_file) =
+                MidiFile::new_with_loop_type(&mut Cursor::new(data), MidiFileLoopType::RpgMaker)
+            else {
                 // A rejected swap-in must not silently keep the old song: the
                 // caller leaves the fade at the floor, so the previous song
                 // cannot come back at full volume.
@@ -194,7 +209,9 @@ mod rusty {
         }
 
         fn is_playing(&self) -> bool {
-            self.sequencer.as_ref().is_some_and(|s| !s.end_of_sequence())
+            self.sequencer
+                .as_ref()
+                .is_some_and(|s| !s.end_of_sequence())
         }
 
         fn stop(&mut self) {

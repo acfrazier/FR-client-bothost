@@ -164,7 +164,12 @@ impl JagFX {
         Some(&self.wave_buffer)
     }
 
-    fn make_sound(sound: &mut Sound, tone_buf: &mut [i32], wave: &mut [u8], mut loop_count: i32) -> i32 {
+    fn make_sound(
+        sound: &mut Sound,
+        tone_buf: &mut [i32],
+        wave: &mut [u8],
+        mut loop_count: i32,
+    ) -> i32 {
         let mut duration = 0;
         for tone in sound.tones.iter().flatten() {
             if tone.length + tone.start > duration {

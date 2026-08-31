@@ -19,10 +19,7 @@ fn client() -> Client {
 
 #[test]
 fn to_sentence_case_after_punct() {
-    assert_eq!(
-        JString::to_sentence_case("hello. world!"),
-        "Hello. World!"
-    );
+    assert_eq!(JString::to_sentence_case("hello. world!"), "Hello. World!");
 }
 
 #[test]
@@ -105,7 +102,10 @@ fn player_chat_mask_skips_payload_when_disabled() {
 
     assert!(c.ingame, "payload still skipped; frame stays aligned");
     assert_eq!(c.players[0].as_ref().unwrap().chat_message, None);
-    assert!(c.chat_text[0].is_empty(), "disabled chat must not add a line");
+    assert!(
+        c.chat_text[0].is_empty(),
+        "disabled chat must not add a line"
+    );
 }
 
 // ---- Task 4: friends/ignore list state, packets and list ops ----
@@ -145,7 +145,10 @@ fn update_friendlist_existing_world_0_to_10_chats_login() {
     assert!(c.redraw_side);
     assert_eq!(c.chat_type[0], 5);
     assert_eq!(c.chat_text[0], "Bob has logged in.");
-    assert!(c.chat_username[0].is_empty(), "type-5 lines carry no sender");
+    assert!(
+        c.chat_username[0].is_empty(),
+        "type-5 lines carry no sender"
+    );
 }
 
 /// TS 3168-3189: a public send stamps the local player's chat bubble
@@ -174,7 +177,10 @@ fn public_send_stamps_local_bubble_and_hides_when_off() {
     assert!(c.redraw_chat_mode);
     // trailing CHAT_SETMODE packet: p1_enc(154) p1(3) p1(private) p1(trade)
     let pos = c.out.pos;
-    assert_eq!(c.out.data()[pos - 4] as i32, ClientProt::CHAT_SETMODE.id & 0xff);
+    assert_eq!(
+        c.out.data()[pos - 4] as i32,
+        ClientProt::CHAT_SETMODE.id & 0xff
+    );
     assert_eq!(c.out.data()[pos - 3], 3);
 }
 
@@ -191,8 +197,15 @@ fn public_send_without_name_skips_bubble() {
     }
     c.shell.apply_key(true, 0, 13);
     c.handle_chat_input();
-    assert_eq!(c.local_player.as_ref().unwrap().chat_timer, 100, "never stamped");
-    assert_eq!(c.chat_public_mode, 3, "mode flip is independent of the name");
+    assert_eq!(
+        c.local_player.as_ref().unwrap().chat_timer,
+        100,
+        "never stamped"
+    );
+    assert_eq!(
+        c.chat_public_mode, 3,
+        "mode flip is independent of the name"
+    );
 }
 
 /// Java `timeoutChat` (`Client.java` 9152-9177): each game loop decrements
@@ -404,11 +417,15 @@ fn social_enter_pm_sends_message_private() {
     c.handle_chat_input();
     // MESSAGE_PRIVATE: p1_enc(139) p1(0) psize1 p8(hash) WordPack("hi")
     assert_eq!(c.out.data()[0], ClientProt::MESSAGE_PRIVATE.id as u8);
-    assert_eq!(c.out.data()[1] as usize - 8, c.out.pos - 10, "size is p8 + wordpack");
+    assert_eq!(
+        c.out.data()[1] as usize - 8,
+        c.out.pos - 10,
+        "size is p8 + wordpack"
+    );
     let packed_len = c.out.data()[1] as usize - 8;
     let mut tail = Packet::new(c.out.data()[10..10 + packed_len].to_vec());
     assert_eq!(WordPack::unpack(&mut tail, packed_len), "Hi"); // even nibbles, no carry
-    // the own PM echoes as type 6 with the screen name
+                                                               // the own PM echoes as type 6 with the screen name
     assert_eq!(c.chat_text[0], "Hi");
     assert_eq!(c.chat_type[0], 6);
     assert_eq!(c.chat_username[0], "Bob");

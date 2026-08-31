@@ -19,8 +19,10 @@ use std::sync::Arc;
 
 use crate::client::client::Client;
 use crate::dash3d::BuildArea;
-use crate::graphics::{Pix3D, Pix32, Pix3DDraw, Pix8, PixMap};
-use crate::render::backend::{BackendKind, CpuBackend, FrameKind, FrameOutput, GpuBackend, RenderBackend};
+use crate::graphics::{Pix32, Pix3D, Pix3DDraw, Pix8, PixMap};
+use crate::render::backend::{
+    BackendKind, CpuBackend, FrameKind, FrameOutput, GpuBackend, RenderBackend,
+};
 use crate::render::media::Media;
 use crate::render::world::RenderWorld;
 use crate::util::JavaRandom;
@@ -207,7 +209,10 @@ impl Renderer {
         RENDERER_CONSTRUCTED.fetch_add(1, Ordering::Relaxed);
         let mut renderer = Renderer {
             world: RenderWorld::new(),
-            draw_area: PixMap::new(crate::client::client::APPLET_W, crate::client::client::APPLET_H),
+            draw_area: PixMap::new(
+                crate::client::client::APPLET_W,
+                crate::client::client::APPLET_H,
+            ),
             pix3d: Pix3DDraw::default(),
             image_title0: None,
             image_title1: None,

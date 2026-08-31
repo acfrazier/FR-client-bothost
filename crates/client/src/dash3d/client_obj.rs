@@ -14,7 +14,12 @@ pub struct ClientObj {
 
 impl ClientObj {
     pub fn new(id: i32, count: i32) -> Self {
-        ClientObj { id, count, min_y: 1000, links: Links::new(0) }
+        ClientObj {
+            id,
+            count,
+            min_y: 1000,
+            links: Links::new(0),
+        }
     }
 
     /// `getTempModel()` from client-ts.
@@ -33,6 +38,11 @@ impl LinkableTrait for ClientObj {
     }
 
     fn sentinel() -> Self {
-        ClientObj { id: 0, count: 0, min_y: 1000, links: Links::new(0) }
+        ClientObj {
+            id: 0,
+            count: 0,
+            min_y: 1000,
+            links: Links::new(0),
+        }
     }
 }

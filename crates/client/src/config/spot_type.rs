@@ -56,7 +56,10 @@ impl SpotType {
         let num = dat.g2();
         let mut list = Vec::with_capacity(num as usize);
         for id in 0..num {
-            let mut spot = SpotType { id, ..SpotType::default() };
+            let mut spot = SpotType {
+                id,
+                ..SpotType::default()
+            };
             spot.decode(&mut dat);
             list.push(spot);
         }
@@ -105,7 +108,10 @@ impl SpotType {
             }
         }
 
-        model_cache().lock().unwrap().put(model.clone(), self.id as i64);
+        model_cache()
+            .lock()
+            .unwrap()
+            .put(model.clone(), self.id as i64);
         Some(model)
     }
 }

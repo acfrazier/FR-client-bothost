@@ -20,8 +20,8 @@ use std::thread;
 use std::time::Duration;
 
 use client::client::{Client, ClientConfig, MiniMenuAction};
-use client::config::{IfType, IfTypeMut};
 use client::config::LocType;
+use client::config::{IfType, IfTypeMut};
 use client::dash3d::store::ModelStore;
 use client::dash3d::ClientEntity;
 use client::io::{Packet, ServerProt};
@@ -93,7 +93,8 @@ fn perlin_ground() -> Vec<u8> {
 fn loc_stream() -> Vec<u8> {
     vec![
         0x01, 0x82, 0x09, 0x00, 0x00, // deltaId 1 → loc 0 at raw (8,8); info 0 = wall
-        0x01, 0x82, 0x8b, 0x28, 0x00, 0x00, // deltaId 1 → loc 1 at raw (10,10); info 0x28 = centrepiece
+        0x01, 0x82, 0x8b, 0x28, 0x00,
+        0x00, // deltaId 1 → loc 1 at raw (10,10); info 0x28 = centrepiece
     ]
 }
 
@@ -227,7 +228,10 @@ fn headless_client_core_runs_sim_without_renderer() {
         c.tryMove(10, 10, 12, 10, false, 0, 0, 0, 0, 0, 2),
         "tryMove must route on the sim collision map"
     );
-    assert!(c.out.pos > 0, "tryMove must write the MOVE_OPCLICK walk packet");
+    assert!(
+        c.out.pos > 0,
+        "tryMove must write the MOVE_OPCLICK walk packet"
+    );
 
     // More mainloop passes over the built scene (loc-change, movement,
     // timeout ticks).

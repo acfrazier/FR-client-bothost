@@ -62,7 +62,9 @@ fn cache_dir() -> Option<String> {
 }
 
 fn lock() -> std::sync::MutexGuard<'static, ()> {
-    STORE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    STORE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[test]
@@ -93,10 +95,7 @@ fn loads_fake_snapshot_into_stores() {
 
     assert!(Model::load(30002).is_some(), "model 30002 loadable");
     assert!(Model::load(30003).is_some(), "model 30003 loadable");
-    assert!(
-        AnimFrame::get(30001).is_some(),
-        "anim frame 30001 loadable"
-    );
+    assert!(AnimFrame::get(30001).is_some(), "anim frame 30001 loadable");
 }
 
 /// `AnimFrame.unpack` indexes `list[frame_id]`. The in-record `total` is

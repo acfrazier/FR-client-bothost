@@ -3,7 +3,7 @@ use client::render::Renderer;
 
 #[test]
 fn config_has_no_rsa_fields() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let cfg = ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
@@ -16,14 +16,18 @@ let _r = Renderer::new(false);
 
 #[test]
 fn login_error_carries_code_and_messages() {
-let _r = Renderer::new(false);
-    let e = LoginError { code: 6, mes1: "invalid".into(), mes2: "rsa".into() };
+    let _r = Renderer::new(false);
+    let e = LoginError {
+        code: 6,
+        mes1: "invalid".into(),
+        mes2: "rsa".into(),
+    };
     assert_eq!(e.code, 6);
 }
 
 #[test]
 fn new_client_starts_logged_out() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let c = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
@@ -37,7 +41,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn run_drives_mainloop_and_hook_until_stopped() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let mut c = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,

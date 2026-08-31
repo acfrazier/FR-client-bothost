@@ -14,8 +14,8 @@ use crate::io::{JagFile, Packet};
 #[derive(Clone)]
 pub struct Pix32 {
     pub data: Vec<i32>,
-    pub wi: i32, // width
-    pub hi: i32, // height
+    pub wi: i32,  // width
+    pub hi: i32,  // height
     pub xof: i32, // x offset
     pub yof: i32, // y offset
     pub owi: i32, // original width
@@ -153,7 +153,8 @@ impl Pix32 {
         } else if encoding == 1 {
             for x in 0..wi {
                 for y in 0..hi {
-                    image.data[(x + y * wi) as usize] = bpal.get(dat.g1() as usize).copied().unwrap_or(0);
+                    image.data[(x + y * wi) as usize] =
+                        bpal.get(dat.g1() as usize).copied().unwrap_or(0);
                 }
             }
         }
@@ -198,7 +199,8 @@ impl Pix32 {
         let mut pixels = vec![0; (self.owi as usize) * (self.ohi as usize)];
         for y in 0..self.hi {
             for x in 0..self.wi {
-                pixels[((self.yof + y) * self.owi + self.xof + x) as usize] = self.data[(self.wi * y + x) as usize];
+                pixels[((self.yof + y) * self.owi + self.xof + x) as usize] =
+                    self.data[(self.wi * y + x) as usize];
             }
         }
         self.data = pixels;
@@ -283,7 +285,16 @@ impl Pix32 {
         }
     }
 
-    fn plot_quick(&self, surface: &mut Pix2D, w: i32, h: i32, mut src_off: i32, src_step: i32, mut dst_off: i32, dst_step: i32) {
+    fn plot_quick(
+        &self,
+        surface: &mut Pix2D,
+        w: i32,
+        h: i32,
+        mut src_off: i32,
+        src_step: i32,
+        mut dst_off: i32,
+        dst_step: i32,
+    ) {
         let qw = w >> 2;
         let rem = w & 0x3;
 
@@ -357,7 +368,16 @@ impl Pix32 {
         }
     }
 
-    fn plot(&self, surface: &mut Pix2D, w: i32, h: i32, mut src_off: i32, src_step: i32, mut dst_off: i32, dst_step: i32) {
+    fn plot(
+        &self,
+        surface: &mut Pix2D,
+        w: i32,
+        h: i32,
+        mut src_off: i32,
+        src_step: i32,
+        mut dst_off: i32,
+        dst_step: i32,
+    ) {
         let qw = w >> 2;
         let rem = w & 0x3;
 
@@ -439,7 +459,17 @@ impl Pix32 {
         }
     }
 
-    fn tran_sprite(&self, surface: &mut Pix2D, mut src_off: i32, mut dst_off: i32, w: i32, h: i32, dst_step: i32, src_step: i32, alpha: i32) {
+    fn tran_sprite(
+        &self,
+        surface: &mut Pix2D,
+        mut src_off: i32,
+        mut dst_off: i32,
+        w: i32,
+        h: i32,
+        dst_step: i32,
+        src_step: i32,
+        alpha: i32,
+    ) {
         let inv_alpha = 256 - alpha;
 
         for _ in 0..h {
@@ -450,10 +480,13 @@ impl Pix32 {
                     dst_off += 1;
                 } else {
                     let dst_rgb = surface.pixels[dst_off as usize];
-                    surface.pixels[dst_off as usize] = ((((rgb & 0xff00ff).wrapping_mul(alpha)
+                    surface.pixels[dst_off as usize] = ((((rgb & 0xff00ff)
+                        .wrapping_mul(alpha)
                         .wrapping_add((dst_rgb & 0xff00ff).wrapping_mul(inv_alpha)))
                         & 0xff00_ff00u32 as i32)
-                        + (((rgb & 0xff00).wrapping_mul(alpha) + (dst_rgb & 0xff00).wrapping_mul(inv_alpha)) & 0xff0000))
+                        + (((rgb & 0xff00).wrapping_mul(alpha)
+                            + (dst_rgb & 0xff00).wrapping_mul(inv_alpha))
+                            & 0xff0000))
                         >> 8;
                     surface.mark_pixel(dst_off);
                     dst_off += 1;
@@ -486,8 +519,16 @@ impl Pix32 {
         let sin_zoom = sin.wrapping_mul(zoom) >> 8;
         let cos_zoom = cos.wrapping_mul(zoom) >> 8;
 
-        let mut left_x = anchor_x.wrapping_shl(16).wrapping_add(center_y.wrapping_mul(sin_zoom).wrapping_add(center_x.wrapping_mul(cos_zoom)));
-        let mut left_y = anchor_y.wrapping_shl(16).wrapping_add(center_y.wrapping_mul(cos_zoom).wrapping_sub(center_x.wrapping_mul(sin_zoom)));
+        let mut left_x = anchor_x.wrapping_shl(16).wrapping_add(
+            center_y
+                .wrapping_mul(sin_zoom)
+                .wrapping_add(center_x.wrapping_mul(cos_zoom)),
+        );
+        let mut left_y = anchor_y.wrapping_shl(16).wrapping_add(
+            center_y
+                .wrapping_mul(cos_zoom)
+                .wrapping_sub(center_x.wrapping_mul(sin_zoom)),
+        );
         let mut left_off = x + y * surface.width;
 
         for i in 0..h {
@@ -514,7 +555,18 @@ impl Pix32 {
         }
     }
 
-    pub fn rotate_plot_sprite(&self, surface: &mut Pix2D, x: i32, y: i32, w: i32, h: i32, anchor_x: i32, anchor_y: i32, theta: f64, zoom: i32) {
+    pub fn rotate_plot_sprite(
+        &self,
+        surface: &mut Pix2D,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        anchor_x: i32,
+        anchor_y: i32,
+        theta: f64,
+        zoom: i32,
+    ) {
         let center_x = -w / 2;
         let center_y = -h / 2;
 
@@ -523,8 +575,16 @@ impl Pix32 {
         let sin_zoom = sin.wrapping_mul(zoom) >> 8;
         let cos_zoom = cos.wrapping_mul(zoom) >> 8;
 
-        let mut left_x = anchor_x.wrapping_shl(16).wrapping_add(center_y.wrapping_mul(sin_zoom).wrapping_add(center_x.wrapping_mul(cos_zoom)));
-        let mut left_y = anchor_y.wrapping_shl(16).wrapping_add(center_y.wrapping_mul(cos_zoom).wrapping_sub(center_x.wrapping_mul(sin_zoom)));
+        let mut left_x = anchor_x.wrapping_shl(16).wrapping_add(
+            center_y
+                .wrapping_mul(sin_zoom)
+                .wrapping_add(center_x.wrapping_mul(cos_zoom)),
+        );
+        let mut left_y = anchor_y.wrapping_shl(16).wrapping_add(
+            center_y
+                .wrapping_mul(cos_zoom)
+                .wrapping_sub(center_x.wrapping_mul(sin_zoom)),
+        );
         let mut left_off = x + y * surface.width;
 
         for _ in 0..h {
@@ -604,11 +664,23 @@ impl Pix32 {
         }
 
         if w > 0 && h > 0 {
-            self.plot_scanline(surface, src_step, dst_step, w, h, dst_off, src_off, &mask.data);
+            self.plot_scanline(
+                surface, src_step, dst_step, w, h, dst_off, src_off, &mask.data,
+            );
         }
     }
 
-    fn plot_scanline(&self, surface: &mut Pix2D, mut src_off: i32, mut dst_off: i32, w: i32, h: i32, dst_step: i32, src_step: i32, mask: &[i8]) {
+    fn plot_scanline(
+        &self,
+        surface: &mut Pix2D,
+        mut src_off: i32,
+        mut dst_off: i32,
+        w: i32,
+        h: i32,
+        dst_step: i32,
+        src_step: i32,
+        mask: &[i8],
+    ) {
         let qw = w >> 2;
         let rem = w & 0x3;
 

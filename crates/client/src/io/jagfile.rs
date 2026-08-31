@@ -24,7 +24,10 @@ impl JagFile {
         let mut hash: i32 = 0;
         for c in name.chars() {
             let c = c.to_ascii_uppercase();
-            hash = hash.wrapping_mul(61).wrapping_add(c as i32).wrapping_sub(32);
+            hash = hash
+                .wrapping_mul(61)
+                .wrapping_add(c as i32)
+                .wrapping_sub(32);
         }
         hash
     }

@@ -7,11 +7,11 @@
 use std::sync::Arc;
 
 use client::client::{Client, ClientConfig, ClientPlayer};
-use client::render::Renderer;
 use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::config::{ObjType, SeqType, VarpType};
 use client::graphics::{Colour, Pix2D, Pix8, PixMap};
 use client::io::{ClientProt, JagFile, Packet};
+use client::render::Renderer;
 use client::wordfilter::WordPack;
 
 fn client() -> Client {
@@ -26,7 +26,7 @@ fn client() -> Client {
 
 #[test]
 fn icon_state_defaults() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let c = client();
     assert_eq!(c.active_icon, 3);
     assert!(c.side_icon.iter().all(|&id| id == -1));
@@ -36,7 +36,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn if_seticon_writes_side_icon_slot() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![0, 50, 3]); // com 50, tab 3
     c.apply_if_seticon(&mut p);
@@ -46,7 +46,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn if_seticon_65535_clears_slot() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![0xff, 0xff, 0]); // com 65535 -> -1, tab 0
     c.apply_if_seticon(&mut p);
@@ -55,7 +55,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn if_seticon_out_of_range_icon_is_ignored() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![0, 50, 14]); // tab 14 is outside 0..14
     c.apply_if_seticon(&mut p);
@@ -64,7 +64,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn if_showicon_sets_active_icon() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.apply_if_showicon(7);
     assert_eq!(c.active_icon, 7);
@@ -73,7 +73,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn sideicons_load_from_media() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
@@ -88,13 +88,15 @@ let mut r = Renderer::new(false);
     c.ingame = true;
     r.game_draw(&mut c);
     assert!(r.media.sideicons.iter().any(|s| s.is_some()));
-    assert!(r.media.redstone1.is_some() && r.media.redstone2.is_some() && r.media.redstone3.is_some());
+    assert!(
+        r.media.redstone1.is_some() && r.media.redstone2.is_some() && r.media.redstone3.is_some()
+    );
     assert!(r.media.redstone1h.is_some() && r.media.redstone2hv.is_some());
 }
 
 #[test]
 fn click_combat_tab_sets_active_icon_0() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.side_icon[0] = 1; // tab present
@@ -106,7 +108,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn if_openside_sets_side_modal_id() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![0, 50]); // com 50
     c.apply_if_openside(&mut p);
@@ -116,7 +118,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn if_close_clears_side_and_chat_modals() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = 50;
     c.chat_modal_id = 7;
@@ -128,7 +130,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn if_openchat_sets_chat_and_closes_side() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = 9;
     c.main_modal_id = 3;
@@ -143,7 +145,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn if_openmain_sets_main_and_closes_side_chat() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = 9;
     c.chat_modal_id = 8;
@@ -158,7 +160,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn if_openmain_side_sets_both() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.chat_modal_id = 8;
     let mut p = Packet::new(vec![0, 10, 0, 20]);
@@ -170,7 +172,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn if_openoverlay_g2b_negative_clears() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.main_overlay_id = 5;
     let mut p = Packet::new(vec![0xff, 0xff]); // g2b -1
@@ -180,7 +182,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn if_openoverlay_g2b_positive_sets() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![0, 12]);
     c.apply_if_openoverlay(&mut p);
@@ -189,7 +191,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn tut_flash_bounces_active_icon_when_same() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.active_icon = 3;
     c.apply_tut_flash(3);
@@ -200,7 +202,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn tut_open_sets_tut_com_id() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new(vec![0, 99]);
     c.apply_tut_open(&mut p);
@@ -210,7 +212,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn if_openside_clears_main_modal() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.main_modal_id = 3;
     c.chat_modal_id = 8;
@@ -223,7 +225,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn if_close_also_clears_main_modal() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = 50;
     c.chat_modal_id = 7;
@@ -238,7 +240,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn draw_interface_text_writes_pixels() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
         return;
@@ -287,7 +289,7 @@ let mut r = Renderer::new(false);
 
 #[test]
 fn iftype_keeps_graphic_name() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     // the logout tab's red button is a TYPE_GRAPHIC sibling of its text
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("interface").is_file() {
@@ -311,7 +313,7 @@ let mut r = Renderer::new(false);
 
 #[test]
 fn draw_graphic_writes_pixels() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
@@ -362,7 +364,7 @@ let mut r = Renderer::new(false);
 
 #[test]
 fn draw_side_text_component_writes_pixels() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("interface").is_file() {
         return;
@@ -416,7 +418,7 @@ let mut r = Renderer::new(false);
 
 #[test]
 fn add_chat_shifts_and_redraws() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.add_chat(0, "hello", "");
     assert_eq!(c.chat_text[0], "hello");
@@ -439,7 +441,7 @@ fn add_chat_bumps_chat_seq_per_message() {
 
 #[test]
 fn message_game_plain_is_type_0() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new({
         let mut v = Vec::new();
@@ -454,7 +456,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn message_game_tradereq_is_type_4() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new({
         let mut v = Vec::new();
@@ -469,7 +471,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn message_game_duelreq_is_type_8() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::new({
         let mut v = Vec::new();
@@ -484,7 +486,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn chat_enter_clears_input_and_echoes_without_player_name() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.chat_input = "hello".into();
@@ -497,7 +499,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn chat_input_appends_prints_and_backspaces() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     c.shell.apply_key(true, 0, 'h' as i32);
@@ -511,7 +513,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn chat_input_command_sends_client_cheat() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     for ch in b"::ping" {
@@ -530,7 +532,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn chat_input_public_sends_message_public() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
     let mut player = ClientPlayer::at(1, 1);
@@ -559,7 +561,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn draw_chat_empty_history_does_not_panic() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
@@ -570,7 +572,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn draw_chat_renders_type0_line_and_input() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
         return;
@@ -609,7 +611,11 @@ fn sprite_fill_colour(sprite: &Pix8) -> i32 {
             }
         }
     }
-    counts.into_iter().max_by_key(|&(_, n)| n).map(|(c, _)| c).unwrap_or(0)
+    counts
+        .into_iter()
+        .max_by_key(|&(_, n)| n)
+        .map(|(c, _)| c)
+        .unwrap_or(0)
 }
 
 /// A client whose `media` sprites and fonts are loaded (`prepare_game`).
@@ -637,7 +643,7 @@ fn chat_line_pixels(cache: &str, r: &mut Renderer, r#type: i32, sender: &str) ->
 
 #[test]
 fn prepare_game_depacks_mod_icons() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
@@ -655,16 +661,23 @@ let mut r = Renderer::new(false);
 
 #[test]
 fn draw_chat_plots_cr1_crown() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
     }
     let crown_colour = {
         let _c = chat_client(&cache, &mut r);
-        sprite_fill_colour(r.media.mod_icons[0].as_ref().expect("mod_icons[0] depacked"))
+        sprite_fill_colour(
+            r.media.mod_icons[0]
+                .as_ref()
+                .expect("mod_icons[0] depacked"),
+        )
     };
-    assert_ne!(crown_colour, 0, "the gold crown sprite must have drawn pixels");
+    assert_ne!(
+        crown_colour, 0,
+        "the gold crown sprite must have drawn pixels"
+    );
     // control: the same line without the @cr1@ prefix
     let control = chat_line_pixels(&cache, &mut r, 2, "Mod");
     let rendered = chat_line_pixels(&cache, &mut r, 2, "@cr1@Mod");
@@ -679,7 +692,7 @@ let mut r = Renderer::new(false);
 
 #[test]
 fn draw_chat_plots_cr2_crown_for_private() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     // types 3/7 with split_private_chat 0 draw the private line in the
     // chatbox: the silver crown plots after the "From" label.
     let cache = client::cache_dir().display().to_string();
@@ -688,9 +701,16 @@ let mut r = Renderer::new(false);
     }
     let silver_colour = {
         let _c = chat_client(&cache, &mut r);
-        sprite_fill_colour(r.media.mod_icons[1].as_ref().expect("mod_icons[1] depacked"))
+        sprite_fill_colour(
+            r.media.mod_icons[1]
+                .as_ref()
+                .expect("mod_icons[1] depacked"),
+        )
     };
-    assert_ne!(silver_colour, 0, "the silver crown sprite must have drawn pixels");
+    assert_ne!(
+        silver_colour, 0,
+        "the silver crown sprite must have drawn pixels"
+    );
     let control = chat_line_pixels(&cache, &mut r, 7, "Eve");
     let rendered = chat_line_pixels(&cache, &mut r, 7, "@cr2@Eve");
     let n_control = control.iter().filter(|&&p| p == silver_colour).count();
@@ -704,7 +724,7 @@ let mut r = Renderer::new(false);
 
 #[test]
 fn draw_private_messages_plots_cr1_crown() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     // split private chat draws into area_game at y = 329 - line*13.
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
@@ -715,9 +735,16 @@ let mut r = Renderer::new(false);
     c.split_private_chat = 1;
     let gold_colour = {
         let _c = chat_client(&cache, &mut r);
-        sprite_fill_colour(r.media.mod_icons[0].as_ref().expect("mod_icons[0] depacked"))
+        sprite_fill_colour(
+            r.media.mod_icons[0]
+                .as_ref()
+                .expect("mod_icons[0] depacked"),
+        )
     };
-    assert_ne!(gold_colour, 0, "the gold crown sprite must have drawn pixels");
+    assert_ne!(
+        gold_colour, 0,
+        "the gold crown sprite must have drawn pixels"
+    );
     c.add_chat(3, "hello", "Eve");
     c.redraw_chat = true;
     r.game_draw(&mut c);
@@ -737,7 +764,7 @@ let mut r = Renderer::new(false);
 
 #[test]
 fn draw_chat_social_overlay_draws_header_and_input() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
         return;
@@ -765,7 +792,7 @@ let mut r = Renderer::new(false);
 
 #[test]
 fn draw_chat_dialog_overlay_draws_header_and_input() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
         return;
@@ -793,7 +820,7 @@ let mut r = Renderer::new(false);
 
 #[test]
 fn draw_reboot_timer_overlay_draws_system_update() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
         return;
@@ -856,57 +883,69 @@ fn text_com_mut(text: &str) -> IfTypeMut {
 
 #[test]
 fn get_if_var_stat_effective() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let r = Renderer::new(false);
     let mut c = client();
     c.stat_effective_level[0] = 12;
-    c.set_iface(9, IfType {
-                scripts: Some(vec![vec![1, 0, 0]]), // opcode 1 stat_effective, skill 0, halt
-        ..IfType::default()
-    });
+    c.set_iface(
+        9,
+        IfType {
+            scripts: Some(vec![vec![1, 0, 0]]), // opcode 1 stat_effective, skill 0, halt
+            ..IfType::default()
+        },
+    );
     assert_eq!(r.get_if_var(&c, 9, 0), Some(12));
 }
 
 #[test]
 fn get_if_var_pushvar() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let r = Renderer::new(false);
     let mut c = client();
     c.var = vec![0, 0, 0, 42];
-    c.set_iface(9, IfType {
-                scripts: Some(vec![vec![5, 3, 0]]), // opcode 5 pushvar 3, halt
-        ..IfType::default()
-    });
+    c.set_iface(
+        9,
+        IfType {
+            scripts: Some(vec![vec![5, 3, 0]]), // opcode 5 pushvar 3, halt
+            ..IfType::default()
+        },
+    );
     assert_eq!(r.get_if_var(&c, 9, 0), Some(42));
 }
 
 #[test]
 fn get_if_var_missing_scripts_is_none() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let r = Renderer::new(false);
     let mut c = client();
-    c.set_iface(9, IfType {
-                scripts: None,
-        ..IfType::default()
-    });
+    c.set_iface(
+        9,
+        IfType {
+            scripts: None,
+            ..IfType::default()
+        },
+    );
     assert_eq!(r.get_if_var(&c, 9, 0), None);
 }
 
 #[test]
 fn get_if_var_out_of_range_script_id_is_none() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let r = Renderer::new(false);
     let mut c = client();
-    c.set_iface(9, IfType {
-                scripts: Some(vec![vec![0]]),
-        ..IfType::default()
-    });
+    c.set_iface(
+        9,
+        IfType {
+            scripts: Some(vec![vec![0]]),
+            ..IfType::default()
+        },
+    );
     assert_eq!(r.get_if_var(&c, 9, 1), None);
 }
 
 #[test]
 fn draw_interface_substitutes_percent1() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
         return;
@@ -923,7 +962,12 @@ let mut r = Renderer::new(false);
     c.stat_effective_level[0] = 12;
 
     let literal = draw_text(&mut c, &mut r, &text_com("%1", None), &text_com_mut("%1"));
-    let substituted = draw_text(&mut c, &mut r, &text_com("%1", Some(vec![vec![1, 0, 0]])), &text_com_mut("%1"));
+    let substituted = draw_text(
+        &mut c,
+        &mut r,
+        &text_com("%1", Some(vec![vec![1, 0, 0]])),
+        &text_com_mut("%1"),
+    );
     assert_ne!(
         substituted.pixels, literal.pixels,
         "a %1 script must substitute, not draw the literal text"
@@ -935,7 +979,12 @@ let mut r = Renderer::new(false);
     );
 
     // inf: values >= 999_999_999 render as '*'
-    let star = draw_text(&mut c, &mut r, &text_com("%1", Some(vec![vec![20, 999_999_999, 0]])), &text_com_mut("%1"));
+    let star = draw_text(
+        &mut c,
+        &mut r,
+        &text_com("%1", Some(vec![vec![20, 999_999_999, 0]])),
+        &text_com_mut("%1"),
+    );
     assert_eq!(
         star.pixels,
         draw_text(&mut c, &mut r, &text_com("*", None), &text_com_mut("*")).pixels,
@@ -1029,7 +1078,7 @@ fn side_button(
 
 #[test]
 fn side_click_ok_button_writes_if_button() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     // the panel is blitted at (553, 205); a click at (560, 210) is local (7, 5)
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 20);
@@ -1042,7 +1091,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn side_click_close_button_sends_close_modal() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
     let button = side_button(2, ButtonType::BUTTON_CLOSE, "", 0, 0, 190, 20);
@@ -1055,7 +1104,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn close_modal_clears_resumed_pause_button() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
     let button = side_button(2, ButtonType::BUTTON_CLOSE, "", 0, 0, 190, 20);
@@ -1068,7 +1117,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn side_click_toggle_flips_var_and_redraws() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
     let toggle = IfType {
@@ -1085,7 +1134,11 @@ let _r = Renderer::new(false);
         ..IfTypeMut::default()
     };
     c.var = vec![0, 0, 0, 0, 0, 0, 0, 1];
-    bind_side(&mut c, 1, vec![(root, IfTypeMut::default()), (toggle, toggle_mut)]);
+    bind_side(
+        &mut c,
+        1,
+        vec![(root, IfTypeMut::default()), (toggle, toggle_mut)],
+    );
     click_side(&mut c, 560, 210);
     assert_eq!(out_bytes(&c), &[9, 0, 2]);
     assert_eq!(c.var[7], 0);
@@ -1094,7 +1147,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn side_click_toggle_without_script_keeps_var() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
     let toggle = side_button(2, ButtonType::BUTTON_TOGGLE, "Toggle", 0, 0, 190, 20);
@@ -1110,7 +1163,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn side_click_toggle_applies_varp_clientcode() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     // varp 0 carries the music clientcode (3): flipping the toggle must
     // change the volume through clientVar, not just var/redraw_side
@@ -1131,7 +1184,11 @@ let _r = Renderer::new(false);
         button_type: ButtonType::BUTTON_TOGGLE,
         ..IfTypeMut::default()
     };
-    bind_side(&mut c, 1, vec![(root, IfTypeMut::default()), (toggle, toggle_mut)]);
+    bind_side(
+        &mut c,
+        1,
+        vec![(root, IfTypeMut::default()), (toggle, toggle_mut)],
+    );
     click_side(&mut c, 560, 210);
     assert_eq!(out_bytes(&c), &[9, 0, 2]);
     assert_eq!(c.var[0], 0);
@@ -1141,7 +1198,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn side_click_select_sets_var_when_different() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
     let select = IfType {
@@ -1159,7 +1216,11 @@ let _r = Renderer::new(false);
         ..IfTypeMut::default()
     };
     c.var = vec![0, 0, 0, 0, 0, 0, 0, 1];
-    bind_side(&mut c, 1, vec![(root, IfTypeMut::default()), (select, select_mut)]);
+    bind_side(
+        &mut c,
+        1,
+        vec![(root, IfTypeMut::default()), (select, select_mut)],
+    );
     c.redraw_side = false;
     click_side(&mut c, 560, 210);
     assert_eq!(out_bytes(&c), &[9, 0, 2]);
@@ -1178,7 +1239,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn side_click_requires_left_button_in_panel() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
     let button = side_button(2, ButtonType::BUTTON_OK, "OK", 0, 0, 190, 20);
@@ -1203,7 +1264,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn side_click_skips_non_button_first_child() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let root = side_layer(1, vec![2, 3], vec![0, 0], vec![0, 0], 190, 261);
     let text = IfType {
@@ -1214,14 +1275,22 @@ let _r = Renderer::new(false);
         ..IfType::default()
     };
     let button = side_button(3, ButtonType::BUTTON_OK, "OK", 0, 0, 190, 20);
-    bind_side(&mut c, 1, vec![(root, IfTypeMut::default()), (text, IfTypeMut::default()), button]);
+    bind_side(
+        &mut c,
+        1,
+        vec![
+            (root, IfTypeMut::default()),
+            (text, IfTypeMut::default()),
+            button,
+        ],
+    );
     click_side(&mut c, 560, 210);
     assert_eq!(out_bytes(&c), &[9, 0, 3]);
 }
 
 #[test]
 fn side_click_uses_side_modal_when_open() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let tab_root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
     let tab_button = side_button(2, ButtonType::BUTTON_OK, "OK", 0, 0, 190, 20);
@@ -1250,7 +1319,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn side_click_layer_recurse_with_scrolled_child() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let root = side_layer(1, vec![2], vec![0], vec![0], 190, 261);
     // a scroller at scroll_pos 20 puts the child at local y 30-20 = 10,
@@ -1272,7 +1341,15 @@ let _r = Renderer::new(false);
         ..IfTypeMut::default()
     };
     let button = side_button(3, ButtonType::BUTTON_OK, "OK", 0, 0, 190, 20);
-    bind_side(&mut c, 1, vec![(root, IfTypeMut::default()), (scroller, scroller_mut), button]);
+    bind_side(
+        &mut c,
+        1,
+        vec![
+            (root, IfTypeMut::default()),
+            (scroller, scroller_mut),
+            button,
+        ],
+    );
     click_side(&mut c, 558, 217); // local (5, 12)
     assert_eq!(out_bytes(&c), &[9, 0, 3]);
     c.out.pos = 0;
@@ -1282,7 +1359,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn side_click_real_logout_text_sends_if_button() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("interface").is_file() {
         return;
@@ -1351,7 +1428,7 @@ let mut r = Renderer::new(false);
 
 #[test]
 fn iftype_unpack_keeps_inv_background_names() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("interface").is_file() {
         return;
@@ -1371,7 +1448,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn draw_scrollbar_fills_track() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut r = Renderer::new(false);
     let mut c = client();
     let mut pixels = vec![0i32; 16 * 77];
@@ -1385,7 +1462,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn do_scrollbar_up_arrow_decreases_pos() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.scroll_cycle = 1;
     let mut com = IfType::default();
@@ -1405,7 +1482,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn game_draw_chat_scrollbar_up_arrow_steps_scroll_pos() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
@@ -1421,7 +1498,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn inv_number_formats_k_and_m() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let r = Renderer::new(false);
     let c = client();
     assert_eq!(r.inv_number(&c, 999), "999");
@@ -1433,17 +1510,20 @@ let _r = Renderer::new(false);
 
 #[test]
 fn nice_number_groups_and_colours() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let r = Renderer::new(false);
     let c = client();
     assert_eq!(r.nice_number(&c, 1), " 1");
     assert_eq!(r.nice_number(&c, 1234), " @cya@1K @whi@(1,234)");
-    assert_eq!(r.nice_number(&c, 12_345_678), " @gre@12 million @whi@(12,345,678)");
+    assert_eq!(
+        r.nice_number(&c, 12_345_678),
+        " @gre@12 million @whi@(12,345,678)"
+    );
 }
 
 #[test]
 fn draw_interface_inv_text_writes_obj_name() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
         return;
@@ -1481,14 +1561,17 @@ let mut r = Renderer::new(false);
     let mut pixels = vec![0i32; 200 * 50];
     let mut surface = Pix2D::with_pixels(&mut pixels, 200, 50);
     r.draw_interface(&mut c, 1, 0, 0, 0, &mut surface);
-    assert!(pixels.iter().any(|&p| p != 0), "inv-text should plot the obj name");
+    assert!(
+        pixels.iter().any(|&p| p != 0),
+        "inv-text should plot the obj name"
+    );
 }
 
 // ---- main/chat modal drawing and clicks (slice 3 Task 2) ----
 
 #[test]
 fn draw_chat_uses_chat_modal_instead_of_lines() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
@@ -1514,7 +1597,10 @@ let _r = Renderer::new(false);
     c.set_iface_mut(2, rect_mut);
     c.redraw_chat = true;
     r.game_draw(&mut c);
-    let chat = r.area_chat.as_ref().expect("prepare_game allocates area_chat");
+    let chat = r
+        .area_chat
+        .as_ref()
+        .expect("prepare_game allocates area_chat");
     assert!(
         chat.pixels.iter().any(|&p| p & 0xffffff == 0x00ff00),
         "chat modal TYPE_RECT must plot into area_chat"
@@ -1523,7 +1609,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn draw_chat_modal_clears_stale_chat_lines() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     // TS 11125-11146: chatback plots first, then the modal iface replaces
     // the chat lines — a modal opened after chat text must not keep the old
     // line pixels (regression: the modal branch used to early-return).
@@ -1550,7 +1636,10 @@ let mut r = Renderer::new(false);
         .filter(|(_, &p)| p & 0xffffff == 0x000000)
         .map(|(i, _)| i)
         .collect();
-    assert!(!black_spots.is_empty(), "the type-0 line must leave black pixels");
+    assert!(
+        !black_spots.is_empty(),
+        "the type-0 line must leave black pixels"
+    );
     // open a chat modal over the same area
     c.chat_modal_id = 1;
     let mut layer = IfType::default();
@@ -1588,7 +1677,7 @@ let mut r = Renderer::new(false);
 
 #[test]
 fn main_modal_click_sends_if_button() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.main_modal_id = 1;
     let mut layer = IfType::default();
@@ -1625,7 +1714,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn mouse_loop_skips_walk_when_main_modal_open() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.main_modal_id = 1;
     c.shell.apply_mouse_down(1, 100, 100);
@@ -1642,7 +1731,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn animate_interface_advances_model_frame() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut r = Renderer::new(false);
     let mut c = client();
     let mut layer = IfType::default();
@@ -1659,7 +1748,10 @@ let _r = Renderer::new(false);
     c.set_iface(1, layer);
     c.set_iface(2, model);
     c.set_iface_mut(2, model_mut);
-    Arc::get_mut(&mut c.cache).unwrap().seqs.resize(1, SeqType::default());
+    Arc::get_mut(&mut c.cache)
+        .unwrap()
+        .seqs
+        .resize(1, SeqType::default());
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].num_frames = 2;
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].frames = Some(vec![0, 0]);
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].iframes = Some(vec![-1, -1]);
@@ -1671,7 +1763,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn if_anim_reset_zeros_nested_layer_child() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut root = IfType::default();
     root.r#type = ComponentType::TYPE_LAYER;
@@ -1696,7 +1788,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn game_draw_redraws_side_and_chat_when_modal_anims() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut r = Renderer::new(false);
     let mut c = client();
     // separate model trees for the side and chat modals; world_update_num 2
@@ -1725,7 +1817,10 @@ let _r = Renderer::new(false);
     c.set_iface(3, chat_layer);
     c.set_iface(4, chat_model);
     c.set_iface_mut(4, chat_model_mut);
-    Arc::get_mut(&mut c.cache).unwrap().seqs.resize(1, SeqType::default());
+    Arc::get_mut(&mut c.cache)
+        .unwrap()
+        .seqs
+        .resize(1, SeqType::default());
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].num_frames = 2;
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].frames = Some(vec![0, 0]);
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].iframes = Some(vec![-1, -1]);
@@ -1743,7 +1838,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn draw_icons_flash_sends_tut_clickside_and_clears() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut r = Renderer::new(false);
     let mut c = client();
     c.tut_flash_icon = 3;
@@ -1757,7 +1852,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn draw_icons_blinks_flashing_tab() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
@@ -1790,7 +1885,14 @@ let mut r = Renderer::new(false);
 // ---- pointer hover over*ComId (Task 6) ----
 
 /// A TYPE_LAYER with one child list (child offsets and layer size).
-fn hover_layer(id: i32, width: i32, height: i32, children: Vec<i32>, child_x: Vec<i32>, child_y: Vec<i32>) -> IfType {
+fn hover_layer(
+    id: i32,
+    width: i32,
+    height: i32,
+    children: Vec<i32>,
+    child_x: Vec<i32>,
+    child_y: Vec<i32>,
+) -> IfType {
     IfType {
         id,
         r#type: ComponentType::TYPE_LAYER,
@@ -1805,7 +1907,7 @@ fn hover_layer(id: i32, width: i32, height: i32, children: Vec<i32>, child_x: Ve
 
 #[test]
 fn update_if_pointer_sets_over_side_and_redraws() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = 1;
     let mut layer = IfType::default();
@@ -1833,7 +1935,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn hidden_layer_draws_when_hovered() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut r = Renderer::new(false);
     let mut c = client();
     c.over_side_com_id = 1;
@@ -1866,7 +1968,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn update_if_pointer_sets_over_main() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.main_modal_id = 1;
     let layer = hover_layer(1, 512, 334, vec![2], vec![0], vec![0]);
@@ -1886,7 +1988,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn update_if_pointer_sets_over_chat_and_redraws_chat() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.chat_modal_id = 1;
     let layer = hover_layer(1, 479, 96, vec![2], vec![0], vec![0]);
@@ -1907,7 +2009,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn update_if_pointer_resets_over_side_when_pointer_leaves() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.over_side_com_id = 2;
     c.redraw_side = false;
@@ -1920,7 +2022,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn hovered_rect_uses_colour_over() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut r = Renderer::new(false);
     let mut c = client();
     let layer = hover_layer(1, 20, 20, vec![2], vec![0], vec![0]);
@@ -1951,7 +2053,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn hover_walk_steps_scrollable_layer_scrollbar() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = 1;
     // the scroller sits at local (0, 30) of the side panel (553, 205)
@@ -1987,7 +2089,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn type_inv_hover_sets_hovered_slot_on_empty_slot() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = 1;
     let root = hover_layer(1, 190, 261, vec![2], vec![0], vec![0]);
@@ -2009,7 +2111,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn resumed_pause_button_text_is_please_wait() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
         return;
@@ -2040,7 +2142,12 @@ let mut r = Renderer::new(false);
     let waiting = draw_text(&mut c, &mut r, &cont, &cont_mut);
     c.resumed_pause_button = false;
     let plain = draw_text(&mut c, &mut r, &cont, &cont_mut);
-    let literal = draw_text(&mut c, &mut r, &text_com("Please wait...", None), &text_com_mut("Please wait..."));
+    let literal = draw_text(
+        &mut c,
+        &mut r,
+        &text_com("Please wait...", None),
+        &text_com_mut("Please wait..."),
+    );
     assert_eq!(
         waiting.pixels, literal.pixels,
         "BUTTON_CONTINUE + resumed_pause_button must render 'Please wait...'"
@@ -2053,7 +2160,7 @@ let mut r = Renderer::new(false);
 
 #[test]
 fn active_text_uses_text2() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("title").is_file() {
         return;
@@ -2087,7 +2194,13 @@ let mut r = Renderer::new(false);
     };
     assert_eq!(
         draw_text(&mut c, &mut r, &active, &IfTypeMut::default()).pixels,
-        draw_text(&mut c, &mut r, &text_com("Over", None), &text_com_mut("Over")).pixels,
+        draw_text(
+            &mut c,
+            &mut r,
+            &text_com("Over", None),
+            &text_com_mut("Over")
+        )
+        .pixels,
         "an active text must render text2, not text"
     );
 }
@@ -2096,7 +2209,7 @@ let mut r = Renderer::new(false);
 
 #[test]
 fn swap_slots_exchanges_type_and_count() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut com_mut = IfTypeMut {
         link_obj_type: Some(vec![10, 20]),
         link_obj_number: Some(vec![1, 5]),
@@ -2109,7 +2222,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn obj_drag_release_sends_inv_buttond() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = 1;
     let layer = IfType {
@@ -2144,7 +2257,10 @@ let _r = Renderer::new(false);
     // the slot holds obj id 5, so `build_minimenu` can name it for the
     // Examine entry (the drag-start target)
     if c.cache.objs.len() < 5 {
-        Arc::get_mut(&mut c.cache).unwrap().objs.resize(5, ObjType::default());
+        Arc::get_mut(&mut c.cache)
+            .unwrap()
+            .objs
+            .resize(5, ObjType::default());
     }
     Arc::get_mut(&mut c.cache).unwrap().objs[4].name = "Rune".into();
     // grab slot 0: build the menu (the last entry is the occupied slot's
@@ -2171,10 +2287,7 @@ let _r = Renderer::new(false);
     c.shell.mouse_button = 0;
     c.handle_obj_drag();
     assert_eq!(c.obj_drag_area, 0);
-    assert_eq!(
-        c.if_(2).unwrap().link_obj_type.as_ref().unwrap()[1],
-        5
-    );
+    assert_eq!(c.if_(2).unwrap().link_obj_type.as_ref().unwrap()[1], 5);
     // INV_BUTTOND (id 93): p1_enc(93) p2(com) p2(src) p2(dst) p1(mode),
     // p2 big-endian — dst 1 is bytes [5]=0, [6]=1
     assert_eq!(c.out.data()[0], ClientProt::INV_BUTTOND.id as u8);
@@ -2189,7 +2302,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn obj_drag_quick_release_fires_last_entry_same_slot_drop_does_not() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.side_modal_id = 1;
     let layer = IfType {
@@ -2224,7 +2337,10 @@ let _r = Renderer::new(false);
     // the slot holds obj id 5, so `build_minimenu` can name it for the
     // Examine entry (the drag-start target)
     if c.cache.objs.len() < 5 {
-        Arc::get_mut(&mut c.cache).unwrap().objs.resize(5, ObjType::default());
+        Arc::get_mut(&mut c.cache)
+            .unwrap()
+            .objs
+            .resize(5, ObjType::default());
     }
     Arc::get_mut(&mut c.cache).unwrap().objs[4].name = "Rune".into();
     Arc::get_mut(&mut c.cache).unwrap().objs[4].desc = String::new();

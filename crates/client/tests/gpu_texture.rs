@@ -151,7 +151,9 @@ fn textured_pix() -> Pix3DDraw {
 
 /// The mesh for a world with the textured wall placed on tile (1, 2)
 /// (the same placement as gpu_mesh.rs).
-fn textured_wall_mesh(pix: &mut Pix3DDraw) -> (RenderWorld, World, client::render::world::SceneMesh) {
+fn textured_wall_mesh(
+    pix: &mut Pix3DDraw,
+) -> (RenderWorld, World, client::render::world::SceneMesh) {
     let mut world = flat_world();
     world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
     let mut rw = RenderWorld::new();
@@ -194,7 +196,11 @@ fn textured_model_mesh_carries_tex_id_and_uv() {
         if tex_plus != 0 {
             // A textured vertex packs texture id + 1 in the low 16 bits and
             // the fixed-point u in the high 16 bits, plus the raw shade.
-            assert_eq!((v.abhsl & 0xffff) as i32, TEX_SHADE, "a textured vertex carries the raw shade");
+            assert_eq!(
+                (v.abhsl & 0xffff) as i32,
+                TEX_SHADE,
+                "a textured vertex carries the raw shade"
+            );
             saw_nonzero_u |= (v.uv_tex >> 16) != 0;
             saw_nonzero_v |= v.v != 0;
         } else {
@@ -204,13 +210,22 @@ fn textured_model_mesh_carries_tex_id_and_uv() {
     }
     assert!(found_red, "the red-textured face must be in the mesh");
     assert!(found_blue, "the blue-textured face must be in the mesh");
-    assert!(saw_nonzero_u, "a textured face must pack a nonzero u (high 16 bits)");
+    assert!(
+        saw_nonzero_u,
+        "a textured face must pack a nonzero u (high 16 bits)"
+    );
     assert!(saw_nonzero_v, "a textured face must pack a nonzero v");
 
     // The texture array has one 128×128 layer per texture id, so ids 7
     // and 12 sample different layers (no shared-atlas cell derivation).
-    assert!((0..50).contains(&TEXTURE_RED), "the fixture texture id is in the valid range");
-    assert!((0..50).contains(&TEXTURE_BLUE), "the fixture texture id is in the valid range");
+    assert!(
+        (0..50).contains(&TEXTURE_RED),
+        "the fixture texture id is in the valid range"
+    );
+    assert!(
+        (0..50).contains(&TEXTURE_BLUE),
+        "the fixture texture id is in the valid range"
+    );
     assert_ne!(
         TEXTURE_RED, TEXTURE_BLUE,
         "the two textures must sample different array layers"
@@ -291,7 +306,10 @@ fn wall_face_crossing_the_near_plane_still_emits() {
     for v in mesh.vertices() {
         if (v.abhsl & 0xffff) as i32 == SHADE {
             wall_verts += 1;
-            assert!(v.z >= 50.0, "clipped wall vertices must stay on the near plane or in front");
+            assert!(
+                v.z >= 50.0,
+                "clipped wall vertices must stay on the near plane or in front"
+            );
         }
     }
     assert!(
@@ -400,7 +418,10 @@ fn gpu_render_samples_multi_texture_model() {
         "the blue-textured wall face must render blue texels, not flat-shaded white"
     );
     // Sanity: the wall occupies real screen space (not a one-pixel sliver).
-    assert!(found_red + found_blue > 500, "the textured wall must cover screen area");
+    assert!(
+        found_red + found_blue > 500,
+        "the textured wall must cover screen area"
+    );
 }
 
 /// The GPU textured path must apply the CPU's 8-level per-texel brightness:
@@ -521,8 +542,7 @@ fn gpu_lowmem_texture_samples_the_full_128px_layer() {
     pix.low_mem = true;
     let tex = quadrant_texture();
     pix.textures[TEXTURE_QUAD as usize] = Some(tex.clone());
-    pix.tex_pal[TEXTURE_QUAD as usize] =
-        Some(vec![0, 0xff0000, 0x00ff00, 0x0000ff, 0xffff00]);
+    pix.tex_pal[TEXTURE_QUAD as usize] = Some(vec![0, 0xff0000, 0x00ff00, 0x0000ff, 0xffff00]);
 
     let mut world = flat_world();
     world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
@@ -680,7 +700,8 @@ fn composite_lands_the_scene_in_the_full_frame() {
         (55, 104, 0x000000),  // black border, covered -> opaque black
     ] {
         assert_eq!(
-            pixels[fy * 765 + fx], expected,
+            pixels[fy * 765 + fx],
+            expected,
             "a covered minimenu pixel at ({fx}, {fy}) must be opaque over the scene"
         );
     }

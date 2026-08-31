@@ -5,10 +5,10 @@
 use std::sync::Arc;
 
 use client::client::{Client, ClientConfig, ClientPlayer};
-use client::render::Renderer;
 use client::config::IdkType;
 use client::dash3d::Model;
 use client::graphics::{Colour, Pix32};
+use client::render::Renderer;
 use std::collections::HashMap;
 
 fn client() -> Client {
@@ -62,7 +62,7 @@ fn look_down_z(c: &mut Client) {
 
 #[test]
 fn get_overlay_pos_out_of_range_is_neg1() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut r = Renderer::new(false);
     let mut c = client();
     r.get_overlay_pos(&mut c, 0, 64, 0); // x < 128
@@ -77,7 +77,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn get_overlay_pos_projects_in_front_of_camera() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut r = Renderer::new(false);
     let mut c = client();
     r.pix3d.origin_x = 256;
@@ -97,28 +97,44 @@ let _r = Renderer::new(false);
 
 #[test]
 fn prepare_game_depacks_headicons() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
     }
     let _c = overlay_client(&cache, &mut r);
-    assert!(r.media.headicons[3].is_some(), "protect-melee headicon must depack");
-    assert!(r.media.headicons[4].is_some(), "protect-missiles headicon must depack");
-    assert!(r.media.headicons[5].is_some(), "protect-magic headicon must depack");
+    assert!(
+        r.media.headicons[3].is_some(),
+        "protect-melee headicon must depack"
+    );
+    assert!(
+        r.media.headicons[4].is_some(),
+        "protect-missiles headicon must depack"
+    );
+    assert!(
+        r.media.headicons[5].is_some(),
+        "protect-magic headicon must depack"
+    );
     assert!(r.media.hitmarks.iter().take(4).any(|s| s.is_some()));
 }
 
 #[test]
 fn entity_overlays_plots_prayer_headicon() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
     }
     let mut c = overlay_client(&cache, &mut r);
-    let melee = sprite_fill_colour(r.media.headicons[3].as_ref().expect("headicons[3] depacked"));
-    assert_ne!(melee, 0, "the protect-melee headicon must have drawn pixels");
+    let melee = sprite_fill_colour(
+        r.media.headicons[3]
+            .as_ref()
+            .expect("headicons[3] depacked"),
+    );
+    assert_ne!(
+        melee, 0,
+        "the protect-melee headicon must have drawn pixels"
+    );
     look_down_z(&mut c);
     let mut player = ClientPlayer::default();
     player.ready = true;
@@ -142,7 +158,7 @@ let mut r = Renderer::new(false);
 
 #[test]
 fn entity_overlays_collects_chat_bubble() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&cache).join("media").is_file() {
         return;
@@ -190,12 +206,15 @@ const LIFTED_MODEL: &[u8] = &[
 /// (`height + 15`).
 #[test]
 fn add_players_stamps_model_min_y_on_live_player() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     Model::unpack(4096, Some(LIFTED_MODEL));
     let mut r = Renderer::new(false);
     let mut c = client();
     while c.cache.idks.is_empty() {
-        Arc::get_mut(&mut c.cache).unwrap().idks.push(IdkType::default());
+        Arc::get_mut(&mut c.cache)
+            .unwrap()
+            .idks
+            .push(IdkType::default());
     }
     Arc::get_mut(&mut c.cache).unwrap().idks[0].model = Some(vec![4096]);
     let mut player = ClientPlayer::default();

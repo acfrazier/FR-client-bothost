@@ -44,7 +44,10 @@ struct SharedModel {
 
 impl SharedModel {
     fn new(model: Arc<Model>) -> Self {
-        SharedModel { model, links: Links::new(0) }
+        SharedModel {
+            model,
+            links: Links::new(0),
+        }
     }
 }
 
@@ -56,7 +59,10 @@ impl LinkableTrait for SharedModel {
         &mut self.links
     }
     fn sentinel() -> Self {
-        SharedModel { model: Arc::new(Model::default()), links: Links::new(0) }
+        SharedModel {
+            model: Arc::new(Model::default()),
+            links: Links::new(0),
+        }
     }
 }
 
@@ -68,7 +74,10 @@ struct SharedSprite {
 
 impl SharedSprite {
     fn new(sprite: Arc<Pix32>) -> Self {
-        SharedSprite { sprite, links: Links::new(0) }
+        SharedSprite {
+            sprite,
+            links: Links::new(0),
+        }
     }
 }
 
@@ -80,7 +89,10 @@ impl LinkableTrait for SharedSprite {
         &mut self.links
     }
     fn sentinel() -> Self {
-        SharedSprite { sprite: Arc::new(Pix32::new(0, 0)), links: Links::new(0) }
+        SharedSprite {
+            sprite: Arc::new(Pix32::new(0, 0)),
+            links: Links::new(0),
+        }
     }
 }
 

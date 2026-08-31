@@ -232,7 +232,9 @@ impl Midi for AcceptingMidi {
 fn successful_swap_restores_gain() {
     let plays = Arc::new(AtomicUsize::new(0));
     let mut c = client();
-    c.midi = Arc::new(Mutex::new(AcceptingMidi { plays: plays.clone() }));
+    c.midi = Arc::new(Mutex::new(AcceptingMidi {
+        plays: plays.clone(),
+    }));
     c.save_midi(&[1, 2, 3], true); // title plays now
     c.midi_volume = -800;
     c.save_midi(&[4, 5, 6], true); // zone change: held pending

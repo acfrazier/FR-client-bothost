@@ -119,32 +119,30 @@ impl GpuContext {
         });
 
         let scene_brightness_layout =
-            device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("r274 scene uniforms layout"),
-                    entries: &[wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(16),
-                        },
-                        count: None,
-                    }],
-                });
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("r274 scene uniforms layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(16),
+                    },
+                    count: None,
+                }],
+            });
 
         let assets_lock = assets.lock().unwrap();
         let scene_pipeline_layout =
-            device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("r274 scene layout"),
-                    bind_group_layouts: &[
-                        Some(&assets_lock.model_bind_group_layout),
-                        Some(&scene_brightness_layout),
-                    ],
-                    immediate_size: 0,
-                });
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("r274 scene layout"),
+                bind_group_layouts: &[
+                    Some(&assets_lock.model_bind_group_layout),
+                    Some(&scene_brightness_layout),
+                ],
+                immediate_size: 0,
+            });
         let pipeline_opaque = make_pipeline(&device, &scene_pipeline_layout, &scene_shader, true);
         let pipeline_translucent =
             make_pipeline(&device, &scene_pipeline_layout, &scene_shader, false);
@@ -154,86 +152,81 @@ impl GpuContext {
             label: Some("r274 chrome composite shader"),
             source: wgpu::ShaderSource::Wgsl(CHROME_SHADER.into()),
         });
-        let chrome_layout =
-            device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("r274 chrome composite layout"),
-                    entries: &[
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture {
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                                view_dimension: wgpu::TextureViewDimension::D2,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                            count: None,
-                        },
-                    ],
-                });
+        let chrome_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("r274 chrome composite layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
         let chrome_pipeline_layout =
-            device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("r274 chrome composite pipeline layout"),
-                    bind_group_layouts: &[Some(&chrome_layout)],
-                    immediate_size: 0,
-                });
-        let chrome_pipeline =
-            device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("r274 chrome composite"),
-                    layout: Some(&chrome_pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &chrome_shader,
-                        entry_point: Some("vs_main"),
-                        compilation_options: Default::default(),
-                        buffers: &[wgpu::VertexBufferLayout {
-                            array_stride: std::mem::size_of::<ChromeVertex>() as u64,
-                            step_mode: wgpu::VertexStepMode::Vertex,
-                            attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2],
-                        }],
-                    },
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        strip_index_format: None,
-                        front_face: wgpu::FrontFace::Ccw,
-                        cull_mode: None,
-                        unclipped_depth: false,
-                        polygon_mode: wgpu::PolygonMode::Fill,
-                        conservative: false,
-                    },
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState {
-                        count: 1,
-                        mask: !0,
-                        alpha_to_coverage_enabled: false,
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &chrome_shader,
-                        entry_point: Some("fs_main"),
-                        compilation_options: Default::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba8Unorm,
-                            blend: Some(wgpu::BlendState {
-                                color: wgpu::BlendComponent {
-                                    src_factor: wgpu::BlendFactor::SrcAlpha,
-                                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                    operation: wgpu::BlendOperation::Add,
-                                },
-                                alpha: wgpu::BlendComponent::OVER,
-                            }),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("r274 chrome composite pipeline layout"),
+                bind_group_layouts: &[Some(&chrome_layout)],
+                immediate_size: 0,
+            });
+        let chrome_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("r274 chrome composite"),
+            layout: Some(&chrome_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &chrome_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<ChromeVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2],
+                }],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &chrome_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::SrcAlpha,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent::OVER,
                     }),
-                    multiview_mask: None,
-                    cache: None,
-                });
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
 
         Arc::new(GpuContext {
             device,
@@ -1336,7 +1329,11 @@ mod tests {
             (bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3])
         };
         assert_eq!(px(4, 4), (255, 0, 0, 255), "opaque overlay keeps A=255");
-        assert_eq!(px(5, 4), (0, 0, 255, 82), "nav fill coverage is the overlay alpha");
+        assert_eq!(
+            px(5, 4),
+            (0, 0, 255, 82),
+            "nav fill coverage is the overlay alpha"
+        );
         assert_eq!(px(6, 4).3, 0, "uncovered scene pixel is the 3D hole");
         assert_eq!(px(0, 0).3, 255, "chrome outside the scene window is opaque");
     }

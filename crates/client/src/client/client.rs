@@ -242,7 +242,7 @@ fn empty_ground_obj() -> Box<[[[Option<Box<LinkList<ClientObj>>>; 104]; 104]; 4]
     // cells.
     unsafe {
         Box::from_raw(
-            Box::into_raw(boxed) as *mut [[[Option<Box<LinkList<ClientObj>>>; 104]; 104]; 4],
+            Box::into_raw(boxed) as *mut [[[Option<Box<LinkList<ClientObj>>>; 104]; 104]; 4]
         )
     }
 }
@@ -880,7 +880,14 @@ impl Client {
         ifaces_mut: impl Into<Arc<Vec<Option<Arc<IfTypeMut>>>>>,
     ) -> Self {
         let jag_checksum = Self::read_jag_checksums(&config.cache_dir);
-        let mut client = Self::construct(config, cache, ifaces, ifaces_mut.into(), false, jag_checksum);
+        let mut client = Self::construct(
+            config,
+            cache,
+            ifaces,
+            ifaces_mut.into(),
+            false,
+            jag_checksum,
+        );
         client.cache_from_shared = true;
         client
     }
@@ -2909,7 +2916,10 @@ impl Client {
             // prompt (social), arm a timer (logout) or cycle the design
             // kit; the logout/accept-design arms return `true` so the
             // click is sent, everything else returns `false`.
-            let client_code = self.if_(c as usize).map(|com| com.client_code).unwrap_or(-1);
+            let client_code = self
+                .if_(c as usize)
+                .map(|com| com.client_code)
+                .unwrap_or(-1);
             let mut notify = true;
             if client_code > 0 {
                 notify = self.client_button(c);
@@ -3900,10 +3910,7 @@ impl Client {
     /// children (the layer recursion is 0, not TS `type === 1`). Missing
     /// children or missing child ids stop the walk.
     pub fn if_anim_reset(&mut self, id: i32) {
-        let Some(children) = self
-            .if_(id as usize)
-            .and_then(|com| com.children.clone())
-        else {
+        let Some(children) = self.if_(id as usize).and_then(|com| com.children.clone()) else {
             return;
         };
         for child_id in children {
@@ -3916,7 +3923,10 @@ impl Client {
             if child.r#type == ComponentType::TYPE_LAYER {
                 self.if_anim_reset(child.id);
             }
-            if let Some(com) = Arc::make_mut(&mut self.ifaces_mut).get_mut(child_id as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+            if let Some(com) = Arc::make_mut(&mut self.ifaces_mut)
+                .get_mut(child_id as usize)
+                .and_then(|o| o.as_mut())
+                .map(Arc::make_mut)
             {
                 com.anim_frame = 0;
                 com.anim_cycle = 0;
@@ -4543,7 +4553,11 @@ impl Client {
                 // borrow below.
                 let client_code = self.if_(com_id).map(|com| com.client_code).unwrap_or(-1);
                 let obj_replace = self.if_(com_id).map(|com| com.obj_replace).unwrap_or(false);
-                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut).get_mut(com_id).and_then(|o| o.as_mut()).map(Arc::make_mut) {
+                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut)
+                    .get_mut(com_id)
+                    .and_then(|o| o.as_mut())
+                    .map(Arc::make_mut)
+                {
                     let mut mode = 0;
                     if self.bank_arrange_mode == 1 && client_code == CC_BANKMODE {
                         mode = 1;
@@ -4877,7 +4891,10 @@ impl Client {
             .if_(com_id as usize)
             .map(|com| com.graphic2_name.clone())
             .unwrap_or_default();
-        let Some(com) = Arc::make_mut(&mut self.ifaces_mut).get_mut(com_id as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+        let Some(com) = Arc::make_mut(&mut self.ifaces_mut)
+            .get_mut(com_id as usize)
+            .and_then(|o| o.as_mut())
+            .map(Arc::make_mut)
         else {
             return;
         };
@@ -5982,7 +5999,10 @@ impl Client {
                 let g = (colour >> 5) & 0x1f;
                 let b = colour & 0x1f;
 
-                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut).get_mut(com_id as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut)
+                    .get_mut(com_id as usize)
+                    .and_then(|o| o.as_mut())
+                    .map(Arc::make_mut)
                 {
                     com.colour = (r << 19) + (g << 11) + (b << 3);
                 }
@@ -5993,7 +6013,10 @@ impl Client {
                 let com_id = payload.g2();
                 let hide = payload.g1() == 1;
 
-                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut).get_mut(com_id as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut)
+                    .get_mut(com_id as usize)
+                    .and_then(|o| o.as_mut())
+                    .map(Arc::make_mut)
                 {
                     com.hide = hide;
                 }
@@ -6012,7 +6035,10 @@ impl Client {
                     (0, 0, 0)
                 };
 
-                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut).get_mut(com_id as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut)
+                    .get_mut(com_id as usize)
+                    .and_then(|o| o.as_mut())
+                    .map(Arc::make_mut)
                 {
                     com.model1_type = 4;
                     com.model1_id = obj_id;
@@ -6028,7 +6054,10 @@ impl Client {
                 let com_id = payload.g2();
                 let model_id = payload.g2();
 
-                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut).get_mut(com_id as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut)
+                    .get_mut(com_id as usize)
+                    .and_then(|o| o.as_mut())
+                    .map(Arc::make_mut)
                 {
                     com.model1_type = 1;
                     com.model1_id = model_id;
@@ -6040,7 +6069,10 @@ impl Client {
                 let com_id = payload.g2();
                 let seq_id = payload.g2b();
 
-                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut).get_mut(com_id as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut)
+                    .get_mut(com_id as usize)
+                    .and_then(|o| o.as_mut())
+                    .map(Arc::make_mut)
                 {
                     com.model_anim = seq_id;
                     if seq_id == -1 {
@@ -6062,7 +6094,10 @@ impl Client {
                 });
 
                 if let (Some(com), Some(model1_id)) = (
-                    Arc::make_mut(&mut self.ifaces_mut).get_mut(com_id as usize).and_then(|o| o.as_mut()).map(Arc::make_mut),
+                    Arc::make_mut(&mut self.ifaces_mut)
+                        .get_mut(com_id as usize)
+                        .and_then(|o| o.as_mut())
+                        .map(Arc::make_mut),
                     head,
                 ) {
                     com.model1_type = 3;
@@ -6079,7 +6114,10 @@ impl Client {
                     .if_(com_id as usize)
                     .is_some_and(|com| com.layer_id == self.side_icon[self.active_icon as usize]);
 
-                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut).get_mut(com_id as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut)
+                    .get_mut(com_id as usize)
+                    .and_then(|o| o.as_mut())
+                    .map(Arc::make_mut)
                 {
                     com.text = text;
                     // TS 6164: redraw the side when the edited text sits on
@@ -6095,7 +6133,10 @@ impl Client {
                 let com_id = payload.g2();
                 let npc_id = payload.g2();
 
-                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut).get_mut(com_id as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut)
+                    .get_mut(com_id as usize)
+                    .and_then(|o| o.as_mut())
+                    .map(Arc::make_mut)
                 {
                     com.model1_type = 2;
                     com.model1_id = npc_id;
@@ -6108,7 +6149,10 @@ impl Client {
                 let x = payload.g2b();
                 let y = payload.g2b();
 
-                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut).get_mut(com_id as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut)
+                    .get_mut(com_id as usize)
+                    .and_then(|o| o.as_mut())
+                    .map(Arc::make_mut)
                 {
                     com.x = x;
                     com.y = y;
@@ -6125,7 +6169,10 @@ impl Client {
                     .map(|com| (com.r#type, com.height))
                     .unwrap_or((-1, 0));
 
-                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut).get_mut(com_id as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut)
+                    .get_mut(com_id as usize)
+                    .and_then(|o| o.as_mut())
+                    .map(Arc::make_mut)
                 {
                     if layer.0 == ComponentType::TYPE_LAYER {
                         if pos < 0 {
@@ -6145,7 +6192,10 @@ impl Client {
             ServerProt::UPDATE_INV_STOP_TRANSMIT => {
                 let com_id = payload.g2();
 
-                if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut).get_mut(com_id as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+                if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
+                    .get_mut(com_id as usize)
+                    .and_then(|o| o.as_mut())
+                    .map(Arc::make_mut)
                 {
                     if let Some(link_types) = inv.link_obj_type.as_mut() {
                         // [sic] TS writes -1 then 0; the final value is 0
@@ -6170,7 +6220,10 @@ impl Client {
                     slots.push(Self::read_inv_count(payload));
                 }
 
-                if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut).get_mut(com_id as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+                if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
+                    .get_mut(com_id as usize)
+                    .and_then(|o| o.as_mut())
+                    .map(Arc::make_mut)
                 {
                     if let (Some(link_types), Some(link_numbers)) =
                         (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut())
@@ -6200,7 +6253,10 @@ impl Client {
                     let slot = payload.g1();
                     let (id, count) = Self::read_inv_count(payload);
 
-                    if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut).get_mut(com_id as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+                    if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
+                        .get_mut(com_id as usize)
+                        .and_then(|o| o.as_mut())
+                        .map(Arc::make_mut)
                     {
                         if let (Some(link_types), Some(link_numbers)) =
                             (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut())
@@ -7787,7 +7843,9 @@ impl Client {
                             let player = if pid == self.self_slot {
                                 self.local_player.as_mut()
                             } else {
-                                self.players.get_mut(pid as usize).and_then(|p| p.as_deref_mut())
+                                self.players
+                                    .get_mut(pid as usize)
+                                    .and_then(|p| p.as_deref_mut())
                             };
                             if let Some(player) = player {
                                 player.loc_start_cycle = t1 + self.loop_cycle;
@@ -7883,7 +7941,10 @@ impl Client {
         let com = if com_id < 0 {
             Some(&mut self.chat_interface)
         } else {
-            Arc::make_mut(&mut self.ifaces_mut).get_mut(com_id as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+            Arc::make_mut(&mut self.ifaces_mut)
+                .get_mut(com_id as usize)
+                .and_then(|o| o.as_mut())
+                .map(Arc::make_mut)
         };
         let Some(com) = com else {
             return;
@@ -10356,10 +10417,8 @@ impl Client {
     /// `finish_build` reads it for textured overlay rgb; a headed paint
     /// also copies the renderer's table, but unheaded map_build runs first.
     pub fn load_tex_averages(&mut self) {
-        self.tex_average = crate::graphics::Pix3DDraw::cached_averages(
-            &self.config.cache_dir,
-            self.config.lowmem,
-        );
+        self.tex_average =
+            crate::graphics::Pix3DDraw::cached_averages(&self.config.cache_dir, self.config.lowmem);
     }
 
     /// Publish the host's nav-debug paint for this frame. Always stores —

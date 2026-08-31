@@ -12,7 +12,10 @@ impl ClientProt {
 
     pub const IDLE_TIMER: ClientProt = ClientProt { id: 209, length: 0 };
     pub const EVENT_MOUSE_CLICK: ClientProt = ClientProt { id: 20, length: 4 };
-    pub const EVENT_MOUSE_MOVE: ClientProt = ClientProt { id: 222, length: -1 };
+    pub const EVENT_MOUSE_MOVE: ClientProt = ClientProt {
+        id: 222,
+        length: -1,
+    };
     pub const EVENT_APPLET_FOCUS: ClientProt = ClientProt { id: 73, length: 1 };
     pub const EVENT_CAMERA_POSITION: ClientProt = ClientProt { id: 53, length: 4 };
 
@@ -27,7 +30,10 @@ impl ClientProt {
     pub const ANTICHEAT_OPLOGIC9: ClientProt = ClientProt { id: 24, length: 3 };
 
     pub const ANTICHEAT_CYCLELOGIC1: ClientProt = ClientProt { id: 12, length: -1 };
-    pub const ANTICHEAT_CYCLELOGIC2: ClientProt = ClientProt { id: 149, length: -1 };
+    pub const ANTICHEAT_CYCLELOGIC2: ClientProt = ClientProt {
+        id: 149,
+        length: -1,
+    };
     pub const ANTICHEAT_CYCLELOGIC3: ClientProt = ClientProt { id: 52, length: 1 };
     pub const ANTICHEAT_CYCLELOGIC4: ClientProt = ClientProt { id: 230, length: 1 };
     pub const ANTICHEAT_CYCLELOGIC5: ClientProt = ClientProt { id: 100, length: 0 };
@@ -72,7 +78,10 @@ impl ClientProt {
     pub const OPHELD4: ClientProt = ClientProt { id: 216, length: 6 };
     pub const OPHELD5: ClientProt = ClientProt { id: 42, length: 6 };
     pub const OPHELDT: ClientProt = ClientProt { id: 135, length: 8 };
-    pub const OPHELDU: ClientProt = ClientProt { id: 136, length: 12 };
+    pub const OPHELDU: ClientProt = ClientProt {
+        id: 136,
+        length: 12,
+    };
 
     pub const INV_BUTTON1: ClientProt = ClientProt { id: 74, length: 6 };
     pub const INV_BUTTON2: ClientProt = ClientProt { id: 82, length: 6 };
@@ -87,18 +96,39 @@ impl ClientProt {
     pub const TUT_CLICKSIDE: ClientProt = ClientProt { id: 94, length: 1 };
 
     pub const MAP_BUILD_COMPLETE: ClientProt = ClientProt { id: 214, length: 0 };
-    pub const MOVE_OPCLICK: ClientProt = ClientProt { id: 138, length: -1 };
-    pub const REPORT_ABUSE: ClientProt = ClientProt { id: 137, length: 10 }; // todo: rename to SEND_SNAPSHOT
+    pub const MOVE_OPCLICK: ClientProt = ClientProt {
+        id: 138,
+        length: -1,
+    };
+    pub const REPORT_ABUSE: ClientProt = ClientProt {
+        id: 137,
+        length: 10,
+    }; // todo: rename to SEND_SNAPSHOT
     pub const MOVE_MINIMAPCLICK: ClientProt = ClientProt { id: 86, length: -1 };
     pub const INV_BUTTOND: ClientProt = ClientProt { id: 93, length: 7 };
     pub const IGNORELIST_DEL: ClientProt = ClientProt { id: 101, length: 8 };
     pub const IGNORELIST_ADD: ClientProt = ClientProt { id: 255, length: 8 };
-    pub const IDK_SAVEDESIGN: ClientProt = ClientProt { id: 125, length: 13 };
+    pub const IDK_SAVEDESIGN: ClientProt = ClientProt {
+        id: 125,
+        length: 13,
+    };
     pub const CHAT_SETMODE: ClientProt = ClientProt { id: 154, length: 3 };
-    pub const MESSAGE_PRIVATE: ClientProt = ClientProt { id: 139, length: -1 };
+    pub const MESSAGE_PRIVATE: ClientProt = ClientProt {
+        id: 139,
+        length: -1,
+    };
     pub const FRIENDLIST_DEL: ClientProt = ClientProt { id: 106, length: 8 };
     pub const FRIENDLIST_ADD: ClientProt = ClientProt { id: 13, length: 8 };
-    pub const CLIENT_CHEAT: ClientProt = ClientProt { id: 224, length: -1 };
-    pub const MESSAGE_PUBLIC: ClientProt = ClientProt { id: 253, length: -1 };
-    pub const MOVE_GAMECLICK: ClientProt = ClientProt { id: 207, length: -1 };
+    pub const CLIENT_CHEAT: ClientProt = ClientProt {
+        id: 224,
+        length: -1,
+    };
+    pub const MESSAGE_PUBLIC: ClientProt = ClientProt {
+        id: 253,
+        length: -1,
+    };
+    pub const MOVE_GAMECLICK: ClientProt = ClientProt {
+        id: 207,
+        length: -1,
+    };
 }

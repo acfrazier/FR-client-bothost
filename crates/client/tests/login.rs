@@ -1,6 +1,6 @@
 use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer};
-use client::render::Renderer;
 use client::io::Packet;
+use client::render::Renderer;
 use client::util::JString;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -8,7 +8,7 @@ use std::thread;
 
 #[test]
 fn to_userhash_matches_client_ts() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     // values generated with webclient JString.ts toUserhash
     assert_eq!(JString::to_userhash("bob"), 3295);
     assert_eq!(JString::to_userhash("admin"), 2094917);
@@ -25,7 +25,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn cold_login_opcode_16_success() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
@@ -49,7 +49,9 @@ let _r = Renderer::new(false);
         assert_eq!((buf[3] as usize) << 8 | buf[4] as usize, 274); // client version
         assert_eq!(buf[5], 0); // info: lowmem off
         assert_eq!(n, 2 + size);
-        if client::login_rsa::login_rsan().starts_with("7162900525229798032761816791230527296329313291") {
+        if client::login_rsa::login_rsan()
+            .starts_with("7162900525229798032761816791230527296329313291")
+        {
             // Java `Packet.rsaenc` writes `BigInteger.toByteArray()` length:
             // 64, or 65 with the leading 0x00 two's-complement byte when the
             // ciphertext MSB is set (random per login).
@@ -82,7 +84,7 @@ let _r = Renderer::new(false);
 /// local player is then re-seeded fresh at `players[2047]` (ready = false).
 #[test]
 fn cold_login_clears_entity_tables() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
@@ -123,7 +125,10 @@ let _r = Renderer::new(false);
 
     c.login("bob", "pw", false).unwrap();
     assert_eq!(c.npc_count, 0, "response 2 must zero npc_count");
-    assert!(c.npc[1].is_none(), "response 2 must null leftover npc slots");
+    assert!(
+        c.npc[1].is_none(),
+        "response 2 must null leftover npc slots"
+    );
     assert_eq!(c.player_count, 0, "response 2 must zero player_count");
     assert!(
         c.players[5].is_none(),
@@ -147,7 +152,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn reconnect_uses_opcode_18() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
@@ -178,7 +183,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn reconnect_response_15_keeps_game_and_local_player() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
@@ -234,7 +239,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     // Task 4c: a cold login after logout must restore the Java response-2
     // defaults (`sideTab = 3`, closed modals, empty chat, no minimap flag)
     // and call `prepareGame` so the game frame the title draw consumed is
@@ -310,7 +315,7 @@ let mut r = Renderer::new(false);
 
 #[test]
 fn login_code_6_is_error() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     thread::spawn(move || {
@@ -340,7 +345,7 @@ let _r = Renderer::new(false);
 /// `login` on the same `Client` can succeed (bot-host retry).
 #[test]
 fn already_logged_in_leaves_title_ready_to_retry() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
@@ -378,7 +383,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn failed_login_can_be_retried_on_the_same_client() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
@@ -417,7 +422,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn lowmem_login_writes_info_byte_one() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {

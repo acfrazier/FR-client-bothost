@@ -226,7 +226,19 @@ fn cpu_renders_maze_wall_and_textured_door() {
         {
             let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
             viewport(&mut pix, &mut surface);
-            rw.render_all(&mut world, &mut pix, &mut surface, &cache, 0, 192, 1950, 192, 3, 0, 128);
+            rw.render_all(
+                &mut world,
+                &mut pix,
+                &mut surface,
+                &cache,
+                0,
+                192,
+                1950,
+                192,
+                3,
+                0,
+                128,
+            );
         }
         let ground = Pix3D::colour_table()[SHADE as usize];
         let n = map
@@ -257,8 +269,26 @@ fn flat_world() -> World {
     for x in 0..max_tile_x {
         for z in 0..max_tile_z {
             world.set_ground(
-                0, x, z, TerrainOverlayShape::PLAIN, 0, -1, 0, 0, 0, 0,
-                SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, SHADE, 0, 0,
+                0,
+                x,
+                z,
+                TerrainOverlayShape::PLAIN,
+                0,
+                -1,
+                0,
+                0,
+                0,
+                0,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                0,
+                0,
             );
         }
     }

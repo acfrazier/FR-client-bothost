@@ -122,18 +122,31 @@ impl PixFont {
         let mut space = 0i64;
         for y in (hi / 7)..hi {
             let idx = if last { wi + y * wi - 1 } else { y * wi };
-            space += mask.get(idx as usize).copied().map(i64::from).unwrap_or(i64::MIN);
+            space += mask
+                .get(idx as usize)
+                .copied()
+                .map(i64::from)
+                .unwrap_or(i64::MIN);
         }
         space
     }
 
     fn glyph(&self, code: u32) -> (&[i8], i32, i32, i32, i32) {
         (
-            self.char_mask.get(code as usize).map(|m| m.as_slice()).unwrap_or(&[]),
+            self.char_mask
+                .get(code as usize)
+                .map(|m| m.as_slice())
+                .unwrap_or(&[]),
             self.char_offset_x.get(code as usize).copied().unwrap_or(0),
             self.char_offset_y.get(code as usize).copied().unwrap_or(0),
-            self.char_mask_width.get(code as usize).copied().unwrap_or(0),
-            self.char_mask_height.get(code as usize).copied().unwrap_or(0),
+            self.char_mask_width
+                .get(code as usize)
+                .copied()
+                .unwrap_or(0),
+            self.char_mask_height
+                .get(code as usize)
+                .copied()
+                .unwrap_or(0),
         )
     }
 
@@ -142,11 +155,32 @@ impl PixFont {
             Some(s) => s,
             None => return,
         };
-        self.draw_string(surface, Some(str), x - self.string_wid(Some(str)) / 2, y, rgb);
+        self.draw_string(
+            surface,
+            Some(str),
+            x - self.string_wid(Some(str)) / 2,
+            y,
+            rgb,
+        );
     }
 
-    pub fn centre_string_tag(&self, surface: &mut Pix2D, str: &str, x: i32, y: i32, rgb: i32, shadowed: bool) {
-        self.draw_string_tag(surface, str, x - self.string_wid(Some(str)) / 2, y, rgb, shadowed);
+    pub fn centre_string_tag(
+        &self,
+        surface: &mut Pix2D,
+        str: &str,
+        x: i32,
+        y: i32,
+        rgb: i32,
+        shadowed: bool,
+    ) {
+        self.draw_string_tag(
+            surface,
+            str,
+            x - self.string_wid(Some(str)) / 2,
+            y,
+            rgb,
+            shadowed,
+        );
     }
 
     pub fn string_wid(&self, str: Option<&str>) -> i32 {
@@ -162,14 +196,25 @@ impl PixFont {
             if chars[c] == '@' && c + 4 < length && chars[c + 4] == '@' {
                 c += 4;
             } else {
-                w += self.char_advance.get(chars[c] as u32 as usize).copied().unwrap_or(0);
+                w += self
+                    .char_advance
+                    .get(chars[c] as u32 as usize)
+                    .copied()
+                    .unwrap_or(0);
             }
             c += 1;
         }
         w
     }
 
-    pub fn draw_string(&self, surface: &mut Pix2D, str: Option<&str>, mut x: i32, mut y: i32, rgb: i32) {
+    pub fn draw_string(
+        &self,
+        surface: &mut Pix2D,
+        str: Option<&str>,
+        mut x: i32,
+        mut y: i32,
+        rgb: i32,
+    ) {
         let str = match str {
             Some(s) => s,
             None => return,
@@ -185,7 +230,15 @@ impl PixFont {
         }
     }
 
-    pub fn centre_string_wave(&self, surface: &mut Pix2D, str: Option<&str>, mut x: i32, y: i32, rgb: i32, phase: i32) {
+    pub fn centre_string_wave(
+        &self,
+        surface: &mut Pix2D,
+        str: Option<&str>,
+        mut x: i32,
+        y: i32,
+        rgb: i32,
+        phase: i32,
+    ) {
         let str = match str {
             Some(s) => s,
             None => return,
@@ -203,7 +256,15 @@ impl PixFont {
         }
     }
 
-    pub fn draw_string_tag(&self, surface: &mut Pix2D, str: &str, mut x: i32, mut y: i32, mut rgb: i32, shadowed: bool) {
+    pub fn draw_string_tag(
+        &self,
+        surface: &mut Pix2D,
+        str: &str,
+        mut x: i32,
+        mut y: i32,
+        mut rgb: i32,
+        shadowed: bool,
+    ) {
         // The strikeout flag is per-call scratch (the fonts are the shared
         // `Media` copy): the `@str@` tag sets it, the end-of-line hline
         // reads it.
@@ -230,7 +291,15 @@ impl PixFont {
                 if code != 32 {
                     let (mask, ox, oy, w, h) = self.glyph(code);
                     if shadowed {
-                        self.plot_letter(surface, mask, x + ox + 1, y + oy + 1, w, h, Colour::BLACK);
+                        self.plot_letter(
+                            surface,
+                            mask,
+                            x + ox + 1,
+                            y + oy + 1,
+                            w,
+                            h,
+                            Colour::BLACK,
+                        );
                     }
                     self.plot_letter(surface, mask, x + ox, y + oy, w, h, rgb);
                 }
@@ -239,11 +308,25 @@ impl PixFont {
             i += 1;
         }
         if strikeout {
-            surface.hline(start_x, y + (self.height as f64 * 0.7) as i32, x - start_x, Colour::DARKRED);
+            surface.hline(
+                start_x,
+                y + (self.height as f64 * 0.7) as i32,
+                x - start_x,
+                Colour::DARKRED,
+            );
         }
     }
 
-    pub fn draw_string_anti_macro(&self, surface: &mut Pix2D, str: &str, mut x: i32, y: i32, mut rgb: i32, shadowed: bool, seed: i32) {
+    pub fn draw_string_anti_macro(
+        &self,
+        surface: &mut Pix2D,
+        str: &str,
+        mut x: i32,
+        y: i32,
+        mut rgb: i32,
+        shadowed: bool,
+        seed: i32,
+    ) {
         // `self.rand` is reseeded at every call, so a local instance
         // reproduces the exact draw sequence (the shared fonts hold no
         // per-call state).
@@ -268,9 +351,27 @@ impl PixFont {
                 if code != 32 {
                     let (mask, ox, oy, w, h) = self.glyph(code);
                     if shadowed {
-                        self.plot_letter_trans(surface, mask, x + ox + 1, off_y + oy + 1, w, h, Colour::BLACK, 192);
+                        self.plot_letter_trans(
+                            surface,
+                            mask,
+                            x + ox + 1,
+                            off_y + oy + 1,
+                            w,
+                            h,
+                            Colour::BLACK,
+                            192,
+                        );
                     }
-                    self.plot_letter_trans(surface, mask, x + ox, off_y + oy, w, h, rgb, rand_alpha);
+                    self.plot_letter_trans(
+                        surface,
+                        mask,
+                        x + ox,
+                        off_y + oy,
+                        w,
+                        h,
+                        rgb,
+                        rand_alpha,
+                    );
                 }
                 x += self.char_advance.get(code as usize).copied().unwrap_or(0);
                 if (rand.next_int() & 0x3) == 0 {
@@ -305,14 +406,37 @@ impl PixFont {
         }
     }
 
-    pub fn draw_string_right(&self, surface: &mut Pix2D, str: &str, x: i32, y: i32, rgb: i32, shadowed: bool) {
+    pub fn draw_string_right(
+        &self,
+        surface: &mut Pix2D,
+        str: &str,
+        x: i32,
+        y: i32,
+        rgb: i32,
+        shadowed: bool,
+    ) {
         if shadowed {
-            self.draw_string(surface, Some(str), x - self.string_wid(Some(str)) + 1, y + 1, Colour::BLACK);
+            self.draw_string(
+                surface,
+                Some(str),
+                x - self.string_wid(Some(str)) + 1,
+                y + 1,
+                Colour::BLACK,
+            );
         }
         self.draw_string(surface, Some(str), x - self.string_wid(Some(str)), y, rgb);
     }
 
-    fn plot_letter(&self, surface: &mut Pix2D, data: &[i8], x: i32, y: i32, w: i32, h: i32, rgb: i32) {
+    fn plot_letter(
+        &self,
+        surface: &mut Pix2D,
+        data: &[i8],
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        rgb: i32,
+    ) {
         let mut x = x;
         let mut y = y;
         let mut w = w;
@@ -349,11 +473,24 @@ impl PixFont {
         }
 
         if w > 0 && h > 0 {
-            self.plot(surface, data, rgb, src_off, dst_off, w, h, dst_step, src_step);
+            self.plot(
+                surface, data, rgb, src_off, dst_off, w, h, dst_step, src_step,
+            );
         }
     }
 
-    fn plot(&self, surface: &mut Pix2D, src: &[i8], rgb: i32, mut src_off: i32, mut dst_off: i32, w: i32, h: i32, dst_step: i32, src_step: i32) {
+    fn plot(
+        &self,
+        surface: &mut Pix2D,
+        src: &[i8],
+        rgb: i32,
+        mut src_off: i32,
+        mut dst_off: i32,
+        w: i32,
+        h: i32,
+        dst_step: i32,
+        src_step: i32,
+    ) {
         let hw = w >> 2;
         let rem = w & 0x3;
 
@@ -389,7 +526,17 @@ impl PixFont {
         }
     }
 
-    fn plot_letter_trans(&self, surface: &mut Pix2D, data: &[i8], x: i32, y: i32, w: i32, h: i32, rgb: i32, alpha: i32) {
+    fn plot_letter_trans(
+        &self,
+        surface: &mut Pix2D,
+        data: &[i8],
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        rgb: i32,
+        alpha: i32,
+    ) {
         let mut x = x;
         let mut y = y;
         let mut w = w;
@@ -426,11 +573,25 @@ impl PixFont {
         }
 
         if w > 0 && h > 0 {
-            self.plot_trans(surface, data, rgb, src_off, dst_off, w, h, dst_step, src_step, alpha);
+            self.plot_trans(
+                surface, data, rgb, src_off, dst_off, w, h, dst_step, src_step, alpha,
+            );
         }
     }
 
-    fn plot_trans(&self, surface: &mut Pix2D, src: &[i8], rgb: i32, mut src_off: i32, mut dst_off: i32, w: i32, h: i32, dst_step: i32, src_step: i32, alpha: i32) {
+    fn plot_trans(
+        &self,
+        surface: &mut Pix2D,
+        src: &[i8],
+        rgb: i32,
+        mut src_off: i32,
+        mut dst_off: i32,
+        w: i32,
+        h: i32,
+        dst_step: i32,
+        src_step: i32,
+        alpha: i32,
+    ) {
         let mixed = ((((rgb & 0xff00ff).wrapping_mul(alpha)) & 0xff00_ff00u32 as i32)
             + (((rgb & 0xff00).wrapping_mul(alpha)) & 0xff0000))
             >> 8;
@@ -442,7 +603,9 @@ impl PixFont {
                     dst_off += 1;
                 } else {
                     let dst_rgb = surface.pixels[dst_off as usize];
-                    surface.pixels[dst_off as usize] = (((((dst_rgb & 0xff00ff).wrapping_mul(inv_alpha)) & 0xff00_ff00u32 as i32)
+                    surface.pixels[dst_off as usize] = (((((dst_rgb & 0xff00ff)
+                        .wrapping_mul(inv_alpha))
+                        & 0xff00_ff00u32 as i32)
                         + (((dst_rgb & 0xff00).wrapping_mul(inv_alpha)) & 0xff0000))
                         >> 8)
                         .wrapping_add(mixed);

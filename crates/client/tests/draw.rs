@@ -18,7 +18,7 @@ fn client() -> Client {
 
 #[test]
 fn headless_new_starts_with_draw_off() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut r = Renderer::new(false);
     let mut c = client();
     assert!(!c.draw);
@@ -27,12 +27,15 @@ let _r = Renderer::new(false);
     r.mainredraw(&mut c);
     assert_eq!(r.draw_area.pixels, before);
     // draw=false skips the frame render entirely: prepare_game never ran
-    assert!(r.area_game.is_none(), "mainredraw must skip with draw=false");
+    assert!(
+        r.area_game.is_none(),
+        "mainredraw must skip with draw=false"
+    );
 }
 
 #[test]
 fn set_draw_true_allows_game_draw_without_present() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut r = Renderer::new(false);
     let mut c = client();
     c.set_draw(true);

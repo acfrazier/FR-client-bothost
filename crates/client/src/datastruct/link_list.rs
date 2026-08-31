@@ -34,7 +34,12 @@ impl<T: LinkableTrait> LinkList<T> {
 
     pub fn clear(&mut self) {
         loop {
-            let head = self.arena.get(self.sentinel).links().next.expect("linked list invariant");
+            let head = self
+                .arena
+                .get(self.sentinel)
+                .links()
+                .next
+                .expect("linked list invariant");
             if head == self.sentinel {
                 self.last = None;
                 return;
@@ -47,7 +52,12 @@ impl<T: LinkableTrait> LinkList<T> {
     pub fn push(&mut self, node: T) {
         let id = self.arena.alloc(node);
         let s = self.sentinel;
-        let tail = self.arena.get(s).links().prev.expect("linked list invariant");
+        let tail = self
+            .arena
+            .get(s)
+            .links()
+            .prev
+            .expect("linked list invariant");
         {
             let n = self.arena.get_mut(id).links_mut();
             n.prev = Some(tail);
@@ -60,7 +70,12 @@ impl<T: LinkableTrait> LinkList<T> {
     pub fn push_front(&mut self, node: T) {
         let id = self.arena.alloc(node);
         let s = self.sentinel;
-        let head = self.arena.get(s).links().next.expect("linked list invariant");
+        let head = self
+            .arena
+            .get(s)
+            .links()
+            .next
+            .expect("linked list invariant");
         {
             let n = self.arena.get_mut(id).links_mut();
             n.prev = Some(s);
@@ -72,7 +87,12 @@ impl<T: LinkableTrait> LinkList<T> {
 
     pub fn pop_front(&mut self) -> Option<T> {
         let s = self.sentinel;
-        let head = self.arena.get(s).links().next.expect("linked list invariant");
+        let head = self
+            .arena
+            .get(s)
+            .links()
+            .next
+            .expect("linked list invariant");
         if head == s {
             return None;
         }
@@ -82,7 +102,12 @@ impl<T: LinkableTrait> LinkList<T> {
 
     pub fn head(&mut self) -> Option<&mut T> {
         let s = self.sentinel;
-        let head = self.arena.get(s).links().next.expect("linked list invariant");
+        let head = self
+            .arena
+            .get(s)
+            .links()
+            .next
+            .expect("linked list invariant");
         if head == s {
             self.cursor = None;
             self.last = None;
@@ -95,7 +120,12 @@ impl<T: LinkableTrait> LinkList<T> {
 
     pub fn tail(&mut self) -> Option<&mut T> {
         let s = self.sentinel;
-        let tail = self.arena.get(s).links().prev.expect("linked list invariant");
+        let tail = self
+            .arena
+            .get(s)
+            .links()
+            .prev
+            .expect("linked list invariant");
         if tail == s {
             self.cursor = None;
             self.last = None;
@@ -138,10 +168,20 @@ impl<T: LinkableTrait> LinkList<T> {
     /// when the walk needs to unlink or re-insert nodes.
     pub fn for_each(&self, mut f: impl FnMut(&T)) {
         let s = self.sentinel;
-        let mut node = self.arena.get(s).links().next.expect("linked list invariant");
+        let mut node = self
+            .arena
+            .get(s)
+            .links()
+            .next
+            .expect("linked list invariant");
         while node != s {
             f(self.arena.get(node));
-            node = self.arena.get(node).links().next.expect("linked list invariant");
+            node = self
+                .arena
+                .get(node)
+                .links()
+                .next
+                .expect("linked list invariant");
         }
     }
 
@@ -168,7 +208,12 @@ impl<T: LinkableTrait> LinkList<T> {
         };
         self.arena.unlink(id);
         let s = self.sentinel;
-        let head = self.arena.get(s).links().next.expect("linked list invariant");
+        let head = self
+            .arena
+            .get(s)
+            .links()
+            .next
+            .expect("linked list invariant");
         {
             let n = self.arena.get_mut(id).links_mut();
             n.prev = Some(s);
@@ -258,7 +303,11 @@ impl<T: LinkableTrait> LinkList2<T> {
         let mut node = arena.get(s).links().next2.expect("linked list invariant");
         while node != s {
             count += 1;
-            node = arena.get(node).links().next2.expect("linked list invariant");
+            node = arena
+                .get(node)
+                .links()
+                .next2
+                .expect("linked list invariant");
         }
         count
     }

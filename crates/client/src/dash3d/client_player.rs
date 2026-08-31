@@ -32,19 +32,15 @@ pub(crate) fn recol1d() -> &'static [Vec<i32>; 5] {
                 6798, 107, 10283, 16, 4797, 7744, 5799, 4634, 33697, 22433, 2983, 54193,
             ], // hair
             vec![
-                8741, 12, 64030, 43162, 7735, 8404, 1701, 38430, 24094, 10153, 56621, 4783,
-                1341, 16578, 35003, 25239,
+                8741, 12, 64030, 43162, 7735, 8404, 1701, 38430, 24094, 10153, 56621, 4783, 1341,
+                16578, 35003, 25239,
             ], // torso
             vec![
-                25238, 8742, 12, 64030, 43162, 7735, 8404, 1701, 38430, 24094, 10153, 56621,
-                4783, 1341, 16578, 35003,
+                25238, 8742, 12, 64030, 43162, 7735, 8404, 1701, 38430, 24094, 10153, 56621, 4783,
+                1341, 16578, 35003,
             ], // legs
-            vec![
-                4626, 11146, 6439, 12, 4758, 10270,
-            ], // feet
-            vec![
-                4550, 4537, 5681, 5673, 5790, 6806, 8076, 4574,
-            ], // skin
+            vec![4626, 11146, 6439, 12, 4758, 10270], // feet
+            vec![4550, 4537, 5681, 5673, 5790, 6806, 8076, 4574], // skin
         ]
     })
 }
@@ -215,16 +211,20 @@ impl ClientPlayer {
         for part in 0..12 {
             self.base_id <<= 0x4;
             if self.appearance[part] >= 256 {
-                self.base_id = self.base_id.wrapping_add(self.appearance[part] as i64 - 256);
+                self.base_id = self
+                    .base_id
+                    .wrapping_add(self.appearance[part] as i64 - 256);
             }
         }
         if self.appearance[0] >= 256 {
-            self.base_id =
-                self.base_id.wrapping_add((self.appearance[0] as i64 - 256) >> 4);
+            self.base_id = self
+                .base_id
+                .wrapping_add((self.appearance[0] as i64 - 256) >> 4);
         }
         if self.appearance[1] >= 256 {
-            self.base_id =
-                self.base_id.wrapping_add((self.appearance[1] as i64 - 256) >> 8);
+            self.base_id = self
+                .base_id
+                .wrapping_add((self.appearance[1] as i64 - 256) >> 8);
         }
         for part in 0..5 {
             self.base_id <<= 0x3;
@@ -346,7 +346,9 @@ impl ClientPlayer {
                     transform_id = frames[self.secondary_anim_frame as usize];
                 }
             }
-            return cache.npc(npc_id).get_temp_model(cache, transform_id, -1, None);
+            return cache
+                .npc(npc_id)
+                .get_temp_model(cache, transform_id, -1, None);
         }
 
         let mut hash = self.base_id;
@@ -370,12 +372,14 @@ impl ClientPlayer {
 
             if seq.replaceheldleft >= 0 {
                 left_hand_value = seq.replaceheldleft;
-                hash = hash.wrapping_add((left_hand_value as i64 - self.appearance[5] as i64) << 40);
+                hash =
+                    hash.wrapping_add((left_hand_value as i64 - self.appearance[5] as i64) << 40);
             }
 
             if seq.replaceheldright >= 0 {
                 right_hand_value = seq.replaceheldright;
-                hash = hash.wrapping_add((right_hand_value as i64 - self.appearance[3] as i64) << 48);
+                hash =
+                    hash.wrapping_add((right_hand_value as i64 - self.appearance[3] as i64) << 48);
             }
         } else if self.secondary_anim >= 0 {
             if let Some(second_frames) = &cache.seq(self.secondary_anim as usize).frames {
@@ -401,12 +405,17 @@ impl ClientPlayer {
                     value = left_hand_value;
                 }
 
-                if value >= 0x100 && value < 0x200 && !cache.idk((value - 0x100) as usize).check_model()
+                if value >= 0x100
+                    && value < 0x200
+                    && !cache.idk((value - 0x100) as usize).check_model()
                 {
                     needs_model = true;
                 }
 
-                if value >= 0x200 && !cache.obj((value - 0x200) as usize).check_wear_model(self.gender)
+                if value >= 0x200
+                    && !cache
+                        .obj((value - 0x200) as usize)
+                        .check_wear_model(self.gender)
                 {
                     needs_model = true;
                 }
@@ -439,15 +448,17 @@ impl ClientPlayer {
                 }
 
                 if value >= 256 && value < 512 {
-                    if let Some(idk_model) = cache.idk((value - 256) as usize).get_model_no_check() {
+                    if let Some(idk_model) = cache.idk((value - 256) as usize).get_model_no_check()
+                    {
                         models.push(Some(idk_model));
                         model_count += 1;
                     }
                 }
 
                 if value >= 512 {
-                    if let Some(obj_model) =
-                        cache.obj((value - 512) as usize).get_wear_model_no_check(self.gender)
+                    if let Some(obj_model) = cache
+                        .obj((value - 512) as usize)
+                        .get_wear_model_no_check(self.gender)
                     {
                         models.push(Some(obj_model));
                         model_count += 1;
@@ -494,7 +505,11 @@ impl ClientPlayer {
 
         if primary_transform_id != -1 && secondary_transform_id != -1 {
             let walkmerge = cache.seq(self.primary_anim as usize).walkmerge.clone();
-            tmp.mask_animate(primary_transform_id, secondary_transform_id, walkmerge.as_deref());
+            tmp.mask_animate(
+                primary_transform_id,
+                secondary_transform_id,
+                walkmerge.as_deref(),
+            );
         } else if primary_transform_id != -1 {
             tmp.animate(primary_transform_id);
         }
@@ -520,7 +535,11 @@ impl ClientPlayer {
                 needs_model = true;
             }
 
-            if part >= 0x200 && !cache.obj((part - 0x200) as usize).check_head_model(self.gender) {
+            if part >= 0x200
+                && !cache
+                    .obj((part - 0x200) as usize)
+                    .check_head_model(self.gender)
+            {
                 needs_model = true;
             }
         }
@@ -542,8 +561,9 @@ impl ClientPlayer {
             }
 
             if value >= 512 {
-                if let Some(head_model) =
-                    cache.obj((value - 512) as usize).get_head_model_no_check(self.gender)
+                if let Some(head_model) = cache
+                    .obj((value - 512) as usize)
+                    .get_head_model_no_check(self.gender)
                 {
                     models.push(Some(head_model));
                     model_count += 1;
@@ -556,7 +576,10 @@ impl ClientPlayer {
             if self.colour[part] == 0 {
                 continue;
             }
-            tmp.recolour(recol1d()[part][0], recol1d()[part][self.colour[part] as usize]);
+            tmp.recolour(
+                recol1d()[part][0],
+                recol1d()[part][self.colour[part] as usize],
+            );
             if part == 1 {
                 tmp.recolour(recol2d()[0], recol2d()[self.colour[part] as usize]);
             }

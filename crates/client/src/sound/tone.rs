@@ -136,10 +136,12 @@ impl Envelope {
             if self.position >= self.length {
                 self.position = self.length - 1;
             }
-            self.threshold = ((self.shape_delta[self.position as usize] as f64 / 65536.0) * delta as f64) as i32;
+            self.threshold =
+                ((self.shape_delta[self.position as usize] as f64 / 65536.0) * delta as f64) as i32;
             if self.threshold > self.ticks {
-                self.delta = (((self.shape_peak[self.position as usize] << 15) as f64 - self.amplitude)
-                    / (self.threshold - self.ticks) as f64) as i32 as f64;
+                self.delta =
+                    (((self.shape_peak[self.position as usize] << 15) as f64 - self.amplitude)
+                        / (self.threshold - self.ticks) as f64) as i32 as f64;
             }
         }
         self.amplitude += self.delta;
@@ -261,8 +263,8 @@ impl Filter {
             let coeff2 = r * r;
 
             self.coeff[direction][pair * 2 + 1] = self.coeff[direction][pair * 2 - 1] * coeff2;
-            self.coeff[direction][pair * 2] =
-                self.coeff[direction][pair * 2 - 1] * coeff + self.coeff[direction][pair * 2 - 2] * coeff2;
+            self.coeff[direction][pair * 2] = self.coeff[direction][pair * 2 - 1] * coeff
+                + self.coeff[direction][pair * 2 - 2] * coeff2;
 
             let mut i = pair * 2 - 1;
             while i >= 2 {
@@ -409,7 +411,12 @@ impl Tone {
 
     /// `generate(sampleCount, length)` from TS; `scratch` is the shared
     /// `Tone.buf` (22050 * 10 samples) and holds the result.
-    pub fn generate<'a>(&mut self, sample_count: i32, length: i32, scratch: &'a mut [i32]) -> &'a [i32] {
+    pub fn generate<'a>(
+        &mut self,
+        sample_count: i32,
+        length: i32,
+        scratch: &'a mut [i32],
+    ) -> &'a [i32] {
         for sample in 0..sample_count as usize {
             scratch_set(scratch, sample, 0);
         }
@@ -426,7 +433,9 @@ impl Tone {
         let mut frequency_start = 0i32;
         let mut frequency_duration = 0i32;
         let mut frequency_form = 0i32;
-        if let (Some(rate), Some(range)) = (&mut self.frequency_mod_rate, &mut self.frequency_mod_range) {
+        if let (Some(rate), Some(range)) =
+            (&mut self.frequency_mod_rate, &mut self.frequency_mod_range)
+        {
             rate.gen_init();
             range.gen_init();
             frequency_form = rate.form;
@@ -437,7 +446,9 @@ impl Tone {
         let mut amplitude_start = 0i32;
         let mut amplitude_duration = 0i32;
         let mut amplitude_form = 0i32;
-        if let (Some(rate), Some(range)) = (&mut self.amplitude_mod_rate, &mut self.amplitude_mod_range) {
+        if let (Some(rate), Some(range)) =
+            (&mut self.amplitude_mod_rate, &mut self.amplitude_mod_range)
+        {
             rate.gen_init();
             range.gen_init();
             amplitude_form = rate.form;
@@ -448,13 +459,16 @@ impl Tone {
         for harmonic in 0..5 {
             if self.harmonic_volume[harmonic] != 0 {
                 self.f_pos[harmonic] = 0;
-                self.f_del[harmonic] = (self.harmonic_delay[harmonic] as f64 * samples_per_step) as i32;
+                self.f_del[harmonic] =
+                    (self.harmonic_delay[harmonic] as f64 * samples_per_step) as i32;
                 self.f_amp[harmonic] = (self.harmonic_volume[harmonic] << 14) / 100;
-                self.f_multi[harmonic] = (((self.frequency_base.end - self.frequency_base.start) as f64
+                self.f_multi[harmonic] = (((self.frequency_base.end - self.frequency_base.start)
+                    as f64
                     * 32.768
                     * 1.0057929410678534f64.powf(self.harmonic_semitone[harmonic] as f64))
                     / samples_per_step) as i32;
-                self.f_offset[harmonic] = (self.frequency_base.start as f64 * 32.768 / samples_per_step) as i32;
+                self.f_offset[harmonic] =
+                    (self.frequency_base.start as f64 * 32.768 / samples_per_step) as i32;
             }
         }
 
@@ -464,7 +478,9 @@ impl Tone {
             let mut frequency = self.frequency_base.gen_next(sample_count);
             let mut amplitude = self.amplitude_base.gen_next(sample_count);
 
-            if let (Some(rate), Some(range)) = (&mut self.frequency_mod_rate, &mut self.frequency_mod_range) {
+            if let (Some(rate), Some(range)) =
+                (&mut self.frequency_mod_rate, &mut self.frequency_mod_range)
+            {
                 let rate = rate.gen_next(sample_count);
                 let range = range.gen_next(sample_count);
                 frequency += self.wave_func(range, frequency_phase, frequency_form) >> 1;
@@ -473,11 +489,14 @@ impl Tone {
                 );
             }
 
-            if let (Some(rate), Some(range)) = (&mut self.amplitude_mod_rate, &mut self.amplitude_mod_range) {
+            if let (Some(rate), Some(range)) =
+                (&mut self.amplitude_mod_rate, &mut self.amplitude_mod_range)
+            {
                 let rate = rate.gen_next(sample_count);
                 let range = range.gen_next(sample_count);
                 amplitude = (amplitude.wrapping_mul(
-                    (self.wave_func(range, amplitude_phase, amplitude_form) >> 1).wrapping_add(32768),
+                    (self.wave_func(range, amplitude_phase, amplitude_form) >> 1)
+                        .wrapping_add(32768),
                 )) >> 15;
                 amplitude_phase = amplitude_phase.wrapping_add(
                     ((rate.wrapping_mul(amplitude_start)) >> 16).wrapping_add(amplitude_duration),
@@ -495,7 +514,8 @@ impl Tone {
                         );
                         scratch_add(scratch, position as usize, value);
                         self.f_pos[harmonic] = self.f_pos[harmonic].wrapping_add(
-                            ((frequency.wrapping_mul(self.f_multi[harmonic])) >> 16).wrapping_add(self.f_offset[harmonic]),
+                            ((frequency.wrapping_mul(self.f_multi[harmonic])) >> 16)
+                                .wrapping_add(self.f_offset[harmonic]),
                         );
                     }
                 }
@@ -514,9 +534,13 @@ impl Tone {
                 let attack_value = attack.gen_next(sample_count);
 
                 let threshold: i32 = if muted {
-                    release.start + ((((release.end as i64 - release.start as i64) * release_value as i64) >> 8) as i32)
+                    release.start
+                        + ((((release.end as i64 - release.start as i64) * release_value as i64)
+                            >> 8) as i32)
                 } else {
-                    release.start + ((((release.end as i64 - release.start as i64) * attack_value as i64) >> 8) as i32)
+                    release.start
+                        + ((((release.end as i64 - release.start as i64) * attack_value as i64)
+                            >> 8) as i32)
                 };
 
                 counter = counter.wrapping_add(256);
@@ -535,7 +559,9 @@ impl Tone {
             let start = (self.reverb_delay as f64 * samples_per_step) as i32;
 
             for sample in start as usize..sample_count as usize {
-                let value = ((scratch_get(scratch, sample - start as usize) as f64 * self.reverb_volume as f64) / 100.0) as i32;
+                let value = ((scratch_get(scratch, sample - start as usize) as f64
+                    * self.reverb_volume as f64)
+                    / 100.0) as i32;
                 scratch_add(scratch, sample, value);
             }
         }
@@ -556,7 +582,10 @@ impl Tone {
                 }
 
                 while sample < limit {
-                    let mut value = mul_shift16(scratch_get(scratch, (sample + coeff0) as usize), self.filter.reduce_coeff_int());
+                    let mut value = mul_shift16(
+                        scratch_get(scratch, (sample + coeff0) as usize),
+                        self.filter.reduce_coeff_int(),
+                    );
 
                     for i in 0..coeff0 {
                         value = value.wrapping_add(mul_shift16(
@@ -586,7 +615,10 @@ impl Tone {
                     }
 
                     while sample < next {
-                        let mut value = mul_shift16(scratch_get(scratch, (sample + coeff0) as usize), self.filter.reduce_coeff_int());
+                        let mut value = mul_shift16(
+                            scratch_get(scratch, (sample + coeff0) as usize),
+                            self.filter.reduce_coeff_int(),
+                        );
 
                         for i in 0..coeff0 {
                             value = value.wrapping_add(mul_shift16(
@@ -658,7 +690,8 @@ impl Tone {
             }
             2 => (sine_table()[(phase & 0x7fff) as usize].wrapping_mul(amplitude)) >> 14,
             3 => (((phase & 0x7fff).wrapping_mul(amplitude)) >> 14) - amplitude,
-            4 => noise_table()[((phase as f64 / 2607.0) as i32 & 0x7fff) as usize].wrapping_mul(amplitude),
+            4 => noise_table()[((phase as f64 / 2607.0) as i32 & 0x7fff) as usize]
+                .wrapping_mul(amplitude),
             _ => 0,
         }
     }

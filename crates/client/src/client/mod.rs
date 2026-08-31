@@ -1,15 +1,15 @@
 pub mod client;
-pub use client::{APPLET_H, APPLET_W, Client, ClientGens, ClientNpc, ClientPlayer};
 pub use crate::core::build as client_build;
-pub use client_build::ClientBuild;
 pub use crate::render::draw as client_draw;
+pub use client::{Client, ClientGens, ClientNpc, ClientPlayer, APPLET_H, APPLET_W};
+pub use client_build::ClientBuild;
 pub mod config;
 pub use config::ClientConfig;
 pub mod game_shell;
 pub use game_shell::GameShell;
 pub mod key_codes;
-pub use key_codes::JavaKeyCode;
 pub use key_codes::lookup;
+pub use key_codes::JavaKeyCode;
 pub mod login_error;
 pub use login_error::LoginError;
 pub mod mini_menu_action;

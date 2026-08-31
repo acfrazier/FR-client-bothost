@@ -5,9 +5,9 @@
 //! Clicks reach `clientButton` through the `doAction` IF_BUTTON arm
 //! (TS 9144-9154), and the non-OK button arms never call it.
 use client::client::{Client, ClientConfig, APPLET_H, APPLET_W};
-use client::render::Renderer;
 use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::graphics::PixMap;
+use client::render::Renderer;
 
 fn client() -> Client {
     Client::new(ClientConfig {
@@ -21,31 +21,43 @@ fn client() -> Client {
 
 #[test]
 fn cc_logout_arms_logout_timer() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
-    c.set_iface(9, IfType {
-        client_code: 205,
-        ..IfType::default()
-    });
+    c.set_iface(
+        9,
+        IfType {
+            client_code: 205,
+            ..IfType::default()
+        },
+    );
     assert!(c.client_button(9));
     assert_eq!(c.logout_timer, 250);
-    c.set_iface(9, IfType {
-        client_code: 3,
-        ..IfType::default()
-    });
-    assert!(!c.client_button(9), "Java clientButton returns false for non-205 codes");
+    c.set_iface(
+        9,
+        IfType {
+            client_code: 3,
+            ..IfType::default()
+        },
+    );
+    assert!(
+        !c.client_button(9),
+        "Java clientButton returns false for non-205 codes"
+    );
     assert_eq!(c.logout_timer, 250); // unchanged for unported codes
 }
 
 #[test]
 fn cc_add_friend_opens_social_input_without_if_button() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.friend_server_status = 2;
-    c.set_iface(9, IfType {
-        client_code: 201, // CC_ADD_FRIEND
-        ..IfType::default()
-    });
+    c.set_iface(
+        9,
+        IfType {
+            client_code: 201, // CC_ADD_FRIEND
+            ..IfType::default()
+        },
+    );
     assert!(!c.client_button(9), "social codes do not send IF_BUTTON");
     assert!(c.social_input_open);
     assert_eq!(c.social_input_type, 1);
@@ -54,12 +66,15 @@ let _r = Renderer::new(false);
 
 #[test]
 fn cc_add_ignore_opens_social_input_without_friend_server() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
-    c.set_iface(9, IfType {
-        client_code: 501, // CC_ADD_IGNORE
-        ..IfType::default()
-    });
+    c.set_iface(
+        9,
+        IfType {
+            client_code: 501, // CC_ADD_IGNORE
+            ..IfType::default()
+        },
+    );
     assert!(!c.client_button(9));
     assert!(c.social_input_open);
     assert_eq!(c.social_input_type, 4);
@@ -67,7 +82,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn cc_logout_hook_ignores_non_ok_buttons() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     // Java execute calls clientButton only from the var5 == 231 (BUTTON_OK)
     // arm; a BUTTON_TOGGLE with client code 205 must not arm the timer.
@@ -85,7 +100,11 @@ let _r = Renderer::new(false);
         button_type: ButtonType::BUTTON_TOGGLE,
         ..IfTypeMut::default()
     };
-    bind_side(&mut c, 1, vec![(root, IfTypeMut::default()), (toggle, toggle_mut)]);
+    bind_side(
+        &mut c,
+        1,
+        vec![(root, IfTypeMut::default()), (toggle, toggle_mut)],
+    );
     click_side(&mut c, 560, 210);
     // the TOGGLE_BUTTON arm sends IF_BUTTON but never calls clientButton
     assert_eq!(c.logout_timer, 0);
@@ -178,7 +197,10 @@ fn logout_then_title_draw_reallocates_regions() {
     r.draw_area = PixMap::new(APPLET_W, APPLET_H);
     r.draw_area.fill(0x00ff00);
     c.logout();
-    assert!(r.image_title2.is_none(), "fresh client has no title regions yet");
+    assert!(
+        r.image_title2.is_none(),
+        "fresh client has no title regions yet"
+    );
     r.title_screen_draw(&mut c);
     assert!(
         r.image_title2.is_some(),

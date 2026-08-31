@@ -35,7 +35,7 @@ fn walk_here_uses_picking_not_tiles_as_params() {
     assert!(c.world.click);
     assert_eq!(c.world.click_x, 96); // 100-4
     assert_eq!(c.world.click_y, 76); // 80-4
-    // no inline walk packet: the pick is armed for the next render
+                                     // no inline walk packet: the pick is armed for the next render
     assert_eq!(c.out.pos, 0);
 }
 

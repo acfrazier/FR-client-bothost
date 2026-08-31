@@ -139,8 +139,12 @@ impl SeqType {
     /// delay into `this.delay[frame]`; this port recomputes (same result),
     /// so it takes `&self`.
     pub fn get_delay(&self, frame: i32) -> i32 {
-        let Some(delay) = self.delay.as_ref() else { return 0 };
-        let Some(frames) = self.frames.as_ref() else { return 0 };
+        let Some(delay) = self.delay.as_ref() else {
+            return 0;
+        };
+        let Some(frames) = self.frames.as_ref() else {
+            return 0;
+        };
 
         let delay_value = if frame >= 0 && (frame as usize) < delay.len() {
             delay[frame as usize]

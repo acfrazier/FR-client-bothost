@@ -365,7 +365,15 @@ mod device {
             let waves = Mutex::new(Vec::new());
             let mut data = vec![0i16; 4];
             let mut scratch = Vec::new();
-            fill_buffer(&mut data, &mut scratch, &midi, &waves, &fade, SAMPLE_RATE, SAMPLE_RATE);
+            fill_buffer(
+                &mut data,
+                &mut scratch,
+                &midi,
+                &waves,
+                &fade,
+                SAMPLE_RATE,
+                SAMPLE_RATE,
+            );
             // Fade gain 1.0 (midivol 0) × 0.5 × 32767 — no extra mix scale.
             assert_eq!(data, vec![16383, 16383, 16383, 16383]);
         }
@@ -378,7 +386,15 @@ mod device {
             let waves = Mutex::new(vec![500i16, -32768i16]);
             let mut data = vec![0i16; 4];
             let mut scratch = Vec::new();
-            fill_buffer(&mut data, &mut scratch, &midi, &waves, &fade, SAMPLE_RATE, SAMPLE_RATE);
+            fill_buffer(
+                &mut data,
+                &mut scratch,
+                &midi,
+                &waves,
+                &fade,
+                SAMPLE_RATE,
+                SAMPLE_RATE,
+            );
             // 32767 + 500 clips to 32767; 32767 + (-32768) = -1
             assert_eq!(data, vec![32767, 32767, -1, -1]);
         }
@@ -392,7 +408,15 @@ mod device {
             let waves = Mutex::new(vec![1000i16; 2]);
             let mut data = vec![0i16; 4];
             let mut scratch = Vec::new();
-            fill_buffer(&mut data, &mut scratch, &midi, &waves, &fade, SAMPLE_RATE, SAMPLE_RATE);
+            fill_buffer(
+                &mut data,
+                &mut scratch,
+                &midi,
+                &waves,
+                &fade,
+                SAMPLE_RATE,
+                SAMPLE_RATE,
+            );
             // waves still mix; the synth path is muted
             assert_eq!(data, vec![1000, 1000, 1000, 1000]);
         }

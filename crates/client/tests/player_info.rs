@@ -69,6 +69,12 @@ fn player_info_appearance_lands_on_local_player() {
     assert_eq!(local.name.as_deref(), Some("Invalid Name"));
     assert_eq!(local.face_entity, 4660, "other masks land on local_player");
     let slot = c.players[2047].as_ref().unwrap();
-    assert!(!slot.ready, "mask writes go to local_player, not the players[2047] clone");
-    assert_eq!(slot.face_entity, -1, "players[2047] clone keeps its own state");
+    assert!(
+        !slot.ready,
+        "mask writes go to local_player, not the players[2047] clone"
+    );
+    assert_eq!(
+        slot.face_entity, -1,
+        "players[2047] clone keeps its own state"
+    );
 }

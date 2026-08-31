@@ -3,13 +3,13 @@
 // The /tmp cache has no packs, so `Client::new` falls back to
 // `Cache::default()` and `Model::load` of a missing id is None.
 use client::config::npc_type::NpcType;
-use client::render::Renderer;
 use client::config::obj_type::ObjType;
 use client::dash3d::Model;
+use client::render::Renderer;
 
 #[test]
 fn npc_get_head_none_without_head_ids() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let npc = NpcType::default();
     assert!(npc.get_head().is_none());
 }
@@ -24,7 +24,7 @@ fn obj_get_model_unlit_none_without_model() {
 
 #[test]
 fn draw_interface_type_model_missing_does_not_panic() {
-let mut r = Renderer::new(false);
+    let mut r = Renderer::new(false);
     let mut c = hud_client();
     let mut layer = client::config::if_type::IfType::default();
     layer.r#type = client::config::if_type::ComponentType::TYPE_LAYER;
@@ -68,7 +68,12 @@ fn npc_get_head_queues_every_missing_head_id() {
     }
 
     let requested = Arc::new(Mutex::new(Vec::new()));
-    Model::init(7, Box::new(CountingProvider { requested: requested.clone() }));
+    Model::init(
+        7,
+        Box::new(CountingProvider {
+            requested: requested.clone(),
+        }),
+    );
 
     let npc = NpcType {
         head: Some(vec![5, 6]),
@@ -109,8 +114,7 @@ fn gpu_draw_does_not_crash_on_mysterious_cube_modal() {
     client::dash3d::AnimFrame::init(40000);
     client::dash3d::Model::init(70000, Box::new(NoopProvider));
     let home = std::env::var("HOME").unwrap();
-    client::unpack::load_snapshot(&cache, &format!("{home}/.274bot/unpack"))
-        .expect("274 snapshot");
+    client::unpack::load_snapshot(&cache, &format!("{home}/.274bot/unpack")).expect("274 snapshot");
 
     client::render::Renderer::set_prefer_gpu(true);
     let mut r = client::render::Renderer::new(false);

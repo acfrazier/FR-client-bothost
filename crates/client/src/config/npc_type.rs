@@ -89,7 +89,10 @@ impl NpcType {
         for id in 0..num {
             let size = idx.g2();
             dat.pos = offset;
-            let mut npc = NpcType { id, ..NpcType::default() };
+            let mut npc = NpcType {
+                id,
+                ..NpcType::default()
+            };
             npc.decode(&mut dat);
             list.push(npc);
             offset += size as usize;
@@ -219,7 +222,10 @@ impl NpcType {
 
                     model.prepare_anim();
                     model.calculate_normals(64, 850, -30, -50, -30, true);
-                    model_cache().lock().unwrap().put(model.clone(), self.id as i64);
+                    model_cache()
+                        .lock()
+                        .unwrap()
+                        .put(model.clone(), self.id as i64);
                 }
                 model
             }

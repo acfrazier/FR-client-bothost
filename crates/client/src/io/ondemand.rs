@@ -82,15 +82,28 @@ pub(crate) struct ModelProviderHandle {
 
 impl ModelProvider for ModelProviderHandle {
     fn request_model(&mut self, id: i32) {
-        let _ = self.tx.send(WorkerCommand::Request { archive: 0, file: id });
+        let _ = self.tx.send(WorkerCommand::Request {
+            archive: 0,
+            file: id,
+        });
     }
 }
 
 /// Client → worker commands (TS `postMessage` inbound messages).
 enum WorkerCommand {
-    Request { archive: i32, file: i32 },
-    PrefetchPriority { archive: i32, file: i32, priority: i32 },
-    Prefetch { archive: i32, file: i32 },
+    Request {
+        archive: i32,
+        file: i32,
+    },
+    PrefetchPriority {
+        archive: i32,
+        file: i32,
+        priority: i32,
+    },
+    Prefetch {
+        archive: i32,
+        file: i32,
+    },
     ClearPrefetches,
     /// Logout: the engine dropped the update connection, so drop the
     /// worker's stream and reset the reconnect state. Unlike `Stop`, the
@@ -293,7 +306,12 @@ impl OnDemand {
     ) -> Option<Self> {
         let versions = read_table(
             versionlist,
-            &["model_version", "anim_version", "midi_version", "map_version"],
+            &[
+                "model_version",
+                "anim_version",
+                "midi_version",
+                "map_version",
+            ],
             2,
             |buf| buf.g2(),
         )?;
@@ -468,7 +486,11 @@ impl OnDemand {
         let map = (x << 8) + z;
         for i in 0..self.map_index.len() {
             if self.map_index[i] == map {
-                return if ty == 0 { self.map_land[i] } else { self.map_loc[i] };
+                return if ty == 0 {
+                    self.map_land[i]
+                } else {
+                    self.map_loc[i]
+                };
             }
         }
         -1
@@ -563,7 +585,11 @@ impl OnDemand {
             if let Some(data) = cache_read(cache_dir, 1, i) {
                 // The store keeps gzip + a 2-byte version trailer, exactly
                 // what `loop_request` strips before handing to `Model::unpack`.
-                let body = if data.len() >= 2 { &data[..data.len() - 2] } else { &data };
+                let body = if data.len() >= 2 {
+                    &data[..data.len() - 2]
+                } else {
+                    &data
+                };
                 let raw = gunzip(body);
                 crate::dash3d::Model::unpack(i, Some(raw.as_slice()));
                 count += 1;
@@ -601,7 +627,11 @@ impl OnDemand {
     pub fn prefetch_priority(&mut self, archive: i32, file: i32, priority: i32) {
         self.want_file(archive, file);
         if let Some(tx) = &self.tx {
-            let _ = tx.send(WorkerCommand::PrefetchPriority { archive, file, priority });
+            let _ = tx.send(WorkerCommand::PrefetchPriority {
+                archive,
+                file,
+                priority,
+            });
         }
     }
 
@@ -654,7 +684,11 @@ impl OnDemand {
             self.arena.take(id);
         }
         if let Some(data) = req.data.take() {
-            let body = if data.len() >= 2 { &data[..data.len() - 2] } else { &data };
+            let body = if data.len() >= 2 {
+                &data[..data.len() - 2]
+            } else {
+                &data
+            };
             req.data = Some(gunzip(body));
         }
         Some(req)
@@ -727,14 +761,17 @@ impl OnDemand {
     fn drain_worker(&mut self) {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
-                WorkerMessage::Completed { archive, file, urgent, data } => {
+                WorkerMessage::Completed {
+                    archive,
+                    file,
+                    urgent,
+                    data,
+                } => {
                     // `want` is the per-handle request/prefetch set. Archive 0/1
                     // Completeds also arrive from `Model::request_download` via
                     // the process provider, which never touches `want` — drop
                     // those and `check_scene` stays on scene 1 (-3, loc models).
-                    let keep = archive == 0
-                        || archive == 1
-                        || self.want.remove(&(archive, file));
+                    let keep = archive == 0 || archive == 1 || self.want.remove(&(archive, file));
                     if !keep {
                         continue;
                     }
@@ -880,7 +917,11 @@ impl Worker {
                     }
                     self.queue.push_back(OnDemandRequest::new(archive, file));
                 }
-                WorkerCommand::PrefetchPriority { archive, file, priority } => {
+                WorkerCommand::PrefetchPriority {
+                    archive,
+                    file,
+                    priority,
+                } => {
                     self.prefetch_priority(archive, file, priority);
                 }
                 WorkerCommand::Prefetch { archive, file } => {
@@ -989,9 +1030,10 @@ impl Worker {
     fn handle_queue(&mut self) {
         while let Some(mut req) = self.queue.pop_front() {
             self.active = true;
-            let mut cached = self.cache_dir.as_ref().and_then(|dir| {
-                cache_read(dir, req.archive + 1, req.file)
-            });
+            let mut cached = self
+                .cache_dir
+                .as_ref()
+                .and_then(|dir| cache_read(dir, req.archive + 1, req.file));
             if !validate(
                 self.crcs[req.archive as usize][req.file as usize],
                 self.versions[req.archive as usize][req.file as usize],
@@ -1021,7 +1063,9 @@ impl Worker {
             }
         }
         while self.urgent_count < 10 {
-            let Some(req) = self.missing.pop_front() else { break };
+            let Some(req) = self.missing.pop_front() else {
+                break;
+            };
             if self.priorities[req.archive as usize][req.file as usize] != 0 {
                 self.loaded_prefetch_files += 1;
             }
@@ -1100,7 +1144,9 @@ impl Worker {
 
     fn try_read(&mut self) -> Result<(), ()> {
         let available = {
-            let Some(stream) = &mut self.stream else { return Ok(()) };
+            let Some(stream) = &mut self.stream else {
+                return Ok(());
+            };
             stream.available().map_err(|_| ())?
         };
 
@@ -1108,7 +1154,9 @@ impl Worker {
             self.active = true;
             let mut hdr = [0u8; 6];
             {
-                let Some(stream) = &mut self.stream else { return Ok(()) };
+                let Some(stream) = &mut self.stream else {
+                    return Ok(());
+                };
                 stream.read_bytes(&mut hdr, 0, 6).map_err(|_| ())?;
             }
             let archive = hdr[0] as i32;
@@ -1165,14 +1213,13 @@ impl Worker {
         if self.part_available > 0 && available >= self.part_available {
             self.active = true;
             let (data_len, into_buf) = match self.current {
-                Some(ci) => (
-                    self.pending[ci].data.as_ref().map_or(0, |d| d.len()),
-                    false,
-                ),
+                Some(ci) => (self.pending[ci].data.as_ref().map_or(0, |d| d.len()), false),
                 None => (self.buf.len(), true),
             };
             {
-                let Some(stream) = &mut self.stream else { return Ok(()) };
+                let Some(stream) = &mut self.stream else {
+                    return Ok(());
+                };
                 if into_buf {
                     stream
                         .read_bytes(&mut self.buf, 0, self.part_available as usize)
@@ -1184,7 +1231,11 @@ impl Worker {
                         .as_mut()
                         .expect("part data allocated with the header");
                     stream
-                        .read_bytes(data, self.part_offset as usize, self.part_available as usize)
+                        .read_bytes(
+                            data,
+                            self.part_offset as usize,
+                            self.part_available as usize,
+                        )
                         .map_err(|_| ())?;
                 }
             }

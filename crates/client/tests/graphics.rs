@@ -683,7 +683,10 @@ fn pix3d_raster_marks_gpu_overlay_coverage() {
         d.set_render_clipping(&surface);
         d.gouraud_triangle(&mut surface, 0, 4, 0, 0, 0, 4, 256, 256, 256);
     }
-    assert_eq!(coverage[0], 255, "written TYPE_MODEL pixel must be opaque overlay");
+    assert_eq!(
+        coverage[0], 255,
+        "written TYPE_MODEL pixel must be opaque overlay"
+    );
     assert_eq!(coverage[4], 0, "unwritten pixel stays a scene hole");
 }
 

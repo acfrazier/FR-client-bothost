@@ -93,12 +93,18 @@ impl ClientProj {
     /// so `move_by` can run the anim loop without a `Cache`. A missing spot
     /// or seq leaves the defaults (loop skipped).
     pub fn bind_seq(&mut self, cache: &Cache) {
-        let Some(spot) = cache.spots.get(self.spotanim as usize) else { return };
+        let Some(spot) = cache.spots.get(self.spotanim as usize) else {
+            return;
+        };
         let Some(seq) = spot.seq else { return };
         let seq_type = cache.seq(seq);
         self.seq_id = Some(seq);
         self.seq_num_frames = seq_type.num_frames;
-        self.seq_delays = Some((0..seq_type.num_frames).map(|f| seq_type.get_delay(f)).collect());
+        self.seq_delays = Some(
+            (0..seq_type.num_frames)
+                .map(|f| seq_type.get_delay(f))
+                .collect(),
+        );
     }
 
     /// Reads a delay pre-resolved by `bind_seq`; out-of-range frames read
@@ -126,7 +132,8 @@ impl ClientProj {
         let dt = (self.t2 + 1 - cycle) as f64;
         self.velocity_x = (dst_x - self.x) / dt;
         self.velocity_z = (dst_z - self.z) / dt;
-        self.velocity = (self.velocity_x * self.velocity_x + self.velocity_z * self.velocity_z).sqrt();
+        self.velocity =
+            (self.velocity_x * self.velocity_x + self.velocity_z * self.velocity_z).sqrt();
         if !self.mobile {
             self.velocity_y = -self.velocity * (self.angle as f64 * 0.02454369).tan();
         }
@@ -142,8 +149,8 @@ impl ClientProj {
         self.y += self.velocity_y * delta as f64
             + self.acceleration_y * 0.5 * delta as f64 * delta as f64;
         self.velocity_y += self.acceleration_y * delta as f64;
-        self.yaw = ((f64::atan2(self.velocity_x, self.velocity_z) * 325.949 + 1024.0) as i32)
-            & 0x7ff;
+        self.yaw =
+            ((f64::atan2(self.velocity_x, self.velocity_z) * 325.949 + 1024.0) as i32) & 0x7ff;
         self.pitch = ((f64::atan2(self.velocity_y, self.velocity) * 325.949) as i32) & 0x7ff;
 
         if self.seq_id.is_some() {
@@ -171,8 +178,12 @@ impl ClientProj {
             }
         }
 
-        let mut model =
-            Model::copy_for_anim(&spot_model, true, AnimFrame::animate_transparencies(frame), false);
+        let mut model = Model::copy_for_anim(
+            &spot_model,
+            true,
+            AnimFrame::animate_transparencies(frame),
+            false,
+        );
 
         if frame != -1 {
             model.prepare_anim();

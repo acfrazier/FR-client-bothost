@@ -149,8 +149,13 @@ impl RenderBackend for CpuBackend {
 
         if !core.cinema_cam {
             if let Some(player) = &core.local_player {
-                let target_y =
-                    get_av_h(&core.groundh, &core.mapl, player.x, player.z, core.minusedlevel) - 50;
+                let target_y = get_av_h(
+                    &core.groundh,
+                    &core.mapl,
+                    player.x,
+                    player.z,
+                    core.minusedlevel,
+                ) - 50;
                 r.cam_follow(
                     core,
                     pitch,
@@ -214,8 +219,17 @@ impl RenderBackend for CpuBackend {
             surface.cls();
             pix3d.set_clipping(game.width, game.height);
             world.render_all(
-                &mut core.world, pix3d, &mut surface, cache, loop_cycle, cam_x, cam_y, cam_z,
-                level, cam_yaw, cam_pitch,
+                &mut core.world,
+                pix3d,
+                &mut surface,
+                cache,
+                loop_cycle,
+                cam_x,
+                cam_y,
+                cam_z,
+                level,
+                cam_yaw,
+                cam_pitch,
             );
         }
         world.remove_sprites(&mut core.world);
@@ -229,7 +243,8 @@ impl RenderBackend for CpuBackend {
         // consumes the picks in the same pass (task-2b fix round 1; the old
         // end-of-frame copy was one frame stale).
         core.pick_count = r.pix3d.picked_count;
-        core.pick_typecodes.copy_from_slice(&r.pix3d.picked_entity_typecode);
+        core.pick_typecodes
+            .copy_from_slice(&r.pix3d.picked_entity_typecode);
         r.other_overlays(core);
 
         // TS 4252-4257: restore the pre-jitter eye.
@@ -279,12 +294,26 @@ impl RenderBackend for CpuBackend {
                     if core.on_demand.is_some() {
                         let message = core.on_demand.as_ref().unwrap().message.clone();
                         if let Some(p11) = r.media.p11.as_ref() {
-                            p11.centre_string_tag(&mut surface, &message, w / 2, extra_y, 0x75a9a9, true);
+                            p11.centre_string_tag(
+                                &mut surface,
+                                &message,
+                                w / 2,
+                                extra_y,
+                                0x75a9a9,
+                                true,
+                            );
                         }
                     }
 
                     if let Some(b12) = r.media.b12.as_ref() {
-                        b12.centre_string_tag(&mut surface, "Welcome to RuneScape", w / 2, y, Colour::YELLOW, true);
+                        b12.centre_string_tag(
+                            &mut surface,
+                            "Welcome to RuneScape",
+                            w / 2,
+                            y,
+                            Colour::YELLOW,
+                            true,
+                        );
                     }
 
                     let mut x = (w / 2) - 80;
@@ -293,7 +322,14 @@ impl RenderBackend for CpuBackend {
                         button.plot_sprite(&mut surface, x - 73, y - 20);
                     }
                     if let Some(b12) = r.media.b12.as_ref() {
-                        b12.centre_string_tag(&mut surface, "New User", x, y + 5, Colour::WHITE, true);
+                        b12.centre_string_tag(
+                            &mut surface,
+                            "New User",
+                            x,
+                            y + 5,
+                            Colour::WHITE,
+                            true,
+                        );
                     }
 
                     x = (w / 2) + 80;
@@ -301,33 +337,83 @@ impl RenderBackend for CpuBackend {
                         button.plot_sprite(&mut surface, x - 73, y - 20);
                     }
                     if let Some(b12) = r.media.b12.as_ref() {
-                        b12.centre_string_tag(&mut surface, "Existing User", x, y + 5, Colour::WHITE, true);
+                        b12.centre_string_tag(
+                            &mut surface,
+                            "Existing User",
+                            x,
+                            y + 5,
+                            Colour::WHITE,
+                            true,
+                        );
                     }
                 } else if core.loginscreen == 2 {
                     let mut y = (h / 2) - 40;
                     if let Some(b12) = r.media.b12.as_ref() {
                         if core.login_mes1.is_empty() {
-                            b12.centre_string_tag(&mut surface, &core.login_mes2, w / 2, y - 7, Colour::YELLOW, true);
+                            b12.centre_string_tag(
+                                &mut surface,
+                                &core.login_mes2,
+                                w / 2,
+                                y - 7,
+                                Colour::YELLOW,
+                                true,
+                            );
                         } else {
-                            b12.centre_string_tag(&mut surface, &core.login_mes1, w / 2, y - 15, Colour::YELLOW, true);
-                            b12.centre_string_tag(&mut surface, &core.login_mes2, w / 2, y, Colour::YELLOW, true);
+                            b12.centre_string_tag(
+                                &mut surface,
+                                &core.login_mes1,
+                                w / 2,
+                                y - 15,
+                                Colour::YELLOW,
+                                true,
+                            );
+                            b12.centre_string_tag(
+                                &mut surface,
+                                &core.login_mes2,
+                                w / 2,
+                                y,
+                                Colour::YELLOW,
+                                true,
+                            );
                         }
                         y += 30;
 
                         let user_line = format!(
                             "Username: {}{}",
                             core.login_user,
-                            if core.login_select == 0 && core.loop_cycle % 40 < 20 { "@yel@|" } else { "" }
+                            if core.login_select == 0 && core.loop_cycle % 40 < 20 {
+                                "@yel@|"
+                            } else {
+                                ""
+                            }
                         );
-                        b12.draw_string_tag(&mut surface, &user_line, w / 2 - 90, y, Colour::WHITE, true);
+                        b12.draw_string_tag(
+                            &mut surface,
+                            &user_line,
+                            w / 2 - 90,
+                            y,
+                            Colour::WHITE,
+                            true,
+                        );
                         y += 15;
 
                         let pass_line = format!(
                             "Password: {}{}",
                             JString::get_repeated_character(&core.login_pass),
-                            if core.login_select == 1 && core.loop_cycle % 40 < 20 { "@yel@|" } else { "" }
+                            if core.login_select == 1 && core.loop_cycle % 40 < 20 {
+                                "@yel@|"
+                            } else {
+                                ""
+                            }
                         );
-                        b12.draw_string_tag(&mut surface, &pass_line, w / 2 - 88, y, Colour::WHITE, true);
+                        b12.draw_string_tag(
+                            &mut surface,
+                            &pass_line,
+                            w / 2 - 88,
+                            y,
+                            Colour::WHITE,
+                            true,
+                        );
                     }
 
                     let x = (w / 2) - 80;
@@ -344,22 +430,64 @@ impl RenderBackend for CpuBackend {
                         button.plot_sprite(&mut surface, x - 73, y - 20);
                     }
                     if let Some(b12) = r.media.b12.as_ref() {
-                        b12.centre_string_tag(&mut surface, "Cancel", x, y + 5, Colour::WHITE, true);
+                        b12.centre_string_tag(
+                            &mut surface,
+                            "Cancel",
+                            x,
+                            y + 5,
+                            Colour::WHITE,
+                            true,
+                        );
                     }
                 } else if core.loginscreen == 3 {
                     let x = w / 2;
                     let mut y = (h / 2) - 60;
                     if let Some(b12) = r.media.b12.as_ref() {
-                        b12.centre_string_tag(&mut surface, "Create a free account", x, y, Colour::YELLOW, true);
+                        b12.centre_string_tag(
+                            &mut surface,
+                            "Create a free account",
+                            x,
+                            y,
+                            Colour::YELLOW,
+                            true,
+                        );
 
                         y = (h / 2) - 35;
-                        b12.centre_string_tag(&mut surface, "To create a new account you need to", x, y, Colour::WHITE, true);
+                        b12.centre_string_tag(
+                            &mut surface,
+                            "To create a new account you need to",
+                            x,
+                            y,
+                            Colour::WHITE,
+                            true,
+                        );
                         y += 15;
-                        b12.centre_string_tag(&mut surface, "go back to the main RuneScape webpage", x, y, Colour::WHITE, true);
+                        b12.centre_string_tag(
+                            &mut surface,
+                            "go back to the main RuneScape webpage",
+                            x,
+                            y,
+                            Colour::WHITE,
+                            true,
+                        );
                         y += 15;
-                        b12.centre_string_tag(&mut surface, "and choose the red 'create account'", x, y, Colour::WHITE, true);
+                        b12.centre_string_tag(
+                            &mut surface,
+                            "and choose the red 'create account'",
+                            x,
+                            y,
+                            Colour::WHITE,
+                            true,
+                        );
                         y += 15;
-                        b12.centre_string_tag(&mut surface, "button at the top right of that page.", x, y, Colour::WHITE, true);
+                        b12.centre_string_tag(
+                            &mut surface,
+                            "button at the top right of that page.",
+                            x,
+                            y,
+                            Colour::WHITE,
+                            true,
+                        );
                     }
 
                     let x = w / 2;
@@ -368,7 +496,14 @@ impl RenderBackend for CpuBackend {
                         button.plot_sprite(&mut surface, x - 73, y - 20);
                     }
                     if let Some(b12) = r.media.b12.as_ref() {
-                        b12.centre_string_tag(&mut surface, "Cancel", x, y + 5, Colour::WHITE, true);
+                        b12.centre_string_tag(
+                            &mut surface,
+                            "Cancel",
+                            x,
+                            y + 5,
+                            Colour::WHITE,
+                            true,
+                        );
                     }
                 }
             }
@@ -443,9 +578,11 @@ impl RenderBackend for CpuBackend {
             // held-arrow step goes through `chat_interface` (a synthetic IfType,
             // `com_id` -1), then `chat_scroll_pos` is re-derived from it.
             if core.chat_modal_id == -1 {
-                core.chat_interface.scroll_pos = core.chat_scroll_height - core.chat_scroll_pos - 77;
+                core.chat_interface.scroll_pos =
+                    core.chat_scroll_height - core.chat_scroll_pos - 77;
                 core.chat_interface.scroll_height = core.chat_scroll_height;
-                if core.shell.mouse_x > 448 && core.shell.mouse_x < 560 && core.shell.mouse_y > 332 {
+                if core.shell.mouse_x > 448 && core.shell.mouse_x < 560 && core.shell.mouse_y > 332
+                {
                     core.do_scrollbar(
                         core.shell.mouse_x - 17,
                         core.shell.mouse_y - 357,
@@ -531,7 +668,14 @@ impl RenderBackend for CpuBackend {
                         backbase1.plot_sprite(&mut surface, 0, 0);
                     }
                     if let Some(p12) = r.media.p12.as_ref() {
-                        p12.centre_string_tag(&mut surface, "Public chat", 55, 28, Colour::WHITE, true);
+                        p12.centre_string_tag(
+                            &mut surface,
+                            "Public chat",
+                            55,
+                            28,
+                            Colour::WHITE,
+                            true,
+                        );
                         let (label, rgb) = match core.chat_public_mode {
                             1 => ("Friends", Colour::YELLOW),
                             2 => ("Off", Colour::RED),
@@ -539,21 +683,42 @@ impl RenderBackend for CpuBackend {
                             _ => ("On", Colour::GREEN),
                         };
                         p12.centre_string_tag(&mut surface, label, 55, 41, rgb, true);
-                        p12.centre_string_tag(&mut surface, "Private chat", 184, 28, Colour::WHITE, true);
+                        p12.centre_string_tag(
+                            &mut surface,
+                            "Private chat",
+                            184,
+                            28,
+                            Colour::WHITE,
+                            true,
+                        );
                         let (label, rgb) = match core.chat_private_mode {
                             1 => ("Friends", Colour::YELLOW),
                             2 => ("Off", Colour::RED),
                             _ => ("On", Colour::GREEN),
                         };
                         p12.centre_string_tag(&mut surface, label, 184, 41, rgb, true);
-                        p12.centre_string_tag(&mut surface, "Trade/duel", 324, 28, Colour::WHITE, true);
+                        p12.centre_string_tag(
+                            &mut surface,
+                            "Trade/duel",
+                            324,
+                            28,
+                            Colour::WHITE,
+                            true,
+                        );
                         let (label, rgb) = match core.chat_trade_mode {
                             1 => ("Friends", Colour::YELLOW),
                             2 => ("Off", Colour::RED),
                             _ => ("On", Colour::GREEN),
                         };
                         p12.centre_string_tag(&mut surface, label, 324, 41, rgb, true);
-                        p12.centre_string_tag(&mut surface, "Report abuse", 458, 33, Colour::WHITE, true);
+                        p12.centre_string_tag(
+                            &mut surface,
+                            "Report abuse",
+                            458,
+                            33,
+                            Colour::WHITE,
+                            true,
+                        );
                     }
                 }
                 if let Some(base) = &r.area_backbase1 {

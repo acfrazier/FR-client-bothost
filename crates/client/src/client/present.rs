@@ -204,19 +204,17 @@ mod window {
         /// in physical pixels and non-resizable so present, surface, and the
         /// `apply_mouse_*` coordinates share the 1:1 applet pixel space: no
         /// resize-to-fit, no upscale.
-        pub(super) fn open(
-            width: u32,
-            height: u32,
-            title: &str,
-        ) -> Result<Self, PresentError> {
+        pub(super) fn open(width: u32, height: u32, title: &str) -> Result<Self, PresentError> {
             let event_loop = EventLoop::new()?;
             #[allow(deprecated)] // pump-based driver creates the window outside run_app
-            let window = Arc::new(event_loop.create_window(
-                Window::default_attributes()
-                    .with_title(title)
-                    .with_inner_size(PhysicalSize::new(width, height))
-                    .with_resizable(false),
-            )?);
+            let window = Arc::new(
+                event_loop.create_window(
+                    Window::default_attributes()
+                        .with_title(title)
+                        .with_inner_size(PhysicalSize::new(width, height))
+                        .with_resizable(false),
+                )?,
+            );
             let context = softbuffer::Context::new(window.clone())?;
             let mut surface = softbuffer::Surface::new(&context, window)?;
             let (w, h) = (

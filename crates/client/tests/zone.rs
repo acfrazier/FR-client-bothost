@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
 use client::client::{Client, ClientBuild, ClientConfig};
-use client::render::{RenderWorld, Renderer};
 use client::config::{Cache, LocType, SeqType, SpotType};
 use client::dash3d::{ClientObj, LocChange};
 use client::datastruct::LinkList;
 use client::io::{Packet, ServerProt};
+use client::render::{RenderWorld, Renderer};
 
 #[test]
 fn loc_change_defaults_end_time_minus_one() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let loc = LocChange::default();
     assert_eq!(loc.end_time, -1);
     assert_eq!(loc.new_type, 0);
@@ -17,7 +17,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn client_obj_roundtrips_in_link_list() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut list = LinkList::new();
     list.push(ClientObj::new(42, 5));
     assert_eq!(list.head().unwrap().id, 42);
@@ -26,11 +26,14 @@ let _r = Renderer::new(false);
 
 use client::core::world::LevelHeightmaps;
 use client::core::World;
-use client::dash3d::{AnimFrame, BuildArea, ClientEntity, ClientPlayer, ClientProj, CollisionMap, LocShape, MapSpotAnim, Model, SceneModel};
+use client::dash3d::{
+    AnimFrame, BuildArea, ClientEntity, ClientPlayer, ClientProj, CollisionMap, LocShape,
+    MapSpotAnim, Model, SceneModel,
+};
 
 #[test]
 fn rotate_x_axis_90_swaps_y_and_z() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut m = Model::default();
     m.num_points = 1;
     m.point_x = Some(vec![0]);
@@ -45,7 +48,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn client_proj_set_target_places_startpos_along_delta() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut p = ClientProj::new(0, 0, 0, 100, 0, 0, 10, 0, 64, 0, 0);
     p.set_target(128.0, 100.0, 0.0, 0);
     // d=128, startpos=64 → x = 0 + 128*64/128 = 64
@@ -56,7 +59,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn map_spot_anim_start_cycle_is_cycle_plus_delay() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let s = MapSpotAnim::new(0, 0, 64, 64, 0, 10, 5);
     assert_eq!(s.start_cycle, 15);
     assert!(!s.anim_complete);
@@ -64,17 +67,27 @@ let _r = Renderer::new(false);
 
 #[test]
 fn client_proj_move_by_uses_bound_seq_delays() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let cache = Cache {
         seqs: vec![
             SeqType::default(),
             SeqType::default(),
             SeqType::default(),
-            SeqType { num_frames: 2, frames: Some(vec![0, 1]), iframes: Some(vec![0, 1]), delay: Some(vec![10, 5]), ..SeqType::default() },
+            SeqType {
+                num_frames: 2,
+                frames: Some(vec![0, 1]),
+                iframes: Some(vec![0, 1]),
+                delay: Some(vec![10, 5]),
+                ..SeqType::default()
+            },
         ],
         spots: vec![
             SpotType::default(),
-            SpotType { id: 1, seq: Some(3), ..SpotType::default() },
+            SpotType {
+                id: 1,
+                seq: Some(3),
+                ..SpotType::default()
+            },
         ],
         ..Cache::default()
     };
@@ -97,7 +110,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn client_proj_bind_seq_resolves_zero_delays_via_animframe_fallback() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     // One AnimFrame in the process-wide store: id 0, delay 2. A seq frame
     // with raw delay 0 falls back to its transform's delay; a transform id
     // that is not in the store falls back to 1 (`SeqType::getDelay`).
@@ -132,8 +145,16 @@ let _r = Renderer::new(false);
         ],
         spots: vec![
             SpotType::default(),
-            SpotType { id: 1, seq: Some(0), ..SpotType::default() },
-            SpotType { id: 2, seq: Some(1), ..SpotType::default() },
+            SpotType {
+                id: 1,
+                seq: Some(0),
+                ..SpotType::default()
+            },
+            SpotType {
+                id: 2,
+                seq: Some(1),
+                ..SpotType::default()
+            },
         ],
         ..Cache::default()
     };
@@ -161,14 +182,13 @@ let _r = Renderer::new(false);
 }
 
 fn empty_world() -> World {
-    let groundh: LevelHeightmaps =
-        vec![vec![vec![0i32; 105]; 105]; BuildArea::LEVELS as usize];
+    let groundh: LevelHeightmaps = vec![vec![vec![0i32; 105]; 105]; BuildArea::LEVELS as usize];
     World::new(groundh, BuildArea::SIZE, BuildArea::LEVELS, BuildArea::SIZE)
 }
 
 #[test]
 fn scene_model_proj_min_y_defaults_1000() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let p = ClientProj::new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     let sm = SceneModel::Proj(p);
     assert_eq!(sm.min_y(), 1000);
@@ -176,14 +196,14 @@ let _r = Renderer::new(false);
 
 #[test]
 fn world_dynamic_count_starts_zero() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let w = empty_world();
     assert_eq!(w.dynamic_count(), 0);
 }
 
 #[test]
 fn get_wall_mut_none_on_empty_tile() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut w = empty_world();
     assert!(w.get_wall_mut(0, 1, 1).is_none());
 }
@@ -200,7 +220,7 @@ fn client() -> Client {
 
 #[test]
 fn update_pid_sets_self_slot_and_members() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     let mut p = Packet::alloc(0);
     p.p2(7);
@@ -214,7 +234,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn world_update_num_increments_when_draw_then_zeros_headless() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     assert_eq!(c.world_update_num, 0);
     c.ingame = true;
@@ -227,9 +247,11 @@ let _r = Renderer::new(false);
 
 #[test]
 fn logout_clears_zone_lists() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
-    c.projectiles.push(client::dash3d::ClientProj::new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+    c.projectiles.push(client::dash3d::ClientProj::new(
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ));
     c.logout();
     assert!(c.projectiles.head().is_none());
 }
@@ -238,13 +260,13 @@ let _r = Renderer::new(false);
 
 #[test]
 fn check_model_none_is_ready() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     assert!(LocType::default().check_model(0));
 }
 
 #[test]
 fn change_loc_available_remaps_shape_11_to_10() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut cache = Cache::default();
     cache.locs.push(LocType {
         model: Some(vec![60000]),
@@ -257,20 +279,34 @@ let _r = Renderer::new(false);
 
 #[test]
 fn change_loc_unchecked_wall_straight_with_anim_sets_wall() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut cache = Cache::default();
     cache.locs.push(LocType {
         anim: 0,
         ..LocType::default()
     });
     cache.seqs.push(SeqType::default());
-    let groundh: LevelHeightmaps =
-        vec![vec![vec![0i32; 105]; 105]; BuildArea::LEVELS as usize];
-    let mut world = World::new(groundh.clone(), BuildArea::SIZE, BuildArea::LEVELS, BuildArea::SIZE);
+    let groundh: LevelHeightmaps = vec![vec![vec![0i32; 105]; 105]; BuildArea::LEVELS as usize];
+    let mut world = World::new(
+        groundh.clone(),
+        BuildArea::SIZE,
+        BuildArea::LEVELS,
+        BuildArea::SIZE,
+    );
     let mut cmap = CollisionMap::new();
     ClientBuild::change_loc_unchecked(
-        &cache, &mut world, Some(&mut cmap), &groundh,
-        0, 2, 2, 0, LocShape::WALL_STRAIGHT, 0, 0, 0,
+        &cache,
+        &mut world,
+        Some(&mut cmap),
+        &groundh,
+        0,
+        2,
+        2,
+        0,
+        LocShape::WALL_STRAIGHT,
+        0,
+        0,
+        0,
     );
     // The animated model is materialised lazily on the render side.
     let mut rw = RenderWorld::new();
@@ -283,11 +319,17 @@ let _r = Renderer::new(false);
 
 fn seed_anim_loc(c: &mut Client, id: usize) {
     while c.cache.locs.len() <= id {
-        Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType::default());
+        Arc::get_mut(&mut c.cache)
+            .unwrap()
+            .locs
+            .push(LocType::default());
     }
     Arc::get_mut(&mut c.cache).unwrap().locs[id].anim = 0;
     if c.cache.seqs.is_empty() {
-        Arc::get_mut(&mut c.cache).unwrap().seqs.push(client::config::SeqType::default());
+        Arc::get_mut(&mut c.cache)
+            .unwrap()
+            .seqs
+            .push(client::config::SeqType::default());
     }
 }
 
@@ -302,7 +344,7 @@ fn loc_add_payload(pos: u8, info: u8, id: u16) -> Packet {
 
 #[test]
 fn loc_add_change_applies_on_do_queue() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
@@ -317,10 +359,13 @@ let _r = Renderer::new(false);
 
 #[test]
 fn loc_add_change_waits_when_model_not_ready() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     if c.cache.locs.is_empty() {
-        Arc::get_mut(&mut c.cache).unwrap().locs.push(LocType::default());
+        Arc::get_mut(&mut c.cache)
+            .unwrap()
+            .locs
+            .push(LocType::default());
     }
     // shape 0 with model 60000 not downloaded → check_model(0) is false
     Arc::get_mut(&mut c.cache).unwrap().locs[0].model = Some(vec![60000]);
@@ -340,7 +385,7 @@ let _r = Renderer::new(false);
 /// (2, 5) in place.
 #[test]
 fn loc_del_wall_decor_uses_tile_xz_not_swapped() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
@@ -349,7 +394,8 @@ let _r = Renderer::new(false);
     c.zone_update_z = 0;
     // Seed a wall-decor at (2, 5) directly; a swapped decor_type lookup
     // reads (5, 2) and finds nothing, so the delete would be skipped.
-    c.world.set_decor(0, 2, 5, 0, 0, 0, 0x40000000, 0, 0, 0, 0, 0, 0, 0);
+    c.world
+        .set_decor(0, 2, 5, 0, 0, 0, 0x40000000, 0, 0, 0, 0, 0, 0, 0);
     // pos 0x25 → tile (2, 5), info 0x10 → shape 4 (wall-decor), LOC_DEL.
     let mut p = Packet::alloc(0);
     p.p1(0x25);
@@ -362,7 +408,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn loc_del_removes_wall() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
@@ -383,7 +429,7 @@ let _r = Renderer::new(false);
 /// `LOC_SHAPE_TO_LAYER` table must skip the apply, not panic and log out.
 #[test]
 fn loc_add_change_out_of_range_shape_does_not_panic() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
@@ -404,7 +450,7 @@ let _r = Renderer::new(false);
 /// distinct seeded values fail the assert if a transposed order is used.
 #[test]
 fn loc_anim_replaces_wall_model1() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
@@ -436,8 +482,9 @@ let _r = Renderer::new(false);
     assert_eq!(wall.h_nw, 400);
     let mut rw = RenderWorld::new();
     rw.resolve_tile(&c.world, &c.cache, c.loop_cycle, 0, 1, 1);
-    let SceneModel::LocAnim(anim) =
-        rw.wall_model1(&c.world, &c.cache, c.loop_cycle, 0, 1, 1).expect("model1 set")
+    let SceneModel::LocAnim(anim) = rw
+        .wall_model1(&c.world, &c.cache, c.loop_cycle, 0, 1, 1)
+        .expect("model1 set")
     else {
         panic!("model1 should be LocAnim");
     };
@@ -453,7 +500,7 @@ let _r = Renderer::new(false);
 /// (angle (rotate+1)&3).
 #[test]
 fn loc_anim_wall_door_animates_both_models() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
@@ -498,7 +545,7 @@ let _r = Renderer::new(false);
 /// original `locAnimChange` `if shape == 2` behaviour.
 #[test]
 fn loc_anim_door_packet_overrides_non_door_placement() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
@@ -534,14 +581,15 @@ let _r = Renderer::new(false);
 /// untouched. Seed at (2, 5) so x != z and the swap would miss.
 #[test]
 fn loc_anim_wall_decor_uses_tile_xz() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
     c.ingame = true;
     c.zone_update_x = 0;
     c.zone_update_z = 0;
-    c.world.set_decor(0, 2, 5, 0, 0, 0, 0x40000000, 0, 0, 0, 0, 0, 0, 0);
+    c.world
+        .set_decor(0, 2, 5, 0, 0, 0, 0x40000000, 0, 0, 0, 0, 0, 0, 0);
     let mut p = Packet::alloc(0);
     p.p1(0x25); // tile (2, 5)
     p.p1(0x10); // shape 4 → WALL_DECOR
@@ -554,7 +602,9 @@ let _r = Renderer::new(false);
     assert_eq!(decor.anim_angle, 0);
     let mut rw = RenderWorld::new();
     rw.resolve_tile(&c.world, &c.cache, c.loop_cycle, 0, 2, 5);
-    let model = rw.decor_model(&c.world, &c.cache, c.loop_cycle, 0, 2, 5).expect("decor model set");
+    let model = rw
+        .decor_model(&c.world, &c.cache, c.loop_cycle, 0, 2, 5)
+        .expect("decor model set");
     assert!(matches!(model, SceneModel::LocAnim(_)));
 }
 
@@ -562,14 +612,15 @@ let _r = Renderer::new(false);
 /// ClientLocAnim on the sprite.
 #[test]
 fn loc_anim_scene_remaps_shape_11_to_10() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
     c.ingame = true;
     // typecode bits 29-30 == 2 marks the sprite as a scene (get_scene_mut
     // looks for that bit pattern on the tile's sprites).
-    c.world.add_scenery(0, 1, 1, 0, 0x40000000, 0, 1, 1, 0, 0, 0, 0, 0);
+    c.world
+        .add_scenery(0, 1, 1, 0, 0x40000000, 0, 1, 1, 0, 0, 0, 0, 0);
     let mut p = Packet::alloc(0);
     p.p1(0x11);
     p.p1(0x2c); // shape 11
@@ -582,8 +633,9 @@ let _r = Renderer::new(false);
     assert_eq!(sprite.anim_angle, 0);
     let index = c.world.scene_sprite_index(0, 1, 1).expect("sprite index");
     let mut rw = RenderWorld::new();
-    let SceneModel::LocAnim(anim) =
-        rw.sprite_model(&c.world, &c.cache, c.loop_cycle, index).expect("sprite model set")
+    let SceneModel::LocAnim(anim) = rw
+        .sprite_model(&c.world, &c.cache, c.loop_cycle, index)
+        .expect("sprite model set")
     else {
         panic!("sprite model should be LocAnim");
     };
@@ -593,12 +645,13 @@ let _r = Renderer::new(false);
 /// GROUND_DECOR (layer 3) animates the ground decor's model with shape 22.
 #[test]
 fn loc_anim_ground_decor_model() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
     c.ingame = true;
-    c.world.set_ground_decor(0, 1, 1, 0, 0x40000000, 0, 0, 0, 0, 0);
+    c.world
+        .set_ground_decor(0, 1, 1, 0, 0x40000000, 0, 0, 0, 0, 0);
     let mut p = Packet::alloc(0);
     p.p1(0x11);
     p.p1(0x58); // shape 22 → GROUND_DECOR
@@ -610,8 +663,9 @@ let _r = Renderer::new(false);
     assert_eq!(gd.anim_shape, 22);
     let mut rw = RenderWorld::new();
     rw.resolve_tile(&c.world, &c.cache, c.loop_cycle, 0, 1, 1);
-    let SceneModel::LocAnim(anim) =
-        rw.gd_model(&c.world, &c.cache, c.loop_cycle, 0, 1, 1).expect("gd model set")
+    let SceneModel::LocAnim(anim) = rw
+        .gd_model(&c.world, &c.cache, c.loop_cycle, 0, 1, 1)
+        .expect("gd model set")
     else {
         panic!("gd model should be LocAnim");
     };
@@ -623,7 +677,7 @@ let _r = Renderer::new(false);
 /// skipped instead of panicking and logging out.
 #[test]
 fn loc_anim_out_of_range_shape_does_not_panic() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.scene_state = 2;
@@ -645,7 +699,7 @@ let _r = Renderer::new(false);
 /// No wall on the tile → LOC_ANIM is a no-op (bytes consumed, no panic).
 #[test]
 fn loc_anim_missing_wall_is_noop() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0);
     c.ingame = true;
@@ -663,7 +717,10 @@ let _r = Renderer::new(false);
 
 fn seed_obj(c: &mut Client, id: usize, cost: i32) {
     while c.cache.objs.len() <= id {
-        Arc::get_mut(&mut c.cache).unwrap().objs.push(client::config::ObjType::default());
+        Arc::get_mut(&mut c.cache)
+            .unwrap()
+            .objs
+            .push(client::config::ObjType::default());
     }
     Arc::get_mut(&mut c.cache).unwrap().objs[id].id = id as i32;
     Arc::get_mut(&mut c.cache).unwrap().objs[id].cost = cost;
@@ -680,7 +737,7 @@ fn obj_add(c: &mut Client, pos: i32, id: i32, count: i32) {
 
 #[test]
 fn obj_add_sets_ground_object() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_obj(&mut c, 3, 10);
     obj_add(&mut c, 0x11, 3, 1);
@@ -691,7 +748,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn obj_del_clears_empty_cell() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_obj(&mut c, 3, 10);
     obj_add(&mut c, 0x11, 3, 1);
@@ -706,7 +763,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn obj_count_rewrites_matching_stack() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_obj(&mut c, 3, 10);
     obj_add(&mut c, 0x11, 3, 2);
@@ -717,12 +774,20 @@ let _r = Renderer::new(false);
     p.p2(9);
     p.pos = 0;
     c.handle_packet(ServerProt::OBJ_COUNT, &mut p);
-    assert_eq!(c.ground_obj[0][1][1].as_mut().unwrap().head().unwrap().count, 9);
+    assert_eq!(
+        c.ground_obj[0][1][1]
+            .as_mut()
+            .unwrap()
+            .head()
+            .unwrap()
+            .count,
+        9
+    );
 }
 
 #[test]
 fn obj_reveal_skips_self_slot() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_obj(&mut c, 3, 10);
     c.self_slot = 5;
@@ -738,7 +803,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn obj_reveal_adds_for_other_pid() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_obj(&mut c, 3, 10);
     c.self_slot = 5;
@@ -754,7 +819,7 @@ let _r = Renderer::new(false);
 
 #[test]
 fn obj_add_headless_still_sets_world() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     assert!(!c.draw);
     seed_obj(&mut c, 3, 10);
@@ -768,7 +833,10 @@ let _r = Renderer::new(false);
 /// `render_all` does not panic on the spotanim index.
 fn seed_spot(c: &mut Client, id: usize) {
     while c.cache.spots.len() <= id {
-        Arc::get_mut(&mut c.cache).unwrap().spots.push(SpotType::default());
+        Arc::get_mut(&mut c.cache)
+            .unwrap()
+            .spots
+            .push(SpotType::default());
     }
 }
 
@@ -779,21 +847,21 @@ fn seed_spot(c: &mut Client, id: usize) {
 /// observable is the moved projectile and the 3D pass having run.
 #[test]
 fn map_projanim_pushes_and_add_projectiles_places_dynamic() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut r = Renderer::new(false);
     let mut c = client();
     seed_spot(&mut c, 0);
     c.loop_cycle = 5;
     let mut p = Packet::alloc(0);
     p.p1(0x11); // tile 1,1
-    p.p1(4);    // x2 offset 4 → dest tile 5,1 (nonzero flight, no NaN)
-    p.p1(0);    // z2
-    p.p2(0);    // target 0
-    p.p2(0);    // spotanim
-    p.p1(1);    // h1 (×4 in apply)
-    p.p1(1);    // h2
-    p.p2(0);    // t1
-    p.p2(10);   // t2
+    p.p1(4); // x2 offset 4 → dest tile 5,1 (nonzero flight, no NaN)
+    p.p1(0); // z2
+    p.p2(0); // target 0
+    p.p2(0); // spotanim
+    p.p1(1); // h1 (×4 in apply)
+    p.p1(1); // h2
+    p.p2(0); // t1
+    p.p2(10); // t2
     p.p1(0);
     p.p1(0);
     p.pos = 0;
@@ -808,27 +876,31 @@ let _r = Renderer::new(false);
     // and addDynamic placed it; frame-end removeSprites zeroed the count.
     let proj = c.projectiles.head().unwrap();
     assert!(proj.mobile, "addProjectiles must move the projectile");
-    assert_eq!(r.world.render_count(), 1, "gameDrawMain must run render_all");
+    assert_eq!(
+        r.world.render_count(),
+        1,
+        "gameDrawMain must run render_all"
+    );
 }
 
 /// src tile (101,101) is in `0..104` but the dest `x2 = 101 + 10 = 111`
 /// is not: the MAP_PROJANIM arm must consume the bytes without pushing.
 #[test]
 fn map_projanim_out_of_range_dest_is_dropped() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.zone_update_x = 100;
     c.zone_update_z = 100;
     let mut p = Packet::alloc(0);
     p.p1(0x11); // src tile 101,101 — in range
-    p.p1(10);   // x2 offset +10 → dest tile 111 — out of 0..104
-    p.p1(0);    // z2 offset 0 → dest z 101 — in range
-    p.p2(0);    // target 0
-    p.p2(0);    // spotanim
-    p.p1(0);    // h1 (×4 in apply)
-    p.p1(0);    // h2
-    p.p2(0);    // t1
-    p.p2(0);    // t2
+    p.p1(10); // x2 offset +10 → dest tile 111 — out of 0..104
+    p.p1(0); // z2 offset 0 → dest z 101 — in range
+    p.p2(0); // target 0
+    p.p2(0); // spotanim
+    p.p1(0); // h1 (×4 in apply)
+    p.p1(0); // h2
+    p.p2(0); // t1
+    p.p2(0); // t2
     p.p1(0);
     p.p1(0);
     p.pos = 0;
@@ -844,7 +916,7 @@ let _r = Renderer::new(false);
 /// packet dest would leave z at 192.
 #[test]
 fn map_projanim_negative_target_retargets_to_local_player() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut r = Renderer::new(false);
     let mut c = client();
     seed_spot(&mut c, 0);
@@ -858,14 +930,14 @@ let _r = Renderer::new(false);
     c.loop_cycle = 5;
     let mut p = Packet::alloc(0);
     p.p1(0x11); // tile 1,1 → scene 192,192
-    p.p1(4);    // x2 offset 4 → dest tile 5,1 (in range)
-    p.p1(0);    // z2 offset 0 → dest z 192
-    p.p2(-6);   // target -(self_slot + 1) → local player index 5
-    p.p2(0);    // spotanim
-    p.p1(1);    // h1 (×4 in apply)
-    p.p1(1);    // h2
-    p.p2(0);    // t1
-    p.p2(10);   // t2
+    p.p1(4); // x2 offset 4 → dest tile 5,1 (in range)
+    p.p1(0); // z2 offset 0 → dest z 192
+    p.p2(-6); // target -(self_slot + 1) → local player index 5
+    p.p2(0); // spotanim
+    p.p1(1); // h1 (×4 in apply)
+    p.p1(1); // h2
+    p.p2(0); // t1
+    p.p2(10); // t2
     p.p1(0);
     p.p1(0);
     p.pos = 0;
@@ -902,7 +974,7 @@ let _r = Renderer::new(false);
 /// with delta `world_update_num`) and render_all having run.
 #[test]
 fn map_anim_pushes_and_add_map_anim_places_dynamic() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut r = Renderer::new(false);
     let mut c = client();
     seed_spot(&mut c, 0);
@@ -910,7 +982,10 @@ let _r = Renderer::new(false);
     // `update` advance `anim_cycle` without completing the anim.
     Arc::get_mut(&mut c.cache).unwrap().spots[0].seq = Some(1);
     while c.cache.seqs.len() <= 1 {
-        Arc::get_mut(&mut c.cache).unwrap().seqs.push(SeqType::default());
+        Arc::get_mut(&mut c.cache)
+            .unwrap()
+            .seqs
+            .push(SeqType::default());
     }
     Arc::get_mut(&mut c.cache).unwrap().seqs[1].num_frames = 2;
     Arc::get_mut(&mut c.cache).unwrap().seqs[1].frames = Some(vec![0, 1]);
@@ -932,7 +1007,10 @@ let _r = Renderer::new(false);
     r.game_draw(&mut c);
     let spot = c.spotanims.head().expect("spot stays linked");
     assert_eq!(spot.anim_cycle, 1, "add_map_anim must update the spot");
-    assert!(r.world.render_count() > 0, "gameDrawMain must run render_all");
+    assert!(
+        r.world.render_count() > 0,
+        "gameDrawMain must run render_all"
+    );
 }
 
 // --- P_LOCMERGE ---
@@ -942,7 +1020,7 @@ let _r = Renderer::new(false);
 /// The Some-model branch (locChange + loc offsets) is covered by live proof.
 #[test]
 fn p_locmerge_consumes_and_noops_without_model() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_anim_loc(&mut c, 0); // get_model is still None without pack bytes
     c.self_slot = 3;
@@ -973,7 +1051,7 @@ let _r = Renderer::new(false);
 /// unguarded index.
 #[test]
 fn p_locmerge_no_player_stops_before_apply() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     c.self_slot = 5;
     c.ingame = true;
@@ -998,7 +1076,7 @@ let _r = Renderer::new(false);
 /// expires every loc change inside that zone (`end_time = 0`).
 #[test]
 fn full_follows_clears_8x8_ground_obj_and_expires_locs() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_obj(&mut c, 1, 1);
     c.minusedlevel = 0;
@@ -1028,7 +1106,7 @@ let _r = Renderer::new(false);
 /// base 40, so dx = 8 and `last_x = x + dx` moves tile 20 to 12.
 #[test]
 fn rebuild_normal_shifts_ground_obj_by_base_delta() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_obj(&mut c, 1, 1);
     c.map_build_centre_zone_x = 10;
@@ -1065,7 +1143,7 @@ let _r = Renderer::new(false);
 /// that preserves stacked items; a `.take()` of the same cell would null it.
 #[test]
 fn rebuild_normal_zero_delta_preserves_ground_obj() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_obj(&mut c, 1, 1);
     c.map_build_centre_zone_x = 10;
@@ -1085,7 +1163,10 @@ let _r = Renderer::new(false);
     p.p2(10);
     p.pos = 0;
     c.handle_packet(ServerProt::REBUILD_NORMAL, &mut p);
-    assert!(c.ground_obj[0][20][20].is_some(), "zero-delta shift must not clear the cell");
+    assert!(
+        c.ground_obj[0][20][20].is_some(),
+        "zero-delta shift must not clear the cell"
+    );
 }
 
 /// dx < 0 must scan descending (from tile SIZE-1) so each source tile is
@@ -1093,7 +1174,7 @@ let _r = Renderer::new(false);
 /// lands at tile 20, and the loc change shifts the same way.
 #[test]
 fn rebuild_normal_negative_dx_shifts_descending() {
-let _r = Renderer::new(false);
+    let _r = Renderer::new(false);
     let mut c = client();
     seed_obj(&mut c, 1, 1);
     c.map_build_centre_zone_x = 10;

@@ -131,7 +131,10 @@ impl ObjType {
         for id in 0..num {
             let size = idx.g2();
             dat.pos = offset;
-            let mut obj = ObjType { id, ..ObjType::default() };
+            let mut obj = ObjType {
+                id,
+                ..ObjType::default()
+            };
             obj.decode(&mut dat);
             list.push(obj);
             offset += size as usize;
@@ -328,7 +331,10 @@ impl ObjType {
         model.calculate_normals(self.ambient + 64, self.contrast + 768, -50, -10, -50, true);
         model.use_aabb_mouse_check = true;
 
-        model_cache().lock().unwrap().put(model.clone(), self.id as i64);
+        model_cache()
+            .lock()
+            .unwrap()
+            .put(model.clone(), self.id as i64);
         Some(model)
     }
 
@@ -404,8 +410,14 @@ impl ObjType {
             if outline_rgb > 0 {
                 zoom = (zoom as f64 * 1.04) as i32;
             }
-            let sin_xan = Pix3D::sin_table().get(obj.xan2d as usize).copied().unwrap_or(0);
-            let cos_xan = Pix3D::cos_table().get(obj.xan2d as usize).copied().unwrap_or(0);
+            let sin_xan = Pix3D::sin_table()
+                .get(obj.xan2d as usize)
+                .copied()
+                .unwrap_or(0);
+            let cos_xan = Pix3D::cos_table()
+                .get(obj.xan2d as usize)
+                .copied()
+                .unwrap_or(0);
             let var22 = sin_xan.wrapping_mul(zoom) >> 16;
             let var23 = cos_xan.wrapping_mul(zoom) >> 16;
             model.obj_render(
@@ -478,7 +490,10 @@ impl ObjType {
             let mut cached = var10.clone();
             cached.owi = if obj.stackable { 33 } else { 32 };
             cached.ohi = count;
-            ModelStore::instance().lock().unwrap().put_sprite(Arc::new(cached), id);
+            ModelStore::instance()
+                .lock()
+                .unwrap()
+                .put_sprite(Arc::new(cached), id);
         }
 
         pix3d.origin_x = saved_origin_x;
@@ -699,7 +714,10 @@ mod tests {
         };
         let s = ObjType::get_sprite(&cache, &mut pix, 10, 0, 5).unwrap();
         assert_eq!(s.owi, 32, "non-stackable -> owi 32");
-        assert_eq!(s.ohi, -1, "countobj null forces ohi -1 regardless of the request");
+        assert_eq!(
+            s.ohi, -1,
+            "countobj null forces ohi -1 regardless of the request"
+        );
 
         // stackable with countobj: owi 33, ohi = the requested count
         cache.objs[11].stackable = true;
@@ -724,7 +742,10 @@ mod tests {
             ..ObjType::default()
         };
         let s = ObjType::get_sprite(&cache, &mut pix, 13, 0, 5).unwrap();
-        assert_eq!(s.owi, 33, "count >= threshold resolves the variant; owi from the resolved obj");
+        assert_eq!(
+            s.owi, 33,
+            "count >= threshold resolves the variant; owi from the resolved obj"
+        );
         assert_eq!(s.ohi, 5, "ohi stays the requested count");
     }
 
@@ -742,7 +763,10 @@ mod tests {
         model_cache().lock().unwrap().clear();
         Model::unload(0);
         let hit = ObjType::get_sprite(&cache, &mut pix, 20, 0, 5);
-        assert!(hit.is_some(), "same id/count must hit the sprite cache, not re-render");
+        assert!(
+            hit.is_some(),
+            "same id/count must hit the sprite cache, not re-render"
+        );
         assert_eq!(hit.unwrap().ohi, 5);
         assert!(
             ObjType::get_sprite(&cache, &mut pix, 21, 0, 5).is_none(),
@@ -757,7 +781,12 @@ mod tests {
         Model::unpack(0, Some(MODEL));
         assert!(ObjType::get_sprite(&cache, &mut pix, 22, 0, 5).is_some());
         assert!(ObjType::get_sprite(&cache, &mut pix, 22, 0, 10).is_some());
-        let cached_ohi = ModelStore::instance().lock().unwrap().sprite(22).map(|s| s.ohi).unwrap();
+        let cached_ohi = ModelStore::instance()
+            .lock()
+            .unwrap()
+            .sprite(22)
+            .map(|s| s.ohi)
+            .unwrap();
         assert_eq!(cached_ohi, 10, "the ohi=5 node must not shadow the re-put");
     }
 
@@ -776,7 +805,10 @@ mod tests {
             );
         }
         let mut store = ModelStore::instance().lock().unwrap();
-        assert!(store.sprite(0).is_none(), "the first-put (LRU) entry must be evicted");
+        assert!(
+            store.sprite(0).is_none(),
+            "the first-put (LRU) entry must be evicted"
+        );
         assert!(store.sprite(100).is_some(), "the most recent entry stays");
     }
 
@@ -790,14 +822,25 @@ mod tests {
         // outline 0: the model must rasterise, and the `3153952` drop-shadow
         // fill applies (Java ObjType.java 290-306)
         let s0 = ObjType::get_sprite(&cache, &mut pix, 30, 0, 1).unwrap();
-        assert!(s0.data.iter().any(|&p| p != 0), "the model must rasterise into the sprite");
-        assert!(s0.data.contains(&3153952), "outline 0 draws the 3153952 drop shadow");
+        assert!(
+            s0.data.iter().any(|&p| p != 0),
+            "the model must rasterise into the sprite"
+        );
+        assert!(
+            s0.data.contains(&3153952),
+            "outline 0 draws the 3153952 drop shadow"
+        );
 
         // outline -1 (the cert-template zoom 1.5x): still renders, but the
         // `else if outline_rgb == 0` shadow fill is skipped
         let s1 = ObjType::get_sprite(&cache, &mut pix, 30, -1, 1).unwrap();
-        assert!(s1.data.iter().any(|&p| p != 0), "outline -1 still renders at 1.5x zoom");
-        assert!(!s1.data.contains(&3153952), "outline -1 must skip the 3153952 fill");
+        assert!(
+            s1.data.iter().any(|&p| p != 0),
+            "outline -1 still renders at 1.5x zoom"
+        );
+        assert!(
+            !s1.data.contains(&3153952),
+            "outline -1 must skip the 3153952 fill"
+        );
     }
 }
-

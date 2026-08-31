@@ -2,10 +2,10 @@
 // TS abstract `isReady` is a per-subclass method in this port. `teleport` and
 // `moveCode` take the config `Cache` because the `SeqType.list` static moved
 // onto the `Client`.
-use crate::config::Cache;
 use crate::config::seq_type::{
     POSTANIM_ABORTANIM, POSTANIM_DELAYMOVE, PREANIM_DELAYANIM, PREANIM_DELAYMOVE,
 };
+use crate::config::Cache;
 
 const ROUTE_CAPACITY: usize = 10;
 

@@ -750,8 +750,14 @@ fn nav_debug_paint_does_not_enable_aabb_loc_pick() {
         !model.use_aabb_mouse_check,
         "nav-debug hull paint must never set use_aabb_mouse_check on a loc"
     );
-    assert!(model.num_points >= 4, "the hull AABB needs the model points");
-    assert!(x >= 0 && y > 0 && z >= 0, "the hull must carry a scene position");
+    assert!(
+        model.num_points >= 4,
+        "the hull AABB needs the model points"
+    );
+    assert!(
+        x >= 0 && y > 0 && z >= 0,
+        "the hull must carry a scene position"
+    );
 
     // Mouse beside the door still must miss.
     let door = angled_door_model();
@@ -825,7 +831,10 @@ fn loc_model_at_resolves_grounded_scenery_loc() {
         !resolved.use_aabb_mouse_check,
         "hull paint must never set use_aabb_mouse_check on a grounded loc"
     );
-    assert_eq!(resolved.num_points, 4, "the grounded loc model must resolve");
+    assert_eq!(
+        resolved.num_points, 4,
+        "the grounded loc model must resolve"
+    );
     assert!(
         x > 0 && y > 0 && z > 0,
         "the grounded loc must carry a scene position"

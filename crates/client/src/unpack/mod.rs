@@ -288,7 +288,10 @@ pub fn load_snapshot(cache_dir: &str, out_dir: &str) -> Result<Loaded, UnpackErr
         crate::dash3d::AnimFrame::unpack(raw);
     })?;
 
-    Ok(Loaded { models, anim_records })
+    Ok(Loaded {
+        models,
+        anim_records,
+    })
 }
 
 /// Process-wide snapshot inject: the first caller unpacks; later clients

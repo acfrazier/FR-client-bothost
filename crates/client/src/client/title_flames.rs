@@ -55,9 +55,13 @@ impl TitleFlames {
     pub fn setup_fire(&mut self, title_left: &PixMap, title_right: &PixMap) {
         let mut flame_left = Pix32::new(FLAME_WIDTH, 265);
         let mut flame_right = Pix32::new(FLAME_WIDTH, 265);
-        let n = TITLE_FLAME_PIXELS.min(title_left.pixels.len()).min(flame_left.data.len());
+        let n = TITLE_FLAME_PIXELS
+            .min(title_left.pixels.len())
+            .min(flame_left.data.len());
         flame_left.data[..n].copy_from_slice(&title_left.pixels[..n]);
-        let n = TITLE_FLAME_PIXELS.min(title_right.pixels.len()).min(flame_right.data.len());
+        let n = TITLE_FLAME_PIXELS
+            .min(title_right.pixels.len())
+            .min(flame_right.data.len());
         flame_right.data[..n].copy_from_slice(&title_right.pixels[..n]);
         self.flame_left = Some(flame_left);
         self.flame_right = Some(flame_right);
@@ -133,7 +137,12 @@ impl TitleFlames {
         self.flame_buffer2.clear();
     }
 
-    pub fn render_flames(&mut self, title_left: &mut PixMap, title_right: &mut PixMap, loop_cycle: i32) {
+    pub fn render_flames(
+        &mut self,
+        title_left: &mut PixMap,
+        title_right: &mut PixMap,
+        loop_cycle: i32,
+    ) {
         if !self.active {
             return;
         }
@@ -149,7 +158,10 @@ impl TitleFlames {
     }
 
     fn update_flames(&mut self, loop_cycle: i32) {
-        if self.flame_buffer3.is_empty() || self.flame_buffer2.is_empty() || self.flame_buffer0.is_empty() {
+        if self.flame_buffer3.is_empty()
+            || self.flame_buffer2.is_empty()
+            || self.flame_buffer0.is_empty()
+        {
             return;
         }
 
@@ -200,7 +212,8 @@ impl TitleFlames {
             for x in 1..127 {
                 let index = (x + (y << 7)) as usize;
                 let mut intensity = self.flame_buffer2[index + 128]
-                    - (self.flame_buffer0[((index as i32 + self.cooling_cycle) & mask) as usize] / 5);
+                    - (self.flame_buffer0[((index as i32 + self.cooling_cycle) & mask) as usize]
+                        / 5);
                 if intensity < 0 {
                     intensity = 0;
                 }
@@ -212,7 +225,8 @@ impl TitleFlames {
         let last = FLAME_HEIGHT as usize - 1;
         self.flame_line_offset[last] = ((loop_cycle as f64 / 14.0).sin() * 16.0
             + (loop_cycle as f64 / 15.0).sin() * 14.0
-            + (loop_cycle as f64 / 16.0).sin() * 12.0) as i32;
+            + (loop_cycle as f64 / 16.0).sin() * 12.0)
+            as i32;
 
         if self.flame_gradient_cycle0 > 0 {
             self.flame_gradient_cycle0 -= 4;
@@ -325,7 +339,9 @@ impl TitleFlames {
         flame_buffer3: &[i32],
         flame_line_offset: &[i32],
     ) {
-        let n = TITLE_FLAME_PIXELS.min(base.data.len()).min(title.pixels.len());
+        let n = TITLE_FLAME_PIXELS
+            .min(base.data.len())
+            .min(title.pixels.len());
         title.pixels[..n].copy_from_slice(&base.data[..n]);
 
         let mut src_offset = 0i32;
@@ -383,11 +399,11 @@ impl TitleFlames {
 
     fn merge(src: i32, dst: i32, alpha: i32) -> i32 {
         let inv_alpha = 256 - alpha;
-        ((((src & 0xff00ff).wrapping_mul(inv_alpha)
+        ((((src & 0xff00ff)
+            .wrapping_mul(inv_alpha)
             .wrapping_add((dst & 0xff00ff).wrapping_mul(alpha)))
             & 0xff00_ff00u32 as i32)
-            + (((src & 0xff00).wrapping_mul(inv_alpha)
-                + (dst & 0xff00).wrapping_mul(alpha))
+            + (((src & 0xff00).wrapping_mul(inv_alpha) + (dst & 0xff00).wrapping_mul(alpha))
                 & 0xff0000))
             >> 8
     }
@@ -412,7 +428,8 @@ impl TitleFlames {
         let inv_alpha = 256 - value;
         value = flame_gradient.get(value as usize).copied().unwrap_or(0);
         let background = title.pixels[dst];
-        title.pixels[dst] = ((((value & 0xff00ff).wrapping_mul(alpha)
+        title.pixels[dst] = ((((value & 0xff00ff)
+            .wrapping_mul(alpha)
             .wrapping_add((background & 0xff00ff).wrapping_mul(inv_alpha)))
             & 0xff00_ff00u32 as i32)
             + (((value & 0xff00).wrapping_mul(alpha)

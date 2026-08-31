@@ -30,7 +30,11 @@ impl<T: LinkableTrait> HashTable<T> {
 
     pub fn find(&self, arena: &Arena<T>, key: i64) -> Option<usize> {
         let start = self.buckets[((key as u64) & (self.bucket_count as u64 - 1)) as usize];
-        let mut node = arena.get(start).links().next.expect("linked list invariant");
+        let mut node = arena
+            .get(start)
+            .links()
+            .next
+            .expect("linked list invariant");
         while node != start {
             if arena.get(node).links().key == key {
                 return Some(node);

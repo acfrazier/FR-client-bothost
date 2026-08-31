@@ -144,16 +144,23 @@ fn synth_sound_queue_pushes_pcm_not_drops() {
     let queue = c.waves.lock().unwrap();
     // generate() leaves pos at 44 (header) + 771 PCM bytes
     assert_eq!(queue.len(), 771);
-    assert!(queue.iter().any(|&s| s != 0), "fixture sound must be audible");
+    assert!(
+        queue.iter().any(|&s| s != 0),
+        "fixture sound must be audible"
+    );
 }
 
 #[test]
 fn jagfx_init_and_generate_from_engine_sounds() {
     let path = client::engine_dir().display().to_string();
     let bytes = std::fs::read(format!("{path}/data/pack/client/sounds"));
-    let Ok(bytes) = bytes else { return; };
+    let Ok(bytes) = bytes else {
+        return;
+    };
     let jag = client::io::JagFile::new(bytes);
-    let Some(sounds_dat) = jag.read("sounds.dat") else { return; };
+    let Some(sounds_dat) = jag.read("sounds.dat") else {
+        return;
+    };
 
     let mut fx = client::sound::JagFX::default();
     let mut p = client::io::Packet::new(sounds_dat);
@@ -166,7 +173,10 @@ fn jagfx_init_and_generate_from_engine_sounds() {
     assert_eq!(&wave.data()[36..40], b"data");
     // WAV data is 8-bit PCM at 22050 Hz (LE int32 at offset 24)
     assert_eq!(wave.data()[22], 1);
-    assert_eq!(u32::from_le_bytes(wave.data()[24..28].try_into().unwrap()), 22050);
+    assert_eq!(
+        u32::from_le_bytes(wave.data()[24..28].try_into().unwrap()),
+        22050
+    );
     assert!(wave.pos > 44);
 
     // looped generation must not panic and stays a valid header
@@ -216,7 +226,6 @@ fn jagfx_fixture_matches_ts_reference() {
     }
 }
 
-
 #[cfg(feature = "audio")]
 mod rusty {
     use client::sound::{Midi, RustyMidi};
@@ -261,7 +270,9 @@ mod rusty {
             Some(m) => m,
             None => return, // no engine soundfont → nothing to render
         };
-        let Ok(song) = std::fs::read(&song) else { return };
+        let Ok(song) = std::fs::read(&song) else {
+            return;
+        };
         m.play(&song, 0, true);
         let mut left = vec![0f32; 22050 * 10];
         let mut right = vec![0f32; 22050 * 10];

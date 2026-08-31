@@ -181,7 +181,10 @@ fn try_move_flushes_move_gameclick_to_socket() {
 fn do_action_obj_examine_adds_chat() {
     let mut c = client();
     if c.cache.objs.is_empty() {
-        Arc::get_mut(&mut c.cache).unwrap().objs.resize(1, ObjType::default());
+        Arc::get_mut(&mut c.cache)
+            .unwrap()
+            .objs
+            .resize(1, ObjType::default());
     }
     // Robust to an ambient real /tmp config pack: pin obj 0 to the synthetic
     // no-desc Coins so examine falls back to "It's a <name>.".
@@ -233,7 +236,8 @@ fn do_action_op_loc_encodes_loc_id_not_shape() {
     let x = 10i32;
     let z = 12i32;
     let typecode = (2 << 29) | ((type_id & 0x7fff) << 14) | ((z & 0x7f) << 7) | (x & 0x7f);
-    c.world.add_scenery(0, x, z, 0, typecode, 0, 1, 1, 0, 0, 0, 0, 0);
+    c.world
+        .add_scenery(0, x, z, 0, typecode, 0, 1, 1, 0, 0, 0, 0, 0);
     assert!(c.world.type_code2(0, x, z, typecode) >= 0);
     c.menu_action[0] = MiniMenuAction::OP_LOC1;
     c.menu_param_a[0] = typecode;
@@ -272,7 +276,10 @@ fn do_action_op_held_writes_p2_obj_slot_com() {
 fn do_action_useheld_start_returns_with_use_mode_armed() {
     let mut c = client();
     if c.cache.objs.is_empty() {
-        Arc::get_mut(&mut c.cache).unwrap().objs.resize(1, ObjType::default());
+        Arc::get_mut(&mut c.cache)
+            .unwrap()
+            .objs
+            .resize(1, ObjType::default());
     }
     Arc::get_mut(&mut c.cache).unwrap().objs[0].name = "Coins".into();
     c.menu_action[0] = MiniMenuAction::USEHELD_START;
@@ -287,4 +294,3 @@ fn do_action_useheld_start_returns_with_use_mode_armed() {
     assert_eq!(c.obj_selected_name, "Coins");
     assert_eq!(c.out.pos, 0);
 }
-

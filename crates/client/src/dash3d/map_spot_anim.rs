@@ -40,7 +40,9 @@ impl MapSpotAnim {
 
     /// `update(delta)` from client-ts.
     pub fn update(&mut self, cache: &Cache, delta: i32) {
-        let Some(seq) = cache.spot(self.spotanim as usize).seq else { return };
+        let Some(seq) = cache.spot(self.spotanim as usize).seq else {
+            return;
+        };
         let seq_type = cache.seq(seq);
 
         self.anim_cycle += delta;

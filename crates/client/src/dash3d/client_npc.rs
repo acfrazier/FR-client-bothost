@@ -15,7 +15,11 @@ pub struct ClientNpc {
 
 impl Default for ClientNpc {
     fn default() -> Self {
-        ClientNpc { entity: ClientEntity::default(), r#type: None, min_y: 1000 }
+        ClientNpc {
+            entity: ClientEntity::default(),
+            r#type: None,
+            min_y: 1000,
+        }
     }
 }
 
@@ -99,7 +103,9 @@ impl ClientNpc {
                 }
             }
 
-            cache.npc(npc_id).get_temp_model(cache, secondary_transform, -1, None)
+            cache
+                .npc(npc_id)
+                .get_temp_model(cache, secondary_transform, -1, None)
         } else {
             let primary_seq = cache.seq(self.primary_anim as usize);
             let mut primary_transform = -1;
@@ -114,9 +120,12 @@ impl ClientNpc {
                 }
             }
 
-            cache
-                .npc(npc_id)
-                .get_temp_model(cache, primary_transform, secondary_transform, primary_seq.walkmerge.as_deref())
+            cache.npc(npc_id).get_temp_model(
+                cache,
+                primary_transform,
+                secondary_transform,
+                primary_seq.walkmerge.as_deref(),
+            )
         }
     }
 

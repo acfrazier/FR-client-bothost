@@ -641,7 +641,8 @@ impl RenderWorld {
         x: i32,
         z: i32,
     ) {
-        let Some(wall) = tile_at(&world.squares, level, x, z).and_then(|t| t.wall.as_deref()) else {
+        let Some(wall) = tile_at(&world.squares, level, x, z).and_then(|t| t.wall.as_deref())
+        else {
             return;
         };
         let loc_id = (wall.typecode >> 14) & 0x7fff;
@@ -851,7 +852,8 @@ impl RenderWorld {
     /// Materialise the ground-object stack's `ClientObj` models from the
     /// `(id, count)` descriptors `showObject` stored on the sim tile.
     fn resolve_objs(&mut self, world: &World, level: i32, x: i32, z: i32) {
-        let Some(go) = tile_at(&world.squares, level, x, z).and_then(|t| t.ground_object.as_deref())
+        let Some(go) =
+            tile_at(&world.squares, level, x, z).and_then(|t| t.ground_object.as_deref())
         else {
             return;
         };
@@ -1103,7 +1105,10 @@ impl RenderWorld {
                 continue;
             }
             let (sx, sy, sz, yaw) = (sprite.x, sprite.y, sprite.z, sprite.yaw);
-            if let Some(model) = self.sprite_model_mut(world, cache, loop_cycle, index).as_mut() {
+            if let Some(model) = self
+                .sprite_model_mut(world, cache, loop_cycle, index)
+                .as_mut()
+            {
                 if let Some(model) = model.get_temp_model(cache, loop_cycle) {
                     return Some((sx, sy, sz, yaw, model));
                 }
@@ -1459,7 +1464,8 @@ impl RenderWorld {
                     let mut tile = self.tile_models.get_mut(index).and_then(|t| t.take());
 
                     if let Some(tile) = tile.as_mut() {
-                        if let Some(model1) = tile.wall_model1.as_mut().and_then(|m| m.as_model_mut())
+                        if let Some(model1) =
+                            tile.wall_model1.as_mut().and_then(|m| m.as_model_mut())
                         {
                             if model1.point_normal.is_some() {
                                 self.share_light_loc(world, level, tile_x, tile_z, 1, 1, model1);
@@ -1600,7 +1606,9 @@ impl RenderWorld {
                     if let Some(model1) = tile.wall_model1.as_mut().and_then(|m| m.as_model_mut()) {
                         if model1.point_normal.is_some() {
                             self.share_light_loc(world, 0, tile_x, tile_z, 1, 1, model1);
-                            if let Some(model2) = tile.wall_model2.as_mut().and_then(|m| m.as_model_mut()) {
+                            if let Some(model2) =
+                                tile.wall_model2.as_mut().and_then(|m| m.as_model_mut())
+                            {
                                 if model2.point_normal.is_some() {
                                     self.share_light_loc(world, 0, tile_x, tile_z, 1, 1, model2);
                                     self.model_share_light(model1, model2, 0, 0, 0, false);
@@ -1809,7 +1817,11 @@ impl RenderWorld {
                         .and_then(|t| t.take());
 
                     if let Some(candidate) = candidate.as_mut() {
-                        if let Some(model_b) = candidate.wall_model1.as_mut().and_then(|m| m.as_model_mut()) {
+                        if let Some(model_b) = candidate
+                            .wall_model1
+                            .as_mut()
+                            .and_then(|m| m.as_model_mut())
+                        {
                             if model_b.point_normal.is_some() {
                                 self.model_share_light(
                                     model_a,
@@ -1821,7 +1833,11 @@ impl RenderWorld {
                                 );
                             }
                         }
-                        if let Some(model_b) = candidate.wall_model2.as_mut().and_then(|m| m.as_model_mut()) {
+                        if let Some(model_b) = candidate
+                            .wall_model2
+                            .as_mut()
+                            .and_then(|m| m.as_model_mut())
+                        {
                             if model_b.point_normal.is_some() {
                                 self.model_share_light(
                                     model_a,
@@ -3631,8 +3647,8 @@ impl RenderWorld {
                 let mut sprite_buffer_size = 0i32;
 
                 'iterate_sprites: for i in 0..sprite_count as usize {
-                    let sprite_index = tile_at(&world.squares, level, tile_x, tile_z)
-                        .and_then(|t| t.sprite(i));
+                    let sprite_index =
+                        tile_at(&world.squares, level, tile_x, tile_z).and_then(|t| t.sprite(i));
                     let Some(sprite_index) = sprite_index else {
                         continue;
                     };
