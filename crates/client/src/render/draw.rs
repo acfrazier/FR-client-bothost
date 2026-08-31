@@ -3609,6 +3609,13 @@ impl Renderer {
         }
 
         if client.scene_state == 2 && client.minusedlevel != client.minimap_level {
+            // Unheaded builds park overlay stamps and set `overlay_pending`.
+            // Compose after materialize — this runs *before* `game_draw`'s
+            // `prepare_scene`, and latching `minimap_level` here would freeze
+            // a blank minimap until the next zone rebuild.
+            if client.world.overlay_pending {
+                client.world.materialize_overlay();
+            }
             client.minimap_level = client.minusedlevel;
             self.minimap_build_buffer(client, client.minusedlevel);
         }
@@ -3828,6 +3835,11 @@ impl Renderer {
             return FrameOutput::PixMap(self.draw_area.clone());
         }
         if client.ingame {
+            // Java `prepareGame` runs after login, before the first
+            // `checkMinimap` compose (media/mapscene + scanline masks).
+            // Doing it here — not inside `game_draw` after the compose —
+            // means the first headed paint's minimap sees loaded sprites.
+            self.prepare_game(client);
             self.check_minimap(client);
             if client.scene_state == 2 {
                 self.follow_camera(client);

@@ -9,7 +9,7 @@
 // `pixels`/`width`/`clipMaxY`/`sizeX` become the surface's fields).
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use super::pix2d::Pix2D;
 use super::pix8::Pix8;
@@ -499,6 +499,31 @@ impl Pix3DDraw {
         for id in 0..50 {
             self.get_texture_average(id);
         }
+    }
+
+    /// Process-wide texture averages for `finish_build`, keyed by cache
+    /// dir + lowmem (halving 128×128 textures changes the average).
+    /// Unheaded slots never run `prepare_game`; they still need this
+    /// before the first `map_build` or textured overlay rgb is 0.
+    pub fn cached_averages(cache_dir: &str, low_mem: bool) -> [i32; 50] {
+        static CELL: OnceLock<Mutex<Option<(String, bool, [i32; 50])>>> = OnceLock::new();
+        let cell = CELL.get_or_init(|| Mutex::new(None));
+        let mut guard = cell.lock().unwrap();
+        if let Some((dir, mem, avg)) = &*guard {
+            if dir == cache_dir && *mem == low_mem {
+                return *avg;
+            }
+        }
+        let mut pix = Pix3DDraw::default();
+        pix.low_mem = low_mem;
+        if let Ok(bytes) = std::fs::read(format!("{cache_dir}/textures")) {
+            pix.unpack_textures(&JagFile::new(bytes));
+            pix.init_texture_palettes(0.8);
+            pix.refresh_texture_averages();
+        }
+        let avg = pix.tex_average;
+        *guard = Some((cache_dir.to_string(), low_mem, avg));
+        avg
     }
 
     /// TS `pushTexture`: return `id`'s active texel row to the pool.

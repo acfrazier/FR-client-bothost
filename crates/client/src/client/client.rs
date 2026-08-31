@@ -1589,6 +1589,11 @@ impl Client {
             self.jagfx = Self::unpack_jagfx(&self.config.cache_dir, false);
         }
 
+        // Java unpacks textures during maininit (progress 45) before any
+        // scene build. Unheaded slots never run `prepare_game`, so bake
+        // the averages the sim's `finish_build` reads for overlay rgb.
+        self.load_tex_averages();
+
         // TS maininit 1236 `WordFilter.unpack(wordenc)`: read the jag the
         // fetch persisted. A missing or corrupt file is skipped — the
         // filter stays identity and maininit must not fail. `unpack` is
@@ -9214,43 +9219,60 @@ impl Client {
     /// `pub` for the `client_build` integration tests.
     pub fn scene_model_ids(&self, model_count: usize) -> Vec<bool> {
         let mut used = vec![false; model_count];
+        let mark = |used: &mut [bool], typecode: i32| {
+            let loc_id = (typecode >> 14) & 0x7fff;
+            if (loc_id as usize) >= self.cache.locs.len() {
+                return;
+            }
+            let loc = self.cache.loc(loc_id as usize);
+            if let Some(models) = &loc.model {
+                for &m in models {
+                    let id = (m & 0xffff) as usize;
+                    if id < used.len() {
+                        used[id] = true;
+                    }
+                }
+            }
+        };
         for level in 0..BuildArea::LEVELS {
             for x in 0..BuildArea::SIZE {
                 for z in 0..BuildArea::SIZE {
-                    let typecodes = [
-                        self.world
-                            .get_wall(level as i32, x as i32, z as i32)
-                            .map(|w| w.typecode),
-                        self.world
-                            .get_decor(level as i32, x as i32, z as i32)
-                            .map(|d| d.typecode),
-                        self.world
-                            .get_scene(level as i32, x as i32, z as i32)
-                            .map(|s| s.typecode),
-                        self.world
-                            .get_gd(level as i32, x as i32, z as i32)
-                            .map(|g| g.typecode),
-                    ];
-                    for typecode in typecodes.into_iter().flatten() {
-                        let loc_id = (typecode >> 14) & 0x7fff;
-                        if (loc_id as usize) >= self.cache.locs.len() {
-                            continue;
+                    let mut cursor = self.world.square(level as i32, x as i32, z as i32);
+                    while let Some(tile) = cursor {
+                        if let Some(w) = tile.wall.as_deref() {
+                            mark(&mut used, w.typecode);
                         }
-                        let loc = self.cache.loc(loc_id as usize);
-                        if let Some(models) = &loc.model {
-                            for &m in models {
-                                let id = (m & 0xffff) as usize;
-                                if id < used.len() {
-                                    used[id] = true;
+                        if let Some(d) = tile.decor.as_deref() {
+                            mark(&mut used, d.typecode);
+                        }
+                        if let Some(g) = tile.ground_decor.as_deref() {
+                            mark(&mut used, g.typecode);
+                        }
+                        for i in 0..tile.sprite_count as usize {
+                            if let Some(idx) = tile.sprite(i) {
+                                if let Some(sprite) =
+                                    self.world.sprites.get(idx).and_then(|s| s.as_ref())
+                                {
+                                    if (sprite.typecode >> 29) & 0x3 == 2 {
+                                        mark(&mut used, sprite.typecode);
+                                    }
                                 }
                             }
                         }
+                        cursor = tile.linked_square.as_deref();
                     }
                 }
             }
         }
         used
     }
+
+    /// Java unloads unused models after `mapBuild` (one client; models
+    /// already decoded onto tiles). Our `GeometryStore` is process-wide
+    /// and loc models are lazy: a slot's 104 must not `Model::unload`
+    /// ids another slot still names — that is why stress50 walls vanished
+    /// until a tele re-fetched them. Keep the snapshot.
+    pub fn unload_unused_lowmem_models(&self) {}
 
     /// `mapBuild` from client-ts (5141): reset the scene grids, decode the
     /// requested map squares (`load_ground`/`fade_adjacent`/`load_locations`),
@@ -9361,10 +9383,9 @@ impl Client {
             &self.groundh,
             &self.mapl,
         );
-        // Land/loc bytes are decoded into the sim world; keep them out of
-        // the 50-head RSS (rebuild uses typecodes, not these buffers).
-        self.map_build_ground_data.clear();
-        self.map_build_location_data.clear();
+        // Keep the parked land/loc bytes: lowmem same-zone level change
+        // (ladder) re-enters `scene_state = 1` and `check_scene` rebuilds
+        // from them. `REBUILD_NORMAL` replaces the vecs on a zone change.
 
         // The world is now re-stamped with this build's locs. The snapshot's
         // loc family is gated on `gens.scene`, which the server bumps on the
@@ -9384,30 +9405,7 @@ impl Client {
         self.loc_change_post_build();
         self.build_minusedlevel = self.minusedlevel;
 
-        // TS 5254-5261: low-memory model unload for models the render
-        // never uses (flags 0x79 = all render uses). The render resolves
-        // loc models lazily from typecodes (task 3b), so a model a placed
-        // loc still references must survive the unload even when its use
-        // flags do not intersect 0x79 — Java decoded and retained placed
-        // models at build time, so it was immune to this unload.
-        if self.config.lowmem && self.on_demand.is_some() {
-            let model_count = self
-                .on_demand
-                .as_ref()
-                .map(|od| od.get_file_count(0))
-                .unwrap_or(0);
-            let scene_models = self.scene_model_ids(model_count as usize);
-            for i in 0..model_count {
-                let flags = self
-                    .on_demand
-                    .as_ref()
-                    .map(|od| od.get_model_use(i))
-                    .unwrap_or(0);
-                if flags & 0x79 == 0 && !scene_models.get(i as usize).copied().unwrap_or(false) {
-                    Model::unload(i);
-                }
-            }
-        }
+        self.unload_unused_lowmem_models();
 
         if let Some(od) = self.on_demand.as_mut() {
             od.clear_prefetches();
@@ -10347,6 +10345,21 @@ impl Client {
         // scene) must flip the same flag so later `set_ground` writes
         // overlay verts, not stamps-only.
         self.world.overlay_mesh = draw;
+        // The minimap pixmap lives on the `Renderer`. Draw-off drops that
+        // head; dirty the latch so the next attach recomposes from stamps.
+        if !draw {
+            self.minimap_level = -1;
+        }
+    }
+
+    /// Bake `tex_average` from `{cache_dir}/textures` for this mem mode.
+    /// `finish_build` reads it for textured overlay rgb; a headed paint
+    /// also copies the renderer's table, but unheaded map_build runs first.
+    pub fn load_tex_averages(&mut self) {
+        self.tex_average = crate::graphics::Pix3DDraw::cached_averages(
+            &self.config.cache_dir,
+            self.config.lowmem,
+        );
     }
 
     /// Publish the host's nav-debug paint for this frame. Always stores —
@@ -10378,6 +10391,7 @@ impl Client {
             return;
         }
         self.config.lowmem = lowmem;
+        self.load_tex_averages();
         if !lowmem {
             self.jagfx = Self::unpack_jagfx(&self.config.cache_dir, false);
             if let Some(od) = &mut self.on_demand {

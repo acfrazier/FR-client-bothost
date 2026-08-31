@@ -975,7 +975,8 @@ impl World {
     /// `overlay_stamp` typecodes (rule 6 of the head design): a head
     /// detach (`draw` off) must not leave headed data on the sim. Re-arms
     /// `overlay_pending` so the next attach's `prepare_scene` re-runs
-    /// `materialize_overlay` from the stamps. Idempotent — a stamp-less
+    /// `materialize_overlay` from the stamps, and `share_light_pending`
+    /// because loc models died with the renderer. Idempotent — a stamp-less
     /// tile (no overlay) and a repeated call are no-ops.
     pub fn dematerialize_overlay(&mut self) {
         for level in 0..self.max_tile_level {
@@ -993,6 +994,7 @@ impl World {
             }
         }
         self.overlay_pending = true;
+        self.share_light_pending = true;
     }
 
     pub(crate) fn del_sprite(&mut self, index: usize) {

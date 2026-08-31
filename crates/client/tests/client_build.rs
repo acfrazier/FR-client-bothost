@@ -523,6 +523,20 @@ fn unheaded_build_keeps_stamp_but_no_mesh_until_materialize() {
     );
 }
 
+/// Detach drops the renderer-owned loc models. Re-arm share-light so the
+/// next attach re-resolves and lights them; otherwise swapped-to slots
+/// keep unlit/empty loc meshes until a headed `map_build`.
+#[test]
+fn dematerialize_overlay_rearms_share_light() {
+    let mut c = client();
+    c.world.share_light_pending = false;
+    c.world.dematerialize_overlay();
+    assert!(
+        c.world.take_share_light_pending(),
+        "detach must re-arm share_light for the next head"
+    );
+}
+
 /// Live attach: `map_build` copies `draw` into `overlay_mesh`. If `set_draw(true)`
 /// does not flip that flag, later `set_ground` (zone/rebuild while headed)
 /// keeps writing stamps only and the scene looks empty/broken.
@@ -810,6 +824,68 @@ let _r = Renderer::new(false);
     assert!(sq.quick_ground.is_some());
 }
 
+/// Textured overlay floors read `Client.tex_average` at `finish_build`.
+/// Unheaded slots never ran `prepare_game`, so averages stayed `[0; 50]`
+/// and the minimap/`QuickGround` rgb was 0 until a headed rebuild.
+#[test]
+fn finish_build_textured_overlay_uses_tex_average() {
+    let _r = Renderer::new(false);
+    let mut c = client();
+    c.set_draw(true);
+    Arc::get_mut(&mut c.cache).unwrap().flos = vec![FloType {
+        texture: 0,
+        ..FloType::default()
+    }];
+    c.tex_average[0] = 0x00aabb;
+    let mut build = ClientBuild::new();
+    let src = ground_src(&[(0, 2, 2, &[2, 1])]);
+    build.load_ground(&mut c.groundh, &mut c.mapl, &src, 0, 0, 0, 0);
+    c.world.fill_base_level(0);
+    build.finish_build(
+        &c.cache,
+        &c.tex_average,
+        &mut c.world,
+        &mut c.collision,
+        &c.groundh,
+        &c.mapl,
+    );
+    let stamp = c
+        .world
+        .square(0, 2, 2)
+        .and_then(|sq| sq.overlay_stamp.as_deref().copied())
+        .expect("stamp");
+    assert!(
+        stamp.overlay == 0x00aabb || stamp.underlay == 0x00aabb,
+        "textured overlay stamp must carry tex_average (overlay={} underlay={})",
+        stamp.overlay,
+        stamp.underlay
+    );
+}
+
+#[test]
+fn load_tex_averages_fills_from_textures_jag() {
+    let dir = client::cache_dir().display().to_string();
+    if !std::path::Path::new(&dir).join("textures").is_file() {
+        return;
+    }
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: dir,
+        members: true,
+        lowmem: true,
+    });
+    assert!(
+        c.tex_average.iter().all(|&a| a == 0),
+        "Client::new must not pretend textures are decoded"
+    );
+    c.load_tex_averages();
+    assert!(
+        c.tex_average.iter().any(|&a| a != 0),
+        "maininit must bake texture averages before the first map_build"
+    );
+}
+
 // --- ground tile gating (Java ClientBuild.java:972-975) ---
 
 #[test]
@@ -868,4 +944,67 @@ let _r = Renderer::new(false);
     let used = c.scene_model_ids(64);
     assert!(used[42], "a placed wall's model id is protected from unload");
     assert!(!used[43], "an unreferenced model id stays unprotected");
+}
+
+/// `finishBuild` push_down moves level-0 walls onto `linked_square`.
+/// `scene_model_ids` used to read only `tile.wall`, so lowmem unload
+/// dropped those models and the first headed paint had no walls (a later
+/// tele re-fetched them).
+#[test]
+fn scene_model_ids_protects_push_down_linked_walls() {
+    let mut c = client();
+    let mut cache = Cache::default();
+    cache.locs.push(LocType {
+        model: Some(vec![42]),
+        ..LocType::default()
+    });
+    c.cache = Arc::new(cache);
+    c.world.set_wall(
+        0,
+        2,
+        2,
+        0,
+        0,
+        0,
+        2 + (2 << 7) + 0x40000000,
+        0,
+        0,
+        0,
+        0,
+        0,
+    );
+    c.world.push_down(2, 2);
+    assert!(
+        c.world.get_wall(0, 2, 2).is_none(),
+        "push_down must move the wall off the level-0 slot"
+    );
+    let used = c.scene_model_ids(64);
+    assert!(
+        used[42],
+        "a LinkBelow-pushed wall's model must survive lowmem unload"
+    );
+}
+
+/// GeometryStore is process-wide. Java's per-client unused-model unload
+/// would drop models another 104 still names — stress50 walls vanished
+/// until a tele re-fetched them.
+#[test]
+fn lowmem_does_not_unload_process_wide_models() {
+    struct Noop;
+    impl ModelProvider for Noop {
+        fn request_model(&mut self, _id: i32) {}
+    }
+    Model::init(16, Box::new(Noop));
+    Model::unpack(7, Some(&[0u8; 18]));
+    assert!(
+        Model::load(7).is_some(),
+        "fixture model must load before the unload hook"
+    );
+    let mut c = client();
+    c.config.lowmem = true;
+    c.unload_unused_lowmem_models();
+    assert!(
+        Model::load(7).is_some(),
+        "one slot's map_build must not unload models another slot's walls still reference"
+    );
 }

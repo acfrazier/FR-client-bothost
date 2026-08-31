@@ -405,6 +405,9 @@ let mut r = Renderer::new(false);
         lowmem: false,
     });
     c.world.fill_base_level(0);
+    // `Client::new` starts unheaded (`overlay_mesh == draw == false`).
+    // This fixture is a headed `set_ground`.
+    c.world.overlay_mesh = true;
     c.world.set_ground(
         0, 1, 1,
         TerrainOverlayShape::PLAIN, 0, -1,
@@ -417,6 +420,49 @@ let mut r = Renderer::new(false);
     r.minimap_build_buffer(&mut c, 0);
     let mm = r.minimap.as_ref().unwrap();
     assert!(mm.data.iter().any(|&p| p != 0), "minimap buffer must be non-black");
+}
+
+/// Unheaded `map_build` parks overlay stamps and leaves `overlay_pending`.
+/// `mainredraw` used to compose the minimap *before* `prepare_scene`
+/// materialized those stamps, then latch `minimap_level` so the image
+/// never rebuilt — live attach showed a blank minimap (and a later tele
+/// looked fine because a headed rebuild wrote meshes first).
+#[test]
+fn first_headed_paint_builds_minimap_from_unheaded_stamps() {
+    let mut r = Renderer::new(false);
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    c.world.overlay_mesh = false;
+    c.world.fill_base_level(0);
+    c.world.set_ground(
+        0, 1, 1,
+        TerrainOverlayShape::PLAIN, 0, -1,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0x00aabb, 0,
+    );
+    c.world.overlay_pending = true;
+    assert!(
+        c.world.square(0, 1, 1).unwrap().quick_ground.is_none(),
+        "unheaded set_ground must not write the minimap mesh"
+    );
+    c.mapl = vec![vec![vec![0u8; 104]; 104]; 4];
+    c.ingame = true;
+    c.draw = true;
+    c.scene_state = 2;
+    c.minimap_level = -1;
+    r.mainredraw(&mut c);
+    let mm = r.minimap.as_ref().unwrap();
+    assert!(
+        mm.data.iter().any(|&p| p != 0),
+        "first headed paint must materialize overlay before composing the minimap"
+    );
 }
 
 // --- Task 6: roofCheck / roofCheck2 (Java 9248-9331) ---

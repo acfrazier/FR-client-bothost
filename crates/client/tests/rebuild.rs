@@ -280,6 +280,32 @@ fn check_scene_ready_sets_state_2_and_map_build_complete() {
     );
 }
 
+/// Lowmem same-zone level change (a ladder) re-enters `scene_state = 1`
+/// and rebuilds from the parked land/loc bytes. Clearing those after the
+/// first `map_build` made `check_scene` return -1000 forever (live hang).
+#[test]
+fn lowmem_level_change_rebuilds_from_parked_map_bytes() {
+    let mut c = client();
+    c.config.lowmem = true;
+    c.ingame = true;
+    c.awaiting_player_info = false;
+    c.scene_state = 1;
+    c.map_build_index = vec![0];
+    c.map_build_ground_file = vec![-1];
+    c.map_build_location_file = vec![-1];
+    c.map_build_ground_data = vec![None];
+    c.map_build_location_data = vec![None];
+    assert_eq!(c.check_scene(), 0);
+    assert_eq!(c.scene_state, 2);
+
+    c.minusedlevel = 1;
+    c.game_loop();
+    assert_eq!(
+        c.scene_state, 2,
+        "lowmem level change must rebuild, not hang in scene_state=1"
+    );
+}
+
 /// The headless scene build (task-2b fix round 1): `game_loop` runs the
 /// sim half of `checkMinimap` unconditionally — `draw=false` must not
 /// skip `check_scene` → `map_build`, so a headless slot still emits
