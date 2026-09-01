@@ -68,6 +68,19 @@ fn logout_clears_ingame() {
     assert!(!c.ingame);
 }
 
+#[test]
+fn logout_clears_the_tutorial_overlay() {
+    let mut c = client();
+    c.tut_com_id = 548;
+    c.tut_flash_icon = 3;
+    c.main_modal_id = 12;
+    let mut p = Packet::alloc(0);
+    c.handle_packet(ServerProt::LOGOUT, &mut p);
+    assert_eq!(c.tut_com_id, -1);
+    assert_eq!(c.tut_flash_icon, -1);
+    assert_eq!(c.main_modal_id, -1);
+}
+
 /// The dedicated LOGOUT arm resets `ptype` like every handled packet; the
 /// unknown-opcode default does not, so this pins the branch.
 #[test]

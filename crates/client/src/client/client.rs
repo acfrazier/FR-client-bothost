@@ -2062,6 +2062,8 @@ impl Client {
             self.side_modal_id = -1;
             self.chat_modal_id = -1;
             self.main_modal_id = -1;
+            self.tut_com_id = -1;
+            self.tut_flash_icon = -1;
             self.minimap_level = -1;
             self.minimap_flag_x = 0;
             self.minimap_flag_z = 0;
@@ -7972,6 +7974,14 @@ impl Client {
         self.loginscreen = 0;
         self.login_user.clear();
         self.login_pass.clear();
+        // TS logout (Client.ts 2001-2013): drop the tutorial chat overlay
+        // and flash, or a later login still draws TUT_OPEN from the
+        // previous session (tabs unlocked, island modal still up).
+        self.tut_com_id = -1;
+        self.tut_flash_icon = -1;
+        self.chat_modal_id = -1;
+        self.main_modal_id = -1;
+        self.side_modal_id = -1;
         self.world.reset_map();
         self.projectiles.clear();
         self.spotanims.clear();
