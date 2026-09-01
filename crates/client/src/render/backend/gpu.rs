@@ -528,9 +528,9 @@ pub struct GpuBackend {
     /// GPU overlay pass records which `area_game` pixels it wrote here,
     /// and `finish` keys the scene-window transparency off it.
     overlay_coverage: Vec<u8>,
-    /// A scene was rendered this frame (a title frame, or an in-game frame
-    /// with no built scene, leaves `composite_scene` a no-op like the CPU
-    /// path's frozen-frame blit).
+    /// Last 3D texture is valid to composite. Title and `scene_state == 0`
+    /// clear it. `scene_state == 1` keeps it (Java `area_game` without
+    /// `cls` — freeze the last 3D frame under the loading splash).
     scene_ready: bool,
     last_kind: FrameKind,
 }
@@ -870,6 +870,29 @@ impl GpuBackend {
         self.context.queue.submit([encoder.finish()]);
         self.scene_ready = true;
     }
+
+    /// CPU overlay pixels into `area_game` plus coverage marks. Runs on
+    /// the live scene and on a `scene_state==1` freeze so main-modals
+    /// (`ship_journey`, `glidermap`) stay over the last 3D texture.
+    fn draw_scene_overlays(&mut self, core: &mut Client, r: &mut Renderer) {
+        if let Some(game) = r.area_game.as_mut() {
+            let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
+            surface.cls();
+        }
+        self.overlay_coverage.fill(0);
+        let _cov_guard = coverage_guard(&mut self.overlay_coverage, SCENE_W, SCENE_H);
+        let mut game = r.area_game.take();
+        if let Some(game) = game.as_mut() {
+            let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
+            r.pix3d.set_clipping(game.width, game.height);
+            crate::render::nav_debug::draw(&mut *core, r, &mut surface);
+        }
+        r.area_game = game;
+        r.entity_overlays(core);
+        r.coord_arrow(core);
+        r.other_overlays(core);
+        drop(_cov_guard);
+    }
 }
 
 /// One of the two scene pipelines (same shaders; the translucent pipeline
@@ -975,7 +998,17 @@ impl RenderBackend for GpuBackend {
     /// blits them over the scene at (4, 4).
     fn scene(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
         if kind != FrameKind::Game || core.scene_state != 2 {
-            self.scene_ready = false;
+            // Loading (`scene_state == 1`): do not rebuild the mesh and do
+            // not drop the last scene texture — `finish` still copies it
+            // (Java freeze + "Loading - please wait."). Title / no-scene
+            // still punch a black 3D hole. Overlay IFs (`ship_journey`,
+            // `glidermap`) still draw: GPU 3D is a separate texture, so a
+            // freeze without this pass would show dock boats and no chart.
+            if freeze_last_scene(kind, core.scene_state) {
+                self.draw_scene_overlays(core, r);
+            } else {
+                self.scene_ready = false;
+            }
             return;
         }
 
@@ -1083,47 +1116,12 @@ impl RenderBackend for GpuBackend {
             .build_scene_mesh(&mut core.world, cache, loop_cycle, &mut r.pix3d);
         self.render_scene(mesh);
 
-        // The overlays (chat bubbles, modal, minimenu, crosshair) draw into
-        // `area_game`. Clear it exactly like the CPU path's `surface.cls()`
-        // before the world pass, so no stale overlay pixels ghost
-        // frame-to-frame.
-        if let Some(game) = r.area_game.as_mut() {
-            let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
-            surface.cls();
-        }
-
-        // The overlay pass records *which* scene-window pixels it wrote
-        // into a coverage buffer (reset each frame): `finish` keys the
-        // scene-window transparency off coverage, not pixel colour, so a
-        // legitimately black overlay pixel (the minimenu title bar, glyph
-        // drop-shadows) stays opaque over the scene.
-        self.overlay_coverage.fill(0);
-        let _cov_guard = coverage_guard(&mut self.overlay_coverage, SCENE_W, SCENE_H);
-
         r.world.remove_sprites(&mut core.world);
-
-        // Nav debug paint (host tiles/hulls) over the 3D world, clipped to
-        // the game viewport like the other overlay passes. Fill coverage
-        // is the overlay alpha so translucent tiles composite over the
-        // scene (rs2b0t pathScenePaint). CpuPix3D / skip-paint never
-        // reach this stage: the store is a no-op draw.
-        let mut game = r.area_game.take();
-        if let Some(game) = game.as_mut() {
-            let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
-            r.pix3d.set_clipping(game.width, game.height);
-            crate::render::nav_debug::draw(&mut *core, r, &mut surface);
-        }
-        r.area_game = game;
-
-        r.entity_overlays(core);
-        r.coord_arrow(core);
         r.texture_run_anims(core, cycle);
-
         core.pick_count = r.pix3d.picked_count;
         core.pick_typecodes
             .copy_from_slice(&r.pix3d.picked_entity_typecode);
-        r.other_overlays(core);
-        drop(_cov_guard);
+        self.draw_scene_overlays(core, r);
 
         core.cam_x = eye_x;
         core.cam_y = eye_y;
@@ -1132,10 +1130,17 @@ impl RenderBackend for GpuBackend {
         core.cam_yaw = eye_yaw;
     }
 
-    /// The composite seam: delegate to the CPU backend — the `area_game`
-    /// overlay pixels (drawn by the scene stage) blit into the persistent
-    /// `draw_area` at (4, 4), exactly like the CPU path.
+    /// The composite seam: `area_game` overlay pixels blit into
+    /// `draw_area` at (4, 4). The CPU backend only blits while
+    /// `scene_state==2`; GPU also blits on a freeze so the modal coverage
+    /// lands on the last 3D texture.
     fn composite_scene(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
+        if freeze_last_scene(kind, core.scene_state) {
+            if let Some(game) = &r.area_game {
+                game.blit_into(&mut r.draw_area, 4, 4);
+            }
+            return;
+        }
         self.cpu.composite_scene(core, r, kind);
     }
 
@@ -1273,6 +1278,12 @@ impl RenderBackend for GpuBackend {
     }
 }
 
+/// Keep compositing the last 3D texture (no mesh rebuild). Matches Java
+/// `checkMinimap`: bind `area_game` without `cls` while `scene_state == 1`.
+pub(crate) fn freeze_last_scene(kind: FrameKind, scene_state: i32) -> bool {
+    kind == FrameKind::Game && scene_state == 1
+}
+
 /// Build the RGBA8 upload bytes from the CPU-drawn `draw_area` (opaque
 /// `0x00RRGGBB` pixels), one row padded to `bytes_per_row` (wgpu's 256-byte
 /// row alignment; the padding is zero-filled). When the scene was rendered,
@@ -1311,8 +1322,29 @@ fn draw_area_rgba(
 
 #[cfg(test)]
 mod tests {
-    use super::{draw_area_rgba, FRAME_H, FRAME_W, SCENE_H, SCENE_W};
+    use super::{draw_area_rgba, freeze_last_scene, FRAME_H, FRAME_W, SCENE_H, SCENE_W};
     use crate::graphics::PixMap;
+    use crate::render::backend::FrameKind;
+
+    #[test]
+    fn freeze_last_scene_only_while_the_game_is_loading() {
+        assert!(
+            freeze_last_scene(FrameKind::Game, 1),
+            "scene_state==1 keeps the last 3D texture (Java no-cls)"
+        );
+        assert!(
+            !freeze_last_scene(FrameKind::Game, 2),
+            "a built scene is redrawn, not frozen"
+        );
+        assert!(
+            !freeze_last_scene(FrameKind::Game, 0),
+            "no scene: punch the 3D hole"
+        );
+        assert!(
+            !freeze_last_scene(FrameKind::Title, 1),
+            "title must not keep an ingame scene"
+        );
+    }
 
     #[test]
     fn draw_area_rgba_uses_coverage_as_scene_window_alpha() {

@@ -170,7 +170,8 @@ pub trait RenderBackend {
     /// Assemble + rasterize the 3D scene. `CpuBackend` renders into
     /// `area_game`; `GpuBackend` rasterizes the scene graph into a wgpu
     /// texture. A no-op on the login screen and while the scene is not
-    /// built (`scene_state != 2`).
+    /// built (`scene_state != 2`). GPU keeps the last scene texture while
+    /// `scene_state == 1` (Java freeze + loading splash).
     fn scene(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind);
     /// Land the backend's scene in `draw_area` at the (4, 4) blit point,
     /// ahead of the 2D chrome (task 7 composite seam). `CpuBackend` blits
