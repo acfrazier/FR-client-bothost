@@ -1079,15 +1079,16 @@ impl Renderer {
         (cam_x, cam_y, cam_z, cam_pitch, cam_yaw)
     }
 
-    /// `followCamera` from client-ts (3222), run from `game_loop` (2346)
-    /// while `scene_state == 2`: the orbit camera chases the local player
+    /// `followCamera` from client-ts (3222), run from `mainredraw` while
+    /// `scene_state` is 1 or 2: the orbit camera chases the local player
     /// (snapped when more than 500 away, then a `/16` ease), the arrow keys
     /// (`key_held[1..4]`) steer yaw/pitch through the TS velocity fields,
     /// and `camera_pitch_clamp` eases toward the surrounding-terrain clamp.
-    /// The `mapl` `VisBelow` level lift is not ported, so the height sample
-    /// reads `minusedlevel` like the rest of the port; `macro_camera_x/z`
-    /// stay 0, their TS initial values (the macro random-drift block is a
-    /// separate gameLoop chunk not ported).
+    /// Java `followCamera` (10125-10127) lifts each 9×9 neighbor with
+    /// `mapl[1] & LinkBelow` before subtracting `groundh`; without that,
+    /// a bridge over a drop reads the undercroft and the pitch slams
+    /// top-down. `macro_camera_x/z` stay 0 (TS initial values; the macro
+    /// random-drift block is a separate gameLoop chunk not ported).
     pub fn follow_camera(&mut self, client: &mut Client) {
         let Some(player) = &client.local_player else {
             return;
@@ -1145,8 +1146,14 @@ impl Renderer {
         if orbit_tile_x > 3 && orbit_tile_z > 3 && orbit_tile_x < 100 && orbit_tile_z < 100 {
             for x in (orbit_tile_x - 4)..=(orbit_tile_x + 4) {
                 for z in (orbit_tile_z - 4)..=(orbit_tile_z + 4) {
-                    let y = orbit_y
-                        - client.groundh[client.minusedlevel as usize][x as usize][z as usize];
+                    // Java 10125: `if (level < 3 && (mapl[1][x][z] & 0x2) == 2) level++`.
+                    let mut level = client.minusedlevel;
+                    if level < 3
+                        && (client.mapl[1][x as usize][z as usize] & MapFlag::LINK_BELOW as u8) != 0
+                    {
+                        level += 1;
+                    }
+                    let y = orbit_y - client.groundh[level as usize][x as usize][z as usize];
                     if y > max_y {
                         max_y = y;
                     }
@@ -4213,7 +4220,11 @@ impl Renderer {
             // means the first headed paint's minimap sees loaded sprites.
             self.prepare_game(client);
             self.check_minimap(client);
-            if client.scene_state == 2 {
+            // TS only follows while scene_state==2. We also chase during
+            // scene_state==1 (GPU freeze-last-frame): otherwise a run-tick
+            // of travel during rebuild trips the 500-unit orbit snap when
+            // the new 3D appears.
+            if client.scene_state == 1 || client.scene_state == 2 {
                 self.follow_camera(client);
             }
             self.game_draw(client)

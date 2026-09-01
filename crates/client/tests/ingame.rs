@@ -323,6 +323,29 @@ fn follow_camera_moves_eye_above_local_player() {
     );
 }
 
+/// GPU freeze-last-frame still needs the orbit to chase during
+/// `scene_state == 1`, or the first built frame 500-snaps after a run.
+#[test]
+fn follow_camera_chases_while_the_scene_is_loading() {
+    let mut r = Renderer::new(false);
+    let mut c = client("/tmp".into());
+    c.ingame = true;
+    c.scene_state = 1;
+    let mut player = ClientPlayer {
+        ready: true,
+        name: Some("tester".into()),
+        entity: ClientEntity::at(5, 7),
+        ..Default::default()
+    };
+    player.entity.teleport(&c.cache, true, 5, 7);
+    c.local_player = Some(player);
+    r.follow_camera(&mut c);
+    let player_x = c.local_player.as_ref().unwrap().x;
+    let player_z = c.local_player.as_ref().unwrap().z;
+    assert_eq!(c.orbit_camera_x, player_x);
+    assert_eq!(c.orbit_camera_z, player_z);
+}
+
 /// TS 5052 `getAvH`: a `MapFlag.LinkBelow` tile on the level-1 map lifts
 /// the height read to the level above, so the orbit eye sits on the 800
 /// upper-floor height instead of the 100 level-0 ground. Two `game_draw`
@@ -362,6 +385,44 @@ fn get_av_h_link_below_reads_level_above() {
         c.cam_y,
         lifted_y - 700,
         "LinkBelow must lift the eye height from the 100 level-0 ground to the 800 upper floor"
+    );
+}
+
+/// Java `followCamera` (10125-10127): each tile in the 9×9 around the
+/// orbit samples `groundh[level]` after `mapl[1] & LinkBelow` lifts
+/// `minusedlevel`. Without that lift, a bridge over a drop reads the
+/// undercroft height and `camera_pitch_clamp` slams to the 98048 cap
+/// (looking straight down) — the live "terrain height isn't there" yaw/pitch
+/// hitch on hills and stacked floors.
+#[test]
+fn follow_camera_pitch_clamp_lifts_link_below_neighbors() {
+    let mut r = Renderer::new(false);
+    let mut c = client("/tmp".into());
+    c.ingame = true;
+    c.scene_state = 2;
+    let mut player = ClientPlayer {
+        ready: true,
+        name: Some("tester".into()),
+        entity: ClientEntity::at(10, 10),
+        ..Default::default()
+    };
+    player.entity.teleport(&c.cache, true, 10, 10);
+    c.local_player = Some(player);
+    for x in 6..15 {
+        for z in 6..15 {
+            c.groundh[0][x][z] = 0;
+            c.groundh[1][x][z] = 800;
+            c.mapl[1][x][z] = MapFlag::LINK_BELOW as u8;
+        }
+    }
+    c.game_loop();
+    for _ in 0..80 {
+        r.follow_camera(&mut c);
+    }
+    assert!(
+        c.camera_pitch_clamp < 40_000,
+        "LinkBelow neighbors must not pitch the camera into the 98048 cap (got {})",
+        c.camera_pitch_clamp
     );
 }
 
