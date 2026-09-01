@@ -63,7 +63,7 @@ impl JavaRandom {
     /// TS `nextInt(bound)`. The rejection loop in the TS never fires (doubles
     /// cannot overflow like Java ints), so this is a straight modulo.
     pub fn next_int_bound(&mut self, bound: i32) -> i32 {
-        if (bound & bound.wrapping_neg()) == bound {
+        if bound.isolate_lowest_one() == bound {
             let r = self.next() >> 1;
             return ((r * bound as i64) >> 31) as i32;
         }

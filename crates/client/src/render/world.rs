@@ -5194,8 +5194,10 @@ impl SceneMesh {
     pub fn sort_opaque_far_first(&mut self) {
         fn sort_group(verts: &mut Vec<GpuVertex>) {
             let mut tris: Vec<(f32, [GpuVertex; 3])> = verts
-                .chunks_exact(3)
-                .map(|c| (c[0].z.min(c[1].z).min(c[2].z), [c[0], c[1], c[2]]))
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|c| (c[0].z.min(c[1].z).min(c[2].z), *c))
                 .collect();
             tris.sort_by(|a, b| b.0.total_cmp(&a.0));
             *verts = tris.into_iter().flat_map(|(_, t)| t).collect();

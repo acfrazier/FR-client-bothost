@@ -313,13 +313,13 @@ mod device {
             let drained: Vec<i16> = waves.drain(..n).collect();
             if src_rate == dst_rate {
                 let mut wave = drained.into_iter();
-                for (frame, out) in data.chunks_exact_mut(2).enumerate() {
+                for (frame, out) in data.as_chunks_mut::<2>().0.iter_mut().enumerate() {
                     let w = wave.next().unwrap_or(0) as f32;
                     out[0] = (left[frame] * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
                     out[1] = (right[frame] * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
                 }
             } else {
-                for (frame, out) in data.chunks_exact_mut(2).enumerate() {
+                for (frame, out) in data.as_chunks_mut::<2>().0.iter_mut().enumerate() {
                     let src_pos = frame as f32 * src_rate as f32 / dst_rate as f32;
                     let i = src_pos as usize;
                     let frac = src_pos - i as f32;
