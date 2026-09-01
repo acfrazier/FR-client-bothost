@@ -93,11 +93,16 @@ fn seed_jags(dir: &std::path::Path, config_bytes: &[u8], checksums: &mut [i32; 9
         "wordenc",
         "sounds",
     ];
+    // Empty uncompressed jag (unpacked_size == packed_size, file_count 0).
+    // Dummy ASCII like `{name}-seed` parses as packed≠unpacked and
+    // bunzip2 panics — maininit still opens title/media/textures/sounds
+    // even when `load_cache` is skipped.
+    const EMPTY_JAG: &[u8] = &[0, 0, 6, 0, 0, 6, 0, 0];
     for (i, name) in names.iter().enumerate() {
         let bytes: Vec<u8> = if *name == "config" {
             config_bytes.to_vec()
         } else {
-            format!("{name}-seed").into_bytes()
+            EMPTY_JAG.to_vec()
         };
         std::fs::write(dir.join(name), &bytes).unwrap();
         checksums[i + 1] = Packet::getcrc(&bytes, 0, bytes.len());
