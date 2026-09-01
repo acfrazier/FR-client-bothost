@@ -10,6 +10,17 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
   clippy:
     name: clippy
     runs-on: ubuntu-latest
@@ -18,22 +29,42 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - name: Native libs (ALSA + window)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libasound2-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxrandr-dev
       - uses: Swatinem/rust-cache@v2
-      # Alpha: no `-D warnings`. Deny-warnings is a beta goal (same as 274bot).
-      # This tree is not rustfmt-gated; do not cargo fmt --check here.
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --no-deps
+        run: cargo clippy --workspace --all-targets --no-deps -- -D warnings
 
   test:
     name: test
     runs-on: ubuntu-latest
+    env:
+      SKIP_GPU: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Native libs (ALSA + window)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libasound2-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxrandr-dev
       - uses: Swatinem/rust-cache@v2
       - name: Test
-        env:
-          # GitHub runners are not a GPU fidelity machine. Local `cargo test`
-          # still exercises wgpu when an adapter exists.
-          SKIP_GPU: "1"
         run: cargo test --workspace

@@ -2,7 +2,7 @@
 
 Bot-host fork of the modularized Fairy-Ring 274 client. This is the
 **client** [274bot](https://github.com/acfrazier/274bot) compiles as a
-path-dep (`vendor/fr-client-rust`). Alpha with the host’s `0.1.0` tag.
+path-dep (`vendor/fr-client-rust`). Alpha with the host’s `0.1.1` tag.
 
 | | |
 |--|--|
