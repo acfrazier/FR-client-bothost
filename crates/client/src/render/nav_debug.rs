@@ -104,6 +104,8 @@ pub struct NavDebugPaint {
     pub trail: Vec<(i32, i32, bool)>,
     /// Live loc hulls (loc id, world tile of the loc).
     pub hulls: Vec<NavDebugHull>,
+    /// Hop captions (scene lx, lz, kind word) at `at` only.
+    pub labels: Vec<(i32, i32, String)>,
     /// Current walk(aim) scene tile.
     pub click: Option<(i32, i32)>,
     /// RGB bytes from the panel.
@@ -157,6 +159,7 @@ pub(crate) fn draw(client: &mut Client, r: &mut Renderer, surface: &mut Pix2D) {
         || paint.show_path
         || paint.show_trail
         || paint.show_hulls
+        || !paint.labels.is_empty()
         || paint.click.is_some();
     if !show_any {
         return;
@@ -239,6 +242,13 @@ pub(crate) fn draw(client: &mut Client, r: &mut Renderer, surface: &mut Pix2D) {
     if paint.show_hulls {
         for hull in &paint.hulls {
             draw_hull(client, r, surface, hull, rgb(paint.colors.hull));
+        }
+    }
+
+    if !paint.labels.is_empty() {
+        let colour = rgb(paint.colors.nsew);
+        for &(lx, lz, ref text) in &paint.labels {
+            draw_hop_label(client, r, surface, lx, lz, text, colour);
         }
     }
 }
@@ -395,6 +405,45 @@ fn nsew_centres(cell: &NavDebugCell) -> [(u8, i32, i32); 4] {
         (FACE_E, x + TILE, z + TILE / 2),
         (FACE_W, x, z + TILE / 2),
     ]
+}
+
+/// Caption at the projected tile centre (rs2b0t `drawHopLabel`). Uses
+/// `b12` when loaded; otherwise a 5×5 fallback is skipped (no tiny noise).
+fn draw_hop_label(
+    client: &Client,
+    r: &Renderer,
+    surface: &mut Pix2D,
+    lx: i32,
+    lz: i32,
+    text: &str,
+    colour: i32,
+) {
+    let x = lx.wrapping_mul(TILE) + TILE / 2;
+    let z = lz.wrapping_mul(TILE) + TILE / 2;
+    let (px, py) = r.project_overlay(client, x, z, 0);
+    if px == -1 {
+        return;
+    }
+    let Some(font) = r.media.b12.as_ref() else {
+        return;
+    };
+    font.centre_string(surface, Some(text), px + 1, py + 1, 0);
+    font.centre_string(surface, Some(text), px, py, colour);
+    let w = font.string_wid(Some(text));
+    let h = font.height.max(12);
+    let x0 = px - w / 2 - 1;
+    let y0 = py - h - 1;
+    for row in y0..=py + 1 {
+        for col in x0..=px + w / 2 + 1 {
+            if col < 0 || row < 0 || col >= surface.width || row >= surface.height {
+                continue;
+            }
+            let off = row * surface.width + col;
+            if surface.pixels[off as usize] & 0x00ff_ffff != 0 {
+                surface.mark_pixel_alpha(off, STROKE_ALPHA.clamp(0, 255) as u8);
+            }
+        }
+    }
 }
 
 fn plot_glyph(surface: &mut Pix2D, x: i32, y: i32, glyph: [u8; 5], colour: i32, alpha: i32) {
