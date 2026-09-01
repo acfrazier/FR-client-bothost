@@ -11,6 +11,12 @@ use std::time::{Duration, Instant};
 use client::client::{Client, ClientConfig};
 use client::io::Packet;
 
+/// Uncompressed empty jag (packed_size == unpacked_size, file_count 0).
+/// ASCII dummy bodies (`title-seed`) parse as compressed and bunzip2 panics.
+const EMPTY_JAG: &[u8] = &[0, 0, 6, 0, 0, 6, 0, 0];
+/// Same shape, different CRC — for retry / fetch tests.
+const EMPTY_JAG_B: &[u8] = &[0, 0, 7, 0, 0, 7, 0, 0];
+
 /// Records every poll/present the headed driver issues during the load,
 /// proving the progress callback pumped the window through `maininit`.
 struct CountingTarget {
@@ -239,7 +245,7 @@ fn maininit_is_oneshot_and_sets_progress_100_on_crc_hit() {
         "sounds",
     ];
     for (i, name) in names.iter().enumerate() {
-        let bytes = format!("{name}-seed").into_bytes();
+        let bytes = EMPTY_JAG.to_vec();
         std::fs::write(dir.join(name), &bytes).unwrap();
         checksums[i + 1] = Packet::getcrc(&bytes, 0, bytes.len());
     }
@@ -261,7 +267,7 @@ fn maininit_is_oneshot_and_sets_progress_100_on_crc_hit() {
     // dummy jags were all CRC hits: files unchanged, no HTTP after /crc
     for (i, name) in names.iter().enumerate() {
         let bytes = std::fs::read(dir.join(name)).unwrap();
-        assert_eq!(bytes, format!("{name}-seed").into_bytes());
+        assert_eq!(bytes, EMPTY_JAG);
         assert_eq!(Packet::getcrc(&bytes, 0, bytes.len()), checksums[i + 1]);
     }
     c.maininit(); // oneshot
@@ -285,7 +291,7 @@ fn maininit_with_progress_notifies_callback_at_each_progress_point() {
         "sounds",
     ];
     for (i, name) in names.iter().enumerate() {
-        let bytes = format!("{name}-seed").into_bytes();
+        let bytes = EMPTY_JAG.to_vec();
         std::fs::write(dir.join(name), &bytes).unwrap();
         checksums[i + 1] = Packet::getcrc(&bytes, 0, bytes.len());
     }
@@ -339,9 +345,9 @@ fn maininit_empty_cache_fetches_all_eight_jags_over_http() {
         // `errorLoading` stays clear; the rest are dummy bytes that the
         // catch_unwind'd unpack paths tolerate.
         let bytes: Vec<u8> = if name == "config" {
-            vec![0u8, 0, 6, 0, 0, 6, 0, 0]
+            EMPTY_JAG.to_vec()
         } else {
-            format!("{name}-fetched").into_bytes()
+            EMPTY_JAG_B.to_vec()
         };
         checksums[slot] = Packet::getcrc(&bytes, 0, bytes.len());
         bodies.push(bytes);
@@ -393,7 +399,7 @@ fn maininit_retries_jag_get_after_crc_mismatch() {
     std::fs::create_dir_all(&dir).unwrap();
     // title's on-disk bytes are stale, so its served checksum (for `fresh`)
     // forces an HTTP fetch; every other jag is a CRC hit.
-    let fresh = b"fresh-title".to_vec();
+    let fresh = EMPTY_JAG_B.to_vec();
     let mut checksums = [0i32; 9];
     let names = [
         "title",
@@ -406,11 +412,7 @@ fn maininit_retries_jag_get_after_crc_mismatch() {
         "sounds",
     ];
     for (i, name) in names.iter().enumerate() {
-        let bytes = if *name == "title" {
-            b"stale-title".to_vec()
-        } else {
-            format!("{name}-seed").into_bytes()
-        };
+        let bytes = EMPTY_JAG.to_vec();
         std::fs::write(dir.join(name), &bytes).unwrap();
         checksums[i + 1] = if *name == "title" {
             Packet::getcrc(&fresh, 0, fresh.len())
@@ -422,7 +424,7 @@ fn maininit_retries_jag_get_after_crc_mismatch() {
     // discard the bytes and retry), then the correct ones.
     let (port, th, seen) = serve_in_order(vec![
         crc_body(&checksums),
-        b"wrong-crc-bytes".to_vec(),
+        EMPTY_JAG.to_vec(),
         fresh.clone(),
     ]);
 
@@ -595,7 +597,7 @@ fn maininit_clears_error_loading_from_new_unpack() {
         let bytes = if *name == "config" {
             b"garbage-config".to_vec()
         } else {
-            format!("{name}-seed").into_bytes()
+            EMPTY_JAG.to_vec()
         };
         std::fs::write(dir.join(name), &bytes).unwrap();
         checksums[i + 1] = if *name == "config" {
