@@ -14,7 +14,7 @@ use std::sync::OnceLock;
 pub enum BotTarget {
     /// Loopback Lost City engine. Keys from `$ENGINE_DIR` / `LOGIN_RSAN`.
     Local,
-    /// `w1.rs2b2t.com` with the baked public RSA. Unadvertised in alpha.
+    /// `w1.rs2b2t.com` with the baked public RSA.
     Prod,
 }
 
