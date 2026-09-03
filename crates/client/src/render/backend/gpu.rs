@@ -50,6 +50,34 @@ const SCENE_H: u32 = 334;
 const FRAME_W: u32 = crate::client::client::APPLET_W as u32;
 const FRAME_H: u32 = crate::client::client::APPLET_H as u32;
 
+/// One 765×503 composite target (`finish` ping-pongs two of these).
+fn make_frame_target(
+    device: &wgpu::Device,
+    label: &'static str,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: FRAME_W,
+            height: FRAME_H,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        // TEXTURE_BINDING: the shared-device seam — the host samples
+        // the frame texture directly in its ImGui renderer.
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&Default::default());
+    (texture, view)
+}
+
 /// The shared wgpu device/queue home (one per process). `Result` so a
 /// failed init is cached: the fallback log fires once and later renderers
 /// do not retry (and cannot take the bot down).
@@ -496,10 +524,12 @@ pub struct GpuBackend {
     scene_texture: wgpu::Texture,
     scene_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
-    /// The full-frame 765×503 composite (scene at (4, 4) + chrome), the
-    /// texture `finish` returns.
-    frame_texture: wgpu::Texture,
-    frame_view: wgpu::TextureView,
+    /// Ping-pong pair of full-frame 765×503 composites (scene at (4, 4)
+    /// + chrome). `finish` writes the slot the host is not sampling.
+    frame_textures: [wgpu::Texture; 2],
+    frame_views: [wgpu::TextureView; 2],
+    /// Slot last handed to the host. The next `finish` writes `1 - this`.
+    present_slot: usize,
     /// The shared model-texture-array bind group, bound each scene pass.
     model_bind_group: wgpu::BindGroup,
     /// The scene-shader brightness uniform (group 1): the current
@@ -579,26 +609,8 @@ impl GpuBackend {
         });
         let depth_view = depth_texture.create_view(&Default::default());
 
-        let frame_texture = context.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("r274 frame"),
-            size: wgpu::Extent3d {
-                width: FRAME_W,
-                height: FRAME_H,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            // TEXTURE_BINDING: the shared-device seam — the host samples
-            // the frame texture directly in its ImGui renderer.
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::COPY_DST
-                | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let frame_view = frame_texture.create_view(&Default::default());
+        let (frame_texture_a, frame_view_a) = make_frame_target(&context.device, "r274 frame a");
+        let (frame_texture_b, frame_view_b) = make_frame_target(&context.device, "r274 frame b");
 
         let brightness_buf = context.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("r274 scene uniforms"),
@@ -734,8 +746,9 @@ impl GpuBackend {
             scene_texture,
             scene_view,
             depth_view,
-            frame_texture,
-            frame_view,
+            frame_textures: [frame_texture_a, frame_texture_b],
+            frame_views: [frame_view_a, frame_view_b],
+            present_slot: 0,
             model_bind_group,
             brightness_bind_group,
             brightness_buf,
@@ -1156,27 +1169,31 @@ impl RenderBackend for GpuBackend {
     }
 
     /// The full-frame composite (the RuneLite canvas-upload pattern):
-    /// clear the frame, copy the GPU scene at (4, 4) when it was
+    /// clear the back buffer, copy the GPU scene at (4, 4) when it was
     /// rendered, then upload the CPU-drawn `draw_area` as one RGBA8
-    /// texture and draw it over the frame with alpha blending. The upload
-    /// is opaque chrome except inside the scene window, where overlay
-    /// alpha is the coverage byte (255 = opaque chrome including black
-    /// minimenu bars, 0 = 3D hole, 1..=254 = translucent nav paint; see
-    /// [`draw_area_rgba`]). No readback.
+    /// texture and draw it over the frame with alpha blending. Copy and
+    /// chrome are separate submits so the copy dest is not also a render
+    /// attachment in the same encoder. The upload is opaque chrome except
+    /// inside the scene window, where overlay alpha is the coverage byte
+    /// (255 = opaque chrome including black minimenu bars, 0 = 3D hole,
+    /// 1..=254 = translucent nav paint; see [`draw_area_rgba`]). No
+    /// readback. Ping-pongs so the host can keep sampling the last
+    /// presented texture while this write runs.
     fn finish(&mut self, r: &mut Renderer) -> FrameOutput {
-        let mut encoder =
+        let write = 1 - self.present_slot;
+        let mut copy_encoder =
             self.context
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("r274 frame encoder"),
+                    label: Some("r274 frame copy encoder"),
                 });
         {
             // An empty clear pass (begin + immediate end) — the frame
             // starts black each frame.
-            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let _pass = copy_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("r274 frame clear"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.frame_view,
+                    view: &self.frame_views[write],
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -1194,7 +1211,7 @@ impl RenderBackend for GpuBackend {
             self.scene_ready = false;
         }
         if self.scene_ready {
-            encoder.copy_texture_to_texture(
+            copy_encoder.copy_texture_to_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &self.scene_texture,
                     mip_level: 0,
@@ -1202,7 +1219,7 @@ impl RenderBackend for GpuBackend {
                     aspect: wgpu::TextureAspect::All,
                 },
                 wgpu::TexelCopyTextureInfo {
-                    texture: &self.frame_texture,
+                    texture: &self.frame_textures[write],
                     mip_level: 0,
                     origin: wgpu::Origin3d { x: 4, y: 4, z: 0 },
                     aspect: wgpu::TextureAspect::All,
@@ -1214,6 +1231,7 @@ impl RenderBackend for GpuBackend {
                 },
             );
         }
+        self.context.queue.submit([copy_encoder.finish()]);
         // The CPU chrome body drew the 2D UI into the persistent
         // `draw_area`; upload it as one RGBA8 texture. The rows are padded
         // to wgpu's 256-byte `COPY_BYTES_PER_ROW_ALIGNMENT`.
@@ -1243,11 +1261,17 @@ impl RenderBackend for GpuBackend {
                 depth_or_array_layers: 1,
             },
         );
+        let mut chrome_encoder =
+            self.context
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("r274 chrome encoder"),
+                });
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut pass = chrome_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("r274 chrome composite pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.frame_view,
+                    view: &self.frame_views[write],
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -1265,11 +1289,12 @@ impl RenderBackend for GpuBackend {
             pass.set_vertex_buffer(0, self.chrome_vertex_buf.slice(..));
             pass.draw(0..6, 0..1);
         }
-        self.context.queue.submit([encoder.finish()]);
+        self.context.queue.submit([chrome_encoder.finish()]);
+        self.present_slot = write;
         FrameOutput::Texture(TextureHandle {
             device: self.context.device.clone(),
             queue: self.context.queue.clone(),
-            view: self.frame_view.clone(),
+            view: self.frame_views[write].clone(),
             width: FRAME_W,
             height: FRAME_H,
         })

@@ -187,6 +187,52 @@ fn draw_area_upload_carries_known_chrome_pixels() {
     Renderer::set_prefer_gpu(false);
 }
 
+/// The host (ImGui) keeps sampling the last `TextureHandle` while the next
+/// `finish` writes. A single `frame_texture` would clobber that sample.
+#[test]
+fn finish_does_not_clobber_the_last_presented_frame() {
+    let Ok(mut backend) = client::render::backend::GpuBackend::try_new() else {
+        eprintln!("no adapter on this machine; the frame ping-pong test skips");
+        return;
+    };
+    let mut r = Renderer::new(false);
+    {
+        let w = r.draw_area.width;
+        let h = r.draw_area.height;
+        let mut surface = client::graphics::Pix2D::with_pixels(&mut r.draw_area.pixels, w, h);
+        surface.fill_rect(560, 210, 32, 32, 0xff0000);
+    }
+    let FrameOutput::Texture(first) = backend.finish(&mut r) else {
+        panic!("finish must return the full-frame texture");
+    };
+
+    for pixel in r.draw_area.pixels.iter_mut() {
+        *pixel = 0;
+    }
+    {
+        let w = r.draw_area.width;
+        let h = r.draw_area.height;
+        let mut surface = client::graphics::Pix2D::with_pixels(&mut r.draw_area.pixels, w, h);
+        surface.fill_rect(560, 210, 32, 32, 0x0000ff);
+    }
+    let FrameOutput::Texture(second) = backend.finish(&mut r) else {
+        panic!("finish must return the full-frame texture");
+    };
+
+    let first_pixels = first.read_back();
+    assert_eq!(
+        first_pixels[210 * 765 + 560],
+        0xff0000,
+        "the host-held frame must stay the previous composite, not the write in flight"
+    );
+    let second_pixels = second.read_back();
+    assert_eq!(
+        second_pixels[210 * 765 + 560],
+        0x0000ff,
+        "the new finish must still composite the latest chrome"
+    );
+}
+
 /// The composite produces one full-frame texture: the scene (when built)
 /// sits at (4, 4) and the chrome surrounds it, all in the single 765×503
 /// texture `finish` returns — no separate scene readback.

@@ -8,7 +8,7 @@
 // surface (TS binds a target with `Pix2D.setPixels`; the TS Pix3D statics
 // `pixels`/`width`/`clipMaxY`/`sizeX` become the surface's fields).
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::cell::Cell;
 use std::sync::{Mutex, OnceLock};
 
 use super::pix2d::Pix2D;
@@ -33,7 +33,12 @@ static COLOUR_TABLES: [OnceLock<Box<[i32; 65536]>>; 4] = [
     OnceLock::new(),
     OnceLock::new(),
 ];
-static COLOUR_TABLE_SLOT: AtomicUsize = AtomicUsize::new(1);
+thread_local! {
+    /// Active brightness slot (0.9/0.8/0.7/0.6). Per-thread so two panel
+    /// slots with different options-panel brightness do not fight. Default
+    /// 1 is 0.8, matching `Renderer::new`.
+    static COLOUR_TABLE_SLOT: Cell<usize> = const { Cell::new(1) };
+}
 
 fn brightness_slot(brightness: f64) -> usize {
     if (brightness - 0.9).abs() < 0.05 {
@@ -117,11 +122,11 @@ impl Pix3D {
             build_colour_table(&mut table[..], slot_brightness(slot));
             table
         });
-        COLOUR_TABLE_SLOT.store(slot, Ordering::Relaxed);
+        COLOUR_TABLE_SLOT.with(|s| s.set(slot));
     }
 
     pub fn colour_table() -> &'static [i32; 65536] {
-        let slot = COLOUR_TABLE_SLOT.load(Ordering::Relaxed);
+        let slot = COLOUR_TABLE_SLOT.with(|s| s.get());
         COLOUR_TABLES[slot]
             .get()
             .or_else(|| COLOUR_TABLES[1].get())
@@ -133,7 +138,7 @@ impl Pix3D {
     /// at, so the GPU scene shader's `hslToRgb` applies the same gamma the
     /// CPU flat-face `colour_table()` baked in.
     pub fn colour_brightness() -> f64 {
-        let slot = COLOUR_TABLE_SLOT.load(Ordering::Relaxed);
+        let slot = COLOUR_TABLE_SLOT.with(|s| s.get());
         slot_brightness(slot)
     }
 

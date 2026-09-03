@@ -925,6 +925,28 @@ fn clientcode_1_rebuilds_colour_table() {
     assert_ne!(mid, dark, "darker brightness must change the HSL table");
 }
 
+/// Two panel slots run on separate threads. A process-global brightness
+/// slot lets one client's options slider steal the other's HSL table.
+#[test]
+fn colour_table_slot_is_per_thread() {
+    let _r = Renderer::new(false);
+    const IDX: usize = 200 * 128 + 64;
+    Pix3D::init_colour_table(0.8);
+    let mid = Pix3D::colour_table()[IDX];
+    let dark = std::thread::spawn(|| {
+        Pix3D::init_colour_table(0.6);
+        Pix3D::colour_table()[IDX]
+    })
+    .join()
+    .expect("child brightness thread");
+    assert_ne!(mid, dark, "darker brightness must change the HSL table");
+    assert_eq!(
+        Pix3D::colour_table()[IDX],
+        mid,
+        "a sibling slot's brightness must not steal this thread's colour table"
+    );
+}
+
 #[test]
 fn clientcode_options_panel_fields() {
     let _r = Renderer::new(false);
