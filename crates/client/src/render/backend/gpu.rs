@@ -875,9 +875,11 @@ impl GpuBackend {
     /// the live scene and on a `scene_state==1` freeze so main-modals
     /// (`ship_journey`, `glidermap`) stay over the last 3D texture.
     fn draw_scene_overlays(&mut self, core: &mut Client, r: &mut Renderer) {
-        if let Some(game) = r.area_game.as_mut() {
-            let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
-            surface.cls();
+        if should_cls_scene_overlays(self.last_kind, core.scene_state) {
+            if let Some(game) = r.area_game.as_mut() {
+                let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
+                surface.cls();
+            }
         }
         self.overlay_coverage.fill(0);
         let _cov_guard = coverage_guard(&mut self.overlay_coverage, SCENE_W, SCENE_H);
@@ -1284,6 +1286,12 @@ pub(crate) fn freeze_last_scene(kind: FrameKind, scene_state: i32) -> bool {
     kind == FrameKind::Game && scene_state == 1
 }
 
+/// Live 3D overlays `cls` so they do not accumulate. A freeze must not:
+/// Java binds `areaGame` without `cls` so the last frame stays visible.
+pub(crate) fn should_cls_scene_overlays(kind: FrameKind, scene_state: i32) -> bool {
+    !freeze_last_scene(kind, scene_state)
+}
+
 /// Build the RGBA8 upload bytes from the CPU-drawn `draw_area` (opaque
 /// `0x00RRGGBB` pixels), one row padded to `bytes_per_row` (wgpu's 256-byte
 /// row alignment; the padding is zero-filled). When the scene was rendered,
@@ -1322,7 +1330,10 @@ fn draw_area_rgba(
 
 #[cfg(test)]
 mod tests {
-    use super::{draw_area_rgba, freeze_last_scene, FRAME_H, FRAME_W, SCENE_H, SCENE_W};
+    use super::{
+        draw_area_rgba, freeze_last_scene, should_cls_scene_overlays, FRAME_H, FRAME_W, SCENE_H,
+        SCENE_W,
+    };
     use crate::graphics::PixMap;
     use crate::render::backend::FrameKind;
 
@@ -1343,6 +1354,18 @@ mod tests {
         assert!(
             !freeze_last_scene(FrameKind::Title, 1),
             "title must not keep an ingame scene"
+        );
+    }
+
+    #[test]
+    fn freeze_does_not_cls_the_frozen_viewport() {
+        assert!(
+            !should_cls_scene_overlays(FrameKind::Game, 1),
+            "Java freeze binds areaGame without cls"
+        );
+        assert!(
+            should_cls_scene_overlays(FrameKind::Game, 2),
+            "a live scene still cls overlays so they do not accumulate"
         );
     }
 

@@ -38,6 +38,9 @@ static PREFER_GPU: AtomicBool = AtomicBool::new(false);
 static RENDERER_CONSTRUCTED: AtomicUsize = AtomicUsize::new(0);
 
 fn prefer_gpu() -> bool {
+    if std::env::var("BOT_CPU").map(|v| v == "1").unwrap_or(false) {
+        return false;
+    }
     PREFER_GPU.load(Ordering::Relaxed)
 }
 

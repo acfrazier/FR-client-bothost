@@ -39,13 +39,20 @@ pub fn active_pair() -> (String, String) {
     }
 }
 
-/// Bigints for `rsaenc`.
+/// Bigints for `rsaenc`. Garbage `LOGIN_RSAN`/`LOGIN_RSAE` fall back to
+/// the Lost City Java pair instead of panicking the slot thread.
 pub fn active_biguints() -> (BigUint, BigUint) {
     let (n, e) = active_pair();
-    (
-        BigUint::from_str(&n).expect("login RSA n"),
-        BigUint::from_str(&e).expect("login RSA e"),
-    )
+    match (BigUint::from_str(&n), BigUint::from_str(&e)) {
+        (Ok(n), Ok(e)) => (n, e),
+        _ => {
+            eprintln!("login RSA: LOGIN_RSAN/E is not decimal; using Lost City defaults");
+            (
+                BigUint::from_str(JAVA_LOGIN_RSAN).expect("baked Java n"),
+                BigUint::from_str(JAVA_LOGIN_RSAE).expect("baked Java e"),
+            )
+        }
+    }
 }
 
 /// Local engine RSA. Stock Lost City Server ships the Java default pair —
