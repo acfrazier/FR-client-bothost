@@ -387,3 +387,77 @@ fn chrome_upload_runs_when_redraw_chat_set() {
         "redraw-flagged chrome must upload the atlas again"
     );
 }
+
+/// After a punched chrome atlas + live minimap upload, a freeze frame
+/// (`minimap_live=false`, chrome not dirty) must still show the last
+/// minimap — not a transparent hole over black/3D.
+#[test]
+fn freeze_keeps_last_minimap_after_punched_chrome() {
+    let Ok(mut backend) = client::render::backend::GpuBackend::try_new() else {
+        eprintln!("no adapter; freeze minimap hole test skips");
+        return;
+    };
+    let mut r = Renderer::new(false);
+    {
+        let w = r.draw_area.width;
+        let h = r.draw_area.height;
+        let mut surface = client::graphics::Pix2D::with_pixels(&mut r.draw_area.pixels, w, h);
+        // Non-zero chrome outside the minimap so the atlas is real content.
+        surface.fill_rect(560, 210, 32, 32, 0xff0000);
+    }
+    // Known minimap colour across the 172×156 layer.
+    const MAP_RGB: i32 = 0x00_33_cc_66;
+    r.area_map = Some(client::graphics::PixMap::new(172, 156));
+    if let Some(map) = r.area_map.as_mut() {
+        for p in map.pixels.iter_mut() {
+            *p = MAP_RGB;
+        }
+    }
+    backend.set_minimap_live_for_test(true);
+    let FrameOutput::Texture(live) = backend.finish(&mut r) else {
+        panic!("finish must return the full-frame texture");
+    };
+    let live_px = live.read_back();
+    // Sample centre of minimap blit rect (550,4)-(722,160).
+    let cx = 550 + 86;
+    let cy = 4 + 78;
+    assert_eq!(
+        live_px[cy * 765 + cx],
+        MAP_RGB,
+        "live punched frame must composite the minimap colour"
+    );
+    assert!(
+        backend.minimap_upload_count() >= 1,
+        "live finish must have uploaded the minimap layer"
+    );
+    let chrome_n = backend.chrome_upload_count();
+
+    // Freeze: no minimap live, chrome stays clean (scene_state==1 path).
+    backend.set_minimap_live_for_test(false);
+    let FrameOutput::Texture(frozen) = backend.finish(&mut r) else {
+        panic!("finish must return the full-frame texture");
+    };
+    assert_eq!(
+        backend.chrome_upload_count(),
+        chrome_n,
+        "freeze must not re-upload chrome"
+    );
+    let frozen_px = frozen.read_back();
+    assert_eq!(
+        frozen_px[cy * 765 + cx],
+        MAP_RGB,
+        "freeze after punch must keep the last minimap, not a transparent hole"
+    );
+    // Spot-check a few more cells in the rect so a single lucky pixel cannot pass.
+    for (x, y) in [
+        (550 + 10, 4 + 10),
+        (550 + 160, 4 + 140),
+        (550 + 40, 4 + 100),
+    ] {
+        assert_eq!(
+            frozen_px[y * 765 + x],
+            MAP_RGB,
+            "freeze minimap hole at ({x},{y})"
+        );
+    }
+}

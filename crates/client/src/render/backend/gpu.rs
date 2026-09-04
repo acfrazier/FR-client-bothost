@@ -576,8 +576,13 @@ pub struct GpuBackend {
     minimap_bind_group: wgpu::BindGroup,
     minimap_vertex_buf: wgpu::Buffer,
     minimap_rgba: Vec<u8>,
-    /// `chrome` saw `scene_state==2` this frame — upload + composite minimap.
+    /// `chrome` saw `scene_state==2` this frame — upload a fresh minimap.
     minimap_live: bool,
+    /// Last minimap upload is still the fill for a punched chrome hole.
+    /// Cleared when chrome uploads without a punch (title / sealed atlas).
+    /// Freeze (`scene_state==1`) keeps compositing this layer so the hole
+    /// does not show through as black/3D.
+    minimap_held: bool,
     /// How many minimap `write_texture`s ran (tests).
     minimap_upload_count: u64,
     /// The overlay-coverage marks (one byte per scene-window pixel): the
@@ -887,6 +892,7 @@ impl GpuBackend {
             minimap_vertex_buf,
             minimap_rgba: vec![0u8; (minimap_bytes_per_row * MINIMAP_H) as usize],
             minimap_live: false,
+            minimap_held: false,
             minimap_upload_count: 0,
             overlay_coverage: vec![0; (SCENE_W * SCENE_H) as usize],
             scene_ready: false,
@@ -934,7 +940,7 @@ impl GpuBackend {
     }
 
     /// Test hook: force the next `finish` to treat the minimap layer as live
-    /// (upload + composite) without running a full chrome stage.
+    /// (upload + hold for composite) without running a full chrome stage.
     #[doc(hidden)]
     pub fn set_minimap_live_for_test(&mut self, live: bool) {
         self.minimap_live = live;
@@ -1372,9 +1378,11 @@ impl RenderBackend for GpuBackend {
 
     /// The full-frame composite: clear the back buffer, copy the GPU scene
     /// at (4, 4) when ready, upload chrome atlas only when dirty (reuse
-    /// last otherwise), always composite chrome, upload+composite the
-    /// 172×156 minimap when live, then copy the write slot into the stable
-    /// present texture the host samples.
+    /// last otherwise), always composite chrome, upload the 172×156
+    /// minimap only while live (`scene_state==2`), and composite the last
+    /// minimap while live or still held over a punched hole (freeze).
+    /// Then copy the write slot into the stable present texture the host
+    /// samples.
     fn finish(&mut self, r: &mut Renderer) -> FrameOutput {
         let write = 1 - self.present_slot;
         let mut copy_encoder =
@@ -1430,6 +1438,8 @@ impl RenderBackend for GpuBackend {
         self.context.queue.submit([copy_encoder.finish()]);
 
         let chrome_bytes_per_row = (FRAME_W * 4).div_ceil(256) * 256;
+        // Punch only while the minimap layer is live; a sealed atlas (no
+        // punch) replaces the hole and drops the held layer.
         let punch_minimap = self.minimap_live;
         if self.chrome_upload_pending {
             fill_draw_area_rgba(
@@ -1462,8 +1472,12 @@ impl RenderBackend for GpuBackend {
             self.chrome_upload_count += 1;
             self.chrome_uploaded = true;
             self.chrome_upload_pending = false;
+            if !punch_minimap {
+                self.minimap_held = false;
+            }
         }
 
+        // Upload only on live frames; freeze reuses the last texture.
         if self.minimap_live {
             if let Some(map) = r.area_map.as_ref() {
                 let minimap_bytes_per_row = (MINIMAP_W * 4).div_ceil(256) * 256;
@@ -1488,9 +1502,11 @@ impl RenderBackend for GpuBackend {
                     },
                 );
                 self.minimap_upload_count += 1;
+                self.minimap_held = true;
             }
         }
 
+        let composite_minimap = self.minimap_live || self.minimap_held;
         let mut chrome_encoder =
             self.context
                 .device
@@ -1518,7 +1534,7 @@ impl RenderBackend for GpuBackend {
             pass.set_bind_group(0, &self.chrome_bind_group, &[]);
             pass.set_vertex_buffer(0, self.chrome_vertex_buf.slice(..));
             pass.draw(0..6, 0..1);
-            if self.minimap_live {
+            if composite_minimap {
                 pass.set_bind_group(0, &self.minimap_bind_group, &[]);
                 pass.set_vertex_buffer(0, self.minimap_vertex_buf.slice(..));
                 pass.draw(0..6, 0..1);
