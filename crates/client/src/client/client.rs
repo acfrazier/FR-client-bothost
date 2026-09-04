@@ -1109,7 +1109,7 @@ impl Client {
             loop_cycle: 0,
             last_progress_percent: 0,
             last_progress_message: String::new(),
-            http_port: 80,
+            http_port: crate::jag_fetch_port_for(crate::bot_target()),
             already_started: false,
             fetch_retry_wait: Duration::from_secs(5),
             pick_count: 0,
@@ -1357,12 +1357,40 @@ impl Client {
     /// `\r\n\r\n` (client-ts `getJagChecksums`/`getJagFile` fetch the same
     /// way). `None` on connect/read failure or a bodyless response.
     fn http_get(host: &str, port: u16, path: &str) -> Option<Vec<u8>> {
+        if crate::uses_secure_transport(crate::bot_target()) {
+            Self::https_get(host, path)
+        } else {
+            Self::http_get_plain(host, port, path)
+        }
+    }
+
+    fn http_get_plain(host: &str, port: u16, path: &str) -> Option<Vec<u8>> {
         use std::io::{Read, Write};
         let mut stream = std::net::TcpStream::connect((host, port)).ok()?;
         stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
         write!(stream, "GET {path} HTTP/1.0\r\nHost: {host}\r\n\r\n").ok()?;
         let mut buf = Vec::new();
         stream.read_to_end(&mut buf).ok()?;
+        Self::split_http_body(&buf)
+    }
+
+    fn https_get(host: &str, path: &str) -> Option<Vec<u8>> {
+        use std::io::{Read, Write};
+        let tcp = std::net::TcpStream::connect((host, 443)).ok()?;
+        tcp.set_read_timeout(Some(Duration::from_secs(8))).ok()?;
+        let connector = native_tls::TlsConnector::new().ok()?;
+        let mut stream = connector.connect(host, tcp).ok()?;
+        write!(
+            stream,
+            "GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+        )
+        .ok()?;
+        let mut buf = Vec::new();
+        stream.read_to_end(&mut buf).ok()?;
+        Self::split_http_body(&buf)
+    }
+
+    fn split_http_body(buf: &[u8]) -> Option<Vec<u8>> {
         let split = buf.windows(4).position(|w| w == b"\r\n\r\n")?;
         Some(buf[split + 4..].to_vec())
     }

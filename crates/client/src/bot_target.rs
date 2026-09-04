@@ -2,8 +2,7 @@
 //!
 //! `BOT_TARGET=prod` (alias `live`) talks to `w1.rs2b2t.com` with the
 //! baked public RSA. Anything else is the **local engine** on loopback.
-//! Alpha only supports local; prod exists so a later bin does not need a
-//! rebuild to flip worlds.
+//! Prod is HTTPS `/crc`+jags and WSS `ClientStream`; local stays TCP.
 
 use std::env;
 use std::path::PathBuf;
@@ -42,12 +41,33 @@ pub fn bot_target() -> BotTarget {
     bot_target_from_env(env::var("BOT_TARGET").ok().as_deref())
 }
 
-/// TCP host for a target. Port stays 43594.
+/// TCP host for a target.
 pub fn world_host_for(target: BotTarget) -> &'static str {
     match target {
         BotTarget::Prod => "w1.rs2b2t.com",
         BotTarget::Local => "127.0.0.1",
     }
+}
+
+/// Game port. Local is Java TCP `:43594`. Prod is WSS on `:443`.
+pub fn game_port_for(target: BotTarget) -> u16 {
+    match target {
+        BotTarget::Prod => 443,
+        BotTarget::Local => 43594,
+    }
+}
+
+/// Jag/crc fetch port. Local HTTP `:80`; Prod HTTPS `:443`.
+pub fn jag_fetch_port_for(target: BotTarget) -> u16 {
+    match target {
+        BotTarget::Prod => 443,
+        BotTarget::Local => 80,
+    }
+}
+
+/// Prod talks WSS + HTTPS; local stays TCP + HTTP.
+pub fn uses_secure_transport(target: BotTarget) -> bool {
+    target == BotTarget::Prod
 }
 
 /// [`world_host_for`] for [`bot_target`].
@@ -106,6 +126,12 @@ mod tests {
         assert_eq!(bot_target_from_env(None), BotTarget::Local);
         assert_eq!(world_host_for(BotTarget::Prod), "w1.rs2b2t.com");
         assert_eq!(world_host_for(BotTarget::Local), "127.0.0.1");
+        assert_eq!(game_port_for(BotTarget::Prod), 443);
+        assert_eq!(game_port_for(BotTarget::Local), 43594);
+        assert_eq!(jag_fetch_port_for(BotTarget::Prod), 443);
+        assert_eq!(jag_fetch_port_for(BotTarget::Local), 80);
+        assert!(uses_secure_transport(BotTarget::Prod));
+        assert!(!uses_secure_transport(BotTarget::Local));
     }
 
     #[test]

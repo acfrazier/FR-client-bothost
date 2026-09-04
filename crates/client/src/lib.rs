@@ -17,7 +17,8 @@ pub mod unpack;
 pub mod util;
 pub mod wordfilter;
 pub use bot_target::{
-    bot_target, cache_dir, content_dir, engine_dir, set_bot_target, world_host, BotTarget,
+    bot_target, cache_dir, content_dir, engine_dir, game_port_for, jag_fetch_port_for,
+    set_bot_target, uses_secure_transport, world_host, world_host_for, BotTarget,
 };
 pub use login_rsa::{
     active_pair, JAVA_LOGIN_RSAE, JAVA_LOGIN_RSAN, PROD_LOGIN_RSAE, PROD_LOGIN_RSAN,
