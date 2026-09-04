@@ -513,22 +513,33 @@ struct ChromeVertex {
     v: f32,
 }
 
+/// Minimap / compass blit rect on the 765×503 applet (`area_map` at (550, 4)).
+const MINIMAP_X: u32 = 550;
+const MINIMAP_Y: u32 = 4;
+const MINIMAP_W: u32 = 172;
+const MINIMAP_H: u32 = 156;
+
 /// The wgpu scene backend (see the module docs). `begin`/`scene`/`chrome`
 /// delegate to the inner `CpuBackend` (the 2D chrome stays CPU this slice);
 /// `scene` rasterizes the 3D world into `scene_texture` and draws the
 /// overlays into `area_game` as pixels; `composite_scene` blits that into
-/// the persistent `draw_area`; `finish` uploads `draw_area` as a texture
-/// and composites it over the scene.
+/// the persistent `draw_area`; `finish` uploads chrome (lazy) + minimap
+/// and composites them over the scene into a stable present texture.
 pub struct GpuBackend {
     context: Arc<GpuContext>,
     scene_texture: wgpu::Texture,
     scene_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
-    /// Ping-pong pair of full-frame 765×503 composites (scene at (4, 4)
-    /// + chrome). `finish` writes the slot the host is not sampling.
+    /// Ping-pong pair of full-frame 765×503 write targets (scene at (4, 4)
+    /// + chrome + minimap). `finish` writes the slot the other is not
+    /// resolving from, then copies into [`Self::present_texture`].
     frame_textures: [wgpu::Texture; 2],
     frame_views: [wgpu::TextureView; 2],
-    /// Slot last handed to the host. The next `finish` writes `1 - this`.
+    /// Stable host-facing composite. Always returned from `finish` so
+    /// ImGui registers once; ping-pong stays internal.
+    present_texture: wgpu::Texture,
+    present_view: wgpu::TextureView,
+    /// Slot last written. The next `finish` writes `1 - this`.
     present_slot: usize,
     /// The shared model-texture-array bind group, bound each scene pass.
     model_bind_group: wgpu::BindGroup,
@@ -545,15 +556,30 @@ pub struct GpuBackend {
     /// The 2D chrome/title half: the CPU fidelity path the frame stages
     /// delegate to. The chrome draws into the persistent `draw_area`.
     cpu: CpuBackend,
-    /// The CPU `draw_area` uploaded as one RGBA8 texture each frame (the
-    /// RuneLite canvas-upload composite), drawn over the frame with alpha
-    /// blending. The texture + bind group are per-backend (each frame's
-    /// upload); the composite shader/layout/pipeline are the shared
-    /// `GpuContext`.
+    /// Chrome atlas (chat, side, map border, buttons) — not the minimap.
+    /// Uploaded only when redraw flags fire; still composited every frame.
     chrome_texture: wgpu::Texture,
     chrome_bind_group: wgpu::BindGroup,
     /// The full-frame quad (six `ChromeVertex`es, uploaded once).
     chrome_vertex_buf: wgpu::Buffer,
+    /// Reused RGBA scratch for the chrome atlas upload (no per-finish alloc).
+    chrome_rgba: Vec<u8>,
+    /// Set in `chrome` when side/chat/icons/chat_mode/title need a new atlas.
+    chrome_upload_pending: bool,
+    /// At least one chrome atlas upload has landed (first frame forces one).
+    chrome_uploaded: bool,
+    /// How many chrome atlas `write_texture`s ran (tests / BOT_DEBUG).
+    chrome_upload_count: u64,
+    /// Live minimap/compass layer (172×156), uploaded every `scene_state==2`
+    /// frame and composited over the hole punched in the chrome atlas.
+    minimap_texture: wgpu::Texture,
+    minimap_bind_group: wgpu::BindGroup,
+    minimap_vertex_buf: wgpu::Buffer,
+    minimap_rgba: Vec<u8>,
+    /// `chrome` saw `scene_state==2` this frame — upload + composite minimap.
+    minimap_live: bool,
+    /// How many minimap `write_texture`s ran (tests).
+    minimap_upload_count: u64,
     /// The overlay-coverage marks (one byte per scene-window pixel): the
     /// GPU overlay pass records which `area_game` pixels it wrote here,
     /// and `finish` keys the scene-window transparency off it.
@@ -611,6 +637,8 @@ impl GpuBackend {
 
         let (frame_texture_a, frame_view_a) = make_frame_target(&context.device, "r274 frame a");
         let (frame_texture_b, frame_view_b) = make_frame_target(&context.device, "r274 frame b");
+        let (present_texture, present_view) =
+            make_frame_target(&context.device, "r274 present stable");
 
         let brightness_buf = context.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("r274 scene uniforms"),
@@ -741,6 +769,96 @@ impl GpuBackend {
             bytemuck::cast_slice(&chrome_vertices),
         );
 
+        // Minimap layer: 172×156 at (550, 4), own texture + quad (composited
+        // every live frame; chrome atlas punches a hole so this is visible).
+        let minimap_texture = context.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("r274 minimap upload"),
+            size: wgpu::Extent3d {
+                width: MINIMAP_W,
+                height: MINIMAP_H,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let minimap_view = minimap_texture.create_view(&Default::default());
+        let minimap_bind_group = context
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("r274 minimap upload group"),
+                layout: &context.chrome_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&minimap_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&chrome_sampler),
+                    },
+                ],
+            });
+        let mx0 = MINIMAP_X as f32;
+        let my0 = MINIMAP_Y as f32;
+        let mx1 = (MINIMAP_X + MINIMAP_W) as f32;
+        let my1 = (MINIMAP_Y + MINIMAP_H) as f32;
+        let minimap_vertices: [ChromeVertex; 6] = [
+            ChromeVertex {
+                x: mx0,
+                y: my0,
+                u: 0.0,
+                v: 0.0,
+            },
+            ChromeVertex {
+                x: mx1,
+                y: my0,
+                u: 1.0,
+                v: 0.0,
+            },
+            ChromeVertex {
+                x: mx0,
+                y: my1,
+                u: 0.0,
+                v: 1.0,
+            },
+            ChromeVertex {
+                x: mx0,
+                y: my1,
+                u: 0.0,
+                v: 1.0,
+            },
+            ChromeVertex {
+                x: mx1,
+                y: my0,
+                u: 1.0,
+                v: 0.0,
+            },
+            ChromeVertex {
+                x: mx1,
+                y: my1,
+                u: 1.0,
+                v: 1.0,
+            },
+        ];
+        let minimap_vertex_buf = context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("r274 minimap quad"),
+            size: (minimap_vertices.len() * std::mem::size_of::<ChromeVertex>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        context.queue.write_buffer(
+            &minimap_vertex_buf,
+            0,
+            bytemuck::cast_slice(&minimap_vertices),
+        );
+
+        let chrome_bytes_per_row = (FRAME_W * 4).div_ceil(256) * 256;
+        let minimap_bytes_per_row = (MINIMAP_W * 4).div_ceil(256) * 256;
+
         Ok(GpuBackend {
             context,
             scene_texture,
@@ -748,6 +866,8 @@ impl GpuBackend {
             depth_view,
             frame_textures: [frame_texture_a, frame_texture_b],
             frame_views: [frame_view_a, frame_view_b],
+            present_texture,
+            present_view,
             present_slot: 0,
             model_bind_group,
             brightness_bind_group,
@@ -758,6 +878,16 @@ impl GpuBackend {
             chrome_texture,
             chrome_bind_group,
             chrome_vertex_buf,
+            chrome_rgba: vec![0u8; (chrome_bytes_per_row * FRAME_H) as usize],
+            chrome_upload_pending: true,
+            chrome_uploaded: false,
+            chrome_upload_count: 0,
+            minimap_texture,
+            minimap_bind_group,
+            minimap_vertex_buf,
+            minimap_rgba: vec![0u8; (minimap_bytes_per_row * MINIMAP_H) as usize],
+            minimap_live: false,
+            minimap_upload_count: 0,
             overlay_coverage: vec![0; (SCENE_W * SCENE_H) as usize],
             scene_ready: false,
             last_kind: FrameKind::Title,
@@ -783,6 +913,37 @@ impl GpuBackend {
     #[doc(hidden)]
     pub fn device(&self) -> &wgpu::Device {
         &self.context.device
+    }
+
+    /// How many chrome-atlas `write_texture`s this backend has run.
+    #[doc(hidden)]
+    pub fn chrome_upload_count(&self) -> u64 {
+        self.chrome_upload_count
+    }
+
+    /// How many minimap-layer `write_texture`s this backend has run.
+    #[doc(hidden)]
+    pub fn minimap_upload_count(&self) -> u64 {
+        self.minimap_upload_count
+    }
+
+    /// Minimap layer size (always 172×156).
+    #[doc(hidden)]
+    pub fn minimap_texture_size(&self) -> (u32, u32) {
+        (self.minimap_texture.width(), self.minimap_texture.height())
+    }
+
+    /// Test hook: force the next `finish` to treat the minimap layer as live
+    /// (upload + composite) without running a full chrome stage.
+    #[doc(hidden)]
+    pub fn set_minimap_live_for_test(&mut self, live: bool) {
+        self.minimap_live = live;
+    }
+
+    /// Test hook: mark the chrome atlas dirty so the next `finish` uploads.
+    #[doc(hidden)]
+    pub fn mark_chrome_dirty_for_test(&mut self) {
+        self.chrome_upload_pending = true;
     }
 
     /// Test hook: upload the model textures from `pix`, render `mesh` into
@@ -1163,22 +1324,57 @@ impl RenderBackend for GpuBackend {
     /// side/chat/icons/minimap/title into the persistent `draw_area`. The
     /// redraw flags gate the draws (no forced redraw — the persistent
     /// `draw_area` carries the previous frame's chrome until a redraw
-    /// flag is set).
+    /// flag is set). Atlas upload is gated on those same flags (plus
+    /// title flames every frame); minimap is a separate layer.
     fn chrome(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
+        // Capture atlas dirtiness before cpu.chrome clears the flags.
+        let mut atlas_dirty = kind == FrameKind::Title;
+        if kind == FrameKind::Game {
+            // Same force cases as CpuBackend::chrome, without re-running
+            // animate_interface (cpu.chrome owns that call).
+            if core.is_menu_open && (core.menu_area == 1 || core.menu_area == 2) {
+                atlas_dirty = true;
+            }
+            // Modal open: cpu may set redraw via animate_interface each frame.
+            if core.side_modal_id != -1 || core.chat_modal_id != -1 {
+                atlas_dirty = true;
+            }
+            if core.selected_area == 2
+                || core.obj_drag_area == 2
+                || core.selected_area == 3
+                || core.obj_drag_area == 3
+            {
+                atlas_dirty = true;
+            }
+            if core.tut_flash_icon != -1 {
+                atlas_dirty = true;
+            }
+            // Chat scrollbar may flip redraw_chat inside cpu.chrome.
+            if core.chat_modal_id == -1 {
+                let mut offset = core.chat_scroll_height - core.chat_interface.scroll_pos - 77;
+                if offset < 0 {
+                    offset = 0;
+                }
+                if offset > core.chat_scroll_height - 77 {
+                    offset = core.chat_scroll_height - 77;
+                }
+                if core.chat_scroll_pos != offset {
+                    atlas_dirty = true;
+                }
+            }
+            atlas_dirty |=
+                core.redraw_side || core.redraw_chat || core.redraw_icons || core.redraw_chat_mode;
+        }
+        self.minimap_live = kind == FrameKind::Game && core.scene_state == 2;
+        self.chrome_upload_pending = atlas_dirty || !self.chrome_uploaded;
         self.cpu.chrome(core, r, kind);
     }
 
-    /// The full-frame composite (the RuneLite canvas-upload pattern):
-    /// clear the back buffer, copy the GPU scene at (4, 4) when it was
-    /// rendered, then upload the CPU-drawn `draw_area` as one RGBA8
-    /// texture and draw it over the frame with alpha blending. Copy and
-    /// chrome are separate submits so the copy dest is not also a render
-    /// attachment in the same encoder. The upload is opaque chrome except
-    /// inside the scene window, where overlay alpha is the coverage byte
-    /// (255 = opaque chrome including black minimenu bars, 0 = 3D hole,
-    /// 1..=254 = translucent nav paint; see [`draw_area_rgba`]). No
-    /// readback. Ping-pongs so the host can keep sampling the last
-    /// presented texture while this write runs.
+    /// The full-frame composite: clear the back buffer, copy the GPU scene
+    /// at (4, 4) when ready, upload chrome atlas only when dirty (reuse
+    /// last otherwise), always composite chrome, upload+composite the
+    /// 172×156 minimap when live, then copy the write slot into the stable
+    /// present texture the host samples.
     fn finish(&mut self, r: &mut Renderer) -> FrameOutput {
         let write = 1 - self.present_slot;
         let mut copy_encoder =
@@ -1232,35 +1428,69 @@ impl RenderBackend for GpuBackend {
             );
         }
         self.context.queue.submit([copy_encoder.finish()]);
-        // The CPU chrome body drew the 2D UI into the persistent
-        // `draw_area`; upload it as one RGBA8 texture. The rows are padded
-        // to wgpu's 256-byte `COPY_BYTES_PER_ROW_ALIGNMENT`.
-        let bytes_per_row = (FRAME_W * 4).div_ceil(256) * 256;
-        let rgba = draw_area_rgba(
-            &r.draw_area,
-            &self.overlay_coverage,
-            self.scene_ready,
-            bytes_per_row,
-        );
-        self.context.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.chrome_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &rgba,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(bytes_per_row),
-                rows_per_image: Some(FRAME_H),
-            },
-            wgpu::Extent3d {
-                width: FRAME_W,
-                height: FRAME_H,
-                depth_or_array_layers: 1,
-            },
-        );
+
+        let chrome_bytes_per_row = (FRAME_W * 4).div_ceil(256) * 256;
+        let punch_minimap = self.minimap_live;
+        if self.chrome_upload_pending {
+            fill_draw_area_rgba(
+                &r.draw_area,
+                &self.overlay_coverage,
+                self.scene_ready,
+                punch_minimap,
+                chrome_bytes_per_row,
+                &mut self.chrome_rgba,
+            );
+            self.context.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.chrome_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &self.chrome_rgba,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(chrome_bytes_per_row),
+                    rows_per_image: Some(FRAME_H),
+                },
+                wgpu::Extent3d {
+                    width: FRAME_W,
+                    height: FRAME_H,
+                    depth_or_array_layers: 1,
+                },
+            );
+            self.chrome_upload_count += 1;
+            self.chrome_uploaded = true;
+            self.chrome_upload_pending = false;
+        }
+
+        if self.minimap_live {
+            if let Some(map) = r.area_map.as_ref() {
+                let minimap_bytes_per_row = (MINIMAP_W * 4).div_ceil(256) * 256;
+                fill_minimap_rgba(map, minimap_bytes_per_row, &mut self.minimap_rgba);
+                self.context.queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &self.minimap_texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    &self.minimap_rgba,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(minimap_bytes_per_row),
+                        rows_per_image: Some(MINIMAP_H),
+                    },
+                    wgpu::Extent3d {
+                        width: MINIMAP_W,
+                        height: MINIMAP_H,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                self.minimap_upload_count += 1;
+            }
+        }
+
         let mut chrome_encoder =
             self.context
                 .device
@@ -1288,13 +1518,38 @@ impl RenderBackend for GpuBackend {
             pass.set_bind_group(0, &self.chrome_bind_group, &[]);
             pass.set_vertex_buffer(0, self.chrome_vertex_buf.slice(..));
             pass.draw(0..6, 0..1);
+            if self.minimap_live {
+                pass.set_bind_group(0, &self.minimap_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.minimap_vertex_buf.slice(..));
+                pass.draw(0..6, 0..1);
+            }
         }
+        // Resolve write slot into the stable present texture the host binds.
+        chrome_encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.frame_textures[write],
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.present_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width: FRAME_W,
+                height: FRAME_H,
+                depth_or_array_layers: 1,
+            },
+        );
         self.context.queue.submit([chrome_encoder.finish()]);
         self.present_slot = write;
         FrameOutput::Texture(TextureHandle {
             device: self.context.device.clone(),
             queue: self.context.queue.clone(),
-            view: self.frame_views[write].clone(),
+            view: self.present_view.clone(),
             width: FRAME_W,
             height: FRAME_H,
         })
@@ -1317,25 +1572,58 @@ pub(crate) fn should_cls_scene_overlays(kind: FrameKind, scene_state: i32) -> bo
     !freeze_last_scene(kind, scene_state)
 }
 
-/// Build the RGBA8 upload bytes from the CPU-drawn `draw_area` (opaque
-/// `0x00RRGGBB` pixels), one row padded to `bytes_per_row` (wgpu's 256-byte
-/// row alignment; the padding is zero-filled). When the scene was rendered,
-/// the scene window — the fixed rect x∈[4,516), y∈[4,338) — takes overlay
-/// alpha from the coverage byte: 255 is opaque chrome (minimenu black
-/// bars stay black), 0 is the 3D hole, 1..=254 is translucent nav paint
-/// over the scene. Outside the scene window the chrome is opaque; with no
-/// scene (title screen) the whole frame is opaque.
+/// Test helper: allocate + fill chrome RGBA (production reuses `chrome_rgba`
+/// via [`fill_draw_area_rgba`]). When the scene was rendered, the scene
+/// window — the fixed rect x∈[4,516), y∈[4,338) — takes overlay alpha from
+/// the coverage byte: 255 is opaque chrome (minimenu black bars stay black),
+/// 0 is the 3D hole, 1..=254 is translucent nav paint over the scene. Outside
+/// the scene window the chrome is opaque; with no scene (title screen) the
+/// whole frame is opaque. When `punch_minimap` is set, the 172×156 minimap
+/// rect is alpha 0 so the separate minimap layer composites through.
+#[cfg(test)]
 fn draw_area_rgba(
     draw_area: &PixMap,
     coverage: &[u8],
     scene_ready: bool,
+    punch_minimap: bool,
     bytes_per_row: u32,
 ) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity((bytes_per_row * FRAME_H) as usize);
+    let mut bytes = vec![0u8; (bytes_per_row * FRAME_H) as usize];
+    fill_draw_area_rgba(
+        draw_area,
+        coverage,
+        scene_ready,
+        punch_minimap,
+        bytes_per_row,
+        &mut bytes,
+    );
+    bytes
+}
+
+fn fill_draw_area_rgba(
+    draw_area: &PixMap,
+    coverage: &[u8],
+    scene_ready: bool,
+    punch_minimap: bool,
+    bytes_per_row: u32,
+    bytes: &mut Vec<u8>,
+) {
+    let need = (bytes_per_row * FRAME_H) as usize;
+    if bytes.len() < need {
+        bytes.resize(need, 0);
+    }
     for y in 0..FRAME_H {
         for x in 0..FRAME_W {
             let rgb = draw_area.pixels[(y * FRAME_W + x) as usize];
-            let alpha = if scene_ready
+            let o = (y * bytes_per_row + x * 4) as usize;
+            let alpha = if punch_minimap
+                && x >= MINIMAP_X
+                && x < MINIMAP_X + MINIMAP_W
+                && y >= MINIMAP_Y
+                && y < MINIMAP_Y + MINIMAP_H
+            {
+                0
+            } else if scene_ready
                 && (4..516).contains(&(x as i32))
                 && (4..338).contains(&(y as i32))
             {
@@ -1343,14 +1631,37 @@ fn draw_area_rgba(
             } else {
                 255
             };
-            bytes.push(((rgb >> 16) & 0xff) as u8);
-            bytes.push(((rgb >> 8) & 0xff) as u8);
-            bytes.push((rgb & 0xff) as u8);
-            bytes.push(alpha);
+            bytes[o] = ((rgb >> 16) & 0xff) as u8;
+            bytes[o + 1] = ((rgb >> 8) & 0xff) as u8;
+            bytes[o + 2] = (rgb & 0xff) as u8;
+            bytes[o + 3] = alpha;
         }
-        bytes.resize(bytes.len() + (bytes_per_row - FRAME_W * 4) as usize, 0);
+        // padding already zero from resize/init
     }
-    bytes
+}
+
+/// Pack `area_map` (172×156 `0x00RRGGBB`) into a padded RGBA8 upload buffer.
+fn fill_minimap_rgba(map: &PixMap, bytes_per_row: u32, bytes: &mut Vec<u8>) {
+    let need = (bytes_per_row * MINIMAP_H) as usize;
+    if bytes.len() < need {
+        bytes.resize(need, 0);
+    }
+    let w = map.width.max(0) as u32;
+    let h = map.height.max(0) as u32;
+    for y in 0..MINIMAP_H {
+        for x in 0..MINIMAP_W {
+            let o = (y * bytes_per_row + x * 4) as usize;
+            let rgb = if x < w && y < h {
+                map.pixels[(y * w + x) as usize]
+            } else {
+                0
+            };
+            bytes[o] = ((rgb >> 16) & 0xff) as u8;
+            bytes[o + 1] = ((rgb >> 8) & 0xff) as u8;
+            bytes[o + 2] = (rgb & 0xff) as u8;
+            bytes[o + 3] = 255;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1403,7 +1714,7 @@ mod tests {
         coverage[0] = 255;
         coverage[1] = 82;
         let bytes_per_row = (FRAME_W * 4).div_ceil(256) * 256;
-        let bytes = draw_area_rgba(&draw, &coverage, true, bytes_per_row);
+        let bytes = draw_area_rgba(&draw, &coverage, true, false, bytes_per_row);
         let px = |x: u32, y: u32| {
             let o = (y * bytes_per_row + x * 4) as usize;
             (bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3])
@@ -1424,7 +1735,7 @@ mod tests {
         draw.pixels[(4 * FRAME_W + 4) as usize] = 0x00ff8800;
         let coverage = vec![0u8; (SCENE_W * SCENE_H) as usize];
         let bytes_per_row = (FRAME_W * 4).div_ceil(256) * 256;
-        let bytes = draw_area_rgba(&draw, &coverage, false, bytes_per_row);
+        let bytes = draw_area_rgba(&draw, &coverage, false, false, bytes_per_row);
         let o = (4 * bytes_per_row + 4 * 4) as usize;
         assert_eq!(
             bytes[o + 3],

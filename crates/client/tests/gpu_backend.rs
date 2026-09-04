@@ -187,8 +187,57 @@ fn draw_area_upload_carries_known_chrome_pixels() {
     Renderer::set_prefer_gpu(false);
 }
 
-/// The host (ImGui) keeps sampling the last `TextureHandle` while the next
-/// `finish` writes. A single `frame_texture` would clobber that sample.
+/// Ping-pong stays inside the backend for write-while-sample; `finish`
+/// always returns one stable present texture so the host's ImGui bind is a
+/// no-op after the first registration (not a new `wgpu::Texture` every frame).
+#[test]
+fn finish_returns_stable_present_texture_identity() {
+    let Ok(mut backend) = client::render::backend::GpuBackend::try_new() else {
+        eprintln!("no adapter on this machine; the stable-present test skips");
+        return;
+    };
+    let mut r = Renderer::new(false);
+    {
+        let w = r.draw_area.width;
+        let h = r.draw_area.height;
+        let mut surface = client::graphics::Pix2D::with_pixels(&mut r.draw_area.pixels, w, h);
+        surface.fill_rect(560, 210, 32, 32, 0xff0000);
+    }
+    let FrameOutput::Texture(first) = backend.finish(&mut r) else {
+        panic!("finish must return the full-frame texture");
+    };
+    let first_tex = first.view.texture().clone();
+
+    for pixel in r.draw_area.pixels.iter_mut() {
+        *pixel = 0;
+    }
+    {
+        let w = r.draw_area.width;
+        let h = r.draw_area.height;
+        let mut surface = client::graphics::Pix2D::with_pixels(&mut r.draw_area.pixels, w, h);
+        surface.fill_rect(560, 210, 32, 32, 0x0000ff);
+    }
+    backend.mark_chrome_dirty_for_test();
+    let FrameOutput::Texture(second) = backend.finish(&mut r) else {
+        panic!("finish must return the full-frame texture");
+    };
+    let second_tex = second.view.texture().clone();
+
+    assert_eq!(
+        first_tex, second_tex,
+        "consecutive Texture presents must share one stable present texture identity"
+    );
+    let second_pixels = second.read_back();
+    assert_eq!(
+        second_pixels[210 * 765 + 560],
+        0x0000ff,
+        "the stable present must still carry the latest chrome composite"
+    );
+}
+
+/// Write still ping-pongs off the stable present: a host-held prior frame is
+/// not the in-flight write slot. After the second `finish`, the stable
+/// present shows the new composite (host samples the same texture).
 #[test]
 fn finish_does_not_clobber_the_last_presented_frame() {
     let Ok(mut backend) = client::render::backend::GpuBackend::try_new() else {
@@ -205,6 +254,12 @@ fn finish_does_not_clobber_the_last_presented_frame() {
     let FrameOutput::Texture(first) = backend.finish(&mut r) else {
         panic!("finish must return the full-frame texture");
     };
+    let first_pixels = first.read_back();
+    assert_eq!(
+        first_pixels[210 * 765 + 560],
+        0xff0000,
+        "first finish composites red"
+    );
 
     for pixel in r.draw_area.pixels.iter_mut() {
         *pixel = 0;
@@ -215,15 +270,15 @@ fn finish_does_not_clobber_the_last_presented_frame() {
         let mut surface = client::graphics::Pix2D::with_pixels(&mut r.draw_area.pixels, w, h);
         surface.fill_rect(560, 210, 32, 32, 0x0000ff);
     }
+    backend.mark_chrome_dirty_for_test();
     let FrameOutput::Texture(second) = backend.finish(&mut r) else {
         panic!("finish must return the full-frame texture");
     };
 
-    let first_pixels = first.read_back();
     assert_eq!(
-        first_pixels[210 * 765 + 560],
-        0xff0000,
-        "the host-held frame must stay the previous composite, not the write in flight"
+        first.view.texture(),
+        second.view.texture(),
+        "stable present: host keeps one texture identity across finishes"
     );
     let second_pixels = second.read_back();
     assert_eq!(
@@ -259,4 +314,76 @@ fn composite_produces_one_full_frame_texture() {
     assert_eq!(handle.view.texture().width(), 765);
     assert_eq!(handle.view.texture().height(), 503);
     Renderer::set_prefer_gpu(false);
+}
+
+/// Chrome atlas is 172×156-free: minimap lives on its own texture.
+#[test]
+fn minimap_texture_is_172x156() {
+    let Ok(backend) = client::render::backend::GpuBackend::try_new() else {
+        eprintln!("no adapter; minimap size test skips");
+        return;
+    };
+    assert_eq!(backend.minimap_texture_size(), (172, 156));
+}
+
+/// Only minimap motion must not re-upload the full chrome atlas.
+#[test]
+fn chrome_upload_skipped_when_only_minimap_moved() {
+    let Ok(mut backend) = client::render::backend::GpuBackend::try_new() else {
+        eprintln!("no adapter; chrome lazy test skips");
+        return;
+    };
+    let mut r = Renderer::new(false);
+    {
+        let w = r.draw_area.width;
+        let h = r.draw_area.height;
+        let mut surface = client::graphics::Pix2D::with_pixels(&mut r.draw_area.pixels, w, h);
+        surface.fill_rect(560, 210, 32, 32, 0xff0000);
+    }
+    let _ = backend.finish(&mut r);
+    let chrome_after_first = backend.chrome_upload_count();
+    assert!(chrome_after_first >= 1, "first finish uploads chrome");
+
+    // Seed a minimap pixmap and mark only the minimap live — atlas stays clean.
+    r.area_map = Some(client::graphics::PixMap::new(172, 156));
+    if let Some(map) = r.area_map.as_mut() {
+        map.pixels[0] = 0x00_00_ff_00;
+    }
+    backend.set_minimap_live_for_test(true);
+    let _ = backend.finish(&mut r);
+    assert_eq!(
+        backend.chrome_upload_count(),
+        chrome_after_first,
+        "minimap-only frame must not re-upload the chrome atlas"
+    );
+    assert!(
+        backend.minimap_upload_count() >= 1,
+        "minimap layer must upload when live"
+    );
+}
+
+/// A chrome redraw flag forces another atlas upload.
+#[test]
+fn chrome_upload_runs_when_redraw_chat_set() {
+    let Ok(mut backend) = client::render::backend::GpuBackend::try_new() else {
+        eprintln!("no adapter; chrome redraw test skips");
+        return;
+    };
+    let mut r = Renderer::new(false);
+    let _ = backend.finish(&mut r);
+    let n = backend.chrome_upload_count();
+
+    {
+        let w = r.draw_area.width;
+        let h = r.draw_area.height;
+        let mut surface = client::graphics::Pix2D::with_pixels(&mut r.draw_area.pixels, w, h);
+        surface.fill_rect(10, 460, 16, 4, 0xffffff);
+    }
+    backend.mark_chrome_dirty_for_test();
+    let _ = backend.finish(&mut r);
+    assert_eq!(
+        backend.chrome_upload_count(),
+        n + 1,
+        "redraw-flagged chrome must upload the atlas again"
+    );
 }
