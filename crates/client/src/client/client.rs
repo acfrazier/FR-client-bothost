@@ -1445,6 +1445,7 @@ impl Client {
         if Packet::getcrc(&bytes, 0, bytes.len()) != crc {
             return None;
         }
+        let _ = std::fs::create_dir_all(cache_dir);
         let _ = std::fs::write(format!("{cache_dir}/{filename}"), &bytes);
         Some(bytes)
     }
@@ -1462,13 +1463,9 @@ impl Client {
         checksum
     }
 
-    /// The Task 2 snapshot root (`~/.274bot/unpack`), matching `unpack-cache`
-    /// when `HOME` is unset.
+    /// The Task 2 snapshot root (`~/.274bot/unpack`), matching `unpack-cache`.
     fn unpack_snapshot_dir() -> String {
-        match std::env::var("HOME") {
-            Ok(home) => format!("{home}/.274bot/unpack"),
-            Err(_) => ".274bot/unpack".to_string(),
-        }
+        crate::unpack_dir().display().to_string()
     }
 
     /// Start the OnDemand worker when the cache dir has a `versionlist` pack

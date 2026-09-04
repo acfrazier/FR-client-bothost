@@ -89,9 +89,27 @@ pub fn engine_dir() -> PathBuf {
     }
 }
 
-/// Client pack cache: `$ENGINE_DIR/data/pack/client`.
+/// Jag pack + versioned snapshots (`models.bin` etc.). Prod downloads land here.
+pub fn unpack_dir() -> PathBuf {
+    match env::var("HOME") {
+        Ok(home) if !home.is_empty() => PathBuf::from(home).join(".274bot/unpack"),
+        _ => PathBuf::from(".274bot/unpack"),
+    }
+}
+
+/// Pack cache for a target. Local is the engine jag dir; Prod is
+/// [`unpack_dir`] so HTTPS `/crc`+jags do not overwrite the local engine pack.
+/// Versioned snapshots stay in `{unpack_dir}/{sha256(versionlist)[:8]}/`.
+pub fn cache_dir_for(target: BotTarget) -> PathBuf {
+    match target {
+        BotTarget::Local => engine_dir().join("data/pack/client"),
+        BotTarget::Prod => unpack_dir(),
+    }
+}
+
+/// [`cache_dir_for`] for [`bot_target`].
 pub fn cache_dir() -> PathBuf {
-    engine_dir().join("data/pack/client")
+    cache_dir_for(bot_target())
 }
 
 /// Config jag: `$ENGINE_DIR/data/pack/config`.
@@ -132,6 +150,25 @@ mod tests {
         assert_eq!(jag_fetch_port_for(BotTarget::Local), 80);
         assert!(uses_secure_transport(BotTarget::Prod));
         assert!(!uses_secure_transport(BotTarget::Local));
+    }
+
+    #[test]
+    fn prod_cache_dir_is_home_unpack_not_engine_pack() {
+        assert_eq!(
+            cache_dir_for(BotTarget::Local),
+            engine_dir().join("data/pack/client")
+        );
+        assert_eq!(cache_dir_for(BotTarget::Prod), unpack_dir());
+        assert_ne!(
+            cache_dir_for(BotTarget::Prod),
+            cache_dir_for(BotTarget::Local),
+            "prod jag downloads must not land in the local engine pack"
+        );
+        let unpack = unpack_dir();
+        assert_eq!(
+            unpack.file_name().map(|s| s.to_string_lossy().into_owned()),
+            Some("unpack".into())
+        );
     }
 
     #[test]

@@ -65,7 +65,7 @@ struct WsInner {
 
 enum Inner {
     Tcp(TcpInner),
-    Ws(WsInner),
+    Ws(Box<WsInner>),
 }
 
 pub struct ClientStream {
@@ -123,12 +123,12 @@ impl ClientStream {
         );
         let (ws, _) = tungstenite::client::client(req, tls).map_err(io_other)?;
         Ok(ClientStream {
-            inner: Inner::Ws(WsInner {
+            inner: Inner::Ws(Box::new(WsInner {
                 ws: Mutex::new(ws),
                 leftover: Mutex::new(VecDeque::new()),
                 dummy: Mutex::new(false),
                 fd,
-            }),
+            })),
             bytes_in: AtomicU64::new(0),
             bytes_out: AtomicU64::new(0),
         })
@@ -286,8 +286,7 @@ impl ClientStream {
                     return Ok(());
                 }
                 let payload = buf[..len].to_vec();
-                w.ws
-                    .lock()
+                w.ws.lock()
                     .unwrap()
                     .send(Message::Binary(payload))
                     .map_err(io_other)?;
@@ -340,12 +339,7 @@ fn fill_ws(w: &WsInner) -> io::Result<()> {
     }
 }
 
-fn tcp_write(
-    t: &mut TcpInner,
-    buf: &[u8],
-    len: usize,
-    bytes_out: &AtomicU64,
-) -> io::Result<()> {
+fn tcp_write(t: &mut TcpInner, buf: &[u8], len: usize, bytes_out: &AtomicU64) -> io::Result<()> {
     let sock = t.writer_sock.try_clone()?;
     let shared = t.shared.clone();
     let condvar = t.condvar.clone();
