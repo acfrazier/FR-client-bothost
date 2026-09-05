@@ -154,8 +154,8 @@ impl SeqType {
 
         if delay_value == 0 {
             if let Some(&transform_id) = frames.get(frame.max(0) as usize) {
-                if let Some(transform) = crate::dash3d::AnimFrame::get(transform_id) {
-                    return transform.delay;
+                if let Some(delay) = crate::dash3d::AnimFrame::delay(transform_id) {
+                    return delay;
                 }
             }
             return 1;

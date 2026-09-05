@@ -200,6 +200,16 @@ impl AnimFrame {
         s.list.get(id as usize).and_then(|f| f.clone())
     }
 
+    /// Read only the delay under the store lock, without cloning transforms.
+    /// Look up each time so later archive publication remains visible.
+    pub(crate) fn delay(id: i32) -> Option<i32> {
+        let s = store().lock().unwrap();
+        s.list
+            .get(id as usize)
+            .and_then(Option::as_ref)
+            .map(|frame| frame.delay)
+    }
+
     /// `AnimFrame.animateTransparencies(frame)` from client-ts.
     pub fn animate_transparencies(frame: i32) -> bool {
         frame == -1
