@@ -479,7 +479,8 @@ impl RenderWorld {
             .copied()
             .collect();
         for index in dynamic {
-            world.del_sprite(index);
+            world.release_dynamic_sprite(index);
+            if let Some(stamp) = self.sprite_stamps.get_mut(index) { *stamp = i32::MIN; }
             if let Some(slot) = self.sprite_models.get_mut(index) {
                 *slot = None;
             }

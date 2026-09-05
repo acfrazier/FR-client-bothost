@@ -54,6 +54,8 @@ pub struct World {
     /// of one sprite object across every tile it spans. The render pass
     /// (`fill`) reads the same arena for the scene sprites.
     pub(crate) sprites: Vec<Option<Sprite>>,
+    free_dynamic_sprites: Vec<usize>,
+    last_sprite: Option<usize>,
     pub(crate) dynamic_count: i32,
     pub(crate) dynamic_sprites: Vec<Option<usize>>,
     /// Occluder table. Written by the sim build (`ClientBuild::finish_build`
@@ -119,6 +121,8 @@ impl World {
             groundh,
             squares,
             sprites: Vec::new(),
+            free_dynamic_sprites: Vec::new(),
+            last_sprite: None,
             dynamic_count: 0,
             dynamic_sprites: vec![None; MAX_DYNAMIC_SPRITES],
             num_occluders: [0; OCCLUDER_LEVELS],
@@ -164,6 +168,8 @@ impl World {
         }
         self.dynamic_count = 0;
         self.sprites.clear();
+        self.free_dynamic_sprites.clear();
+        self.last_sprite = None;
     }
 
     pub fn fill_base_level(&mut self, level: i32) {
@@ -821,11 +827,10 @@ impl World {
         None
     }
 
-    /// The most recently pushed sprite arena index (every sprite push
-    /// appends; `del_sprite` only nulls slots). The tests attach render-side
-    /// models for synthetic sprites through this.
+    /// The most recently inserted sprite index, including a reused dynamic
+    /// slot. Render-side models attach through this or add_dynamic's result.
     pub fn last_sprite_index(&self) -> Option<usize> {
-        self.sprites.len().checked_sub(1)
+        self.last_sprite
     }
 
     /// The model stamp of the tile, for the render side's lazy model cache
@@ -868,8 +873,13 @@ impl World {
             }
         }
 
-        let index = self.sprites.len();
-        self.sprites.push(Some(Sprite::new(
+        let index = if dynamic { self.free_dynamic_sprites.pop() } else { None }.unwrap_or_else(|| {
+            let index = self.sprites.len();
+            self.sprites.push(None);
+            index
+        });
+        self.last_sprite = Some(index);
+        self.sprites[index] = Some(Sprite::new(
             level,
             y,
             x,
@@ -885,7 +895,7 @@ impl World {
             h_se,
             h_ne,
             h_nw,
-        )));
+        ));
 
         for tx in tile_x..tile_x + tile_size_x {
             for tz in tile_z..tile_z + tile_size_z {
@@ -1008,6 +1018,15 @@ impl World {
         }
         self.overlay_pending = true;
         self.share_light_pending = true;
+    }
+
+    /// Called only by render teardown after a dynamic sprite's frame ends.
+    /// Static scenery indices are never recycled.
+    pub(crate) fn release_dynamic_sprite(&mut self, index: usize) {
+        if self.sprites.get(index).is_some_and(|slot|slot.is_some()) {
+            self.del_sprite(index);
+            self.free_dynamic_sprites.push(index);
+        }
     }
 
     pub(crate) fn del_sprite(&mut self, index: usize) {
@@ -1156,5 +1175,35 @@ mod size_tests {
         }
         assert_eq!(n, 0, "empty plane must stay None holes, got {n}");
         assert_eq!(w.min_level, 0);
+    }
+}
+
+#[cfg(test)]
+mod sprite_reuse_tests {
+    use super::*;
+    #[test]
+    fn dynamic_sprite_slots_stay_bounded_across_frames() {
+        let mut world = World::new(vec![vec![vec![0;5];5]],4,1,4);
+        let mut render = crate::render::world::RenderWorld::new();
+        let static_index = world.set_sprite(64,64,0,0,0,0,1,1,1,0,0,false,0,0,0,0).unwrap();
+        for _ in 0..1000 {
+            let index = world.set_sprite(192,192,0,0,1,1,1,1,2,0,0,true,0,0,0,0).unwrap();
+            render.set_sprite_model(&world,index,None);
+            assert_eq!(world.last_sprite_index(),Some(index));
+            render.remove_sprites(&mut world);
+            assert!(world.sprites[static_index].is_some());
+            assert_eq!(world.square(0,1,1).unwrap().sprite_count,0);
+        }
+        assert_eq!(world.sprites.len(),2,"one static and one reusable dynamic slot");
+        // Repeated teardown cannot enqueue the same free index twice.
+        render.remove_sprites(&mut world);
+        assert_eq!(world.free_dynamic_sprites.len(),1);
+        world.reset_map();
+        assert!(world.free_dynamic_sprites.is_empty());
+        assert_eq!(world.last_sprite_index(),None);
+        assert_eq!(world.set_sprite(64,64,0,0,0,0,1,1,3,0,0,true,0,0,0,0),Some(0));
+        let independent = World::new(vec![vec![vec![0;5];5]],4,1,4);
+        assert!(independent.sprites.is_empty());
+        assert!(independent.free_dynamic_sprites.is_empty());
     }
 }
