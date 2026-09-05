@@ -1450,7 +1450,14 @@ impl RenderBackend for GpuBackend {
         // Punch only while the minimap layer is live; a sealed atlas (no
         // punch) replaces the hole and drops the held layer.
         let punch_minimap = self.minimap_live;
-        if self.chrome_upload_pending {
+        // Viewport overlays share the atlas, but their motion/removal does
+        // not set chat/sidebar redraw flags. Compare with the last upload
+        // without another retained image or allocation. Frozen scenes also
+        // retain scene_ready and must receive current modal/overlay pixels.
+        let overlay_changed = self.scene_ready && self.chrome_uploaded
+            && scene_overlay_changed(&r.draw_area, &self.overlay_coverage,
+                &self.chrome_rgba, chrome_bytes_per_row);
+        if self.chrome_upload_pending || overlay_changed {
             fill_draw_area_rgba(
                 &r.draw_area,
                 &self.overlay_coverage,
@@ -1625,6 +1632,25 @@ fn draw_area_rgba(
     bytes
 }
 
+/// Compare visible viewport RGBA with the retained upload buffer. RGB under
+/// zero coverage is immaterial; coverage changes still invalidate removal.
+fn scene_overlay_changed(draw: &PixMap, coverage: &[u8], uploaded: &[u8], stride: u32) -> bool {
+    for y in 0..SCENE_H {
+        for x in 0..SCENE_W {
+            let alpha = coverage[(y * SCENE_W + x) as usize];
+            let offset = ((y + 4) * stride + (x + 4) * 4) as usize;
+            if uploaded[offset + 3] != alpha { return true; }
+            if alpha != 0 {
+                let rgb = draw.pixels[((y + 4) * FRAME_W + x + 4) as usize];
+                if uploaded[offset] != ((rgb >> 16) & 255) as u8
+                    || uploaded[offset + 1] != ((rgb >> 8) & 255) as u8
+                    || uploaded[offset + 2] != (rgb & 255) as u8 { return true; }
+            }
+        }
+    }
+    false
+}
+
 fn fill_draw_area_rgba(
     draw_area: &PixMap,
     coverage: &[u8],
@@ -1697,6 +1723,41 @@ mod tests {
     };
     use crate::graphics::PixMap;
     use crate::render::backend::FrameKind;
+
+    #[test]
+    fn viewport_overlay_moves_and_clears_without_chrome_redraw() {
+        use crate::render::backend::{FrameOutput, RenderBackend};
+        let mut backend = super::GpuBackend::try_new().expect("GPU required for overlay regression");
+        let mut r = crate::render::Renderer::new(false);
+        backend.last_kind = FrameKind::Game;
+        // A newly allocated GPU texture is zero-initialized. Hold it as
+        // the frozen scene while changing only the overlay.
+        backend.scene_ready = true;
+        let first = (4 * FRAME_W + 4) as usize;
+        r.draw_area.pixels[first] = 0xff0000;
+        backend.overlay_coverage[0] = 255;
+        let FrameOutput::Texture(frame) = backend.finish(&mut r) else { panic!("GPU frame"); };
+        assert_eq!(frame.read_back()[first], 0xff0000);
+        let uploads = backend.chrome_upload_count();
+        // Same live/frozen scene texture, new overlay pixels, no UI redraw.
+        r.draw_area.pixels[first] = 0;
+        r.draw_area.pixels[first + 1] = 0x00ff00;
+        backend.overlay_coverage[0] = 0;
+        backend.overlay_coverage[1] = 255;
+        let FrameOutput::Texture(frame) = backend.finish(&mut r) else { panic!("GPU frame"); };
+        let pixels = frame.read_back();
+        assert_eq!(pixels[first], 0, "old overlay must disappear");
+        assert_eq!(pixels[first + 1], 0x00ff00, "new overlay must appear");
+        assert_eq!(backend.chrome_upload_count(), uploads + 1);
+        // Coverage-only removal must clear even when RGB storage is retained.
+        backend.overlay_coverage[1] = 0;
+        let FrameOutput::Texture(frame) = backend.finish(&mut r) else { panic!("GPU frame"); };
+        assert_eq!(frame.read_back()[first + 1], 0);
+        let uploads = backend.chrome_upload_count();
+        r.draw_area.pixels[first + 1] = 0xff00ff; // invisible RGB is immaterial
+        backend.finish(&mut r);
+        assert_eq!(backend.chrome_upload_count(), uploads, "unchanged visible overlay stays lazy");
+    }
 
     #[test]
     fn freeze_last_scene_only_while_the_game_is_loading() {
