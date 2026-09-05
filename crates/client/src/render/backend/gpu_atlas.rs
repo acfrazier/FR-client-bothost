@@ -118,6 +118,7 @@ pub struct Region {
 /// group (the texture object) must be rebuilt, which `GpuAssets` does when
 /// `generation` changes.
 pub struct GpuAtlas {
+    storage: crate::profiling::Allocation,
     texture: wgpu::Texture,
     view: wgpu::TextureView,
     size: (u32, u32),
@@ -156,6 +157,7 @@ impl GpuAtlas {
         });
         let view = texture.create_view(&Default::default());
         GpuAtlas {
+            storage: crate::profiling::Allocation::new(0,crate::profiling::texture_bytes(&texture)),
             texture,
             view,
             size,
@@ -270,7 +272,9 @@ impl GpuAtlas {
             },
         );
         queue.submit([encoder.finish()]);
+        let storage = crate::profiling::Allocation::new(0,crate::profiling::texture_bytes(&new_texture));
         self.texture = new_texture;
+        self.storage = storage;
         self.view = self.texture.create_view(&Default::default());
         self.size = new_size;
         self.generation += 1;
@@ -471,6 +475,7 @@ impl<K: Copy + Eq + std::hash::Hash> RegionCache<K> {
 /// `GpuContext` owns the `Arc`; renderers clone it. `Mutex` because the
 /// atlases grow on first use from any renderer's thread.
 pub struct GpuAssets {
+    _model_storage: crate::profiling::Allocation,
     device: wgpu::Device,
     queue: wgpu::Queue,
     /// The model-texture array texture (scene shader group 0, binding 0).
@@ -706,6 +711,7 @@ impl GpuAssets {
             &chrome_bind_group_layout,
         );
         let mut assets = GpuAssets {
+            _model_storage: crate::profiling::Allocation::new(0,crate::profiling::texture_bytes(&model_atlas)),
             device: device.clone(),
             queue: queue.clone(),
             model_atlas,

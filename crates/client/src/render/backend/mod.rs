@@ -54,6 +54,7 @@ impl TextureHandle {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
+        let _readback_storage = crate::profiling::Allocation::new(buffer.size(),0);
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
