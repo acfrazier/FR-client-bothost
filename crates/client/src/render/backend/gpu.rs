@@ -1438,9 +1438,6 @@ impl RenderBackend for GpuBackend {
         self.context.queue.submit([copy_encoder.finish()]);
 
         let chrome_bytes_per_row = (FRAME_W * 4).div_ceil(256) * 256;
-        // Punch only while the minimap layer is live; a sealed atlas (no
-        // punch) replaces the hole and drops the held layer.
-        let punch_minimap = self.minimap_live;
         // Viewport overlays share the atlas, but their motion/removal does
         // not set chat/sidebar redraw flags. Compare with the last upload
         // without another retained image or allocation. Frozen scenes also
@@ -1448,6 +1445,11 @@ impl RenderBackend for GpuBackend {
         let overlay_changed = self.scene_ready && self.chrome_uploaded
             && scene_overlay_changed(&r.draw_area, &self.overlay_coverage,
                 &self.chrome_rgba, chrome_bytes_per_row);
+        // An overlay-only update must preserve the previously punched
+        // minimap during freeze. Explicit chrome redraws still seal the
+        // atlas when not live (including title transitions).
+        let punch_minimap = self.minimap_live
+            || (overlay_changed && !self.chrome_upload_pending && self.minimap_held);
         if self.chrome_upload_pending || overlay_changed {
             fill_draw_area_rgba(
                 &r.draw_area,
@@ -1724,12 +1726,18 @@ mod tests {
         // A newly allocated GPU texture is zero-initialized. Hold it as
         // the frozen scene while changing only the overlay.
         backend.scene_ready = true;
+        r.area_map = Some(PixMap::new(172, 156));
+        r.area_map.as_mut().unwrap().pixels.fill(0x0000ff);
+        backend.minimap_live = true;
         let first = (4 * FRAME_W + 4) as usize;
         r.draw_area.pixels[first] = 0xff0000;
         backend.overlay_coverage[0] = 255;
         let FrameOutput::Texture(frame) = backend.finish(&mut r) else { panic!("GPU frame"); };
         assert_eq!(frame.read_back()[first], 0xff0000);
         let uploads = backend.chrome_upload_count();
+        let minimap_pixel = (4 * FRAME_W + 550) as usize;
+        assert_eq!(frame.read_back()[minimap_pixel], 0x0000ff);
+        backend.minimap_live = false; // loading retains the last minimap
         // Same live/frozen scene texture, new overlay pixels, no UI redraw.
         r.draw_area.pixels[first] = 0;
         r.draw_area.pixels[first + 1] = 0x00ff00;
@@ -1737,6 +1745,7 @@ mod tests {
         backend.overlay_coverage[1] = 255;
         let FrameOutput::Texture(frame) = backend.finish(&mut r) else { panic!("GPU frame"); };
         let pixels = frame.read_back();
+        assert_eq!(pixels[minimap_pixel], 0x0000ff, "freeze overlay upload must retain minimap");
         assert_eq!(pixels[first], 0, "old overlay must disappear");
         assert_eq!(pixels[first + 1], 0x00ff00, "new overlay must appear");
         assert_eq!(backend.chrome_upload_count(), uploads + 1);
