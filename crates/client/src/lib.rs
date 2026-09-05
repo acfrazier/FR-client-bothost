@@ -42,3 +42,5 @@ pub fn render_debug_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var("BOT_RENDER_DEBUG").is_ok_and(|v| v == "1"))
 }
+
+pub mod profiling;

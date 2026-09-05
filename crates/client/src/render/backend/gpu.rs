@@ -526,6 +526,8 @@ const MINIMAP_H: u32 = 156;
 /// the persistent `draw_area`; `finish` uploads chrome (lazy) + minimap
 /// and composites them over the scene into a stable present texture.
 pub struct GpuBackend {
+    _gpu_storage: crate::profiling::Allocation,
+    vertex_storage: crate::profiling::Allocation,
     context: Arc<GpuContext>,
     scene_texture: wgpu::Texture,
     scene_view: wgpu::TextureView,
@@ -864,7 +866,12 @@ impl GpuBackend {
         let chrome_bytes_per_row = (FRAME_W * 4).div_ceil(256) * 256;
         let minimap_bytes_per_row = (MINIMAP_W * 4).div_ceil(256) * 256;
 
+        let textures = [&scene_texture, &depth_texture, &frame_texture_a, &frame_texture_b,
+            &present_texture, &chrome_texture, &minimap_texture].into_iter().map(crate::profiling::texture_bytes).sum();
+        let buffers = brightness_buf.size()+chrome_vertex_buf.size()+minimap_vertex_buf.size();
         Ok(GpuBackend {
+            _gpu_storage: crate::profiling::Allocation::new(buffers,textures),
+            vertex_storage: crate::profiling::Allocation::new(vertex_buf.size(),0),
             context,
             scene_texture,
             scene_view,
@@ -987,6 +994,7 @@ impl GpuBackend {
         }
         let bytes = vertices.len() * std::mem::size_of::<GpuVertex>();
         if bytes > self.vertex_buf_capacity {
+            let storage = crate::profiling::Allocation::new(bytes as u64,0);
             self.vertex_buf_capacity = bytes;
             self.vertex_buf = self.context.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("r274 scene vertices"),
@@ -994,6 +1002,7 @@ impl GpuBackend {
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
+            self.vertex_storage = storage;
         }
         self.context
             .queue
