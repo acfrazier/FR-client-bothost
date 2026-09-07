@@ -533,6 +533,224 @@
         "client.java:8378 p2(289)"
       ],
       "oracle_derivation": "Production login() path on R289 session writes the outer wrapper order and installs ISAAC cursors; offline synthetic TCP proves bytes/state without a live game endpoint."
+    },
+    {
+      "name": "outbound_move_gameclick_r289",
+      "kind": "outbound",
+      "opcode": 234,
+      "length_kind": "var_p1_size",
+      "payload_fields": [
+        "p1 size",
+        "p1 ctrl",
+        "p2 absX",
+        "p2 absZ",
+        "step deltas"
+      ],
+      "length": -1,
+      "expected_result": {
+        "status": "emit",
+        "state": "MOVE_GAMECLICK",
+        "error": null
+      },
+      "source_anchors": [
+        "client.java method206 method465(234)",
+        "Class1_Sub1_Sub3 method466/467"
+      ],
+      "oracle_derivation": "Primary tryMove type0 writes method465(234) then p1 size (2*steps+3), p1 ctrl, p2 start+base, step p1 pairs. Length variable."
+    },
+    {
+      "name": "outbound_move_minimapclick_r289",
+      "kind": "outbound",
+      "opcode": 236,
+      "length_kind": "var_p1_size",
+      "payload_fields": [
+        "p1 size including +14",
+        "p1 ctrl",
+        "p2 absX",
+        "p2 absZ",
+        "steps",
+        "14-byte minimap tail"
+      ],
+      "length": -1,
+      "expected_result": {
+        "status": "emit",
+        "state": "MOVE_MINIMAPCLICK",
+        "error": null
+      },
+      "source_anchors": [
+        "client.java method206 method465(236)"
+      ],
+      "oracle_derivation": "tryMove type1: size = 2*steps+3+14 after opcode 236."
+    },
+    {
+      "name": "outbound_move_opclick_r289",
+      "kind": "outbound",
+      "opcode": 67,
+      "length_kind": "var_p1_size",
+      "length": -1,
+      "expected_result": {
+        "status": "emit",
+        "state": "MOVE_OPCLICK",
+        "error": null
+      },
+      "source_anchors": [
+        "client.java method206 method465(67)"
+      ],
+      "oracle_derivation": "tryMove type2 interaction walk uses opcode 67; payload shape matches GAMECLICK without minimap tail."
+    },
+    {
+      "name": "outbound_opnpc2_r289",
+      "kind": "outbound",
+      "opcode": 21,
+      "length_kind": "fixed",
+      "payload_fields": [
+        "p2 npcIndex"
+      ],
+      "length": 2,
+      "expected_result": {
+        "status": "emit",
+        "state": "OPNPC2",
+        "error": null
+      },
+      "source_anchors": [
+        "client.java method216 method465(21) then method467(index)"
+      ],
+      "oracle_derivation": "OPNPC2 writes p2 npc slot index only; total payload length 2."
+    },
+    {
+      "name": "outbound_oploc1_r289",
+      "kind": "outbound",
+      "opcode": 10,
+      "length_kind": "fixed",
+      "payload_fields": [
+        "p2 sceneX",
+        "p2 sceneZ",
+        "p2 locId"
+      ],
+      "length": 6,
+      "expected_result": {
+        "status": "emit",
+        "state": "OPLOC1",
+        "error": null
+      },
+      "source_anchors": [
+        "client.java method160 method465(arg1=10) method467 x3"
+      ],
+      "oracle_derivation": "method160 always writes three p2 fields after the opcode; OPLOC1 length 6. OPLOCT/U append spell/use fields after method160 returns."
+    },
+    {
+      "name": "outbound_opheld1_r289",
+      "kind": "outbound",
+      "opcode": 76,
+      "length_kind": "fixed",
+      "payload_fields": [
+        "p2 obj",
+        "p2 slot",
+        "p2 com"
+      ],
+      "length": 6,
+      "expected_result": {
+        "status": "emit",
+        "state": "OPHELD1",
+        "error": null
+      },
+      "source_anchors": [
+        "client.java method216 method465(76) three method467"
+      ],
+      "oracle_derivation": "Held op1 writes three big-endian shorts."
+    },
+    {
+      "name": "outbound_inv_button1_r289",
+      "kind": "outbound",
+      "opcode": 44,
+      "length_kind": "fixed",
+      "payload_fields": [
+        "p2 obj",
+        "p2 slot",
+        "p2 com"
+      ],
+      "length": 6,
+      "expected_result": {
+        "status": "emit",
+        "state": "INV_BUTTON1",
+        "error": null
+      },
+      "source_anchors": [
+        "client.java method216 method465(44)"
+      ],
+      "oracle_derivation": "INV_BUTTON1 payload matches held shape length 6."
+    },
+    {
+      "name": "outbound_if_button_r289",
+      "kind": "outbound",
+      "opcode": 86,
+      "length_kind": "fixed",
+      "payload_fields": [
+        "p2 componentId"
+      ],
+      "length": 2,
+      "expected_result": {
+        "status": "emit",
+        "state": "IF_BUTTON",
+        "error": null
+      },
+      "source_anchors": [
+        "client.java method216 method465(86) method467(com)"
+      ],
+      "oracle_derivation": "Widget button sends component id as p2."
+    },
+    {
+      "name": "outbound_resume_p_countdialog_r289",
+      "kind": "outbound",
+      "opcode": 180,
+      "length_kind": "fixed",
+      "payload_fields": [
+        "p4 count"
+      ],
+      "length": 4,
+      "expected_result": {
+        "status": "emit",
+        "state": "RESUME_P_COUNTDIALOG",
+        "error": null
+      },
+      "source_anchors": [
+        "client.java method465(180) method470(count)"
+      ],
+      "oracle_derivation": "Enter-amount dialog resumes with a single p4."
+    },
+    {
+      "name": "outbound_close_modal_r289",
+      "kind": "outbound",
+      "opcode": 93,
+      "length_kind": "fixed",
+      "payload_fields": [],
+      "length": 0,
+      "expected_result": {
+        "status": "emit",
+        "state": "CLOSE_MODAL",
+        "error": null
+      },
+      "source_anchors": [
+        "client.java method465(93)"
+      ],
+      "oracle_derivation": "CLOSE_MODAL is opcode-only."
+    },
+    {
+      "name": "cache_offline_synthetic_config_seam",
+      "kind": "cache",
+      "opcode": null,
+      "length_kind": null,
+      "expected_result": {
+        "status": "offline_loader",
+        "state": "synthetic_jag_not_authentic",
+        "authentic_cache_present": false,
+        "error": null
+      },
+      "source_anchors": [
+        "client.java login 9x jag checksums",
+        "JAG names title/config/interface/media/versionlist/textures/wordenc/sounds"
+      ],
+      "oracle_derivation": "Offline seam validates JAG container structure for named packs. Client/deob JAR is not a game cache. Missing authentic 289 cache prohibits scene/asset proof; loader tests remain authorized."
     }
   ]
 }

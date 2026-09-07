@@ -2284,6 +2284,12 @@ impl Client {
         (x * BUILD_AREA_SIZE + z) as usize
     }
 
+    /// Revision-selected outbound opcode id. R274 keeps public ClientProt
+    /// constants; R289 maps through ClientProt289 (fail-closed on unmapped).
+    fn client_opcode(&self, p: crate::io::ClientProt) -> i32 {
+        crate::io::map_client_prot(self.revision, p).id
+    }
+
     /// Walk `dir_map` from dest back to src, recording every tile, then
     /// reverse so the path is src → dest. This is the BFS the click
     /// actually walked, not the direction-change waypoints in `route_x`.
@@ -2390,32 +2396,32 @@ impl Client {
                         self.oplogic7 += 1;
                     }
                     if self.oplogic7 >= 123 {
-                        self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC7.id);
+                        self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC7));
                         self.out.p4(0);
                     }
-                    self.out.p1_enc(ClientProt::OPOBJ1.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ1));
                 }
                 if action == MiniMenuAction::OP_OBJ2 {
-                    self.out.p1_enc(ClientProt::OPOBJ2.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ2));
                 }
                 if action == MiniMenuAction::OP_OBJ3 {
-                    self.out.p1_enc(ClientProt::OPOBJ3.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ3));
                 }
                 if action == MiniMenuAction::OP_OBJ4 {
                     self.oplogic8 += c;
                     if self.oplogic8 >= 75 {
-                        self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC8.id);
+                        self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC8));
                         self.out.p1(19);
                     }
-                    self.out.p1_enc(ClientProt::OPOBJ4.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ4));
                 }
                 if action == MiniMenuAction::OP_OBJ5 {
                     self.oplogic3 += self.map_build_base_z;
                     if self.oplogic3 >= 118 {
-                        self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC3.id);
+                        self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC3));
                         self.out.p4(0);
                     }
-                    self.out.p1_enc(ClientProt::OPOBJ5.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ5));
                 }
 
                 self.out.p2(b + self.map_build_base_x);
@@ -2450,7 +2456,7 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(ClientProt::OPOBJT.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPOBJT));
                 self.out.p2(b + self.map_build_base_x);
                 self.out.p2(c + self.map_build_base_z);
                 self.out.p2(a);
@@ -2473,7 +2479,7 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(ClientProt::OPOBJU.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPOBJU));
                 self.out.p2(b + self.map_build_base_x);
                 self.out.p2(c + self.map_build_base_z);
                 self.out.p2(a);
@@ -2509,11 +2515,11 @@ impl Client {
                 self.cross_cycle = 0;
 
                 let opcode = match action {
-                    MiniMenuAction::OP_NPC1 => ClientProt::OPNPC1.id,
-                    MiniMenuAction::OP_NPC2 => ClientProt::OPNPC2.id,
-                    MiniMenuAction::OP_NPC3 => ClientProt::OPNPC3.id,
-                    MiniMenuAction::OP_NPC4 => ClientProt::OPNPC4.id,
-                    _ => ClientProt::OPNPC5.id,
+                    MiniMenuAction::OP_NPC1 => self.client_opcode(ClientProt::OPNPC1),
+                    MiniMenuAction::OP_NPC2 => self.client_opcode(ClientProt::OPNPC2),
+                    MiniMenuAction::OP_NPC3 => self.client_opcode(ClientProt::OPNPC3),
+                    MiniMenuAction::OP_NPC4 => self.client_opcode(ClientProt::OPNPC4),
+                    _ => self.client_opcode(ClientProt::OPNPC5),
                 };
                 self.out.p1_enc(opcode);
                 self.out.p2(a);
@@ -2557,7 +2563,7 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(ClientProt::OPNPCT.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPNPCT));
                 self.out.p2(a);
                 self.out.p2(self.target_com_id);
             }
@@ -2581,7 +2587,7 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(ClientProt::OPNPCU.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPNPCU));
                 self.out.p2(a);
                 self.out.p2(self.obj_com_id);
                 self.out.p2(self.obj_selected_slot);
@@ -2590,33 +2596,33 @@ impl Client {
         }
 
         if action == MiniMenuAction::OP_LOC1 {
-            self.interact_with_loc(b, c, a, ClientProt::OPLOC1.id);
+            self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC1));
         }
 
         if action == MiniMenuAction::OP_LOC2 {
             self.oplogic1 += c;
             if self.oplogic1 >= 139 {
-                self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC1.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC1));
                 self.out.p4(0);
             }
-            self.interact_with_loc(b, c, a, ClientProt::OPLOC2.id);
+            self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC2));
         }
 
         if action == MiniMenuAction::OP_LOC3 {
             self.oplogic2 += 1;
             if self.oplogic2 >= 124 {
-                self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC2.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC2));
                 self.out.p2(37954);
             }
-            self.interact_with_loc(b, c, a, ClientProt::OPLOC3.id);
+            self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC3));
         }
 
         if action == MiniMenuAction::OP_LOC4 {
-            self.interact_with_loc(b, c, a, ClientProt::OPLOC4.id);
+            self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC4));
         }
 
         if action == MiniMenuAction::OP_LOC5 {
-            self.interact_with_loc(b, c, a, ClientProt::OPLOC5.id);
+            self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC5));
         }
 
         if action == MiniMenuAction::OP_LOC6 {
@@ -2634,13 +2640,13 @@ impl Client {
         }
 
         if action == MiniMenuAction::TGT_LOC
-            && self.interact_with_loc(b, c, a, ClientProt::OPLOCT.id)
+            && self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOCT))
         {
             self.out.p2(self.target_com_id);
         }
 
         if action == MiniMenuAction::USEHELD_ONLOC
-            && self.interact_with_loc(b, c, a, ClientProt::OPLOCU.id)
+            && self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOCU))
         {
             self.out.p2(self.obj_com_id);
             self.out.p2(self.obj_selected_slot);
@@ -2670,27 +2676,27 @@ impl Client {
                 if action == MiniMenuAction::OP_PLAYER1 {
                     self.oplogic4 += 1;
                     if self.oplogic4 >= 52 {
-                        self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC4.id);
+                        self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC4));
                         self.out.p1(131);
                     }
-                    self.out.p1_enc(ClientProt::OPPLAYER1.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER1));
                 }
                 if action == MiniMenuAction::OP_PLAYER2 {
-                    self.out.p1_enc(ClientProt::OPPLAYER2.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER2));
                 }
                 if action == MiniMenuAction::OP_PLAYER3 {
-                    self.out.p1_enc(ClientProt::OPPLAYER3.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER3));
                 }
                 if action == MiniMenuAction::OP_PLAYER4 {
                     self.oplogic5 += a;
                     if self.oplogic5 >= 66 {
-                        self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC5.id);
+                        self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC5));
                         self.out.p1(154);
                     }
-                    self.out.p1_enc(ClientProt::OPPLAYER4.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER4));
                 }
                 if action == MiniMenuAction::OP_PLAYER5 {
-                    self.out.p1_enc(ClientProt::OPPLAYER5.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER5));
                 }
                 self.out.p2(a);
             }
@@ -2729,18 +2735,18 @@ impl Client {
                         if action == MiniMenuAction::ACCEPT_TRADEREQ {
                             self.oplogic5 += a;
                             if self.oplogic5 >= 66 {
-                                self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC5.id);
+                                self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC5));
                                 self.out.p1(154);
                             }
-                            self.out.p1_enc(ClientProt::OPPLAYER4.id);
+                            self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER4));
                         }
                         if action == MiniMenuAction::ACCEPT_DUELREQ {
                             self.oplogic4 += 1;
                             if self.oplogic4 >= 52 {
-                                self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC4.id);
+                                self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC4));
                                 self.out.p1(131);
                             }
-                            self.out.p1_enc(ClientProt::OPPLAYER1.id);
+                            self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER1));
                         }
                         self.out.p2(index as i32);
                         found = true;
@@ -2771,7 +2777,7 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(ClientProt::OPPLAYERT.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYERT));
                 self.out.p2(a);
                 self.out.p2(self.target_com_id);
             }
@@ -2795,7 +2801,7 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(ClientProt::OPPLAYERU.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYERU));
                 self.out.p2(a);
                 self.out.p2(self.obj_com_id);
                 self.out.p2(self.obj_selected_slot);
@@ -2812,24 +2818,24 @@ impl Client {
             // TS 8956-8997: p2(obj) p2(slot) p2(com), then the selected
             // outline fields.
             if action == MiniMenuAction::OP_HELD1 {
-                self.out.p1_enc(ClientProt::OPHELD1.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPHELD1));
             }
             if action == MiniMenuAction::OP_HELD2 {
-                self.out.p1_enc(ClientProt::OPHELD2.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPHELD2));
             }
             if action == MiniMenuAction::OP_HELD3 {
-                self.out.p1_enc(ClientProt::OPHELD3.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPHELD3));
             }
             if action == MiniMenuAction::OP_HELD4 {
                 self.oplogic9 += 1;
                 if self.oplogic9 >= 116 {
-                    self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC9.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC9));
                     self.out.p3(13018169);
                 }
-                self.out.p1_enc(ClientProt::OPHELD4.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPHELD4));
             }
             if action == MiniMenuAction::OP_HELD5 {
-                self.out.p1_enc(ClientProt::OPHELD5.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPHELD5));
             }
             self.out.p2(a);
             self.out.p2(b);
@@ -2909,7 +2915,7 @@ impl Client {
         }
 
         if action == MiniMenuAction::TGT_HELD {
-            self.out.p1_enc(ClientProt::OPHELDT.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::OPHELDT));
             self.out.p2(a);
             self.out.p2(b);
             self.out.p2(c);
@@ -2918,7 +2924,7 @@ impl Client {
         }
 
         if action == MiniMenuAction::USEHELD_ONHELD {
-            self.out.p1_enc(ClientProt::OPHELDU.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::OPHELDU));
             self.out.p2(a);
             self.out.p2(b);
             self.out.p2(c);
@@ -2941,22 +2947,22 @@ impl Client {
                     self.oplogic6 += 1;
                 }
                 if self.oplogic6 >= 133 {
-                    self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC6.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC6));
                     self.out.p2(6118);
                 }
-                self.out.p1_enc(ClientProt::INV_BUTTON1.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON1));
             }
             if action == MiniMenuAction::INV_BUTTON2 {
-                self.out.p1_enc(ClientProt::INV_BUTTON2.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON2));
             }
             if action == MiniMenuAction::INV_BUTTON3 {
-                self.out.p1_enc(ClientProt::INV_BUTTON3.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON3));
             }
             if action == MiniMenuAction::INV_BUTTON4 {
-                self.out.p1_enc(ClientProt::INV_BUTTON4.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON4));
             }
             if action == MiniMenuAction::INV_BUTTON5 {
-                self.out.p1_enc(ClientProt::INV_BUTTON5.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON5));
             }
             self.out.p2(a);
             self.out.p2(b);
@@ -2979,13 +2985,13 @@ impl Client {
                 notify = self.client_button(c);
             }
             if notify {
-                self.out.p1_enc(ClientProt::IF_BUTTON.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::IF_BUTTON));
                 self.out.p2(c);
             }
         }
 
         if action == MiniMenuAction::TOGGLE_BUTTON {
-            self.out.p1_enc(ClientProt::IF_BUTTON.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::IF_BUTTON));
             self.out.p2(c);
             // An owned script copy: the varp writes below need `&mut self`
             // while the script is read (the view borrow would conflict).
@@ -3005,7 +3011,7 @@ impl Client {
         }
 
         if action == MiniMenuAction::SELECT_BUTTON {
-            self.out.p1_enc(ClientProt::IF_BUTTON.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::IF_BUTTON));
             self.out.p2(c);
             let script = self
                 .if_(c as usize)
@@ -3032,7 +3038,7 @@ impl Client {
         if action == MiniMenuAction::PAUSE_BUTTON {
             // TS 9186-9191: RESUME_PAUSEBUTTON, not IF_BUTTON.
             if !self.resumed_pause_button {
-                self.out.p1_enc(ClientProt::RESUME_PAUSEBUTTON.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::RESUME_PAUSEBUTTON));
                 self.out.p2(c);
                 self.resumed_pause_button = true;
             }
@@ -3157,7 +3163,7 @@ impl Client {
         self.cyclelogic2 += 1;
         if self.cyclelogic2 > 1086 {
             self.cyclelogic2 = 0;
-            self.out.p1_enc(ClientProt::ANTICHEAT_CYCLELOGIC2.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC2));
             self.out.p1(0);
             let start = self.out.pos;
             // the Math.random draws become 0 and both 2.0-roll conditionals
@@ -3518,15 +3524,15 @@ impl Client {
 
             match r#type {
                 0 => {
-                    self.out.p1_enc(ClientProt::MOVE_GAMECLICK.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::MOVE_GAMECLICK));
                     self.out.p1((buffer_size + buffer_size + 3) as i32);
                 }
                 1 => {
-                    self.out.p1_enc(ClientProt::MOVE_MINIMAPCLICK.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::MOVE_MINIMAPCLICK));
                     self.out.p1((buffer_size + buffer_size + 3 + 14) as i32);
                 }
                 2 => {
-                    self.out.p1_enc(ClientProt::MOVE_OPCLICK.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::MOVE_OPCLICK));
                     self.out.p1((buffer_size + buffer_size + 3) as i32);
                 }
                 _ => {}
@@ -4276,7 +4282,7 @@ impl Client {
             self.friend_node_id[self.friend_count as usize] = 0;
             self.friend_count += 1;
             self.redraw_side = true;
-            self.out.p1_enc(ClientProt::FRIENDLIST_ADD.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::FRIENDLIST_ADD));
             self.out.p8(userhash);
         }
     }
@@ -4316,7 +4322,7 @@ impl Client {
         self.ignore_userhash[self.ignore_count as usize] = userhash;
         self.ignore_count += 1;
         self.redraw_side = true;
-        self.out.p1_enc(ClientProt::IGNORELIST_ADD.id);
+        self.out.p1_enc(self.client_opcode(ClientProt::IGNORELIST_ADD));
         self.out.p8(userhash);
     }
 
@@ -4337,7 +4343,7 @@ impl Client {
                     self.friend_node_id[j as usize] = self.friend_node_id[(j + 1) as usize];
                     self.friend_userhash[j as usize] = self.friend_userhash[(j + 1) as usize];
                 }
-                self.out.p1_enc(ClientProt::FRIENDLIST_DEL.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::FRIENDLIST_DEL));
                 self.out.p8(userhash);
                 return;
             }
@@ -4358,7 +4364,7 @@ impl Client {
                 for j in i..self.ignore_count {
                     self.ignore_userhash[j as usize] = self.ignore_userhash[(j + 1) as usize];
                 }
-                self.out.p1_enc(ClientProt::IGNORELIST_DEL.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::IGNORELIST_DEL));
                 self.out.p8(userhash);
                 return;
             }
@@ -4667,7 +4673,7 @@ impl Client {
                             com.swap_slots(src, dst);
                         }
                     }
-                    self.out.p1_enc(ClientProt::INV_BUTTOND.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTOND));
                     self.out.p2(self.obj_drag_com_id);
                     self.out.p2(self.obj_drag_slot);
                     self.out.p2(self.hovered_slot);
@@ -4839,7 +4845,7 @@ impl Client {
         } else if client_code == CC_ACCEPT_DESIGN {
             // TS 11053-11065: IDK_SAVEDESIGN (id 125, length 13) carries
             // the gender byte, 7 kit bytes and 5 colour bytes.
-            self.out.p1_enc(ClientProt::IDK_SAVEDESIGN.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::IDK_SAVEDESIGN));
             self.out.p1(if self.idk_design_gender { 0 } else { 1 });
             for i in 0..7 {
                 self.out.p1(self.idk_design_part[i]);
@@ -5112,7 +5118,7 @@ impl Client {
     /// `redrawSide`/`redrawIcons`/`redrawChat`. Not to be confused with the
     /// incoming-server `apply_if_close`.
     fn close_modal(&mut self) {
-        self.out.p1_enc(ClientProt::CLOSE_MODAL.id);
+        self.out.p1_enc(self.client_opcode(ClientProt::CLOSE_MODAL));
         if self.side_modal_id != -1 {
             self.side_modal_id = -1;
             self.redraw_side = true;
@@ -8422,7 +8428,7 @@ impl Client {
             self.chat_public_mode = (self.chat_public_mode + 1) % 4;
             self.redraw_chat_mode = true;
             self.redraw_chat = true;
-            self.out.p1_enc(ClientProt::CHAT_SETMODE.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
             self.out.p1(self.chat_public_mode);
             self.out.p1(self.chat_private_mode);
             self.out.p1(self.chat_trade_mode);
@@ -8435,7 +8441,7 @@ impl Client {
             self.chat_private_mode = (self.chat_private_mode + 1) % 3;
             self.redraw_chat_mode = true;
             self.redraw_chat = true;
-            self.out.p1_enc(ClientProt::CHAT_SETMODE.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
             self.out.p1(self.chat_public_mode);
             self.out.p1(self.chat_private_mode);
             self.out.p1(self.chat_trade_mode);
@@ -8448,7 +8454,7 @@ impl Client {
             self.chat_trade_mode = (self.chat_trade_mode + 1) % 3;
             self.redraw_chat_mode = true;
             self.redraw_chat = true;
-            self.out.p1_enc(ClientProt::CHAT_SETMODE.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
             self.out.p1(self.chat_public_mode);
             self.out.p1(self.chat_private_mode);
             self.out.p1(self.chat_trade_mode);
@@ -8516,7 +8522,7 @@ impl Client {
                         && !self.social_input.is_empty()
                         && self.social_userhash != 0
                     {
-                        self.out.p1_enc(ClientProt::MESSAGE_PRIVATE.id);
+                        self.out.p1_enc(self.client_opcode(ClientProt::MESSAGE_PRIVATE));
                         self.out.p1(0);
                         let start = self.out.pos;
                         self.out.p8(self.social_userhash);
@@ -8533,7 +8539,7 @@ impl Client {
                         if self.chat_private_mode == 2 {
                             self.chat_private_mode = 1;
                             self.redraw_chat_mode = true;
-                            self.out.p1_enc(ClientProt::CHAT_SETMODE.id);
+                            self.out.p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
                             self.out.p1(self.chat_public_mode);
                             self.out.p1(self.chat_private_mode);
                             self.out.p1(self.chat_trade_mode);
@@ -8568,7 +8574,7 @@ impl Client {
                 if key == 13 || key == 10 {
                     if !self.dialog_input.is_empty() {
                         let value: i32 = self.dialog_input.parse().unwrap_or(0);
-                        self.out.p1_enc(ClientProt::RESUME_P_COUNTDIALOG.id);
+                        self.out.p1_enc(self.client_opcode(ClientProt::RESUME_P_COUNTDIALOG));
                         self.out.p4(value);
                     }
 
@@ -8597,7 +8603,7 @@ impl Client {
 
             if (key == 13 || key == 10) && !self.chat_input.is_empty() {
                 if self.chat_input.starts_with("::") {
-                    self.out.p1_enc(ClientProt::CLIENT_CHEAT.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::CLIENT_CHEAT));
                     self.out.p1((self.chat_input.len() - 2 + 1) as i32);
                     self.out.pjstr(&self.chat_input[2..]);
                 } else {
@@ -8662,7 +8668,7 @@ impl Client {
                         text = text[7..].to_string();
                     }
 
-                    self.out.p1_enc(ClientProt::MESSAGE_PUBLIC.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::MESSAGE_PUBLIC));
                     self.out.p1(0);
                     let start = self.out.pos;
                     self.out.p1(colour);
@@ -8710,7 +8716,7 @@ impl Client {
                     if self.chat_public_mode == 2 {
                         self.chat_public_mode = 3;
                         self.redraw_chat_mode = true;
-                        self.out.p1_enc(ClientProt::CHAT_SETMODE.id);
+                        self.out.p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
                         self.out.p1(self.chat_public_mode);
                         self.out.p1(self.chat_private_mode);
                         self.out.p1(self.chat_trade_mode);
@@ -9437,7 +9443,7 @@ impl Client {
 
         self.scene_state = 2;
         self.map_build();
-        self.out.p1_enc(ClientProt::MAP_BUILD_COMPLETE.id);
+        self.out.p1_enc(self.client_opcode(ClientProt::MAP_BUILD_COMPLETE));
         0
     }
 
@@ -9545,7 +9551,7 @@ impl Client {
         }
 
         if !self.map_build_ground_data.is_empty() {
-            self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
 
             for i in 0..self.map_build_ground_data.len() {
                 let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
@@ -9580,7 +9586,7 @@ impl Client {
         self.world.groundh.clone_from(&self.groundh);
 
         if !self.map_build_location_data.is_empty() {
-            self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
 
             for i in 0..self.map_build_location_data.len() {
                 if let Some(data) = &self.map_build_location_data[i] {
@@ -9601,7 +9607,7 @@ impl Client {
             }
         }
 
-        self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
+        self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
 
         build.finish_build(
             &self.cache,
@@ -9622,7 +9628,7 @@ impl Client {
         // loc list from the fresh world, never the previous build's locs.
         self.gens.scene += 1;
 
-        self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
+        self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
 
         for x in 0..BuildArea::SIZE {
             for z in 0..BuildArea::SIZE {
@@ -10277,7 +10283,7 @@ impl Client {
 
         self.no_timeout_timer += 1;
         if self.no_timeout_timer > 50 {
-            self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
         }
 
         let write_result = if let Some(stream) = self.stream.as_mut() {
