@@ -22,7 +22,7 @@ Login at `client.java:8342-8398` sends request opcode 14 plus world/login-server
 
 ## Inbound contract
 
-`protocol-289.json` enumerates all 256 decoded inbound IDs and their exact `Class17.anIntArray209` lengths. Named rows are source-derived for the relevant implementation cut: actor/player update (188), inventory full (172), inventory partial (76), region rebuild (55), varp/config, widgets/interface, logout and actor reset. Other rows retain explicit unknown field descriptions rather than guessed schemas.
+`protocol-289.json` enumerates all 256 decoded inbound IDs and their exact `Class17.anIntArray209` lengths. Named rows are source-derived only where the primary dispatch branch was traced: actor/player update (188), inventory full (107), inventory partial (76), region rebuild (219), varp/config (75, 97, 172), widgets/interface (59, 211, 252), logout (121), interface reset/set (127), and actor reset (201). Notably, opcode 172 is a zero-payload bulk varp sync, 55 opens two interfaces, and 127 reads a signed g2 interface id; these are not renamed to inventory, region, or logout. Other rows retain explicit unknown field descriptions rather than guessed schemas.
 
 Important encodings:
 
@@ -54,4 +54,4 @@ The 75 outbound IDs are the complete numeric set observed at `client.java` `meth
 4. Exact actor local-player index, region base/plane timing, widget IDs and config/object definitions require primary-source tracing plus cache evidence.
 5. Login/RSA/ISAAC needs an offline capture or independently checked vector; compilation is not proof.
 
-The accompanying fixtures are tiny public-safe byte cases with manually derived expected lengths/states. They are contract checks, not claims that the current Rust decoder passes them.
+The accompanying fixtures are tiny public-safe byte cases with independently derived expected results. Each manifest row separates opcode/frame bytes from payload bytes, records declared length versus actual cursor consumption, and uses structured pending/dispatch/error results. The actor case deliberately records the traced cursor boundary without inventing a valid actor bitstream. They are contract checks, not claims that the current Rust decoder passes them.

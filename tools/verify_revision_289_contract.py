@@ -44,23 +44,54 @@ def main() -> int:
         if direction == "inbound" and set(ids) != set(range(256)):
             fail("inbound must enumerate all 256 decoded opcode IDs")
     manifest = json.loads(FIXTURES.read_text())
+    inbound_by_id = {row["id"]: row for row in contract["inbound"]}
     cases = manifest.get("cases")
     if not isinstance(cases, list) or not cases:
         fail("fixture cases must be a non-empty array")
     names = set()
     for case in cases:
-        for key in ("name", "hex", "source_anchors", "expected_consumed_length", "expected_decoded_state", "oracle_derivation"):
+        for key in ("name", "opcode", "length_kind", "frame_hex", "payload_hex", "source_anchors", "expected_consumed_length", "expected_cursor", "expected_result", "oracle_derivation"):
             if key not in case:
                 fail(f"fixture missing {key}: {case!r}")
         if case["name"] in names:
             fail(f"duplicate fixture name {case['name']}")
         names.add(case["name"])
-        raw = re.sub(r"\s+", "", case["hex"])
-        if not re.fullmatch(r"[0-9a-fA-F]*", raw) or len(raw) % 2:
-            fail(f"fixture hex is not byte-aligned hex: {case['name']}")
-        if len(raw) // 2 != case["expected_consumed_length"]:
-            fail(f"fixture length mismatch: {case['name']}")
-        if "new Rust" in case["oracle_derivation"] or "proposed Rust" in case["oracle_derivation"]:
+        if case["opcode"] not in inbound_by_id:
+            fail(f"fixture opcode is not in inbound contract: {case['name']}")
+        frame = re.sub(r"\s+", "", case["frame_hex"])
+        payload = re.sub(r"\s+", "", case["payload_hex"])
+        if not re.fullmatch(r"[0-9a-fA-F]*", frame) or len(frame) % 2:
+            fail(f"fixture frame_hex is not byte-aligned hex: {case['name']}")
+        if not re.fullmatch(r"[0-9a-fA-F]*", payload) or len(payload) % 2:
+            fail(f"fixture payload_hex is not byte-aligned hex: {case['name']}")
+        if int(frame[:2], 16) != case["opcode"]:
+            fail(f"fixture opcode/header mismatch: {case['name']}")
+        row_length = inbound_by_id[case["opcode"]]["length"]
+        expected_kind = { -1: "g1", -2: "g2" }.get(row_length, "fixed")
+        if case["length_kind"] != expected_kind:
+            fail(f"fixture length kind disagrees with protocol row: {case['name']}")
+        header_size = {"fixed": 1, "g1": 2, "g2": 3}[case["length_kind"]]
+        if case["length_kind"] == "fixed":
+            declared = row_length
+            if declared != len(payload) // 2:
+                fail(f"fixed fixture payload length mismatch: {case['name']}")
+        else:
+            if "declared_payload_length" not in case:
+                fail(f"variable fixture missing declared_payload_length: {case['name']}")
+            declared = case["declared_payload_length"]
+            if declared != int(frame[2:2 + (2 if case["length_kind"] == "g1" else 4)], 16):
+                fail(f"declared length bytes mismatch: {case['name']}")
+            if declared != len(payload) // 2 and case["expected_result"]["status"] == "dispatch":
+                fail(f"complete variable fixture payload length mismatch: {case['name']}")
+        expected_status = case["expected_result"]["status"]
+        expected_consumed = header_size if expected_status == "pending" else header_size + declared
+        if case["expected_consumed_length"] != expected_consumed:
+            fail(f"expected consumed length disagrees with source cursor rule: {case['name']}")
+        if len(frame) // 2 < case["expected_consumed_length"]:
+            fail(f"fixture frame is shorter than consumed prefix: {case['name']}")
+        if not isinstance(case["expected_result"], dict) or "status" not in case["expected_result"]:
+            fail(f"fixture expected_result must be structured: {case['name']}")
+        if any(word in case["oracle_derivation"].lower() for word in ("new rust", "proposed rust", "placeholder", "depends on selected table", "hand-waved")):
             fail(f"fixture oracle must be independent: {case['name']}")
         if not case["source_anchors"]:
             fail(f"fixture source_anchors empty: {case['name']}")
