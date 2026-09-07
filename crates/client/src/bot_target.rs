@@ -8,6 +8,36 @@ use std::env;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
+/// Operator home for path defaults (`~/.274bot`, engine under `$HOME/...`).
+///
+/// Same `Result` shape as `env::var("HOME")`. On non-Windows this is
+/// verbatim `HOME`. On Windows, an explicitly set `HOME` (including empty)
+/// always wins; `USERPROFILE` is used only when `HOME` is absent or not
+/// valid Unicode. Callers keep their own empty/fallback handling.
+pub fn operator_home() -> Result<String, env::VarError> {
+    operator_home_from(env::var("HOME"), || env::var("USERPROFILE"))
+}
+
+/// Pure selector for tests: inject `HOME` / `USERPROFILE` results without
+/// mutating the process environment.
+fn operator_home_from(
+    home: Result<String, env::VarError>,
+    userprofile: impl FnOnce() -> Result<String, env::VarError>,
+) -> Result<String, env::VarError> {
+    #[cfg(windows)]
+    {
+        match home {
+            Ok(h) => Ok(h),
+            Err(_) => userprofile(),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = userprofile;
+        home
+    }
+}
+
 /// Which world a `Client` logs into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BotTarget {
@@ -83,7 +113,7 @@ pub fn engine_dir() -> PathBuf {
             return PathBuf::from(p);
         }
     }
-    match env::var("HOME") {
+    match operator_home() {
         Ok(home) => PathBuf::from(home).join("experiments/Server/engine"),
         Err(_) => PathBuf::from("experiments/Server/engine"),
     }
@@ -91,7 +121,7 @@ pub fn engine_dir() -> PathBuf {
 
 /// Jag pack + versioned snapshots (`models.bin` etc.). Prod downloads land here.
 pub fn unpack_dir() -> PathBuf {
-    match env::var("HOME") {
+    match operator_home() {
         Ok(home) if !home.is_empty() => PathBuf::from(home).join(".274bot/unpack"),
         _ => PathBuf::from(".274bot/unpack"),
     }
@@ -179,4 +209,49 @@ mod tests {
             Path::new("/tmp/Server/content/maps")
         );
     }
+
+    #[test]
+    fn operator_home_prefers_explicit_home_including_empty() {
+        use std::env::VarError;
+        assert_eq!(
+            operator_home_from(Ok("/explicit".into()), || Ok("/profile".into())).unwrap(),
+            "/explicit"
+        );
+        assert_eq!(
+            operator_home_from(Ok(String::new()), || Ok("/profile".into())).unwrap(),
+            ""
+        );
+        let missing = Err(VarError::NotPresent);
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                operator_home_from(missing.clone(), || Ok(r"C:\Users\op".into())).unwrap(),
+                r"C:\Users\op"
+            );
+            assert!(operator_home_from(missing.clone(), || missing.clone()).is_err());
+            assert_eq!(
+                operator_home_from(Err(VarError::NotUnicode("x".into())), || Ok("/p".into())).unwrap(),
+                "/p"
+            );
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(
+                operator_home_from(Ok("/unix".into()), || Ok("/ignored".into())).unwrap(),
+                "/unix"
+            );
+            assert!(operator_home_from(missing.clone(), || Ok("/ignored".into())).is_err());
+            assert!(operator_home_from(missing.clone(), || missing).is_err());
+        }
+    }
+    #[test]
+    fn operator_home_never_queries_profile_for_explicit_home() {
+        assert_eq!(
+            super::operator_home_from(Ok("/explicit".into()), || panic!("unexpected USERPROFILE read")).unwrap(),
+            "/explicit"
+        );
+        #[cfg(not(windows))]
+        assert!(super::operator_home_from(Err(std::env::VarError::NotPresent), || panic!("Unix queried USERPROFILE")).is_err());
+    }
+
 }

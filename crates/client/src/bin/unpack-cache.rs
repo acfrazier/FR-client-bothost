@@ -17,7 +17,7 @@ struct Args {
 }
 
 fn default_dir(kind: &str) -> String {
-    match env::var("HOME") {
+    match client::operator_home() {
         Ok(home) => format!("{home}/{kind}"),
         Err(_) => kind.to_string(),
     }
@@ -26,7 +26,7 @@ fn default_dir(kind: &str) -> String {
 fn parse_args() -> Args {
     let mut args = Args {
         cache: default_dir(DEFAULT_CACHE),
-        out: match env::var("HOME") {
+        out: match client::operator_home() {
             Ok(home) => format!("{home}/.274bot/unpack"),
             Err(_) => ".274bot/unpack".to_string(),
         },
