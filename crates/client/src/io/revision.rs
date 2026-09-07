@@ -79,6 +79,7 @@ mod tests {
     #[test]
     fn sizes_289_named_rows() {
         assert_eq!(SERVER_PROT_SIZES_289.len(), 256);
+        // Stage 1
         assert_eq!(
             SERVER_PROT_SIZES_289[ServerProt289::UPDATE_INV_FULL as usize],
             -2
@@ -87,16 +88,42 @@ mod tests {
             SERVER_PROT_SIZES_289[ServerProt289::UPDATE_INV_PARTIAL as usize],
             -2
         );
-        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::LOGOUT as usize], 0);
         assert_eq!(SERVER_PROT_SIZES_289[47], -2);
+        // Stage 2 named opcodes (protocol-289.json / Class17 lengths)
         assert_eq!(
             SERVER_PROT_SIZES_289[ServerProt289::PLAYER_INFO as usize],
             -2
         );
+        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::NPC_INFO as usize], -2);
         assert_eq!(
             SERVER_PROT_SIZES_289[ServerProt289::REBUILD_NORMAL as usize],
             4
         );
+        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::LOGOUT as usize], 0);
+        assert_eq!(
+            SERVER_PROT_SIZES_289[ServerProt289::RESET_ANIMS as usize],
+            0
+        );
+        assert_eq!(
+            SERVER_PROT_SIZES_289[ServerProt289::IF_SETTEXT as usize],
+            -2
+        );
+        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::IF_SETANIM as usize], 4);
+        assert_eq!(
+            SERVER_PROT_SIZES_289[ServerProt289::IF_OPENMAIN_SIDE as usize],
+            4
+        );
+        assert_eq!(
+            SERVER_PROT_SIZES_289[ServerProt289::IF_OPENSIDE as usize],
+            2
+        );
+        assert_eq!(
+            SERVER_PROT_SIZES_289[ServerProt289::IF_OPENOVERLAY as usize],
+            2
+        );
+        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::VARP_SMALL as usize], 3);
+        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::VARP_LARGE as usize], 6);
+        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::VARP_SYNC as usize], 0);
     }
 
     #[test]

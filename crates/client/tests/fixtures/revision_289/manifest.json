@@ -439,6 +439,100 @@
         "client.java:3351-3361"
       ],
       "oracle_derivation": "Zero-payload bulk copy from server varp shadow array into client vars."
+    },
+    {
+      "name": "actor_removal_player_empty_old_vis",
+      "opcode": 188,
+      "length_kind": "g2",
+      "frame_hex": "bc00020000",
+      "payload_hex": "0000",
+      "declared_payload_length": 2,
+      "expected_consumed_length": 5,
+      "expected_cursor": 2,
+      "expected_result": {
+        "status": "dispatch",
+        "state": "actor_removal_player",
+        "player_count_after": 0,
+        "error": null
+      },
+      "source_anchors": [
+        "Class17.java:11 (length[188] = -2)",
+        "client.java:6150-6168 (method185 old-vis count)",
+        "client.java:7207-7218 (entity_removal clear)"
+      ],
+      "oracle_derivation": "With prior player_count>0 and payload local-info 0 + old-vis count 0, production queues entity_removal_ids for the excess slots and clears players whose cycle != loop_cycle. Independently derived from empty-world bitstream plus a pre-seeded other-player."
+    },
+    {
+      "name": "actor_removal_npc_empty_old_vis",
+      "opcode": 65,
+      "length_kind": "g2",
+      "frame_hex": "41000100",
+      "payload_hex": "00",
+      "declared_payload_length": 1,
+      "expected_consumed_length": 4,
+      "expected_cursor": 1,
+      "expected_result": {
+        "status": "dispatch",
+        "state": "actor_removal_npc",
+        "npc_count_after": 0,
+        "error": null
+      },
+      "source_anchors": [
+        "Class17.java:11 (length[65] = -2)",
+        "client.java:12056-12120 (method226 old-vis count)"
+      ],
+      "oracle_derivation": "Prior npc_count>0 with g8 count 0 queues entity_removal and clears npc slots whose cycle != loop_cycle."
+    },
+    {
+      "name": "npc_info_face_entity_mask",
+      "opcode": 65,
+      "length_kind": "g2",
+      "frame_hex": "410007019fff80041234",
+      "payload_hex": "019fff80041234",
+      "declared_payload_length": 7,
+      "expected_consumed_length": 10,
+      "expected_cursor": 7,
+      "expected_result": {
+        "status": "dispatch",
+        "state": "npc_face_entity",
+        "face_entity": 4660,
+        "error": null
+      },
+      "source_anchors": [
+        "Class17.java:11 (length[65] = -2)",
+        "client.java:12056-12120 (method226)",
+        "client.java NPC mask FACEENTITY 0x4"
+      ],
+      "oracle_derivation": "Existing npc slot: g8 count 1, info 1, op 0 (extended), 14-bit 16383 new-vis sentinel, mask 0x04 FACEENTITY, g2 face 0x1234. Independently packed from production get_npc_pos bit widths."
+    },
+    {
+      "name": "login_outer_frame_r289",
+      "kind": "login",
+      "opcode": null,
+      "length_kind": "login_wrapper",
+      "frame_hex": "",
+      "payload_hex": "",
+      "expected_result": {
+        "status": "structure",
+        "state": "login_outer_16_255_p2_289_checksums_rsa_isaac",
+        "fields": [
+          "g1 opcode 16 cold / 18 reconnect",
+          "g1 size",
+          "g1 255",
+          "g2 revision 289",
+          "g1 lowmem",
+          "9 x g4 jag checksums",
+          "rsa blob",
+          "out.random Isaac(seed)",
+          "random_in Isaac(seed+50)"
+        ],
+        "error": null
+      },
+      "source_anchors": [
+        "client.java:8342-8398",
+        "client.java:8378 p2(289)"
+      ],
+      "oracle_derivation": "Production login() path on R289 session writes the outer wrapper order and installs ISAAC cursors; offline synthetic TCP proves bytes/state without a live game endpoint."
     }
   ]
 }
