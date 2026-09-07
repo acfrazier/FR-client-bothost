@@ -8,11 +8,15 @@
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
-use std::os::unix::io::AsRawFd;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+
+#[cfg(unix)]
+use std::os::unix::io::{AsRawFd, RawFd};
+#[cfg(windows)]
+use std::os::windows::io::{AsRawSocket, RawSocket};
 
 use native_tls::TlsStream;
 use tungstenite::protocol::WebSocket;
@@ -60,7 +64,11 @@ struct WsInner {
     ws: Mutex<WebSocket<TlsStream<TcpStream>>>,
     leftover: Mutex<VecDeque<u8>>,
     dummy: Mutex<bool>,
-    fd: i32,
+    /// Underlying TCP handle for zero-time readability probes (WSS).
+    #[cfg(unix)]
+    fd: RawFd,
+    #[cfg(windows)]
+    socket: RawSocket,
 }
 
 enum Inner {
@@ -111,7 +119,10 @@ impl ClientStream {
         let tcp = TcpStream::connect((host, 443))?;
         tcp.set_read_timeout(Some(READ_TIMEOUT))?;
         tcp.set_nodelay(true)?;
+        #[cfg(unix)]
         let fd = tcp.as_raw_fd();
+        #[cfg(windows)]
+        let socket = tcp.as_raw_socket();
         let connector = native_tls::TlsConnector::new().map_err(io_other)?;
         let tls = connector.connect(host, tcp).map_err(io_other)?;
         let mut req = format!("wss://{host}/")
@@ -127,7 +138,10 @@ impl ClientStream {
                 ws: Mutex::new(ws),
                 leftover: Mutex::new(VecDeque::new()),
                 dummy: Mutex::new(false),
+                #[cfg(unix)]
                 fd,
+                #[cfg(windows)]
+                socket,
             })),
             bytes_in: AtomicU64::new(0),
             bytes_out: AtomicU64::new(0),
@@ -150,10 +164,21 @@ impl ClientStream {
     /// socket, so polling this fd cannot race the writer; `close` shuts
     /// both ends down, which wakes a parked poll with EOF.
     #[cfg(unix)]
-    pub fn fd(&self) -> i32 {
+    pub fn fd(&self) -> RawFd {
         match &self.inner {
             Inner::Tcp(t) => t.reader.as_raw_fd(),
             Inner::Ws(w) => w.fd,
+        }
+    }
+
+    /// Reader socket as a Windows `SOCKET` (pointer-width), for `WSAPoll`
+    /// readability waits by the host's idle-slot scheduler. Same ownership
+    /// notes as [`Self::fd`]: writer uses a clone; `close` wakes waiters.
+    #[cfg(windows)]
+    pub fn raw_socket(&self) -> RawSocket {
+        match &self.inner {
+            Inner::Tcp(t) => t.reader.as_raw_socket(),
+            Inner::Ws(w) => w.socket,
         }
     }
 
@@ -261,13 +286,7 @@ impl ClientStream {
                         return Ok(n as i32);
                     }
                 }
-                let mut fds = [libc::pollfd {
-                    fd: w.fd,
-                    events: libc::POLLIN,
-                    revents: 0,
-                }];
-                let rc = unsafe { libc::poll(fds.as_mut_ptr(), 1, 0) };
-                if rc <= 0 {
+                if !socket_readable_now(wss_wait_handle(w)) {
                     return Ok(0);
                 }
                 let _ = fill_ws(w);
@@ -419,22 +438,63 @@ fn writer_loop(shared: Arc<Mutex<WriterState>>, condvar: Arc<Condvar>, mut sock:
     }
 }
 
-#[cfg(all(test, unix))]
+/// Zero-time readability probe handle for WSS `available`.
+#[cfg(unix)]
+fn wss_wait_handle(w: &WsInner) -> RawFd {
+    w.fd
+}
+
+#[cfg(windows)]
+fn wss_wait_handle(w: &WsInner) -> RawSocket {
+    w.socket
+}
+
+#[cfg(unix)]
+fn socket_readable_now(fd: RawFd) -> bool {
+    let mut fds = [libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    }];
+    let rc = unsafe { libc::poll(fds.as_mut_ptr(), 1, 0) };
+    rc > 0
+}
+
+#[cfg(windows)]
+fn socket_readable_now(socket: RawSocket) -> bool {
+    use windows_sys::Win32::Networking::WinSock::{WSAPoll, POLLIN, SOCKET, WSAPOLLFD};
+    let mut fds = [WSAPOLLFD {
+        fd: socket as SOCKET,
+        events: POLLIN,
+        revents: 0,
+    }];
+    let rc = unsafe { WSAPoll(fds.as_mut_ptr(), 1, 0) };
+    rc > 0
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::net::TcpListener;
 
     #[test]
-    fn fd_tracks_the_reader_socket_and_wakes_on_data() {
+    fn reader_handle_tracks_the_socket_and_wakes_on_data() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let mut stream = ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
         let (mut server, _) = listener.accept().unwrap();
+        #[cfg(unix)]
         assert!(stream.fd() >= 0, "fd must be a valid socket descriptor");
+        #[cfg(windows)]
+        assert!(
+            stream.raw_socket()
+                != windows_sys::Win32::Networking::WinSock::INVALID_SOCKET as RawSocket,
+            "raw_socket must be a valid SOCKET"
+        );
         // Idle: nothing readable yet.
         assert_eq!(stream.available().unwrap(), 0);
         server.write_all(&[1, 2, 3]).unwrap();
-        // The fd sits on the same socket `available` peeks; wait for the
+        // The handle sits on the same socket `available` peeks; wait for the
         // bytes to land (loopback delivery is not synchronous with write).
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
         loop {
@@ -447,6 +507,12 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(5));
         }
+        #[cfg(unix)]
         assert!(stream.fd() >= 0);
+        #[cfg(windows)]
+        assert!(
+            stream.raw_socket()
+                != windows_sys::Win32::Networking::WinSock::INVALID_SOCKET as RawSocket
+        );
     }
 }
