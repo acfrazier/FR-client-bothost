@@ -1,0 +1,4247 @@
+{
+  "revision": 289,
+  "source_pin": {
+    "repository": "https://github.com/RuneWiki/openrs2-nonfree.git",
+    "branch": "289",
+    "commit": "0c00ef249546fada67b1f6eb8bbe01ea7c250c95",
+    "entry": "nonfree/client/src/main/java/client.java",
+    "inventory": "FR-vault/docs/research/deob-289-source-inventory.md",
+    "artifacts": {
+      "client_source_sha256": "d03a34d8c965a426993f5a3e812bc566a80a18a91de65e994a257c49a5f5fea6",
+      "deob_client_jar_sha256": "3ec08f3e733f0f021d73f180300f00349cb01e4a50803ab5f9efe2af839f70f6",
+      "game_cache_pairing": "unknown"
+    }
+  },
+  "inbound": [
+    {
+      "name": "server_opcode_000",
+      "id": 0,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[0] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 0)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_001",
+      "id": 1,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[1] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 1)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_002",
+      "id": 2,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[2] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 2)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_003",
+      "id": 3,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[3] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 3)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_004",
+      "id": 4,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[4] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 4)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_005",
+      "id": 5,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[5] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 5)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_006",
+      "id": 6,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[6] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 6)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_007",
+      "id": 7,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[7] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 7)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_008",
+      "id": 8,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[8] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 8)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_009",
+      "id": 9,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[9] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 9)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_010",
+      "id": 10,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[10] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 10)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_011",
+      "id": 11,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[11] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 11)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_012",
+      "id": 12,
+      "length": 2,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[12] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 12)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "varp_small",
+      "id": 13,
+      "length": 3,
+      "fields": [
+        "g1 variable id/value"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[13] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 13)"
+      ],
+      "confidence": "verified-length; fields-source-derived"
+    },
+    {
+      "name": "server_opcode_014",
+      "id": 14,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[14] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 14)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_015",
+      "id": 15,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[15] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 15)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_016",
+      "id": 16,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[16] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 16)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_017",
+      "id": 17,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[17] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 17)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_018",
+      "id": 18,
+      "length": 6,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[18] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 18)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_019",
+      "id": 19,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[19] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 19)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_020",
+      "id": 20,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[20] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 20)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_021",
+      "id": 21,
+      "length": -1,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[21] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 21)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_022",
+      "id": 22,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[22] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 22)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_023",
+      "id": 23,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[23] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 23)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_024",
+      "id": 24,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[24] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 24)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_025",
+      "id": 25,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[25] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 25)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_026",
+      "id": 26,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[26] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 26)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_027",
+      "id": 27,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[27] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 27)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_028",
+      "id": 28,
+      "length": 2,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[28] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 28)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_029",
+      "id": 29,
+      "length": 4,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[29] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 29)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_030",
+      "id": 30,
+      "length": 2,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[30] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 30)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_031",
+      "id": 31,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[31] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 31)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_032",
+      "id": 32,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[32] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 32)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_033",
+      "id": 33,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[33] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 33)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_034",
+      "id": 34,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[34] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 34)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_035",
+      "id": 35,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[35] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 35)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_036",
+      "id": 36,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[36] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 36)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_037",
+      "id": 37,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[37] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 37)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_038",
+      "id": 38,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[38] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 38)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_039",
+      "id": 39,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[39] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 39)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_040",
+      "id": 40,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[40] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 40)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_041",
+      "id": 41,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[41] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 41)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_042",
+      "id": 42,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[42] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 42)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_043",
+      "id": 43,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[43] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 43)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_044",
+      "id": 44,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[44] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 44)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_045",
+      "id": 45,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[45] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 45)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "varp_large",
+      "id": 46,
+      "length": 2,
+      "fields": [
+        "g2 variable id/value"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[46] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 46)"
+      ],
+      "confidence": "verified-length; fields-source-derived"
+    },
+    {
+      "name": "server_opcode_047",
+      "id": 47,
+      "length": -2,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[47] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 47)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_048",
+      "id": 48,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[48] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 48)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_049",
+      "id": 49,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[49] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 49)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_050",
+      "id": 50,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[50] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 50)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_051",
+      "id": 51,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[51] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 51)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_052",
+      "id": 52,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[52] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 52)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_053",
+      "id": 53,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[53] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 53)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_054",
+      "id": 54,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[54] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 54)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "region_rebuild",
+      "id": 55,
+      "length": 4,
+      "fields": [
+        "g2 region base coordinates; map/scene rebuild state"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[55] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 55)"
+      ],
+      "confidence": "verified-length; fields-source-derived"
+    },
+    {
+      "name": "server_opcode_056",
+      "id": 56,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[56] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 56)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_057",
+      "id": 57,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[57] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 57)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_058",
+      "id": 58,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[58] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 58)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "if_settext",
+      "id": 59,
+      "length": -2,
+      "fields": [
+        "g2 component id; newline-terminated string"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[59] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 59)"
+      ],
+      "confidence": "verified-length; fields-source-derived"
+    },
+    {
+      "name": "server_opcode_060",
+      "id": 60,
+      "length": 5,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[60] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 60)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_061",
+      "id": 61,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[61] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 61)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_062",
+      "id": 62,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[62] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 62)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_063",
+      "id": 63,
+      "length": 3,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[63] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 63)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_064",
+      "id": 64,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[64] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 64)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_065",
+      "id": 65,
+      "length": -2,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[65] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 65)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_066",
+      "id": 66,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[66] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 66)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_067",
+      "id": 67,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[67] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 67)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_068",
+      "id": 68,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[68] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 68)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_069",
+      "id": 69,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[69] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 69)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_070",
+      "id": 70,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[70] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 70)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_071",
+      "id": 71,
+      "length": 3,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[71] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 71)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_072",
+      "id": 72,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[72] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 72)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_073",
+      "id": 73,
+      "length": 6,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[73] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 73)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_074",
+      "id": 74,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[74] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 74)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_075",
+      "id": 75,
+      "length": 3,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[75] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 75)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "inventory_partial",
+      "id": 76,
+      "length": -2,
+      "fields": [
+        "g2 component/container id; repeated g2 slot, g2 item id, g1 count or g4 count when 255"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[76] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 76)"
+      ],
+      "confidence": "verified-length; fields-source-derived"
+    },
+    {
+      "name": "server_opcode_077",
+      "id": 77,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[77] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 77)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_078",
+      "id": 78,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[78] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 78)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_079",
+      "id": 79,
+      "length": 6,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[79] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 79)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_080",
+      "id": 80,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[80] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 80)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_081",
+      "id": 81,
+      "length": 2,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[81] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 81)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_082",
+      "id": 82,
+      "length": 6,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[82] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 82)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_083",
+      "id": 83,
+      "length": 14,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[83] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 83)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_084",
+      "id": 84,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[84] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 84)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_085",
+      "id": 85,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[85] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 85)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_086",
+      "id": 86,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[86] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 86)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_087",
+      "id": 87,
+      "length": 15,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[87] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 87)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_088",
+      "id": 88,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[88] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 88)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_089",
+      "id": 89,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[89] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 89)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_090",
+      "id": 90,
+      "length": 4,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[90] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 90)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_091",
+      "id": 91,
+      "length": 4,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[91] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 91)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_092",
+      "id": 92,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[92] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 92)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_093",
+      "id": 93,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[93] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 93)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_094",
+      "id": 94,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[94] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 94)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_095",
+      "id": 95,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[95] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 95)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_096",
+      "id": 96,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[96] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 96)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_097",
+      "id": 97,
+      "length": 6,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[97] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 97)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_098",
+      "id": 98,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[98] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 98)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_099",
+      "id": 99,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[99] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 99)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_100",
+      "id": 100,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[100] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 100)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_101",
+      "id": 101,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[101] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 101)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_102",
+      "id": 102,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[102] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 102)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_103",
+      "id": 103,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[103] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 103)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_104",
+      "id": 104,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[104] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 104)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_105",
+      "id": 105,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[105] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 105)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_106",
+      "id": 106,
+      "length": 4,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[106] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 106)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_107",
+      "id": 107,
+      "length": -2,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[107] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 107)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_108",
+      "id": 108,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[108] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 108)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_109",
+      "id": 109,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[109] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 109)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_110",
+      "id": 110,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[110] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 110)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_111",
+      "id": 111,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[111] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 111)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_112",
+      "id": 112,
+      "length": -2,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[112] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 112)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_113",
+      "id": 113,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[113] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 113)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_114",
+      "id": 114,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[114] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 114)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_115",
+      "id": 115,
+      "length": 6,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[115] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 115)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_116",
+      "id": 116,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[116] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 116)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_117",
+      "id": 117,
+      "length": 7,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[117] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 117)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_118",
+      "id": 118,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[118] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 118)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_119",
+      "id": 119,
+      "length": 2,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[119] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 119)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_120",
+      "id": 120,
+      "length": 3,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[120] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 120)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_121",
+      "id": 121,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[121] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 121)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_122",
+      "id": 122,
+      "length": 6,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[122] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 122)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_123",
+      "id": 123,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[123] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 123)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_124",
+      "id": 124,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[124] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 124)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_125",
+      "id": 125,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[125] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 125)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_126",
+      "id": 126,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[126] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 126)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "logout",
+      "id": 127,
+      "length": 2,
+      "fields": [
+        "g1 signed logout/reset reason"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[127] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 127)"
+      ],
+      "confidence": "verified-length; fields-source-derived"
+    },
+    {
+      "name": "server_opcode_128",
+      "id": 128,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[128] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 128)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_129",
+      "id": 129,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[129] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 129)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_130",
+      "id": 130,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[130] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 130)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_131",
+      "id": 131,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[131] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 131)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_132",
+      "id": 132,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[132] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 132)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_133",
+      "id": 133,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[133] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 133)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_134",
+      "id": 134,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[134] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 134)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_135",
+      "id": 135,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[135] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 135)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_136",
+      "id": 136,
+      "length": 1,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[136] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 136)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_137",
+      "id": 137,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[137] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 137)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_138",
+      "id": 138,
+      "length": 3,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[138] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 138)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_139",
+      "id": 139,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[139] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 139)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_140",
+      "id": 140,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[140] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 140)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_141",
+      "id": 141,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[141] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 141)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_142",
+      "id": 142,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[142] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 142)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_143",
+      "id": 143,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[143] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 143)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_144",
+      "id": 144,
+      "length": 2,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[144] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 144)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_145",
+      "id": 145,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[145] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 145)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_146",
+      "id": 146,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[146] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 146)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_147",
+      "id": 147,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[147] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 147)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_148",
+      "id": 148,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[148] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 148)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_149",
+      "id": 149,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[149] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 149)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_150",
+      "id": 150,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[150] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 150)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_151",
+      "id": 151,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[151] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 151)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_152",
+      "id": 152,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[152] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 152)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_153",
+      "id": 153,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[153] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 153)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_154",
+      "id": 154,
+      "length": 6,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[154] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 154)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_155",
+      "id": 155,
+      "length": 2,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[155] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 155)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_156",
+      "id": 156,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[156] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 156)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_157",
+      "id": 157,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[157] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 157)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_158",
+      "id": 158,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[158] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 158)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_159",
+      "id": 159,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[159] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 159)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_160",
+      "id": 160,
+      "length": 4,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[160] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 160)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_161",
+      "id": 161,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[161] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 161)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_162",
+      "id": 162,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[162] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 162)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_163",
+      "id": 163,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[163] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 163)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_164",
+      "id": 164,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[164] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 164)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_165",
+      "id": 165,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[165] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 165)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_166",
+      "id": 166,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[166] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 166)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_167",
+      "id": 167,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[167] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 167)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_168",
+      "id": 168,
+      "length": 9,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[168] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 168)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_169",
+      "id": 169,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[169] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 169)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_170",
+      "id": 170,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[170] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 170)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_171",
+      "id": 171,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[171] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 171)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "inventory_full",
+      "id": 172,
+      "length": 0,
+      "fields": [
+        "g2 component/container id; g2 slot count; repeated gsmart item ids/counts per slot"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[172] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 172)"
+      ],
+      "confidence": "verified-length; fields-source-derived"
+    },
+    {
+      "name": "server_opcode_173",
+      "id": 173,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[173] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 173)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_174",
+      "id": 174,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[174] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 174)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_175",
+      "id": 175,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[175] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 175)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_176",
+      "id": 176,
+      "length": 7,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[176] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 176)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_177",
+      "id": 177,
+      "length": 5,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[177] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 177)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_178",
+      "id": 178,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[178] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 178)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_179",
+      "id": 179,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[179] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 179)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_180",
+      "id": 180,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[180] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 180)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_181",
+      "id": 181,
+      "length": 1,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[181] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 181)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_182",
+      "id": 182,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[182] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 182)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_183",
+      "id": 183,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[183] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 183)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_184",
+      "id": 184,
+      "length": 4,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[184] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 184)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_185",
+      "id": 185,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[185] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 185)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_186",
+      "id": 186,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[186] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 186)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_187",
+      "id": 187,
+      "length": 2,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[187] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 187)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "player_update",
+      "id": 188,
+      "length": -2,
+      "fields": [
+        "bit-packed actor count/masks and variable movement/update records; final cursor must equal frame length"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[188] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 188)"
+      ],
+      "confidence": "verified-length; fields-source-derived"
+    },
+    {
+      "name": "server_opcode_189",
+      "id": 189,
+      "length": 1,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[189] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 189)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_190",
+      "id": 190,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[190] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 190)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_191",
+      "id": 191,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[191] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 191)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_192",
+      "id": 192,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[192] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 192)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_193",
+      "id": 193,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[193] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 193)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_194",
+      "id": 194,
+      "length": 2,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[194] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 194)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_195",
+      "id": 195,
+      "length": 1,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[195] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 195)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_196",
+      "id": 196,
+      "length": -1,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[196] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 196)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_197",
+      "id": 197,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[197] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 197)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_198",
+      "id": 198,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[198] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 198)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_199",
+      "id": 199,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[199] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 199)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_200",
+      "id": 200,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[200] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 200)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "reset_actors",
+      "id": 201,
+      "length": 0,
+      "fields": [
+        "no payload; clears actor animation/target state"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[201] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 201)"
+      ],
+      "confidence": "verified-length; fields-source-derived"
+    },
+    {
+      "name": "server_opcode_202",
+      "id": 202,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[202] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 202)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_203",
+      "id": 203,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[203] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 203)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_204",
+      "id": 204,
+      "length": 2,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[204] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 204)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_205",
+      "id": 205,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[205] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 205)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_206",
+      "id": 206,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[206] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 206)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_207",
+      "id": 207,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[207] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 207)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_208",
+      "id": 208,
+      "length": 4,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[208] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 208)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_209",
+      "id": 209,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[209] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 209)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_210",
+      "id": 210,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[210] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 210)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "if_open_main",
+      "id": 211,
+      "length": 4,
+      "fields": [
+        "g2 component/interface id and interface state"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[211] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 211)"
+      ],
+      "confidence": "verified-length; fields-source-derived"
+    },
+    {
+      "name": "server_opcode_212",
+      "id": 212,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[212] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 212)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_213",
+      "id": 213,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[213] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 213)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_214",
+      "id": 214,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[214] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 214)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_215",
+      "id": 215,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[215] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 215)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_216",
+      "id": 216,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[216] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 216)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_217",
+      "id": 217,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[217] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 217)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_218",
+      "id": 218,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[218] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 218)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_219",
+      "id": 219,
+      "length": 4,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[219] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 219)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_220",
+      "id": 220,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[220] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 220)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_221",
+      "id": 221,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[221] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 221)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_222",
+      "id": 222,
+      "length": 4,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[222] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 222)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_223",
+      "id": 223,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[223] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 223)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_224",
+      "id": 224,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[224] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 224)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_225",
+      "id": 225,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[225] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 225)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_226",
+      "id": 226,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[226] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 226)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_227",
+      "id": 227,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[227] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 227)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_228",
+      "id": 228,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[228] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 228)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_229",
+      "id": 229,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[229] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 229)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_230",
+      "id": 230,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[230] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 230)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_231",
+      "id": 231,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[231] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 231)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_232",
+      "id": 232,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[232] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 232)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_233",
+      "id": 233,
+      "length": 6,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[233] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 233)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_234",
+      "id": 234,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[234] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 234)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_235",
+      "id": 235,
+      "length": 1,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[235] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 235)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_236",
+      "id": 236,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[236] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 236)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_237",
+      "id": 237,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[237] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 237)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_238",
+      "id": 238,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[238] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 238)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_239",
+      "id": 239,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[239] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 239)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_240",
+      "id": 240,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[240] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 240)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_241",
+      "id": 241,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[241] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 241)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_242",
+      "id": 242,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[242] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 242)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_243",
+      "id": 243,
+      "length": -1,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[243] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 243)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_244",
+      "id": 244,
+      "length": 4,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[244] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 244)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_245",
+      "id": 245,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[245] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 245)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_246",
+      "id": 246,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[246] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 246)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_247",
+      "id": 247,
+      "length": 1,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[247] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 247)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_248",
+      "id": 248,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[248] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 248)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_249",
+      "id": 249,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[249] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 249)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_250",
+      "id": 250,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[250] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 250)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_251",
+      "id": 251,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[251] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 251)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "if_open",
+      "id": 252,
+      "length": 2,
+      "fields": [
+        "g2 interface id; interface stack/reset state"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[252] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 252)"
+      ],
+      "confidence": "verified-length; fields-source-derived"
+    },
+    {
+      "name": "server_opcode_253",
+      "id": 253,
+      "length": 10,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[253] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 253)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_254",
+      "id": 254,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[254] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 254)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    },
+    {
+      "name": "server_opcode_255",
+      "id": 255,
+      "length": 0,
+      "fields": [
+        "unknown: decode fields from client.java dispatch branch before implementation"
+      ],
+      "source_anchors": [
+        "Class17.java:11 (anIntArray209[255] packet length)",
+        "client.java:2593-3510 (dispatch branch for opcode 255)"
+      ],
+      "confidence": "verified-id-and-length; fields-unknown"
+    }
+  ],
+  "outbound": [
+    {
+      "name": "client_opcode_004",
+      "id": 4,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(4) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_013",
+      "id": 13,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(13) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_016",
+      "id": 16,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(16) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_021",
+      "id": 21,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(21) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_022",
+      "id": 22,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(22) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_027",
+      "id": 27,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(27) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_030",
+      "id": 30,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(30) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_034",
+      "id": 34,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(34) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_040",
+      "id": 40,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(40) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_044",
+      "id": 44,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(44) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_046",
+      "id": 46,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(46) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_049",
+      "id": 49,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(49) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_051",
+      "id": 51,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(51) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_055",
+      "id": 55,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(55) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_067",
+      "id": 67,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(67) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_069",
+      "id": 69,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(69) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_073",
+      "id": 73,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(73) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_076",
+      "id": 76,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(76) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_079",
+      "id": 79,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(79) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_081",
+      "id": 81,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(81) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_085",
+      "id": 85,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(85) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_086",
+      "id": 86,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(86) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_088",
+      "id": 88,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(88) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_093",
+      "id": 93,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(93) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_094",
+      "id": 94,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(94) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_097",
+      "id": 97,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(97) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_107",
+      "id": 107,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(107) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_108",
+      "id": 108,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(108) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_110",
+      "id": 110,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(110) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_111",
+      "id": 111,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(111) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_112",
+      "id": 112,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(112) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_122",
+      "id": 122,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(122) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_124",
+      "id": 124,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(124) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_125",
+      "id": 125,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(125) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_130",
+      "id": 130,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(130) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_133",
+      "id": 133,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(133) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_137",
+      "id": 137,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(137) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_138",
+      "id": 138,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(138) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_145",
+      "id": 145,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(145) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_146",
+      "id": 146,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(146) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_147",
+      "id": 147,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(147) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_149",
+      "id": 149,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(149) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_154",
+      "id": 154,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(154) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_156",
+      "id": 156,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(156) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_160",
+      "id": 160,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(160) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_161",
+      "id": 161,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(161) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_166",
+      "id": 166,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(166) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_168",
+      "id": 168,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(168) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_177",
+      "id": 177,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(177) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_178",
+      "id": 178,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(178) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_180",
+      "id": 180,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(180) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_181",
+      "id": 181,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(181) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_189",
+      "id": 189,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(189) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_191",
+      "id": 191,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(191) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_192",
+      "id": 192,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(192) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_193",
+      "id": 193,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(193) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_195",
+      "id": 195,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(195) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_200",
+      "id": 200,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(200) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_203",
+      "id": 203,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(203) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_214",
+      "id": 214,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(214) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_220",
+      "id": 220,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(220) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_224",
+      "id": 224,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(224) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_227",
+      "id": 227,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(227) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_229",
+      "id": 229,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(229) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_232",
+      "id": 232,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(232) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_234",
+      "id": 234,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(234) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_235",
+      "id": 235,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(235) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_236",
+      "id": 236,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(236) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_241",
+      "id": 241,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(241) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_247",
+      "id": 247,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(247) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_248",
+      "id": 248,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(248) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_251",
+      "id": 251,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(251) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_252",
+      "id": 252,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(252) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_253",
+      "id": 253,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(253) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    },
+    {
+      "name": "client_opcode_255",
+      "id": 255,
+      "length": "unknown",
+      "fields": [
+        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+      ],
+      "source_anchors": [
+        "client.java:method465(255) call sites"
+      ],
+      "confidence": "verified-id; length/semantic mapping pending independent trace"
+    }
+  ]
+}
