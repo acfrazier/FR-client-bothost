@@ -1920,6 +1920,9 @@ impl Client {
     /// adopted socket instead of a fresh TCP. Returns `None` when `other`
     /// has no live stream.
     pub fn adopt_from(&mut self, other: &mut Client) -> Option<()> {
+        // Session baton must carry the stream's revision profile so size
+        // tables and dispatch cannot silently diverge midstream.
+        self.revision = other.revision;
         self.stream = Some(other.stream.take()?);
         self.random_in = other.random_in.take();
         self.out = std::mem::replace(&mut other.out, Packet::alloc(1));
@@ -3648,19 +3651,24 @@ impl Client {
     /// invalidates every family (new scene). `LOGOUT` and unknown T1
     /// opcodes reach here after `dispatch` already called `logout()`, which
     /// bumps all; they must not double-bump.
+    ///
+    /// On R289 only stage-1-traced inventory opcodes bump `inv`; every other
+    /// id is fail-closed at dispatch (T1/logout already bumped all) so bare
+    /// 274 family arms must not run against colliding numeric ids.
     pub fn bump_gens(&mut self, ptype: i32) {
+        if self.revision.is_289() {
+            if ptype == ServerProt289::UPDATE_INV_FULL || ptype == ServerProt289::UPDATE_INV_PARTIAL
+            {
+                self.gens.inv += 1;
+            }
+            return;
+        }
         match ptype {
             ServerProt::NPC_INFO => self.gens.npc += 1,
             ServerProt::PLAYER_INFO => self.gens.player += 1,
             ServerProt::UPDATE_INV_FULL
             | ServerProt::UPDATE_INV_PARTIAL
             | ServerProt::UPDATE_INV_STOP_TRANSMIT => self.gens.inv += 1,
-            x if self.revision.is_289()
-                && (x == ServerProt289::UPDATE_INV_FULL
-                    || x == ServerProt289::UPDATE_INV_PARTIAL) =>
-            {
-                self.gens.inv += 1
-            }
             ServerProt::VARP_SMALL | ServerProt::VARP_LARGE | ServerProt::VARP_SYNC => {
                 self.gens.varp += 1
             }
@@ -5765,6 +5773,13 @@ impl Client {
     }
 
     fn dispatch_packet(&mut self, ptype: i32, payload: &mut Packet) {
+        // Stage-1 R289: only source-traced inventory handlers may mutate
+        // game state. Every other inbound id fails closed (T1) so numeric
+        // collisions with 274 constants cannot execute wrong handlers.
+        if self.revision.is_289() {
+            self.dispatch_packet_289(ptype, payload);
+            return;
+        }
         match ptype {
             ServerProt::REBUILD_NORMAL => {
                 let zone_x = payload.g2();
@@ -6216,26 +6231,14 @@ impl Client {
             }
 
             // 274 inventory full: g2 component, g1 entry count, then slots.
-            ServerProt::UPDATE_INV_FULL if self.revision.is_274() => {
+            ServerProt::UPDATE_INV_FULL => {
                 self.apply_update_inv_full(payload, /*count_is_g2=*/ false);
                 self.ptype = -1;
             }
 
-            // 289 inventory full: g2 component, g2 entry count (client.java:2972-2990).
-            x if self.revision.is_289() && x == ServerProt289::UPDATE_INV_FULL => {
-                self.apply_update_inv_full(payload, /*count_is_g2=*/ true);
-                self.ptype = -1;
-            }
-
             // 274 inventory partial: g1 slot index per entry.
-            ServerProt::UPDATE_INV_PARTIAL if self.revision.is_274() => {
+            ServerProt::UPDATE_INV_PARTIAL => {
                 self.apply_update_inv_partial(payload, /*slot_is_gsmart=*/ false);
-                self.ptype = -1;
-            }
-
-            // 289 inventory partial: gsmart slot (client.java:3477-3494).
-            x if self.revision.is_289() && x == ServerProt289::UPDATE_INV_PARTIAL => {
-                self.apply_update_inv_partial(payload, /*slot_is_gsmart=*/ true);
                 self.ptype = -1;
             }
 
@@ -6571,8 +6574,6 @@ impl Client {
             }
 
             // zone protocol, direct dispatch like the TS.
-            // MAP_PROJANIM is 107 on 274; on 289 that id is inventory-full, so
-            // keep the zone arm off the 289 profile (handled above).
             ServerProt::OBJ_COUNT
             | ServerProt::P_LOCMERGE
             | ServerProt::OBJ_REVEAL
@@ -6581,17 +6582,39 @@ impl Client {
             | ServerProt::OBJ_ADD
             | ServerProt::LOC_ANIM
             | ServerProt::LOC_DEL
-            | ServerProt::LOC_ADD_CHANGE => {
-                self.zone_packet(payload, ptype);
-                self.ptype = -1;
-            }
-            ServerProt::MAP_PROJANIM if self.revision.is_274() => {
+            | ServerProt::LOC_ADD_CHANGE
+            | ServerProt::MAP_PROJANIM => {
                 self.zone_packet(payload, ptype);
                 self.ptype = -1;
             }
 
             _ => {
                 // Java/TS report unknown opcodes to the world and log out
+                eprintln!(
+                    "T1 - {ptype},{} - {},{}",
+                    self.psize, self.ptype1, self.ptype2
+                );
+                self.logout();
+            }
+        }
+    }
+
+    /// Stage-1 289 inbound dispatch: inventory full/partial only. All other
+    /// opcodes (including ids that collide with 274 handlers) are unknown/T1
+    /// until later stages trace their fields. No parallel full 289 decoder.
+    fn dispatch_packet_289(&mut self, ptype: i32, payload: &mut Packet) {
+        match ptype {
+            // 289 inventory full: g2 component, g2 entry count (client.java:2972-2990).
+            x if x == ServerProt289::UPDATE_INV_FULL => {
+                self.apply_update_inv_full(payload, /*count_is_g2=*/ true);
+                self.ptype = -1;
+            }
+            // 289 inventory partial: gsmart slot (client.java:3477-3494).
+            x if x == ServerProt289::UPDATE_INV_PARTIAL => {
+                self.apply_update_inv_partial(payload, /*slot_is_gsmart=*/ true);
+                self.ptype = -1;
+            }
+            _ => {
                 eprintln!(
                     "T1 - {ptype},{} - {},{}",
                     self.psize, self.ptype1, self.ptype2
@@ -10842,34 +10865,52 @@ impl Client {
         }
     }
 
-    /// One `UPDATE_INV_*` slot: `g2` id + `g1` count, with `255` promoting
-    /// to `g4` (TS `UPDATE_INV_FULL` / `UPDATE_INV_PARTIAL`; same on 289).
-    fn read_inv_count(payload: &mut Packet) -> (i32, i32) {
+    /// Require `n` bytes still available inside the declared frame end.
+    /// Panics on shortfall so `handle_packet` maps it to T2 + logout without
+    /// publishing partial inventory state.
+    fn require_frame_bytes(payload: &Packet, end: usize, n: usize) {
+        if payload.pos + n > end {
+            panic!("inventory frame truncated or overrun past psize");
+        }
+    }
+
+    /// One `UPDATE_INV_*` slot bounded to the declared frame end: `g2` id +
+    /// `g1` count, with `255` promoting to `g4` (same on 274 and 289).
+    fn read_inv_count_bounded(payload: &mut Packet, end: usize) -> (i32, i32) {
+        Self::require_frame_bytes(payload, end, 2);
         let id = payload.g2();
+        Self::require_frame_bytes(payload, end, 1);
         let mut count = payload.g1();
         if count == 255 {
+            Self::require_frame_bytes(payload, end, 4);
             count = payload.g4();
         }
         (id, count)
     }
 
     /// Full inventory replace. 274 uses `g1` entry count; 289 uses `g2`.
-    /// Always consumes the frame even when the component is missing so the
-    /// cursor stays aligned. Zero-fills remaining component entries.
+    /// Decodes entirely within `[0, psize)` into a staging buffer, then
+    /// publishes once. Overrun/truncation panics before any slot write.
     fn apply_update_inv_full(&mut self, payload: &mut Packet, count_is_g2: bool) {
         self.redraw_side = true;
+        let end = self.inbound_end(payload);
 
+        Self::require_frame_bytes(payload, end, 2);
         let com_id = payload.g2();
         let size = if count_is_g2 {
+            Self::require_frame_bytes(payload, end, 2);
             payload.g2()
         } else {
+            Self::require_frame_bytes(payload, end, 1);
             payload.g1()
         };
 
         let mut slots = Vec::with_capacity(size.max(0) as usize);
         for _ in 0..size {
-            slots.push(Self::read_inv_count(payload));
+            slots.push(Self::read_inv_count_bounded(payload, end));
         }
+        // Leftover bytes inside the declared frame are allowed (servers may
+        // pad); reading past `end` already failed closed above.
 
         if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
             .get_mut(com_id as usize)
@@ -10893,29 +10934,44 @@ impl Client {
     }
 
     /// Partial inventory update. 274 uses `g1` slot; 289 uses `gsmart` slot.
-    /// Consumes every declared entry even if the component is missing.
+    /// Stages every complete entry inside the declared frame, then commits
+    /// once — a truncated later entry does not leave earlier slots applied.
     fn apply_update_inv_partial(&mut self, payload: &mut Packet, slot_is_gsmart: bool) {
         self.redraw_side = true;
-
-        let com_id = payload.g2();
         let end = self.inbound_end(payload);
 
+        Self::require_frame_bytes(payload, end, 2);
+        let com_id = payload.g2();
+
+        let mut staged: Vec<(i32, i32, i32)> = Vec::new();
         while payload.pos < end {
             let slot = if slot_is_gsmart {
-                payload.gsmart()
+                // gsmart peeks one byte then consumes 1 or 2.
+                Self::require_frame_bytes(payload, end, 1);
+                let first = payload.data()[payload.pos];
+                if first < 0x80 {
+                    payload.g1()
+                } else {
+                    Self::require_frame_bytes(payload, end, 2);
+                    payload.g2() - 0x8000
+                }
             } else {
+                Self::require_frame_bytes(payload, end, 1);
                 payload.g1()
             };
-            let (id, count) = Self::read_inv_count(payload);
+            let (id, count) = Self::read_inv_count_bounded(payload, end);
+            staged.push((slot, id, count));
+        }
 
-            if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
-                .get_mut(com_id as usize)
-                .and_then(|o| o.as_mut())
-                .map(Arc::make_mut)
+        if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
+            .get_mut(com_id as usize)
+            .and_then(|o| o.as_mut())
+            .map(Arc::make_mut)
+        {
+            if let (Some(link_types), Some(link_numbers)) =
+                (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut())
             {
-                if let (Some(link_types), Some(link_numbers)) =
-                    (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut())
-                {
+                for (slot, id, count) in staged {
                     if slot >= 0 && (slot as usize) < link_types.len() {
                         link_types[slot as usize] = id;
                         link_numbers[slot as usize] = count;
