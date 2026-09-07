@@ -12,5 +12,7 @@ pub mod ondemand;
 pub use ondemand::{OnDemand, OnDemandProvider, OnDemandRequest};
 pub mod packet;
 pub use packet::Packet;
+pub mod revision;
+pub use revision::{ClientRevision, ServerProt289, SERVER_PROT_SIZES_289};
 pub mod server_prot;
 pub use server_prot::{ServerProt, SERVER_PROT_SIZES};

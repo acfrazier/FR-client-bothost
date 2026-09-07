@@ -44,7 +44,8 @@ pub use crate::dash3d::{ClientNpc, ClientPlayer};
 use crate::datastruct::LinkList;
 use crate::graphics::Pix3D;
 use crate::io::{
-    ClientProt, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt, SERVER_PROT_SIZES,
+    ClientProt, ClientRevision, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt,
+    ServerProt289,
 };
 use crate::login_rsa;
 use crate::render::nav_debug::NavDebugPaint;
@@ -297,6 +298,10 @@ pub struct Client {
     /// host attaches a target to receive frames without a window.
     pub present: Option<Box<dyn crate::client::present::PresentTarget>>,
     pub config: ClientConfig,
+    /// Protocol revision profile for framing and inbound dispatch. Default
+    /// construction is [`ClientRevision::R274`]; set explicitly for 289.
+    /// Not a global opcode table swap — 274 public constants stay put.
+    pub revision: ClientRevision,
     /// Config type tables (`obj`, `npc`, `loc`, ...), unpacked from the
     /// `config` jag by `Cache::unpack`; empty until loaded. Shared with
     /// every client via `Arc` (the tables are immutable once unpacked);
@@ -913,6 +918,7 @@ impl Client {
             shell: GameShell::new(),
             present: None,
             config,
+            revision: ClientRevision::R274,
             cache,
             ifaces,
             ifaces_mut,
@@ -3516,9 +3522,9 @@ impl Client {
     }
 
     /// In-game inbound read, 1:1 of `Client.ts` `tcpIn` (5871-7150) on the
-    /// Java-style blocking stream: Isaac-decoded `ptype`, `psize` from
-    /// `SERVER_PROT_SIZES` (-1/-2 variable-length forms), full-payload read,
-    /// then the `ptype` switch. Returns false when no complete frame is
+    /// Java-style blocking stream: Isaac-decoded `ptype`, `psize` from the
+    /// revision-selected size table (-1/-2 variable-length forms), full-payload
+    /// read, then the `ptype` switch. Returns false when no complete frame is
     /// available yet; `gameLoop` drives it up to 5 times per frame.
     pub fn tcp_in(&mut self) -> bool {
         match self.read_packet() {
@@ -3569,12 +3575,13 @@ impl Client {
             if let Some(random) = self.random_in.as_mut() {
                 self.ptype = self.ptype.wrapping_sub(random.next_int()) & 0xff;
             }
-            self.psize = SERVER_PROT_SIZES[self.ptype as usize];
+            self.psize = self.revision.server_prot_sizes()[self.ptype as usize];
             available -= 1;
         }
 
         if self.psize == -1 {
             if available <= 0 {
+                // Incomplete variable-length header: no partial publication.
                 return Ok(false);
             }
             stream.read_bytes(self.r#in.data_mut(), 0, 1)?;
@@ -3584,6 +3591,7 @@ impl Client {
 
         if self.psize == -2 {
             if available <= 1 {
+                // Incomplete g2 length header: wait for both length bytes.
                 return Ok(false);
             }
             stream.read_bytes(self.r#in.data_mut(), 0, 2)?;
@@ -3593,6 +3601,7 @@ impl Client {
         }
 
         if available < self.psize {
+            // Fixed or declared payload not fully buffered yet.
             return Ok(false);
         }
 
@@ -3646,6 +3655,12 @@ impl Client {
             ServerProt::UPDATE_INV_FULL
             | ServerProt::UPDATE_INV_PARTIAL
             | ServerProt::UPDATE_INV_STOP_TRANSMIT => self.gens.inv += 1,
+            x if self.revision.is_289()
+                && (x == ServerProt289::UPDATE_INV_FULL
+                    || x == ServerProt289::UPDATE_INV_PARTIAL) =>
+            {
+                self.gens.inv += 1
+            }
             ServerProt::VARP_SMALL | ServerProt::VARP_LARGE | ServerProt::VARP_SYNC => {
                 self.gens.varp += 1
             }
@@ -6200,67 +6215,27 @@ impl Client {
                 self.ptype = -1;
             }
 
-            ServerProt::UPDATE_INV_FULL => {
-                self.redraw_side = true;
-
-                let com_id = payload.g2();
-                let size = payload.g1();
-
-                // Always consume the frame (TS still reads when the iface is
-                // missing; skipping here would desync once ifaces load).
-                let mut slots = Vec::with_capacity(size as usize);
-                for _ in 0..size {
-                    slots.push(Self::read_inv_count(payload));
-                }
-
-                if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
-                    .get_mut(com_id as usize)
-                    .and_then(|o| o.as_mut())
-                    .map(Arc::make_mut)
-                {
-                    if let (Some(link_types), Some(link_numbers)) =
-                        (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut())
-                    {
-                        let n = size.min(link_types.len() as i32) as usize;
-                        for i in 0..n {
-                            link_types[i] = slots[i].0;
-                            link_numbers[i] = slots[i].1;
-                        }
-                        for i in n..link_types.len() {
-                            link_types[i] = 0;
-                            link_numbers[i] = 0;
-                        }
-                    }
-                }
+            // 274 inventory full: g2 component, g1 entry count, then slots.
+            ServerProt::UPDATE_INV_FULL if self.revision.is_274() => {
+                self.apply_update_inv_full(payload, /*count_is_g2=*/ false);
                 self.ptype = -1;
             }
 
-            ServerProt::UPDATE_INV_PARTIAL => {
-                self.redraw_side = true;
+            // 289 inventory full: g2 component, g2 entry count (client.java:2972-2990).
+            x if self.revision.is_289() && x == ServerProt289::UPDATE_INV_FULL => {
+                self.apply_update_inv_full(payload, /*count_is_g2=*/ true);
+                self.ptype = -1;
+            }
 
-                let com_id = payload.g2();
-                let end = self.inbound_end(payload);
+            // 274 inventory partial: g1 slot index per entry.
+            ServerProt::UPDATE_INV_PARTIAL if self.revision.is_274() => {
+                self.apply_update_inv_partial(payload, /*slot_is_gsmart=*/ false);
+                self.ptype = -1;
+            }
 
-                // Consume every slot even if the component is missing.
-                while payload.pos < end {
-                    let slot = payload.g1();
-                    let (id, count) = Self::read_inv_count(payload);
-
-                    if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
-                        .get_mut(com_id as usize)
-                        .and_then(|o| o.as_mut())
-                        .map(Arc::make_mut)
-                    {
-                        if let (Some(link_types), Some(link_numbers)) =
-                            (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut())
-                        {
-                            if slot >= 0 && (slot as usize) < link_types.len() {
-                                link_types[slot as usize] = id;
-                                link_numbers[slot as usize] = count;
-                            }
-                        }
-                    }
-                }
+            // 289 inventory partial: gsmart slot (client.java:3477-3494).
+            x if self.revision.is_289() && x == ServerProt289::UPDATE_INV_PARTIAL => {
+                self.apply_update_inv_partial(payload, /*slot_is_gsmart=*/ true);
                 self.ptype = -1;
             }
 
@@ -6595,17 +6570,22 @@ impl Client {
                 self.ptype = -1;
             }
 
-            // zone protocol, direct dispatch like the TS
+            // zone protocol, direct dispatch like the TS.
+            // MAP_PROJANIM is 107 on 274; on 289 that id is inventory-full, so
+            // keep the zone arm off the 289 profile (handled above).
             ServerProt::OBJ_COUNT
             | ServerProt::P_LOCMERGE
             | ServerProt::OBJ_REVEAL
             | ServerProt::MAP_ANIM
-            | ServerProt::MAP_PROJANIM
             | ServerProt::OBJ_DEL
             | ServerProt::OBJ_ADD
             | ServerProt::LOC_ANIM
             | ServerProt::LOC_DEL
             | ServerProt::LOC_ADD_CHANGE => {
+                self.zone_packet(payload, ptype);
+                self.ptype = -1;
+            }
+            ServerProt::MAP_PROJANIM if self.revision.is_274() => {
                 self.zone_packet(payload, ptype);
                 self.ptype = -1;
             }
@@ -10863,7 +10843,7 @@ impl Client {
     }
 
     /// One `UPDATE_INV_*` slot: `g2` id + `g1` count, with `255` promoting
-    /// to `g4` (TS `UPDATE_INV_FULL` / `UPDATE_INV_PARTIAL`).
+    /// to `g4` (TS `UPDATE_INV_FULL` / `UPDATE_INV_PARTIAL`; same on 289).
     fn read_inv_count(payload: &mut Packet) -> (i32, i32) {
         let id = payload.g2();
         let mut count = payload.g1();
@@ -10871,6 +10851,78 @@ impl Client {
             count = payload.g4();
         }
         (id, count)
+    }
+
+    /// Full inventory replace. 274 uses `g1` entry count; 289 uses `g2`.
+    /// Always consumes the frame even when the component is missing so the
+    /// cursor stays aligned. Zero-fills remaining component entries.
+    fn apply_update_inv_full(&mut self, payload: &mut Packet, count_is_g2: bool) {
+        self.redraw_side = true;
+
+        let com_id = payload.g2();
+        let size = if count_is_g2 {
+            payload.g2()
+        } else {
+            payload.g1()
+        };
+
+        let mut slots = Vec::with_capacity(size.max(0) as usize);
+        for _ in 0..size {
+            slots.push(Self::read_inv_count(payload));
+        }
+
+        if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
+            .get_mut(com_id as usize)
+            .and_then(|o| o.as_mut())
+            .map(Arc::make_mut)
+        {
+            if let (Some(link_types), Some(link_numbers)) =
+                (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut())
+            {
+                let n = size.min(link_types.len() as i32) as usize;
+                for i in 0..n {
+                    link_types[i] = slots[i].0;
+                    link_numbers[i] = slots[i].1;
+                }
+                for i in n..link_types.len() {
+                    link_types[i] = 0;
+                    link_numbers[i] = 0;
+                }
+            }
+        }
+    }
+
+    /// Partial inventory update. 274 uses `g1` slot; 289 uses `gsmart` slot.
+    /// Consumes every declared entry even if the component is missing.
+    fn apply_update_inv_partial(&mut self, payload: &mut Packet, slot_is_gsmart: bool) {
+        self.redraw_side = true;
+
+        let com_id = payload.g2();
+        let end = self.inbound_end(payload);
+
+        while payload.pos < end {
+            let slot = if slot_is_gsmart {
+                payload.gsmart()
+            } else {
+                payload.g1()
+            };
+            let (id, count) = Self::read_inv_count(payload);
+
+            if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
+                .get_mut(com_id as usize)
+                .and_then(|o| o.as_mut())
+                .map(Arc::make_mut)
+            {
+                if let (Some(link_types), Some(link_numbers)) =
+                    (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut())
+                {
+                    if slot >= 0 && (slot as usize) < link_types.len() {
+                        link_types[slot as usize] = id;
+                        link_numbers[slot as usize] = count;
+                    }
+                }
+            }
+        }
     }
 }
 

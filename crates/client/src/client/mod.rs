@@ -1,6 +1,7 @@
 #[allow(clippy::module_inception)]
 pub mod client;
 pub use crate::core::build as client_build;
+pub use crate::io::{ClientRevision, ServerProt289, SERVER_PROT_SIZES_289};
 pub use crate::render::draw as client_draw;
 pub use client::{Client, ClientGens, ClientNpc, ClientPlayer, APPLET_H, APPLET_W};
 pub use client_build::ClientBuild;

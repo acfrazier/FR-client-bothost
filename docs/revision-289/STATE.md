@@ -2,27 +2,27 @@
 
 Authorized 2026-09-07. Prepared branch codex/revision-289-client, base
 4f2048ea10f75b3bb92ff45610b35ba7313b0308 (published r274-bh-modular).
-Current plan: plan.md. Current task: first milestone and deliverables (source,
-cache inventory, complete protocol/lifecycle mapping, offline fixtures, reviewed
-implementation dependency plan). Continue subsequent client stages after the
-plan's actual reviewer approval; do not stop at a plan when independent client
-implementation can proceed. Required final branchreviewer remains.
+Current plan: plan.md. Current task: stage 1 implementation (revision
+selection, production framing, inventory) pending same-card reviewer
+acceptance. Required final branchreviewer remains.
 
 Primary source pin and supporting host evidence are named in plan.md and
-host-script-evidence.md. No 289 implementation or proof has run yet. The live
-289 server/cache pairing is unverified; investigate existing source/artifact
-provenance read-only, report exact remaining prerequisites, and do not invent
-a successful live target. Only this checkout may be edited or built by workers.
+host-script-evidence.md. The live 289 server/cache pairing is unverified.
+Only this checkout may be edited or built by workers.
 
 ## Dispatch checkpoint
 
-Orchestration card: t_95bef768. Implementation is not yet accepted.
+Orchestration card: t_95bef768. Implementation stage 1 is implemented and
+awaiting same-card review; later stages remain gated.
+
 Serialized same-workspace dependency chain (each implementation card requires
 same-card reviewer approval before the next is released):
 
 - t_c59985d0 (luna): source/cache inventory, complete protocol contract,
-  independently derived fixtures and reviewed implementation plan.
-- t_3d5171fb (implementer): revision selection, production framing/inventory.
+  independently derived fixtures and reviewed implementation plan — DONE
+  (approved round 4 on d2c6318, model grok-4.5).
+- t_3d5171fb (implementer): revision selection, production framing/inventory
+  — implemented; pending same-card reviewer.
 - t_da1f1a6a (implementer): login, actors/world/widgets and lifecycle reset.
 - t_448637e1 (implementer): cache/config, basic actions and offline replay.
 - t_77d35bfb (branchreviewer): required independent Grok4.6 branch verdict.
@@ -30,51 +30,47 @@ same-card reviewer approval before the next is released):
 Design boundary: retain 274 public constants and default construction; add
 explicit revision selection at the client/session boundary. Source contract
 artifacts: source-contract.md, protocol-289.json, implementation.md and
-crates/client/tests/fixtures/revision_289/manifest.json. No numeric mappings
-are approved until the primary Java evidence and plan pass review.
+crates/client/tests/fixtures/revision_289/manifest.json.
 
-Verified here: clean git status and codex/revision-289-client branch;
-`hermes profile list` reports expected model names for all five profiles.
-No client tests or implementation have run in this orchestration checkpoint.
-A read-only Python configuration inspection was denied by command approval;
-no approval/auth/provider settings were changed. Provider defaults remain
-task-supplied evidence; actual review model/provider receipts must be checked.
+## Source milestone (accepted)
 
-The source inventory explicitly identifies client/deob JARs, not a verified
-game-cache pairing. Authorized endpoint, compatible game-cache manifest and
-live credentials/test authorization remain unverified, not reasons to skip
-independent offline work. Parent Codex retains integration/live coordination.
-Next: release source milestone, obtain actual plan review, then execute the
-serialized production stages and final branch review. Dispatch is not proof of
-execution, successful tests, review acceptance or a complete 289 port.
+Source contract approved on commit d2c6318 (reviewer grok-4.5, round 4).
+Verifier PASS 256/75/10. Known non-blocking prerequisites remain: authoritative
+game-cache pairing/manifest, approved endpoint/live authorization, outbound
+field/length tracing before stage-3 actions, live RSA/ISAAC compatibility proof.
 
-## Source milestone checkpoint (t_c59985d0, revision 3)
+## Stage 1 checkpoint (t_3d5171fb) — pending review
 
-Deliverables prepared for same-card independent review after correcting the first review's primary-source and oracle findings and completing the actor/login gaps:
+Implemented additive revision profile without replacing 274 public tables:
 
-- `docs/revision-289/source-contract.md`
-- `docs/revision-289/protocol-289.json` (256 inbound rows; 75 observed outbound IDs, unresolved lengths explicit)
-- `docs/revision-289/implementation.md`
-- `crates/client/tests/fixtures/revision_289/manifest.json` (10 public-safe cases with frame/payload separation, declared length, cursor, structured result, valid empty actor bitstream, and credential-free login plaintext structure)
-- `tools/verify_revision_289_contract.py` (shape, uniqueness, opcode/length-kind, declared-length, cursor-consumption and oracle-word verifier)
-- `tools/generate_revision_289_contract.py` (reproducible source extraction for the pinned read-only vault checkout and source-traced fixture generation, including method212/185/172/153/128 actor fields)
+- `Client.revision: ClientRevision` defaults to `R274` in `Client::new` /
+  `from_shared` / `construct`; opt-in `R289` at session boundary.
+- `crates/client/src/io/revision.rs` + `SERVER_PROT_SIZES_289` (from
+  protocol-289.json) and named `ServerProt289` inventory/logout/player/region IDs.
+- Production `read_packet` / `tcp_in` select sizes via `revision.server_prot_sizes()`;
+  incomplete fixed/-1/-2 frames stay pending with no partial publication.
+- Inventory full (289 opcode 107, g2 count) and partial (76, gsmart slot) on
+  production `handle_packet` path; 274 full/partial (106 g1 count / 172 g1 slot)
+  unchanged. Opcode 107 MAP_PROJANIM zone arm is 274-only so it does not steal
+  289 inventory-full.
+- Integration tests: `crates/client/tests/revision_289_stage1.rs` (manifest
+  framing/inventory oracles, tcp_in production path, 274 regressions,
+  truncated no-partial-publish). Generator helper:
+  `tools/gen_server_prot_sizes_289.py`.
 
-Exact verification run: `python3 tools/generate_revision_289_contract.py && python3 tools/verify_revision_289_contract.py && git diff --check` -> `PASS: 256 inbound, 75 outbound rows; 10 fixtures`.
+Exact tests run (CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target):
 
-Primary-source corrections recorded: inventory full is 107, partial is 76 with gsmart slots, logout is 121, region is 219, varp small/large are 75/97, 172 is bulk varp sync, 55 is dual-interface open, 127 is signed-g2 interface state, and 211 is component animation. Actor fields now trace method212/185/172/153/128, with a valid two-byte zero actor bitstream; login plaintext order and revision/cache-index frame fields trace client.java:8342-8398, with credentials and RSA constants excluded.
+- `cargo test -p client --test revision_289_stage1` → 12 passed
+- `cargo test -p client --test prot --test server_packets --test gens` →
+  2 + 19 + 12 passed
+- `cargo test -p client --lib io::revision` → 2 passed
+- `cargo check -p client -p client-play` → ok
 
-Known blockers remain honest: no authoritative game-cache pairing/manifest, approved endpoint or live authorization; outbound field/length tracing and live RSA/ISAAC compatibility proof are still required. No client implementation, live test, host test, push, merge, remote or submodule change was performed in this milestone. Same-card reviewer must independently inspect primary Java and fixture derivations and record actual model/provider, commit and verdict before releasing t_3d5171fb.
+Not in this stage (remain later / external):
 
-## Source milestone checkpoint (t_c59985d0, revision 4)
+- Login RSA/ISAAC, actor bitstream, region/widget lifecycle (stage 2)
+- Cache/config pairing, outbound action lengths, live endpoint (stage 3 / external)
+- 289 logout method104 semantics beyond framing of opcode 121
+- Enabling any outbound row with `length: "unknown"`
 
-Corrected the final reviewer finding in the generated contract: player-update
-mask dispatch now anchors method153 at `client.java:7207-7218`, replacing the
-unrelated NPC method124 range; the actor fixture carries
-the same direct method153 anchor. Regenerated protocol-289.json and the fixture
-manifest from the pinned read-only source.
-
-Exact verification: `python3 tools/generate_revision_289_contract.py &&
-python3 tools/verify_revision_289_contract.py && git diff --check` -> `PASS:
-256 inbound, 75 outbound rows; 10 fixtures`. Pending same-card reviewer
-approval and recording of the actual review model/provider and verdict; no
-implementation, live, host, push, merge, remote or submodule work performed.
+No pushes, merges, remotes, submodule, host, live-server, or other-checkout work.
