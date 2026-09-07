@@ -117,7 +117,7 @@ fn cold_login_clears_entity_tables() {
     c.npc[1] = Some(Box::new(ClientNpc::default()));
     c.player_count = 2;
     c.players[5] = Some(Box::new(ClientPlayer::default()));
-    c.player_appearance_buffer[5] = Some(Packet::new(vec![]));
+    c.player_appearance_buffer[5] = Some(Box::new(Packet::new(vec![])));
     let local = ClientPlayer {
         ready: true,
         name: Some("leftover".into()),
