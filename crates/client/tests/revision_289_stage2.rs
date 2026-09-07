@@ -23,8 +23,7 @@ fn cfg() -> ClientConfig {
 }
 
 fn client_289() -> Client {
-    let mut c = Client::new(cfg());
-    c.revision = ClientRevision::R289;
+    let mut c = Client::new_with_revision(cfg(), ClientRevision::R289);
     c.ingame = true;
     c.ptype = -1;
     c
@@ -170,14 +169,16 @@ fn login_production_outer_frame_and_isaac_r289() {
         s.write_all(&[2, 0, 0]).unwrap(); // response 2
     });
 
-    let mut c = Client::new(ClientConfig {
-        host: addr.ip().to_string(),
-        port: addr.port(),
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    });
-    c.revision = ClientRevision::R289;
+    let mut c = Client::new_with_revision(
+        ClientConfig {
+            host: addr.ip().to_string(),
+            port: addr.port(),
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        },
+        ClientRevision::R289,
+    );
     c.jag_checksum = [1, 2, 3, 4, 5, 6, 7, 8, 9];
     c.login("bob", "pw", false).unwrap();
 
@@ -230,12 +231,12 @@ fn login_production_outer_frame_and_isaac_r289() {
 #[test]
 fn login_wrapper_p2_revision_274_default() {
     let c = Client::new(cfg());
-    assert_eq!(c.revision, ClientRevision::R274);
+    assert_eq!(c.revision(), ClientRevision::R274);
     let mut loginout = Packet::alloc(1);
     loginout.p1(16);
     loginout.p1(0);
     loginout.p1(255);
-    loginout.p2(c.revision.as_i32());
+    loginout.p2(c.revision().as_i32());
     let data = loginout.data()[..loginout.pos as usize].to_vec();
     assert_eq!(&data[3..5], &[0x01, 0x12], "p2 274 big-endian");
 }
@@ -254,14 +255,16 @@ fn lifecycle_attached_neq_ingame_neq_scene_ready() {
         let (_sock, _) = listener.accept().unwrap();
         done_s.wait();
     });
-    let mut c = Client::new(ClientConfig {
-        host: addr.ip().to_string(),
-        port: addr.port(),
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    });
-    c.revision = ClientRevision::R289;
+    let mut c = Client::new_with_revision(
+        ClientConfig {
+            host: addr.ip().to_string(),
+            port: addr.port(),
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        },
+        ClientRevision::R289,
+    );
     c.ingame = false;
     c.scene_state = 0;
     c.stream = Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
@@ -301,8 +304,7 @@ fn lifecycle_attached_neq_ingame_neq_scene_ready() {
         "PASS (c): scene_ready is scene_state==2 (check_scene success path)"
     );
     // Prove attach alone never sets it:
-    let mut cold = Client::new(cfg());
-    cold.revision = ClientRevision::R289;
+    let cold = Client::new_with_revision(cfg(), ClientRevision::R289);
     assert!(
         !cold.ingame && cold.scene_state != 2 && cold.stream.is_none(),
         "PASS (c): fresh client is neither attached, ingame, nor scene_ready"
@@ -754,14 +756,16 @@ fn login_response_2_vs_15_distinct_on_r289() {
         s2.write_all(&[15]).unwrap();
     });
 
-    let mut c = Client::new(ClientConfig {
-        host: addr.ip().to_string(),
-        port: addr.port(),
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    });
-    c.revision = ClientRevision::R289;
+    let mut c = Client::new_with_revision(
+        ClientConfig {
+            host: addr.ip().to_string(),
+            port: addr.port(),
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        },
+        ClientRevision::R289,
+    );
     // Dirty prior session state — response 2 must clear
     c.npc_count = 3;
     c.npc[1] = Some(Box::new(ClientNpc::default()));

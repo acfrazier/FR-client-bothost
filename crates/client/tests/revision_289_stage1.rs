@@ -31,8 +31,9 @@ fn client_274() -> Client {
 }
 
 fn client_289() -> Client {
-    let mut c = client_274();
-    c.revision = ClientRevision::R289;
+    let mut c = Client::new_with_revision(cfg(), ClientRevision::R289);
+    c.ingame = true;
+    c.ptype = -1;
     c
 }
 
@@ -146,7 +147,7 @@ fn feed_chunks(c: &mut Client, chunks: &[Vec<u8>], polls_per_chunk: usize) -> us
 #[test]
 fn default_client_stays_on_274_public_tables() {
     let c = Client::new(cfg());
-    assert_eq!(c.revision, ClientRevision::R274);
+    assert_eq!(c.revision(), ClientRevision::R274);
     assert_eq!(ServerProt::UPDATE_INV_FULL, 106);
     assert_eq!(ServerProt::UPDATE_INV_PARTIAL, 172);
     assert_eq!(ServerProt::LOGOUT, 88);
@@ -511,10 +512,10 @@ fn adopt_from_carries_revision_with_stream_baton() {
     head.psize = 5;
 
     let mut sim = client_274();
-    assert_eq!(sim.revision, ClientRevision::R274);
+    assert_eq!(sim.revision(), ClientRevision::R274);
     assert!(sim.adopt_from(&mut head).is_some());
     assert_eq!(
-        sim.revision,
+        sim.revision(),
         ClientRevision::R289,
         "adopt_from must carry session revision with the socket"
     );
@@ -524,4 +525,186 @@ fn adopt_from_carries_revision_with_stream_baton() {
     assert!(head.stream.is_none());
     barrier.wait();
     t.join().unwrap();
+}
+
+#[test]
+fn overlong_289_inv_full_exact_end_required_zero_publication() {
+    // Declared psize includes two pad bytes after a complete count=1 body.
+    // R289 must reject before publishing (exact consumed-length contract).
+    let mut c = client_289();
+    ensure_inv_slots(&mut c, 3, 4);
+    {
+        let slots = Arc::make_mut(&mut c.ifaces_mut);
+        let m = Arc::make_mut(slots[3].as_mut().unwrap());
+        m.link_obj_type.as_mut().unwrap()[0] = 42;
+        m.link_obj_number.as_mut().unwrap()[0] = 7;
+    }
+    // com=3, count=1, (id=1,count=2), pad 00 00 → 9 declared bytes
+    let mut p = Packet::new(hex_bytes("000300010001020000"));
+    c.psize = 9;
+    c.ingame = true;
+    c.handle_packet(ServerProt289::UPDATE_INV_FULL, &mut p);
+    assert!(!c.ingame, "overlong R289 full inv → T2 logout");
+    assert_eq!(inv_slot(&c, 3, 0), (42, 7), "zero inventory publication");
+}
+
+#[test]
+fn incomplete_289_inv_full_zero_publication_production_stream() {
+    // Production tcp_in path: outer g2 length matches delivered bytes, but
+    // g2 inventory count claims 2 slots while only one is present → T2, no publish.
+    let mut c = client_289();
+    ensure_inv_slots(&mut c, 3, 4);
+    {
+        let slots = Arc::make_mut(&mut c.ifaces_mut);
+        let m = Arc::make_mut(slots[3].as_mut().unwrap());
+        m.link_obj_type.as_mut().unwrap()[0] = 42;
+        m.link_obj_number.as_mut().unwrap()[0] = 7;
+        m.link_obj_type.as_mut().unwrap()[1] = 11;
+        m.link_obj_number.as_mut().unwrap()[1] = 3;
+    }
+    // opcode 107, g2 len 7, body: com=3 count=2 + only first slot
+    let frame = hex_bytes("6b000700030002000102");
+    let accepted = feed_frames(&mut c, &frame, 8);
+    assert_eq!(accepted, 1, "complete socket frame still dispatches");
+    assert!(!c.ingame, "truncated inv full → T2 logout");
+    assert_eq!(inv_slot(&c, 3, 0), (42, 7));
+    assert_eq!(inv_slot(&c, 3, 1), (11, 3));
+}
+
+#[test]
+fn overlong_289_inv_full_zero_publication_production_stream() {
+    // opcode 107, g2 len 9, exact one-slot body + 2 pad bytes inside psize.
+    let mut c = client_289();
+    ensure_inv_slots(&mut c, 3, 4);
+    {
+        let slots = Arc::make_mut(&mut c.ifaces_mut);
+        let m = Arc::make_mut(slots[3].as_mut().unwrap());
+        m.link_obj_type.as_mut().unwrap()[0] = 42;
+        m.link_obj_number.as_mut().unwrap()[0] = 7;
+    }
+    let frame = hex_bytes("6b0009000300010001020000");
+    let accepted = feed_frames(&mut c, &frame, 8);
+    assert_eq!(accepted, 1);
+    assert!(!c.ingame);
+    assert_eq!(
+        inv_slot(&c, 3, 0),
+        (42, 7),
+        "pad inside psize must not publish"
+    );
+}
+
+#[test]
+fn inv_full_274_still_allows_trailing_pad_inside_psize() {
+    // Intentional 274 behavior: leftover pad inside declared frame still publishes.
+    let mut c = client_274();
+    ensure_inv_slots(&mut c, 3, 4);
+    let mut p = Packet::alloc(0);
+    p.p2(3);
+    p.p1(1); // g1 count
+    p.p2(1);
+    p.p1(2);
+    p.p1(0xff); // pad
+    let end = p.pos;
+    p.pos = 0;
+    c.psize = end as i32;
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut p);
+    assert!(c.ingame);
+    assert_eq!(inv_slot(&c, 3, 0), (1, 2));
+}
+
+#[test]
+fn adopt_from_failed_leaves_target_entirely_unchanged() {
+    // Target is live R289 with partial-frame state; source has no stream and
+    // a different revision. Failed adopt must not touch target at all.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let barrier = Arc::new(Barrier::new(2));
+    let b2 = Arc::clone(&barrier);
+    let t = thread::spawn(move || {
+        let (_sock, _) = listener.accept().unwrap();
+        b2.wait();
+    });
+
+    let mut target = client_289();
+    target.stream = Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    target.ptype = 47;
+    target.psize = 5;
+    target.ptype0 = 1;
+    target.ptype1 = 2;
+    target.ptype2 = 3;
+    target.baton = false;
+    target.out.p1(0xaa);
+    let out_pos = target.out.pos;
+    let in_len = target.r#in.length();
+
+    let mut source = client_274();
+    assert!(source.stream.is_none());
+    assert_eq!(source.revision(), ClientRevision::R274);
+
+    assert!(target.adopt_from(&mut source).is_none());
+    assert_eq!(target.revision(), ClientRevision::R289);
+    assert!(target.stream.is_some(), "target live stream kept");
+    assert_eq!(target.ptype, 47);
+    assert_eq!(target.psize, 5);
+    assert_eq!(target.ptype0, 1);
+    assert_eq!(target.ptype1, 2);
+    assert_eq!(target.ptype2, 3);
+    assert!(!target.baton);
+    assert_eq!(target.out.pos, out_pos);
+    assert_eq!(target.r#in.length(), in_len);
+    assert_eq!(source.revision(), ClientRevision::R274);
+    assert!(source.stream.is_none());
+
+    barrier.wait();
+    t.join().unwrap();
+}
+
+#[test]
+fn adopt_from_failed_across_revisions_does_not_assign_source_revision() {
+    // Target R274 (default), source R289 without stream — pre-fix bug assigned
+    // revision before take() and left target mutated on None.
+    let mut target = client_274();
+    target.ptype = 88;
+    target.psize = 0;
+    let mut source = client_289();
+    assert!(source.stream.is_none());
+    assert!(target.adopt_from(&mut source).is_none());
+    assert_eq!(
+        target.revision(),
+        ClientRevision::R274,
+        "failed adopt must not copy source revision"
+    );
+    assert_eq!(target.ptype, 88);
+    assert_eq!(target.psize, 0);
+    assert!(!target.baton);
+}
+
+#[test]
+fn revision_bound_at_construction_read_only_getter() {
+    // Callsite API: revision is construction-bound + getter; no public field set.
+    let c = Client::new(cfg());
+    assert_eq!(c.revision(), ClientRevision::R274);
+    assert!(c.revision().is_274());
+
+    let c289 = Client::new_with_revision(cfg(), ClientRevision::R289);
+    assert_eq!(c289.revision(), ClientRevision::R289);
+    assert!(c289.revision().is_289());
+    assert_eq!(c289.revision().as_i32(), 289);
+
+    let shared = Client::from_shared(
+        cfg(),
+        Arc::new(client::config::Cache::default()),
+        Arc::new(vec![]),
+        vec![],
+    );
+    assert_eq!(shared.revision(), ClientRevision::R274);
+
+    let shared289 = Client::from_shared_with_revision(
+        cfg(),
+        Arc::new(client::config::Cache::default()),
+        Arc::new(vec![]),
+        vec![],
+        ClientRevision::R289,
+    );
+    assert_eq!(shared289.revision(), ClientRevision::R289);
 }

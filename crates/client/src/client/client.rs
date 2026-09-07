@@ -298,10 +298,12 @@ pub struct Client {
     /// host attaches a target to receive frames without a window.
     pub present: Option<Box<dyn crate::client::present::PresentTarget>>,
     pub config: ClientConfig,
-    /// Protocol revision profile for framing and inbound dispatch. Default
-    /// construction is [`ClientRevision::R274`]; set explicitly for 289.
-    /// Not a global opcode table swap — 274 public constants stay put.
-    pub revision: ClientRevision,
+    /// Protocol revision profile for framing and inbound dispatch. Bound at
+    /// construction ([`Client::new`] / [`Client::new_with_revision`] /
+    /// [`Client::from_shared`] / [`Client::from_shared_with_revision`]) or
+    /// carried by a successful [`Client::adopt_from`]. Not publicly mutable
+    /// midstream — use [`Client::revision`] to read.
+    revision: ClientRevision,
     /// Config type tables (`obj`, `npc`, `loc`, ...), unpacked from the
     /// `config` jag by `Cache::unpack`; empty until loaded. Shared with
     /// every client via `Arc` (the tables are immutable once unpacked);
@@ -852,7 +854,16 @@ pub struct Client {
 const SERVER_TIMEOUT: Duration = Duration::from_secs(15);
 
 impl Client {
+    /// Default construction: revision 274 public tables and framing.
     pub fn new(config: ClientConfig) -> Self {
+        Self::new_with_revision(config, ClientRevision::R274)
+    }
+
+    /// Construct with an explicit protocol revision bound for the session.
+    /// Prefer this (or [`Client::from_shared_with_revision`]) over any
+    /// midstream revision mutation — the profile is immutable after build
+    /// except via successful [`Client::adopt_from`].
+    pub fn new_with_revision(config: ClientConfig, revision: ClientRevision) -> Self {
         // TS `getJagChecksums` downloads `/crc` from the web origin (port 80).
         // Local pack/client is missing `wordenc`, so file CRCs fail the
         // engine's CrcBuffer32 check (login code 6). Prefer /crc; fall back
@@ -870,6 +881,7 @@ impl Client {
             ifaces_mut,
             error_loading,
             jag_checksum,
+            revision,
         )
     }
 
@@ -878,12 +890,23 @@ impl Client {
     /// `load_cache` and the `/crc` probe; the host unpacks once per
     /// `cache_dir` and every client short-circuits the `maininit` re-unpack
     /// via `cache_from_shared`. `error_loading` is false so `mainloop` is
-    /// not a no-op after a successful inject.
+    /// not a no-op after a successful inject. Defaults to revision 274.
     pub fn from_shared(
         config: ClientConfig,
         cache: Arc<Cache>,
         ifaces: Arc<Vec<Option<Box<IfType>>>>,
         ifaces_mut: impl Into<Arc<Vec<Option<Arc<IfTypeMut>>>>>,
+    ) -> Self {
+        Self::from_shared_with_revision(config, cache, ifaces, ifaces_mut, ClientRevision::R274)
+    }
+
+    /// Host construct with an explicit protocol revision bound for the session.
+    pub fn from_shared_with_revision(
+        config: ClientConfig,
+        cache: Arc<Cache>,
+        ifaces: Arc<Vec<Option<Box<IfType>>>>,
+        ifaces_mut: impl Into<Arc<Vec<Option<Arc<IfTypeMut>>>>>,
+        revision: ClientRevision,
     ) -> Self {
         let jag_checksum = Self::read_jag_checksums(&config.cache_dir);
         let mut client = Self::construct(
@@ -893,9 +916,15 @@ impl Client {
             ifaces_mut.into(),
             false,
             jag_checksum,
+            revision,
         );
         client.cache_from_shared = true;
         client
+    }
+
+    /// Read-only session protocol revision (bound at construction or adopt).
+    pub fn revision(&self) -> ClientRevision {
+        self.revision
     }
 
     fn construct(
@@ -905,6 +934,7 @@ impl Client {
         ifaces_mut: Arc<Vec<Option<Arc<IfTypeMut>>>>,
         error_loading: bool,
         jag_checksum: [i32; 9],
+        revision: ClientRevision,
     ) -> Self {
         let on_demand = Self::load_on_demand(&config);
         let midi = midi_backend(&config.cache_dir);
@@ -918,7 +948,7 @@ impl Client {
             shell: GameShell::new(),
             present: None,
             config,
-            revision: ClientRevision::R274,
+            revision,
             cache,
             ifaces,
             ifaces_mut,
@@ -1920,10 +1950,13 @@ impl Client {
     /// adopted socket instead of a fresh TCP. Returns `None` when `other`
     /// has no live stream.
     pub fn adopt_from(&mut self, other: &mut Client) -> Option<()> {
-        // Session baton must carry the stream's revision profile so size
-        // tables and dispatch cannot silently diverge midstream.
+        // Take the live stream first. A failed handoff must leave `self`
+        // entirely unchanged (including revision and any partial-frame state).
+        let stream = other.stream.take()?;
+        // Session baton carries the stream's revision with ISAAC/frame state
+        // so size tables and dispatch cannot silently diverge midstream.
         self.revision = other.revision;
-        self.stream = Some(other.stream.take()?);
+        self.stream = Some(stream);
         self.random_in = other.random_in.take();
         self.out = std::mem::replace(&mut other.out, Packet::alloc(1));
         self.r#in = std::mem::replace(&mut other.r#in, Packet::alloc(1));
@@ -11044,8 +11077,11 @@ impl Client {
         for _ in 0..size {
             slots.push(Self::read_inv_count_bounded(payload, end));
         }
-        // Leftover bytes inside the declared frame are allowed (servers may
-        // pad); reading past `end` already failed closed above.
+        // R289: exact declared payload end before any inventory publication.
+        // 274 retains historical allowance for leftover pad inside psize.
+        if self.revision.is_289() && payload.pos != end {
+            panic!("R289 UPDATE_INV_FULL must consume exact declared payload end");
+        }
 
         if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
             .get_mut(com_id as usize)
