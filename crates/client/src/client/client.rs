@@ -353,7 +353,9 @@ pub struct Client {
     pub entity_removal_ids: Vec<i32>,
     pub entity_update_count: i32,
     pub entity_update_ids: Vec<i32>,
-    pub player_appearance_buffer: Vec<Option<Packet>>,
+    /// Sparse ownership: empty slots are pointer-sized; occupied appearances are
+    /// boxed once on receive and re-applied from the same independent `Packet`.
+    pub player_appearance_buffer: Vec<Option<Box<Packet>>>,
 
     /// Scene height map, `groundh[level][x][z]` sized `[4][105][105]`; owned
     /// here and mirrored into `world` after each `map_build` load/fade pass
@@ -6904,7 +6906,7 @@ impl Client {
             let mut data = vec![0u8; length];
             buf.gdata(length, 0, &mut data);
 
-            self.player_appearance_buffer[index] = Some(Packet::new(data));
+            self.player_appearance_buffer[index] = Some(Box::new(Packet::new(data)));
             if let Some(player) = player.as_mut() {
                 let mut appearance = self.player_appearance_buffer[index].take().unwrap();
                 appearance.pos = 0;
