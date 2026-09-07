@@ -64,3 +64,17 @@ Exact verification run: `python3 tools/generate_revision_289_contract.py && pyth
 Primary-source corrections recorded: inventory full is 107, partial is 76 with gsmart slots, logout is 121, region is 219, varp small/large are 75/97, 172 is bulk varp sync, 55 is dual-interface open, 127 is signed-g2 interface state, and 211 is component animation. Actor fields now trace method212/185/172/153/128, with a valid two-byte zero actor bitstream; login plaintext order and revision/cache-index frame fields trace client.java:8342-8398, with credentials and RSA constants excluded.
 
 Known blockers remain honest: no authoritative game-cache pairing/manifest, approved endpoint or live authorization; outbound field/length tracing and live RSA/ISAAC compatibility proof are still required. No client implementation, live test, host test, push, merge, remote or submodule change was performed in this milestone. Same-card reviewer must independently inspect primary Java and fixture derivations and record actual model/provider, commit and verdict before releasing t_3d5171fb.
+
+## Source milestone checkpoint (t_c59985d0, revision 4)
+
+Corrected the final reviewer finding in the generated contract: player-update
+mask dispatch now anchors method153 at `client.java:7207-7218`, replacing the
+unrelated NPC method124 range; the actor fixture carries
+the same direct method153 anchor. Regenerated protocol-289.json and the fixture
+manifest from the pinned read-only source.
+
+Exact verification: `python3 tools/generate_revision_289_contract.py &&
+python3 tools/verify_revision_289_contract.py && git diff --check` -> `PASS:
+256 inbound, 75 outbound rows; 10 fixtures`. Pending same-card reviewer
+approval and recording of the actual review model/provider and verdict; no
+implementation, live, host, push, merge, remote or submodule work performed.
