@@ -277,16 +277,14 @@ fn framing_variable_g2_complete_fail_closed_not_reset_anims() {
 
 #[test]
 fn framing_fixed_logout_opcode_121_header() {
-    // manifest: fixed_logout_opcode_121 — length 0 fixed; stage-1 proves framing
-    // selects size 0 and delivers an empty payload to dispatch. Full method104
-    // lifecycle is stage-2; here we only require the frame is accepted once.
+    // manifest: fixed_logout_opcode_121 — length 0 fixed. Stage-2 wires method104
+    // logout; framing still delivers one empty payload frame.
     let mut c = client_289();
     c.ingame = true;
     let frame = hex_bytes("79");
     let accepted = feed_frames(&mut c, &frame, 8);
     assert_eq!(accepted, 1);
-    // Opcode 121 is not yet a handled 289 logout branch → T1 logout.
-    assert!(!c.ingame);
+    assert!(!c.ingame, "LOGOUT 121 must call logout");
 }
 
 #[test]
@@ -439,20 +437,20 @@ fn production_buffer_truncated_inv_partial_no_partial_publication() {
 }
 
 #[test]
-fn r289_opcode_219_fail_closed_not_obj_reveal_or_rebuild() {
-    // 219 = 274 OBJ_REVEAL and 289 REBUILD_NORMAL. Stage-1 must not run either.
+fn r289_opcode_219_rebuild_not_obj_reveal() {
+    // 219 = 274 OBJ_REVEAL and 289 REBUILD_NORMAL. Stage-2 runs rebuild only.
     let mut c = client_289();
     c.ingame = true;
     c.scene_state = 2;
     c.map_build_centre_zone_x = 50;
     c.map_build_centre_zone_z = 50;
-    let mut p = Packet::new(vec![0, 1, 0, 2]); // would-be rebuild coords
+    let mut p = Packet::new(vec![0, 1, 0, 2]); // zone 1 / 2
     c.psize = 4;
     c.handle_packet(219, &mut p);
-    assert!(!c.ingame, "colliding 219 must T1 logout");
-    assert_eq!(c.scene_state, 2, "must not enter REBUILD_NORMAL path");
-    assert_eq!(c.map_build_centre_zone_x, 50);
-    assert_eq!(c.map_build_centre_zone_z, 50);
+    assert!(c.ingame, "REBUILD must not T1 logout");
+    assert_eq!(c.scene_state, 1, "must enter REBUILD_NORMAL path");
+    assert_eq!(c.map_build_centre_zone_x, 1);
+    assert_eq!(c.map_build_centre_zone_z, 2);
 }
 
 #[test]

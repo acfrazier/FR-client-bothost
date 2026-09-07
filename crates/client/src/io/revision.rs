@@ -43,17 +43,29 @@ impl ClientRevision {
     }
 }
 
-/// Named 289 inbound opcodes that are source-verified for stage-1 use.
-/// Other 289 IDs are framed via [`SERVER_PROT_SIZES_289`] but not dispatched
-/// until later stages trace their fields.
+/// Named 289 inbound opcodes source-verified for stage-1/2 dispatch.
+/// Other 289 IDs are framed via [`SERVER_PROT_SIZES_289`] but fail-closed
+/// until a later stage traces their fields.
 pub struct ServerProt289;
 
 impl ServerProt289 {
+    // Stage 1
     pub const UPDATE_INV_FULL: i32 = 107;
     pub const UPDATE_INV_PARTIAL: i32 = 76;
+    // Stage 2 — login/actors/world/widgets/reset (client.java dispatch)
     pub const LOGOUT: i32 = 121;
     pub const PLAYER_INFO: i32 = 188;
+    pub const NPC_INFO: i32 = 65;
     pub const REBUILD_NORMAL: i32 = 219;
+    pub const RESET_ANIMS: i32 = 201;
+    pub const IF_SETTEXT: i32 = 59;
+    pub const IF_SETANIM: i32 = 211;
+    pub const IF_OPENMAIN_SIDE: i32 = 55;
+    pub const IF_OPENSIDE: i32 = 252;
+    pub const IF_OPENOVERLAY: i32 = 127;
+    pub const VARP_SMALL: i32 = 75;
+    pub const VARP_LARGE: i32 = 97;
+    pub const VARP_SYNC: i32 = 172;
 }
 
 // 289 `Class17.anIntArray209` lengths, generated from

@@ -57,7 +57,7 @@ use crate::wordfilter::{WordFilter, WordPack};
 const MAX_PLAYER_COUNT: usize = 2048;
 const MAX_NPC_COUNT: usize = 16384;
 const MENU_CAPACITY: usize = 500;
-const CLIENT_VERSION: i32 = 274;
+// Login version word comes from `self.revision.as_i32()` (274 default / 289 profile).
 
 /// Client code of the red "Click here to logout" control; `clientButton`
 /// arms `logoutTimer` (Java `Client.java` 8746).
@@ -2041,7 +2041,8 @@ impl Client {
             }
             loginout.p1((self.out.pos + 36 + 1 + 1 + 2) as i32);
             loginout.p1(255);
-            loginout.p2(CLIENT_VERSION);
+            // 274 default / 289 explicit session profile (client.java:8378 p2 289).
+            loginout.p2(self.revision.as_i32());
             loginout.p1(if self.config.lowmem { 1 } else { 0 });
             for i in 0..9 {
                 loginout.p4(self.jag_checksum[i]);
@@ -3652,15 +3653,27 @@ impl Client {
     /// opcodes reach here after `dispatch` already called `logout()`, which
     /// bumps all; they must not double-bump.
     ///
-    /// On R289 only stage-1-traced inventory opcodes bump `inv`; every other
-    /// id is fail-closed at dispatch (T1/logout already bumped all) so bare
-    /// 274 family arms must not run against colliding numeric ids.
+    /// On R289 only stage-traced opcodes bump family gens; untraced ids are
+    /// fail-closed at dispatch (T1/logout already bumped all) so bare 274
+    /// family arms must not run against colliding numeric ids.
     pub fn bump_gens(&mut self, ptype: i32) {
         if self.revision.is_289() {
             if ptype == ServerProt289::UPDATE_INV_FULL || ptype == ServerProt289::UPDATE_INV_PARTIAL
             {
                 self.gens.inv += 1;
+            } else if ptype == ServerProt289::PLAYER_INFO {
+                self.gens.player += 1;
+            } else if ptype == ServerProt289::NPC_INFO {
+                self.gens.npc += 1;
+            } else if ptype == ServerProt289::VARP_SMALL
+                || ptype == ServerProt289::VARP_LARGE
+                || ptype == ServerProt289::VARP_SYNC
+            {
+                self.gens.varp += 1;
+            } else if ptype == ServerProt289::REBUILD_NORMAL {
+                self.bump_all_gens();
             }
+            // LOGOUT / RESET_ANIMS / widgets: no dedicated gen, or logout already bumped all.
             return;
         }
         match ptype {
@@ -5773,190 +5786,16 @@ impl Client {
     }
 
     fn dispatch_packet(&mut self, ptype: i32, payload: &mut Packet) {
-        // Stage-1 R289: only source-traced inventory handlers may mutate
-        // game state. Every other inbound id fails closed (T1) so numeric
-        // collisions with 274 constants cannot execute wrong handlers.
+        // R289: only source-traced stage-1/2 handlers may mutate game state.
+        // Every other inbound id fails closed (T1) so numeric collisions with
+        // 274 constants cannot execute wrong handlers.
         if self.revision.is_289() {
             self.dispatch_packet_289(ptype, payload);
             return;
         }
         match ptype {
             ServerProt::REBUILD_NORMAL => {
-                let zone_x = payload.g2();
-                let zone_z = payload.g2();
-
-                if self.map_build_centre_zone_x == zone_x
-                    && self.map_build_centre_zone_z == zone_z
-                    && self.scene_state == 2
-                {
-                    self.ptype = -1;
-                    return;
-                }
-
-                self.map_build_centre_zone_x = zone_x;
-                self.map_build_centre_zone_z = zone_z;
-                self.map_build_base_x = (self.map_build_centre_zone_x - 6) * 8;
-                self.map_build_base_z = (self.map_build_centre_zone_z - 6) * 8;
-
-                self.within_tutorial_island = ((self.map_build_centre_zone_x / 8 == 48
-                    || self.map_build_centre_zone_x / 8 == 49)
-                    && self.map_build_centre_zone_z / 8 == 48)
-                    || (self.map_build_centre_zone_x / 8 == 48
-                        && self.map_build_centre_zone_z / 8 == 148);
-
-                self.scene_state = 1;
-                self.scene_load_start_time = Instant::now();
-
-                // The loading splash is drawn by the renderer: `check_minimap`
-                // paints it (and builds the scene) on the next `mainredraw`.
-
-                let start_x = (self.map_build_centre_zone_x - 6) / 8;
-                let end_x = (self.map_build_centre_zone_x + 6) / 8;
-                let start_z = (self.map_build_centre_zone_z - 6) / 8;
-                let end_z = (self.map_build_centre_zone_z + 6) / 8;
-                let regions = ((end_x - start_x + 1) * (end_z - start_z + 1)) as usize;
-
-                self.map_build_ground_data = vec![None; regions];
-                self.map_build_location_data = vec![None; regions];
-                self.map_build_index = vec![0; regions];
-                self.map_build_ground_file = vec![0; regions];
-                self.map_build_location_file = vec![0; regions];
-
-                let mut map_count = 0;
-                for x in start_x..=end_x {
-                    for z in start_z..=end_z {
-                        self.map_build_index[map_count] = (x << 8) + z;
-
-                        if self.within_tutorial_island
-                            && (z == 49 || z == 149 || z == 147 || x == 50 || (x == 49 && z == 47))
-                        {
-                            self.map_build_ground_file[map_count] = -1;
-                            self.map_build_location_file[map_count] = -1;
-                            map_count += 1;
-                        } else if let Some(od) = &mut self.on_demand {
-                            let land_file = od.get_map_file(x, z, 0);
-                            self.map_build_ground_file[map_count] = land_file;
-                            if land_file != -1 {
-                                od.request(3, land_file);
-                            }
-                            let loc_file = od.get_map_file(x, z, 1);
-                            self.map_build_location_file[map_count] = loc_file;
-                            if loc_file != -1 {
-                                od.request(3, loc_file);
-                            }
-                            map_count += 1;
-                        }
-                    }
-                }
-
-                let dx = self.map_build_base_x - self.map_build_prev_base_x;
-                let dz = self.map_build_base_z - self.map_build_prev_base_z;
-                self.map_build_prev_base_x = self.map_build_base_x;
-                self.map_build_prev_base_z = self.map_build_base_z;
-
-                for npc in self.npc.iter_mut().flatten() {
-                    for j in 0..10 {
-                        npc.route_x[j] -= dx;
-                        npc.route_z[j] -= dz;
-                    }
-                    npc.x -= dx * 128;
-                    npc.z -= dz * 128;
-                }
-
-                for player in self.players.iter_mut().flatten() {
-                    for j in 0..10 {
-                        player.route_x[j] -= dx;
-                        player.route_z[j] -= dz;
-                    }
-                    player.x -= dx * 128;
-                    player.z -= dz * 128;
-                }
-
-                // Java `localPlayer` IS `players[LOCAL_PLAYER_INDEX]`, so the
-                // shift loop above also moves the local body with the build
-                // origin; the Rust clone must follow or NPC_INFO places new
-                // NPCs relative to an unshifted local.
-                if let Some(local) = self.local_player.as_mut() {
-                    for j in 0..10 {
-                        local.route_x[j] -= dx;
-                        local.route_z[j] -= dz;
-                    }
-                    local.x -= dx * 128;
-                    local.z -= dz * 128;
-                }
-
-                self.awaiting_player_info = true;
-
-                // TS 6907-6948: carry groundObj and locChanges across the
-                // build-area move. The scan runs in the signed direction of
-                // dx/dz so a positive delta copies tiles that are still
-                // needed; a naive `0..SIZE` sweep would overwrite them.
-                // A zero delta is a no-op (TS self-assigns, preserving every
-                // stacked item), so skip the whole shift.
-                if dx != 0 || dz != 0 {
-                    let mut start_tile_x = 0;
-                    let mut end_tile_x = BuildArea::SIZE;
-                    let mut dir_x = 1;
-                    if dx < 0 {
-                        start_tile_x = BuildArea::SIZE - 1;
-                        end_tile_x = -1;
-                        dir_x = -1;
-                    }
-
-                    let mut start_tile_z = 0;
-                    let mut end_tile_z = BuildArea::SIZE;
-                    let mut dir_z = 1;
-                    if dz < 0 {
-                        start_tile_z = BuildArea::SIZE - 1;
-                        end_tile_z = -1;
-                        dir_z = -1;
-                    }
-
-                    let mut x = start_tile_x;
-                    while x != end_tile_x {
-                        let mut z = start_tile_z;
-                        while z != end_tile_z {
-                            let last_x = x + dx;
-                            let last_z = z + dz;
-                            for level in 0..BuildArea::LEVELS {
-                                let cell = if last_x >= 0
-                                    && last_z >= 0
-                                    && last_x < BuildArea::SIZE
-                                    && last_z < BuildArea::SIZE
-                                {
-                                    self.ground_obj[level as usize][last_x as usize]
-                                        [last_z as usize]
-                                        .take()
-                                } else {
-                                    None
-                                };
-                                self.ground_obj[level as usize][x as usize][z as usize] = cell;
-                            }
-                            z += dir_z;
-                        }
-                        x += dir_x;
-                    }
-
-                    let mut node = self.loc_changes.head();
-                    while let Some(loc) = node {
-                        loc.x -= dx;
-                        loc.z -= dz;
-                        if loc.x < 0
-                            || loc.z < 0
-                            || loc.x >= BuildArea::SIZE
-                            || loc.z >= BuildArea::SIZE
-                        {
-                            self.loc_changes.unlink_last();
-                        }
-                        node = self.loc_changes.next_node();
-                    }
-
-                    if self.minimap_flag_x != 0 {
-                        self.minimap_flag_x -= dx;
-                        self.minimap_flag_z -= dz;
-                    }
-                }
-
+                self.apply_rebuild_normal(payload);
                 self.ptype = -1;
             }
 
@@ -6599,9 +6438,180 @@ impl Client {
         }
     }
 
-    /// Stage-1 289 inbound dispatch: inventory full/partial only. All other
-    /// opcodes (including ids that collide with 274 handlers) are unknown/T1
-    /// until later stages trace their fields. No parallel full 289 decoder.
+    /// Shared REBUILD_NORMAL body (274 opcode 231 / 289 opcode 219).
+    fn apply_rebuild_normal(&mut self, payload: &mut Packet) {
+        let zone_x = payload.g2();
+        let zone_z = payload.g2();
+
+        if self.map_build_centre_zone_x == zone_x
+            && self.map_build_centre_zone_z == zone_z
+            && self.scene_state == 2
+        {
+            self.ptype = -1;
+            return;
+        }
+
+        self.map_build_centre_zone_x = zone_x;
+        self.map_build_centre_zone_z = zone_z;
+        self.map_build_base_x = (self.map_build_centre_zone_x - 6) * 8;
+        self.map_build_base_z = (self.map_build_centre_zone_z - 6) * 8;
+
+        self.within_tutorial_island = ((self.map_build_centre_zone_x / 8 == 48
+            || self.map_build_centre_zone_x / 8 == 49)
+            && self.map_build_centre_zone_z / 8 == 48)
+            || (self.map_build_centre_zone_x / 8 == 48 && self.map_build_centre_zone_z / 8 == 148);
+
+        self.scene_state = 1;
+        self.scene_load_start_time = Instant::now();
+
+        // The loading splash is drawn by the renderer: `check_minimap`
+        // paints it (and builds the scene) on the next `mainredraw`.
+
+        let start_x = (self.map_build_centre_zone_x - 6) / 8;
+        let end_x = (self.map_build_centre_zone_x + 6) / 8;
+        let start_z = (self.map_build_centre_zone_z - 6) / 8;
+        let end_z = (self.map_build_centre_zone_z + 6) / 8;
+        let regions = ((end_x - start_x + 1) * (end_z - start_z + 1)) as usize;
+
+        self.map_build_ground_data = vec![None; regions];
+        self.map_build_location_data = vec![None; regions];
+        self.map_build_index = vec![0; regions];
+        self.map_build_ground_file = vec![0; regions];
+        self.map_build_location_file = vec![0; regions];
+
+        let mut map_count = 0;
+        for x in start_x..=end_x {
+            for z in start_z..=end_z {
+                self.map_build_index[map_count] = (x << 8) + z;
+
+                if self.within_tutorial_island
+                    && (z == 49 || z == 149 || z == 147 || x == 50 || (x == 49 && z == 47))
+                {
+                    self.map_build_ground_file[map_count] = -1;
+                    self.map_build_location_file[map_count] = -1;
+                    map_count += 1;
+                } else if let Some(od) = &mut self.on_demand {
+                    let land_file = od.get_map_file(x, z, 0);
+                    self.map_build_ground_file[map_count] = land_file;
+                    if land_file != -1 {
+                        od.request(3, land_file);
+                    }
+                    let loc_file = od.get_map_file(x, z, 1);
+                    self.map_build_location_file[map_count] = loc_file;
+                    if loc_file != -1 {
+                        od.request(3, loc_file);
+                    }
+                    map_count += 1;
+                }
+            }
+        }
+
+        let dx = self.map_build_base_x - self.map_build_prev_base_x;
+        let dz = self.map_build_base_z - self.map_build_prev_base_z;
+        self.map_build_prev_base_x = self.map_build_base_x;
+        self.map_build_prev_base_z = self.map_build_base_z;
+
+        for npc in self.npc.iter_mut().flatten() {
+            for j in 0..10 {
+                npc.route_x[j] -= dx;
+                npc.route_z[j] -= dz;
+            }
+            npc.x -= dx * 128;
+            npc.z -= dz * 128;
+        }
+
+        for player in self.players.iter_mut().flatten() {
+            for j in 0..10 {
+                player.route_x[j] -= dx;
+                player.route_z[j] -= dz;
+            }
+            player.x -= dx * 128;
+            player.z -= dz * 128;
+        }
+
+        // Java `localPlayer` IS `players[LOCAL_PLAYER_INDEX]`, so the
+        // shift loop above also moves the local body with the build
+        // origin; the Rust clone must follow or NPC_INFO places new
+        // NPCs relative to an unshifted local.
+        if let Some(local) = self.local_player.as_mut() {
+            for j in 0..10 {
+                local.route_x[j] -= dx;
+                local.route_z[j] -= dz;
+            }
+            local.x -= dx * 128;
+            local.z -= dz * 128;
+        }
+
+        self.awaiting_player_info = true;
+
+        // TS 6907-6948: carry groundObj and locChanges across the
+        // build-area move. The scan runs in the signed direction of
+        // dx/dz so a positive delta copies tiles that are still
+        // needed; a naive `0..SIZE` sweep would overwrite them.
+        // A zero delta is a no-op (TS self-assigns, preserving every
+        // stacked item), so skip the whole shift.
+        if dx != 0 || dz != 0 {
+            let mut start_tile_x = 0;
+            let mut end_tile_x = BuildArea::SIZE;
+            let mut dir_x = 1;
+            if dx < 0 {
+                start_tile_x = BuildArea::SIZE - 1;
+                end_tile_x = -1;
+                dir_x = -1;
+            }
+
+            let mut start_tile_z = 0;
+            let mut end_tile_z = BuildArea::SIZE;
+            let mut dir_z = 1;
+            if dz < 0 {
+                start_tile_z = BuildArea::SIZE - 1;
+                end_tile_z = -1;
+                dir_z = -1;
+            }
+
+            let mut x = start_tile_x;
+            while x != end_tile_x {
+                let mut z = start_tile_z;
+                while z != end_tile_z {
+                    let last_x = x + dx;
+                    let last_z = z + dz;
+                    for level in 0..BuildArea::LEVELS {
+                        let cell = if last_x >= 0
+                            && last_z >= 0
+                            && last_x < BuildArea::SIZE
+                            && last_z < BuildArea::SIZE
+                        {
+                            self.ground_obj[level as usize][last_x as usize][last_z as usize].take()
+                        } else {
+                            None
+                        };
+                        self.ground_obj[level as usize][x as usize][z as usize] = cell;
+                    }
+                    z += dir_z;
+                }
+                x += dir_x;
+            }
+
+            let mut node = self.loc_changes.head();
+            while let Some(loc) = node {
+                loc.x -= dx;
+                loc.z -= dz;
+                if loc.x < 0 || loc.z < 0 || loc.x >= BuildArea::SIZE || loc.z >= BuildArea::SIZE {
+                    self.loc_changes.unlink_last();
+                }
+                node = self.loc_changes.next_node();
+            }
+
+            if self.minimap_flag_x != 0 {
+                self.minimap_flag_x -= dx;
+                self.minimap_flag_z -= dz;
+            }
+        }
+    }
+
+    /// Stage-2 289 inbound dispatch: inventory, actors, region, widgets,
+    /// varps, reset and logout. Untraced ids (including numeric collisions
+    /// with 274 handlers) remain unknown/T1. No parallel full 289 decoder.
     fn dispatch_packet_289(&mut self, ptype: i32, payload: &mut Packet) {
         match ptype {
             // 289 inventory full: g2 component, g2 entry count (client.java:2972-2990).
@@ -6612,6 +6622,131 @@ impl Client {
             // 289 inventory partial: gsmart slot (client.java:3477-3494).
             x if x == ServerProt289::UPDATE_INV_PARTIAL => {
                 self.apply_update_inv_partial(payload, /*slot_is_gsmart=*/ true);
+                self.ptype = -1;
+            }
+            // Player update method139/212/185/172/153/128 (client.java:2819-2823).
+            // Mask bit layout matches 274 player_update (method128).
+            x if x == ServerProt289::PLAYER_INFO => {
+                self.get_player_pos(payload, self.psize);
+                self.awaiting_player_info = false;
+                self.ptype = -1;
+            }
+            // NPC update method187 (client.java:3380-3383).
+            x if x == ServerProt289::NPC_INFO => {
+                self.get_npc_pos(payload, self.psize);
+                self.ptype = -1;
+            }
+            // Region rebuild g2/g2 (client.java:2999-3022).
+            x if x == ServerProt289::REBUILD_NORMAL => {
+                self.apply_rebuild_normal(payload);
+                self.ptype = -1;
+            }
+            // Logout → method104 (client.java:2833-2837).
+            x if x == ServerProt289::LOGOUT => {
+                self.logout();
+                self.ptype = -1;
+            }
+            // Clear primary anim on all actors (client.java:3496-3508).
+            x if x == ServerProt289::RESET_ANIMS => {
+                for player in self.players.iter_mut().flatten() {
+                    player.primary_anim = -1;
+                }
+                for npc in self.npc.iter_mut().flatten() {
+                    npc.primary_anim = -1;
+                }
+                if let Some(local) = self.local_player.as_mut() {
+                    local.primary_anim = -1;
+                }
+                self.ptype = -1;
+            }
+            // IF_SETTEXT: g2 + newline string (client.java:2638-2646).
+            x if x == ServerProt289::IF_SETTEXT => {
+                let com_id = payload.g2();
+                let text = payload.gjstr();
+                let on_active_tab = self
+                    .if_(com_id as usize)
+                    .is_some_and(|com| com.layer_id == self.side_icon[self.active_icon as usize]);
+                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut)
+                    .get_mut(com_id as usize)
+                    .and_then(|o| o.as_mut())
+                    .map(Arc::make_mut)
+                {
+                    com.text = text;
+                    if on_active_tab {
+                        self.redraw_side = true;
+                    }
+                }
+                self.ptype = -1;
+            }
+            // IF_SETANIM: g2 + signed g2 (client.java:2722-2732).
+            x if x == ServerProt289::IF_SETANIM => {
+                let com_id = payload.g2();
+                let seq_id = payload.g2b();
+                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut)
+                    .get_mut(com_id as usize)
+                    .and_then(|o| o.as_mut())
+                    .map(Arc::make_mut)
+                {
+                    com.model_anim = seq_id;
+                    if seq_id == -1 {
+                        com.anim_frame = 0;
+                        com.anim_cycle = 0;
+                    }
+                }
+                self.ptype = -1;
+            }
+            // IF_OPENMAIN_SIDE: two g2 (client.java:2593-2610).
+            x if x == ServerProt289::IF_OPENMAIN_SIDE => {
+                self.apply_if_openmain_side(payload);
+                self.ptype = -1;
+            }
+            // IF_OPENSIDE: one g2 (client.java:2665-2682).
+            x if x == ServerProt289::IF_OPENSIDE => {
+                self.apply_if_openside(payload);
+                self.ptype = -1;
+            }
+            // IF_OPENOVERLAY: signed g2 (client.java:3393-3400).
+            x if x == ServerProt289::IF_OPENOVERLAY => {
+                self.apply_if_openoverlay(payload);
+                self.ptype = -1;
+            }
+            // VARP_SMALL: g2 + signed g1 (client.java:3402-3415).
+            x if x == ServerProt289::VARP_SMALL => {
+                let varp_id = payload.g2();
+                let value = payload.g1b();
+                grow_write(&mut self.var_serv, varp_id, value);
+                if self.var.get(varp_id as usize).copied() != Some(value) {
+                    grow_write(&mut self.var, varp_id, value);
+                    self.client_var(varp_id);
+                    self.redraw_side = true;
+                }
+                self.ptype = -1;
+            }
+            // VARP_LARGE: g2 + g4 (client.java:3526-3539).
+            x if x == ServerProt289::VARP_LARGE => {
+                let varp_id = payload.g2();
+                let value = payload.g4();
+                grow_write(&mut self.var_serv, varp_id, value);
+                if self.var.get(varp_id as usize).copied() != Some(value) {
+                    grow_write(&mut self.var, varp_id, value);
+                    self.client_var(varp_id);
+                    self.redraw_side = true;
+                }
+                self.ptype = -1;
+            }
+            // VARP_SYNC: zero payload bulk copy (client.java:3351-3361).
+            x if x == ServerProt289::VARP_SYNC => {
+                for i in 0..self.var.len() {
+                    if self.var_serv.get(i).copied() != Some(self.var[i]) {
+                        if let Some(&value) = self.var_serv.get(i) {
+                            self.var[i] = value;
+                        } else {
+                            self.var[i] = 0;
+                        }
+                        self.client_var(i as i32);
+                        self.redraw_side = true;
+                    }
+                }
                 self.ptype = -1;
             }
             _ => {

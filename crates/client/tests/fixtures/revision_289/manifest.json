@@ -239,6 +239,206 @@
         "client.java:8342-8398"
       ],
       "oracle_derivation": "The primary login method writes the RSA plaintext in this exact order before method491 applies the source constants; this structural vector intentionally contains no credentials, modulus, exponent, or live endpoint bytes."
+    },
+    {
+      "name": "actor_update_face_entity_mask",
+      "opcode": 188,
+      "length_kind": "g2",
+      "frame_hex": null,
+      "payload_hex": "801ffc052c00000000000000000000000000000000000000ffffffffffffffffffffffffffff00000000000000000000001234",
+      "declared_payload_length": null,
+      "expected_result": {
+        "status": "dispatch",
+        "state": "actor_update_face_entity",
+        "face_entity": 4660,
+        "error": null
+      },
+      "source_anchors": [
+        "Class17.java:11 (length[188] = -2)",
+        "client.java:2819-2823",
+        "client.java:8021-8054 (method128 FACEENTITY 0x4)"
+      ],
+      "oracle_derivation": "Local update bit 1 + type 0, empty old-vis, 2047 sentinel, mask 0x05 (APPEARANCE|FACEENTITY), 44-byte default appearance, face_entity 0x1234=4660. Bit layout matches 274 player_update and 289 method128."
+    },
+    {
+      "name": "actor_update_truncated_player_info",
+      "opcode": 188,
+      "length_kind": "g2",
+      "frame_hex": "bc000180",
+      "payload_hex": "80",
+      "declared_payload_length": 1,
+      "expected_consumed_length": 4,
+      "expected_cursor": 1,
+      "expected_result": {
+        "status": "dispatch",
+        "state": "actor_update_truncated_no_partial_mask",
+        "error": null
+      },
+      "source_anchors": [
+        "Class17.java:11 (length[188] = -2)",
+        "client.java:2819-2823",
+        "client.java:6150-6168"
+      ],
+      "oracle_derivation": "A one-byte payload with the local-update high bit set has no extended mask body. Production must not leave half-applied appearance/face_entity state; logout or no-op without partial mask writes is acceptable."
+    },
+    {
+      "name": "npc_info_empty_bitstream",
+      "opcode": 65,
+      "length_kind": "g2",
+      "frame_hex": "41000100",
+      "payload_hex": "00",
+      "declared_payload_length": 1,
+      "expected_consumed_length": 4,
+      "expected_cursor": 1,
+      "expected_result": {
+        "status": "dispatch",
+        "state": "npc_update_empty",
+        "npc_count": 0,
+        "error": null
+      },
+      "source_anchors": [
+        "Class17.java:11 (length[65] = -2)",
+        "client.java:3380-3383",
+        "client.java:12056-12120 (method226)"
+      ],
+      "oracle_derivation": "With npc_count 0 and a single zero byte, method226 reads g8 count 0, method124 lacks 14+ bits for a new index and terminates, method222 has no mask records."
+    },
+    {
+      "name": "widget_setanim",
+      "opcode": 211,
+      "length_kind": "fixed",
+      "frame_hex": "d300070100",
+      "payload_hex": "00070100",
+      "expected_consumed_length": 5,
+      "expected_cursor": 4,
+      "expected_result": {
+        "status": "dispatch",
+        "state": "widget_setanim",
+        "component_id": 7,
+        "seq_id": 256
+      },
+      "source_anchors": [
+        "Class17.java:11 (length[211] = 4)",
+        "client.java:2722-2732"
+      ],
+      "oracle_derivation": "Primary branch reads g2 component 7 and signed g2 sequence 0x0100."
+    },
+    {
+      "name": "widget_openside",
+      "opcode": 252,
+      "length_kind": "fixed",
+      "frame_hex": "fc0009",
+      "payload_hex": "0009",
+      "expected_consumed_length": 3,
+      "expected_cursor": 2,
+      "expected_result": {
+        "status": "dispatch",
+        "state": "widget_openside",
+        "side_modal_id": 9
+      },
+      "source_anchors": [
+        "Class17.java:11 (length[252] = 2)",
+        "client.java:2665-2682"
+      ],
+      "oracle_derivation": "Opcode 252 opens side modal (anInt232) with g2 component id and clears main modal."
+    },
+    {
+      "name": "widget_openmain_side",
+      "opcode": 55,
+      "length_kind": "fixed",
+      "frame_hex": "37000b000c",
+      "payload_hex": "000b000c",
+      "expected_consumed_length": 5,
+      "expected_cursor": 4,
+      "expected_result": {
+        "status": "dispatch",
+        "state": "widget_openmain_side",
+        "main_modal_id": 11,
+        "side_modal_id": 12
+      },
+      "source_anchors": [
+        "Class17.java:11 (length[55] = 4)",
+        "client.java:2593-2610"
+      ],
+      "oracle_derivation": "Opcode 55 reads two g2 ids into main (anInt377) and side (anInt232) modals."
+    },
+    {
+      "name": "widget_openoverlay_clear",
+      "opcode": 127,
+      "length_kind": "fixed",
+      "frame_hex": "7fffff",
+      "payload_hex": "ffff",
+      "expected_consumed_length": 3,
+      "expected_cursor": 2,
+      "expected_result": {
+        "status": "dispatch",
+        "state": "widget_openoverlay",
+        "main_overlay_id": -1
+      },
+      "source_anchors": [
+        "Class17.java:11 (length[127] = 2)",
+        "client.java:3393-3400"
+      ],
+      "oracle_derivation": "Opcode 127 reads signed g2 into overlay id (anInt246); 0xffff is -1."
+    },
+    {
+      "name": "varp_small",
+      "opcode": 75,
+      "length_kind": "fixed",
+      "frame_hex": "4b0003fb",
+      "payload_hex": "0003fb",
+      "expected_consumed_length": 4,
+      "expected_cursor": 3,
+      "expected_result": {
+        "status": "dispatch",
+        "state": "varp_small",
+        "varp_id": 3,
+        "value": -5
+      },
+      "source_anchors": [
+        "Class17.java:11 (length[75] = 3)",
+        "client.java:3402-3415"
+      ],
+      "oracle_derivation": "g2 varp id 3 and signed g1 value 0xfb (-5)."
+    },
+    {
+      "name": "varp_large",
+      "opcode": 97,
+      "length_kind": "fixed",
+      "frame_hex": "61000400001234",
+      "payload_hex": "000400001234",
+      "expected_consumed_length": 7,
+      "expected_cursor": 6,
+      "expected_result": {
+        "status": "dispatch",
+        "state": "varp_large",
+        "varp_id": 4,
+        "value": 4660
+      },
+      "source_anchors": [
+        "Class17.java:11 (length[97] = 6)",
+        "client.java:3526-3539"
+      ],
+      "oracle_derivation": "g2 varp id 4 and g4 value 0x00001234."
+    },
+    {
+      "name": "varp_sync_empty",
+      "opcode": 172,
+      "length_kind": "fixed",
+      "frame_hex": "ac",
+      "payload_hex": "",
+      "expected_consumed_length": 1,
+      "expected_cursor": 0,
+      "expected_result": {
+        "status": "dispatch",
+        "state": "varp_sync",
+        "error": null
+      },
+      "source_anchors": [
+        "Class17.java:11 (length[172] = 0)",
+        "client.java:3351-3361"
+      ],
+      "oracle_derivation": "Zero-payload bulk copy from server varp shadow array into client vars."
     }
   ]
 }
