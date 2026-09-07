@@ -1449,11 +1449,18 @@ impl RenderBackend for GpuBackend {
         let chrome_bytes_per_row = (FRAME_W * 4).div_ceil(256) * 256;
         // Viewport overlays share the atlas, but their motion/removal does
         // not set chat/sidebar redraw flags. Compare with the last upload
-        // without another retained image or allocation. Frozen scenes also
-        // retain scene_ready and must receive current modal/overlay pixels.
-        let overlay_changed = self.scene_ready && self.chrome_uploaded
-            && scene_overlay_changed(&r.draw_area, &self.overlay_coverage,
-                &self.chrome_rgba, chrome_bytes_per_row);
+        // without another retained image or allocation. Match fill alpha:
+        // coverage only while a 3D texture is composited; otherwise the
+        // scene window is sealed opaque chrome (empty mesh still blits
+        // main-modal pixels into draw_area and must re-upload on change).
+        let overlay_changed = self.chrome_uploaded
+            && scene_overlay_changed(
+                &r.draw_area,
+                &self.overlay_coverage,
+                &self.chrome_rgba,
+                chrome_bytes_per_row,
+                self.scene_ready,
+            );
         // An overlay-only update must preserve the previously punched
         // minimap during freeze. Explicit chrome redraws still seal the
         // atlas when not live (including title transitions).
@@ -1634,19 +1641,36 @@ fn draw_area_rgba(
     bytes
 }
 
-/// Compare visible viewport RGBA with the retained upload buffer. RGB under
-/// zero coverage is immaterial; coverage changes still invalidate removal.
-fn scene_overlay_changed(draw: &PixMap, coverage: &[u8], uploaded: &[u8], stride: u32) -> bool {
+/// Compare visible viewport RGBA with the retained upload buffer. Alpha
+/// matches `fill_draw_area_rgba`: coverage while `scene_ready`, else opaque
+/// sealed chrome. RGB under zero coverage is immaterial; coverage / sealed
+/// RGB changes still invalidate.
+fn scene_overlay_changed(
+    draw: &PixMap,
+    coverage: &[u8],
+    uploaded: &[u8],
+    stride: u32,
+    scene_ready: bool,
+) -> bool {
     for y in 0..SCENE_H {
         for x in 0..SCENE_W {
-            let alpha = coverage[(y * SCENE_W + x) as usize];
+            let alpha = if scene_ready {
+                coverage[(y * SCENE_W + x) as usize]
+            } else {
+                255
+            };
             let offset = ((y + 4) * stride + (x + 4) * 4) as usize;
-            if uploaded[offset + 3] != alpha { return true; }
+            if uploaded[offset + 3] != alpha {
+                return true;
+            }
             if alpha != 0 {
                 let rgb = draw.pixels[((y + 4) * FRAME_W + x + 4) as usize];
                 if uploaded[offset] != ((rgb >> 16) & 255) as u8
                     || uploaded[offset + 1] != ((rgb >> 8) & 255) as u8
-                    || uploaded[offset + 2] != (rgb & 255) as u8 { return true; }
+                    || uploaded[offset + 2] != (rgb & 255) as u8
+                {
+                    return true;
+                }
             }
         }
     }
@@ -1766,6 +1790,46 @@ mod tests {
         r.draw_area.pixels[first + 1] = 0xff00ff; // invisible RGB is immaterial
         backend.finish(&mut r);
         assert_eq!(backend.chrome_upload_count(), uploads, "unchanged visible overlay stays lazy");
+    }
+
+    /// Empty mesh leaves `scene_ready` false (synthetic main-modal fixture).
+    /// The scene window is sealed opaque chrome; modal RGB in `draw_area`
+    /// must still force a lazy atlas upload without HUD redraw flags.
+    #[test]
+    fn sealed_scene_window_uploads_modal_rgb_without_chrome_redraw() {
+        use crate::render::backend::{FrameOutput, RenderBackend};
+        let mut backend =
+            super::GpuBackend::try_new().expect("GPU required for sealed-modal regression");
+        let mut r = crate::render::Renderer::new(false);
+        backend.last_kind = FrameKind::Game;
+        backend.scene_ready = false;
+        backend.chrome_upload_pending = true;
+        let first = (4 * FRAME_W + 4) as usize;
+        r.draw_area.pixels[first] = 0;
+        let FrameOutput::Texture(frame) = backend.finish(&mut r) else {
+            panic!("GPU frame");
+        };
+        assert_eq!(frame.read_back()[first], 0, "sealed empty window starts black");
+        let uploads = backend.chrome_upload_count();
+        // Full-path main-modal: coverage is marked but scene_ready stays false.
+        r.draw_area.pixels[first] = 0x0033_6699;
+        backend.overlay_coverage[0] = 255;
+        let FrameOutput::Texture(frame) = backend.finish(&mut r) else {
+            panic!("GPU frame");
+        };
+        assert_eq!(
+            frame.read_back()[first] & 0x00ff_ffff,
+            0x0033_6699,
+            "sealed chrome must re-upload modal RGB without atlas dirty flags"
+        );
+        assert_eq!(backend.chrome_upload_count(), uploads + 1);
+        let uploads = backend.chrome_upload_count();
+        backend.finish(&mut r);
+        assert_eq!(
+            backend.chrome_upload_count(),
+            uploads,
+            "unchanged sealed modal stays lazy"
+        );
     }
 
     #[test]
