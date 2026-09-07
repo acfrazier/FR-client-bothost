@@ -121,25 +121,32 @@
       "oracle_derivation": "The primary branch reads component 3, then method490 slot 1 (one-byte smart), g2 item 1 and g1 count 0; the trailing zero is intentionally outside the declared frame and is not consumed."
     },
     {
-      "name": "actor_update_empty_payload_cursor",
+      "name": "actor_update_empty_world_bitstream",
       "opcode": 188,
       "length_kind": "g2",
-      "frame_hex": "bc0000",
-      "payload_hex": "",
-      "declared_payload_length": 0,
-      "expected_consumed_length": 3,
-      "expected_cursor": 0,
+      "frame_hex": "bc00020000",
+      "payload_hex": "0000",
+      "declared_payload_length": 2,
+      "expected_consumed_length": 5,
+      "expected_cursor": 2,
       "expected_result": {
         "status": "dispatch",
-        "state": "actor_update_requires_source_structure",
-        "error": "actor decoder outcome is blocked without a traced bitstream"
+        "state": "actor_update_empty_world",
+        "local_update": 0,
+        "other_count": 0,
+        "new_player_records": 0,
+        "mask_records": 0,
+        "error": null
       },
       "source_anchors": [
         "Class17.java:11 (length[188] = -2)",
         "client.java:2819-2823",
-        "client.java:6150-6168"
+        "client.java:6150-6168",
+        "client.java:10590-10632",
+        "client.java:8755-8815",
+        "client.java:8021-8054"
       ],
-      "oracle_derivation": "Only the dispatch call and final cursor equality are source-proven here; no invented actor bitstream is asserted."
+      "oracle_derivation": "With a two-byte zero payload, method212 reads local update bit 0, method185 reads other-player count 0, method172 has fewer than 11 remaining bits and terminates, method153 has no mask records, method139 aligns to byte 2 and its final cursor check succeeds."
     },
     {
       "name": "region_scene_base",
@@ -201,6 +208,36 @@
         "client.java:3496-3508"
       ],
       "oracle_derivation": "The primary branch has no reads and iterates both actor arrays to set anInt1003 to -1."
+    },
+    {
+      "name": "login_rsa_plaintext_structure",
+      "kind": "login",
+      "opcode": null,
+      "length_kind": "login_rsa",
+      "frame_hex": "",
+      "payload_hex": "",
+      "expected_consumed_length": 0,
+      "expected_cursor": 0,
+      "expected_result": {
+        "status": "structure",
+        "state": "rsa_plaintext_ordered",
+        "fields": [
+          "g1 rsa block type 10",
+          "g4 isaac seed 0",
+          "g4 isaac seed 1",
+          "g4 server-seed high",
+          "g4 server-seed low",
+          "g4 signlink anInt928",
+          "jagex string username",
+          "jagex string password",
+          "rsa modular exponentiation"
+        ],
+        "error": null
+      },
+      "source_anchors": [
+        "client.java:8342-8398"
+      ],
+      "oracle_derivation": "The primary login method writes the RSA plaintext in this exact order before method491 applies the source constants; this structural vector intentionally contains no credentials, modulus, exponent, or live endpoint bytes."
     }
   ]
 }

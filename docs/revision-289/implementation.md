@@ -22,13 +22,13 @@ Gate: all manifest framing/inventory cases have independent oracle assertions; e
 
 ## Stage 2: login, actors, world, widgets and reset
 
-Trace `login_rsa.rs`, stream setup and ISAAC seed installation against `client.java:8342-8398`. Classify response codes and make response 15/reset distinct from successful response 2. Bind actor/player update (including masks and final cursor equality), region/scene rebuild, widgets and logout/reset to the existing client lifecycle and world state. Do not claim scene readiness from socket attachment.
+Trace `login_rsa.rs`, stream setup and ISAAC seed installation against `client.java:8342-8398`; exercise the credential-free ordered RSA plaintext vector in the manifest offline, while leaving modulus/endpoint compatibility as a live gate. Classify response codes and make response 15/reset distinct from successful response 2. Bind actor/player update (including method212/185/172 movement, method153/method128 masks and final cursor equality), region/scene rebuild, widgets and logout/reset to the existing client lifecycle and world state. Do not claim scene readiness from socket attachment.
 
 Gate: offline login/RSA/ISAAC vector or replay is verified; actor, region, widget and reset fixtures pass through production lifecycle; every transition is labelled PASS, FAIL or BLOCKED; renderer freeze regression remains green.
 
 ## Stage 3: cache/config, basic actions and offline end-to-end
 
-Add an explicit cache/archive manifest and loader seam only after an authoritative 289 cache is identified. Map config/object/NPC/location/widget identities from that cache. The first action cut is existing basic client actions only (walk plus already typed entity/widget/dialog/count/logout/map paths); tutorial, guardian and random-event policy are explicitly `not impl` in this client milestone. Trace outbound payload lengths/fields from the primary Java before enabling any 289 action; unresolved outbound rows remain a fail-closed stage-3 gate. Reuse existing typed action and snapshot boundaries only where revision fixtures prove equivalent semantics.
+Add source-derived offline loader seam and tests now, with an explicit cache/archive manifest and live asset loader only after an authoritative 289 cache is identified. Map config/object/NPC/location/widget identities from that cache. The first action cut is existing basic client actions only (walk plus already typed entity/widget/dialog/count/logout/map paths); tutorial, guardian and random-event policy are explicitly `not impl` in this client milestone. Trace outbound payload lengths/fields from the primary Java before enabling any 289 action; unresolved outbound rows remain a fail-closed stage-3 gate. Reuse existing typed action and snapshot boundaries only where revision fixtures prove equivalent semantics.
 
 Gate: cache hash/manifest and server pairing are recorded; each enabled outbound row has exact fields and length; offline replay covers login, player/world, inventory, scene, action and reset; missing capabilities fail closed rather than being cloned in JS.
 
@@ -40,4 +40,4 @@ Each stage must pass source review before the dependent stage starts. Run client
 
 The first action cut is limited to existing basic client actions; tutorial, guardian and random-event policy are `not impl`. Offline replay uses the fixture manifest JSON format: each case carries explicit initial state, opcode/frame versus payload bytes, declared length, expected decoded state/error, and cursor semantics. These are settled architecture decisions, not open alternatives.
 
-The authoritative cache/archive and checksum/manifest, approved endpoint, credentials/test authorization, and RSA/ISAAC replay capture remain external gates. Authentic cache gates require real assets/live proof; source-derived offline loader and packet tests must not be presented as cache compatibility evidence.
+The authoritative cache/archive and checksum/manifest, approved endpoint, credentials/test authorization, and live RSA/ISAAC replay capture remain external gates for compatibility proof. Source-derived offline loader, packet, and credential-free crypto-structure tests are authorized before those prerequisites; they must not be presented as authentic cache or live compatibility evidence.

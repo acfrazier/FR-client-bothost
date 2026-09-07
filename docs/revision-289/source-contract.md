@@ -18,7 +18,7 @@ These are source/deob/JAR artifacts, not a verified host-loadable game-cache pai
 
 At `client.java:2553-2587`, the client reads one opcode byte, subtracts ISAAC when active, selects `Class17.anIntArray209[opcode]`, then handles fixed sizes, `-1` byte lengths, and `-2` big-endian `g2` lengths. It refuses to consume a frame until the declared payload is available. Player updates at `client.java:6150-6168` additionally require the final cursor to equal the declared packet size; this is a mandatory invariant for Rust.
 
-Login at `client.java:8342-8398` sends request opcode 14 plus world/login-server seed, receives an eight-byte server seed, builds RSA input containing four ISAAC seed words, client signlink value, username and password, then sends revision `289`, cache/config indices and RSA payload. Response 2 enters the game; responses 3-14 and 16-21 are explicit error/retry outcomes. Response 15 clears packet/frame state without being equivalent to a successful logout. The RSA modulus/exponent values and operator-approved endpoint remain outside this public contract.
+Login at `client.java:8342-8398` sends request opcode 14 plus the five-bit name hash, receives eight server-seed bytes, then builds RSA plaintext in source order: block type `10`; four big-endian ISAAC seed words (two random words followed by the server-seed high/low words); `signlink.anInt928`; username Jagex string; password Jagex string. `method491(aBigInteger2, aBigInteger1)` applies the RSA operation. The subsequent login frame writes mode 16/18, RSA length, `255`, revision `289`, membership byte, nine cache/config index g4 values, and the RSA block. Response 2 enters the game; responses 3-14 and 16-21 are explicit error/retry outcomes. Response 15 clears packet/frame state without being equivalent to a successful logout. The RSA modulus/exponent values and operator-approved endpoint remain outside this public contract. The public fixture manifest contains a credential-free structural vector for this ordered plaintext; it is not a live login claim.
 
 ## Inbound contract
 
@@ -29,7 +29,7 @@ Important encodings:
 - `g2`: unsigned big-endian two-byte value.
 - `gsmart`: one byte for values below 128; otherwise unsigned `g2 - 0x8000`.
 - variable frame lengths: `g1` for `-1`, `g2` for `-2`.
-- actor updates: bit-packed counts, movement and masks; implementation must consume exactly the declared frame.
+- actor updates: method212 local update bits, method185 g8 other-player count/movement, method172 11-bit new-player records with signed 5/5 offsets and 1-bit flags, method153 one/two-byte masks, and method128 ordered mask payloads (0x001/002/004/008/010/020/040/100/200/400); implementation must consume exactly the declared frame.
 - inventory: revision-specific `g2` container/count shape and smart slot/item values; do not carry 274 widths into 289.
 - widgets: component IDs and newline-terminated strings are cache/interface data, not public ABI constants.
 
@@ -52,6 +52,6 @@ The 75 outbound IDs are the complete numeric set observed at `client.java` `meth
 2. No approved live endpoint or credentials/test authorization is available.
 3. Complete outbound field/length tracing remains required before enabling actions.
 4. Exact actor local-player index, region base/plane timing, widget IDs and config/object definitions require primary-source tracing plus cache evidence.
-5. Login/RSA/ISAAC needs an offline capture or independently checked vector; compilation is not proof.
+5. Live RSA/ISAAC compatibility still needs a capture or authorized endpoint, but the source-derived ordered plaintext structure is independently checked offline; compilation is not proof.
 
-The accompanying fixtures are tiny public-safe byte cases with independently derived expected results. Each manifest row separates opcode/frame bytes from payload bytes, records declared length versus actual cursor consumption, and uses structured pending/dispatch/error results. The actor case deliberately records the traced cursor boundary without inventing a valid actor bitstream. They are contract checks, not claims that the current Rust decoder passes them.
+The accompanying fixtures are tiny public-safe byte cases with independently derived expected results. Each packet row separates opcode/frame bytes from payload bytes, records declared length versus actual cursor consumption, and uses structured pending/dispatch/error results. The actor case is a valid two-byte zero bitstream: local update bit 0, other count 0, no new-player records, no masks, then byte alignment. The login row is a credential-free structural oracle rather than packet bytes. They are contract checks, not claims that the current Rust decoder passes them.

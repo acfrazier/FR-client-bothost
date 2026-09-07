@@ -48,19 +48,19 @@ Next: release source milestone, obtain actual plan review, then execute the
 serialized production stages and final branch review. Dispatch is not proof of
 execution, successful tests, review acceptance or a complete 289 port.
 
-## Source milestone checkpoint (t_c59985d0, revision 2)
+## Source milestone checkpoint (t_c59985d0, revision 3)
 
-Deliverables prepared for same-card independent review after correcting the first review's primary-source and oracle findings:
+Deliverables prepared for same-card independent review after correcting the first review's primary-source and oracle findings and completing the actor/login gaps:
 
 - `docs/revision-289/source-contract.md`
 - `docs/revision-289/protocol-289.json` (256 inbound rows; 75 observed outbound IDs, unresolved lengths explicit)
 - `docs/revision-289/implementation.md`
-- `crates/client/tests/fixtures/revision_289/manifest.json` (9 public-safe cases with frame/payload separation, declared length, cursor, structured result)
+- `crates/client/tests/fixtures/revision_289/manifest.json` (10 public-safe cases with frame/payload separation, declared length, cursor, structured result, valid empty actor bitstream, and credential-free login plaintext structure)
 - `tools/verify_revision_289_contract.py` (shape, uniqueness, opcode/length-kind, declared-length, cursor-consumption and oracle-word verifier)
-- `tools/generate_revision_289_contract.py` (reproducible source extraction for the pinned read-only vault checkout and source-traced fixture generation)
+- `tools/generate_revision_289_contract.py` (reproducible source extraction for the pinned read-only vault checkout and source-traced fixture generation, including method212/185/172/153/128 actor fields)
 
-Exact verification run: `python3 tools/generate_revision_289_contract.py && python3 tools/verify_revision_289_contract.py && git diff --check` -> `PASS: 256 inbound, 75 outbound rows; 9 fixtures`.
+Exact verification run: `python3 tools/generate_revision_289_contract.py && python3 tools/verify_revision_289_contract.py && git diff --check` -> `PASS: 256 inbound, 75 outbound rows; 10 fixtures`.
 
-Primary-source corrections recorded: inventory full is 107, partial is 76 with gsmart slots, logout is 121, region is 219, varp small/large are 75/97, 172 is bulk varp sync, 55 is dual-interface open, 127 is signed-g2 interface state, and 211 is component animation. Actor fixtures do not invent a bitstream.
+Primary-source corrections recorded: inventory full is 107, partial is 76 with gsmart slots, logout is 121, region is 219, varp small/large are 75/97, 172 is bulk varp sync, 55 is dual-interface open, 127 is signed-g2 interface state, and 211 is component animation. Actor fields now trace method212/185/172/153/128, with a valid two-byte zero actor bitstream; login plaintext order and revision/cache-index frame fields trace client.java:8342-8398, with credentials and RSA constants excluded.
 
-Known blockers remain honest: no authoritative game-cache pairing/manifest, approved endpoint or live authorization; outbound field/length tracing and RSA/ISAAC replay proof are still required. No client implementation, live test, host test, push, merge, remote or submodule change was performed in this milestone. Same-card reviewer must independently inspect primary Java and fixture derivations and record actual model/provider, commit and verdict before releasing t_3d5171fb.
+Known blockers remain honest: no authoritative game-cache pairing/manifest, approved endpoint or live authorization; outbound field/length tracing and live RSA/ISAAC compatibility proof are still required. No client implementation, live test, host test, push, merge, remote or submodule change was performed in this milestone. Same-card reviewer must independently inspect primary Java and fixture derivations and record actual model/provider, commit and verdict before releasing t_3d5171fb.

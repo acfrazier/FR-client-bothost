@@ -56,6 +56,18 @@ def main() -> int:
         if case["name"] in names:
             fail(f"duplicate fixture name {case['name']}")
         names.add(case["name"])
+        if case.get("kind") == "login":
+            if case.get("opcode") is not None:
+                fail(f"login fixture must not claim an inbound opcode: {case['name']}")
+            if case.get("length_kind") != "login_rsa":
+                fail(f"login fixture length kind must be login_rsa: {case['name']}")
+            if case.get("expected_consumed_length") != 0 or case.get("expected_cursor") != 0:
+                fail(f"login structural vector must have zero packet cursor: {case['name']}")
+            if case["expected_result"].get("status") != "structure":
+                fail(f"login structural vector status must be structure: {case['name']}")
+            if not case["source_anchors"] or "client.java:8342-8398" not in case["source_anchors"]:
+                fail(f"login fixture missing handshake anchor: {case['name']}")
+            continue
         if case["opcode"] not in inbound_by_id:
             fail(f"fixture opcode is not in inbound contract: {case['name']}")
         frame = re.sub(r"\s+", "", case["frame_hex"])
