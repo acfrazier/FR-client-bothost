@@ -382,9 +382,13 @@ enum R289InterfaceOperation {
 
 #[path = "actor_289.rs"]
 mod actor_289;
+#[path = "zone_289.rs"]
+mod zone_289;
 
 /// Validated meaning, never a raw 274/289 opcode alias.
 enum R289Operation {
+    Rebuild { zone_x: i32, zone_z: i32 },
+    Zones(zone_289::ZoneFrame),
     Actors(actor_289::ActorFrame),
     ResetAnims,
     UpdatePid { slot: i32, members: i32 },
@@ -405,6 +409,11 @@ enum R289Operation {
 impl R289Operation {
     fn decode(client: &Client, ptype: i32, payload: &mut Packet) -> Option<Self> {
         let operation = match ptype {
+            ServerProt289::REBUILD_NORMAL => Self::Rebuild { zone_x: payload.g2(), zone_z: payload.g2() },
+            60 | 71 | 83 | 87 | 90 | 91 | 106 | 117 | 144 | 155 | 176 | 194 | 233
+            | ServerProt289::UPDATE_ZONE_PARTIAL_ENCLOSED => {
+                Self::Zones(zone_289::ZoneFrame::decode(client, ptype, payload))
+            }
             ServerProt289::PLAYER_INFO => {
                 Self::Actors(actor_289::ActorFrame::decode(client, false, payload))
             }
@@ -4432,6 +4441,11 @@ impl Client {
 
     fn apply_operation_289(&mut self, operation: R289Operation) -> R289Outcome {
         let publication = match operation {
+            R289Operation::Rebuild { zone_x, zone_z } => {
+                self.apply_rebuild_zones(zone_x, zone_z);
+                R289Publication::ALL
+            }
+            R289Operation::Zones(frame) => frame.apply(self),
             R289Operation::Actors(frame) => frame.apply(self),
             R289Operation::ResetAnims => {
                 for player in self.players.iter_mut().flatten() {
@@ -7063,11 +7077,14 @@ impl Client {
         }
     }
 
-    /// Shared REBUILD_NORMAL body (274 opcode 231 / 289 opcode 219).
+    /// Legacy decoder; both revisions share only packet-free application.
     fn apply_rebuild_normal(&mut self, payload: &mut Packet) {
         let zone_x = payload.g2();
         let zone_z = payload.g2();
+        self.apply_rebuild_zones(zone_x, zone_z);
+    }
 
+    fn apply_rebuild_zones(&mut self, zone_x: i32, zone_z: i32) {
         if self.map_build_centre_zone_x == zone_x
             && self.map_build_centre_zone_z == zone_z
             && self.scene_state == 2
@@ -7335,46 +7352,6 @@ impl Client {
                 self.ptype = -1;
             }
 
-            // First-tick zone bootstrap uses the R289 source-defined zone
-            // coordinates and inner opcode table.
-            x if x == ServerProt289::UPDATE_ZONE_PARTIAL_FOLLOWS => {
-                self.zone_update_x = payload.g1();
-                self.zone_update_z = payload.g1();
-                self.ptype = -1;
-            }
-            x if x == ServerProt289::UPDATE_ZONE_FULL_FOLLOWS => {
-                self.zone_update_x = payload.g1();
-                self.zone_update_z = payload.g1();
-                for x in self.zone_update_x..self.zone_update_x + 8 {
-                    for z in self.zone_update_z..self.zone_update_z + 8 {
-                        if (0..BuildArea::SIZE).contains(&x)
-                            && (0..BuildArea::SIZE).contains(&z)
-                            && self.ground_obj[self.minusedlevel as usize][x as usize][z as usize]
-                                .take()
-                                .is_some()
-                        {
-                            self.show_object(x, z);
-                        }
-                    }
-                }
-                self.ptype = -1;
-            }
-            x if x == ServerProt289::UPDATE_ZONE_PARTIAL_ENCLOSED => {
-                self.zone_update_x = payload.g1();
-                self.zone_update_z = payload.g1();
-                let end = self.inbound_end(payload);
-                while payload.pos < end {
-                    let opcode = payload.g1();
-                    self.zone_packet_289(payload, opcode, end);
-                }
-                self.ptype = -1;
-            }
-            // Region rebuild g2/g2 (client.java:2999-3022).
-            x if x == ServerProt289::REBUILD_NORMAL => {
-                self.apply_rebuild_normal(payload);
-                publication = R289Publication::ALL;
-                self.ptype = -1;
-            }
 
             // IF_SETTEXT: g2 + newline string (client.java:2638-2646).
             x if x == ServerProt289::IF_SETTEXT => {
@@ -8294,29 +8271,6 @@ impl Client {
         }
     }
 
-    /// Translate the R289 zone protocol IDs before using the shared decoder.
-    /// The field widths are identical to the corresponding source-defined
-    /// 274 operations; unknown inner IDs consume the remainder of the outer
-    /// frame so they cannot desynchronise the next top-level packet.
-    fn zone_packet_289(&mut self, buf: &mut Packet, opcode: i32, end: usize) {
-        let mapped = match opcode {
-            ServerProt289::ZONE_LOC_MERGE => ServerProt::P_LOCMERGE,
-            ServerProt289::ZONE_LOC_ANIM => ServerProt::LOC_ANIM,
-            ServerProt289::ZONE_OBJ_DEL => ServerProt::OBJ_DEL,
-            ServerProt289::ZONE_OBJ_REVEAL => ServerProt::OBJ_REVEAL,
-            ServerProt289::ZONE_LOC_ADD_CHANGE => ServerProt::LOC_ADD_CHANGE,
-            ServerProt289::ZONE_MAP_PROJANIM => ServerProt::MAP_PROJANIM,
-            ServerProt289::ZONE_LOC_DEL => ServerProt::LOC_DEL,
-            ServerProt289::ZONE_OBJ_COUNT => ServerProt::OBJ_COUNT,
-            ServerProt289::ZONE_MAP_ANIM => ServerProt::MAP_ANIM,
-            ServerProt289::ZONE_OBJ_ADD => ServerProt::OBJ_ADD,
-            _ => {
-                buf.pos = end;
-                return;
-            }
-        };
-        self.zone_packet(buf, mapped);
-    }
 
     /// `zonePacket(buf, opcode)` from client-ts: reads the 8-tile zone
     /// position byte and the TS field widths for each opcode, then applies
@@ -10394,6 +10348,7 @@ impl Client {
     }
 
     pub(crate) fn show_object(&mut self, x: i32, z: i32) {
+        let revision = self.revision();
         let level = self.minusedlevel as usize;
         if self.ground_obj[level][x as usize][z as usize].is_none() {
             self.world.del_obj(self.minusedlevel, x, z);
@@ -10418,7 +10373,13 @@ impl Client {
                 let typ = self.cache.obj(id as usize);
                 let mut cost = typ.cost;
                 if typ.stackable {
-                    cost *= count + 1;
+                    if revision == ClientRevision::R289 {
+                        // Java int arithmetic; valid piles must not panic after
+                        // a staged zone frame has begun applying.
+                        cost = cost.wrapping_mul(count.wrapping_add(1));
+                    } else {
+                        cost *= count + 1;
+                    }
                 }
                 if cost > top_cost {
                     top_cost = cost;

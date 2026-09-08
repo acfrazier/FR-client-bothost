@@ -11,6 +11,10 @@ fc5516c. Required final Grok4.6 re-review t_f4e2ad64: OFFLINE ACCEPTED
 (bounded) HEAD fc5516c. See docs/revision-289/branch-final-review.md.
 Whole client / live is not accepted.
 
+Current cleanup checkpoint: D accepted at 5f5148b on t_115f2843 by actual
+Grok4.5. E implementation t_3aa4481e is ready for same-card review (see
+cleanup-e-report.md and the final section below). F-H remain root-owned.
+
 Primary source pin and supporting host evidence are named in plan.md and
 host-script-evidence.md. The live 289 server/cache pairing is unverified.
 Only this checkout may be edited or built by workers.
@@ -514,3 +518,29 @@ target/cleanup-d-all-features.log. No test result implies live compatibility.
 Next: same-card reviewer=reviewer, then root decides E-H. Authentic cache/server
 pairing, live RSA/ISAAC/presentation and required final whole-branch Grok4.6
 remain root gates. No host/server/live or renderer ownership changes.
+
+## Cleanup E implementation (t_3aa4481e)
+
+Accepted D foundation: 5f5148b (t_115f2843, actual Grok4.5 approved).
+E stages all eleven primary zone operations in direct and enclosed paths;
+entire enclosed frames validate before origin/effects/publication. Adds
+area-synth91, full-zone pending-loc expiry, primary LOC_ANIM bounds/heights,
+typed rebuild application and coalesced scene/player merge publication.
+R274 and rendering/cache ownership remain intact. Independent production
+fixtures and source anchors: cleanup-e-report.md. E is not yet accepted;
+same-card reviewer=reviewer is next.
+
+Final verification: zones8, full native workspace and workspace all-features
+PASS (including actors13, stage1 46, stage2 42, stage3 23, server_packets19,
+legacy zone45 and client-play4). All-feature check, new-file rustfmt,
+contract verifier256/82/50 and diff check PASS. Exact commands and failed
+TDD/early stage1 runs are preserved in cleanup-e-report.md; passing logs:
+target/cleanup-e-workspace-final.log and target/cleanup-e-all-features-final.log.
+Earlier native run timed out at180s; earlier all-features run had transient
+stage1 sync/welcome failures, both passing in final full runs without timing
+test edits. Offline gates do not establish live compatibility.
+
+Next: same-card Grok4.5 review of E; root then decides F-H. Authentic
+cache/server pairing, live RSA/ISAAC/presentation and final whole-branch
+Grok4.6 remain required. Hotspot client.rs remains serialized. No push,
+merge, remote/live, host/server changes or F-H implementation.
