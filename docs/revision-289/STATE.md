@@ -3,10 +3,10 @@
 Authorized 2026-09-07. Prepared branch codex/revision-289-client, base
 4f2048ea10f75b3bb92ff45610b35ba7313b0308 (published r274-bh-modular).
 Current plan: plan.md. Required Grok4.6 whole-branch review t_77d35bfb
-REJECTED HEAD 0030afb. See docs/revision-289/branch-review.md. Correction
-t_b04f979b (this card) addresses the two blocking items; required final
-Grok4.6 re-review after same-card approval is t_615aa9ac (parent=
-t_b04f979b). Preserve the t_77d35bfb rejection receipt.
+REJECTED HEAD 0030afb — preserve docs/revision-289/branch-review.md.
+Correction t_b04f979b approved 0e3b6a7. Required Grok4.6 re-review
+t_615aa9ac: OFFLINE ACCEPTED (bounded) HEAD 0e3b6a7. See
+docs/revision-289/branch-rereview.md. Whole client / live is not accepted.
 
 Primary source pin and supporting host evidence are named in plan.md and
 host-script-evidence.md. The live 289 server/cache pairing is unverified.
@@ -42,11 +42,16 @@ Serialized same-workspace dependency chain:
   — REJECTED on 0030afb. Model grok-4.6 / xai-oauth. Deliverable
   docs/revision-289/branch-review.md. **Preserve rejection.**
 - t_b04f979b (implementer): 274 chat-effect revision-gate + opcode 65 NPC
-  field contract / remaining mask goldens — implementation complete; awaiting
-  same-card reviewer (Grok4.5). Not branch acceptance.
+  field contract / remaining mask goldens — DONE (approved 0e3b6a7, Grok4.5
+  artifact lens). Not branch acceptance.
 - t_615aa9ac (branchreviewer): required final Grok4.6 whole-branch re-review
-  after t_b04f979b same-card approval. Parent=t_b04f979b. Does not replace
-  t_77d35bfb rejection history.
+  — OFFLINE ACCEPTED (bounded) on 0e3b6a7. Model grok-4.6 / xai-oauth.
+  Deliverable docs/revision-289/branch-rereview.md. Does not replace
+  t_77d35bfb rejection history. Not whole-client/live acceptance.
+- t_57ec82eb (implementer): post-review workspace GPU gate diagnosis + minimal
+  fix (main_modal chrome dirty + scene test lock). See
+  docs/revision-289/gpu-workspace-gate-diagnosis.md. Production GPU fix needs
+  whole-branch re-review; not live acceptance.
 
 Design boundary: retain 274 public constants and default construction; add
 explicit revision selection at the client/session boundary. Source contract
@@ -152,7 +157,7 @@ ISAAC +50 offset is offline-proven as a seed transform only, not encrypted-login
 correspondence. Synthetic scene_state=2 is not claimed. No pushes, merges,
 remotes, submodule, host, live-server, or other-checkout work.
 
-## Correction t_b04f979b — implementation (awaiting same-card review)
+## Correction t_b04f979b — accepted 0e3b6a7 (same-card Grok4.5)
 
 ### Changes
 
@@ -188,8 +193,75 @@ remotes, submodule, host, live-server, or other-checkout work.
 - `python3 tools/verify_revision_289_contract.py` → PASS 256 inbound, 82
   outbound, 50 fixtures
 
-### Next
+Same-card reviewer approved 0e3b6a7 (artifact lens). Not branch acceptance.
 
-1. Same-card independent Grok4.5 review on t_b04f979b (reviewer profile).
-2. After approval: t_615aa9ac Grok4.6 whole-branch re-review (not this card).
-3. Do not treat t_b04f979b approval as branch acceptance.
+## Whole-branch re-review (t_615aa9ac) — OFFLINE ACCEPTED (bounded) 0e3b6a7
+
+Independent Grok4.6 / xai-oauth. Exact HEAD
+0e3b6a719c25b134473b94023807d3c3f90e8d68 vs prepared 716f79c.
+Deliverable: docs/revision-289/branch-rereview.md.
+t_77d35bfb rejection of 0030afb is preserved.
+
+Closed blockers:
+
+1. 274 preserve: handle_chat_input revision-gates MESSAGE_PUBLIC effects.
+   Default Client::new sequential wave:=1 / scroll:=2. R289 else-if five
+   effects retained. Explicit default_revision production test.
+2. protocol-289.json opcode 65 promoted to npc_info with method187/226/124/222
+   fields; remaining NPC/player mask goldens; player 188 0x200 exact-move
+   gloss; HITMARK timer stays +400.
+
+Independent tests (this run, CARGO_TARGET_DIR this checkout):
+
+- `python3 tools/verify_revision_289_contract.py` → PASS 256/82/50
+- `cargo test -p client --test revision_289_stage3` → 23 passed
+- `cargo test -p client --test revision_289_stage2` → 30 passed
+- `cargo test -p client --test revision_289_stage1` → 26 passed
+- `cargo test -p client --lib` → 70 passed
+- do_action 13, walk 6, prot 2, logout 7, from_shared 6, player_info 1,
+  login_rsa 2, gens 12, server_packets 19, freeze_last_scene 1
+- `cargo check -p client -p client-play` → ok
+
+Whole client / live acceptance is **not** complete. Missing live
+prerequisites remain external:
+
+- Authoritative 289 game-cache pairing, checksums, and real asset/render proof
+- Approved live endpoint, credentials, test-account authorization
+- Live RSA/ISAAC modulus/endpoint compatibility
+- Tutorial / guardian / random-event policy (explicitly not impl this milestone)
+
+ISAAC +50 offset is offline-proven as a seed transform only, not encrypted-login
+correspondence. Synthetic scene_state=2 is not claimed. No follow-up
+implementer/luna cards. No pushes, merges, remotes, submodule, host,
+live-server, or other-checkout work.
+
+## Post-review workspace GPU gate (t_57ec82eb)
+
+Orch t_95bef768 gate failed workspace GPU tests on accepted HEAD 0e3b6a7.
+Diagnosis + minimal production fix: see
+`docs/revision-289/gpu-workspace-gate-diagnosis.md` (this card).
+
+Root causes (not 289 protocol regressions; GPU paths were bit-identical to
+prepared 716f79c before this fix):
+
+1. `GpuBackend::chrome` omitted `main_modal_id` / `main_overlay_id` from
+   atlas_dirty — post-warmup main modal left chrome_upload_pending false →
+   0 overlay px on four iface_model GPU tests (deterministic).
+2. Shared process `GpuAssets` model texture array raced under parallel
+   `render_scene_for_test` → intermittent gpu_texture clamps/lowmem fails.
+
+Minimal fix in `crates/client/src/render/backend/gpu.rs`: main_modal/overlay
+dirty gate + `GPU_SCENE_TEST_LOCK` around scene test upload/render/readback.
+scene_state==1 freeze ownership unchanged.
+
+Post-fix verification (CARGO_TARGET_DIR this checkout):
+
+- `cargo test -p client --test iface_model -- --test-threads=1` → 9 passed
+- `cargo test -p client --test gpu_texture -- --test-threads=16` ×5 → 10/10
+- `cargo test --workspace --no-fail-fast` ×2 → 0 FAILED
+- revision_289 stage1/2/3 → 26+30+23; `--lib` 70; verifier PASS 256/82/50
+- `cargo check -p client -p client-play` → ok
+
+Whole-branch re-review required for this production GPU fix (does not
+replace t_615aa9ac bounded offline receipt; not live acceptance).
+Preserve branch-review.md rejection and branch-rereview.md bounded accept.

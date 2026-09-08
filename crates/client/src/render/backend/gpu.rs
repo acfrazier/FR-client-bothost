@@ -102,6 +102,13 @@ static FAILURE_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 /// keeps it at 0.
 static GPU_BACKEND_TRIED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+/// Serializes shared model-texture-array upload + scene render + readback.
+/// Backends share one process-wide `GpuAssets` array; concurrent
+/// `render_scene_for_test` callers otherwise interleave ensure/upload with
+/// another test's draw and read back empty/wrong layers (workspace flake:
+/// clamps green=0, lowmem seen[false;4]).
+static GPU_SCENE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 /// How many times the shared context built its shader modules / pipelines
 /// (task 6): the `OnceLock` means the first `GpuContext::new` builds them
 /// and a second `GpuBackend::try_new` reuses them, so two heads pay one
@@ -958,6 +965,9 @@ impl GpuBackend {
     /// production frame never reads back — `finish` hands the texture.
     #[doc(hidden)]
     pub fn render_scene_for_test(&mut self, mesh: SceneMesh, pix: &Pix3DDraw) -> Vec<i32> {
+        let _guard = GPU_SCENE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         self.context
             .assets
             .lock()
@@ -1342,7 +1352,15 @@ impl RenderBackend for GpuBackend {
                 atlas_dirty = true;
             }
             // Modal open: cpu may set redraw via animate_interface each frame.
-            if core.side_modal_id != -1 || core.chat_modal_id != -1 {
+            // main_modal / main_overlay draw into area_game and are keyed into
+            // the chrome atlas via overlay_coverage in finish — same force as
+            // side/chat, otherwise a post-warmup main modal never re-uploads
+            // and the GPU frame keeps the empty scene hole (0 overlay px).
+            if core.side_modal_id != -1
+                || core.chat_modal_id != -1
+                || core.main_modal_id != -1
+                || core.main_overlay_id != -1
+            {
                 atlas_dirty = true;
             }
             if core.selected_area == 2
