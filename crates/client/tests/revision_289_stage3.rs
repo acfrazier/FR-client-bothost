@@ -8,9 +8,11 @@ use client::client::{
     Client, ClientConfig, ClientNpc, ClientPlayer, ClientRevision, MiniMenuAction,
 };
 use client::io::{
-    load_offline_config_seam, map_client_prot, synthetic_jag, CacheArchiveKind, CacheManifest289,
-    ClientProt, ClientProt289, ClientStream, Isaac, ServerProt289, CACHE_JAG_NAMES_289,
+    load_offline_config_seam, map_client_prot, write_synthetic_cache_dir, CacheArchiveKind,
+    CacheManifest289, ClientProt, ClientProt289, ClientStream, Isaac, ServerProt289,
+    CACHE_JAG_NAMES_289,
 };
+use client::render::Renderer;
 use std::io::Write;
 use std::net::TcpListener;
 use std::path::Path;
@@ -289,27 +291,99 @@ fn r289_if_button_and_close_modal() {
     assert_eq!(&c.out.data()[1..3], &[0x12, 0x34]);
 
     c.out.pos = 0;
-    // close_modal is private; open a modal then use production path via side effects.
-    // RESUME_PAUSEBUTTON arm:
+    // RESUME_PAUSEBUTTON production arm:
     c.menu_action[0] = MiniMenuAction::PAUSE_BUTTON;
     c.menu_param_c[0] = 5;
     c.doAction(0);
     assert_eq!(c.out.data()[0], 166, "RESUME_PAUSEBUTTON");
     assert_eq!(&c.out.data()[1..3], &[0, 5]);
+
+    // CLOSE_MODAL via production CLOSE_BUTTON → close_modal path.
+    c.out.pos = 0;
+    c.side_modal_id = 42;
+    c.main_modal_id = 7;
+    c.menu_action[0] = MiniMenuAction::CLOSE_BUTTON;
+    c.doAction(0);
+    assert_eq!(c.out.data()[0], 93, "CLOSE_MODAL");
+    assert_eq!(c.out.pos, 1, "CLOSE_MODAL length 0");
+    assert_eq!(c.side_modal_id, -1);
+    assert_eq!(c.main_modal_id, -1);
 }
 
 #[test]
 fn r289_resume_p_count_dialog_p4() {
     let mut c = client_289();
-    c.dialog_input_open = false;
-    // Production path: show_dialog_input + chat enter amount.
-    // Direct encode matching client keyboard path for count dialog.
-    c.out
-        .p1_enc(map_client_prot(ClientRevision::R289, ClientProt::RESUME_P_COUNTDIALOG).id);
-    c.out.p4(12345);
-    assert_eq!(c.out.data()[0], 180);
+    // Production keyboard path: dialog_input_open + digit keys + enter.
+    c.dialog_input_open = true;
+    c.dialog_input.clear();
+    for ch in b"12345" {
+        c.shell.apply_key(true, 0, *ch as i32);
+    }
+    c.shell.apply_key(true, 0, 10); // enter
+    c.handle_chat_input();
+    assert_eq!(c.out.data()[0], 180, "RESUME_P_COUNTDIALOG");
     assert_eq!(&c.out.data()[1..5], &12345i32.to_be_bytes());
+    assert_eq!(c.out.pos, 5);
+    assert!(!c.dialog_input_open);
     assert_eq!(ClientProt289::RESUME_P_COUNTDIALOG.length, 4);
+}
+
+#[test]
+fn r289_draw_paths_emit_289_not_274_opcodes() {
+    // Production draw.rs sites must use client_opcode remap (not bare ClientProt.id).
+    let _keep = Renderer::new(false);
+    let mut r = Renderer::new(false);
+    let mut c = client_289();
+
+    // TUT_CLICKSIDE via draw_icons (game_draw chrome path).
+    c.tut_flash_icon = 3;
+    c.active_icon = 3;
+    c.redraw_icons = true;
+    r.game_draw(&mut c);
+    assert_eq!(c.tut_flash_icon, -1);
+    assert_eq!(c.out.data()[0], 146, "TUT_CLICKSIDE 289");
+    assert_ne!(c.out.data()[0], ClientProt::TUT_CLICKSIDE.id as u8);
+    assert_eq!(c.out.data()[1], 3);
+
+    // ANTICHEAT_CYCLELOGIC6 via add_players arrival-clear (scene_state==2).
+    c.out.pos = 0;
+    c.ingame = true;
+    c.scene_state = 2;
+    c.cyclelogic6 = 122;
+    c.minimap_flag_x = 10;
+    c.minimap_flag_z = 10;
+    let mut p = ClientPlayer::at(10, 10);
+    p.x = 10 * 128 + 64;
+    p.z = 10 * 128 + 64;
+    c.local_player = Some(p);
+    r.game_draw(&mut c);
+    assert_eq!(c.out.data()[0], 255, "CYCLELOGIC6 289");
+    assert_ne!(c.out.data()[0], ClientProt::ANTICHEAT_CYCLELOGIC6.id as u8);
+    assert_eq!(c.out.data()[1], 62);
+
+    // ANTICHEAT_CYCLELOGIC1 via add_projectiles (scene path).
+    c.out.pos = 0;
+    r.cyclelogic1 = 1174;
+    r.game_draw(&mut c);
+    assert_eq!(c.out.data()[0], 130, "CYCLELOGIC1 289");
+    assert_ne!(c.out.data()[0], ClientProt::ANTICHEAT_CYCLELOGIC1.id as u8);
+
+    // ANTICHEAT_CYCLELOGIC3 via public minimap_build_buffer.
+    c.out.pos = 0;
+    r.cyclelogic3 = 112;
+    r.minimap_build_buffer(&mut c, 0);
+    assert_eq!(c.out.data()[0], 125, "CYCLELOGIC3 289");
+    assert_ne!(c.out.data()[0], ClientProt::ANTICHEAT_CYCLELOGIC3.id as u8);
+    assert_eq!(c.out.data()[1], 50);
+
+    // 274 session still emits public table ids on the same draw paths.
+    let mut r274 = Renderer::new(false);
+    let mut c274 = client_274();
+    c274.tut_flash_icon = 2;
+    c274.active_icon = 2;
+    c274.redraw_icons = true;
+    r274.game_draw(&mut c274);
+    assert_eq!(c274.out.data()[0], ClientProt::TUT_CLICKSIDE.id as u8);
 }
 
 #[test]
@@ -397,31 +471,26 @@ fn offline_config_loader_synthetic_fixture() {
         .unwrap()
         .as_nanos();
     let dir = std::env::temp_dir().join(format!("r289_stage3_cache_{stamp}"));
-    std::fs::create_dir_all(&dir).unwrap();
-    // Minimal public-safe JAG: named empty config members. Not game assets.
-    let cfg = synthetic_jag(&[
-        ("flo.dat", &[0, 0]),
-        ("npc.dat", &[0, 0]),
-        ("loc.dat", &[0, 0]),
-        ("obj.dat", &[0, 0]),
-    ]);
-    std::fs::write(dir.join("config"), &cfg).unwrap();
-    let iface = synthetic_jag(&[("data", &[0, 0, 0, 0])]);
-    std::fs::write(dir.join("interface"), &iface).unwrap();
+    // Source-shaped tiny config/interface records through production unpackers.
+    write_synthetic_cache_dir(&dir).unwrap();
 
     let load = load_offline_config_seam(&dir);
-    assert!(load.config_present && load.config_jag_ok);
-    assert!(load.interface_present && load.interface_jag_ok);
+    assert!(load.config_present && load.config_jag_ok && load.config_unpack_ok);
+    assert!(load.interface_present && load.interface_jag_ok && load.interface_unpack_ok);
+    assert_eq!(load.flo_count, 1);
+    assert_eq!(load.varp_count, 1);
+    assert_eq!(load.idk_count, 1);
+    assert_eq!(load.iface_count, 1);
 
     let man = CacheManifest289::discover_offline(
         &dir,
-        "stage3 synthetic JAG; provenance=tools/synthetic_jag; not live cache",
+        "stage3 synthetic JAG; provenance=write_synthetic_cache_dir; not live cache",
     );
     assert!(man.has(CacheArchiveKind::Config));
     assert!(man.has(CacheArchiveKind::Interface));
     assert!(!man.authentic_cache_present);
 
-    // Missing authentic cache must not claim scene readiness via Client load.
+    // Production Client::load_cache path (via new_with_revision) must bind tables.
     let mut c = Client::new_with_revision(
         ClientConfig {
             host: "127.0.0.1".into(),
@@ -432,6 +501,18 @@ fn offline_config_loader_synthetic_fixture() {
         },
         ClientRevision::R289,
     );
+    assert!(!c.error_loading, "valid synthetic config must load");
+    assert_eq!(c.cache.flos.len(), 1);
+    assert_eq!(c.cache.flos[0].colour, 0xFF_00_00);
+    assert_eq!(c.cache.varps.len(), 1);
+    assert_eq!(c.cache.varps[0].clientcode, 7);
+    assert_eq!(c.cache.idks.len(), 1);
+    assert_eq!(
+        c.ifaces.iter().filter(|s| s.is_some()).count(),
+        1,
+        "interface TYPE_RECT id=1"
+    );
+    // Missing authentic map/media cache must not claim scene readiness.
     c.ingame = true;
     c.scene_state = 1;
     let status = c.check_scene();
@@ -446,6 +527,7 @@ fn offline_config_missing_fail_closed() {
     let load = load_offline_config_seam(Path::new("/tmp/r289-missing-cache-dir-stage3"));
     assert!(!load.config_present);
     assert!(!load.config_jag_ok);
+    assert!(!load.config_unpack_ok);
 }
 
 // --- Offline native replay: receive → lifecycle → action → reset ------------

@@ -2,8 +2,10 @@
 
 Authorized 2026-09-07. Prepared branch codex/revision-289-client, base
 4f2048ea10f75b3bb92ff45610b35ba7313b0308 (published r274-bh-modular).
-Current plan: plan.md. Stage 3 (t_448637e1) implementation complete; pending
-same-card reviewer. Required final branchreviewer remains.
+Current plan: plan.md. Stage 3 (t_448637e1) rework after review round-1
+changes; pending same-card reviewer. Corrective independent full-stage3
+review t_5f3a92c0 is a prerequisite to final branchreviewer t_77d35bfb.
+Required final branchreviewer remains.
 
 Primary source pin and supporting host evidence are named in plan.md and
 host-script-evidence.md. The live 289 server/cache pairing is unverified.
@@ -12,7 +14,9 @@ Only this checkout may be edited or built by workers.
 ## Dispatch checkpoint
 
 Orchestration card: t_95bef768. Implementation stages 1–2 accepted. Corrective
-t_058241ac accepted f766c9a. Stage 3 t_448637e1 in review.
+t_058241ac accepted f766c9a. Stage 3 t_448637e1 rework after d441614 / run496
+changes_requested (preserve rejected receipt). Independent full-stage3
+corrective review: t_5f3a92c0 (must complete before t_77d35bfb).
 
 Serialized same-workspace dependency chain:
 
@@ -25,8 +29,11 @@ Serialized same-workspace dependency chain:
 - t_058241ac (implementer): full inventory exact-end + session-revision API
   — DONE (accepted f766c9a).
 - t_448637e1 (implementer): cache/config, basic actions and offline replay
-  — pending same-card reviewer.
-- t_77d35bfb (branchreviewer): required independent Grok4.6 branch verdict.
+  — rework after run496 changes_requested on d441614; pending reviewer.
+- t_5f3a92c0 (reviewer): independent Grok4.5 full-stage3 corrective verdict
+  — prerequisite to final branch review; preserve d441614/run496 reject.
+- t_77d35bfb (branchreviewer): required independent Grok4.6 branch verdict
+  — blocked on t_5f3a92c0 (and any correction children it creates).
 
 Design boundary: retain 274 public constants and default construction; add
 explicit revision selection at the client/session boundary. Source contract
@@ -55,34 +62,40 @@ Commit e8ec353 (production base cc86024). Reviewer grok-4.5 round 2 approved.
 Commit f766c9a. Strict INV_FULL end on R289; adopt_from fail-closed; private
 revision construction API.
 
-## Stage 3 checkpoint (t_448637e1) — pending review
+## Stage 3 checkpoint (t_448637e1) — rework after review
 
-Source-traced outbound action cut + offline cache seam + offline replay.
+### Rejected receipt (preserve)
 
-Production changes:
+Commit d441614 reviewed by independent Grok4.5 (run496, artifact lens):
+changes_requested. Defects:
 
-1. `ClientProt289` + `map_client_prot` (R274 identity / R289 remap, fail-closed
-   on unmapped 274 constants). IDs and payload lengths for walk, NPC, loc,
-   object, player, held, inv-button, IF_BUTTON, resume pause/count, close
-   modal, map_build, chat_setmode, no_timeout traced from primary 289
-   `client.java` `method465` / `method160` / `method206` write sequences
-   (method466=p1, method467=p2, method470=p4). Shapes match 274 for this cut;
-   opcodes differ. Public `ClientProt` 274 table unchanged.
-2. Production emit: `Client::client_opcode` routes every outbound
-   `p1_enc` / interact opcode through the session revision mapper (83 sites).
-3. Offline cache/config seam `io/cache_289.rs`: login JAG name/CRC slot layout,
-   `CacheManifest289`, `load_offline_config_seam`, `synthetic_jag` (public-safe
-   fixture builder). Explicit `authentic_cache_present=false`; missing
-   authentic cache does not claim scene/assets.
-4. Offline native replay tests: receive (logout/varp/widget/reset/inv-full) →
-   lifecycle → action emit (walk/NPC) → scene_state stays 1 without map data
-   (last-FBO freeze band preserved).
-5. Manifest outbound/cache cases appended with source anchors and provenance.
+1. draw.rs bare ClientProt.id for CYCLELOGIC6/1/3 + TUT_CLICKSIDE (274 ids on
+   R289 sessions).
+2. protocol-289.json outbound 75× length unknown while production emit live;
+   source-contract still forbade enabling unknown rows.
+
+### Rework contents (this commit)
+
+1. `Client::client_opcode` is `pub(crate)`; draw.rs four sites route through it.
+2. `protocol-289.json` outbound: all production-mapped rows have exact length +
+   ordered fields + source anchors (0 unknown); OPLOC family rows added
+   (method160). `source-contract.md` updated to match enabled emit.
+3. Offline cache/config: `synthetic_jag` outer g3 sizes exclude the six-byte
+   header; `write_synthetic_cache_dir` + tiny source-shaped flo/varp/idk +
+   interface TYPE_RECT records; `load_offline_config_seam` calls production
+   `Cache::unpack` / `IfType::unpack`; Client::new_with_revision binds tables.
+   Authentic cache pairing still external for assets/render/scene proof only.
+4. Stage3 tests: draw-path 289-vs-274 emit, CLOSE_MODAL via CLOSE_BUTTON,
+   RESUME_P_COUNT via keyboard `handle_chat_input`, production cache bind.
+
+Do not claim "every outbound site" remap without the draw coverage above;
+client interact sites + the four draw sites are the production emit surface
+for this stage cut.
 
 Exact tests (CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target):
 
-- `cargo test -p client --test revision_289_stage3` → 19 passed
-- `cargo test -p client --lib` → 69 passed (includes io::cache_289 ×4)
+- `cargo test -p client --test revision_289_stage3` → 20 passed
+- `cargo test -p client --lib` → 70 passed (includes io::cache_289 ×5)
 - `cargo test -p client --test revision_289_stage1` → 26 passed
 - `cargo test -p client --test revision_289_stage2` → 28 passed
 - `cargo test -p client --test do_action --test walk --test prot` → 13+6+2
@@ -95,11 +108,15 @@ PASS (offline):
 
 - R289 MOVE_GAMECLICK=234 / MINIMAP=236 / OPCLICK=67 with source payload shapes
 - OPNPC2=21 len2, OPLOC1=10 len6, OPHELD1=76 len6, INV_BUTTON1=44 len6,
-  IF_BUTTON=86 len2, RESUME_PAUSE=166 len2, RESUME_P_COUNT=180 len4,
-  CLOSE_MODAL=93 len0, MAP_BUILD_COMPLETE=214, NO_TIMEOUT=181
-- R274 default emit still uses public ClientProt ids (e.g. MOVE_GAMECLICK 207)
-- Offline synthetic config JAG seam; scene readiness fail-closed without maps
+  IF_BUTTON=86 len2, RESUME_PAUSE=166 len2, RESUME_P_COUNT=180 len4 (keyboard),
+  CLOSE_MODAL=93 len0 (CLOSE_BUTTON path), MAP_BUILD_COMPLETE=214, NO_TIMEOUT=181
+- Draw paths R289: TUT_CLICKSIDE=146, CYCLELOGIC6=255, CYCLELOGIC1=130,
+  CYCLELOGIC3=125 (not 274 94/188/12/52)
+- R274 default emit still uses public ClientProt ids
+- Offline synthetic config/interface through Cache::unpack + Client load_cache;
+  scene_state stays 1 without maps
 - Offline replay logout + action + inv-full + varp/widget/reset path
+- protocol-289.json outbound unknown count = 0 for mapped table
 
 BLOCKED / external (not claimed):
 
@@ -107,7 +124,5 @@ BLOCKED / external (not claimed):
 - Approved live endpoint, credentials, test-account authorization
 - Live RSA/ISAAC modulus/endpoint compatibility
 - Tutorial / guardian / random-event policy (explicitly not impl this milestone)
-- Social/event outbound rows beyond the mapped table remain unused or
-  fail-closed if an unmapped 274 constant is emitted on R289
 
 No pushes, merges, remotes, submodule, host, live-server, or other-checkout work.

@@ -1,6 +1,7 @@
 # Revision 289 source contract
 
-Status: source-grounded offline contract, pending reviewer acceptance. This is not a live compatibility claim.
+Status: source-grounded offline contract with stage-3 production-enabled outbound
+rows traced. This is not a live compatibility claim.
 
 ## Authority and provenance
 
@@ -35,23 +36,37 @@ Important encodings:
 
 ## Outbound contract
 
-The 75 outbound IDs are the complete numeric set observed at `client.java` `method465(...)` call sites. Payload lengths and field order are intentionally marked unknown where the branch-dependent writes have not yet been independently traced. This is a gate, not a guessed mapping: implementation must not treat the rows with `length: "unknown"` as production-safe.
+Outbound IDs observed at `client.java` `method465(...)` call sites (including method160/method206/method216 wrappers) are listed in `protocol-289.json`.
+
+Stage-3 production-enabled families have **source-ordered payload lengths and fields** promoted from primary write sequences (`method466`=p1, `method467`=p2, `method470`=p4) into both `protocol-289.json` and `ClientProt289`. Enabled families include:
+
+- walk: MOVE_GAMECLICK 234, MOVE_MINIMAPCLICK 236, MOVE_OPCLICK 67 (variable)
+- NPC/loc/object/player/held/inv-button ops (fixed lengths 2/4/6/8/12 as traced)
+- IF_BUTTON 86, RESUME_PAUSEBUTTON 166, RESUME_P_COUNTDIALOG 180, CLOSE_MODAL 93
+- MAP_BUILD_COMPLETE 214, NO_TIMEOUT 181, CHAT_SETMODE 161
+- draw-path anticheat/tut: CYCLELOGIC1 130, CYCLELOGIC3 125, CYCLELOGIC6 255, TUT_CLICKSIDE 146
+- remaining mapped table rows used by production emit (events, social, design, idle)
+
+Rows still without an independent field trace must not be newly enabled. Production emit routes through `Client::client_opcode` / `map_client_prot` (client interact sites and render/draw sites for the four previously bare opcodes). Unmapped 274 constants fail closed on R289. Length `"unknown"` is no longer acceptable for any production-enabled row.
 
 ## Existing Rust mapping
 
 - `crates/client/src/io/packet.rs`: primitive g1/g2/gsmart/bit/RSA/ISAAC operations; keep as low-level primitives and add bounded error paths before production use.
 - `crates/client/src/io/server_prot.rs` and `client_prot.rs`: current 274 tables; preserve public constants/default construction and add an explicit revision-selected profile.
-- `crates/client/src/client/client.rs`, `game_shell.rs`: production lifecycle and packet dispatch seams to bind to the revision profile.
+- `crates/client/src/io/client_prot_289.rs`: additive 289 outbound table + `map_client_prot`.
+- `crates/client/src/io/cache_289.rs`: offline synthetic config/interface fixtures through production `Cache::unpack` / `IfType::unpack`; JAG outer g3 sizes exclude the six-byte header.
+- `crates/client/src/client/client.rs`, `game_shell.rs`: production lifecycle and packet dispatch seams; `client_opcode` selects revision outbound ids.
+- `crates/client/src/render/draw.rs`: draw-path outbound emits also use `client_opcode`.
 - `crates/client/src/login_rsa.rs`: existing RSA boundary; compare byte-for-byte against the 289 login sequence before changing it.
 - `crates/client/src/io/client_stream.rs`: transport/read buffering; frame availability must be checked before dispatch.
 - `crates/client/src/core/world.rs` and render modules: preserve existing scene ownership and `scene_state == 1` last-FBO freeze.
 
 ## Explicit unknowns and gates
 
-1. No authoritative 289 game-cache manifest or server/cache pairing is available.
+1. No authoritative 289 game-cache manifest or server/cache pairing is available (authentic assets/render/scene proof gated). Offline synthetic config/interface records through production loaders are authorized and do not substitute for authentic pairing.
 2. No approved live endpoint or credentials/test authorization is available.
-3. Complete outbound field/length tracing remains required before enabling actions.
-4. Exact actor local-player index, region base/plane timing, widget IDs and config/object definitions require primary-source tracing plus cache evidence.
+3. Outbound production-enabled families now carry traced lengths/fields; further social/event edge cases beyond the mapped table remain fail-closed if unmapped.
+4. Exact actor local-player index, region base/plane timing, widget IDs and full config/object definitions require primary-source tracing plus authentic cache evidence for live proof.
 5. Live RSA/ISAAC compatibility still needs a capture or authorized endpoint, but the source-derived ordered plaintext structure is independently checked offline; compilation is not proof.
 
-The accompanying fixtures are tiny public-safe byte cases with independently derived expected results. Each packet row separates opcode/frame bytes from payload bytes, records declared length versus actual cursor consumption, and uses structured pending/dispatch/error results. The actor case is a valid two-byte zero bitstream: local update bit 0, other count 0, no new-player records, no masks, then byte alignment. The login row is a credential-free structural oracle rather than packet bytes. They are contract checks, not claims that the current Rust decoder passes them.
+The accompanying fixtures are tiny public-safe byte cases with independently derived expected results. Each packet row separates opcode/frame bytes from payload bytes, records declared length versus actual cursor consumption, and uses structured pending/dispatch/error results. The actor case is a valid two-byte zero bitstream: local update bit 0, other count 0, no new-player records, no masks, then byte alignment. The login row is a credential-free structural oracle rather than packet bytes. Synthetic config/interface JAGs exercise production unpackers only; they are not live world definitions.

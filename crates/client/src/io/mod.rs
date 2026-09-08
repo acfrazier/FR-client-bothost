@@ -20,6 +20,7 @@ pub mod server_prot;
 pub use server_prot::{ServerProt, SERVER_PROT_SIZES};
 pub mod cache_289;
 pub use cache_289::{
-    load_offline_config_seam, synthetic_jag, CacheArchiveKind, CacheManifest289, OfflineCacheLoad,
+    load_offline_config_seam, synthetic_config_members, synthetic_interface_data, synthetic_jag,
+    write_synthetic_cache_dir, CacheArchiveKind, CacheManifest289, OfflineCacheLoad,
     CACHE_JAG_NAMES_289,
 };

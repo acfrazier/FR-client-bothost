@@ -2286,7 +2286,9 @@ impl Client {
 
     /// Revision-selected outbound opcode id. R274 keeps public ClientProt
     /// constants; R289 maps through ClientProt289 (fail-closed on unmapped).
-    fn client_opcode(&self, p: crate::io::ClientProt) -> i32 {
+    /// `pub(crate)` so render/draw paths share the same emit remap as
+    /// `client.rs` interact sites (stage-3 production gate).
+    pub(crate) fn client_opcode(&self, p: crate::io::ClientProt) -> i32 {
         crate::io::map_client_prot(self.revision, p).id
     }
 

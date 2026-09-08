@@ -708,7 +708,8 @@ impl Renderer {
                 client.cyclelogic6 += 1;
                 if client.cyclelogic6 > 122 {
                     client.cyclelogic6 = 0;
-                    client.out.p1_enc(ClientProt::ANTICHEAT_CYCLELOGIC6.id);
+                    client.out
+                        .p1_enc(client.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC6));
                     client.out.p1(62);
                 }
             }
@@ -937,7 +938,9 @@ impl Renderer {
         if self.cyclelogic1 > 1174 {
             self.cyclelogic1 = 0;
 
-            client.out.p1_enc(ClientProt::ANTICHEAT_CYCLELOGIC1.id);
+            client
+                .out
+                .p1_enc(client.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC1));
             client.out.p1(0);
             let start = client.out.pos;
             if (random_float() * 2.0) as i32 == 0 {
@@ -3295,7 +3298,9 @@ impl Renderer {
     pub(crate) fn draw_icons(&mut self, client: &mut Client) {
         if client.tut_flash_icon != -1 && client.tut_flash_icon == client.active_icon {
             client.tut_flash_icon = -1;
-            client.out.p1_enc(ClientProt::TUT_CLICKSIDE.id);
+            client
+                .out
+                .p1_enc(client.client_opcode(ClientProt::TUT_CLICKSIDE));
             client.out.p1(client.active_icon);
         }
         if let Some(area) = self.area_backhmid1.as_mut() {
@@ -4175,7 +4180,9 @@ impl Renderer {
         if self.cyclelogic3 > 112 {
             self.cyclelogic3 = 0;
 
-            client.out.p1_enc(ClientProt::ANTICHEAT_CYCLELOGIC3.id);
+            client
+                .out
+                .p1_enc(client.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC3));
             client.out.p1(50);
         }
     }

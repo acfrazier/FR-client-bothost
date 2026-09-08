@@ -3367,904 +3367,1245 @@
   ],
   "outbound": [
     {
-      "name": "client_opcode_004",
+      "name": "OPOBJ2",
       "id": 4,
-      "length": "unknown",
+      "length": 6,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 sceneX",
+        "p2 sceneZ",
+        "p2 objId"
       ],
       "source_anchors": [
-        "client.java:method465(4) call sites"
+        "client.java method216 method465(4) + three method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_013",
+      "name": "OPLOC1",
+      "id": 10,
+      "length": 6,
+      "fields": [
+        "p2 sceneX",
+        "p2 sceneZ",
+        "p2 locId"
+      ],
+      "source_anchors": [
+        "client.java method160 method465(10) + three method467"
+      ],
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
+    },
+    {
+      "name": "OPPLAYER3",
       "id": 13,
-      "length": "unknown",
+      "length": 2,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 playerIndex"
       ],
       "source_anchors": [
-        "client.java:method465(13) call sites"
+        "client.java method216 method465(13) + method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_016",
+      "name": "OPPLAYERU",
       "id": 16,
-      "length": "unknown",
+      "length": 8,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 playerIndex",
+        "p2 useObj",
+        "p2 useSlot",
+        "p2 useCom"
       ],
       "source_anchors": [
-        "client.java:method465(16) call sites"
+        "client.java method216 method465(16) + four method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_021",
+      "name": "OPNPC2",
       "id": 21,
-      "length": "unknown",
+      "length": 2,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 npcIndex"
       ],
       "source_anchors": [
-        "client.java:method465(21) call sites"
+        "client.java method216 method465(21) + method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_022",
+      "name": "OPOBJ5",
       "id": 22,
-      "length": "unknown",
+      "length": 6,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 sceneX",
+        "p2 sceneZ",
+        "p2 objId"
       ],
       "source_anchors": [
-        "client.java:method465(22) call sites"
+        "client.java method216 method465(22) + three method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_027",
+      "name": "IDK_SAVEDESIGN",
       "id": 27,
-      "length": "unknown",
+      "length": 13,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p1 gender",
+        "p1 kit[7]",
+        "p1 colour[5]"
       ],
       "source_anchors": [
-        "client.java:method465(27) call sites"
+        "client.java design accept method465(27)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_030",
+      "name": "OPNPC4",
       "id": 30,
-      "length": "unknown",
+      "length": 2,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 npcIndex"
       ],
       "source_anchors": [
-        "client.java:method465(30) call sites"
+        "client.java method216 method465(30) + method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_034",
+      "name": "CLIENT_CHEAT",
       "id": 34,
-      "length": "unknown",
+      "length": -1,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p1 size",
+        "pjstr command"
       ],
       "source_anchors": [
-        "client.java:method465(34) call sites"
+        "client.java chat :: branch method465(34)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_040",
+      "name": "OPHELD3",
       "id": 40,
-      "length": "unknown",
+      "length": 6,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 obj",
+        "p2 slot",
+        "p2 com"
       ],
       "source_anchors": [
-        "client.java:method465(40) call sites"
+        "client.java method216 method465(40) + three method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_044",
+      "name": "INV_BUTTON1",
       "id": 44,
-      "length": "unknown",
+      "length": 6,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 obj",
+        "p2 slot",
+        "p2 com"
       ],
       "source_anchors": [
-        "client.java:method465(44) call sites"
+        "client.java method216 method465(44) + three method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_046",
+      "name": "OPLOC2",
+      "id": 45,
+      "length": 6,
+      "fields": [
+        "p2 sceneX",
+        "p2 sceneZ",
+        "p2 locId"
+      ],
+      "source_anchors": [
+        "client.java method160 method465(45) + three method467"
+      ],
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
+    },
+    {
+      "name": "ANTICHEAT_OPLOGIC5",
       "id": 46,
-      "length": "unknown",
+      "length": 1,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p1 pad"
       ],
       "source_anchors": [
-        "client.java:method465(46) call sites"
+        "client.java method465(46)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_049",
+      "name": "ANTICHEAT_OPLOGIC4",
       "id": 49,
-      "length": "unknown",
+      "length": 1,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p1 pad"
       ],
       "source_anchors": [
-        "client.java:method465(49) call sites"
+        "client.java method465(49)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_051",
+      "name": "OPPLAYER2",
       "id": 51,
-      "length": "unknown",
+      "length": 2,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 playerIndex"
       ],
       "source_anchors": [
-        "client.java:method465(51) call sites"
+        "client.java method216 method465(51) + method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_055",
+      "name": "OPLOC4",
+      "id": 53,
+      "length": 6,
+      "fields": [
+        "p2 sceneX",
+        "p2 sceneZ",
+        "p2 locId"
+      ],
+      "source_anchors": [
+        "client.java method160 method465(53) + three method467"
+      ],
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
+    },
+    {
+      "name": "OPOBJU",
       "id": 55,
-      "length": "unknown",
+      "length": 12,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 sceneX",
+        "p2 sceneZ",
+        "p2 objId",
+        "p2 useObj",
+        "p2 useSlot",
+        "p2 useCom"
       ],
       "source_anchors": [
-        "client.java:method465(55) call sites"
+        "client.java method216 method465(55)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_067",
+      "name": "MOVE_OPCLICK",
       "id": 67,
-      "length": "unknown",
+      "length": -1,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p1 size",
+        "p1 ctrl",
+        "p2 absX",
+        "p2 absZ",
+        "step deltas"
       ],
       "source_anchors": [
-        "client.java:method465(67) call sites"
+        "client.java method206 method465(67)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_069",
+      "name": "OPPLAYER5",
       "id": 69,
-      "length": "unknown",
+      "length": 2,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 playerIndex"
       ],
       "source_anchors": [
-        "client.java:method465(69) call sites"
+        "client.java method216 method465(69) + method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_073",
+      "name": "ANTICHEAT_OPLOGIC6",
       "id": 73,
-      "length": "unknown",
+      "length": 2,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 pad"
       ],
       "source_anchors": [
-        "client.java:method465(73) call sites"
+        "client.java method465(73)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_076",
+      "name": "OPHELD1",
       "id": 76,
-      "length": "unknown",
+      "length": 6,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 obj",
+        "p2 slot",
+        "p2 com"
       ],
       "source_anchors": [
-        "client.java:method465(76) call sites"
+        "client.java method216 method465(76) + three method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_079",
+      "name": "OPHELD5",
       "id": 79,
-      "length": "unknown",
+      "length": 6,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 obj",
+        "p2 slot",
+        "p2 com"
       ],
       "source_anchors": [
-        "client.java:method465(79) call sites"
+        "client.java method216 method465(79) + three method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_081",
+      "name": "ANTICHEAT_OPLOGIC2",
       "id": 81,
-      "length": "unknown",
+      "length": 2,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 pad"
       ],
       "source_anchors": [
-        "client.java:method465(81) call sites"
+        "client.java method465(81)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_085",
+      "name": "ANTICHEAT_CYCLELOGIC5",
       "id": 85,
-      "length": "unknown",
-      "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
-      ],
+      "length": 0,
+      "fields": [],
       "source_anchors": [
-        "client.java:method465(85) call sites"
+        "client.java method465(85)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_086",
+      "name": "IF_BUTTON",
       "id": 86,
-      "length": "unknown",
+      "length": 2,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 componentId"
       ],
       "source_anchors": [
-        "client.java:method465(86) call sites"
+        "client.java method465(86) + method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_088",
+      "name": "ANTICHEAT_OPLOGIC9",
       "id": 88,
-      "length": "unknown",
+      "length": 3,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p3 pad"
       ],
       "source_anchors": [
-        "client.java:method465(88) call sites"
+        "client.java method465(88)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_093",
+      "name": "CLOSE_MODAL",
       "id": 93,
-      "length": "unknown",
-      "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
-      ],
+      "length": 0,
+      "fields": [],
       "source_anchors": [
-        "client.java:method465(93) call sites"
+        "client.java closeModal method465(93)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_094",
+      "name": "SEND_SNAPSHOT",
       "id": 94,
-      "length": "unknown",
+      "length": 10,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2*5 snapshot fields"
       ],
       "source_anchors": [
-        "client.java:method465(94) call sites"
+        "client.java method465(94)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_097",
+      "name": "OPOBJ1",
       "id": 97,
-      "length": "unknown",
+      "length": 6,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 sceneX",
+        "p2 sceneZ",
+        "p2 objId"
       ],
       "source_anchors": [
-        "client.java:method465(97) call sites"
+        "client.java method216 method465(97) + three method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_107",
+      "name": "MESSAGE_PRIVATE",
       "id": 107,
-      "length": "unknown",
+      "length": -1,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p1 size",
+        "p8 target",
+        "wordpacked text"
       ],
       "source_anchors": [
-        "client.java:method465(107) call sites"
+        "client.java social PM method465(107)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_108",
+      "name": "OPNPCT",
       "id": 108,
-      "length": "unknown",
+      "length": 4,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 npcIndex",
+        "p2 spell"
       ],
       "source_anchors": [
-        "client.java:method465(108) call sites"
+        "client.java method216 method465(108)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_110",
+      "name": "OPOBJ3",
       "id": 110,
-      "length": "unknown",
+      "length": 6,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 sceneX",
+        "p2 sceneZ",
+        "p2 objId"
       ],
       "source_anchors": [
-        "client.java:method465(110) call sites"
+        "client.java method216 method465(110) + three method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_111",
+      "name": "INV_BUTTON2",
       "id": 111,
-      "length": "unknown",
+      "length": 6,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 obj",
+        "p2 slot",
+        "p2 com"
       ],
       "source_anchors": [
-        "client.java:method465(111) call sites"
+        "client.java method216 method465(111) + three method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_112",
+      "name": "OPHELDT",
       "id": 112,
-      "length": "unknown",
+      "length": 8,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 obj",
+        "p2 slot",
+        "p2 com",
+        "p2 spell"
       ],
       "source_anchors": [
-        "client.java:method465(112) call sites"
+        "client.java method216 method465(112)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_122",
+      "name": "ANTICHEAT_OPLOGIC3",
       "id": 122,
-      "length": "unknown",
+      "length": 4,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p4 pad"
       ],
       "source_anchors": [
-        "client.java:method465(122) call sites"
+        "client.java method465(122)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_124",
+      "name": "INV_BUTTON3",
       "id": 124,
-      "length": "unknown",
+      "length": 6,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 obj",
+        "p2 slot",
+        "p2 com"
       ],
       "source_anchors": [
-        "client.java:method465(124) call sites"
+        "client.java method216 method465(124) + three method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_125",
+      "name": "ANTICHEAT_CYCLELOGIC3",
       "id": 125,
-      "length": "unknown",
+      "length": 1,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p1 pad"
       ],
       "source_anchors": [
-        "client.java:method465(125) call sites"
+        "client.java minimap cycle method465(125)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_130",
+      "name": "OPLOC5",
+      "id": 126,
+      "length": 6,
+      "fields": [
+        "p2 sceneX",
+        "p2 sceneZ",
+        "p2 locId"
+      ],
+      "source_anchors": [
+        "client.java method160 method465(126) + three method467"
+      ],
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
+    },
+    {
+      "name": "ANTICHEAT_CYCLELOGIC1",
       "id": 130,
-      "length": "unknown",
+      "length": -1,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p1 size",
+        "variable random blob"
       ],
       "source_anchors": [
-        "client.java:method465(130) call sites"
+        "client.java addProjectiles method465(130)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_133",
+      "name": "ANTICHEAT_OPLOGIC7",
       "id": 133,
-      "length": "unknown",
+      "length": 4,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p4 pad"
       ],
       "source_anchors": [
-        "client.java:method465(133) call sites"
+        "client.java method465(133)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_137",
+      "name": "ANTICHEAT_CYCLELOGIC4",
       "id": 137,
-      "length": "unknown",
+      "length": 1,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p1 pad"
       ],
       "source_anchors": [
-        "client.java:method465(137) call sites"
+        "client.java method465(137)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_138",
+      "name": "OPPLAYERT",
       "id": 138,
-      "length": "unknown",
+      "length": 4,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 playerIndex",
+        "p2 spell"
       ],
       "source_anchors": [
-        "client.java:method465(138) call sites"
+        "client.java method216 method465(138)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_145",
+      "name": "IDLE_TIMER",
       "id": 145,
-      "length": "unknown",
-      "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
-      ],
+      "length": 0,
+      "fields": [],
       "source_anchors": [
-        "client.java:method465(145) call sites"
+        "client.java method465(145)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_146",
+      "name": "TUT_CLICKSIDE",
       "id": 146,
-      "length": "unknown",
+      "length": 1,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p1 tab"
       ],
       "source_anchors": [
-        "client.java:method465(146) call sites"
+        "client.java drawIcons method465(146)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_147",
+      "name": "OPOBJ4",
       "id": 147,
-      "length": "unknown",
+      "length": 6,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 sceneX",
+        "p2 sceneZ",
+        "p2 objId"
       ],
       "source_anchors": [
-        "client.java:method465(147) call sites"
+        "client.java method216 method465(147) + three method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_149",
+      "name": "EVENT_APPLET_FOCUS",
       "id": 149,
-      "length": "unknown",
+      "length": 1,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p1 focused"
       ],
       "source_anchors": [
-        "client.java:method465(149) call sites"
+        "client.java method465(149)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_154",
+      "name": "ANTICHEAT_CYCLELOGIC2",
       "id": 154,
-      "length": "unknown",
+      "length": -1,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p1 size",
+        "variable random blob"
       ],
       "source_anchors": [
-        "client.java:method465(154) call sites"
+        "client.java method465(154)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_156",
+      "name": "MESSAGE_PUBLIC",
       "id": 156,
-      "length": "unknown",
+      "length": -1,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p1 size",
+        "p1 colour",
+        "p1 effect",
+        "wordpacked text"
       ],
       "source_anchors": [
-        "client.java:method465(156) call sites"
+        "client.java chat method465(156)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_160",
+      "name": "OPNPCU",
       "id": 160,
-      "length": "unknown",
+      "length": 8,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 npcIndex",
+        "p2 useObj",
+        "p2 useSlot",
+        "p2 useCom"
       ],
       "source_anchors": [
-        "client.java:method465(160) call sites"
+        "client.java method216 method465(160)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_161",
+      "name": "CHAT_SETMODE",
       "id": 161,
-      "length": "unknown",
+      "length": 3,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p1 public",
+        "p1 private",
+        "p1 trade"
       ],
       "source_anchors": [
-        "client.java:method465(161) call sites"
+        "client.java chat mode method465(161)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_166",
+      "name": "RESUME_PAUSEBUTTON",
       "id": 166,
-      "length": "unknown",
+      "length": 2,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 componentId"
       ],
       "source_anchors": [
-        "client.java:method465(166) call sites"
+        "client.java method465(166) + method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_168",
+      "name": "ANTICHEAT_OPLOGIC8",
       "id": 168,
-      "length": "unknown",
+      "length": 1,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p1 pad"
       ],
       "source_anchors": [
-        "client.java:method465(168) call sites"
+        "client.java method465(168)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_177",
+      "name": "OPHELD2",
       "id": 177,
-      "length": "unknown",
+      "length": 6,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 obj",
+        "p2 slot",
+        "p2 com"
       ],
       "source_anchors": [
-        "client.java:method465(177) call sites"
+        "client.java method216 method465(177) + three method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_178",
+      "name": "OPNPC3",
       "id": 178,
-      "length": "unknown",
+      "length": 2,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 npcIndex"
       ],
       "source_anchors": [
-        "client.java:method465(178) call sites"
+        "client.java method216 method465(178) + method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_180",
+      "name": "RESUME_P_COUNTDIALOG",
       "id": 180,
-      "length": "unknown",
+      "length": 4,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p4 amount"
       ],
       "source_anchors": [
-        "client.java:method465(180) call sites"
+        "client.java handleInputKey count dialog method465(180) + method470"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_181",
+      "name": "NO_TIMEOUT",
       "id": 181,
-      "length": "unknown",
-      "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
-      ],
+      "length": 0,
+      "fields": [],
       "source_anchors": [
-        "client.java:method465(181) call sites"
+        "client.java method465(181)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_189",
+      "name": "OPLOCU",
+      "id": 184,
+      "length": 12,
+      "fields": [
+        "p2 sceneX",
+        "p2 sceneZ",
+        "p2 locId",
+        "p2 useObj",
+        "p2 useSlot",
+        "p2 useCom"
+      ],
+      "source_anchors": [
+        "client.java method160 method465(184) + extras"
+      ],
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
+    },
+    {
+      "name": "OPPLAYER4",
       "id": 189,
-      "length": "unknown",
+      "length": 2,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 playerIndex"
       ],
       "source_anchors": [
-        "client.java:method465(189) call sites"
+        "client.java method216 method465(189) + method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_191",
+      "name": "OPHELD4",
       "id": 191,
-      "length": "unknown",
+      "length": 6,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 obj",
+        "p2 slot",
+        "p2 com"
       ],
       "source_anchors": [
-        "client.java:method465(191) call sites"
+        "client.java method216 method465(191) + three method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_192",
+      "name": "IGNORELIST_ADD",
       "id": 192,
-      "length": "unknown",
+      "length": 8,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p8 userhash"
       ],
       "source_anchors": [
-        "client.java:method465(192) call sites"
+        "client.java method465(192) + method468"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_193",
+      "name": "EVENT_CAMERA_POSITION",
       "id": 193,
-      "length": "unknown",
+      "length": 4,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 yaw",
+        "p2 pitch"
       ],
       "source_anchors": [
-        "client.java:method465(193) call sites"
+        "client.java method465(193)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_195",
+      "name": "ANTICHEAT_OPLOGIC1",
       "id": 195,
-      "length": "unknown",
+      "length": 4,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p4 pad"
       ],
       "source_anchors": [
-        "client.java:method465(195) call sites"
+        "client.java method465(195)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_200",
+      "name": "OPLOC3",
+      "id": 196,
+      "length": 6,
+      "fields": [
+        "p2 sceneX",
+        "p2 sceneZ",
+        "p2 locId"
+      ],
+      "source_anchors": [
+        "client.java method160 method465(196) + three method467"
+      ],
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
+    },
+    {
+      "name": "OPHELDU",
       "id": 200,
-      "length": "unknown",
+      "length": 12,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 obj",
+        "p2 slot",
+        "p2 com",
+        "p2 useObj",
+        "p2 useSlot",
+        "p2 useCom"
       ],
       "source_anchors": [
-        "client.java:method465(200) call sites"
+        "client.java method216 method465(200)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_203",
+      "name": "FRIENDLIST_DEL",
       "id": 203,
-      "length": "unknown",
+      "length": 8,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p8 userhash"
       ],
       "source_anchors": [
-        "client.java:method465(203) call sites"
+        "client.java method465(203) + method468"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_214",
+      "name": "MAP_BUILD_COMPLETE",
       "id": 214,
-      "length": "unknown",
-      "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
-      ],
+      "length": 0,
+      "fields": [],
       "source_anchors": [
-        "client.java:method465(214) call sites"
+        "client.java map_build method465(214)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_220",
+      "name": "OPLOCT",
+      "id": 218,
+      "length": 8,
+      "fields": [
+        "p2 sceneX",
+        "p2 sceneZ",
+        "p2 locId",
+        "p2 spell"
+      ],
+      "source_anchors": [
+        "client.java method160 method465(218) + spell"
+      ],
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
+    },
+    {
+      "name": "OPPLAYER1",
       "id": 220,
-      "length": "unknown",
+      "length": 2,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 playerIndex"
       ],
       "source_anchors": [
-        "client.java:method465(220) call sites"
+        "client.java method216 method465(220) + method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_224",
+      "name": "EVENT_MOUSE_CLICK",
       "id": 224,
-      "length": "unknown",
+      "length": 4,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 x",
+        "p2 y"
       ],
       "source_anchors": [
-        "client.java:method465(224) call sites"
+        "client.java method465(224)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_227",
+      "name": "INV_BUTTON5",
       "id": 227,
-      "length": "unknown",
+      "length": 6,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 obj",
+        "p2 slot",
+        "p2 com"
       ],
       "source_anchors": [
-        "client.java:method465(227) call sites"
+        "client.java method216 method465(227) + three method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_229",
+      "name": "EVENT_MOUSE_MOVE",
       "id": 229,
-      "length": "unknown",
+      "length": -1,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p1 size",
+        "move samples"
       ],
       "source_anchors": [
-        "client.java:method465(229) call sites"
+        "client.java method465(229)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_232",
+      "name": "ANTICHEAT_CYCLELOGIC7",
       "id": 232,
-      "length": "unknown",
+      "length": 1,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p1 pad"
       ],
       "source_anchors": [
-        "client.java:method465(232) call sites"
+        "client.java method465(232)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_234",
+      "name": "MOVE_GAMECLICK",
       "id": 234,
-      "length": "unknown",
+      "length": -1,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p1 size",
+        "p1 ctrl",
+        "p2 absX",
+        "p2 absZ",
+        "step deltas"
       ],
       "source_anchors": [
-        "client.java:method465(234) call sites"
+        "client.java method206 method465(234)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_235",
+      "name": "FRIENDLIST_ADD",
       "id": 235,
-      "length": "unknown",
+      "length": 8,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p8 userhash"
       ],
       "source_anchors": [
-        "client.java:method465(235) call sites"
+        "client.java method465(235) + method468"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_236",
+      "name": "MOVE_MINIMAPCLICK",
       "id": 236,
-      "length": "unknown",
+      "length": -1,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p1 size+14",
+        "p1 ctrl",
+        "p2 absX",
+        "p2 absZ",
+        "steps",
+        "14-byte minimap tail"
       ],
       "source_anchors": [
-        "client.java:method465(236) call sites"
+        "client.java method206 method465(236)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_241",
+      "name": "OPOBJT",
       "id": 241,
-      "length": "unknown",
+      "length": 8,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 sceneX",
+        "p2 sceneZ",
+        "p2 objId",
+        "p2 spell"
       ],
       "source_anchors": [
-        "client.java:method465(241) call sites"
+        "client.java method216 method465(241)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_247",
+      "name": "OPNPC5",
       "id": 247,
-      "length": "unknown",
+      "length": 2,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 npcIndex"
       ],
       "source_anchors": [
-        "client.java:method465(247) call sites"
+        "client.java method216 method465(247) + method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_248",
+      "name": "INV_BUTTON4",
       "id": 248,
-      "length": "unknown",
+      "length": 6,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 obj",
+        "p2 slot",
+        "p2 com"
       ],
       "source_anchors": [
-        "client.java:method465(248) call sites"
+        "client.java method216 method465(248) + three method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_251",
+      "name": "IGNORELIST_DEL",
       "id": 251,
-      "length": "unknown",
+      "length": 8,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p8 userhash"
       ],
       "source_anchors": [
-        "client.java:method465(251) call sites"
+        "client.java method465(251) + method468"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_252",
+      "name": "OPNPC1",
       "id": 252,
-      "length": "unknown",
+      "length": 2,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 npcIndex"
       ],
       "source_anchors": [
-        "client.java:method465(252) call sites"
+        "client.java method216 method465(252) + method467"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_253",
+      "name": "INV_BUTTOND",
       "id": 253,
-      "length": "unknown",
+      "length": 7,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p2 com",
+        "p2 fromSlot",
+        "p2 toSlot",
+        "p1 mode"
       ],
       "source_anchors": [
-        "client.java:method465(253) call sites"
+        "client.java inv drag method465(253)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     },
     {
-      "name": "client_opcode_255",
+      "name": "ANTICHEAT_CYCLELOGIC6",
       "id": 255,
-      "length": "unknown",
+      "length": 1,
       "fields": [
-        "unknown: payload writes are branch-dependent and must be traced from the enclosing client.java method before implementation"
+        "p1 pad"
       ],
       "source_anchors": [
-        "client.java:method465(255) call sites"
+        "client.java addPlayers arrival method465(255)"
       ],
-      "confidence": "verified-id; length/semantic mapping pending independent trace"
+      "confidence": "verified-id-length-fields",
+      "production_enabled": true,
+      "notes": "Stage-3 source-traced payload; ClientProt289 + production client_opcode/map_client_prot."
     }
   ]
 }
