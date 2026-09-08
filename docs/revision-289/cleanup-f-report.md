@@ -37,11 +37,16 @@ to `ServerProt289`.
 All commands used the isolated target directory:
 
 - `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo check -p client` — PASS.
-- `cargo test -p client --test revision_289_stage2 -- --test-threads=1` — PASS, 42/42.
-- `cargo test -p client --lib --tests` — PASS, including 45 zone tests.
-- `cargo test --workspace --all-features --no-fail-fast -- --test-threads=1` — PASS; includes stage1 46, stage2 42, stage3 23, server_packets 19, zones 8, legacy zone 45, renderer suites, and client-play 4.
+- `cargo test -p client --test revision_289_stage2 -- --test-threads=1` — PASS, 48/48.
+- `cargo test -p client --lib --tests` — PASS, including 73 library tests and 48 stage2 tests.
+- `cargo test --workspace --all-features --no-fail-fast -- --test-threads=1` — PASS in the isolated workspace; includes library 76, stage1 46, stage2 48, stage3 23, server_packets 19, zones 8, legacy zone 45, renderer suites, social 23, and client-play 4.
 - `python3 tools/verify_revision_289_contract.py` — PASS: 256 inbound, 82 outbound rows, 50 fixtures.
 - `git diff --check` — PASS.
+
+The first aggregate client test invocation also reproduced the known
+load-sensitive `fixed_empty_sync_after_welcome_and_unknown_frame_reset_once`
+stage1 failure (1/46); the required isolated serial stage1 rerun passed 46/46,
+and the subsequent all-features workspace run passed.
 
 ## Remaining gates
 
@@ -60,7 +65,10 @@ requests chat redraw without closing the interface.
 
 Production-path fixtures in `revision_289_stage2` additionally cover challenge
 body and tutorial acknowledgement, all three request suffixes, ignored private
-exact consumption, ignore-list non-divisible remainder and capacity rejection
-without mutation, private short-header rejection, and null plus out-of-range
-player-option indices. Focused execution passed 3/3 tests;
-the expected fail-closed T2 diagnostics were emitted for the malformed frames.
+exact consumption with a nonzero message ID and WordPack body, private
+deduplication, every staff level and crown/type gate, ignore-list non-divisible
+remainder and capacity rejection without mutation, private short-header
+rejection, friend add/same-world/login/logout/current-world sorting and notice
+generations, null/out-of-range/edge player-option indices and priority, and a
+malformed later field. Focused execution passed 6/6 tests; the expected
+fail-closed T2 diagnostics were emitted for malformed frames.

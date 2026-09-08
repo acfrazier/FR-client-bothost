@@ -572,3 +572,11 @@ production-path stage2 fixtures for those behaviors, ignore remainder/capacity,
 private short header, ignored exact consumption, all request suffixes and
 player-option null/OOR edges. Focused cleanup-F tests pass 3/3; full affected
 suites and same-card reviewer remain next.
+
+Follow-up review correction added production-path stage2 coverage for private
+deduplication, a nonzero ignored private ID with WordPack body and exact frame
+consumption, staff levels 0/1/2/3, UPDATE_FRIENDLIST add/same-world/login/
+logout/current-world sorting and actual notice generations, SET_PLAYER_OP index
+5/nonzero priority, and malformed later fields. Focused cleanup-F tests pass
+6/6; full stage2, client lib/tests, workspace all-features, client-play
+check, contract verifier and diff check pass. Ready for same-card reviewer handoff.

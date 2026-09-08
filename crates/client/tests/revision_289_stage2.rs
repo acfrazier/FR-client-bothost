@@ -7,6 +7,7 @@ use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer, ClientRevisi
 use client::config::{IfType, IfTypeMut};
 use client::io::{ClientStream, Isaac, Packet, ServerProt, ServerProt289};
 use client::util::JString;
+use client::wordfilter::WordPack;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Barrier, Mutex};
@@ -1696,6 +1697,31 @@ fn cleanup_f_social_frames_cover_fail_closed_and_option_edges() {
     c.handle_packet(ServerProt289::SET_PLAYER_OP, &mut out_of_range);
     assert!(c.ingame);
     assert!(c.player_op.iter().all(Option::is_none));
+
+    let mut edge = Packet::new(b"\x05\x01Examine\n".to_vec());
+    c.psize = edge.length() as i32;
+    c.handle_packet(ServerProt289::SET_PLAYER_OP, &mut edge);
+    assert_eq!(c.player_op[4].as_deref(), Some("Examine"));
+    assert!(!c.player_op_priority[4], "nonzero priority is not prioritized");
+
+    let mut malformed = Packet::new(b"\x01\x01unterminated".to_vec());
+    c.psize = malformed.length() as i32;
+    c.handle_packet(ServerProt289::SET_PLAYER_OP, &mut malformed);
+    assert!(!c.ingame, "malformed later field fails closed");
+    assert_eq!(c.player_op[4].as_deref(), Some("Examine"));
+}
+
+#[test]
+fn cleanup_f_friend_short_frame_does_not_partially_mutate_state() {
+    let mut c = client_289();
+    c.friend_count = 1;
+    c.friend_userhash[0] = 42;
+    c.friend_node_id[0] = 301;
+    let mut malformed = Packet::new(vec![0; 8]);
+    c.psize = malformed.length() as i32;
+    c.handle_packet(ServerProt289::UPDATE_FRIENDLIST, &mut malformed);
+    assert!(!c.ingame);
+    assert_eq!(c.chat_seq, 0, "malformed frame cannot publish a notice");
 }
 
 #[test]
@@ -1715,9 +1741,100 @@ fn cleanup_f_request_suffixes_and_ignored_private_consume_exact_frames() {
 
     c.ignore_count = 1;
     c.ignore_userhash[0] = JString::to_userhash("Bob") as i64;
-    let mut private = Packet::new(vec![0; 16]);
+    let ignored_before = c.gens.chat;
+    let mut private = Packet::new(vec![0; 64]);
+    private.p8(JString::to_userhash("Bob") as i64);
+    private.p4(41);
+    private.p1(0);
+    WordPack::pack(&mut private, "ignored body");
+    private = Packet::new(private.data()[..private.pos].to_vec());
     c.psize = private.length() as i32;
     c.handle_packet(ServerProt289::MESSAGE_PRIVATE, &mut private);
     assert_eq!(private.pos, private.length());
-    assert_eq!(c.chat_text[0], "wishes to duel with you.");
+    assert_eq!(c.chat_seq, 2, "ignored private message adds no chat line");
+    assert_eq!(c.gens.chat, ignored_before);
+}
+
+#[test]
+fn cleanup_f_private_staff_levels_dedup_and_exact_body_are_production_path() {
+    let bob = JString::to_userhash("Bob") as i64;
+    let private = |id: i32, staff: i32| {
+        let mut p = Packet::new(vec![0; 64]);
+        p.p8(bob);
+        p.p4(id);
+        p.p1(staff);
+        WordPack::pack(&mut p, "hello friend");
+        Packet::new(p.data()[..p.pos].to_vec())
+    };
+
+    for (staff, kind, sender) in [
+        (0, 3, "Bob"),
+        (1, 7, "@cr1@Bob"),
+        (2, 7, "@cr2@Bob"),
+        (3, 7, "@cr2@Bob"),
+    ] {
+        let mut c = client_289();
+        c.ignore_count = 1;
+        c.ignore_userhash[0] = bob as i64;
+        let mut p = private(100 + staff, staff);
+        c.psize = p.length() as i32;
+        c.handle_packet(ServerProt289::MESSAGE_PRIVATE, &mut p);
+        assert_eq!(p.pos, p.length());
+        if staff <= 1 {
+            assert_eq!(c.chat_seq, 0, "low-staff ignored message must be gated");
+        } else {
+            assert_eq!(c.chat_type[0], kind);
+            assert_eq!(c.chat_username[0], sender);
+            assert_eq!(c.chat_text[0], "Hello friend ");
+            assert_eq!(c.chat_seq, 1);
+        }
+    }
+
+    let mut c = client_289();
+    let mut first = private(777, 0);
+    c.psize = first.length() as i32;
+    c.handle_packet(ServerProt289::MESSAGE_PRIVATE, &mut first);
+    let seq = c.chat_seq;
+    let gen = c.gens.chat;
+    let mut duplicate = private(777, 0);
+    c.psize = duplicate.length() as i32;
+    c.handle_packet(ServerProt289::MESSAGE_PRIVATE, &mut duplicate);
+    assert_eq!(duplicate.pos, duplicate.length());
+    assert_eq!(c.chat_seq, seq);
+    assert_eq!(c.gens.chat, gen);
+}
+
+#[test]
+fn cleanup_f_friend_updates_cover_new_same_world_transitions_and_sorting() {
+    let alice = JString::to_userhash("Alice") as i64;
+    let bob = JString::to_userhash("Bob") as i64;
+    let mut c = client_289();
+    c.node_id = 301;
+
+    let send = |c: &mut Client, username: i64, world: i32| {
+        let mut p = Packet::new(vec![0; 9]);
+        p.p8(username);
+        p.p1(world);
+        p = Packet::new(p.data()[..p.pos].to_vec());
+        c.psize = p.length() as i32;
+        c.handle_packet(ServerProt289::UPDATE_FRIENDLIST, &mut p);
+        assert_eq!(p.pos, p.length());
+    };
+    send(&mut c, alice, 0);
+    assert_eq!(c.friend_count, 1);
+    let gen = c.gens.chat;
+    send(&mut c, alice, 0);
+    assert_eq!(c.gens.chat, gen, "same-world update has no notice");
+    send(&mut c, alice, 301);
+    assert_eq!(c.chat_text[0], "Alice has logged in.");
+    assert_eq!(c.gens.chat, gen + 1);
+    let gen = c.gens.chat;
+    send(&mut c, alice, 0);
+    assert_eq!(c.chat_text[0], "Alice has logged out.");
+    assert_eq!(c.gens.chat, gen + 1);
+
+    send(&mut c, bob, 301);
+    assert_eq!(c.friend_count, 2);
+    assert_eq!(c.friend_userhash[0], bob, "current world sorts first");
+    assert_eq!(c.friend_userhash[1], alice);
 }
