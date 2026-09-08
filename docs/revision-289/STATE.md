@@ -395,3 +395,17 @@ script/first-tick packets.
 The enclosed-zone regression now uses the source-defined opcode-first framing
 (90 LOC_ADD_CHANGE payload, then 71 OBJ_DEL payload), asserts the decoded zone
 origin, and verifies exact outer-frame consumption.
+
+## Startup colour corrective implementation (t_5f66df33)
+
+Implemented source-backed R289 `IF_SETCOLOUR` opcode 160/4 after the preserved
+live proof reproduced `T1 - 160,4 - 63,63`. The transitive startup trace is
+`login.rs2` → `initalltabs` / `update_questlist` →
+`send_quest_progress_colour` → `if_setcolour`; the report is
+`docs/revision-289/startup-colour-failure-report.md`. Java field semantics are
+component g2 + RGB555 colour g2 expanded to the per-client interface overlay.
+
+Verification: stage2 36 passed, stage1 26 passed, contract verifier PASS
+256/82/50, `cargo check -p client -p client-play` passed, and `git diff --check`
+passed. Live acceptance, authentic cache/server pairing, and final Grok4.6
+review remain root-owned prerequisites. Same-card reviewer handoff follows.

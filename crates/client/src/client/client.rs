@@ -6922,6 +6922,23 @@ impl Client {
                 }
                 self.ptype = -1;
             }
+            // IF_SETCOLOUR: component g2 + RGB555 colour g2
+            // (client.java:3362-3370; ServerGameProt.ts:13).
+            x if x == ServerProt289::IF_SETCOLOUR => {
+                let com_id = payload.g2();
+                let colour = payload.g2();
+                let r = (colour >> 10) & 0x1f;
+                let g = (colour >> 5) & 0x1f;
+                let b = colour & 0x1f;
+                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut)
+                    .get_mut(com_id as usize)
+                    .and_then(|o| o.as_mut())
+                    .map(Arc::make_mut)
+                {
+                    com.colour = (r << 19) + (g << 11) + (b << 3);
+                }
+                self.ptype = -1;
+            }
             // IF_OPENMAIN_SIDE: two g2 (client.java:2593-2610).
             x if x == ServerProt289::IF_OPENMAIN_SIDE => {
                 self.apply_if_openmain_side(payload);

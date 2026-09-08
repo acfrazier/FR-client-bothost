@@ -157,7 +157,7 @@ pub const SERVER_PROT_SIZES_289: [i32; 256] = [
     2,
     0,
     0,
-    0,
+    4,
     0,
     4,
     0,

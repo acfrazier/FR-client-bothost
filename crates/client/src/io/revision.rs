@@ -89,6 +89,7 @@ impl ServerProt289 {
     pub const RESET_ANIMS: i32 = 201;
     pub const IF_SETTEXT: i32 = 59;
     pub const IF_SETANIM: i32 = 211;
+    pub const IF_SETCOLOUR: i32 = 160;
     pub const IF_OPENMAIN_SIDE: i32 = 55;
     pub const IF_OPENSIDE: i32 = 252;
     pub const IF_OPENOVERLAY: i32 = 127;
@@ -138,6 +139,7 @@ mod tests {
             -2
         );
         assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::IF_SETANIM as usize], 4);
+        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::IF_SETCOLOUR as usize], 4);
         assert_eq!(
             SERVER_PROT_SIZES_289[ServerProt289::IF_OPENMAIN_SIDE as usize],
             4

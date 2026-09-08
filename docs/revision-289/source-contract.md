@@ -23,7 +23,7 @@ Login at `client.java:8342-8398` sends request opcode 14 plus the five-bit name 
 
 ## Inbound contract
 
-`protocol-289.json` enumerates all 256 decoded inbound IDs and their exact `Class17.anIntArray209` lengths. Named rows are source-derived only where the primary dispatch branch was traced: actor/player update (188), NPC update (65 via method187/226/124/222), inventory full (107), inventory partial (76), region rebuild (219), varp/config (75, 97, 172), widgets/interface (59, 211, 252), logout (121), interface reset/set (127), and actor reset (201). Notably, opcode 172 is a zero-payload bulk varp sync, 55 opens two interfaces, and 127 reads a signed g2 interface id; these are not renamed to inventory, region, or logout. Other rows retain explicit unknown field descriptions rather than guessed schemas.
+`protocol-289.json` enumerates all 256 decoded inbound IDs and their exact `Class17.anIntArray209` lengths. Named rows are source-derived only where the primary dispatch branch was traced: actor/player update (188), NPC update (65 via method187/226/124/222), inventory full (107), inventory partial (76), region rebuild (219), varp/config (75, 97, 172), widgets/interface (59, 160, 211, 252), logout (121), interface reset/set (127), and actor reset (201). Opcode 160 is the script-driven `IF_SETCOLOUR` packet: component g2, RGB555 colour g2, expanded to the Java 24-bit overlay value. Notably, opcode 172 is a zero-payload bulk varp sync, 55 opens two interfaces, and 127 reads a signed g2 interface id; these are not renamed to inventory, region, or logout. Other rows retain explicit unknown field descriptions rather than guessed schemas.
 
 Important encodings:
 

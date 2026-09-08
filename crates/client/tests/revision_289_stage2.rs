@@ -118,10 +118,27 @@ fn server_prot_289_stage2_named_opcodes() {
     assert_eq!(ServerProt289::VARP_SMALL, 75);
     assert_eq!(ServerProt289::VARP_LARGE, 97);
     assert_eq!(ServerProt289::VARP_SYNC, 172);
+    assert_eq!(ServerProt289::IF_SETCOLOUR, 160);
     // 274 collisions must remain distinct tables
     assert_ne!(ServerProt::LOGOUT, ServerProt289::LOGOUT);
     assert_ne!(ServerProt::PLAYER_INFO, ServerProt289::PLAYER_INFO);
     assert_ne!(ServerProt::REBUILD_NORMAL, ServerProt289::REBUILD_NORMAL);
+}
+
+#[test]
+fn startup_289_script_if_setcolour_updates_component_and_consumes_payload() {
+    let mut c = client_289();
+    ensure_iface(&mut c, 42);
+    c.psize = 4;
+    // login -> initalltabs -> update_questlist -> send_quest_progress_colour
+    // emits component g2 followed by the source's RGB555 colour g2.
+    let mut p = Packet::new(hex_bytes("002a7fff"));
+
+    c.handle_packet(ServerProt289::IF_SETCOLOUR, &mut p);
+
+    assert_eq!(p.pos, 4, "exact IF_SETCOLOUR payload consumption");
+    assert_eq!(c.if_(42).expect("seeded component").colour, 0xF8F8F8);
+    assert!(c.ingame, "known script packet must not log out");
 }
 
 #[test]
@@ -275,6 +292,7 @@ fn startup_289_engine_login_social_and_identity_packets_dispatch() {
 #[test]
 fn startup_289_login_script_and_first_tick_packets_dispatch() {
     let mut c = client_289();
+    ensure_iface(&mut c, 42);
 
     // login.rs2: mes("Welcome..."), cam_reset, minimap_toggle(0),
     // set_player_op, and initalltabs/last_login_info.
@@ -306,6 +324,12 @@ fn startup_289_login_script_and_first_tick_packets_dispatch() {
     let mut tab = Packet::new(hex_bytes("123405"));
     c.handle_packet(ServerProt289::IF_SETTAB, &mut tab);
     assert_eq!(c.side_icon[5], 0x1234);
+
+    c.psize = 4;
+    let mut quest_colour = Packet::new(hex_bytes("002a7fff"));
+    c.handle_packet(ServerProt289::IF_SETCOLOUR, &mut quest_colour);
+    assert_eq!(quest_colour.pos, 4);
+    assert_eq!(c.if_(42).expect("seeded component").colour, 0xF8F8F8);
 
     c.psize = 6;
     let mut stat = Packet::new(hex_bytes("02000003e807"));

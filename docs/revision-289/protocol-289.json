@@ -2120,13 +2120,16 @@
       "id": 160,
       "length": 4,
       "fields": [
-        "unknown: decode fields from client.java dispatch branch before implementation"
+        "g2 component id",
+        "g2 RGB555 colour"
       ],
       "source_anchors": [
         "Class17.java:11 (anIntArray209[160] packet length)",
-        "client.java:2553-2587 (dispatch; branch tracing pending for opcode 160)"
+        "client.java:3362-3370 (component colour conversion)",
+        "ServerGameProt.ts:13 (IF_SETCOLOUR=160/4)",
+        "IfSetColourEncoder.ts:9-11 (p2 component, p2 colour)"
       ],
-      "confidence": "verified-id-and-length; fields-unknown"
+      "confidence": "verified-length-and-fields"
     },
     {
       "name": "server_opcode_161",
