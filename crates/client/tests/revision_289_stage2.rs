@@ -1086,6 +1086,107 @@ fn widget_openoverlay_signed() {
     assert_eq!(p.pos, 2, "exact byte consumption");
 }
 
+#[test]
+fn cleanup_b_every_interface_row_reaches_production_dispatch() {
+    let mut c = client_289();
+    for id in [5usize, 7, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] {
+        ensure_iface(&mut c, id);
+    }
+    c.local_player = Some(ClientPlayer::default());
+    let cases: &[(i32, Vec<u8>)] = &[
+        (ServerProt289::TUT_OPEN, hex_bytes("0009")),
+        (ServerProt289::IF_CLOSE, vec![]),
+        (ServerProt289::IF_SETOBJECT, hex_bytes("0009ffff0000")),
+        (ServerProt289::IF_SETPLAYERHEAD, hex_bytes("0005")),
+        (ServerProt289::P_COUNTDIALOG, vec![]),
+        (ServerProt289::IF_OPENMAIN_SIDE, hex_bytes("000b000c")),
+        (ServerProt289::IF_SETTEXT, b"\x00\x07ok\n".to_vec()),
+        (ServerProt289::IF_SETTAB, hex_bytes("ffff03")),
+        (ServerProt289::IF_SETPOSITION, hex_bytes("0009fffe0003")),
+        (ServerProt289::IF_OPENCHAT, hex_bytes("000d")),
+        (ServerProt289::IF_OPENMAIN, hex_bytes("000e")),
+        (ServerProt289::IF_OPENOVERLAY, hex_bytes("ffff")),
+        (ServerProt289::IF_SETHIDE, hex_bytes("000901")),
+        (ServerProt289::IF_SETCOLOUR, hex_bytes("00097fff")),
+        (ServerProt289::TUT_FLASH, vec![3]),
+        (ServerProt289::IF_SETSCROLLPOS, hex_bytes("00090004")),
+        (ServerProt289::IF_SETTAB_ACTIVE, vec![1]),
+        (ServerProt289::IF_SETANIM, hex_bytes("0009ffff")),
+        (ServerProt289::IF_SETMODEL, hex_bytes("0009002a")),
+        (ServerProt289::IF_SETNPCHEAD, hex_bytes("0009002b")),
+        (ServerProt289::IF_OPENSIDE, hex_bytes("000f")),
+    ];
+    for (ptype, bytes) in cases {
+        c.psize = bytes.len() as i32;
+        let mut packet = Packet::new(bytes.clone());
+        c.handle_packet(*ptype, &mut packet);
+        assert_eq!(packet.pos, packet.length(), "opcode {ptype} exact bytes");
+        assert!(c.ingame, "opcode {ptype} must not take the T1 path");
+    }
+    assert_eq!(c.side_icon[3], -1, "65535 tab component clears to -1");
+    assert_eq!(c.tut_com_id, 9);
+    assert_eq!(c.tut_flash_icon, 3);
+    assert_eq!(c.gens.iface, cases.len() as u64);
+}
+
+#[test]
+fn cleanup_b_modal_animation_reset_distinguishes_single_and_combined_opens() {
+    let mut c = client_289();
+    for parent in [10usize, 11, 12] {
+        ensure_iface(&mut c, parent);
+        ensure_iface(&mut c, parent + 10);
+        Arc::make_mut(&mut c.ifaces)[parent].as_mut().unwrap().children = Some(vec![(parent + 10) as i32]);
+        Arc::make_mut(Arc::make_mut(&mut c.ifaces_mut)[parent + 10].as_mut().unwrap()).anim_frame = 7;
+        Arc::make_mut(Arc::make_mut(&mut c.ifaces_mut)[parent + 10].as_mut().unwrap()).anim_cycle = 8;
+    }
+    c.psize = 2;
+    let mut main = Packet::new(hex_bytes("000a"));
+    c.handle_packet(ServerProt289::IF_OPENMAIN, &mut main);
+    assert_eq!(c.ifaces_mut[20].as_ref().unwrap().anim_frame, 0);
+    assert_eq!(c.ifaces_mut[20].as_ref().unwrap().anim_cycle, 0);
+    c.psize = 4;
+    let mut combined = Packet::new(hex_bytes("000b000c"));
+    c.handle_packet(ServerProt289::IF_OPENMAIN_SIDE, &mut combined);
+    assert_eq!(c.ifaces_mut[21].as_ref().unwrap().anim_frame, 7);
+    assert_eq!(c.ifaces_mut[21].as_ref().unwrap().anim_cycle, 8);
+}
+
+#[test]
+fn cleanup_b_player_head_uses_transmog_and_malformed_frame_mutates_nothing_first() {
+    let mut c = client_289();
+    ensure_iface(&mut c, 5);
+    let mut player = ClientPlayer::default();
+    player.appearance = [1; 12];
+    player.colour = [2; 5];
+    player.transmog = Some(321);
+    c.local_player = Some(player);
+    c.psize = 2;
+    let mut head = Packet::new(hex_bytes("0005"));
+    c.handle_packet(ServerProt289::IF_SETPLAYERHEAD, &mut head);
+    assert_eq!(c.if_(5).unwrap().model1_id, 321);
+    let before = c.ifaces_mut[5].as_ref().unwrap().text.clone();
+    c.psize = 3;
+    let mut malformed = Packet::new(hex_bytes("000568"));
+    c.handle_packet(ServerProt289::IF_SETTEXT, &mut malformed);
+    assert_eq!(c.ifaces_mut[5].as_ref().unwrap().text, before);
+    assert!(!c.ingame, "malformed frame follows the Java T2 reset");
+}
+
+#[test]
+fn cleanup_b_interface_overlays_are_isolated_between_clients() {
+    let mut first = client_289();
+    let mut second = client_289();
+    ensure_iface(&mut first, 9);
+    ensure_iface(&mut second, 9);
+    first.psize = 3;
+    let mut hide = Packet::new(hex_bytes("000901"));
+    first.handle_packet(ServerProt289::IF_SETHIDE, &mut hide);
+    assert!(first.ifaces_mut[9].as_ref().unwrap().hide);
+    assert!(!second.ifaces_mut[9].as_ref().unwrap().hide);
+    assert_eq!(first.gens.iface, 1);
+    assert_eq!(second.gens.iface, 0);
+}
+
 // --- varps -----------------------------------------------------------------
 
 #[test]

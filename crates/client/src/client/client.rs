@@ -4443,13 +4443,23 @@ impl Client {
                 }
             }
             R289InterfaceOperation::IfSetPlayerHead(component) => {
-                let head = self.local_player.as_ref().map(|local| (local.appearance[8] as i32) << 6 | (local.appearance[0] as i32) << 12 | (local.colour[0] as i32) << 24 | (local.colour[4] as i32) << 18 | local.appearance[11] as i32);
+                // Java prefers the local player's transformed NPC model key;
+                // only ordinary players use the packed kit appearance head.
+                let head = self.local_player.as_ref().map(|local| {
+                    local.transmog.map(|npc_id| npc_id as i32).unwrap_or_else(|| {
+                        (local.appearance[8] as i32) << 6
+                            | (local.appearance[0] as i32) << 12
+                            | (local.colour[0] as i32) << 24
+                            | (local.colour[4] as i32) << 18
+                            | local.appearance[11] as i32
+                    })
+                });
                 if let (Some(com), Some(head)) = (self.iface_mut(component as usize), head) { com.model1_type = 3; com.model1_id = head; }
             }
-            R289InterfaceOperation::IfOpenChat(id) => { self.chat_modal_id = id; self.side_modal_id = -1; self.main_modal_id = -1; self.redraw_chat = true; self.redraw_side = true; self.redraw_icons = true; self.resumed_pause_button = false; }
-            R289InterfaceOperation::IfOpenMain(id) => { self.main_modal_id = id; self.side_modal_id = -1; self.chat_modal_id = -1; self.dialog_input_open = false; self.redraw_chat = true; self.redraw_side = true; self.redraw_icons = true; self.resumed_pause_button = false; }
+            R289InterfaceOperation::IfOpenChat(id) => { self.if_anim_reset(id); self.chat_modal_id = id; self.side_modal_id = -1; self.main_modal_id = -1; self.redraw_chat = true; self.redraw_side = true; self.redraw_icons = true; self.resumed_pause_button = false; }
+            R289InterfaceOperation::IfOpenMain(id) => { self.if_anim_reset(id); self.main_modal_id = id; self.side_modal_id = -1; self.chat_modal_id = -1; self.dialog_input_open = false; self.redraw_chat = true; self.redraw_side = true; self.redraw_icons = true; self.resumed_pause_button = false; }
             R289InterfaceOperation::IfOpenMainSide { main, side } => { self.main_modal_id = main; self.side_modal_id = side; self.chat_modal_id = -1; self.dialog_input_open = false; self.redraw_chat = true; self.redraw_side = true; self.redraw_icons = true; self.resumed_pause_button = false; }
-            R289InterfaceOperation::IfOpenSide(id) => { self.side_modal_id = id; self.main_modal_id = -1; self.chat_modal_id = -1; self.dialog_input_open = false; self.redraw_chat = true; self.redraw_side = true; self.redraw_icons = true; self.resumed_pause_button = false; }
+            R289InterfaceOperation::IfOpenSide(id) => { self.if_anim_reset(id); self.side_modal_id = id; self.main_modal_id = -1; self.chat_modal_id = -1; self.dialog_input_open = false; self.redraw_chat = true; self.redraw_side = true; self.resumed_pause_button = false; }
             R289InterfaceOperation::IfOpenOverlay(id) => { if id >= 0 { self.if_anim_reset(id); } self.main_overlay_id = id; }
         }
         publication
