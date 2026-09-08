@@ -6703,6 +6703,30 @@ impl Client {
                 self.apply_chat_filter_settings(payload);
                 self.ptype = -1;
             }
+            // IF_CLOSE: clear interface modals (client.java:2612-2619).
+            x if x == ServerProt289::IF_CLOSE => {
+                self.apply_if_close();
+                self.ptype = -1;
+            }
+            // UPDATE_IGNORELIST: one g8 user hash per entry
+            // (client.java:3372-3378).
+            x if x == ServerProt289::UPDATE_IGNORELIST => {
+                self.apply_update_ignorelist(payload, self.psize);
+                self.ptype = -1;
+            }
+            // FRIENDLIST_LOADED: social-server status byte
+            // (client.java:3471-3475).
+            x if x == ServerProt289::FRIENDLIST_LOADED => {
+                self.apply_friendlist_loaded(payload);
+                self.ptype = -1;
+            }
+            // UPDATE_PID: local slot g2 and members-account g1
+            // (client.java:2648-2652).
+            x if x == ServerProt289::UPDATE_PID => {
+                self.self_slot = payload.g2();
+                self.members_account = payload.g1();
+                self.ptype = -1;
+            }
             // 289 inventory full: g2 component, g2 entry count (client.java:2972-2990).
             x if x == ServerProt289::UPDATE_INV_FULL => {
                 self.apply_update_inv_full(payload, /*count_is_g2=*/ true);

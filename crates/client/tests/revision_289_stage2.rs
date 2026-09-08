@@ -162,6 +162,26 @@ fn startup_289_source_sequence_keeps_stream_in_game() {
     c.handle_packet(ServerProt289::CHAT_FILTER_SETTINGS, &mut chat);
     assert_eq!(chat.pos, 3);
 
+    c.psize = 1;
+    let mut friend = Packet::new(vec![2]);
+    c.handle_packet(ServerProt289::FRIENDLIST_LOADED, &mut friend);
+    assert_eq!(friend.pos, 1);
+
+    c.psize = 0;
+    let mut close = Packet::new(vec![]);
+    c.handle_packet(ServerProt289::IF_CLOSE, &mut close);
+    assert_eq!(close.pos, 0);
+
+    c.psize = 3;
+    let mut pid = Packet::new(hex_bytes("000001"));
+    c.handle_packet(ServerProt289::UPDATE_PID, &mut pid);
+    assert_eq!(pid.pos, 3);
+
+    c.psize = 16;
+    let mut ignore = Packet::new(vec![0; 16]);
+    c.handle_packet(ServerProt289::UPDATE_IGNORELIST, &mut ignore);
+    assert_eq!(ignore.pos, 16);
+
     c.psize = 0;
     let mut sync = Packet::new(vec![]);
     c.handle_packet(ServerProt289::VARP_SYNC, &mut sync);
@@ -187,6 +207,45 @@ fn startup_289_source_sequence_keeps_stream_in_game() {
     c.handle_packet(ServerProt289::RESET_ANIMS, &mut reset);
     assert_eq!(reset.pos, 0);
     assert!(c.ingame, "all source-covered startup packets stay in game");
+}
+
+#[test]
+fn startup_289_engine_login_social_and_identity_packets_dispatch() {
+    let mut c = client_289();
+
+    c.psize = 1;
+    let mut friend = Packet::new(vec![2]);
+    c.handle_packet(ServerProt289::FRIENDLIST_LOADED, &mut friend);
+    assert_eq!(friend.pos, 1);
+    assert_eq!(c.friend_server_status, 2);
+    assert!(c.redraw_side);
+
+    c.psize = 16;
+    let mut ignore = Packet::new(vec![0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 9]);
+    c.handle_packet(ServerProt289::UPDATE_IGNORELIST, &mut ignore);
+    assert_eq!(ignore.pos, 16);
+    assert_eq!(c.ignore_count, 2);
+    assert_eq!(c.ignore_userhash[0], 7);
+    assert_eq!(c.ignore_userhash[1], 9);
+
+    c.psize = 0;
+    c.side_modal_id = 42;
+    c.chat_modal_id = 43;
+    c.main_modal_id = 44;
+    let mut close = Packet::new(vec![]);
+    c.handle_packet(ServerProt289::IF_CLOSE, &mut close);
+    assert_eq!(close.pos, 0);
+    assert_eq!(c.side_modal_id, -1);
+    assert_eq!(c.chat_modal_id, -1);
+    assert_eq!(c.main_modal_id, -1);
+
+    c.psize = 3;
+    let mut pid = Packet::new(hex_bytes("123401"));
+    c.handle_packet(ServerProt289::UPDATE_PID, &mut pid);
+    assert_eq!(pid.pos, 3);
+    assert_eq!(c.self_slot, 0x1234);
+    assert_eq!(c.members_account, 1);
+    assert!(c.ingame);
 }
 
 // --- login RSA plaintext structure + version -------------------------------
@@ -1140,14 +1199,14 @@ fn login_response_2_vs_15_distinct_on_r289() {
 
 #[test]
 fn untraced_opcode_still_fail_closed() {
-    // 47 collides with 274 RESET_ANIMS; still unknown on 289.
+    // 236 is untraced on 289 and remains fail-closed.
     let mut c = client_289();
     let mut player = ClientPlayer::at(1, 1);
     player.primary_anim = 99;
     c.players[0] = Some(Box::new(player));
     let mut p = Packet::new(vec![1, 2]);
     c.psize = 2;
-    c.handle_packet(47, &mut p);
+    c.handle_packet(236, &mut p);
     assert!(!c.ingame);
     assert_eq!(c.players[0].as_ref().unwrap().primary_anim, 99);
 }

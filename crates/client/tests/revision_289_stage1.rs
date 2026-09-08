@@ -257,15 +257,14 @@ fn framing_variable_g2_pending_no_dispatch() {
 
 #[test]
 fn framing_variable_g2_complete_fail_closed_not_reset_anims() {
-    // manifest: variable_g2_frame_complete — opcode 47, g2 len 2, payload 0102.
-    // Numeric 47 collides with 274 RESET_ANIMS; stage-1 must T1 fail-closed
-    // (no anim clear), not run the 274 handler.
+    // manifest: variable_g2_frame_complete — opcode 236, g2 len 2, payload 0102.
+    // Untraced R289 ids must T1 fail-closed (no anim clear).
     let mut c = client_289();
     c.ingame = true;
     let mut player = ClientPlayer::at(1, 1);
     player.primary_anim = 42;
     c.players[0] = Some(Box::new(player));
-    let frame = hex_bytes("2f00020102");
+    let frame = hex_bytes("ec00020102");
     let accepted = feed_frames(&mut c, &frame, 8);
     assert_eq!(accepted, 1, "complete frame must pass read_packet");
     assert!(!c.ingame, "unknown/colliding R289 id must T1 logout");
@@ -455,7 +454,7 @@ fn r289_opcode_219_rebuild_not_obj_reveal() {
 }
 
 #[test]
-fn r289_opcode_47_fail_closed_not_reset_anims_direct() {
+fn r289_untraced_opcode_fail_closed_not_reset_anims_direct() {
     let mut c = client_289();
     c.ingame = true;
     let mut player = ClientPlayer::at(1, 1);
@@ -463,7 +462,7 @@ fn r289_opcode_47_fail_closed_not_reset_anims_direct() {
     c.players[0] = Some(Box::new(player));
     let mut p = Packet::new(vec![1, 2]);
     c.psize = 2;
-    c.handle_packet(ServerProt::RESET_ANIMS, &mut p);
+    c.handle_packet(236, &mut p);
     assert!(!c.ingame);
     assert_eq!(c.players[0].as_ref().unwrap().primary_anim, 99);
 }

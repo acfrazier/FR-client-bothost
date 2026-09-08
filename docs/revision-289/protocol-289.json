@@ -315,17 +315,17 @@
       "confidence": "verified-id-and-length; fields-unknown"
     },
     {
-      "name": "server_opcode_023",
+      "name": "if_close",
       "id": 23,
       "length": 0,
       "fields": [
-        "unknown: decode fields from client.java dispatch branch before implementation"
+        "no payload; closes side/chat/name-entry/main modals"
       ],
       "source_anchors": [
         "Class17.java:11 (anIntArray209[23] packet length)",
-        "client.java:2553-2587 (dispatch; branch tracing pending for opcode 23)"
+        "client.java:2553-2610"
       ],
-      "confidence": "verified-id-and-length; fields-unknown"
+      "confidence": "verified-length-and-fields"
     },
     {
       "name": "server_opcode_024",
@@ -627,17 +627,17 @@
       "confidence": "verified-length-and-fields"
     },
     {
-      "name": "server_opcode_047",
+      "name": "update_ignorelist",
       "id": 47,
       "length": -2,
       "fields": [
-        "unknown: decode fields from client.java dispatch branch before implementation"
+        "p8 userhash repeated for psize / 8 entries"
       ],
       "source_anchors": [
         "Class17.java:11 (anIntArray209[47] packet length)",
-        "client.java:2553-2587 (dispatch; branch tracing pending for opcode 47)"
+        "client.java:3372-3378"
       ],
-      "confidence": "verified-id-and-length; fields-unknown"
+      "confidence": "verified-length-and-fields"
     },
     {
       "name": "server_opcode_048",
@@ -1594,17 +1594,17 @@
       "confidence": "verified-id-and-length; fields-unknown"
     },
     {
-      "name": "server_opcode_120",
+      "name": "update_pid",
       "id": 120,
       "length": 3,
       "fields": [
-        "unknown: decode fields from client.java dispatch branch before implementation"
+        "g2 self slot; g1 members-account flag"
       ],
       "source_anchors": [
         "Class17.java:11 (anIntArray209[120] packet length)",
-        "client.java:2553-2587 (dispatch; branch tracing pending for opcode 120)"
+        "client.java:2648-2652"
       ],
-      "confidence": "verified-id-and-length; fields-unknown"
+      "confidence": "verified-length-and-fields"
     },
     {
       "name": "logout",
@@ -3098,17 +3098,17 @@
       "confidence": "verified-id-and-length; fields-unknown"
     },
     {
-      "name": "server_opcode_235",
+      "name": "friendlist_loaded",
       "id": 235,
       "length": 1,
       "fields": [
-        "unknown: decode fields from client.java dispatch branch before implementation"
+        "g1 friend-server status"
       ],
       "source_anchors": [
         "Class17.java:11 (anIntArray209[235] packet length)",
-        "client.java:2553-2587 (dispatch; branch tracing pending for opcode 235)"
+        "client.java:3471-3475"
       ],
-      "confidence": "verified-id-and-length; fields-unknown"
+      "confidence": "verified-length-and-fields"
     },
     {
       "name": "server_opcode_236",

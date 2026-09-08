@@ -54,6 +54,10 @@ impl ServerProt289 {
     pub const UPDATE_INV_PARTIAL: i32 = 76;
     // Startup chat modes (primary client.java:2612-2619).
     pub const CHAT_FILTER_SETTINGS: i32 = 13;
+    pub const IF_CLOSE: i32 = 23;
+    pub const UPDATE_IGNORELIST: i32 = 47;
+    pub const FRIENDLIST_LOADED: i32 = 235;
+    pub const UPDATE_PID: i32 = 120;
     // Stage 2 — login/actors/world/widgets/reset (client.java dispatch)
     pub const LOGOUT: i32 = 121;
     pub const PLAYER_INFO: i32 = 188;
@@ -130,6 +134,10 @@ mod tests {
             SERVER_PROT_SIZES_289[ServerProt289::CHAT_FILTER_SETTINGS as usize],
             3
         );
+        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::IF_CLOSE as usize], 0);
+        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::UPDATE_IGNORELIST as usize], -2);
+        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::FRIENDLIST_LOADED as usize], 1);
+        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::UPDATE_PID as usize], 3);
     }
 
     #[test]

@@ -354,3 +354,22 @@ Live RSA/ISAAC, authentic cache/server pairing, and full startup sequence remain
 unproven; root owns the next live run. Same-card reviewer handoff is required
 before accepting this checkpoint. Inherited untracked review/helper artifacts
 remain intentionally preserved and are not task deliverables.
+
+## Startup packet parity correction (t_82d212a4)
+
+Corrected the prior wrong-engine audit using the absolute isolated engine
+paths. `Player.onLogin` and `ServerGameProt.ts` emit the authentic 289 startup
+prefix: 219/4 rebuild, 13/3 chat filter, 235/1 friendlist status, 47/-2
+ignorelist, 23/0 interface close, 120/3 PID, 172/0 var-cache reset, 75/3 or
+97/6 varps, and 201/0 reset animations. Added source-backed R289 dispatch for
+235, 47, 23, and 120; preserved 172 as the existing var-cache synchronization
+semantics. Expanded `startup_289_source_sequence_keeps_stream_in_game` and
+added `startup_289_engine_login_social_and_identity_packets_dispatch`.
+
+Exact verification: stage2 test 33 passed / 0 failed; contract verifier PASS
+256 inbound, 82 outbound, 50 fixtures; cargo check client/client-play passed;
+git diff --check passed. Report corrected at
+`docs/revision-289/startup-packet-parity-report.md`. Live RSA/ISAAC, authentic
+cache/server pairing, script/provider-driven post-login packets, scene
+readiness, and live acceptance remain external. Inherited untracked review
+and helper artifacts remain preserved and unstaged.

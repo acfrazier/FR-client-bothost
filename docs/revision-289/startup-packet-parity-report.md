@@ -31,6 +31,10 @@ already wired to `apply_rebuild_normal`.
 The explicit R289 dispatch currently covers these source-anchored families:
 
 - `13` chat filter settings: three `g1` mode values; redraw chat and mode.
+- `23` IF_CLOSE: clears side/chat/name-entry/main interface modals.
+- `47` UPDATE_IGNORELIST: consumes repeated `g8` hashes.
+- `120` UPDATE_PID: `g2` self slot plus `g1` members flag.
+- `235` FRIENDLIST_LOADED: consumes the social-server status byte.
 - `65` NPC_INFO: `method187` actor update path.
 - `75` VARP_SMALL: `g2` id plus signed `g1` value.
 - `76` UPDATE_INV_PARTIAL: gsmart slot form.
@@ -57,42 +61,42 @@ production dispatch is in `crates/client/src/client/client.rs`.
 
 ## Isolated-engine startup audit
 
-The isolated engine is not a 289 wire-compatible server at this checkout. Its
-`ServerGameProt.ts` table assigns different IDs to the same semantic messages:
+The authorized isolated engine's `Player.onLogin` source emits the following
+concrete sequence. Its packet IDs and lengths match the authentic 289 table;
+the Rust profile now dispatches each packet without numeric aliases:
 
-| Engine `Player.onLogin` emission | Engine ID/length | Authentic 289 client ID/length | Result |
-|---|---:|---:|---|
-| `rebuildNormal()` | 231/4 | 219/4 | engine ID is not a 289 branch |
-| `ChatFilterSettings` | 114/3 | 13/3 | 289 client handler covered; engine ID is not |
-| `FriendlistLoaded` | 185/1 | 247/1 | engine ID is not a 289 branch |
-| `UpdateIgnoreList` | 3/-2 | no confirmed startup equivalent | engine ID is not a 289 branch |
-| `IfClose` | 171/0 | no 289 branch in pinned dispatch | engine ID is not a 289 branch |
-| `UpdatePid` | 133/3 | no confirmed equivalent (289 branch 133 has other semantics) | do not alias |
-| `ResetClientVarCache` | 190/0 | no confirmed startup branch | do not alias |
-| transmitted varps | 203/3 or 245/6 | 75/3 or 97/6 | engine IDs are not 289 branches |
-| `ResetAnims` | 47/0 | 201/0 | engine ID is not the 289 reset branch |
+| `Player.onLogin` emission | Engine ID/length | R289 handler | Rust state/effect |
+|---|---:|---|---|
+| `rebuildNormal()` | 219/4 | `REBUILD_NORMAL` | region base and scene loading |
+| `ChatFilterSettings` | 13/3 | `CHAT_FILTER_SETTINGS` | public/private/trade modes |
+| friend enabled/disabled `FriendlistLoaded` | 235/1 | `FRIENDLIST_LOADED` | friend-server status |
+| disabled `UpdateIgnoreList([])` | 47/-2 | `UPDATE_IGNORELIST` | clears/loads ignore hashes |
+| `IfClose` | 23/0 | `IF_CLOSE` | closes interface modals |
+| `UpdatePid` | 120/3 | `UPDATE_PID` | local slot and members flag |
+| `ResetClientVarCache` | 172/0 | `VARP_SYNC` | applies authoritative var cache |
+| transmitted `writeVarp` values | 75/3 or 97/6 | `VARP_SMALL`/`VARP_LARGE` | applies varp and client-var effects |
+| `ResetAnims` | 201/0 | `RESET_ANIMS` | clears actor primary animations |
 
-Anchors: `engine/src/engine/entity/Player.ts:487-527` documents and emits the
-login order; `engine/src/network/game/server/ServerGameProt.ts:3-83` defines
-the engine IDs; `engine/src/engine/entity/Player.ts:1806-1811` selects varp
-forms. The pinned Java dispatch confirms the 289 IDs and semantics at
-`client.java:2612-2619`, `2819-2823`, `2833-2837`, `2972-2990`,
-`2999-3022`, `3351-3383`, `3402-3415`, `3477-3508`, and `3518-3539`.
+Anchors: absolute isolated-engine `engine/src/engine/entity/Player.ts:488-527`
+documents and emits the login order; `engine/src/network/game/server/ServerGameProt.ts:3-83`
+defines the IDs and lengths; `Player.ts:516-521` and `:1806-1811` select the
+transmitted varp forms. The pinned Java dispatch confirms the corresponding
+semantics at `client.java:2612-2619`, `2648-2652`, `2819-2823`,
+`2833-2837`, `3351-3383`, `3402-3415`, `3471-3508`, and `3518-3539`.
 
-Therefore the audit finds a server-version mismatch, not a missing Rust
-handler. Adding aliases for the engine IDs would fabricate 289 semantics and
-could hide stream corruption. The engine must be independently ported/configured
-to emit the authentic 289 IDs before its full login sequence can be accepted.
+The source-ordered regression now feeds this complete concrete login prefix,
+including social, identity, var-cache and animation-reset frames. Script-driven
+packets after `onLogin` are not claimed: they depend on runtime script/provider
+state and must be audited from their emitting scripts before adding coverage.
 
 ## Source-observed but still missing dispatch
 
-The primary dispatch contains additional branches in the startup/early-game
-range that are not enabled in the R289 Rust profile. They remain fail-closed;
-no numeric 274 handler is reused for them. Source-observed examples include
-`12`, `28`, `46`, `60`, `71`, `79`, `81`, `82`, `83`, `87`, `90`, `91`, `106`,
-`115`, `117`, `120`, `136`, `138`, `144`, `176`, `194`, `195`, `222`, `233`,
-and `247`. This is an inventory of source branches, not a claim that every
-opcode is emitted by the tested startup server sequence.
+Additional primary-client branches remain fail-closed because they are not
+emitted by the concrete `Player.onLogin` sequence and lack a bounded startup
+emission trace. Examples include `12`, `28`, `46`, `60`, `71`, `79`, `81`, `82`,
+`83`, `87`, `90`, `91`, `106`, `115`, `117`, `136`, `138`, `144`, `154`, `155`,
+`176`, `194`, `195`, `222`, `233`, and `247`. This is an honest non-startup
+inventory, not a claim that every opcode is required before scene readiness.
 
 The next live log must therefore distinguish a new unknown packet from the
 resolved opcode-13 failure, while also recording whether the endpoint is using
@@ -105,10 +109,11 @@ Command:
 
 `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo test -p client --test revision_289_stage2 -- --test-threads=1`
 
-Result: 32 passed, 0 failed.
+Result: 33 passed, 0 failed.
 
-The regressions `startup_chat_filter_settings_289_dispatches_without_t1` and
-`startup_289_source_sequence_keeps_stream_in_game`
+The regressions `startup_chat_filter_settings_289_dispatches_without_t1`,
+`startup_289_source_sequence_keeps_stream_in_game`, and
+`startup_289_engine_login_social_and_identity_packets_dispatch`
 assert the three mode values, both redraw flags, exact cursor consumption,
 chat generation advancement, the ordered startup state transitions, fixed
 payload cursors, `ptype == -1`, and that the client remains `ingame`. Existing
@@ -119,10 +124,9 @@ also pass.
 
 This is offline source parity only. It does not prove the live RSA/ISAAC
 pairing, authentic 289 cache/server pairing, asset/render readiness, or the
-full server packet sequence. The isolated engine audit specifically proves
-that its current login emissions use a different protocol table, so engine
-login cannot be claimed as a 289 startup proof. Root owns further live runs
-and authorization.
+full server packet sequence. Script/provider-driven packets after `onLogin`
+remain outside this bounded audit. Root owns further live runs and
+authorization.
 The existing bounded branch-review limitations and the dirty inherited STATE
 and helper artifacts are preserved; no live client, server, cache, account,
 key, host, or other checkout was modified.
