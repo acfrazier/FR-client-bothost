@@ -7,6 +7,7 @@ Status: bounded offline source-backed startup coverage; live acceptance remains 
 - Authentic 289 Java dispatch: `/Users/acfrazier/experiments/FR-vault/research/deob/289/nonfree/client/src/main/java/client.java`.
 - Isolated engine login emission: `/Users/acfrazier/experiments/lostcity-289/engine/src/engine/entity/Player.ts:488-533`.
 - Isolated engine packet IDs and lengths: `/Users/acfrazier/experiments/lostcity-289/engine/src/network/game/server/ServerGameProt.ts:1-89`.
+- Isolated engine zone packet IDs and lengths: `/Users/acfrazier/experiments/lostcity-289/engine/src/network/game/server/ServerGameZoneProt.ts:1-15`.
 - Isolated login script: `/Users/acfrazier/experiments/lostcity-289/content/scripts/login_logout/login.rs2:1-116`.
 - Isolated first-tick output: `/Users/acfrazier/experiments/lostcity-289/engine/src/engine/entity/NetworkPlayer.ts:155-189,286-395`.
 
@@ -65,23 +66,30 @@ The script also schedules timers and queued procedures. Those are not packet emi
 - `UPDATE_RUNWEIGHT` 46/2: signed g2 and stats-tab redraw.
 - `PLAYER_INFO` 188/-2 and `NPC_INFO` 65/-2: existing exact actor decoders.
 - `UPDATE_ZONE_PARTIAL_FOLLOWS` 155/2 and `UPDATE_ZONE_FULL_FOLLOWS` 144/2: zone origin and full-zone object invalidation.
-- `UPDATE_ZONE_PARTIAL_ENCLOSED` 112/-2: zone origin and bounded inner-zone dispatch.
+- `UPDATE_ZONE_PARTIAL_ENCLOSED` 112/-2: zone origin and R289 inner-zone dispatch.
 - `UPDATE_INV_FULL` 107/-2 and `UPDATE_INV_PARTIAL` 76/-2: existing inventory paths.
 
-The regression `startup_289_login_script_and_first_tick_packets_dispatch` exercises the script packet order plus stat, energy, weight, and identity payload semantics. Existing actor, inventory, region, and zone tests remain in the same production dispatch path.
+The regressions `startup_289_source_sequence_keeps_stream_in_game`,
+`startup_289_login_script_and_first_tick_packets_dispatch`, and
+`startup_289_enclosed_zone_uses_289_inner_opcodes_and_keeps_framing` exercise the
+ordered onLogin prefix, LOGIN script, first-tick stats/identity, and a non-empty
+R289 enclosed-zone frame. Inner IDs are translated from the isolated
+`ServerGameZoneProt.ts:5-14` table to the shared field-width implementations;
+unknown inner IDs consume the remainder of their outer frame rather than
+desynchronizing the next top-level packet.
 
 ## Covered R289 inventory
 
-Source-anchored production dispatch currently covers: 13, 21, 23, 46, 47, 55, 59, 63, 65, 75, 76, 97, 107, 112, 120, 121, 127, 133, 136, 144, 154, 155, 172, 188, 195, 196, 201, 211, 219, 235, and 252. All named rows assert their exact lengths against `SERVER_PROT_SIZES_289`.
+Source-anchored production dispatch currently covers: 13, 21, 23, 46, 47, 55, 59, 63, 65, 75, 76, 97, 107, 112, 120, 121, 127, 133, 136, 144, 154, 155, 172, 188, 195, 196, 201, 211, 219, 235, and 252. Enclosed R289 zone IDs 83, 60, 71, 176, 90, 87, 194, 117, 233, and 106 are covered by the inner dispatch. All named rows assert their exact lengths against `SERVER_PROT_SIZES_289`.
 
 ## Still fail-closed
 
-Packets not emitted by the concrete onLogin/login-trigger/first-tick trace remain fail-closed. This includes unrelated primary-client branches such as tutorial, audio, arbitrary interface updates, private messages, and inner zone object opcodes unless a separate source-backed emission is established. Unknown IDs still report T1 and invoke the existing logout path; no trailing-byte checks were bypassed and no fabricated handler or foreign runtime was added.
+Packets not emitted by the concrete onLogin/login-trigger/first-tick trace remain fail-closed. This includes unrelated primary-client branches such as tutorial, audio, arbitrary interface updates, and private messages. Unknown top-level IDs still report T1 and invoke the existing logout path; unknown inner-zone IDs consume only their enclosing frame remainder. No trailing-byte checks were bypassed and no fabricated handler or foreign runtime was added.
 
 ## Verification
 
-- `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo test -p client --test revision_289_stage2 -- --test-threads=1` — 34 passed, 0 failed.
-- `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo test -p client --test revision_289_stage1 --test revision_289_stage2 --lib -- --test-threads=1` — 73 lib, 26 stage1, 34 stage2 passed; 0 failed.
+- `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo test -p client --test revision_289_stage2 -- --test-threads=1` — 35 passed, 0 failed.
+- `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo test -p client --test revision_289_stage1 --test revision_289_stage2 --lib -- --test-threads=1` — 73 lib, 26 stage1, 35 stage2 passed; 0 failed.
 - `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo check -p client -p client-play` — passed.
 - `python3 tools/verify_revision_289_contract.py` — PASS: 256 inbound, 82 outbound rows; 50 fixtures.
 - `git diff --check` — passed.

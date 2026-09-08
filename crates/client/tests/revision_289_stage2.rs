@@ -148,8 +148,8 @@ fn startup_chat_filter_settings_289_dispatches_without_t1() {
 fn startup_289_source_sequence_keeps_stream_in_game() {
     // This exercises the source-ordered 289-covered prefix identified while
     // auditing the isolated engine's Player.onLogin contract: rebuild, chat
-    // modes, varp sync/updates, inventory, then reset anims. The report maps
-    // the engine's incompatible IDs separately.
+    // modes, friend/ignore state, interface close, identity, varps,
+    // inventory, then reset anims. Script and first-tick packets follow below.
     let mut c = client_289();
     c.psize = 4;
     let mut rebuild = Packet::new(hex_bytes("00100020"));
@@ -167,6 +167,11 @@ fn startup_289_source_sequence_keeps_stream_in_game() {
     c.handle_packet(ServerProt289::FRIENDLIST_LOADED, &mut friend);
     assert_eq!(friend.pos, 1);
 
+    c.psize = 16;
+    let mut ignore = Packet::new(vec![0; 16]);
+    c.handle_packet(ServerProt289::UPDATE_IGNORELIST, &mut ignore);
+    assert_eq!(ignore.pos, 16);
+
     c.psize = 0;
     let mut close = Packet::new(vec![]);
     c.handle_packet(ServerProt289::IF_CLOSE, &mut close);
@@ -176,11 +181,6 @@ fn startup_289_source_sequence_keeps_stream_in_game() {
     let mut pid = Packet::new(hex_bytes("000001"));
     c.handle_packet(ServerProt289::UPDATE_PID, &mut pid);
     assert_eq!(pid.pos, 3);
-
-    c.psize = 16;
-    let mut ignore = Packet::new(vec![0; 16]);
-    c.handle_packet(ServerProt289::UPDATE_IGNORELIST, &mut ignore);
-    assert_eq!(ignore.pos, 16);
 
     c.psize = 0;
     let mut sync = Packet::new(vec![]);
@@ -206,6 +206,30 @@ fn startup_289_source_sequence_keeps_stream_in_game() {
     let mut reset = Packet::new(vec![]);
     c.handle_packet(ServerProt289::RESET_ANIMS, &mut reset);
     assert_eq!(reset.pos, 0);
+
+    // login.rs2 and the first NetworkPlayer tick follow the onLogin prefix.
+    c.psize = 8;
+    let mut welcome = Packet::new(hex_bytes("57656c636f6d650a"));
+    c.handle_packet(ServerProt289::MESSAGE_GAME, &mut welcome);
+    assert_eq!(welcome.pos, 8);
+    c.psize = 0;
+    let mut cam_reset = Packet::new(vec![]);
+    c.handle_packet(ServerProt289::CAM_RESET, &mut cam_reset);
+    c.psize = 1;
+    let mut minimap = Packet::new(vec![0]);
+    c.handle_packet(ServerProt289::MINIMAP_TOGGLE, &mut minimap);
+    c.psize = 6;
+    let mut stat = Packet::new(hex_bytes("02000003e807"));
+    c.handle_packet(ServerProt289::UPDATE_STAT, &mut stat);
+    c.psize = 1;
+    let mut energy = Packet::new(vec![87]);
+    c.handle_packet(ServerProt289::UPDATE_RUNENERGY, &mut energy);
+    c.psize = 2;
+    let mut weight = Packet::new(hex_bytes("ffce"));
+    c.handle_packet(ServerProt289::UPDATE_RUNWEIGHT, &mut weight);
+    c.psize = 10;
+    let mut last_login = Packet::new(vec![0; 10]);
+    c.handle_packet(ServerProt289::LAST_LOGIN_INFO, &mut last_login);
     assert!(c.ingame, "all source-covered startup packets stay in game");
 }
 
@@ -322,6 +346,18 @@ fn startup_289_login_script_and_first_tick_packets_dispatch() {
         &mut enclosed_zone,
     );
     assert_eq!(enclosed_zone.pos, 2);
+    assert!(c.ingame);
+}
+
+#[test]
+fn startup_289_enclosed_zone_uses_289_inner_opcodes_and_keeps_framing() {
+    let mut c = client_289();
+    c.psize = 11;
+    // ServerGameZoneProt: LOC_ADD_CHANGE=90 (pos, info, id) followed by
+    // OBJ_DEL=71 (pos, id). Both frames must consume their R289 payloads.
+    let mut enclosed = Packet::new(vec![40, 48, 0x11, 90, 0, 0x12, 0x34, 0x22, 71, 0x00, 0x56]);
+    c.handle_packet(ServerProt289::UPDATE_ZONE_PARTIAL_ENCLOSED, &mut enclosed);
+    assert_eq!(enclosed.pos, 11);
     assert!(c.ingame);
 }
 

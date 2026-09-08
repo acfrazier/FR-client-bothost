@@ -70,6 +70,17 @@ impl ServerProt289 {
     pub const UPDATE_ZONE_PARTIAL_FOLLOWS: i32 = 155;
     pub const UPDATE_ZONE_FULL_FOLLOWS: i32 = 144;
     pub const UPDATE_ZONE_PARTIAL_ENCLOSED: i32 = 112;
+    // ServerGameZoneProt.ts inner IDs used by UPDATE_ZONE_PARTIAL_ENCLOSED.
+    pub const ZONE_LOC_MERGE: i32 = 83;
+    pub const ZONE_LOC_ANIM: i32 = 106;
+    pub const ZONE_OBJ_DEL: i32 = 71;
+    pub const ZONE_OBJ_REVEAL: i32 = 176;
+    pub const ZONE_LOC_ADD_CHANGE: i32 = 90;
+    pub const ZONE_MAP_PROJANIM: i32 = 87;
+    pub const ZONE_LOC_DEL: i32 = 194;
+    pub const ZONE_OBJ_COUNT: i32 = 117;
+    pub const ZONE_MAP_ANIM: i32 = 233;
+    pub const ZONE_OBJ_ADD: i32 = 60;
     // Stage 2 — login/actors/world/widgets/reset (client.java dispatch)
     pub const LOGOUT: i32 = 121;
     pub const PLAYER_INFO: i32 = 188;

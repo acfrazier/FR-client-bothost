@@ -6703,7 +6703,7 @@ impl Client {
                 self.apply_chat_filter_settings(payload);
                 self.ptype = -1;
             }
-            // IF_CLOSE: clear interface modals (client.java:2612-2619).
+            // IF_CLOSE: clear interface modals (client.java:3195-3212).
             x if x == ServerProt289::IF_CLOSE => {
                 self.apply_if_close();
                 self.ptype = -1;
@@ -6807,9 +6807,8 @@ impl Client {
                 let _members_warning = payload.g1();
                 self.ptype = -1;
             }
-            // First-tick zone bootstrap uses the same source-defined zone
-            // coordinates as the 274 client; inner zone opcodes remain
-            // fail-closed unless separately traced.
+            // First-tick zone bootstrap uses the R289 source-defined zone
+            // coordinates and inner opcode table.
             x if x == ServerProt289::UPDATE_ZONE_PARTIAL_FOLLOWS => {
                 self.zone_update_x = payload.g1();
                 self.zone_update_z = payload.g1();
@@ -6838,7 +6837,7 @@ impl Client {
                 let end = self.inbound_end(payload);
                 while payload.pos < end {
                     let opcode = payload.g1();
-                    self.zone_packet(payload, opcode);
+                    self.zone_packet_289(payload, opcode, end);
                 }
                 self.ptype = -1;
             }
@@ -7820,6 +7819,30 @@ impl Client {
                 }
             }
         }
+    }
+
+    /// Translate the R289 zone protocol IDs before using the shared decoder.
+    /// The field widths are identical to the corresponding source-defined
+    /// 274 operations; unknown inner IDs consume the remainder of the outer
+    /// frame so they cannot desynchronise the next top-level packet.
+    fn zone_packet_289(&mut self, buf: &mut Packet, opcode: i32, end: usize) {
+        let mapped = match opcode {
+            ServerProt289::ZONE_LOC_MERGE => ServerProt::P_LOCMERGE,
+            ServerProt289::ZONE_LOC_ANIM => ServerProt::LOC_ANIM,
+            ServerProt289::ZONE_OBJ_DEL => ServerProt::OBJ_DEL,
+            ServerProt289::ZONE_OBJ_REVEAL => ServerProt::OBJ_REVEAL,
+            ServerProt289::ZONE_LOC_ADD_CHANGE => ServerProt::LOC_ADD_CHANGE,
+            ServerProt289::ZONE_MAP_PROJANIM => ServerProt::MAP_PROJANIM,
+            ServerProt289::ZONE_LOC_DEL => ServerProt::LOC_DEL,
+            ServerProt289::ZONE_OBJ_COUNT => ServerProt::OBJ_COUNT,
+            ServerProt289::ZONE_MAP_ANIM => ServerProt::MAP_ANIM,
+            ServerProt289::ZONE_OBJ_ADD => ServerProt::OBJ_ADD,
+            _ => {
+                buf.pos = end;
+                return;
+            }
+        };
+        self.zone_packet(buf, mapped);
     }
 
     /// `zonePacket(buf, opcode)` from client-ts: reads the 8-tile zone

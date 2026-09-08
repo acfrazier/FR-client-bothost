@@ -334,26 +334,15 @@ cap; non-modal name/cross chrome refresh remains a noted limitation. These are
 not claimed complete by this offline milestone. Live RSA/ISAAC, authentic cache
 pairing, real scene construction and server login/action/logout remain unproven.
 
-## Startup packet parity checkpoint (t_82d212a4)
+## Startup packet parity checkpoint (t_82d212a4) — superseded receipt
 
-Active implementation card t_82d212a4 added source-backed R289 opcode 13
-CHAT_FILTER_SETTINGS dispatch after the reproduced `T1 - 13,3 - 219,-1`,
-then audited the isolated engine's concrete `Player.onLogin` emission order.
-Primary anchors: `client.java:2612-2619` and `Class17.java:11` in the pinned
-289 deob; engine anchors are `engine/src/engine/entity/Player.ts:487-527` and
-`engine/src/network/game/server/ServerGameProt.ts:3-83`. The audit found the
-engine table uses different IDs (for example engine rebuild 231 vs authentic
-289 rebuild 219), so no unsafe aliases were added. Existing opcode 219
-REBUILD_NORMAL was audited and retained.
-Deliverable: `docs/revision-289/startup-packet-parity-report.md`.
-
-Exact verification: `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target
-cargo test -p client --test revision_289_stage2 -- --test-threads=1` — 32 passed,
-0 failed, including `startup_289_source_sequence_keeps_stream_in_game`.
-Live RSA/ISAAC, authentic cache/server pairing, and full startup sequence remain
-unproven; root owns the next live run. Same-card reviewer handoff is required
-before accepting this checkpoint. Inherited untracked review/helper artifacts
-remain intentionally preserved and are not task deliverables.
+The initial opcode-13 checkpoint is retained as commit history, but its engine
+comparison was superseded after correcting the source path. The authoritative
+audit uses the absolute isolated engine files named in the corrective sections
+below; it does not claim an engine rebuild-231 mismatch. The reproduced
+`T1 - 13,3 - 219,-1` remains covered by the source-backed opcode-13 and
+opcode-219 handlers. Inherited untracked review/helper artifacts remain
+intentionally preserved and are not task deliverables.
 
 ## Startup packet parity correction (t_82d212a4)
 
@@ -390,3 +379,15 @@ options/tabs and stat/energy/weight/identity payloads, with exact cursors and
 state assertions. The parity report was rewritten to enumerate concrete
 onLogin, LOGIN-trigger, and first-tick emissions and to distinguish remaining
 fail-closed non-startup packets without live-guess framing.
+
+### Enclosed-zone correction
+
+The R289 `UPDATE_ZONE_PARTIAL_ENCLOSED` path now translates the isolated
+`ServerGameZoneProt.ts:5-14` IDs (LOC_MERGE 83, LOC_ANIM 106, OBJ_DEL 71,
+OBJ_REVEAL 176, LOC_ADD_CHANGE 90, MAP_PROJANIM 87, LOC_DEL 194,
+OBJ_COUNT 117, MAP_ANIM 233, OBJ_ADD 60) before invoking the shared field
+decoders. A non-empty 289 frame regression proves exact consumption; unknown
+inner IDs terminate at the enclosing frame boundary. The stale IF_CLOSE
+comment was corrected to client.java:3195-3212, and the ordered startup test
+now follows friend -> ignore -> close -> PID before varp/inventory/reset and
+script/first-tick packets.
