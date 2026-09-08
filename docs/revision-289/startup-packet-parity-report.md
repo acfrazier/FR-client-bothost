@@ -1,132 +1,91 @@
 # Revision 289 startup packet parity report
 
-Status: bounded offline source-backed update; live acceptance remains external.
+Status: bounded offline source-backed startup coverage; live acceptance remains external.
 
-## Root cause and fix
+## Sources and provenance
 
-The reproduced 289 startup failure was `T1 - 13,3 - 219,-1`. The primary
-289 client treats opcode 13 as the three-byte chat-filter-settings packet, not
-as an unknown camera packet:
+- Authentic 289 Java dispatch: `/Users/acfrazier/experiments/FR-vault/research/deob/289/nonfree/client/src/main/java/client.java`.
+- Isolated engine login emission: `/Users/acfrazier/experiments/lostcity-289/engine/src/engine/entity/Player.ts:488-533`.
+- Isolated engine packet IDs and lengths: `/Users/acfrazier/experiments/lostcity-289/engine/src/network/game/server/ServerGameProt.ts:1-89`.
+- Isolated login script: `/Users/acfrazier/experiments/lostcity-289/content/scripts/login_logout/login.rs2:1-116`.
+- Isolated first-tick output: `/Users/acfrazier/experiments/lostcity-289/engine/src/engine/entity/NetworkPlayer.ts:155-189,286-395`.
 
-- `client.java:2612-2619`: reads three `g1` values into `anInt212`,
-  `anInt234`, and `anInt360`, sets the two redraw flags, and accepts the frame.
-- `client.java:5065-5066`, `5091-5092`, `5303-5304`, `5320-5321`, and
-  `5338-5339`: consume those values as public/private/trade chat visibility
-  modes.
-- `Class17.java:11`: the 289 packet-length table gives opcode 13 length 3.
+No source outside these pinned absolute paths was used for the startup audit. The inherited untracked helper/review artifacts remain untouched and unstaged.
 
-The R289 profile now names opcode 13 `CHAT_FILTER_SETTINGS`, dispatches it
-through the existing production `apply_chat_filter_settings` implementation,
-bumps the chat generation, and preserves exact three-byte consumption. The
-protocol inventory was corrected from the former ambiguous
-`camera_or_scene_triplet` label to `chat_filter_settings`.
+## Root cause and corrected dispatch
 
-Opcode 219 was already correctly source-backed as `REBUILD_NORMAL`: the
-primary client reads two `g2` values and starts the map rebuild at
-`client.java:2999-3022`; the R289 table length is 4 and the Rust dispatch is
-already wired to `apply_rebuild_normal`.
+The reproduced stream was `T1 - 13,3 - 219,-1`. Authentic 289 dispatch reads opcode 13 as three `g1` chat visibility modes (`client.java:2612-2619`) and the authentic length table gives it length 3 (`Class17.java:11`). Opcode 219 is the four-byte `REBUILD_NORMAL` packet (`client.java:2999-3022`).
 
-## Covered R289 dispatch inventory
+R289 dispatch now covers both packets without numeric aliases, preserves exact payload consumption, bumps the appropriate generation state, and leaves the existing default R274 table unchanged.
 
-The explicit R289 dispatch currently covers these source-anchored families:
+## Concrete startup emissions and coverage
 
-- `13` chat filter settings: three `g1` mode values; redraw chat and mode.
-- `23` IF_CLOSE: clears side/chat/name-entry/main interface modals.
-- `47` UPDATE_IGNORELIST: consumes repeated `g8` hashes.
-- `120` UPDATE_PID: `g2` self slot plus `g1` members flag.
-- `235` FRIENDLIST_LOADED: consumes the social-server status byte.
-- `65` NPC_INFO: `method187` actor update path.
-- `75` VARP_SMALL: `g2` id plus signed `g1` value.
-- `76` UPDATE_INV_PARTIAL: gsmart slot form.
-- `97` VARP_LARGE: `g2` id plus `g4` value.
-- `107` UPDATE_INV_FULL: `g2` component plus `g2` entry count.
-- `121` LOGOUT: full lifecycle reset.
-- `127` IF_OPENOVERLAY: signed `g2` component.
-- `172` VARP_SYNC: bulk server-to-client varp copy.
-- `188` PLAYER_INFO: actor bitstream and exact frame-end check.
-- `201` RESET_ANIMS: clears primary animations.
-- `211` IF_SETANIM: `g2` component plus signed `g2` sequence.
-- `219` REBUILD_NORMAL: `g2`/`g2` region base and scene-state transition.
-- `252` IF_OPENSIDE: `g2` component.
-- `59` IF_SETTEXT: `g2` component plus newline string.
+### Player.onLogin ordered prefix
 
-The source-ordered offline regression `startup_289_source_sequence_keeps_stream_in_game`
-feeds the covered prefix as exact frames: `219` rebuild, `13` chat modes,
-`172` varp sync, `75`/`97` varp updates, `107` empty inventory, and `201`
-reset animations. It asserts every fixed payload cursor, `scene_state == 1`
-after rebuild, and that the client remains ingame.
+`Player.ts:488-527` emits this exact order. IDs and lengths are from `ServerGameProt.ts`.
 
-The named rows and length assertions live in `crates/client/src/io/revision.rs`;
-production dispatch is in `crates/client/src/client/client.rs`.
+| Order | Engine message | ID / length | Rust R289 coverage |
+|---:|---|---:|---|
+| 1 | `REBUILD_NORMAL` | 219 / 4 | region base, scene loading |
+| 2 | `CHAT_FILTER_SETTINGS` | 13 / 3 | public/private/trade modes |
+| 3a | `FRIENDLIST_LOADED` (friend enabled) | 235 / 1 | social status |
+| 3b | `FRIENDLIST_LOADED` (friend disabled) | 235 / 1 | social status |
+| 3c | `UPDATE_IGNORELIST([])` (friend disabled) | 47 / -2 | empty/repeated g8 hashes |
+| 4 | `IF_CLOSE` | 23 / 0 | closes modals |
+| 5 | `UPDATE_PID` | 120 / 3 | self slot and members flag |
+| 6 | `RESET_CLIENT_VARCACHE` | 172 / 0 | authoritative var cache copy |
+| 7 | `writeVarp` for transmitted vars | 75 / 3 or 97 / 6 | small/large varp state |
+| 8 | `RESET_ANIMS` | 201 / 0 | clears actor primary animations |
 
-## Isolated-engine startup audit
+The social/identity/var-cache sequence is covered by `startup_289_engine_login_social_and_identity_packets_dispatch` and the ordered prefix regression in `revision_289_stage2.rs`.
 
-The authorized isolated engine's `Player.onLogin` source emits the following
-concrete sequence. Its packet IDs and lengths match the authentic 289 table;
-the Rust profile now dispatches each packet without numeric aliases:
+### LOGIN trigger script
 
-| `Player.onLogin` emission | Engine ID/length | R289 handler | Rust state/effect |
-|---|---:|---|---|
-| `rebuildNormal()` | 219/4 | `REBUILD_NORMAL` | region base and scene loading |
-| `ChatFilterSettings` | 13/3 | `CHAT_FILTER_SETTINGS` | public/private/trade modes |
-| friend enabled/disabled `FriendlistLoaded` | 235/1 | `FRIENDLIST_LOADED` | friend-server status |
-| disabled `UpdateIgnoreList([])` | 47/-2 | `UPDATE_IGNORELIST` | clears/loads ignore hashes |
-| `IfClose` | 23/0 | `IF_CLOSE` | closes interface modals |
-| `UpdatePid` | 120/3 | `UPDATE_PID` | local slot and members flag |
-| `ResetClientVarCache` | 172/0 | `VARP_SYNC` | applies authoritative var cache |
-| transmitted `writeVarp` values | 75/3 or 97/6 | `VARP_SMALL`/`VARP_LARGE` | applies varp and client-var effects |
-| `ResetAnims` | 201/0 | `RESET_ANIMS` | clears actor primary animations |
+`login.rs2:1-90` is the concrete LOGIN trigger selected by `Player.onLogin:525-527`. Its emitted packet coverage is:
 
-Anchors: absolute isolated-engine `engine/src/engine/entity/Player.ts:488-527`
-documents and emits the login order; `engine/src/network/game/server/ServerGameProt.ts:3-83`
-defines the IDs and lengths; `Player.ts:516-521` and `:1806-1811` select the
-transmitted varp forms. The pinned Java dispatch confirms the corresponding
-semantics at `client.java:2612-2619`, `2648-2652`, `2819-2823`,
-`2833-2837`, `3351-3383`, `3402-3415`, `3471-3508`, and `3518-3539`.
+| Script source | Engine message | ID / length | Rust R289 coverage |
+|---|---|---:|---|
+| `mes("Welcome...")` | `MESSAGE_GAME` | 196 / -1 | chat insertion and exact jstr |
+| `cam_reset` (twice) | `CAM_RESET` | 133 / 0 | camera/shake reset |
+| `minimap_toggle(0)` | `MINIMAP_TOGGLE` | 136 / 1 | minimap state |
+| `set_player_op(...)` (multiple) | `SET_PLAYER_OP` | 21 / -1 | option text/priority |
+| wilderness overlay branch | `IF_OPENOVERLAY` | 127 / 2 | existing widget handler; conditional only |
+| `initalltabs` / `if_settab(...)` | `IF_SETTAB` | 63 / 3 | side-tab component mapping |
+| `inv_transmit(...)` | `UPDATE_INV_FULL` | 107 / -2 | existing inventory decoder |
+| `last_login_info` when `map_live` | `LAST_LOGIN_INFO` | 253 / 10 | fixed five-field payload consumption |
 
-The source-ordered regression now feeds this complete concrete login prefix,
-including social, identity, var-cache and animation-reset frames. Script-driven
-packets after `onLogin` are not claimed: they depend on runtime script/provider
-state and must be audited from their emitting scripts before adding coverage.
+The script also schedules timers and queued procedures. Those are not packet emissions until their runtime conditions execute; they are not fabricated into the startup sequence.
 
-## Source-observed but still missing dispatch
+### First tick / NetworkPlayer output
 
-Additional primary-client branches remain fail-closed because they are not
-emitted by the concrete `Player.onLogin` sequence and lack a bounded startup
-emission trace. Examples include `12`, `28`, `46`, `60`, `71`, `79`, `81`, `82`,
-`83`, `87`, `90`, `91`, `106`, `115`, `117`, `136`, `138`, `144`, `154`, `155`,
-`176`, `194`, `195`, `222`, `233`, and `247`. This is an honest non-startup
-inventory, not a claim that every opcode is required before scene readiness.
+`NetworkPlayer.ts:317-330` emits changed stats, run energy, and `NetworkPlayer.ts:332-395` emits first-seen inventory and run weight. `NetworkPlayer.ts:286-313` emits player/NPC and zone bootstrap. R289 coverage now includes:
 
-The next live log must therefore distinguish a new unknown packet from the
-resolved opcode-13 failure, while also recording whether the endpoint is using
-the engine table or the authentic 289 table. Unsupported rows continue to
-produce T1/logout; no trailing-byte bypass or fabricated handler was added.
+- `UPDATE_STAT` 154/6: stat id, g4 experience, effective level; redraw and base-level derivation.
+- `UPDATE_RUNENERGY` 195/1: energy byte and stats-tab redraw.
+- `UPDATE_RUNWEIGHT` 46/2: signed g2 and stats-tab redraw.
+- `PLAYER_INFO` 188/-2 and `NPC_INFO` 65/-2: existing exact actor decoders.
+- `UPDATE_ZONE_PARTIAL_FOLLOWS` 155/2 and `UPDATE_ZONE_FULL_FOLLOWS` 144/2: zone origin and full-zone object invalidation.
+- `UPDATE_ZONE_PARTIAL_ENCLOSED` 112/-2: zone origin and bounded inner-zone dispatch.
+- `UPDATE_INV_FULL` 107/-2 and `UPDATE_INV_PARTIAL` 76/-2: existing inventory paths.
 
-## Offline regression evidence
+The regression `startup_289_login_script_and_first_tick_packets_dispatch` exercises the script packet order plus stat, energy, weight, and identity payload semantics. Existing actor, inventory, region, and zone tests remain in the same production dispatch path.
 
-Command:
+## Covered R289 inventory
 
-`CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo test -p client --test revision_289_stage2 -- --test-threads=1`
+Source-anchored production dispatch currently covers: 13, 21, 23, 46, 47, 55, 59, 63, 65, 75, 76, 97, 107, 112, 120, 121, 127, 133, 136, 144, 154, 155, 172, 188, 195, 196, 201, 211, 219, 235, and 252. All named rows assert their exact lengths against `SERVER_PROT_SIZES_289`.
 
-Result: 33 passed, 0 failed.
+## Still fail-closed
 
-The regressions `startup_chat_filter_settings_289_dispatches_without_t1`,
-`startup_289_source_sequence_keeps_stream_in_game`, and
-`startup_289_engine_login_social_and_identity_packets_dispatch`
-assert the three mode values, both redraw flags, exact cursor consumption,
-chat generation advancement, the ordered startup state transitions, fixed
-payload cursors, `ptype == -1`, and that the client remains `ingame`. Existing
-stage-2 actor, region, widget, varp, login, reset, logout, and fail-closed tests
-also pass.
+Packets not emitted by the concrete onLogin/login-trigger/first-tick trace remain fail-closed. This includes unrelated primary-client branches such as tutorial, audio, arbitrary interface updates, private messages, and inner zone object opcodes unless a separate source-backed emission is established. Unknown IDs still report T1 and invoke the existing logout path; no trailing-byte checks were bypassed and no fabricated handler or foreign runtime was added.
 
-## Limits and prerequisites
+## Verification
 
-This is offline source parity only. It does not prove the live RSA/ISAAC
-pairing, authentic 289 cache/server pairing, asset/render readiness, or the
-full server packet sequence. Script/provider-driven packets after `onLogin`
-remain outside this bounded audit. Root owns further live runs and
-authorization.
-The existing bounded branch-review limitations and the dirty inherited STATE
-and helper artifacts are preserved; no live client, server, cache, account,
-key, host, or other checkout was modified.
+- `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo test -p client --test revision_289_stage2 -- --test-threads=1` — 34 passed, 0 failed.
+- `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo test -p client --test revision_289_stage1 --test revision_289_stage2 --lib -- --test-threads=1` — 73 lib, 26 stage1, 34 stage2 passed; 0 failed.
+- `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo check -p client -p client-play` — passed.
+- `python3 tools/verify_revision_289_contract.py` — PASS: 256 inbound, 82 outbound rows; 50 fixtures.
+- `git diff --check` — passed.
+
+## Limits
+
+This is offline source parity only. It does not prove live RSA/ISAAC correspondence, authentic cache/server pairing, asset/render readiness, scene readiness, or live login/action/logout. Root retains live authorization and acceptance ownership. No live client, server, cache, account, key, host, isolated engine, or other checkout was modified.

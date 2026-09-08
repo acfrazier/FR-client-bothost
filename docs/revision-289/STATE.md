@@ -373,3 +373,20 @@ git diff --check passed. Report corrected at
 cache/server pairing, script/provider-driven post-login packets, scene
 readiness, and live acceptance remain external. Inherited untracked review
 and helper artifacts remain preserved and unstaged.
+
+## Startup packet parity corrective implementation (t_82d212a4)
+
+Corrected the prior onLogin-only audit by tracing the absolute isolated engine
+`Player.ts:488-533`, `NetworkPlayer.ts:286-395`, `ServerGameProt.ts:1-89`,
+and `content/scripts/login_logout/login.rs2:1-116`. Added source-backed R289
+dispatch for concrete login-trigger packets MESSAGE_GAME 196, CAM_RESET 133,
+MINIMAP_TOGGLE 136, SET_PLAYER_OP 21, IF_SETTAB 63, UPDATE_STAT 154,
+UPDATE_RUNENERGY 195, UPDATE_RUNWEIGHT 46, LAST_LOGIN_INFO 253, and first-tick
+zone bootstrap 155/144/112. Existing actor/inventory handlers cover the other
+concrete first-tick emissions.
+
+The ordered regression now includes script-driven welcome/camera/minimap/player
+options/tabs and stat/energy/weight/identity payloads, with exact cursors and
+state assertions. The parity report was rewritten to enumerate concrete
+onLogin, LOGIN-trigger, and first-tick emissions and to distinguish remaining
+fail-closed non-startup packets without live-guess framing.

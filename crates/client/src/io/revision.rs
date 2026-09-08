@@ -58,6 +58,18 @@ impl ServerProt289 {
     pub const UPDATE_IGNORELIST: i32 = 47;
     pub const FRIENDLIST_LOADED: i32 = 235;
     pub const UPDATE_PID: i32 = 120;
+    pub const MESSAGE_GAME: i32 = 196;
+    pub const CAM_RESET: i32 = 133;
+    pub const MINIMAP_TOGGLE: i32 = 136;
+    pub const SET_PLAYER_OP: i32 = 21;
+    pub const IF_SETTAB: i32 = 63;
+    pub const UPDATE_STAT: i32 = 154;
+    pub const UPDATE_RUNENERGY: i32 = 195;
+    pub const UPDATE_RUNWEIGHT: i32 = 46;
+    pub const LAST_LOGIN_INFO: i32 = 253;
+    pub const UPDATE_ZONE_PARTIAL_FOLLOWS: i32 = 155;
+    pub const UPDATE_ZONE_FULL_FOLLOWS: i32 = 144;
+    pub const UPDATE_ZONE_PARTIAL_ENCLOSED: i32 = 112;
     // Stage 2 — login/actors/world/widgets/reset (client.java dispatch)
     pub const LOGOUT: i32 = 121;
     pub const PLAYER_INFO: i32 = 188;
@@ -138,6 +150,24 @@ mod tests {
         assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::UPDATE_IGNORELIST as usize], -2);
         assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::FRIENDLIST_LOADED as usize], 1);
         assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::UPDATE_PID as usize], 3);
+        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::MESSAGE_GAME as usize], -1);
+        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::CAM_RESET as usize], 0);
+        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::MINIMAP_TOGGLE as usize], 1);
+        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::SET_PLAYER_OP as usize], -1);
+        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::IF_SETTAB as usize], 3);
+        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::UPDATE_STAT as usize], 6);
+        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::UPDATE_RUNENERGY as usize], 1);
+        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::UPDATE_RUNWEIGHT as usize], 2);
+        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::LAST_LOGIN_INFO as usize], 10);
+        assert_eq!(
+            SERVER_PROT_SIZES_289[ServerProt289::UPDATE_ZONE_PARTIAL_FOLLOWS as usize],
+            2
+        );
+        assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::UPDATE_ZONE_FULL_FOLLOWS as usize], 2);
+        assert_eq!(
+            SERVER_PROT_SIZES_289[ServerProt289::UPDATE_ZONE_PARTIAL_ENCLOSED as usize],
+            -2
+        );
     }
 
     #[test]

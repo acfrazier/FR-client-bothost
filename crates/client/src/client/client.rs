@@ -6727,6 +6727,121 @@ impl Client {
                 self.members_account = payload.g1();
                 self.ptype = -1;
             }
+            // MESSAGE_GAME: login welcome and server notices (client.java
+            // message-game branch; engine MessageGameEncoder).
+            x if x == ServerProt289::MESSAGE_GAME => {
+                self.apply_message_game(payload);
+                self.ptype = -1;
+            }
+            // CAM_RESET: leave cutscene camera and clear camera shakes.
+            x if x == ServerProt289::CAM_RESET => {
+                self.apply_cam_reset(payload);
+                self.ptype = -1;
+            }
+            // MINIMAP_TOGGLE: one-byte minimap lock state.
+            x if x == ServerProt289::MINIMAP_TOGGLE => {
+                self.apply_minimap_toggle(payload);
+                self.ptype = -1;
+            }
+            // SET_PLAYER_OP: index, priority, newline-terminated option.
+            x if x == ServerProt289::SET_PLAYER_OP => {
+                let index = payload.g1();
+                let priority = payload.g1();
+                let op = payload.gjstr();
+                if (1..=5).contains(&index) {
+                    self.player_op[(index - 1) as usize] =
+                        (!op.eq_ignore_ascii_case("null")).then_some(op);
+                    self.player_op_priority[(index - 1) as usize] = priority == 0;
+                }
+                self.ptype = -1;
+            }
+            // IF_SETTAB: component id and side-tab index.
+            x if x == ServerProt289::IF_SETTAB => {
+                let com_id = payload.g2();
+                let tab = payload.g1();
+                if (0..14).contains(&tab) {
+                    self.side_icon[tab as usize] = com_id;
+                    self.redraw_side = true;
+                    self.redraw_icons = true;
+                }
+                self.ptype = -1;
+            }
+            // UPDATE_STAT: stat id, experience, effective level.
+            x if x == ServerProt289::UPDATE_STAT => {
+                self.redraw_side = true;
+                let stat = payload.g1();
+                let xp = payload.g4();
+                let level = payload.g1();
+                if stat >= 0 && (stat as usize) < self.stat_xp.len() {
+                    self.stat_xp[stat as usize] = xp;
+                    self.stat_effective_level[stat as usize] = level;
+                    let mut base = 1;
+                    for i in 0..98 {
+                        if xp >= level_experience()[i] {
+                            base = (i + 2) as i32;
+                        }
+                    }
+                    self.stat_base_level[stat as usize] = base;
+                }
+                self.ptype = -1;
+            }
+            // UPDATE_RUNENERGY: one-byte energy percentage.
+            x if x == ServerProt289::UPDATE_RUNENERGY => {
+                if self.active_icon == 12 {
+                    self.redraw_side = true;
+                }
+                self.runenergy = payload.g1();
+                self.ptype = -1;
+            }
+            // UPDATE_RUNWEIGHT: signed carried weight.
+            x if x == ServerProt289::UPDATE_RUNWEIGHT => {
+                self.apply_update_runweight(payload);
+                self.ptype = -1;
+            }
+            // LAST_LOGIN_INFO: consume the fixed 10-byte identity notice.
+            x if x == ServerProt289::LAST_LOGIN_INFO => {
+                let _last_ip = payload.g4();
+                let _days_since_login = payload.g2();
+                let _days_since_recovery_change = payload.g1();
+                let _message_count = payload.g2();
+                let _members_warning = payload.g1();
+                self.ptype = -1;
+            }
+            // First-tick zone bootstrap uses the same source-defined zone
+            // coordinates as the 274 client; inner zone opcodes remain
+            // fail-closed unless separately traced.
+            x if x == ServerProt289::UPDATE_ZONE_PARTIAL_FOLLOWS => {
+                self.zone_update_x = payload.g1();
+                self.zone_update_z = payload.g1();
+                self.ptype = -1;
+            }
+            x if x == ServerProt289::UPDATE_ZONE_FULL_FOLLOWS => {
+                self.zone_update_x = payload.g1();
+                self.zone_update_z = payload.g1();
+                for x in self.zone_update_x..self.zone_update_x + 8 {
+                    for z in self.zone_update_z..self.zone_update_z + 8 {
+                        if (0..BuildArea::SIZE).contains(&x)
+                            && (0..BuildArea::SIZE).contains(&z)
+                            && self.ground_obj[self.minusedlevel as usize][x as usize][z as usize]
+                                .take()
+                                .is_some()
+                        {
+                            self.show_object(x, z);
+                        }
+                    }
+                }
+                self.ptype = -1;
+            }
+            x if x == ServerProt289::UPDATE_ZONE_PARTIAL_ENCLOSED => {
+                self.zone_update_x = payload.g1();
+                self.zone_update_z = payload.g1();
+                let end = self.inbound_end(payload);
+                while payload.pos < end {
+                    let opcode = payload.g1();
+                    self.zone_packet(payload, opcode);
+                }
+                self.ptype = -1;
+            }
             // 289 inventory full: g2 component, g2 entry count (client.java:2972-2990).
             x if x == ServerProt289::UPDATE_INV_FULL => {
                 self.apply_update_inv_full(payload, /*count_is_g2=*/ true);

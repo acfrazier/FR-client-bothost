@@ -248,6 +248,83 @@ fn startup_289_engine_login_social_and_identity_packets_dispatch() {
     assert!(c.ingame);
 }
 
+#[test]
+fn startup_289_login_script_and_first_tick_packets_dispatch() {
+    let mut c = client_289();
+
+    // login.rs2: mes("Welcome..."), cam_reset, minimap_toggle(0),
+    // set_player_op, and initalltabs/last_login_info.
+    c.psize = 10;
+    let mut welcome = Packet::new(hex_bytes("57656c636f6d650a"));
+    c.psize = welcome.data().len() as i32;
+    c.handle_packet(ServerProt289::MESSAGE_GAME, &mut welcome);
+    assert_eq!(welcome.pos, 8);
+    assert_eq!(c.chat_text[0], "Welcome");
+
+    c.cinema_cam = true;
+    c.psize = 0;
+    let mut cam_reset = Packet::new(vec![]);
+    c.handle_packet(ServerProt289::CAM_RESET, &mut cam_reset);
+    assert!(!c.cinema_cam);
+
+    c.psize = 1;
+    let mut minimap = Packet::new(vec![0]);
+    c.handle_packet(ServerProt289::MINIMAP_TOGGLE, &mut minimap);
+    assert_eq!(c.minimap_state, 0);
+
+    c.psize = 8;
+    let mut op = Packet::new(b"\x02\x00Attack\n".to_vec());
+    c.handle_packet(ServerProt289::SET_PLAYER_OP, &mut op);
+    assert_eq!(c.player_op[1].as_deref(), Some("Attack"));
+    assert!(c.player_op_priority[1]);
+
+    c.psize = 3;
+    let mut tab = Packet::new(hex_bytes("123405"));
+    c.handle_packet(ServerProt289::IF_SETTAB, &mut tab);
+    assert_eq!(c.side_icon[5], 0x1234);
+
+    c.psize = 6;
+    let mut stat = Packet::new(hex_bytes("02000003e807"));
+    c.handle_packet(ServerProt289::UPDATE_STAT, &mut stat);
+    assert_eq!(c.stat_xp[2], 1000);
+    assert_eq!(c.stat_effective_level[2], 7);
+
+    c.psize = 1;
+    let mut energy = Packet::new(vec![87]);
+    c.handle_packet(ServerProt289::UPDATE_RUNENERGY, &mut energy);
+    assert_eq!(c.runenergy, 87);
+
+    c.psize = 2;
+    let mut weight = Packet::new(hex_bytes("ffce"));
+    c.handle_packet(ServerProt289::UPDATE_RUNWEIGHT, &mut weight);
+    assert_eq!(c.runweight, -50);
+
+    c.psize = 10;
+    let mut last_login = Packet::new(vec![0; 10]);
+    c.handle_packet(ServerProt289::LAST_LOGIN_INFO, &mut last_login);
+    assert_eq!(last_login.pos, 10);
+
+    // NetworkPlayer.updateZones: first full-zone follow and enclosed stream.
+    c.psize = 2;
+    let mut full_zone = Packet::new(vec![8, 16]);
+    c.handle_packet(ServerProt289::UPDATE_ZONE_FULL_FOLLOWS, &mut full_zone);
+    assert_eq!((c.zone_update_x, c.zone_update_z), (8, 16));
+
+    c.psize = 2;
+    let mut partial_zone = Packet::new(vec![24, 32]);
+    c.handle_packet(ServerProt289::UPDATE_ZONE_PARTIAL_FOLLOWS, &mut partial_zone);
+    assert_eq!((c.zone_update_x, c.zone_update_z), (24, 32));
+
+    c.psize = 2;
+    let mut enclosed_zone = Packet::new(vec![40, 48]);
+    c.handle_packet(
+        ServerProt289::UPDATE_ZONE_PARTIAL_ENCLOSED,
+        &mut enclosed_zone,
+    );
+    assert_eq!(enclosed_zone.pos, 2);
+    assert!(c.ingame);
+}
+
 // --- login RSA plaintext structure + version -------------------------------
 
 #[test]
