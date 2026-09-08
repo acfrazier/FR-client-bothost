@@ -17,7 +17,7 @@ Primary evidence: `full-dispatch-cleanup-plan.md` Section B and `full-dispatch-a
 
 - `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo check -p client` — passed.
 - `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo test -p client --lib --test revision_289_stage1 --test revision_289_stage2 --test revision_289_stage3` — passed in isolated serial runs: lib 73, stage1 46, stage2 40, stage3 23. Stage2 includes exact production-dispatch coverage for all 21 B rows, malformed-frame reset, modal reset distinction, transmog head, and two-client overlay isolation.
-- `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo test -p client --test revision_289_stage2 cleanup_b_ -- --test-threads=1` — passed: 3 focused tests.
+- `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo test -p client --test revision_289_stage2 cleanup_b_ -- --test-threads=1` — passed: 4 focused tests.
 - `git diff --check` — passed.
 
 ## Remaining C-H
