@@ -472,8 +472,4 @@ actual lib test, not counted as a pass.
 Active card remains t_358c02ad, corrective implementation ready for same-card
 reviewer=reviewer / actual Grok4.5. No cleanup implementation commit is accepted
 yet. Report: docs/revision-289/cleanup-a-report.md (exact commands and limitations).
-Sections B-H remain root-dispatched future work: actor bit bounds/atomicity,
-enclosed-zone whole-frame staging and remaining semantic/generation/outbound
-gaps are not claimed solved. Optional DNS resolution was not enabled; display
-storage/reset remains lifecycle-owned. Authentic cache/server pairing, live
-RSA/ISAAC/presentation and final whole-branch Grok4.6 remain separate root gates.
+Cleanup B implementation (t_36cd00a5) is complete and awaiting same-card Grok4.5 review. Internal R289 interface operation decoding/apply now covers all Section-B IDs, with per-client overlay writes, iface publication, signed/sentinel semantics, modal/tutorial/count state, and strict frame decode. Report: docs/revision-289/cleanup-b-report.md. Exact tests: client stage1 46, stage2 36, stage3 23; client check; diff check. Sections C-H remain root-dispatched future work: inventory/varps/stats, actors, direct/strict zones, social/tutorial kind0, camera/audio/HUD, outbound coverage. Authentic cache/server pairing, live RSA/ISAAC/presentation and final whole-branch Grok4.6 remain separate root gates.

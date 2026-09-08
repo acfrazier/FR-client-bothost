@@ -353,11 +353,39 @@ struct LastLoginInfo {
     members_warning: i32,
 }
 
+/// Validated interface meaning for the R289 stream. Keeping these values
+/// decoded before apply prevents malformed frames from partially changing a
+/// client overlay or reaching the R274 dispatcher.
+enum R289InterfaceOperation {
+    TutOpen(i32),
+    IfClose,
+    IfSetObject { component: i32, object: i32, divisor: i32 },
+    IfSetPlayerHead(i32),
+    CountDialog,
+    IfOpenMainSide { main: i32, side: i32 },
+    IfSetText { component: i32, text: String },
+    IfSetTab { component: i32, tab: i32 },
+    IfSetPosition { component: i32, x: i32, y: i32 },
+    IfOpenChat(i32),
+    IfOpenMain(i32),
+    IfOpenOverlay(i32),
+    IfSetHide { component: i32, hide: bool },
+    IfSetColour { component: i32, colour: i32 },
+    TutFlash(i32),
+    IfSetScrollPos { component: i32, position: i32 },
+    IfSetTabActive(i32),
+    IfSetAnim { component: i32, sequence: i32 },
+    IfSetModel { component: i32, model: i32 },
+    IfSetNpcHead { component: i32, npc: i32 },
+    IfOpenSide(i32),
+}
+
 /// Section A's validated meaning, never a raw 274/289 opcode alias.
 enum R289Operation {
     UpdatePid { slot: i32, members: i32 },
     Logout,
     LastLoginInfo(LastLoginInfo),
+    Interface(R289InterfaceOperation),
 }
 
 impl R289Operation {
@@ -375,6 +403,49 @@ impl R289Operation {
                 messages: payload.g2(),
                 members_warning: payload.g1(),
             }),
+            ServerProt289::TUT_OPEN => Self::Interface(R289InterfaceOperation::TutOpen(payload.g2b())),
+            ServerProt289::IF_CLOSE => Self::Interface(R289InterfaceOperation::IfClose),
+            ServerProt289::IF_SETOBJECT => Self::Interface(R289InterfaceOperation::IfSetObject {
+                component: payload.g2(), object: payload.g2(), divisor: payload.g2(),
+            }),
+            ServerProt289::IF_SETPLAYERHEAD => Self::Interface(R289InterfaceOperation::IfSetPlayerHead(payload.g2())),
+            ServerProt289::P_COUNTDIALOG => Self::Interface(R289InterfaceOperation::CountDialog),
+            ServerProt289::IF_OPENMAIN_SIDE => Self::Interface(R289InterfaceOperation::IfOpenMainSide {
+                main: payload.g2(), side: payload.g2(),
+            }),
+            ServerProt289::IF_SETTEXT => Self::Interface(R289InterfaceOperation::IfSetText {
+                component: payload.g2(), text: payload.gjstr(),
+            }),
+            ServerProt289::IF_SETTAB => Self::Interface(R289InterfaceOperation::IfSetTab {
+                component: { let v = payload.g2(); if v == 65535 { -1 } else { v } }, tab: payload.g1(),
+            }),
+            ServerProt289::IF_SETPOSITION => Self::Interface(R289InterfaceOperation::IfSetPosition {
+                component: payload.g2(), x: payload.g2b(), y: payload.g2b(),
+            }),
+            ServerProt289::IF_OPENCHAT => Self::Interface(R289InterfaceOperation::IfOpenChat(payload.g2())),
+            ServerProt289::IF_OPENMAIN => Self::Interface(R289InterfaceOperation::IfOpenMain(payload.g2())),
+            ServerProt289::IF_OPENOVERLAY => Self::Interface(R289InterfaceOperation::IfOpenOverlay(payload.g2b())),
+            ServerProt289::IF_SETHIDE => Self::Interface(R289InterfaceOperation::IfSetHide {
+                component: payload.g2(), hide: payload.g1() == 1,
+            }),
+            ServerProt289::IF_SETCOLOUR => Self::Interface(R289InterfaceOperation::IfSetColour {
+                component: payload.g2(), colour: payload.g2(),
+            }),
+            ServerProt289::TUT_FLASH => Self::Interface(R289InterfaceOperation::TutFlash(payload.g1())),
+            ServerProt289::IF_SETSCROLLPOS => Self::Interface(R289InterfaceOperation::IfSetScrollPos {
+                component: payload.g2(), position: payload.g2(),
+            }),
+            ServerProt289::IF_SETTAB_ACTIVE => Self::Interface(R289InterfaceOperation::IfSetTabActive(payload.g1())),
+            ServerProt289::IF_SETANIM => Self::Interface(R289InterfaceOperation::IfSetAnim {
+                component: payload.g2(), sequence: payload.g2b(),
+            }),
+            ServerProt289::IF_SETMODEL => Self::Interface(R289InterfaceOperation::IfSetModel {
+                component: payload.g2(), model: payload.g2(),
+            }),
+            ServerProt289::IF_SETNPCHEAD => Self::Interface(R289InterfaceOperation::IfSetNpcHead {
+                component: payload.g2(), npc: payload.g2(),
+            }),
+            ServerProt289::IF_OPENSIDE => Self::Interface(R289InterfaceOperation::IfOpenSide(payload.g2())),
             _ => return None,
         };
         assert_eq!(payload.available(), 0, "unconsumed Section A frame");
@@ -4300,9 +4371,88 @@ impl Client {
                 return R289Outcome::Reset;
             }
             R289Operation::LastLoginInfo(info) => self.apply_last_login_info(info),
+            R289Operation::Interface(operation) => self.apply_interface_operation_289(operation),
         };
         self.ptype = -1;
         R289Outcome::Applied(publication)
+    }
+
+    fn apply_interface_operation_289(&mut self, operation: R289InterfaceOperation) -> R289Publication {
+        let mut publication = R289Publication::default();
+        publication.iface = true;
+        match operation {
+            R289InterfaceOperation::TutOpen(id) => {
+                self.tut_com_id = id;
+                self.redraw_chat = true;
+            }
+            R289InterfaceOperation::IfClose => self.apply_if_close(),
+            R289InterfaceOperation::TutFlash(icon) => self.apply_tut_flash(icon),
+            R289InterfaceOperation::CountDialog => self.apply_p_countdialog(),
+            R289InterfaceOperation::IfSetTab { component, tab } => {
+                if (0..14).contains(&tab) { self.side_icon[tab as usize] = component; }
+                self.redraw_side = true;
+                self.redraw_icons = true;
+            }
+            R289InterfaceOperation::IfSetTabActive(icon) => self.apply_if_showicon(icon),
+            R289InterfaceOperation::IfSetHide { component, hide } => {
+                if let Some(com) = self.iface_mut(component as usize) { com.hide = hide; }
+            }
+            R289InterfaceOperation::IfSetPosition { component, x, y } => {
+                if let Some(com) = self.iface_mut(component as usize) { com.x = x; com.y = y; }
+            }
+            R289InterfaceOperation::IfSetModel { component, model } => {
+                if let Some(com) = self.iface_mut(component as usize) { com.model1_type = 1; com.model1_id = model; }
+            }
+            R289InterfaceOperation::IfSetNpcHead { component, npc } => {
+                if let Some(com) = self.iface_mut(component as usize) { com.model1_type = 2; com.model1_id = npc; }
+            }
+            R289InterfaceOperation::IfSetAnim { component, sequence } => {
+                if let Some(com) = self.iface_mut(component as usize) {
+                    com.model_anim = sequence;
+                    if sequence == -1 { com.anim_frame = 0; com.anim_cycle = 0; }
+                }
+            }
+            R289InterfaceOperation::IfSetColour { component, colour } => {
+                if let Some(com) = self.iface_mut(component as usize) {
+                    com.colour = ((colour >> 10) & 31) << 19 | ((colour >> 5) & 31) << 11 | (colour & 31) << 3;
+                }
+            }
+            R289InterfaceOperation::IfSetText { component, text } => {
+                let active = self.if_(component as usize).is_some_and(|c| {
+                    (0..14).contains(&self.active_icon) && c.layer_id == self.side_icon[self.active_icon as usize]
+                });
+                if let Some(com) = self.iface_mut(component as usize) { com.text = text; }
+                if active { self.redraw_side = true; }
+            }
+            R289InterfaceOperation::IfSetScrollPos { component, mut position } => {
+                let layer = self.if_(component as usize).map(|c| (c.r#type, c.height));
+                if let Some((kind, height)) = layer {
+                    if kind == ComponentType::TYPE_LAYER {
+                        let max = self.if_(component as usize).map(|c| c.scroll_height).unwrap_or(0) - height;
+                        position = position.max(0).min(max);
+                        if let Some(com) = self.iface_mut(component as usize) { com.scroll_pos = position; }
+                    }
+                }
+            }
+            R289InterfaceOperation::IfSetObject { component, object, divisor } => {
+                let (xan, yan, zoom) = self.cache.objs.get(object as usize)
+                    .map(|o| (o.xan2d, o.yan2d, o.zoom2d)).unwrap_or((0, 0, 0));
+                if let Some(com) = self.iface_mut(component as usize) {
+                    if object == 65535 { com.model1_type = 0; com.model1_id = 0; }
+                    else { com.model1_type = 4; com.model1_id = object; com.model_xan = xan; com.model_yan = yan; com.model_zoom = if divisor == 0 { 0 } else { zoom * 100 / divisor }; }
+                }
+            }
+            R289InterfaceOperation::IfSetPlayerHead(component) => {
+                let head = self.local_player.as_ref().map(|local| (local.appearance[8] as i32) << 6 | (local.appearance[0] as i32) << 12 | (local.colour[0] as i32) << 24 | (local.colour[4] as i32) << 18 | local.appearance[11] as i32);
+                if let (Some(com), Some(head)) = (self.iface_mut(component as usize), head) { com.model1_type = 3; com.model1_id = head; }
+            }
+            R289InterfaceOperation::IfOpenChat(id) => { self.chat_modal_id = id; self.side_modal_id = -1; self.main_modal_id = -1; self.redraw_chat = true; self.redraw_side = true; self.redraw_icons = true; self.resumed_pause_button = false; }
+            R289InterfaceOperation::IfOpenMain(id) => { self.main_modal_id = id; self.side_modal_id = -1; self.chat_modal_id = -1; self.dialog_input_open = false; self.redraw_chat = true; self.redraw_side = true; self.redraw_icons = true; self.resumed_pause_button = false; }
+            R289InterfaceOperation::IfOpenMainSide { main, side } => { self.main_modal_id = main; self.side_modal_id = side; self.chat_modal_id = -1; self.dialog_input_open = false; self.redraw_chat = true; self.redraw_side = true; self.redraw_icons = true; self.resumed_pause_button = false; }
+            R289InterfaceOperation::IfOpenSide(id) => { self.side_modal_id = id; self.main_modal_id = -1; self.chat_modal_id = -1; self.dialog_input_open = false; self.redraw_chat = true; self.redraw_side = true; self.redraw_icons = true; self.resumed_pause_button = false; }
+            R289InterfaceOperation::IfOpenOverlay(id) => { if id >= 0 { self.if_anim_reset(id); } self.main_overlay_id = id; }
+        }
+        publication
     }
 
     /// Java client.java:3159-3183, applied only after exact-frame decode.
