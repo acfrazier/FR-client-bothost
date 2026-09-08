@@ -6,6 +6,7 @@
 use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer, ClientRevision};
 use client::config::{IfType, IfTypeMut};
 use client::io::{ClientStream, Isaac, Packet, ServerProt, ServerProt289};
+use client::util::JString;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Barrier, Mutex};
@@ -1631,4 +1632,92 @@ fn raw_generation_helper_rejects_r289() {
     }));
     assert!(result.is_err());
     assert_eq!(c.gens.player, 0);
+}
+
+#[test]
+fn cleanup_f_challenge_body_and_tutorial_click_are_production_path() {
+    let mut c = client_289();
+    let mut challenge = Packet::new(b"Alice:Bring 10 logs:chalreq:\n".to_vec());
+    c.psize = challenge.length() as i32;
+    c.handle_packet(ServerProt289::MESSAGE_GAME, &mut challenge);
+    assert_eq!(challenge.pos, challenge.length());
+    assert_eq!(c.chat_type[0], 8);
+    assert_eq!(c.chat_username[0], "Alice");
+    assert_eq!(c.chat_text[0], "Bring 10 logs");
+
+    c.tut_com_id = 123;
+    let mut tutorial = Packet::new(b"Keep going\n".to_vec());
+    c.psize = tutorial.length() as i32;
+    c.handle_packet(ServerProt289::MESSAGE_GAME, &mut tutorial);
+    assert_eq!(c.tut_com_message, "Keep going");
+    c.shell.mouse_click_button = 1;
+    c.handle_chat_if_clicks();
+    assert!(c.tut_com_message.is_empty());
+    assert_eq!(c.shell.mouse_click_button, 0);
+    assert!(c.redraw_chat);
+}
+
+#[test]
+fn cleanup_f_social_frames_cover_fail_closed_and_option_edges() {
+    let mut c = client_289();
+
+    // UPDATE_IGNORELIST validates the declared frame before changing state.
+    c.ignore_count = 1;
+    c.ignore_userhash[0] = 77;
+    let mut remainder = Packet::new(vec![0; 9]);
+    c.psize = remainder.length() as i32;
+    c.handle_packet(ServerProt289::UPDATE_IGNORELIST, &mut remainder);
+    assert!(!c.ingame);
+    assert_eq!(c.ignore_count, 1);
+
+    let mut c = client_289();
+    let mut capacity = Packet::new(vec![0; 808]);
+    c.psize = capacity.length() as i32;
+    c.handle_packet(ServerProt289::UPDATE_IGNORELIST, &mut capacity);
+    assert!(!c.ingame);
+    assert_eq!(c.ignore_count, 0);
+
+    let mut c = client_289();
+    let mut short_private = Packet::new(vec![0; 12]);
+    c.psize = short_private.length() as i32;
+    c.handle_packet(ServerProt289::MESSAGE_PRIVATE, &mut short_private);
+    assert!(!c.ingame);
+    assert_eq!(c.chat_seq, 0);
+
+    // Null and out-of-range options do not write neighboring slots.
+    c = client_289();
+    c.player_op[0] = Some("Keep".into());
+    let mut null_op = Packet::new(b"\x01\x01null\n".to_vec());
+    c.psize = null_op.length() as i32;
+    c.handle_packet(ServerProt289::SET_PLAYER_OP, &mut null_op);
+    assert!(c.player_op[0].is_none());
+    let mut out_of_range = Packet::new(b"\x00\x01bad\n".to_vec());
+    c.psize = out_of_range.length() as i32;
+    c.handle_packet(ServerProt289::SET_PLAYER_OP, &mut out_of_range);
+    assert!(c.ingame);
+    assert!(c.player_op.iter().all(Option::is_none));
+}
+
+#[test]
+fn cleanup_f_request_suffixes_and_ignored_private_consume_exact_frames() {
+    let mut c = client_289();
+    for (wire, kind, text) in [
+        ("Bob:tradereq:\n", 4, "wishes to trade with you."),
+        ("Bob:duelreq:\n", 8, "wishes to duel with you."),
+    ] {
+        let mut p = Packet::new(wire.as_bytes().to_vec());
+        c.psize = p.length() as i32;
+        c.handle_packet(ServerProt289::MESSAGE_GAME, &mut p);
+        assert_eq!(p.pos, p.length());
+        assert_eq!(c.chat_type[0], kind);
+        assert_eq!(c.chat_text[0], text);
+    }
+
+    c.ignore_count = 1;
+    c.ignore_userhash[0] = JString::to_userhash("Bob") as i64;
+    let mut private = Packet::new(vec![0; 16]);
+    c.psize = private.length() as i32;
+    c.handle_packet(ServerProt289::MESSAGE_PRIVATE, &mut private);
+    assert_eq!(private.pos, private.length());
+    assert_eq!(c.chat_text[0], "wishes to duel with you.");
 }

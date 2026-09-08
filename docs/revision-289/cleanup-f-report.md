@@ -49,3 +49,18 @@ This is offline packet/lifecycle proof only. Authentic cache/server pairing,
 live RSA/ISAAC/presentation compatibility, and the required final whole-branch
 Grok4.6 review remain root gates. Existing untracked campaign review/helper
 artifacts were preserved and are outside this F change.
+
+## Review correction coverage
+
+The challenge-request branch now follows primary Java J:3264-3276: it uses the
+body between the first colon and the nine-byte `:chalreq:` suffix, with the
+player name as sender. Tutorial kind-0 text is rendered over the tutorial chat
+interface with `Click to continue`, and a latched click clears the text and
+requests chat redraw without closing the interface.
+
+Production-path fixtures in `revision_289_stage2` additionally cover challenge
+body and tutorial acknowledgement, all three request suffixes, ignored private
+exact consumption, ignore-list non-divisible remainder and capacity rejection
+without mutation, private short-header rejection, and null plus out-of-range
+player-option indices. Focused execution passed 3/3 tests;
+the expected fail-closed T2 diagnostics were emitted for the malformed frames.

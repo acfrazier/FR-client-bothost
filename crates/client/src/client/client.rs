@@ -4622,13 +4622,22 @@ impl Client {
     fn apply_message_game_text_289(&mut self, message: &str) {
         let suffix = if message.ends_with(":tradereq:") { Some((4, "wishes to trade with you.")) }
             else if message.ends_with(":duelreq:") { Some((8, "wishes to duel with you.")) }
-            else if message.ends_with(":chalreq:") { Some((8, "wishes to challenge you.")) }
+            else if message.ends_with(":chalreq:") { Some((8, "")) }
             else { None };
         if let Some((kind, text)) = suffix {
             let player = message.split(':').next().unwrap_or("");
             let hash = JString::to_userhash(player) as i64;
             if self.chat_disabled == 0 && !self.ignore_userhash[..self.ignore_count as usize].contains(&hash) {
-                self.add_chat(kind, text, player);
+                let chat_text = if message.ends_with(":chalreq:") {
+                    // Java 3264-3276 uses the challenge body, excluding the
+                    // nine-byte ":chalreq:" suffix, as the chat text.
+                    let start = message.find(':').map(|i| i + 1).unwrap_or(0);
+                    let end = message.len().saturating_sub(9);
+                    message.get(start..end).unwrap_or("")
+                } else {
+                    text
+                };
+                self.add_chat(kind, chat_text, player);
             }
         } else {
             if self.tut_com_id != -1 {
@@ -5843,7 +5852,17 @@ impl Client {
 
     /// See `handle_side_if_clicks`: chat-modal button clicks flow through
     /// `build_minimenu` + `mouse_loop`/`doAction`.
-    pub fn handle_chat_if_clicks(&mut self) {}
+    pub fn handle_chat_if_clicks(&mut self) {
+        // Java 6042-6045: a click acknowledges the pending tutorial chat
+        // message, without closing the tutorial interface itself.
+        if self.tut_com_id != -1 && self.shell.mouse_click_button != 0 {
+            if !self.tut_com_message.is_empty() {
+                self.tut_com_message.clear();
+                self.redraw_chat = true;
+            }
+            self.shell.mouse_click_button = 0;
+        }
+    }
 
     /// `closeModal` from client-ts (10941-10958): send CLOSE_MODAL and
     /// close the side and chat modals locally; `main_modal_id` is reset

@@ -3045,6 +3045,26 @@ impl Renderer {
             } else if client.tut_com_id != -1 {
                 self.pix3d.set_clipping(surface.width, surface.height);
                 self.draw_interface(client, client.tut_com_id, 0, 0, 0, &mut surface);
+                // Java 5273-5276: tutorial chat text is rendered over the
+                // tutorial interface, followed by its acknowledgement hint.
+                if !client.tut_com_message.is_empty() {
+                    if let Some(b12) = self.media.b12.as_ref() {
+                        b12.centre_string(
+                            &mut surface,
+                            Some(&client.tut_com_message),
+                            239,
+                            40,
+                            Colour::BLACK,
+                        );
+                        b12.centre_string(
+                            &mut surface,
+                            Some("Click to continue"),
+                            239,
+                            60,
+                            Colour::BLACK,
+                        );
+                    }
+                }
             } else {
                 let mut line = 0;
                 surface.set_clipping(0, 0, 463, 77);

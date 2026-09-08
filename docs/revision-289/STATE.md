@@ -564,3 +564,11 @@ contract verifier PASS 256/82/50; diff check PASS. This is offline proof only:
 authentic cache/server pairing, live RSA/ISAAC/presentation and required final
 whole-branch Grok4.6 remain root gates. Hotspot client.rs remains serialized;
 no host/server, renderer ownership, remote, merge or push changes.
+
+Review correction in progress: chalreq now extracts the Java-defined body;
+tutorial kind0 renders message plus `Click to continue` and click dismissal
+clears the stored message while retaining the tutorial interface. Added
+production-path stage2 fixtures for those behaviors, ignore remainder/capacity,
+private short header, ignored exact consumption, all request suffixes and
+player-option null/OOR edges. Focused cleanup-F tests pass 3/3; full affected
+suites and same-card reviewer remain next.
