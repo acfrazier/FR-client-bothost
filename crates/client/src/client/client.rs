@@ -353,6 +353,16 @@ struct LastLoginInfo {
     members_warning: i32,
 }
 
+enum R289SocialOperation {
+    IgnoreList(Vec<i64>),
+    Private { from: i64, message_id: i32, staff_mod_level: i32, body: Vec<u8> },
+    Friend { username: i64, world: i32 },
+    FriendLoaded(i32),
+    ChatFilter { public: i32, private: i32, trade: i32 },
+    MessageGame(String),
+    SetPlayerOp { index: i32, priority: i32, option: String },
+}
+
 /// Validated interface meaning for the R289 stream. Keeping these values
 /// decoded before apply prevents malformed frames from partially changing a
 /// client overlay or reaching the R274 dispatcher.
@@ -404,6 +414,7 @@ enum R289Operation {
     UpdateStat { stat: i32, xp: i32, level: i32 },
     RunEnergy(i32),
     RunWeight(i32),
+    Social(R289SocialOperation),
 }
 
 impl R289Operation {
@@ -432,6 +443,36 @@ impl R289Operation {
                 recovery_days: payload.g1(),
                 messages: payload.g2(),
                 members_warning: payload.g1(),
+            }),
+            ServerProt289::UPDATE_IGNORELIST => {
+                assert_eq!(payload.available() % 8, 0, "ignore-list frame remainder");
+                let count = payload.available() / 8;
+                assert!(count <= 100, "ignore-list capacity");
+                let mut hashes = Vec::with_capacity(count);
+                for _ in 0..count { hashes.push(payload.g8()); }
+                Self::Social(R289SocialOperation::IgnoreList(hashes))
+            }
+            ServerProt289::MESSAGE_PRIVATE => {
+                assert!(payload.available() >= 13, "private message short header");
+                let from = payload.g8();
+                let message_id = payload.g4();
+                let staff_mod_level = payload.g1();
+                let start = payload.pos;
+                let end = payload.frame_end().unwrap_or(payload.length());
+                let body = payload.data()[start..end].to_vec();
+                payload.pos = end;
+                Self::Social(R289SocialOperation::Private { from, message_id, staff_mod_level, body })
+            }
+            ServerProt289::UPDATE_FRIENDLIST => Self::Social(R289SocialOperation::Friend {
+                username: payload.g8(), world: payload.g1(),
+            }),
+            ServerProt289::FRIENDLIST_LOADED => Self::Social(R289SocialOperation::FriendLoaded(payload.g1())),
+            ServerProt289::CHAT_FILTER_SETTINGS => Self::Social(R289SocialOperation::ChatFilter {
+                public: payload.g1(), private: payload.g1(), trade: payload.g1(),
+            }),
+            ServerProt289::MESSAGE_GAME => Self::Social(R289SocialOperation::MessageGame(payload.gjstr())),
+            ServerProt289::SET_PLAYER_OP => Self::Social(R289SocialOperation::SetPlayerOp {
+                index: payload.g1(), priority: payload.g1(), option: payload.gjstr(),
             }),
             ServerProt289::TUT_OPEN => Self::Interface(R289InterfaceOperation::TutOpen(payload.g2b())),
             ServerProt289::IF_CLOSE => Self::Interface(R289InterfaceOperation::IfClose),
@@ -796,6 +837,7 @@ pub struct Client {
     /// `tutComId` (TS): the tutorial chat interface, set by `TUT_OPEN`
     /// (-1 none).
     pub tut_com_id: i32,
+    pub tut_com_message: String,
     /// `tutFlashIcon` (TS): the flashing tutorial side tab, set by
     /// `TUT_FLASH` (-1 none).
     pub tut_flash_icon: i32,
@@ -1371,6 +1413,7 @@ impl Client {
             main_modal_id: -1,
             main_overlay_id: -1,
             tut_com_id: -1,
+            tut_com_message: String::new(),
             tut_flash_icon: -1,
             dialog_input_open: false,
             dialog_input: String::new(),
@@ -2415,6 +2458,7 @@ impl Client {
             self.chat_modal_id = -1;
             self.main_modal_id = -1;
             self.tut_com_id = -1;
+            self.tut_com_message.clear();
             self.tut_flash_icon = -1;
             self.minimap_level = -1;
             self.minimap_flag_x = 0;
@@ -4504,11 +4548,96 @@ impl Client {
                 if self.active_icon == 12 { self.redraw_side = true; }
                 R289Publication { stat: true, ..Default::default() }
             }
+            R289Operation::Social(operation) => self.apply_social_operation_289(operation),
         };
         self.ptype = -1;
         R289Outcome::Applied(publication)
     }
 
+    fn apply_social_operation_289(&mut self, operation: R289SocialOperation) -> R289Publication {
+        match operation {
+            R289SocialOperation::IgnoreList(hashes) => {
+                self.ignore_count = hashes.len() as i32;
+                self.ignore_userhash[..hashes.len()].copy_from_slice(&hashes);
+                R289Publication::default()
+            }
+            R289SocialOperation::Private { from, message_id, staff_mod_level, body } => {
+                let before = self.chat_seq;
+                let mut body_packet = Packet::new(body);
+
+                let duplicate = self.private_message_ids[..100].contains(&message_id);
+                let ignored = staff_mod_level <= 1
+                    && self.ignore_userhash[..self.ignore_count as usize].contains(&from);
+                if !duplicate && !ignored && self.chat_disabled == 0 {
+                    self.private_message_ids[self.private_message_count as usize] = message_id;
+                    self.private_message_count = (self.private_message_count + 1) % 100;
+                    let body_len = body_packet.length();
+                    let text = WordFilter::filter(&WordPack::unpack(&mut body_packet, body_len));
+                    let sender = JString::to_screen_name(&JString::to_raw_username(from));
+                    if staff_mod_level == 2 || staff_mod_level == 3 {
+                        self.add_chat(7, &text, &format!("@cr2@{sender}"));
+                    } else if staff_mod_level == 1 {
+                        self.add_chat(7, &text, &format!("@cr1@{sender}"));
+                    } else {
+                        self.add_chat(3, &text, &sender);
+                    }
+                }
+                R289Publication { chat: self.chat_seq != before, ..Default::default() }
+            }
+            R289SocialOperation::Friend { username, world } => {
+                let before = self.chat_seq;
+                let mut p = Packet::new(vec![0; 9]);
+                p.p8(username); p.p1(world); p.pos = 0;
+                self.apply_update_friendlist(&mut p);
+                R289Publication { chat: self.chat_seq != before, ..Default::default() }
+            }
+            R289SocialOperation::FriendLoaded(status) => {
+                self.friend_server_status = status;
+                self.redraw_side = true;
+                R289Publication::default()
+            }
+            R289SocialOperation::ChatFilter { public, private, trade } => {
+                self.chat_public_mode = public;
+                self.chat_private_mode = private;
+                self.chat_trade_mode = trade;
+                self.redraw_chat_mode = true;
+                self.redraw_chat = true;
+                R289Publication { chat: true, ..Default::default() }
+            }
+            R289SocialOperation::MessageGame(message) => {
+                let before = self.chat_seq;
+                self.apply_message_game_text_289(&message);
+                R289Publication { chat: self.chat_seq != before, ..Default::default() }
+            }
+            R289SocialOperation::SetPlayerOp { index, priority, option } => {
+                if (1..=5).contains(&index) {
+                    self.player_op[(index - 1) as usize] = (!option.eq_ignore_ascii_case("null")).then_some(option);
+                    self.player_op_priority[(index - 1) as usize] = priority == 0;
+                }
+                R289Publication::default()
+            }
+        }
+    }
+
+    fn apply_message_game_text_289(&mut self, message: &str) {
+        let suffix = if message.ends_with(":tradereq:") { Some((4, "wishes to trade with you.")) }
+            else if message.ends_with(":duelreq:") { Some((8, "wishes to duel with you.")) }
+            else if message.ends_with(":chalreq:") { Some((8, "wishes to challenge you.")) }
+            else { None };
+        if let Some((kind, text)) = suffix {
+            let player = message.split(':').next().unwrap_or("");
+            let hash = JString::to_userhash(player) as i64;
+            if self.chat_disabled == 0 && !self.ignore_userhash[..self.ignore_count as usize].contains(&hash) {
+                self.add_chat(kind, text, player);
+            }
+        } else {
+            if self.tut_com_id != -1 {
+                self.tut_com_message = message.to_string();
+                self.shell.mouse_click_button = 0;
+            }
+            self.add_chat(0, message, "");
+        }
+    }
     fn apply_inventory_full_289(&mut self, component: i32, entries: Vec<(i32, i32)>) {
         self.redraw_side = true;
         if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)

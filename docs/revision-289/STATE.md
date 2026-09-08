@@ -544,3 +544,23 @@ Next: same-card Grok4.5 review of E; root then decides F-H. Authentic
 cache/server pairing, live RSA/ISAAC/presentation and final whole-branch
 Grok4.6 remain required. Hotspot client.rs remains serialized. No push,
 merge, remote/live, host/server changes or F-H implementation.
+
+## Cleanup F implementation (t_4583da40)
+
+Accepted E foundation: 2a0f774 (t_3aa4481e, actual Grok4.5 approved).
+F stages social/chat/player-option rows 13, 21, 47, 168, 196, 235 and 243
+through bounded R289 decode, packet-free apply and outcome publication. It
+adds strict ignore-list framing/capacity validation, private-message short
+header and exact-body staging, friend notice publication only on actual chat
+changes, all trade/duel/challenge request suffixes, tutorial kind-0 storage
+and click clearing, null/index-safe player options, and declared chat filter
+publication with redraw flags. R274 behavior and public constants remain
+unchanged. Report: cleanup-f-report.md. Same-card reviewer=reviewer is next.
+
+Verification: client check PASS; stage2 42/42; client lib/tests PASS including
+zone45; workspace all-features PASS including stage1 46, stage2 42, stage3 23,
+server_packets19, zones8, legacy zone45, renderer suites and client-play4;
+contract verifier PASS 256/82/50; diff check PASS. This is offline proof only:
+authentic cache/server pairing, live RSA/ISAAC/presentation and required final
+whole-branch Grok4.6 remain root gates. Hotspot client.rs remains serialized;
+no host/server, renderer ownership, remote, merge or push changes.

@@ -63,6 +63,8 @@ impl ServerProt289 {
     pub const CAM_RESET: i32 = 133;
     pub const MINIMAP_TOGGLE: i32 = 136;
     pub const SET_PLAYER_OP: i32 = 21;
+    pub const UPDATE_FRIENDLIST: i32 = 168;
+    pub const MESSAGE_PRIVATE: i32 = 243;
     pub const IF_SETTAB: i32 = 63;
     pub const UPDATE_STAT: i32 = 154;
     pub const UPDATE_RUNENERGY: i32 = 195;
