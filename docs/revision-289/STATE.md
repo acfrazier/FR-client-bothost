@@ -491,3 +491,26 @@ Verification in isolated CARGO_TARGET_DIR: cargo check client PASS; stage1
 combined stage1 serial load-sensitive fixed-empty-sync failure was reproduced
 as pre-existing and passed isolated. Same-card reviewer=reviewer is next;
 Sections D-H and live/cache/Grok4.6 gates remain separate.
+
+## Cleanup D implementation (t_115f2843)
+
+Accepted C foundation: 4a2f5aa (t_19843fbb, actual Grok4.5 approved).
+Active D card t_115f2843 implements IDs65/188/201 through private staged actor
+decode, packet-free apply and operation-returned publication. Full movement,
+mask and appearance frames validate before semantic mutation. Actor identity,
+local ownership and R274 behavior remain intact; R289 hit timers are +300,
+SAY/public chat publish only actual log changes, reset-anims publishes both
+actor families. Report: cleanup-d-report.md. Pending same-card Grok4.5 review;
+no D commit is accepted yet.
+
+Verification: actor suite13; full native workspace all-features PASS, including
+lib76, stage1 46, stage2 42, stage3 23, server_packets19 and client-play4;
+workspace all-feature check, new-file rustfmt, contract verifier256/82/50 and
+diff check PASS. Preserve first workspace failure in target/cleanup-d-workspace.log:
+old stage2 +400 expectations corrected to primary +300; known stage1 sync
+intermittent failed once, passed subsequent full run. Final passing output is
+target/cleanup-d-all-features.log. No test result implies live compatibility.
+
+Next: same-card reviewer=reviewer, then root decides E-H. Authentic cache/server
+pairing, live RSA/ISAAC/presentation and required final whole-branch Grok4.6
+remain root gates. No host/server/live or renderer ownership changes.

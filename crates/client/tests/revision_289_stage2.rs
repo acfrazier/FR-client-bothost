@@ -933,7 +933,7 @@ fn npc_info_remaining_masks_independent() {
         let n = c.npc[3].as_ref().unwrap();
         assert_eq!(n.health, 10);
         assert_eq!(n.total_health, 20);
-        assert_eq!(n.combat_cycle, c.loop_cycle + 400);
+        assert_eq!(n.combat_cycle, c.loop_cycle + 300);
         assert_eq!(p.pos as i32, c.psize);
     }
     // ANIM 0x02
@@ -1005,7 +1005,7 @@ fn npc_info_remaining_masks_independent() {
         let n = c.npc[3].as_ref().unwrap();
         assert_eq!(n.health, 30);
         assert_eq!(n.total_health, 40);
-        assert_eq!(n.combat_cycle, c.loop_cycle + 400);
+        assert_eq!(n.combat_cycle, c.loop_cycle + 300);
         assert_eq!(p.pos as i32, c.psize);
     }
     // CHANGETYPE 0x20 — always consumes g2; type resolve depends on cache.npcs len.
@@ -1058,7 +1058,7 @@ fn actor_update_remaining_masks_independent() {
         let local = c.local_player.as_ref().unwrap();
         assert_eq!(local.health, 50);
         assert_eq!(local.total_health, 100);
-        assert_eq!(local.combat_cycle, c.loop_cycle + 400);
+        assert_eq!(local.combat_cycle, c.loop_cycle + 300);
         assert_eq!(p.pos as i32, c.psize);
     }
     // ANIM 0x02
@@ -1132,7 +1132,7 @@ fn actor_update_remaining_masks_independent() {
         let local = c.local_player.as_ref().unwrap();
         assert_eq!(local.health, 70);
         assert_eq!(local.total_health, 80);
-        assert_eq!(local.combat_cycle, c.loop_cycle + 400);
+        assert_eq!(local.combat_cycle, c.loop_cycle + 300);
         assert_eq!(p.pos as i32, c.psize);
     }
     // CHAT 0x40 with empty wordpack body (cursor-only proof)
@@ -1430,12 +1430,19 @@ fn reset_anims_clears_primary() {
     let mut local = ClientPlayer::at(2, 2);
     local.primary_anim = 7;
     c.local_player = Some(local);
+    c.npc[3] = Some(Box::new(ClientNpc::default()));
+    c.npc[3].as_mut().unwrap().primary_anim = 8;
+    let before = c.gens;
     let mut p = Packet::new(vec![]);
     c.psize = 0;
     c.handle_packet(ServerProt289::RESET_ANIMS, &mut p);
     assert!(c.ingame);
     assert_eq!(c.players[0].as_ref().unwrap().primary_anim, -1);
     assert_eq!(c.local_player.as_ref().unwrap().primary_anim, -1);
+    assert_eq!(c.npc[3].as_ref().unwrap().primary_anim, -1);
+    assert_eq!(c.gens.player, before.player + 1);
+    assert_eq!(c.gens.npc, before.npc + 1);
+    assert_eq!(c.gens.chat, before.chat);
 }
 
 #[test]

@@ -380,8 +380,13 @@ enum R289InterfaceOperation {
     IfOpenSide(i32),
 }
 
-/// Section A's validated meaning, never a raw 274/289 opcode alias.
+#[path = "actor_289.rs"]
+mod actor_289;
+
+/// Validated meaning, never a raw 274/289 opcode alias.
 enum R289Operation {
+    Actors(actor_289::ActorFrame),
+    ResetAnims,
     UpdatePid { slot: i32, members: i32 },
     Logout,
     LastLoginInfo(LastLoginInfo),
@@ -398,8 +403,15 @@ enum R289Operation {
 }
 
 impl R289Operation {
-    fn decode(ptype: i32, payload: &mut Packet) -> Option<Self> {
+    fn decode(client: &Client, ptype: i32, payload: &mut Packet) -> Option<Self> {
         let operation = match ptype {
+            ServerProt289::PLAYER_INFO => {
+                Self::Actors(actor_289::ActorFrame::decode(client, false, payload))
+            }
+            ServerProt289::NPC_INFO => {
+                Self::Actors(actor_289::ActorFrame::decode(client, true, payload))
+            }
+            ServerProt289::RESET_ANIMS => Self::ResetAnims,
             ServerProt289::UPDATE_PID => Self::UpdatePid {
                 slot: payload.g2(),
                 members: payload.g1(),
@@ -4420,6 +4432,23 @@ impl Client {
 
     fn apply_operation_289(&mut self, operation: R289Operation) -> R289Outcome {
         let publication = match operation {
+            R289Operation::Actors(frame) => frame.apply(self),
+            R289Operation::ResetAnims => {
+                for player in self.players.iter_mut().flatten() {
+                    player.primary_anim = -1;
+                }
+                for npc in self.npc.iter_mut().flatten() {
+                    npc.primary_anim = -1;
+                }
+                if let Some(local) = self.local_player.as_mut() {
+                    local.primary_anim = -1;
+                }
+                R289Publication {
+                    player: true,
+                    npc: true,
+                    ..Default::default()
+                }
+            }
             R289Operation::UpdatePid { slot, members } => {
                 self.self_slot = slot;
                 self.members_account = members;
@@ -7219,6 +7248,8 @@ impl Client {
                 ServerProt289::UPDATE_INV_FULL
                     | ServerProt289::UPDATE_INV_PARTIAL
                     | ServerProt289::UPDATE_INV_STOP_TRANSMIT
+                    | ServerProt289::PLAYER_INFO
+                    | ServerProt289::NPC_INFO
             ) {
             0
         } else {
@@ -7234,7 +7265,7 @@ impl Client {
                 assert_eq!(end, size as usize, "fixed frame length mismatch");
             }
         }
-        if let Some(operation) = R289Operation::decode(ptype, payload) {
+        if let Some(operation) = R289Operation::decode(self, ptype, payload) {
             return self.apply_operation_289(operation);
         }
         let mut publication = R289Publication::default();
@@ -7338,40 +7369,13 @@ impl Client {
                 }
                 self.ptype = -1;
             }
-
-            // Player update method139/212/185/172/153/128 (client.java:2819-2823).
-            // Mask bit layout matches 274 player_update (method128).
-            x if x == ServerProt289::PLAYER_INFO => {
-                self.get_player_pos(payload, self.psize);
-                publication.player = true;
-                self.awaiting_player_info = false;
-                self.ptype = -1;
-            }
-            // NPC update method187 (client.java:3380-3383).
-            x if x == ServerProt289::NPC_INFO => {
-                self.get_npc_pos(payload, self.psize);
-                publication.npc = true;
-                self.ptype = -1;
-            }
             // Region rebuild g2/g2 (client.java:2999-3022).
             x if x == ServerProt289::REBUILD_NORMAL => {
                 self.apply_rebuild_normal(payload);
                 publication = R289Publication::ALL;
                 self.ptype = -1;
             }
-            // Clear primary anim on all actors (client.java:3496-3508).
-            x if x == ServerProt289::RESET_ANIMS => {
-                for player in self.players.iter_mut().flatten() {
-                    player.primary_anim = -1;
-                }
-                for npc in self.npc.iter_mut().flatten() {
-                    npc.primary_anim = -1;
-                }
-                if let Some(local) = self.local_player.as_mut() {
-                    local.primary_anim = -1;
-                }
-                self.ptype = -1;
-            }
+
             // IF_SETTEXT: g2 + newline string (client.java:2638-2646).
             x if x == ServerProt289::IF_SETTEXT => {
                 let com_id = payload.g2();
