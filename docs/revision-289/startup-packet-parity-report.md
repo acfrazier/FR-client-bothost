@@ -73,7 +73,8 @@ The regressions `startup_289_source_sequence_keeps_stream_in_game`,
 `startup_289_login_script_and_first_tick_packets_dispatch`, and
 `startup_289_enclosed_zone_uses_289_inner_opcodes_and_keeps_framing` exercise the
 ordered onLogin prefix, LOGIN script, first-tick stats/identity, and a non-empty
-R289 enclosed-zone frame. Inner IDs are translated from the isolated
+R289 enclosed-zone frame in authentic opcode-first order (LOC_ADD_CHANGE 90,
+then OBJ_DEL 71). Inner IDs are translated from the isolated
 `ServerGameZoneProt.ts:5-14` table to the shared field-width implementations;
 unknown inner IDs consume the remainder of their outer frame rather than
 desynchronizing the next top-level packet.

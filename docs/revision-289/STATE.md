@@ -391,3 +391,7 @@ inner IDs terminate at the enclosing frame boundary. The stale IF_CLOSE
 comment was corrected to client.java:3195-3212, and the ordered startup test
 now follows friend -> ignore -> close -> PID before varp/inventory/reset and
 script/first-tick packets.
+
+The enclosed-zone regression now uses the source-defined opcode-first framing
+(90 LOC_ADD_CHANGE payload, then 71 OBJ_DEL payload), asserts the decoded zone
+origin, and verifies exact outer-frame consumption.

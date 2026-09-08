@@ -355,8 +355,9 @@ fn startup_289_enclosed_zone_uses_289_inner_opcodes_and_keeps_framing() {
     c.psize = 11;
     // ServerGameZoneProt: LOC_ADD_CHANGE=90 (pos, info, id) followed by
     // OBJ_DEL=71 (pos, id). Both frames must consume their R289 payloads.
-    let mut enclosed = Packet::new(vec![40, 48, 0x11, 90, 0, 0x12, 0x34, 0x22, 71, 0x00, 0x56]);
+    let mut enclosed = Packet::new(vec![40, 48, 90, 0x11, 0, 0x12, 0x34, 71, 0x22, 0x00, 0x56]);
     c.handle_packet(ServerProt289::UPDATE_ZONE_PARTIAL_ENCLOSED, &mut enclosed);
+    assert_eq!((c.zone_update_x, c.zone_update_z), (40, 48));
     assert_eq!(enclosed.pos, 11);
     assert!(c.ingame);
 }
