@@ -70,3 +70,13 @@ fn pjstr_newline_terminated() {
     p.pos = 0;
     assert_eq!(p.gjstr(), "hi");
 }
+
+#[test]
+fn bounded_frame_hides_reusable_tail_from_strings_and_reads() {
+    let mut p = Packet::new(b"ok\nSTALE".to_vec());
+    p.set_frame_end(3);
+    assert_eq!(p.gjstr(), "ok");
+    p.pos = 3;
+    let short = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| p.g1()));
+    assert!(short.is_err());
+}

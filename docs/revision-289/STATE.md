@@ -450,3 +450,13 @@ Next: same-card reviewer=reviewer (Grok4.5), then root releases implementation
 only after actual approval. No new cards/code/live in this audit. Authentic
 server/cache pairing and later whole-branch Grok4.6/live proof remain separate
 root-owned prerequisites. No merge/push/remote or host-checkout changes.
+
+## Cleanup A implementation boundary (t_358c02ad)
+
+Implemented bounded frame-end enforcement in Packet and production read_packet,
+plus R289 LAST_LOGIN_INFO field/application semantics, generation failure reset,
+and lifecycle reset coverage. Tests: packet 7 and revision_289_stage1 27 passed;
+cargo check -p client passed; git diff --check passed. This is an unreviewed
+same-card handoff; reviewer=reviewer / actual Grok4.5 is required. Sections B-H
+remain future work, and existing unconverted R289 paths are not claimed atomic.
+Report: docs/revision-289/cleanup-a-report.md.

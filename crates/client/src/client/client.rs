@@ -791,6 +791,15 @@ pub struct Client {
     pub friend_username: [String; 200],
     pub friend_node_id: [i32; 200],
     pub friend_server_status: i32,
+    /// LAST_LOGIN_INFO fields and the selected welcome component. The IP is
+    /// retained for state parity but is never included in diagnostics.
+    pub last_login_ip: i32,
+    pub days_since_login: i32,
+    pub days_since_recovery_change: i32,
+    pub last_login_message_count: i32,
+    pub members_warning: i32,
+    pub welcome_interface_id: i32,
+    pub last_login_dns_display: Option<String>,
     pub private_message_ids: [i32; 100],
     pub private_message_count: i32,
     pub node_id: i32,
@@ -1245,6 +1254,13 @@ impl Client {
             friend_username: [const { String::new() }; 200],
             friend_node_id: [0; 200],
             friend_server_status: 0,
+            last_login_ip: 0,
+            days_since_login: 0,
+            days_since_recovery_change: 0,
+            last_login_message_count: 0,
+            members_warning: 0,
+            welcome_interface_id: -1,
+            last_login_dns_display: None,
             private_message_ids: [0; 100],
             private_message_count: 0,
             node_id: 10,
@@ -3637,6 +3653,7 @@ impl Client {
         }
 
         if self.ptype == -1 {
+            self.r#in.clear_frame_end();
             stream.read_bytes(self.r#in.data_mut(), 0, 1)?;
             self.ptype = self.r#in.data()[0] as i32 & 0xff;
             if let Some(random) = self.random_in.as_mut() {
@@ -3680,6 +3697,7 @@ impl Client {
 
         self.r#in.pos = 0;
         stream.read_bytes(self.r#in.data_mut(), 0, self.psize as usize)?;
+        self.r#in.set_frame_end(self.psize as usize);
         // a full packet restamps the in-game silence watchdog (Java tcpIn)
         self.last_response = Some(Instant::now());
         self.ptype2 = self.ptype1;
@@ -3699,6 +3717,7 @@ impl Client {
     pub fn handle_packet(&mut self, ptype: i32, payload: &mut Packet) {
         let ptype1 = self.ptype1;
         let ptype2 = self.ptype2;
+        let before = self.gens;
         let result = catch_unwind(AssertUnwindSafe(|| {
             self.dispatch_packet(ptype, payload);
         }));
@@ -3706,7 +3725,18 @@ impl Client {
             eprintln!("T2 - {ptype},{ptype1},{ptype2}");
             // `logout()` bumps every family (spec: REBUILD/logout → all).
             self.logout();
-        } else {
+        } else if self.gens.npc == before.npc
+            && self.gens.player == before.player
+            && self.gens.inv == before.inv
+            && self.gens.varp == before.varp
+            && self.gens.stat == before.stat
+            && self.gens.chat == before.chat
+            && self.gens.scene == before.scene
+            && self.gens.iface == before.iface
+            && self.gens.camera == before.camera
+            && self.gens.map_flag == before.map_flag
+            && self.gens.world == before.world
+        {
             self.bump_gens(ptype);
         }
     }
@@ -4173,6 +4203,43 @@ impl Client {
         }
         self.main_modal_id = -1;
         self.resumed_pause_button = false;
+    }
+
+    /// `LAST_LOGIN_INFO` (Java client.java:3159-3183). Decode all ten bytes
+    /// before applying welcome state. DNS display resolution remains optional
+    /// lifecycle/UI work and is never performed or logged in this path.
+    pub fn apply_last_login_info(&mut self, payload: &mut Packet) {
+        self.last_login_ip = payload.g4();
+        self.days_since_login = payload.g2();
+        self.days_since_recovery_change = payload.g1();
+        self.last_login_message_count = payload.g2();
+        self.members_warning = payload.g1();
+        self.welcome_interface_id = -1;
+        if self.last_login_ip != 0 && self.main_modal_id == -1 {
+            self.apply_if_close();
+            let client_code = if self.days_since_recovery_change != 201 {
+                650
+            } else if self.members_warning == 1 {
+                655
+            } else {
+                -1
+            };
+            if client_code != -1 {
+                self.welcome_interface_id = self
+                    .ifaces
+                    .iter()
+                    .flatten()
+                    .find(|component| component.client_code == client_code)
+                    .map(|component| component.id)
+                    .unwrap_or(-1);
+                if self.welcome_interface_id != -1 {
+                    self.main_modal_id = self.welcome_interface_id;
+                    self.redraw_frame = true;
+                }
+            }
+        }
+        self.report_abuse_input.clear();
+        self.report_abuse_mute_option = false;
     }
 
     /// `addChat` from client-ts (11453): shift the 100 chat slots down one
@@ -6800,11 +6867,7 @@ impl Client {
             }
             // LAST_LOGIN_INFO: consume the fixed 10-byte identity notice.
             x if x == ServerProt289::LAST_LOGIN_INFO => {
-                let _last_ip = payload.g4();
-                let _days_since_login = payload.g2();
-                let _days_since_recovery_change = payload.g1();
-                let _message_count = payload.g2();
-                let _members_warning = payload.g1();
+                self.apply_last_login_info(payload);
                 self.ptype = -1;
             }
             // First-tick zone bootstrap uses the R289 source-defined zone
@@ -8419,6 +8482,13 @@ impl Client {
         self.loc_changes = LinkList::new();
         self.friend_server_status = 0;
         self.friend_count = 0;
+        self.last_login_ip = 0;
+        self.days_since_login = 0;
+        self.days_since_recovery_change = 0;
+        self.last_login_message_count = 0;
+        self.members_warning = 0;
+        self.welcome_interface_id = -1;
+        self.last_login_dns_display = None;
         self.social_input_open = false;
         for level in 0..BuildArea::LEVELS {
             for x in 0..BuildArea::SIZE {

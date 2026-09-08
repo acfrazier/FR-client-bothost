@@ -52,6 +52,7 @@ pub struct Packet {
     pub pos: usize,
     pub bit_pos: usize,
     pub random: Option<Isaac>,
+    frame_end: Option<usize>,
 }
 
 impl Packet {
@@ -61,6 +62,7 @@ impl Packet {
             pos: 0,
             bit_pos: 0,
             random: None,
+            frame_end: None,
         }
     }
 
@@ -77,7 +79,25 @@ impl Packet {
     }
 
     pub fn available(&self) -> usize {
-        self.data.len() - self.pos
+        self.frame_end.unwrap_or(self.data.len()) - self.pos
+    }
+
+    /// Restrict reads to the exact bytes of the current wire frame. The
+    /// backing allocation is intentionally reusable, so handlers must not see
+    /// bytes left by a previous, longer packet.
+    pub fn set_frame_end(&mut self, end: usize) {
+        assert!(end <= self.data.len());
+        self.frame_end = Some(end);
+    }
+
+    pub fn clear_frame_end(&mut self) {
+        self.frame_end = None;
+    }
+
+    fn assert_can_read(&self, length: usize) {
+        assert!(self.pos.checked_add(length).is_some_and(|end| {
+            end <= self.frame_end.unwrap_or(self.data.len())
+        }));
     }
 
     pub fn getcrc(src: &[u8], offset: usize, length: usize) -> i32 {
@@ -100,6 +120,7 @@ impl Packet {
         };
         if let Some(mut p) = cached {
             p.pos = 0;
+            p.frame_end = None;
             return p;
         }
         match kind {
@@ -134,6 +155,7 @@ impl Packet {
     }
 
     pub fn g1(&mut self) -> i32 {
+        self.assert_can_read(1);
         let v = self.data[self.pos] as i32;
         self.pos += 1;
         v
@@ -141,12 +163,14 @@ impl Packet {
 
     // signed
     pub fn g1b(&mut self) -> i32 {
+        self.assert_can_read(1);
         let v = self.data[self.pos] as i8 as i32;
         self.pos += 1;
         v
     }
 
     pub fn g2(&mut self) -> i32 {
+        self.assert_can_read(2);
         let v = u16::from_be_bytes([self.data[self.pos], self.data[self.pos + 1]]) as i32;
         self.pos += 2;
         v
@@ -154,12 +178,14 @@ impl Packet {
 
     // signed
     pub fn g2b(&mut self) -> i32 {
+        self.assert_can_read(2);
         let v = i16::from_be_bytes([self.data[self.pos], self.data[self.pos + 1]]) as i32;
         self.pos += 2;
         v
     }
 
     pub fn g3(&mut self) -> i32 {
+        self.assert_can_read(3);
         let v = (self.data[self.pos] as i32) << 16
             | u16::from_be_bytes([self.data[self.pos + 1], self.data[self.pos + 2]]) as i32;
         self.pos += 3;
@@ -167,6 +193,7 @@ impl Packet {
     }
 
     pub fn g4(&mut self) -> i32 {
+        self.assert_can_read(4);
         let v = i32::from_be_bytes([
             self.data[self.pos],
             self.data[self.pos + 1],
@@ -178,6 +205,7 @@ impl Packet {
     }
 
     pub fn g8(&mut self) -> i64 {
+        self.assert_can_read(8);
         let v = i64::from_be_bytes([
             self.data[self.pos],
             self.data[self.pos + 1],
@@ -210,7 +238,7 @@ impl Packet {
 
     pub fn gjstr(&mut self) -> String {
         let mut s = String::new();
-        while self.pos < self.data.len() {
+        while self.pos < self.frame_end.unwrap_or(self.data.len()) {
             let b = self.data[self.pos];
             self.pos += 1;
             if b == 10 {
@@ -222,6 +250,7 @@ impl Packet {
     }
 
     pub fn gdata(&mut self, length: usize, offset: usize, dest: &mut [u8]) {
+        self.assert_can_read(length);
         let end = self.pos + length;
         dest[offset..offset + length].copy_from_slice(&self.data[self.pos..end]);
         self.pos = end;

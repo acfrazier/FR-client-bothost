@@ -37,6 +37,32 @@ fn client_289() -> Client {
     c
 }
 
+#[test]
+fn last_login_info_decodes_fields_and_selects_welcome_interface() {
+    let mut c = client_289();
+    let mut welcome = IfType::default();
+    welcome.id = 42;
+    welcome.client_code = 650;
+    c.ifaces = Arc::new(vec![Some(Box::new(welcome))]);
+    c.side_modal_id = 7;
+    c.report_abuse_input = "private".into();
+    c.report_abuse_mute_option = true;
+
+    let mut p = Packet::new(vec![1, 2, 3, 4, 0, 9, 200, 0, 10, 1]);
+    c.handle_packet(ServerProt289::LAST_LOGIN_INFO, &mut p);
+
+    assert_eq!(c.last_login_ip, 0x01020304);
+    assert_eq!(c.days_since_login, 9);
+    assert_eq!(c.days_since_recovery_change, 200);
+    assert_eq!(c.last_login_message_count, 10);
+    assert_eq!(c.members_warning, 1);
+    assert_eq!(c.welcome_interface_id, 42);
+    assert_eq!(c.main_modal_id, 42);
+    assert_eq!(c.side_modal_id, -1);
+    assert!(c.report_abuse_input.is_empty());
+    assert!(!c.report_abuse_mute_option);
+}
+
 fn ensure_inv_slots(c: &mut Client, com_id: usize, n: usize) {
     // Grow ifaces_mut and install inv arrays so inventory writes land.
     {
