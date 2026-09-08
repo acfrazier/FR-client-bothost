@@ -362,6 +362,37 @@ fn r289_message_public_effect_prefixes_match_java() {
     }
 }
 
+/// Default revision (R274) must keep client-ts sequential prefixes: wave:=1,
+/// scroll:=2. Do not infer 274 from the R289 golden above.
+#[test]
+fn default_revision_message_public_scroll_wave_effects() {
+    let cases = [("scroll:hello", 2u8), ("wave:hello", 1u8), ("hello", 0u8)];
+    for (input, effect) in cases {
+        let mut c = client_274();
+        assert_eq!(c.revision(), ClientRevision::R274);
+        let mut player = ClientPlayer::at(1, 1);
+        player.name = Some("Bob".into());
+        c.local_player = Some(player);
+        for ch in input.bytes() {
+            c.shell.apply_key(true, 0, ch as i32);
+        }
+        c.shell.apply_key(true, 0, 13);
+        c.handle_chat_input();
+        assert_eq!(
+            c.out.data()[0],
+            ClientProt::MESSAGE_PUBLIC.id as u8,
+            "274 MESSAGE_PUBLIC id for {input}"
+        );
+        assert_eq!(c.out.data()[2], 0, "colour default for {input}");
+        assert_eq!(c.out.data()[3], effect, "274 effect byte for {input}");
+        assert_eq!(
+            c.local_player.as_ref().unwrap().chat_effect,
+            effect as i32,
+            "274 local echo effect for {input}"
+        );
+    }
+}
+
 #[test]
 fn r289_send_snapshot_report_abuse_p8_p1_p1() {
     // Java client_button 601..=612: CLOSE_MODAL then SEND_SNAPSHOT 94

@@ -23,14 +23,16 @@ Login at `client.java:8342-8398` sends request opcode 14 plus the five-bit name 
 
 ## Inbound contract
 
-`protocol-289.json` enumerates all 256 decoded inbound IDs and their exact `Class17.anIntArray209` lengths. Named rows are source-derived only where the primary dispatch branch was traced: actor/player update (188), inventory full (107), inventory partial (76), region rebuild (219), varp/config (75, 97, 172), widgets/interface (59, 211, 252), logout (121), interface reset/set (127), and actor reset (201). Notably, opcode 172 is a zero-payload bulk varp sync, 55 opens two interfaces, and 127 reads a signed g2 interface id; these are not renamed to inventory, region, or logout. Other rows retain explicit unknown field descriptions rather than guessed schemas.
+`protocol-289.json` enumerates all 256 decoded inbound IDs and their exact `Class17.anIntArray209` lengths. Named rows are source-derived only where the primary dispatch branch was traced: actor/player update (188), NPC update (65 via method187/226/124/222), inventory full (107), inventory partial (76), region rebuild (219), varp/config (75, 97, 172), widgets/interface (59, 211, 252), logout (121), interface reset/set (127), and actor reset (201). Notably, opcode 172 is a zero-payload bulk varp sync, 55 opens two interfaces, and 127 reads a signed g2 interface id; these are not renamed to inventory, region, or logout. Other rows retain explicit unknown field descriptions rather than guessed schemas.
 
 Important encodings:
 
 - `g2`: unsigned big-endian two-byte value.
 - `gsmart`: one byte for values below 128; otherwise unsigned `g2 - 0x8000`.
 - variable frame lengths: `g1` for `-1`, `g2` for `-2`.
-- actor updates: method212 local update bits, method185 g8 other-player count/movement, method172 11-bit new-player records with signed 5/5 offsets and 1-bit flags, method153 one/two-byte masks, and method128 ordered mask payloads (0x001/002/004/008/010/020/040/100/200/400); implementation must consume exactly the declared frame.
+- actor updates (player 188): method212 local update bits, method185 g8 other-player count/movement, method172 11-bit new-player records with signed 5/5 offsets and 1-bit flags, method153 one/two-byte masks, and method128 ordered mask payloads (0x001 appearance, 0x002 anim, 0x004 face entity, 0x008 say, 0x010 hit, 0x020 face square, 0x040 packed chat, 0x100 spotanim, 0x200 exact-move 4×g1+g2+g2+g1, 0x400 secondary hit); implementation must consume exactly the declared frame.
+- NPC updates (65): method187 → method226 old-vis (8-bit count, 1+2-bit ops, 3-bit dirs), method124 new-vis (bit_pos+21 gate, 14-bit index sentinel 16383, 11-bit type, signed 5/5, 1 jump, 1 extended), method222 masks (0x1 HITMARK2, 0x2 ANIM, 0x4 FACEENTITY, 0x8 SAY, 0x10 HITMARK, 0x20 CHANGETYPE, 0x40 SPOTANIM, 0x80 FACESQUARE). Shared HITMARK client timer stays loop_cycle+400 (274/TS); do not globally rewrite to Java +300.
+- MESSAGE_PUBLIC effect prefixes are revision-gated: R274 sequential wave:=1 / scroll:=2; R289 else-if wave2/wave/shake/scroll/slide → 2/1/3/4/5 with wave2 checked before wave.
 - inventory: revision-specific `g2` container/count shape and smart slot/item values; do not carry 274 widths into 289.
 - widgets: component IDs and newline-terminated strings are cache/interface data, not public ABI constants.
 

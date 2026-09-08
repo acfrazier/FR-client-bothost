@@ -488,6 +488,260 @@ fn npc_info_face_entity_mask() {
     assert_eq!(p.pos as i32, c.psize, "exact byte consumption");
 }
 
+fn seed_npc_for_mask(c: &mut Client) {
+    c.loop_cycle = 5;
+    c.npc[3] = Some(Box::new(ClientNpc::default()));
+    c.npc_ids[0] = 3;
+    c.npc_count = 1;
+    c.local_player = Some(ClientPlayer::at(10, 10));
+}
+
+fn seed_local_for_mask(c: &mut Client) {
+    c.loop_cycle = 5;
+    let mut slot = ClientPlayer::default();
+    slot.entity.x = 3 * 128 + 64;
+    slot.entity.z = 4 * 128 + 64;
+    slot.entity.route_x[0] = 3;
+    slot.entity.route_z[0] = 4;
+    c.players[2047] = Some(Box::new(slot));
+    let mut local = ClientPlayer::at(10, 10);
+    local.entity.x = 10 * 128 + 64;
+    local.entity.z = 10 * 128 + 64;
+    local.name = Some("Bob".into());
+    local.ready = true;
+    c.local_player = Some(local);
+}
+
+/// Remaining NPC method222 masks beyond FACEENTITY — independent fixtures.
+#[test]
+fn npc_info_remaining_masks_independent() {
+    // HITMARK 0x10
+    {
+        let mut c = client_289();
+        seed_npc_for_mask(&mut c);
+        let frame = hex_bytes("019fff801005010a14");
+        c.psize = frame.len() as i32;
+        let mut p = Packet::new(frame);
+        c.handle_packet(ServerProt289::NPC_INFO, &mut p);
+        assert!(c.ingame);
+        let n = c.npc[3].as_ref().unwrap();
+        assert_eq!(n.health, 10);
+        assert_eq!(n.total_health, 20);
+        assert_eq!(n.combat_cycle, c.loop_cycle + 400);
+        assert_eq!(p.pos as i32, c.psize);
+    }
+    // ANIM 0x02
+    {
+        let mut c = client_289();
+        seed_npc_for_mask(&mut c);
+        let frame = hex_bytes("019fff8002123403");
+        c.psize = frame.len() as i32;
+        let mut p = Packet::new(frame);
+        c.handle_packet(ServerProt289::NPC_INFO, &mut p);
+        assert!(c.ingame);
+        let n = c.npc[3].as_ref().unwrap();
+        assert_eq!(n.primary_anim, 0x1234);
+        assert_eq!(n.primary_anim_delay, 3);
+        assert_eq!(p.pos as i32, c.psize);
+    }
+    // SAY 0x08
+    {
+        let mut c = client_289();
+        seed_npc_for_mask(&mut c);
+        let frame = hex_bytes("019fff800868690a");
+        c.psize = frame.len() as i32;
+        let mut p = Packet::new(frame);
+        c.handle_packet(ServerProt289::NPC_INFO, &mut p);
+        assert!(c.ingame);
+        assert_eq!(
+            c.npc[3].as_ref().unwrap().chat_message.as_deref(),
+            Some("hi")
+        );
+        assert_eq!(p.pos as i32, c.psize);
+    }
+    // FACESQUARE 0x80
+    {
+        let mut c = client_289();
+        seed_npc_for_mask(&mut c);
+        let frame = hex_bytes("019fff8080000a000b");
+        c.psize = frame.len() as i32;
+        let mut p = Packet::new(frame);
+        c.handle_packet(ServerProt289::NPC_INFO, &mut p);
+        assert!(c.ingame);
+        let n = c.npc[3].as_ref().unwrap();
+        assert_eq!(n.face_square_x, 10);
+        assert_eq!(n.face_square_z, 11);
+        assert_eq!(p.pos as i32, c.psize);
+    }
+    // SPOTANIM 0x40
+    {
+        let mut c = client_289();
+        seed_npc_for_mask(&mut c);
+        let frame = hex_bytes("019fff8040000700010002");
+        c.psize = frame.len() as i32;
+        let mut p = Packet::new(frame);
+        c.handle_packet(ServerProt289::NPC_INFO, &mut p);
+        assert!(c.ingame);
+        let n = c.npc[3].as_ref().unwrap();
+        assert_eq!(n.spotanim_id, 7);
+        assert_eq!(n.spotanim_height, 1);
+        assert_eq!(p.pos as i32, c.psize);
+    }
+    // HITMARK2 0x01
+    {
+        let mut c = client_289();
+        seed_npc_for_mask(&mut c);
+        let frame = hex_bytes("019fff800109021e28");
+        c.psize = frame.len() as i32;
+        let mut p = Packet::new(frame);
+        c.handle_packet(ServerProt289::NPC_INFO, &mut p);
+        assert!(c.ingame);
+        let n = c.npc[3].as_ref().unwrap();
+        assert_eq!(n.health, 30);
+        assert_eq!(n.total_health, 40);
+        assert_eq!(n.combat_cycle, c.loop_cycle + 400);
+        assert_eq!(p.pos as i32, c.psize);
+    }
+    // CHANGETYPE 0x20 — always consumes g2; type resolve depends on cache.npcs len.
+    {
+        let mut c = client_289();
+        seed_npc_for_mask(&mut c);
+        let frame = hex_bytes("019fff80200005");
+        c.psize = frame.len() as i32;
+        let mut p = Packet::new(frame);
+        c.handle_packet(ServerProt289::NPC_INFO, &mut p);
+        assert!(c.ingame);
+        assert!(c.npc[3].is_some());
+        assert_eq!(p.pos as i32, c.psize);
+        // When the offline cache has no npc defs, type stays None; when a
+        // synthetic table is long enough, type id 5 may bind. Either is fine
+        // as long as the g2 is consumed without T2.
+        if c.cache.npcs.is_empty() {
+            assert!(c.npc[3].as_ref().unwrap().r#type.is_none());
+        }
+    }
+}
+
+/// Remaining player method128 masks beyond APPEARANCE|FACEENTITY.
+#[test]
+fn actor_update_remaining_masks_independent() {
+    // SAY 0x08
+    {
+        let mut c = client_289();
+        seed_local_for_mask(&mut c);
+        let frame = hex_bytes("801ffc08796f0a");
+        c.psize = frame.len() as i32;
+        let mut p = Packet::new(frame);
+        c.handle_packet(ServerProt289::PLAYER_INFO, &mut p);
+        assert!(c.ingame);
+        assert_eq!(
+            c.local_player.as_ref().unwrap().chat_message.as_deref(),
+            Some("yo")
+        );
+        assert_eq!(p.pos as i32, c.psize);
+    }
+    // HITMARK 0x10
+    {
+        let mut c = client_289();
+        seed_local_for_mask(&mut c);
+        let frame = hex_bytes("801ffc1004003264");
+        c.psize = frame.len() as i32;
+        let mut p = Packet::new(frame);
+        c.handle_packet(ServerProt289::PLAYER_INFO, &mut p);
+        assert!(c.ingame);
+        let local = c.local_player.as_ref().unwrap();
+        assert_eq!(local.health, 50);
+        assert_eq!(local.total_health, 100);
+        assert_eq!(local.combat_cycle, c.loop_cycle + 400);
+        assert_eq!(p.pos as i32, c.psize);
+    }
+    // ANIM 0x02
+    {
+        let mut c = client_289();
+        seed_local_for_mask(&mut c);
+        let frame = hex_bytes("801ffc02001102");
+        c.psize = frame.len() as i32;
+        let mut p = Packet::new(frame);
+        c.handle_packet(ServerProt289::PLAYER_INFO, &mut p);
+        assert!(c.ingame);
+        let local = c.local_player.as_ref().unwrap();
+        assert_eq!(local.primary_anim, 0x11);
+        assert_eq!(local.primary_anim_delay, 2);
+        assert_eq!(p.pos as i32, c.psize);
+    }
+    // FACESQUARE 0x20
+    {
+        let mut c = client_289();
+        seed_local_for_mask(&mut c);
+        let frame = hex_bytes("801ffc2001020304");
+        c.psize = frame.len() as i32;
+        let mut p = Packet::new(frame);
+        c.handle_packet(ServerProt289::PLAYER_INFO, &mut p);
+        assert!(c.ingame);
+        let local = c.local_player.as_ref().unwrap();
+        assert_eq!(local.face_square_x, 0x102);
+        assert_eq!(local.face_square_z, 0x304);
+        assert_eq!(p.pos as i32, c.psize);
+    }
+    // SPOTANIM 0x100 (big-update second mask byte)
+    {
+        let mut c = client_289();
+        seed_local_for_mask(&mut c);
+        let frame = hex_bytes("801ffc8001000900000005");
+        c.psize = frame.len() as i32;
+        let mut p = Packet::new(frame);
+        c.handle_packet(ServerProt289::PLAYER_INFO, &mut p);
+        assert!(c.ingame);
+        assert_eq!(c.local_player.as_ref().unwrap().spotanim_id, 9);
+        assert_eq!(p.pos as i32, c.psize);
+    }
+    // EXACTMOVE 0x200
+    {
+        let mut c = client_289();
+        seed_local_for_mask(&mut c);
+        let frame = hex_bytes("801ffc800201020304000a001405");
+        c.psize = frame.len() as i32;
+        let mut p = Packet::new(frame);
+        c.handle_packet(ServerProt289::PLAYER_INFO, &mut p);
+        assert!(c.ingame);
+        let local = c.local_player.as_ref().unwrap();
+        assert_eq!(local.exact_start_x, 1);
+        assert_eq!(local.exact_start_z, 2);
+        assert_eq!(local.exact_end_x, 3);
+        assert_eq!(local.exact_end_z, 4);
+        assert_eq!(local.exact_move_facing, 5);
+        assert_eq!(local.exact_move_end, c.loop_cycle + 0x0a);
+        assert_eq!(local.exact_move_start, c.loop_cycle + 0x14);
+        assert_eq!(p.pos as i32, c.psize);
+    }
+    // HITMARK2 0x400
+    {
+        let mut c = client_289();
+        seed_local_for_mask(&mut c);
+        let frame = hex_bytes("801ffc800406014650");
+        c.psize = frame.len() as i32;
+        let mut p = Packet::new(frame);
+        c.handle_packet(ServerProt289::PLAYER_INFO, &mut p);
+        assert!(c.ingame);
+        let local = c.local_player.as_ref().unwrap();
+        assert_eq!(local.health, 70);
+        assert_eq!(local.total_health, 80);
+        assert_eq!(local.combat_cycle, c.loop_cycle + 400);
+        assert_eq!(p.pos as i32, c.psize);
+    }
+    // CHAT 0x40 with empty wordpack body (cursor-only proof)
+    {
+        let mut c = client_289();
+        seed_local_for_mask(&mut c);
+        let frame = hex_bytes("801ffc4001000000");
+        c.psize = frame.len() as i32;
+        let mut p = Packet::new(frame);
+        c.handle_packet(ServerProt289::PLAYER_INFO, &mut p);
+        assert!(c.ingame);
+        assert_eq!(p.pos as i32, c.psize);
+    }
+}
+
 // --- region ----------------------------------------------------------------
 
 #[test]

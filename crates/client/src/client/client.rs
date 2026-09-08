@@ -8681,25 +8681,37 @@ impl Client {
                         colour = 11;
                         text = text[6..].to_string();
                     }
-                    // Primary 289 Java effect prefixes (else-if chain).
-                    // Check wave2 before wave so "wave2:" is not consumed as "wave:".
-                    // wave=1, wave2=2, shake=3, scroll=4, slide=5.
+                    // MESSAGE_PUBLIC effect prefixes are revision-gated.
+                    // R274/client-ts: sequential ifs — wave:=1, scroll:=2.
+                    // R289 Java table (else-if): wave2 before wave so "wave2:"
+                    // is not swallowed; wave/wave2/shake/scroll/slide → 1/2/3/4/5.
                     let mut effect = 0;
-                    if text.starts_with("wave2:") {
-                        effect = 2;
-                        text = text[6..].to_string();
-                    } else if text.starts_with("wave:") {
-                        effect = 1;
-                        text = text[5..].to_string();
-                    } else if text.starts_with("shake:") {
-                        effect = 3;
-                        text = text[6..].to_string();
-                    } else if text.starts_with("scroll:") {
-                        effect = 4;
-                        text = text[7..].to_string();
-                    } else if text.starts_with("slide:") {
-                        effect = 5;
-                        text = text[6..].to_string();
+                    if self.revision.is_289() {
+                        if text.starts_with("wave2:") {
+                            effect = 2;
+                            text = text[6..].to_string();
+                        } else if text.starts_with("wave:") {
+                            effect = 1;
+                            text = text[5..].to_string();
+                        } else if text.starts_with("shake:") {
+                            effect = 3;
+                            text = text[6..].to_string();
+                        } else if text.starts_with("scroll:") {
+                            effect = 4;
+                            text = text[7..].to_string();
+                        } else if text.starts_with("slide:") {
+                            effect = 5;
+                            text = text[6..].to_string();
+                        }
+                    } else {
+                        if text.starts_with("wave:") {
+                            effect = 1;
+                            text = text[5..].to_string();
+                        }
+                        if text.starts_with("scroll:") {
+                            effect = 2;
+                            text = text[7..].to_string();
+                        }
                     }
 
                     self.out.p1_enc(self.client_opcode(ClientProt::MESSAGE_PUBLIC));

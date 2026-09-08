@@ -863,17 +863,24 @@
       "confidence": "verified-id-and-length; fields-unknown"
     },
     {
-      "name": "server_opcode_065",
+      "name": "npc_info",
       "id": 65,
       "length": -2,
       "fields": [
-        "unknown: decode fields from client.java dispatch branch before implementation"
+        "method187 entry: reset entity_removal/entity_update counts then method226 + method124 + method222; require final cursor == psize and no null live npc slots",
+        "method226 old-vis: 8-bit npc count; each retained slot 1-bit info then 2-bit op (0 mask-only, 1 one 3-bit walk dir + 1-bit extended, 2 two 3-bit dirs + 1-bit extended, 3 removal)",
+        "method124 new-vis while bit_pos+21 < psize*8: 14-bit index with sentinel 16383, 11-bit type, signed 5-bit x/y, 1-bit jump, 1-bit extended; then byte-align",
+        "method222 per extended slot: one mask byte; bits 0x1 HITMARK2 four g1, 0x2 ANIM g2+g1, 0x4 FACEENTITY g2, 0x8 SAY gjstr, 0x10 HITMARK four g1, 0x20 CHANGETYPE g2, 0x40 SPOTANIM g2+g4, 0x80 FACESQUARE two g2"
       ],
       "source_anchors": [
         "Class17.java:11 (anIntArray209[65] packet length)",
-        "client.java:2553-2587 (dispatch; branch tracing pending for opcode 65)"
+        "client.java:3380-3383 (dispatch NPC_INFO → method187)",
+        "client.java:8837-8865 (method187)",
+        "client.java:12056-12120 (method226 old-vis)",
+        "client.java:4854-4905 (method124 new-vis)",
+        "client.java:11868-11970 (method222 masks)"
       ],
-      "confidence": "verified-id-and-length; fields-unknown"
+      "confidence": "verified-length-and-fields"
     },
     {
       "name": "server_opcode_066",
@@ -2480,7 +2487,7 @@
         "method212 local-player update: bit 1 has update; 2-bit movement kind; kind 0 mask-only, kind 1 one 3-bit walk direction plus 1-bit mask, kind 2 two 3-bit directions plus 1-bit mask, kind 3 2-bit plane + 7-bit x + 7-bit y + 1-bit teleport + 1-bit mask",
         "method185 other-player count g8; each retained player has 1-bit update, then 2-bit movement (0 none, 1 one 3-bit direction + mask bit, 2 two 3-bit directions + mask bit, 3 removal)",
         "method172 new-player records: 11-bit index, signed 5-bit x/y offsets, 1-bit teleport, 1-bit mask; terminator index 2047",
-        "method153 reads one or two mask bytes when bit 0x80 is set; method128 mask bits 0x001 appearance g1+bytes, 0x002 animation g2+g1, 0x004 face entity g2, 0x008 chat string, 0x010 hit four g1, 0x020 face coordinates two g2, 0x040 packed chat header+bytes, 0x100 spot animation g2+g4, 0x200 hit/health seven fields, 0x400 secondary hit four g1",
+        "method153 reads one or two mask bytes when bit 0x80 is set; method128 mask bits 0x001 appearance g1+bytes, 0x002 animation g2+g1, 0x004 face entity g2, 0x008 say gjstr, 0x010 hit four g1, 0x020 face coordinates two g2, 0x040 packed chat header+bytes, 0x100 spot animation g2+g4, 0x200 exact-move (4 g1 start/end + g2 end-cycle + g2 start-cycle + g1 facing), 0x400 secondary hit four g1",
         "method139 aligns after all sections and requires final cursor equal frame length"
       ],
       "source_anchors": [
