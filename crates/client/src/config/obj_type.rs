@@ -58,6 +58,9 @@ pub struct ObjType {
     pub resizez: i32,
     pub ambient: i32,
     pub contrast: i32,
+    /// Client config code 115 (team cape). It is not used by the renderer,
+    /// but consuming it is required to keep the following fields aligned.
+    pub team: i32,
 }
 
 impl Default for ObjType {
@@ -101,6 +104,7 @@ impl Default for ObjType {
             resizez: 128,
             ambient: 0,
             contrast: 0,
+            team: 0,
         }
     }
 }
@@ -229,6 +233,7 @@ impl ObjType {
                 112 => self.resizez = dat.g2(),
                 113 => self.ambient = dat.g1b(),
                 114 => self.contrast = dat.g1b() * 5,
+                115 => self.team = dat.g1(),
                 _ => eprintln!("Error unrecognised obj config code: {code}"),
             }
         }
@@ -644,6 +649,19 @@ mod tests {
     use super::*;
     use crate::dash3d::store::tests::CACHE_LOCK;
     use std::sync::MutexGuard;
+
+    #[test]
+    fn decode_team_code_consumes_payload_and_preserves_alignment() {
+        // LostCity 289 ObjType.ts:282-283: code 115 is a one-byte team
+        // value. Keep a following known field in the oracle so a decoder that
+        // merely ignores 115 cannot pass this framing regression test.
+        let mut obj = ObjType::default();
+        let mut packet = Packet::new(vec![115, 42, 114, 7, 0]);
+        obj.decode(&mut packet);
+        assert_eq!(obj.team, 42);
+        assert_eq!(obj.contrast, 35);
+        assert_eq!(packet.pos, 5);
+    }
 
     /// The sprite/model caches are process-wide statics shared by every test
     /// in this binary, so tests that clear them or depend on their contents

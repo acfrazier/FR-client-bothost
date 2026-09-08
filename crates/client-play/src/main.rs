@@ -158,12 +158,13 @@ fn main() -> ExitCode {
         members: true,
         lowmem,
     };
-    let mut client = Client::new_with_revision(config, args.revision);
-    // `--http-port N` points the `maininit` jag fetch (and `Client::new`'s
-    // pre-unpack `/crc` probe is unaffected: it always tries the default
-    // origin) at a non-privileged local engine web port. maininit's
-    // `fetch_jag_checksums`/`fetch_jag_file` read `Client.http_port`.
-    client.http_port = args.http_port;
+    // Bind the web-origin port before construction: standalone local engines
+    // commonly use a non-privileged port instead of the default port 80.
+    let mut client = Client::new_with_revision_and_http_port(
+        config,
+        args.revision,
+        args.http_port,
+    );
     // Render state is separate (task 2b): the driver holds the `Renderer`
     // beside the sim `Client` and hands it to `maininit`/`run`.
     // `--window` prefers the wgpu backend (task 7): the 3D scene is

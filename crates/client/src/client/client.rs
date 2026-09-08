@@ -868,17 +868,33 @@ impl Client {
     /// midstream revision mutation — the profile is immutable after build
     /// except via successful [`Client::adopt_from`].
     pub fn new_with_revision(config: ClientConfig, revision: ClientRevision) -> Self {
-        // TS `getJagChecksums` downloads `/crc` from the web origin (port 80).
+        Self::new_with_revision_and_http_port(
+            config,
+            revision,
+            crate::jag_fetch_port_for(crate::bot_target()),
+        )
+    }
+
+    /// Construct with an explicit protocol revision and web-origin port.
+    /// Binding the port before the initial cache/checksum work matters for
+    /// standalone local engines, whose HTTP listener is not privileged port
+    /// 80. The old constructor remains a 274-compatible 80-port wrapper.
+    pub fn new_with_revision_and_http_port(
+        config: ClientConfig,
+        revision: ClientRevision,
+        http_port: u16,
+    ) -> Self {
+        // TS `getJagChecksums` downloads `/crc` from the web origin.
         // Local pack/client is missing `wordenc`, so file CRCs fail the
         // engine's CrcBuffer32 check (login code 6). Prefer /crc; fall back
         // to files for tests without a web server.
-        let jag_checksum = Self::get_jag_checksums(&config.host, 80)
+        let jag_checksum = Self::get_jag_checksums(&config.host, http_port)
             .unwrap_or_else(|_| Self::read_jag_checksums(&config.cache_dir));
         let (cache, ifaces, ifaces_mut, error_loading) = match Self::load_cache(&config.cache_dir) {
             Ok((cache, ifaces, ifaces_mut)) => (cache, ifaces, Arc::new(ifaces_mut), false),
             Err(()) => (Cache::default(), Vec::new(), Arc::new(Vec::new()), true),
         };
-        Self::construct(
+        let mut client = Self::construct(
             config,
             Arc::new(cache),
             Arc::new(ifaces),
@@ -886,7 +902,9 @@ impl Client {
             error_loading,
             jag_checksum,
             revision,
-        )
+        );
+        client.http_port = http_port;
+        client
     }
 
     /// Host construct: inject a process-wide `Arc<Cache>`, the shared
