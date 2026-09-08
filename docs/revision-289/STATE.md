@@ -410,17 +410,43 @@ Exact verification: stage2 test 36 passed, stage1 26 passed, contract verifier P
 
 ## Full dispatch audit / cleanup contract (t_43f9ff17)
 
-Source/handler audit deliverables are `docs/revision-289/full-dispatch-cleanup-plan.md`
-and `docs/revision-289/full-dispatch-audit.json`. The machine-readable ledger
-enumerates all 256 inbound wire IDs from primary 289 `Class17.anIntArray209`,
-retains exact source anchors, records independent Rust dispatch/handler anchors,
-and includes all 82 outbound rows from `protocol-289.json`. Current bounded
-verdicts are 22 complete, 21 partial, and 213 missing/fail-closed; unresolved
-rows are explicitly not enabled from constants alone. The cleanup contract
-preserves default 274 behavior, strict framing, generation/redraw ownership and
-the `scene_state==1` last-FBO freeze. HINT_ARROW is called out as the isolated
-engine's opcode 115 with an exact six-byte payload and requires its own R289
-source trace. Conditional engine/content script emissions remain reachable until
-excluded by an actual isolated fixture. No code or live proof was performed;
-next implementation must follow the semantic sections and gates in the plan.
-review remain root-owned prerequisites. Same-card reviewer handoff follows.
+The a97b4ae audit was REJECTED by actual Grok4.5 (run840): template table
+expansion did not prove semantic dispatch. Preserve that receipt; its old
+22/21/213 counts and blanket completeness language are superseded, not accepted.
+
+Corrective audit against a97b4ae is in `full-dispatch-audit.json` schema2 and
+`full-dispatch-cleanup-plan.md`. Primary Java has 70 real inbound operations,
+not 256: 2 complete, 41 partial, 27 missing under the stricter semantic and
+publication verdicts. The other 186 byte IDs have no primary dispatch branch;
+even length6 ID122 is unsupported. Each real row has fields, source/actual
+Rust/274 anchors, state/generation/redraw and conservative emission evidence.
+All 82 outbound operations now have emit anchors or explicit absence:
+73 mapped, 1 partial, 8 missing actual emitters. Mapped does not mean live-tested.
+
+Findings include HINT_ARROW115 exact-six including actor/stop padding; direct
+zone routes and primary-only area synth91; full-zone loc expiration; missing
+generation families; tutorial tab-clear sentinel; actor hit timeout/SAY;
+welcome-info consume-only and tutorial/challenge chat omissions. Old outbound
+contract is wrong for packed click224, camera193 field order and EMPTY232
+(Java and isolated engine say0, current Rust/manifest say1). Implementation
+must correct these without changing 274 behavior or weakening the verifier.
+
+The plan partitions all real inbound operations into bounded sections plus
+outbound coverage, settles bounded decode/apply/publication ownership, and
+preserves per-client overlays, CPU/GPU ownership and last-FBO freeze. Concrete
+engine/content witnesses include resumed tutorials, timers/queues, every
+interface command edge and direct/enclosed zone emissions. No actual fixture
+exclusions, code changes or new live proof are claimed.
+
+Verification: primary branch-ID set compared to ledger (70, no missing/extra),
+canonical Java lengths compared per real row (no differences), all82 outbound
+names/unique IDs accounted for, source-reachability groups cover every real
+inbound ID (area91 distinguished as primary-only), and section partition checked.
+`python3 tools/verify_revision_289_contract.py` PASS 256/82/50 and
+`git diff --check` PASS. The existing verifier checks its old manifest/fixtures,
+not these newly found semantic issues; its PASS does not erase them.
+
+Next: same-card reviewer=reviewer (Grok4.5), then root releases implementation
+only after actual approval. No new cards/code/live in this audit. Authentic
+server/cache pairing and later whole-branch Grok4.6/live proof remain separate
+root-owned prerequisites. No merge/push/remote or host-checkout changes.
