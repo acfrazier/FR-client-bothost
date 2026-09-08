@@ -337,13 +337,20 @@ pairing, real scene construction and server login/action/logout remain unproven.
 ## Startup packet parity checkpoint (t_82d212a4)
 
 Active implementation card t_82d212a4 added source-backed R289 opcode 13
-CHAT_FILTER_SETTINGS dispatch after the reproduced `T1 - 13,3 - 219,-1`.
+CHAT_FILTER_SETTINGS dispatch after the reproduced `T1 - 13,3 - 219,-1`,
+then audited the isolated engine's concrete `Player.onLogin` emission order.
 Primary anchors: `client.java:2612-2619` and `Class17.java:11` in the pinned
-289 deob. Existing opcode 219 REBUILD_NORMAL was audited and retained.
+289 deob; engine anchors are `engine/src/engine/entity/Player.ts:487-527` and
+`engine/src/network/game/server/ServerGameProt.ts:3-83`. The audit found the
+engine table uses different IDs (for example engine rebuild 231 vs authentic
+289 rebuild 219), so no unsafe aliases were added. Existing opcode 219
+REBUILD_NORMAL was audited and retained.
 Deliverable: `docs/revision-289/startup-packet-parity-report.md`.
 
 Exact verification: `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target
-cargo test -p client --test revision_289_stage2 -- --test-threads=1` — 31 passed,
-0 failed. Live RSA/ISAAC, authentic cache/server pairing, and full startup
-sequence remain unproven; root owns the next live run. Same-card reviewer
-handoff is required before accepting this checkpoint.
+cargo test -p client --test revision_289_stage2 -- --test-threads=1` — 32 passed,
+0 failed, including `startup_289_source_sequence_keeps_stream_in_game`.
+Live RSA/ISAAC, authentic cache/server pairing, and full startup sequence remain
+unproven; root owns the next live run. Same-card reviewer handoff is required
+before accepting this checkpoint. Inherited untracked review/helper artifacts
+remain intentionally preserved and are not task deliverables.

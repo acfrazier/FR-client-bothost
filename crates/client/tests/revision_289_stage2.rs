@@ -144,6 +144,51 @@ fn startup_chat_filter_settings_289_dispatches_without_t1() {
     assert!(c.ingame, "known startup packet must not log out");
 }
 
+#[test]
+fn startup_289_source_sequence_keeps_stream_in_game() {
+    // This exercises the source-ordered 289-covered prefix identified while
+    // auditing the isolated engine's Player.onLogin contract: rebuild, chat
+    // modes, varp sync/updates, inventory, then reset anims. The report maps
+    // the engine's incompatible IDs separately.
+    let mut c = client_289();
+    c.psize = 4;
+    let mut rebuild = Packet::new(hex_bytes("00100020"));
+    c.handle_packet(ServerProt289::REBUILD_NORMAL, &mut rebuild);
+    assert_eq!(rebuild.pos, 4);
+    assert!(c.ingame && c.scene_state == 1);
+
+    c.psize = 3;
+    let mut chat = Packet::new(vec![2, 1, 2]);
+    c.handle_packet(ServerProt289::CHAT_FILTER_SETTINGS, &mut chat);
+    assert_eq!(chat.pos, 3);
+
+    c.psize = 0;
+    let mut sync = Packet::new(vec![]);
+    c.handle_packet(ServerProt289::VARP_SYNC, &mut sync);
+    assert_eq!(sync.pos, 0);
+
+    c.psize = 3;
+    let mut varp_small = Packet::new(hex_bytes("0007fe"));
+    c.handle_packet(ServerProt289::VARP_SMALL, &mut varp_small);
+    assert_eq!(varp_small.pos, 3);
+
+    c.psize = 6;
+    let mut varp_large = Packet::new(hex_bytes("000800000001"));
+    c.handle_packet(ServerProt289::VARP_LARGE, &mut varp_large);
+    assert_eq!(varp_large.pos, 6);
+
+    c.psize = 4;
+    let mut inv = Packet::new(hex_bytes("00010000"));
+    c.handle_packet(ServerProt289::UPDATE_INV_FULL, &mut inv);
+    assert_eq!(inv.pos, 4);
+
+    c.psize = 0;
+    let mut reset = Packet::new(vec![]);
+    c.handle_packet(ServerProt289::RESET_ANIMS, &mut reset);
+    assert_eq!(reset.pos, 0);
+    assert!(c.ingame, "all source-covered startup packets stay in game");
+}
+
 // --- login RSA plaintext structure + version -------------------------------
 
 #[test]

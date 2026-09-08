@@ -46,8 +46,43 @@ The explicit R289 dispatch currently covers these source-anchored families:
 - `252` IF_OPENSIDE: `g2` component.
 - `59` IF_SETTEXT: `g2` component plus newline string.
 
+The source-ordered offline regression `startup_289_source_sequence_keeps_stream_in_game`
+feeds the covered prefix as exact frames: `219` rebuild, `13` chat modes,
+`172` varp sync, `75`/`97` varp updates, `107` empty inventory, and `201`
+reset animations. It asserts every fixed payload cursor, `scene_state == 1`
+after rebuild, and that the client remains ingame.
+
 The named rows and length assertions live in `crates/client/src/io/revision.rs`;
 production dispatch is in `crates/client/src/client/client.rs`.
+
+## Isolated-engine startup audit
+
+The isolated engine is not a 289 wire-compatible server at this checkout. Its
+`ServerGameProt.ts` table assigns different IDs to the same semantic messages:
+
+| Engine `Player.onLogin` emission | Engine ID/length | Authentic 289 client ID/length | Result |
+|---|---:|---:|---|
+| `rebuildNormal()` | 231/4 | 219/4 | engine ID is not a 289 branch |
+| `ChatFilterSettings` | 114/3 | 13/3 | 289 client handler covered; engine ID is not |
+| `FriendlistLoaded` | 185/1 | 247/1 | engine ID is not a 289 branch |
+| `UpdateIgnoreList` | 3/-2 | no confirmed startup equivalent | engine ID is not a 289 branch |
+| `IfClose` | 171/0 | no 289 branch in pinned dispatch | engine ID is not a 289 branch |
+| `UpdatePid` | 133/3 | no confirmed equivalent (289 branch 133 has other semantics) | do not alias |
+| `ResetClientVarCache` | 190/0 | no confirmed startup branch | do not alias |
+| transmitted varps | 203/3 or 245/6 | 75/3 or 97/6 | engine IDs are not 289 branches |
+| `ResetAnims` | 47/0 | 201/0 | engine ID is not the 289 reset branch |
+
+Anchors: `engine/src/engine/entity/Player.ts:487-527` documents and emits the
+login order; `engine/src/network/game/server/ServerGameProt.ts:3-83` defines
+the engine IDs; `engine/src/engine/entity/Player.ts:1806-1811` selects varp
+forms. The pinned Java dispatch confirms the 289 IDs and semantics at
+`client.java:2612-2619`, `2819-2823`, `2833-2837`, `2972-2990`,
+`2999-3022`, `3351-3383`, `3402-3415`, `3477-3508`, and `3518-3539`.
+
+Therefore the audit finds a server-version mismatch, not a missing Rust
+handler. Adding aliases for the engine IDs would fabricate 289 semantics and
+could hide stream corruption. The engine must be independently ported/configured
+to emit the authentic 289 IDs before its full login sequence can be accepted.
 
 ## Source-observed but still missing dispatch
 
@@ -60,8 +95,9 @@ and `247`. This is an inventory of source branches, not a claim that every
 opcode is emitted by the tested startup server sequence.
 
 The next live log must therefore distinguish a new unknown packet from the
-resolved opcode-13 failure. Unsupported rows continue to produce T1/logout;
-no trailing-byte bypass or fabricated handler was added.
+resolved opcode-13 failure, while also recording whether the endpoint is using
+the engine table or the authentic 289 table. Unsupported rows continue to
+produce T1/logout; no trailing-byte bypass or fabricated handler was added.
 
 ## Offline regression evidence
 
@@ -69,19 +105,24 @@ Command:
 
 `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo test -p client --test revision_289_stage2 -- --test-threads=1`
 
-Result: 31 passed, 0 failed.
+Result: 32 passed, 0 failed.
 
-The new regression `startup_chat_filter_settings_289_dispatches_without_t1`
-asserts the three mode values, both redraw flags, exact cursor consumption,
-chat generation advancement, `ptype == -1`, and that the client remains
-`ingame`. Existing stage-2 actor, region, widget, varp, login, reset, logout,
-and fail-closed tests also pass.
+The regressions `startup_chat_filter_settings_289_dispatches_without_t1` and
+`startup_289_source_sequence_keeps_stream_in_game`
+assert the three mode values, both redraw flags, exact cursor consumption,
+chat generation advancement, the ordered startup state transitions, fixed
+payload cursors, `ptype == -1`, and that the client remains `ingame`. Existing
+stage-2 actor, region, widget, varp, login, reset, logout, and fail-closed tests
+also pass.
 
 ## Limits and prerequisites
 
 This is offline source parity only. It does not prove the live RSA/ISAAC
 pairing, authentic 289 cache/server pairing, asset/render readiness, or the
-full server packet sequence. Root owns further live runs and authorization.
+full server packet sequence. The isolated engine audit specifically proves
+that its current login emissions use a different protocol table, so engine
+login cannot be claimed as a 289 startup proof. Root owns further live runs
+and authorization.
 The existing bounded branch-review limitations and the dirty inherited STATE
 and helper artifacts are preserved; no live client, server, cache, account,
 key, host, or other checkout was modified.
