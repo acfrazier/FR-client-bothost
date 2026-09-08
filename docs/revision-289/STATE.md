@@ -453,12 +453,27 @@ root-owned prerequisites. No merge/push/remote or host-checkout changes.
 
 ## Cleanup A implementation boundary (t_358c02ad)
 
-Implemented bounded frame-end enforcement in Packet and production read_packet,
-plus R289 LAST_LOGIN_INFO staged decode/application semantics, Java welcome
-selection, layer publication, generation failure reset, and lifecycle reset
-coverage. Follow-up tests: stage1 29, packet 7, gens 12, logout 7 and
-server_packets 19 passed; cargo check and git diff --check remain required at
-handoff. Same-card review is pending after the correction; reviewer=reviewer /
-actual Grok4.5 is required. Sections B-H remain future work, and existing
-unconverted R289 paths are not claimed atomic.
-Report: docs/revision-289/cleanup-a-report.md.
+203f176 and c135f60 were rejected by actual Grok4.5; retain both receipts.
+The corrected implementation now has internal decoded Section-A operations,
+apply-returned generation sets and explicit reset outcomes, rather than numeric
+R289 publication lookup or whole-generation comparison. Generic fixed admission
+includes zero; bounded strings require a terminator. Welcome uses the Java
+650/655 truth table/layer and method110 closure/acknowledgement, and publishes
+iface even for close-only effects. R274 dispatch/publication remains separate.
+
+Verified in this checkout/isolated target: stage1 46, stage2 36, stage3 23,
+packet7, gens12, logout7, server_packets19, with default and all features;
+lib73 (including last-FBO freeze), do_action13, walk6, prot2, from_shared6,
+player_info1, login_rsa2, iface_model9 and rebuild12; client/client-play
+all-feature check; verifier PASS256/82/50; git diff --check. The initial
+nonexistent freeze_last_scene integration-target command was corrected to its
+actual lib test, not counted as a pass.
+
+Active card remains t_358c02ad, corrective implementation ready for same-card
+reviewer=reviewer / actual Grok4.5. No cleanup implementation commit is accepted
+yet. Report: docs/revision-289/cleanup-a-report.md (exact commands and limitations).
+Sections B-H remain root-dispatched future work: actor bit bounds/atomicity,
+enclosed-zone whole-frame staging and remaining semantic/generation/outbound
+gaps are not claimed solved. Optional DNS resolution was not enabled; display
+storage/reset remains lifecycle-owned. Authentic cache/server pairing, live
+RSA/ISAAC/presentation and final whole-branch Grok4.6 remain separate root gates.

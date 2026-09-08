@@ -293,6 +293,95 @@ pub struct ClientGens {
     pub world: u64,
 }
 
+#[derive(Clone, Copy, Default)]
+struct R289Publication {
+    npc: bool,
+    player: bool,
+    inv: bool,
+    varp: bool,
+    stat: bool,
+    chat: bool,
+    scene: bool,
+    iface: bool,
+    camera: bool,
+    map_flag: bool,
+    world: bool,
+}
+
+impl R289Publication {
+    const ALL: Self = Self {
+        npc: true,
+        player: true,
+        inv: true,
+        varp: true,
+        stat: true,
+        chat: true,
+        scene: true,
+        iface: true,
+        camera: true,
+        map_flag: true,
+        world: true,
+    };
+
+    fn publish(self, gens: &mut ClientGens) {
+        gens.npc += u64::from(self.npc);
+        gens.player += u64::from(self.player);
+        gens.inv += u64::from(self.inv);
+        gens.varp += u64::from(self.varp);
+        gens.stat += u64::from(self.stat);
+        gens.chat += u64::from(self.chat);
+        gens.scene += u64::from(self.scene);
+        gens.iface += u64::from(self.iface);
+        gens.camera += u64::from(self.camera);
+        gens.map_flag += u64::from(self.map_flag);
+        gens.world += u64::from(self.world);
+    }
+}
+
+/// A reset already invalidated every family through logout; it is not a
+/// successful operation with an additional publication to perform.
+enum R289Outcome {
+    Applied(R289Publication),
+    Reset,
+}
+
+struct LastLoginInfo {
+    ip: i32,
+    days: i32,
+    recovery_days: i32,
+    messages: i32,
+    members_warning: i32,
+}
+
+/// Section A's validated meaning, never a raw 274/289 opcode alias.
+enum R289Operation {
+    UpdatePid { slot: i32, members: i32 },
+    Logout,
+    LastLoginInfo(LastLoginInfo),
+}
+
+impl R289Operation {
+    fn decode(ptype: i32, payload: &mut Packet) -> Option<Self> {
+        let operation = match ptype {
+            ServerProt289::UPDATE_PID => Self::UpdatePid {
+                slot: payload.g2(),
+                members: payload.g1(),
+            },
+            ServerProt289::LOGOUT => Self::Logout,
+            ServerProt289::LAST_LOGIN_INFO => Self::LastLoginInfo(LastLoginInfo {
+                ip: payload.g4(),
+                days: payload.g2(),
+                recovery_days: payload.g1(),
+                messages: payload.g2(),
+                members_warning: payload.g1(),
+            }),
+            _ => return None,
+        };
+        assert_eq!(payload.available(), 0, "unconsumed Section A frame");
+        Some(operation)
+    }
+}
+
 pub struct Client {
     pub shell: GameShell,
     /// The frame target the driver attaches (task 6 `PresentTarget`). `run`
@@ -859,6 +948,9 @@ pub struct Client {
     /// after every applied packet so the host can tell which world slices
     /// changed since its last poll.
     pub gens: ClientGens,
+    /// Bridge for unconverted handlers that call logout internally instead of
+    /// returning failure. Cleared at R289 dispatch entry, set by lifecycle reset.
+    r289_packet_reset: bool,
 }
 
 /// Dead-server watchdog bound: the Java client's 750 `gameLoop` passes at
@@ -1161,6 +1253,8 @@ impl Client {
             ptype1: 0,
             ptype2: 0,
             psize: 0,
+
+            r289_packet_reset: false,
 
             stream: None,
             on_demand,
@@ -3717,6 +3811,23 @@ impl Client {
     pub fn handle_packet(&mut self, ptype: i32, payload: &mut Packet) {
         let ptype1 = self.ptype1;
         let ptype2 = self.ptype2;
+        if self.revision.is_289() {
+            self.r289_packet_reset = false;
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                self.dispatch_packet_289(ptype, payload)
+            }));
+            match result {
+                Ok(R289Outcome::Applied(publication)) => publication.publish(&mut self.gens),
+                Ok(R289Outcome::Reset) => {}
+                Err(_) => {
+                    eprintln!("T2 - {ptype},{ptype1},{ptype2}");
+                    if !self.r289_packet_reset {
+                        self.logout();
+                    }
+                }
+            }
+            return;
+        }
         let result = catch_unwind(AssertUnwindSafe(|| {
             self.dispatch_packet(ptype, payload);
         }));
@@ -3724,20 +3835,9 @@ impl Client {
             eprintln!("T2 - {ptype},{ptype1},{ptype2}");
             // `logout()` bumps every family (spec: REBUILD/logout → all).
             self.logout();
-        } else if self.revision.is_289() {
-            // R289 publication is derived from the successful semantic
-            // operation, never from a before/after comparison of all state.
-            self.bump_gens_289(ptype);
         } else {
             // Preserve the established 274 publication behavior verbatim.
             self.bump_gens(ptype);
-        }
-    }
-
-    fn bump_gens_289(&mut self, ptype: i32) {
-        self.bump_gens(ptype);
-        if ptype == ServerProt289::LAST_LOGIN_INFO && self.welcome_interface_id != -1 {
-            self.gens.iface += 1;
         }
     }
 
@@ -3746,31 +3846,13 @@ impl Client {
     /// opcodes reach here after `dispatch` already called `logout()`, which
     /// bumps all; they must not double-bump.
     ///
-    /// On R289 only stage-traced opcodes bump family gens; untraced ids are
-    /// fail-closed at dispatch (T1/logout already bumped all) so bare 274
-    /// family arms must not run against colliding numeric ids.
+    /// R274-only compatibility helper. R289 dispatch returns its publication
+    /// from apply and must never consult a second numeric family table.
     pub fn bump_gens(&mut self, ptype: i32) {
-        if self.revision.is_289() {
-            if ptype == ServerProt289::UPDATE_INV_FULL || ptype == ServerProt289::UPDATE_INV_PARTIAL
-            {
-                self.gens.inv += 1;
-            } else if ptype == ServerProt289::PLAYER_INFO {
-                self.gens.player += 1;
-            } else if ptype == ServerProt289::NPC_INFO {
-                self.gens.npc += 1;
-            } else if ptype == ServerProt289::VARP_SMALL
-                || ptype == ServerProt289::VARP_LARGE
-                || ptype == ServerProt289::VARP_SYNC
-            {
-                self.gens.varp += 1;
-            } else if ptype == ServerProt289::CHAT_FILTER_SETTINGS {
-                self.gens.chat += 1;
-            } else if ptype == ServerProt289::REBUILD_NORMAL {
-                self.bump_all_gens();
-            }
-            // LOGOUT / RESET_ANIMS / widgets: no dedicated gen, or logout already bumped all.
-            return;
-        }
+        assert!(
+            self.revision.is_274(),
+            "R289 publication requires an apply outcome"
+        );
         match ptype {
             ServerProt::NPC_INFO => self.gens.npc += 1,
             ServerProt::PLAYER_INFO => self.gens.player += 1,
@@ -4205,27 +4287,56 @@ impl Client {
         self.resumed_pause_button = false;
     }
 
-    /// `LAST_LOGIN_INFO` (Java client.java:3159-3183). Decode all ten bytes
-    /// before applying welcome state. DNS display resolution remains optional
-    /// lifecycle/UI work and is never performed or logged in this path.
-    pub fn apply_last_login_info(&mut self, payload: &mut Packet) {
-        // Decode into locals first: a malformed frame must not publish a
-        // partially decoded identity notice.
-        let last_login_ip = payload.g4();
-        let days_since_login = payload.g2();
-        let days_since_recovery_change = payload.g1();
-        let last_login_message_count = payload.g2();
-        let members_warning = payload.g1();
-        self.last_login_ip = last_login_ip;
-        self.days_since_login = days_since_login;
-        self.days_since_recovery_change = days_since_recovery_change;
-        self.last_login_message_count = last_login_message_count;
-        self.members_warning = members_warning;
+    fn apply_operation_289(&mut self, operation: R289Operation) -> R289Outcome {
+        let publication = match operation {
+            R289Operation::UpdatePid { slot, members } => {
+                self.self_slot = slot;
+                self.members_account = members;
+                R289Publication::default()
+            }
+            R289Operation::Logout => {
+                self.logout();
+                self.ptype = -1;
+                return R289Outcome::Reset;
+            }
+            R289Operation::LastLoginInfo(info) => self.apply_last_login_info(info),
+        };
+        self.ptype = -1;
+        R289Outcome::Applied(publication)
+    }
+
+    /// Java client.java:3159-3183, applied only after exact-frame decode.
+    /// DNS is optional lifecycle-owned display state, not packet-time IO.
+    fn apply_last_login_info(&mut self, info: LastLoginInfo) -> R289Publication {
+        self.last_login_ip = info.ip;
+        self.days_since_login = info.days;
+        self.days_since_recovery_change = info.recovery_days;
+        self.last_login_message_count = info.messages;
+        self.members_warning = info.members_warning;
+        self.last_login_dns_display = None;
         self.welcome_interface_id = -1;
+        let mut publication = R289Publication::default();
         if self.last_login_ip != 0 && self.main_modal_id == -1 {
-            self.apply_if_close();
-            let client_code = if self.days_since_recovery_change != 201
-                || self.members_warning == 1
+            // Java method110, not the inbound IF_CLOSE operation: emit the
+            // close acknowledgement, retain count-dialog state, and only
+            // clear resumed pause when a side/chat modal was closed.
+            self.out.p1_enc(self.client_opcode(ClientProt::CLOSE_MODAL));
+            if self.side_modal_id != -1 {
+                self.side_modal_id = -1;
+                self.redraw_side = true;
+                self.redraw_icons = true;
+                self.resumed_pause_button = false;
+            }
+            if self.chat_modal_id != -1 {
+                self.chat_modal_id = -1;
+                self.redraw_chat = true;
+                self.resumed_pause_button = false;
+            }
+            // Closing alone is an iface effect, even with no matching welcome
+            // component. Conservative once-per-operation publication also
+            // covers the report state reset and an already-closed UI.
+            publication.iface = true;
+            let client_code = if self.days_since_recovery_change != 201 || self.members_warning == 1
             {
                 655
             } else {
@@ -4245,6 +4356,7 @@ impl Client {
             self.report_abuse_input.clear();
             self.report_abuse_mute_option = false;
         }
+        publication
     }
 
     /// `addChat` from client-ts (11453): shift the 100 chat slots down one
@@ -5941,13 +6053,7 @@ impl Client {
     }
 
     fn dispatch_packet(&mut self, ptype: i32, payload: &mut Packet) {
-        // R289: only source-traced stage-1/2 handlers may mutate game state.
-        // Every other inbound id fails closed (T1) so numeric collisions with
-        // 274 constants cannot execute wrong handlers.
-        if self.revision.is_289() {
-            self.dispatch_packet_289(ptype, payload);
-            return;
-        }
+        // Established R274 path; R289 is decoded separately by handle_packet.
         match ptype {
             ServerProt::REBUILD_NORMAL => {
                 self.apply_rebuild_normal(payload);
@@ -6764,15 +6870,31 @@ impl Client {
         }
     }
 
-    /// Stage-2 289 inbound dispatch: inventory, actors, region, widgets,
-    /// varps, reset and logout. Untraced ids (including numeric collisions
-    /// with 274 handlers) remain unknown/T1. No parallel full 289 decoder.
-    fn dispatch_packet_289(&mut self, ptype: i32, payload: &mut Packet) {
+    /// Common R289 admission and publication boundary. Section A is fully
+    /// decoded before apply. B-H retain their existing (not all atomic)
+    /// handlers; their existing generation effects are returned at those arms.
+    fn dispatch_packet_289(&mut self, ptype: i32, payload: &mut Packet) -> R289Outcome {
+        let end = self.inbound_end(payload);
+        payload.set_frame_end(end);
+        assert_eq!(payload.pos, 0, "frame must start at zero");
+        if let Some(&size) = usize::try_from(ptype)
+            .ok()
+            .and_then(|id| self.revision.server_prot_sizes().get(id))
+        {
+            if size >= 0 {
+                assert_eq!(end, size as usize, "fixed frame length mismatch");
+            }
+        }
+        if let Some(operation) = R289Operation::decode(ptype, payload) {
+            return self.apply_operation_289(operation);
+        }
+        let mut publication = R289Publication::default();
         match ptype {
             // 289 chat filter settings: public/private/trade mode bytes
             // (client.java:2612-2619; anInt212/anInt234/anInt360).
             x if x == ServerProt289::CHAT_FILTER_SETTINGS => {
                 self.apply_chat_filter_settings(payload);
+                publication.chat = true;
                 self.ptype = -1;
             }
             // IF_CLOSE: clear interface modals (client.java:3195-3212).
@@ -6792,13 +6914,7 @@ impl Client {
                 self.apply_friendlist_loaded(payload);
                 self.ptype = -1;
             }
-            // UPDATE_PID: local slot g2 and members-account g1
-            // (client.java:2648-2652).
-            x if x == ServerProt289::UPDATE_PID => {
-                self.self_slot = payload.g2();
-                self.members_account = payload.g1();
-                self.ptype = -1;
-            }
+
             // MESSAGE_GAME: login welcome and server notices (client.java
             // message-game branch; engine MessageGameEncoder).
             x if x == ServerProt289::MESSAGE_GAME => {
@@ -6870,11 +6986,7 @@ impl Client {
                 self.apply_update_runweight(payload);
                 self.ptype = -1;
             }
-            // LAST_LOGIN_INFO: consume the fixed 10-byte identity notice.
-            x if x == ServerProt289::LAST_LOGIN_INFO => {
-                self.apply_last_login_info(payload);
-                self.ptype = -1;
-            }
+
             // First-tick zone bootstrap uses the R289 source-defined zone
             // coordinates and inner opcode table.
             x if x == ServerProt289::UPDATE_ZONE_PARTIAL_FOLLOWS => {
@@ -6912,33 +7024,33 @@ impl Client {
             // 289 inventory full: g2 component, g2 entry count (client.java:2972-2990).
             x if x == ServerProt289::UPDATE_INV_FULL => {
                 self.apply_update_inv_full(payload, /*count_is_g2=*/ true);
+                publication.inv = true;
                 self.ptype = -1;
             }
             // 289 inventory partial: gsmart slot (client.java:3477-3494).
             x if x == ServerProt289::UPDATE_INV_PARTIAL => {
                 self.apply_update_inv_partial(payload, /*slot_is_gsmart=*/ true);
+                publication.inv = true;
                 self.ptype = -1;
             }
             // Player update method139/212/185/172/153/128 (client.java:2819-2823).
             // Mask bit layout matches 274 player_update (method128).
             x if x == ServerProt289::PLAYER_INFO => {
                 self.get_player_pos(payload, self.psize);
+                publication.player = true;
                 self.awaiting_player_info = false;
                 self.ptype = -1;
             }
             // NPC update method187 (client.java:3380-3383).
             x if x == ServerProt289::NPC_INFO => {
                 self.get_npc_pos(payload, self.psize);
+                publication.npc = true;
                 self.ptype = -1;
             }
             // Region rebuild g2/g2 (client.java:2999-3022).
             x if x == ServerProt289::REBUILD_NORMAL => {
                 self.apply_rebuild_normal(payload);
-                self.ptype = -1;
-            }
-            // Logout → method104 (client.java:2833-2837).
-            x if x == ServerProt289::LOGOUT => {
-                self.logout();
+                publication = R289Publication::ALL;
                 self.ptype = -1;
             }
             // Clear primary anim on all actors (client.java:3496-3508).
@@ -7024,6 +7136,7 @@ impl Client {
             }
             // VARP_SMALL: g2 + signed g1 (client.java:3402-3415).
             x if x == ServerProt289::VARP_SMALL => {
+                publication.varp = true;
                 let varp_id = payload.g2();
                 let value = payload.g1b();
                 grow_write(&mut self.var_serv, varp_id, value);
@@ -7036,6 +7149,7 @@ impl Client {
             }
             // VARP_LARGE: g2 + g4 (client.java:3526-3539).
             x if x == ServerProt289::VARP_LARGE => {
+                publication.varp = true;
                 let varp_id = payload.g2();
                 let value = payload.g4();
                 grow_write(&mut self.var_serv, varp_id, value);
@@ -7048,6 +7162,7 @@ impl Client {
             }
             // VARP_SYNC: zero payload bulk copy (client.java:3351-3361).
             x if x == ServerProt289::VARP_SYNC => {
+                publication.varp = true;
                 for i in 0..self.var.len() {
                     if self.var_serv.get(i).copied() != Some(self.var[i]) {
                         if let Some(&value) = self.var_serv.get(i) {
@@ -7068,6 +7183,11 @@ impl Client {
                 );
                 self.logout();
             }
+        }
+        if self.r289_packet_reset {
+            R289Outcome::Reset
+        } else {
+            R289Outcome::Applied(publication)
         }
     }
 
@@ -8458,6 +8578,7 @@ impl Client {
     /// one-shot `draw_area` cls so no game-frame viewport/chat/side pixel
     /// survives).
     pub fn logout(&mut self) {
+        self.r289_packet_reset = true;
         if let Some(mut stream) = self.stream.take() {
             stream.close();
         }
@@ -11358,6 +11479,14 @@ impl Client {
     /// payload length when `psize` is unset.
     fn inbound_end(&self, payload: &Packet) -> usize {
         if let Some(end) = payload.frame_end() {
+            return end;
+        }
+        // Compatibility for socket-free callers with an explicit nonzero
+        // psize. Production always stamps frame_end, including declared zero.
+        // Never silently shorten an impossible R289 declaration to allocation.
+        if self.revision.is_289() && self.psize != 0 {
+            let end = usize::try_from(self.psize).expect("incomplete frame header");
+            assert!(end <= payload.length(), "declared frame exceeds storage");
             return end;
         }
         let psize = self.psize as usize;

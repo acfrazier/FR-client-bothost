@@ -99,9 +99,10 @@ impl Packet {
     }
 
     fn assert_can_read(&self, length: usize) {
-        assert!(self.pos.checked_add(length).is_some_and(|end| {
-            end <= self.frame_end.unwrap_or(self.data.len())
-        }));
+        assert!(self
+            .pos
+            .checked_add(length)
+            .is_some_and(|end| { end <= self.frame_end.unwrap_or(self.data.len()) }));
     }
 
     pub fn getcrc(src: &[u8], offset: usize, length: usize) -> i32 {
@@ -246,10 +247,14 @@ impl Packet {
             let b = self.data[self.pos];
             self.pos += 1;
             if b == 10 {
-                break;
+                return s;
             }
             s.push(b as char);
         }
+        assert!(
+            self.frame_end.is_none(),
+            "unterminated string in bounded frame"
+        );
         s
     }
 

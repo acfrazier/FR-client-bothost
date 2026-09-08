@@ -314,8 +314,9 @@ fn startup_289_login_script_and_first_tick_packets_dispatch() {
     c.handle_packet(ServerProt289::MINIMAP_TOGGLE, &mut minimap);
     assert_eq!(c.minimap_state, 0);
 
-    c.psize = 8;
     let mut op = Packet::new(b"\x02\x00Attack\n".to_vec());
+    // Include the terminator inside the declared frame, not in a stale tail.
+    c.psize = op.length() as i32;
     c.handle_packet(ServerProt289::SET_PLAYER_OP, &mut op);
     assert_eq!(c.player_op[1].as_deref(), Some("Attack"));
     assert!(c.player_op_priority[1]);
@@ -1366,18 +1367,13 @@ fn r274_path_untouched_by_289_opcodes() {
 }
 
 #[test]
-fn bump_gens_player_info_on_r289() {
+fn raw_generation_helper_rejects_r289() {
     let mut c = client_289();
-    let before = c.gens.player;
-    c.bump_gens(ServerProt289::PLAYER_INFO);
-    assert_eq!(c.gens.player, before + 1);
-    let before_inv = c.gens.inv;
-    c.bump_gens(ServerProt289::UPDATE_INV_FULL);
-    assert_eq!(c.gens.inv, before_inv + 1);
-    // Untraced stays zero-family (already bumped all at T1 site separately)
-    let player = c.gens.player;
-    let inv = c.gens.inv;
-    c.bump_gens(47);
-    assert_eq!(c.gens.player, player);
-    assert_eq!(c.gens.inv, inv);
+    // R289 publication must come from dispatch/apply, not a parallel numeric
+    // table. The old helper remains callable only for the established R274 API.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        c.bump_gens(ServerProt289::PLAYER_INFO);
+    }));
+    assert!(result.is_err());
+    assert_eq!(c.gens.player, 0);
 }

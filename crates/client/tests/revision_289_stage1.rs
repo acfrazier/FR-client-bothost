@@ -93,6 +93,56 @@ fn last_login_info_does_not_clear_report_state_when_welcome_gate_is_closed() {
     assert!(c.report_abuse_mute_option);
 }
 
+#[test]
+fn welcome_close_without_component_publishes_iface_once() {
+    let mut c = client_289();
+    c.ifaces = Arc::new(vec![]);
+    c.side_modal_id = 7;
+    c.chat_modal_id = 8;
+    c.report_abuse_input = "retain-on-failure".into();
+    let before = c.gens.iface;
+    let frame = hex_bytes("fd010203040009c9000a00");
+    assert_eq!(feed_frames(&mut c, &frame, 1), 1);
+    assert!(c.ingame);
+    assert_eq!(
+        (c.side_modal_id, c.chat_modal_id, c.main_modal_id),
+        (-1, -1, -1)
+    );
+    assert_eq!(c.welcome_interface_id, -1);
+    assert_eq!(c.gens.iface, before + 1);
+}
+
+#[test]
+fn welcome_method110_emits_close_preserves_count_dialog_and_pause_without_modals() {
+    // Primary J:2282-2301 differs from inbound IF_CLOSE: emits 93, does not
+    // close the count dialog, and only clears resumed pause with a side/chat modal.
+    let mut c = client_289();
+    c.ifaces = Arc::new(vec![]);
+    c.dialog_input_open = true;
+    c.resumed_pause_button = true;
+    c.out.pos = 0;
+    assert_eq!(
+        feed_frames(&mut c, &hex_bytes("fd010203040009c9000a00"), 1),
+        1
+    );
+    assert_eq!(&c.out.data()[..c.out.pos], &[93]);
+    assert!(c.dialog_input_open);
+    assert!(c.resumed_pause_button);
+}
+
+#[test]
+fn overlong_last_login_rejected_before_report_mutation() {
+    let mut c = client_289();
+    c.report_abuse_input = "retain-on-failure".into();
+    let mut p = Packet::new(hex_bytes("010203040009c9000a0000"));
+    p.set_frame_end(11);
+    c.psize = 11;
+    c.handle_packet(ServerProt289::LAST_LOGIN_INFO, &mut p);
+    assert!(!c.ingame);
+    assert_eq!(p.pos, 0, "fixed admission precedes all field reads");
+    assert_eq!(c.report_abuse_input, "retain-on-failure");
+}
+
 fn ensure_inv_slots(c: &mut Client, com_id: usize, n: usize) {
     // Grow ifaces_mut and install inv arrays so inventory writes land.
     {
@@ -153,14 +203,16 @@ fn feed_chunks(c: &mut Client, chunks: &[Vec<u8>], polls_per_chunk: usize) -> us
     let written_s = Arc::clone(&written);
     let done = Arc::new(Barrier::new(2));
     let done_s = Arc::clone(&done);
+    let polled = Arc::new(Barrier::new(2));
+    let polled_s = Arc::clone(&polled);
     let handle = thread::spawn(move || {
         let (mut sock, _) = listener.accept().unwrap();
         for (i, chunk) in chunks.into_iter().enumerate() {
             sock.write_all(&chunk).unwrap();
             let _ = sock.flush();
             *written_s.lock().unwrap() = i + 1;
-            // Let the client poll this chunk before the next write.
-            thread::sleep(Duration::from_millis(30));
+            // Do not rely on scheduling/sleeps to prove fragmentation.
+            polled_s.wait();
         }
         done_s.wait();
         let _ = sock.shutdown(std::net::Shutdown::Both);
@@ -194,6 +246,7 @@ fn feed_chunks(c: &mut Client, chunks: &[Vec<u8>], polls_per_chunk: usize) -> us
                 thread::sleep(Duration::from_millis(5));
             }
         }
+        polled.wait();
     }
     done.wait();
     handle.join().unwrap();
@@ -762,4 +815,374 @@ fn revision_bound_at_construction_read_only_getter() {
         ClientRevision::R289,
     );
     assert_eq!(shared289.revision(), ClientRevision::R289);
+}
+
+#[test]
+fn declared_frame_larger_than_storage_is_not_shortened_to_storage() {
+    let mut c = client_289();
+    c.psize = 4;
+    let mut p = Packet::new(vec![0, 1, 1]);
+    c.self_slot = 321;
+    c.handle_packet(ServerProt289::UPDATE_PID, &mut p);
+    assert!(!c.ingame);
+    assert_eq!(p.pos, 0);
+    assert_eq!(c.self_slot, 321);
+}
+
+#[test]
+fn unterminated_option_does_not_consume_previous_frames_newline() {
+    let mut c = client_289();
+    let chunks = [hex_bytes("1509020041747461636b0a"), hex_bytes("1503020058")];
+    let before = generations(&c);
+    assert_eq!(feed_chunks(&mut c, &chunks, 6), 2);
+    assert!(!c.ingame);
+    assert_eq!(c.player_op[1].as_deref(), Some("Attack"));
+    assert_eq!(c.r#in.frame_end(), Some(3));
+    assert_eq!(c.r#in.pos, 3);
+    assert_eq!(generations(&c), before.map(|g| g + 1));
+}
+
+#[test]
+fn fixed_empty_sync_after_welcome_and_unknown_frame_reset_once() {
+    let mut c = client_289();
+    welcome_table(&mut c);
+    c.var = vec![0];
+    c.var_serv = vec![7];
+    let before = generations(&c);
+    let frame = hex_bytes("fd010203040009c9000a00ac");
+    assert_eq!(feed_frames(&mut c, &frame, 6), 2);
+    assert!(c.ingame);
+    assert_eq!(c.r#in.frame_end(), Some(0));
+    assert_eq!(c.var[0], 7);
+    let mut expected = before;
+    expected[3] += 1;
+    expected[7] += 1;
+    assert_eq!(generations(&c), expected);
+    // ID122 has a fixed table size but no primary operation; never route it
+    // through a colliding 274 handler. T1 is a reset outcome.
+    assert_eq!(feed_frames(&mut c, &hex_bytes("7a000000000000"), 1), 1);
+    assert!(!c.ingame);
+    assert_eq!(generations(&c), expected.map(|g| g + 1));
+}
+
+fn generations(c: &Client) -> [u64; 11] {
+    let g = &c.gens;
+    [
+        g.npc, g.player, g.inv, g.varp, g.stat, g.chat, g.scene, g.iface, g.camera, g.map_flag,
+        g.world,
+    ]
+}
+
+fn welcome_table(c: &mut Client) {
+    let mut normal = IfType::default();
+    normal.id = 99;
+    normal.layer_id = 42;
+    normal.client_code = 650;
+    let mut warning = IfType::default();
+    warning.id = 199;
+    warning.layer_id = 142;
+    warning.client_code = 655;
+    c.ifaces = Arc::new(vec![Some(Box::new(normal)), Some(Box::new(warning))]);
+}
+
+#[test]
+fn welcome_truth_table_through_socket() {
+    // Independently specified from J:3165-3177, not the Rust branch logic.
+    for (recovery, members, layer) in [
+        (200, 0, 142),
+        (200, 1, 142),
+        (200, 2, 142),
+        (201, 0, 42),
+        (201, 1, 142),
+        (201, 2, 42),
+    ] {
+        let mut c = client_289();
+        welcome_table(&mut c);
+        c.side_modal_id = 7;
+        c.chat_modal_id = 8;
+        c.resumed_pause_button = true;
+        c.redraw_side = false;
+        c.redraw_chat = false;
+        c.redraw_icons = false;
+        let before = generations(&c);
+        let frame = [253, 1, 2, 3, 4, 0, 9, recovery, 0, 10, members];
+        assert_eq!(feed_frames(&mut c, &frame, 1), 1);
+        assert!(c.ingame);
+        assert_eq!(c.r#in.pos, 10);
+        assert_eq!(
+            (
+                c.last_login_ip,
+                c.days_since_login,
+                c.last_login_message_count
+            ),
+            (0x01020304, 9, 10)
+        );
+        assert_eq!(
+            (c.days_since_recovery_change, c.members_warning),
+            (recovery as i32, members as i32)
+        );
+        assert_eq!((c.welcome_interface_id, c.main_modal_id), (layer, layer));
+        assert_eq!((c.side_modal_id, c.chat_modal_id), (-1, -1));
+        assert!(!c.resumed_pause_button);
+        assert!(c.redraw_side && c.redraw_icons && c.redraw_chat);
+        let mut expected = before;
+        expected[7] += 1;
+        assert_eq!(generations(&c), expected);
+        assert_eq!(&c.out.data()[..c.out.pos], &[93]);
+    }
+}
+
+#[test]
+fn welcome_closed_gates_have_no_ui_publication_or_emit_through_socket() {
+    for (ip, modal) in [(0u8, -1), (1, 77)] {
+        let mut c = client_289();
+        welcome_table(&mut c);
+        c.main_modal_id = modal;
+        c.side_modal_id = 7;
+        c.chat_modal_id = 8;
+        c.dialog_input_open = true;
+        c.report_abuse_input = "keep".into();
+        c.report_abuse_mute_option = true;
+        let before = generations(&c);
+        let frame = [253, 0, 0, 0, ip, 0, 9, 200, 0, 10, 1];
+        assert_eq!(feed_frames(&mut c, &frame, 1), 1);
+        assert!(c.ingame);
+        assert_eq!(
+            (c.main_modal_id, c.side_modal_id, c.chat_modal_id),
+            (modal, 7, 8)
+        );
+        assert_eq!(c.welcome_interface_id, -1);
+        assert_eq!(c.report_abuse_input, "keep");
+        assert!(c.report_abuse_mute_option && c.dialog_input_open);
+        assert_eq!(generations(&c), before);
+        assert_eq!(c.out.pos, 0);
+    }
+}
+
+#[test]
+fn all_fixed_sizes_reject_short_and_long_before_decode_on_production_dispatch() {
+    // A socket fixed packet has no length prefix: a short payload is pending
+    // and any extra byte is the next opcode. Inject declared bounds at the
+    // production handle_packet boundary to exercise impossible-size admission.
+    let mut c = client_289();
+    let sizes = *c.revision().server_prot_sizes();
+    for (id, size) in sizes.into_iter().enumerate().filter(|(_, size)| *size >= 0) {
+        let lengths = if size == 0 {
+            vec![1]
+        } else {
+            vec![size as usize - 1, size as usize + 1]
+        };
+        for end in lengths {
+            c.ingame = true;
+            c.self_slot = 321;
+            c.members_account = 2;
+            c.report_abuse_input = "not-applied".into();
+            c.report_abuse_mute_option = true;
+            let before = generations(&c);
+            let mut p = Packet::alloc(1);
+            p.data_mut().fill(0xff);
+            p.set_frame_end(end);
+            c.psize = end as i32;
+            c.handle_packet(id as i32, &mut p);
+            assert!(!c.ingame, "id={id}, end={end}");
+            assert_eq!(p.pos, 0, "id={id}, admission before any decode");
+            assert_eq!((c.self_slot, c.members_account), (321, 2));
+            assert_eq!(c.report_abuse_input, "not-applied");
+            assert!(c.report_abuse_mute_option);
+            assert_eq!(generations(&c), before.map(|g| g + 1));
+        }
+    }
+}
+
+#[test]
+fn last_login_every_short_bound_and_long_never_applies_before_reset() {
+    let mut c = client_289();
+    welcome_table(&mut c);
+    for end in (0..10).chain([11]) {
+        c.ingame = true;
+        c.last_login_ip = 123;
+        c.days_since_login = 8;
+        c.last_login_dns_display = Some("synthetic.example".into());
+        c.report_abuse_input = "not-applied".into();
+        c.report_abuse_mute_option = true;
+        let before = generations(&c);
+        let out = c.out.pos;
+        let mut p = Packet::alloc(1);
+        p.data_mut()[..10].copy_from_slice(&hex_bytes("010203040009c9000a00"));
+        p.set_frame_end(end);
+        c.psize = end as i32;
+        c.handle_packet(253, &mut p);
+        assert!(!c.ingame);
+        assert_eq!(p.pos, 0);
+        assert_eq!(c.report_abuse_input, "not-applied");
+        assert!(c.report_abuse_mute_option);
+        assert_eq!(c.out.pos, out, "no welcome close emit on failure");
+        assert_eq!(
+            (
+                c.last_login_ip,
+                c.days_since_login,
+                c.days_since_recovery_change,
+                c.last_login_message_count,
+                c.members_warning
+            ),
+            (0, 0, 0, 0, 0)
+        );
+        assert_eq!(c.welcome_interface_id, -1);
+        assert!(c.last_login_dns_display.is_none());
+        assert_eq!(generations(&c), before.map(|g| g + 1));
+    }
+}
+
+#[test]
+fn fragmented_last_login_and_adjacent_pid_publish_each_once() {
+    let mut c = client_289();
+    welcome_table(&mut c);
+    let before = generations(&c);
+    let chunks = [
+        hex_bytes("fd010203"),
+        hex_bytes("040009c9"),
+        hex_bytes("000a0078012301"),
+    ];
+    assert_eq!(feed_chunks(&mut c, &chunks, 6), 2);
+    assert!(c.ingame);
+    assert_eq!(c.welcome_interface_id, 42);
+    assert_eq!((c.self_slot, c.members_account), (0x0123, 1));
+    let mut expected = before;
+    expected[7] += 1;
+    assert_eq!(generations(&c), expected);
+    assert_eq!(&c.out.data()[..c.out.pos], &[93]);
+    assert_eq!(c.r#in.frame_end(), Some(3));
+}
+
+#[test]
+fn short_fixed_socket_payload_stays_pending_without_mutation() {
+    let mut c = client_289();
+    c.report_abuse_input = "pending".into();
+    c.self_slot = 321;
+    let before = generations(&c);
+    assert_eq!(
+        feed_chunks(&mut c, &[vec![253], hex_bytes("010203040009c9000a")], 6),
+        0
+    );
+    assert!(c.ingame);
+    assert_eq!((c.ptype, c.psize), (253, 10));
+    assert_eq!(c.last_login_ip, 0);
+    assert_eq!(c.report_abuse_input, "pending");
+    assert_eq!(c.self_slot, 321);
+    assert_eq!(generations(&c), before);
+}
+
+#[test]
+fn variable_zero_after_valid_frame_cannot_read_reusable_tail() {
+    for frame in ["6b0000", "c400"] {
+        let mut c = client_289();
+        welcome_table(&mut c);
+        let before = generations(&c);
+        let chunks = [hex_bytes("fd010203040009c9000a00"), hex_bytes(frame)];
+        assert_eq!(feed_chunks(&mut c, &chunks, 6), 2);
+        assert!(!c.ingame, "zero inventory/game-string frame is malformed");
+        assert_eq!(c.r#in.frame_end(), Some(0));
+        assert_eq!(c.r#in.pos, 0);
+        let mut expected = before.map(|g| g + 1);
+        expected[7] += 1; // previous successful welcome, not failed packet
+        assert_eq!(generations(&c), expected);
+    }
+}
+
+#[test]
+fn variable_zero_ignorelist_is_valid_and_preserves_adjacent_pid() {
+    let mut c = client_289();
+    c.ignore_count = 1;
+    let before = generations(&c);
+    assert_eq!(
+        feed_chunks(&mut c, &[hex_bytes("2f00"), hex_bytes("0078012301")], 6),
+        2
+    );
+    assert!(c.ingame);
+    assert_eq!(c.ignore_count, 0);
+    assert_eq!((c.self_slot, c.members_account), (0x0123, 1));
+    assert_eq!(generations(&c), before);
+}
+
+#[test]
+fn welcome_then_logout_resets_fields_and_all_families_exactly_once() {
+    let mut c = client_289();
+    welcome_table(&mut c);
+    assert_eq!(
+        feed_frames(&mut c, &hex_bytes("fd010203040009c9000a00"), 1),
+        1
+    );
+    c.last_login_dns_display = Some("synthetic.example".into());
+    let before = generations(&c);
+    assert_eq!(feed_frames(&mut c, &[121], 1), 1);
+    assert!(!c.ingame);
+    assert_eq!(c.revision(), ClientRevision::R289);
+    assert_eq!(
+        (
+            c.last_login_ip,
+            c.days_since_login,
+            c.days_since_recovery_change,
+            c.last_login_message_count,
+            c.members_warning
+        ),
+        (0, 0, 0, 0, 0)
+    );
+    assert_eq!(
+        (
+            c.welcome_interface_id,
+            c.main_modal_id,
+            c.side_modal_id,
+            c.chat_modal_id
+        ),
+        (-1, -1, -1, -1)
+    );
+    assert!(c.last_login_dns_display.is_none());
+    assert_eq!(generations(&c), before.map(|g| g + 1));
+}
+
+#[test]
+fn in_band_actor_failure_has_reset_not_success_publication() {
+    let mut c = client_289();
+    // Valid empty actor prefix plus trailing byte triggers get_player_pos's
+    // in-band size mismatch/logout, not a panic caught by handle_packet.
+    let before = generations(&c);
+    assert_eq!(feed_frames(&mut c, &hex_bytes("bc0003000000"), 1), 1);
+    assert!(!c.ingame);
+    assert_eq!(generations(&c), before.map(|g| g + 1));
+}
+
+#[test]
+fn default_274_last_login_is_noop_and_adjacent_pid_keeps_legacy_meaning() {
+    let mut c = client_274();
+    c.side_modal_id = 7;
+    c.report_abuse_input = "keep".into();
+    c.report_abuse_mute_option = true;
+    let before = generations(&c);
+    let frame = [
+        ServerProt::LAST_LOGIN_INFO as u8,
+        1,
+        2,
+        3,
+        4,
+        0,
+        9,
+        200,
+        0,
+        10,
+        1,
+        ServerProt::UPDATE_PID as u8,
+        1,
+        35,
+        1,
+    ];
+    assert_eq!(feed_frames(&mut c, &frame, 6), 2);
+    assert!(c.ingame);
+    assert_eq!(c.revision(), ClientRevision::R274);
+    assert_eq!(c.last_login_ip, 0);
+    assert_eq!(c.side_modal_id, 7);
+    assert_eq!(c.report_abuse_input, "keep");
+    assert!(c.report_abuse_mute_option);
+    assert_eq!(c.out.pos, 0);
+    assert_eq!((c.self_slot, c.members_account), (291, 1));
+    assert_eq!(generations(&c), before);
 }
