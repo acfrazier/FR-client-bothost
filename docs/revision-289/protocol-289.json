@@ -3725,7 +3725,9 @@
       "name": "ANTICHEAT_CYCLELOGIC5",
       "id": 85,
       "length": 0,
-      "fields": [],
+      "fields": [
+        "(empty payload)"
+      ],
       "source_anchors": [
         "client.java method465(85)"
       ],
@@ -3765,7 +3767,9 @@
       "name": "CLOSE_MODAL",
       "id": 93,
       "length": 0,
-      "fields": [],
+      "fields": [
+        "(empty payload)"
+      ],
       "source_anchors": [
         "client.java closeModal method465(93)"
       ],
@@ -3778,10 +3782,12 @@
       "id": 94,
       "length": 10,
       "fields": [
-        "p2*5 snapshot fields"
+        "p8 namehash",
+        "p1 reason",
+        "p1 mute"
       ],
       "source_anchors": [
-        "client.java method465(94)"
+        "client.java report abuse method465(94)+method472+two method466"
       ],
       "confidence": "verified-id-length-fields",
       "production_enabled": true,
@@ -4005,7 +4011,9 @@
       "name": "IDLE_TIMER",
       "id": 145,
       "length": 0,
-      "fields": [],
+      "fields": [
+        "(empty payload)"
+      ],
       "source_anchors": [
         "client.java method465(145)"
       ],
@@ -4198,7 +4206,9 @@
       "name": "NO_TIMEOUT",
       "id": 181,
       "length": 0,
-      "fields": [],
+      "fields": [
+        "(empty payload)"
+      ],
       "source_anchors": [
         "client.java method465(181)"
       ],
@@ -4263,7 +4273,7 @@
         "p8 userhash"
       ],
       "source_anchors": [
-        "client.java method465(192) + method468"
+        "client.java method465(192) + method472"
       ],
       "confidence": "verified-id-length-fields",
       "production_enabled": true,
@@ -4341,7 +4351,7 @@
         "p8 userhash"
       ],
       "source_anchors": [
-        "client.java method465(203) + method468"
+        "client.java method465(203) + method472"
       ],
       "confidence": "verified-id-length-fields",
       "production_enabled": true,
@@ -4351,7 +4361,9 @@
       "name": "MAP_BUILD_COMPLETE",
       "id": 214,
       "length": 0,
-      "fields": [],
+      "fields": [
+        "(empty payload)"
+      ],
       "source_anchors": [
         "client.java map_build method465(214)"
       ],
@@ -4427,10 +4439,13 @@
       "length": -1,
       "fields": [
         "p1 size",
-        "move samples"
+        "sample p2 (dt<<12)|((dx+32)<<6)|(dy+32) when dt<8 and |dx|,|dy|<=31",
+        "sample p3 (dt<<19)+y*765+x+0x800000 when dt<8 else abs mid",
+        "sample p4 (dt<<19)+coord-0x40000000 when dt>=8",
+        "psize1"
       ],
       "source_anchors": [
-        "client.java method465(229)"
+        "client.java mouse recorder method465(229)+method467/method469/method470+method475"
       ],
       "confidence": "verified-id-length-fields",
       "production_enabled": true,
@@ -4476,7 +4491,7 @@
         "p8 userhash"
       ],
       "source_anchors": [
-        "client.java method465(235) + method468"
+        "client.java method465(235) + method472"
       ],
       "confidence": "verified-id-length-fields",
       "production_enabled": true,
@@ -4556,7 +4571,7 @@
         "p8 userhash"
       ],
       "source_anchors": [
-        "client.java method465(251) + method468"
+        "client.java method465(251) + method472"
       ],
       "confidence": "verified-id-length-fields",
       "production_enabled": true,

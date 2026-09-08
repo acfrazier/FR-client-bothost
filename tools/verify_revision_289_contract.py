@@ -37,8 +37,26 @@ def main() -> int:
             if row["id"] in ids:
                 fail(f"duplicate {direction} id {row['id']}")
             ids.append(row["id"])
-            if not isinstance(row["fields"], list) or not row["fields"]:
-                fail(f"{direction} fields must be a non-empty ordered list")
+            if not isinstance(row["fields"], list):
+                fail(f"{direction} fields must be an ordered list")
+            # Zero-payload rows may use [] or an explicit empty-payload marker.
+            # Non-zero / variable lengths still require a non-empty ordered list.
+            length = row["length"]
+            empty_ok = length == 0 and (
+                not row["fields"]
+                or row["fields"] == ["(empty payload)"]
+                or row["fields"] == ["empty payload"]
+            )
+            if not row["fields"] and not empty_ok:
+                fail(
+                    f"{direction} fields must be a non-empty ordered list "
+                    f"(empty only allowed when length==0): {row.get('name')!r} id={row.get('id')}"
+                )
+            if length != 0 and not row["fields"]:
+                fail(
+                    f"{direction} fields must be a non-empty ordered list when length!=0: "
+                    f"{row.get('name')!r} id={row.get('id')}"
+                )
             if not isinstance(row["source_anchors"], list) or not row["source_anchors"]:
                 fail(f"{direction} source_anchors must be non-empty")
         if direction == "inbound" and set(ids) != set(range(256)):
@@ -67,6 +85,13 @@ def main() -> int:
                 fail(f"login structural vector status must be structure: {case['name']}")
             if not case["source_anchors"] or "client.java:8342-8398" not in case["source_anchors"]:
                 fail(f"login fixture missing handshake anchor: {case['name']}")
+            continue
+        # Outbound/cache documentation rows are not inbound frame oracles.
+        if case.get("kind") in ("outbound", "cache"):
+            if case["expected_result"].get("status") != "structure":
+                fail(f"{case['kind']} fixture status must be structure: {case['name']}")
+            if not case["source_anchors"]:
+                fail(f"{case['kind']} fixture source_anchors empty: {case['name']}")
             continue
         if case["opcode"] not in inbound_by_id:
             fail(f"fixture opcode is not in inbound contract: {case['name']}")

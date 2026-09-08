@@ -38,16 +38,20 @@ Important encodings:
 
 Outbound IDs observed at `client.java` `method465(...)` call sites (including method160/method206/method216 wrappers) are listed in `protocol-289.json`.
 
-Stage-3 production-enabled families have **source-ordered payload lengths and fields** promoted from primary write sequences (`method466`=p1, `method467`=p2, `method470`=p4) into both `protocol-289.json` and `ClientProt289`. Enabled families include:
+Stage-3 production-enabled families have **source-ordered payload lengths and fields** promoted from primary write sequences (`method466`=p1, `method467`=p2, `method469`=p3, `method470`=p4, `method472`=p8) into both `protocol-289.json` and `ClientProt289`. Enabled families include:
 
 - walk: MOVE_GAMECLICK 234, MOVE_MINIMAPCLICK 236, MOVE_OPCLICK 67 (variable)
 - NPC/loc/object/player/held/inv-button ops (fixed lengths 2/4/6/8/12 as traced)
 - IF_BUTTON 86, RESUME_PAUSEBUTTON 166, RESUME_P_COUNTDIALOG 180, CLOSE_MODAL 93
 - MAP_BUILD_COMPLETE 214, NO_TIMEOUT 181, CHAT_SETMODE 161
+- MESSAGE_PUBLIC 156 (p1 colour + p1 effect with Java prefixes wave/wave2/shake/scroll/slide → 1/2/3/4/5 + wordpack)
+- SEND_SNAPSHOT 94 (report-abuse: p8 namehash + p1 reason + p1 mute via method472/method466)
+- friend/ignore add/del: p8 userhash via method472
+- EVENT_MOUSE_MOVE 229: p1 size + timed delta/absolute samples (method467/method469/method470) + psize1
 - draw-path anticheat/tut: CYCLELOGIC1 130, CYCLELOGIC3 125, CYCLELOGIC6 255, TUT_CLICKSIDE 146
 - remaining mapped table rows used by production emit (events, social, design, idle)
 
-Rows still without an independent field trace must not be newly enabled. Production emit routes through `Client::client_opcode` / `map_client_prot` (client interact sites and render/draw sites for the four previously bare opcodes). Unmapped 274 constants fail closed on R289. Length `"unknown"` is no longer acceptable for any production-enabled row.
+Zero-payload outbound rows use an explicit `(empty payload)` field marker (or empty list only when `length==0`); non-zero lengths must keep a non-empty ordered field list. Rows still without an independent field trace must not be newly enabled. Production emit routes through `Client::client_opcode` / `map_client_prot` (client interact sites and render/draw sites for the four previously bare opcodes). Unmapped 274 constants fail closed on R289. Length `"unknown"` is no longer acceptable for any production-enabled row.
 
 ## Existing Rust mapping
 

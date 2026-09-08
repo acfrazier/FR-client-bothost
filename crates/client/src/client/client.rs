@@ -156,6 +156,10 @@ const PLAYER_OP_ACTIONS: [i32; 5] = [
 /// `main_modal_id` from the first interface with this code (TS
 /// `ClientCode.CC_REPORT_INPUT`).
 const CC_REPORT_INPUT: i32 = 600;
+/// Report-abuse reason buttons 601..=612 and mute toggle 613 (Java client_button).
+const CC_REPORT_REASON_START: i32 = 601;
+const CC_REPORT_REASON_END: i32 = 612;
+const CC_REPORT_MUTE: i32 = 613;
 
 /// Index of the local player in `players` (`Client.ts` `LOCAL_PLAYER_INDEX`);
 /// `game_draw_main`'s `addPlayers` uses it for the local-player typecode.
@@ -4745,7 +4749,8 @@ impl Client {
     /// (205) arms `logoutTimer`, CC_ADD/DEL_IGNORE (501/502) open the
     /// add/delete-ignore prompts, the player-design codes 300-327 cycle
     /// kit/colour, switch gender and send `IDK_SAVEDESIGN`, and the
-    /// report-abuse codes (601-613) are slice 6. Social codes return
+    /// report-abuse codes (601-613): 613 toggles mute; 601..=612 closeModal
+    /// then emit REPORT_ABUSE/SEND_SNAPSHOT (p8+p1+p1). Social codes return
     /// `false` so the `doAction` IF_BUTTON arm skips the send (TS sets the
     /// prompt and falls through); logout and accept-design return `true`
     /// and the click is sent.
@@ -4856,6 +4861,23 @@ impl Client {
                 self.out.p1(self.idk_design_colour[i]);
             }
             return true;
+        } else if client_code == CC_REPORT_MUTE {
+            // Java client_button 613: toggle mute-for-48h without a packet.
+            self.report_abuse_mute_option = !self.report_abuse_mute_option;
+        } else if (CC_REPORT_REASON_START..=CC_REPORT_REASON_END).contains(&client_code) {
+            // Java client_button 601..=612: closeModal then SEND_SNAPSHOT /
+            // REPORT_ABUSE (289 id 94, length 10): method472 p8 namehash +
+            // method466 reason (code-601) + method466 mute flag.
+            self.close_modal();
+            if !self.report_abuse_input.is_empty() {
+                let userhash = JString::to_userhash(&self.report_abuse_input) as i64;
+                self.out
+                    .p1_enc(self.client_opcode(ClientProt::REPORT_ABUSE));
+                self.out.p8(userhash);
+                self.out.p1(client_code - CC_REPORT_REASON_START);
+                self.out
+                    .p1(if self.report_abuse_mute_option { 1 } else { 0 });
+            }
         }
         false
     }
@@ -8659,15 +8681,25 @@ impl Client {
                         colour = 11;
                         text = text[6..].to_string();
                     }
-                    // TS 3147-3155 effect prefixes.
+                    // Primary 289 Java effect prefixes (else-if chain).
+                    // Check wave2 before wave so "wave2:" is not consumed as "wave:".
+                    // wave=1, wave2=2, shake=3, scroll=4, slide=5.
                     let mut effect = 0;
-                    if text.starts_with("wave:") {
+                    if text.starts_with("wave2:") {
+                        effect = 2;
+                        text = text[6..].to_string();
+                    } else if text.starts_with("wave:") {
                         effect = 1;
                         text = text[5..].to_string();
-                    }
-                    if text.starts_with("scroll:") {
-                        effect = 2;
+                    } else if text.starts_with("shake:") {
+                        effect = 3;
+                        text = text[6..].to_string();
+                    } else if text.starts_with("scroll:") {
+                        effect = 4;
                         text = text[7..].to_string();
+                    } else if text.starts_with("slide:") {
+                        effect = 5;
+                        text = text[6..].to_string();
                     }
 
                     self.out.p1_enc(self.client_opcode(ClientProt::MESSAGE_PUBLIC));

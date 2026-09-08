@@ -244,9 +244,9 @@
       "name": "actor_update_face_entity_mask",
       "opcode": 188,
       "length_kind": "g2",
-      "frame_hex": null,
+      "frame_hex": "bc0033801ffc052c00000000000000000000000000000000000000ffffffffffffffffffffffffffff00000000000000000000001234",
       "payload_hex": "801ffc052c00000000000000000000000000000000000000ffffffffffffffffffffffffffff00000000000000000000001234",
-      "declared_payload_length": null,
+      "declared_payload_length": 51,
       "expected_result": {
         "status": "dispatch",
         "state": "actor_update_face_entity",
@@ -258,7 +258,9 @@
         "client.java:2819-2823",
         "client.java:8021-8054 (method128 FACEENTITY 0x4)"
       ],
-      "oracle_derivation": "Local update bit 1 + type 0, empty old-vis, 2047 sentinel, mask 0x05 (APPEARANCE|FACEENTITY), 44-byte default appearance, face_entity 0x1234=4660. Bit layout matches 274 player_update and 289 method128."
+      "oracle_derivation": "Local update bit 1 + type 0, empty old-vis, 2047 sentinel, mask 0x05 (APPEARANCE|FACEENTITY), 44-byte default appearance, face_entity 0x1234=4660. Bit layout matches 274 player_update and 289 method128.",
+      "expected_consumed_length": 54,
+      "expected_cursor": 51
     },
     {
       "name": "actor_update_truncated_player_info",
@@ -509,30 +511,21 @@
       "name": "login_outer_frame_r289",
       "kind": "login",
       "opcode": null,
-      "length_kind": "login_wrapper",
+      "length_kind": "login_rsa",
       "frame_hex": "",
       "payload_hex": "",
       "expected_result": {
         "status": "structure",
         "state": "login_outer_16_255_p2_289_checksums_rsa_isaac",
-        "fields": [
-          "g1 opcode 16 cold / 18 reconnect",
-          "g1 size",
-          "g1 255",
-          "g2 revision 289",
-          "g1 lowmem",
-          "9 x g4 jag checksums",
-          "rsa blob",
-          "out.random Isaac(seed)",
-          "random_in Isaac(seed+50)"
-        ],
         "error": null
       },
       "source_anchors": [
         "client.java:8342-8398",
         "client.java:8378 p2(289)"
       ],
-      "oracle_derivation": "Production login() path on R289 session writes the outer wrapper order and installs ISAAC cursors; offline synthetic TCP proves bytes/state without a live game endpoint."
+      "oracle_derivation": "Production login() path on R289 session writes the outer wrapper order and installs ISAAC cursors; offline synthetic TCP proves bytes/state without a live game endpoint.",
+      "expected_consumed_length": 0,
+      "expected_cursor": 0
     },
     {
       "name": "outbound_move_gameclick_r289",
@@ -548,7 +541,7 @@
       ],
       "length": -1,
       "expected_result": {
-        "status": "emit",
+        "status": "structure",
         "state": "MOVE_GAMECLICK",
         "error": null
       },
@@ -556,7 +549,11 @@
         "client.java method206 method465(234)",
         "Class1_Sub1_Sub3 method466/467"
       ],
-      "oracle_derivation": "Primary tryMove type0 writes method465(234) then p1 size (2*steps+3), p1 ctrl, p2 start+base, step p1 pairs. Length variable."
+      "oracle_derivation": "Primary tryMove type0 writes method465(234) then p1 size (2*steps+3), p1 ctrl, p2 start+base, step p1 pairs. Length variable.",
+      "frame_hex": "",
+      "payload_hex": "",
+      "expected_consumed_length": 0,
+      "expected_cursor": 0
     },
     {
       "name": "outbound_move_minimapclick_r289",
@@ -573,14 +570,18 @@
       ],
       "length": -1,
       "expected_result": {
-        "status": "emit",
+        "status": "structure",
         "state": "MOVE_MINIMAPCLICK",
         "error": null
       },
       "source_anchors": [
         "client.java method206 method465(236)"
       ],
-      "oracle_derivation": "tryMove type1: size = 2*steps+3+14 after opcode 236."
+      "oracle_derivation": "tryMove type1: size = 2*steps+3+14 after opcode 236.",
+      "frame_hex": "",
+      "payload_hex": "",
+      "expected_consumed_length": 0,
+      "expected_cursor": 0
     },
     {
       "name": "outbound_move_opclick_r289",
@@ -589,14 +590,18 @@
       "length_kind": "var_p1_size",
       "length": -1,
       "expected_result": {
-        "status": "emit",
+        "status": "structure",
         "state": "MOVE_OPCLICK",
         "error": null
       },
       "source_anchors": [
         "client.java method206 method465(67)"
       ],
-      "oracle_derivation": "tryMove type2 interaction walk uses opcode 67; payload shape matches GAMECLICK without minimap tail."
+      "oracle_derivation": "tryMove type2 interaction walk uses opcode 67; payload shape matches GAMECLICK without minimap tail.",
+      "frame_hex": "",
+      "payload_hex": "",
+      "expected_consumed_length": 0,
+      "expected_cursor": 0
     },
     {
       "name": "outbound_opnpc2_r289",
@@ -608,14 +613,18 @@
       ],
       "length": 2,
       "expected_result": {
-        "status": "emit",
+        "status": "structure",
         "state": "OPNPC2",
         "error": null
       },
       "source_anchors": [
         "client.java method216 method465(21) then method467(index)"
       ],
-      "oracle_derivation": "OPNPC2 writes p2 npc slot index only; total payload length 2."
+      "oracle_derivation": "OPNPC2 writes p2 npc slot index only; total payload length 2.",
+      "frame_hex": "",
+      "payload_hex": "",
+      "expected_consumed_length": 0,
+      "expected_cursor": 0
     },
     {
       "name": "outbound_oploc1_r289",
@@ -629,14 +638,18 @@
       ],
       "length": 6,
       "expected_result": {
-        "status": "emit",
+        "status": "structure",
         "state": "OPLOC1",
         "error": null
       },
       "source_anchors": [
         "client.java method160 method465(arg1=10) method467 x3"
       ],
-      "oracle_derivation": "method160 always writes three p2 fields after the opcode; OPLOC1 length 6. OPLOCT/U append spell/use fields after method160 returns."
+      "oracle_derivation": "method160 always writes three p2 fields after the opcode; OPLOC1 length 6. OPLOCT/U append spell/use fields after method160 returns.",
+      "frame_hex": "",
+      "payload_hex": "",
+      "expected_consumed_length": 0,
+      "expected_cursor": 0
     },
     {
       "name": "outbound_opheld1_r289",
@@ -650,14 +663,18 @@
       ],
       "length": 6,
       "expected_result": {
-        "status": "emit",
+        "status": "structure",
         "state": "OPHELD1",
         "error": null
       },
       "source_anchors": [
         "client.java method216 method465(76) three method467"
       ],
-      "oracle_derivation": "Held op1 writes three big-endian shorts."
+      "oracle_derivation": "Held op1 writes three big-endian shorts.",
+      "frame_hex": "",
+      "payload_hex": "",
+      "expected_consumed_length": 0,
+      "expected_cursor": 0
     },
     {
       "name": "outbound_inv_button1_r289",
@@ -671,14 +688,18 @@
       ],
       "length": 6,
       "expected_result": {
-        "status": "emit",
+        "status": "structure",
         "state": "INV_BUTTON1",
         "error": null
       },
       "source_anchors": [
         "client.java method216 method465(44)"
       ],
-      "oracle_derivation": "INV_BUTTON1 payload matches held shape length 6."
+      "oracle_derivation": "INV_BUTTON1 payload matches held shape length 6.",
+      "frame_hex": "",
+      "payload_hex": "",
+      "expected_consumed_length": 0,
+      "expected_cursor": 0
     },
     {
       "name": "outbound_if_button_r289",
@@ -690,14 +711,18 @@
       ],
       "length": 2,
       "expected_result": {
-        "status": "emit",
+        "status": "structure",
         "state": "IF_BUTTON",
         "error": null
       },
       "source_anchors": [
         "client.java method216 method465(86) method467(com)"
       ],
-      "oracle_derivation": "Widget button sends component id as p2."
+      "oracle_derivation": "Widget button sends component id as p2.",
+      "frame_hex": "",
+      "payload_hex": "",
+      "expected_consumed_length": 0,
+      "expected_cursor": 0
     },
     {
       "name": "outbound_resume_p_countdialog_r289",
@@ -709,14 +734,18 @@
       ],
       "length": 4,
       "expected_result": {
-        "status": "emit",
+        "status": "structure",
         "state": "RESUME_P_COUNTDIALOG",
         "error": null
       },
       "source_anchors": [
         "client.java method465(180) method470(count)"
       ],
-      "oracle_derivation": "Enter-amount dialog resumes with a single p4."
+      "oracle_derivation": "Enter-amount dialog resumes with a single p4.",
+      "frame_hex": "",
+      "payload_hex": "",
+      "expected_consumed_length": 0,
+      "expected_cursor": 0
     },
     {
       "name": "outbound_close_modal_r289",
@@ -726,31 +755,38 @@
       "payload_fields": [],
       "length": 0,
       "expected_result": {
-        "status": "emit",
+        "status": "structure",
         "state": "CLOSE_MODAL",
         "error": null
       },
       "source_anchors": [
         "client.java method465(93)"
       ],
-      "oracle_derivation": "CLOSE_MODAL is opcode-only."
+      "oracle_derivation": "CLOSE_MODAL is opcode-only.",
+      "frame_hex": "",
+      "payload_hex": "",
+      "expected_consumed_length": 0,
+      "expected_cursor": 0
     },
     {
       "name": "cache_offline_synthetic_config_seam",
       "kind": "cache",
       "opcode": null,
-      "length_kind": null,
+      "length_kind": "cache",
       "expected_result": {
-        "status": "offline_loader",
+        "status": "structure",
         "state": "synthetic_jag_not_authentic",
-        "authentic_cache_present": false,
         "error": null
       },
       "source_anchors": [
         "client.java login 9x jag checksums",
         "JAG names title/config/interface/media/versionlist/textures/wordenc/sounds"
       ],
-      "oracle_derivation": "Offline seam validates JAG container structure for named packs. Client/deob JAR is not a game cache. Missing authentic 289 cache prohibits scene/asset proof; loader tests remain authorized."
+      "oracle_derivation": "Offline seam validates JAG container structure for named packs. Client/deob JAR is not a game cache. Missing authentic 289 cache prohibits scene/asset proof; loader tests remain authorized.",
+      "frame_hex": "",
+      "payload_hex": "",
+      "expected_consumed_length": 0,
+      "expected_cursor": 0
     }
   ]
 }

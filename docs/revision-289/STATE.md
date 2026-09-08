@@ -2,10 +2,10 @@
 
 Authorized 2026-09-07. Prepared branch codex/revision-289-client, base
 4f2048ea10f75b3bb92ff45610b35ba7313b0308 (published r274-bh-modular).
-Current plan: plan.md. Stage 3 (t_448637e1) rework after review round-1
-changes; pending same-card reviewer. Corrective independent full-stage3
-review t_5f3a92c0 is a prerequisite to final branchreviewer t_77d35bfb.
-Required final branchreviewer remains.
+Current plan: plan.md. Stage 3 (t_448637e1) accepted a00a641 after run496
+rework. Corrective independent full-stage3 review t_5f3a92c0 REJECTED on
+a00a641; correction t_c2922712 implemented (uncommitted working tree pending
+reviewer). Required final branchreviewer remains behind correction approval.
 
 Primary source pin and supporting host evidence are named in plan.md and
 host-script-evidence.md. The live 289 server/cache pairing is unverified.
@@ -16,7 +16,7 @@ Only this checkout may be edited or built by workers.
 Orchestration card: t_95bef768. Implementation stages 1–2 accepted. Corrective
 t_058241ac accepted f766c9a. Stage 3 t_448637e1 rework after d441614 / run496
 changes_requested (preserve rejected receipt). Independent full-stage3
-corrective review: t_5f3a92c0 (must complete before t_77d35bfb).
+corrective review: t_5f3a92c0 REJECTED. Correction: t_c2922712 (implementer).
 
 Serialized same-workspace dependency chain:
 
@@ -29,11 +29,15 @@ Serialized same-workspace dependency chain:
 - t_058241ac (implementer): full inventory exact-end + session-revision API
   — DONE (accepted f766c9a).
 - t_448637e1 (implementer): cache/config, basic actions and offline replay
-  — rework after run496 changes_requested on d441614; pending reviewer.
+  — DONE (accepted a00a641 after run496 reject on d441614; execution-lens).
 - t_5f3a92c0 (reviewer): independent Grok4.5 full-stage3 corrective verdict
-  — prerequisite to final branch review; preserve d441614/run496 reject.
+  — REJECTED on a00a641; see docs/revision-289/stage3-corrective-review.md.
+  Preserve d441614/run496 reject receipt.
+- t_c2922712 (implementer): MESSAGE_PUBLIC effects + SEND_SNAPSHOT emit +
+  outbound field-oracle honesty + verifier empty-fields repair — implemented;
+  awaiting reviewer.
 - t_77d35bfb (branchreviewer): required independent Grok4.6 branch verdict
-  — blocked on t_5f3a92c0 (and any correction children it creates).
+  — blocked on t_c2922712 approval.
 
 Design boundary: retain 274 public constants and default construction; add
 explicit revision selection at the client/session boundary. Source contract
@@ -45,9 +49,9 @@ hotspot: crates/client/src/client/client.rs — campaign cards serialized.
 ## Source milestone (accepted)
 
 Source contract approved on commit d2c6318 (reviewer grok-4.5, round 4).
-Verifier PASS 256/75/10. Known non-blocking prerequisites remain: authoritative
-game-cache pairing/manifest, approved endpoint/live authorization, live
-RSA/ISAAC compatibility proof.
+Verifier PASS 256/82/35 after t_c2922712. Known non-blocking prerequisites remain:
+authoritative game-cache pairing/manifest, approved endpoint/live authorization,
+live RSA/ISAAC compatibility proof.
 
 ## Stage 1 checkpoint (t_3d5171fb) — accepted
 
@@ -62,7 +66,7 @@ Commit e8ec353 (production base cc86024). Reviewer grok-4.5 round 2 approved.
 Commit f766c9a. Strict INV_FULL end on R289; adopt_from fail-closed; private
 revision construction API.
 
-## Stage 3 checkpoint (t_448637e1) — rework after review
+## Stage 3 checkpoint (t_448637e1) — accepted a00a641 (execution-lens only)
 
 ### Rejected receipt (preserve)
 
@@ -74,7 +78,7 @@ changes_requested. Defects:
 2. protocol-289.json outbound 75× length unknown while production emit live;
    source-contract still forbade enabling unknown rows.
 
-### Rework contents (this commit)
+### Rework contents (a00a641) — closed run496 items
 
 1. `Client::client_opcode` is `pub(crate)`; draw.rs four sites route through it.
 2. `protocol-289.json` outbound: all production-mapped rows have exact length +
@@ -88,14 +92,31 @@ changes_requested. Defects:
 4. Stage3 tests: draw-path 289-vs-274 emit, CLOSE_MODAL via CLOSE_BUTTON,
    RESUME_P_COUNT via keyboard `handle_chat_input`, production cache bind.
 
-Do not claim "every outbound site" remap without the draw coverage above;
-client interact sites + the four draw sites are the production emit surface
-for this stage cut.
+### Corrective full-stage3 review (t_5f3a92c0) — REJECTED on a00a641
+
+Independent Grok4.5 (xai-oauth) artifact+source audit:
+`docs/revision-289/stage3-corrective-review.md`. Run496 items remain closed.
+
+### Correction t_c2922712 — implemented (pending reviewer)
+
+Closed residuals from stage3-corrective-review.md + verifier addendum:
+
+1. MESSAGE_PUBLIC effects in `handle_chat_input`: wave2 before wave (so
+   wave2: is not swallowed), then shake/scroll/slide → effects 2/1/3/4/5.
+2. SEND_SNAPSHOT (94) contract fields p8 namehash + p1 reason + p1 mute;
+   client_button 601..=612 close_modal + REPORT_ABUSE emit; 613 mute toggle.
+3. EVENT_MOUSE_MOVE ordered sample encodings; friend/ignore anchors method472.
+4. Zero-payload outbound rows use `["(empty payload)"]`; verifier allows empty
+   fields only when length==0 and still rejects empty fields when length!=0.
+5. Fixture manifest completed for incomplete actor_update_face_entity_mask and
+   outbound/cache doc rows so verifier structural keys pass.
+6. Stage3 tests: `r289_message_public_effect_prefixes_match_java`,
+   `r289_send_snapshot_report_abuse_p8_p1_p1`.
 
 Exact tests (CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target):
 
-- `cargo test -p client --test revision_289_stage3` → 20 passed
-- `cargo test -p client --lib` → 70 passed (includes io::cache_289 ×5)
+- `cargo test -p client --test revision_289_stage3` → 22 passed
+- `cargo test -p client --lib` → 70 passed
 - `cargo test -p client --test revision_289_stage1` → 26 passed
 - `cargo test -p client --test revision_289_stage2` → 28 passed
 - `cargo test -p client --test do_action --test walk --test prot` → 13+6+2
@@ -103,20 +124,15 @@ Exact tests (CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target)
   --test login_rsa --test gens --test server_packets` → 7+6+1+2+12+19
 - `cargo test -p client --lib freeze_last_scene` → 1 passed
 - `cargo check -p client -p client-play` → ok
+- `python3 tools/verify_revision_289_contract.py` → PASS 256 inbound, 82
+  outbound, 35 fixtures
+- chat_mode + hud integration → 86 passed (spot)
 
-PASS (offline):
+Changed paths (working tree): client.rs; protocol-289.json; source-contract.md;
+promote_outbound_289.py; verify_revision_289_contract.py; revision_289_stage3.rs;
+fixtures/revision_289/manifest.json; STATE.md; tools/fix_stage3_fixtures.py.
 
-- R289 MOVE_GAMECLICK=234 / MINIMAP=236 / OPCLICK=67 with source payload shapes
-- OPNPC2=21 len2, OPLOC1=10 len6, OPHELD1=76 len6, INV_BUTTON1=44 len6,
-  IF_BUTTON=86 len2, RESUME_PAUSE=166 len2, RESUME_P_COUNT=180 len4 (keyboard),
-  CLOSE_MODAL=93 len0 (CLOSE_BUTTON path), MAP_BUILD_COMPLETE=214, NO_TIMEOUT=181
-- Draw paths R289: TUT_CLICKSIDE=146, CYCLELOGIC6=255, CYCLELOGIC1=130,
-  CYCLELOGIC3=125 (not 274 94/188/12/52)
-- R274 default emit still uses public ClientProt ids
-- Offline synthetic config/interface through Cache::unpack + Client load_cache;
-  scene_state stays 1 without maps
-- Offline replay logout + action + inv-full + varp/widget/reset path
-- protocol-289.json outbound unknown count = 0 for mapped table
+PASS offline retained; chat effect + SEND_SNAPSHOT emit oracles green.
 
 BLOCKED / external (not claimed):
 

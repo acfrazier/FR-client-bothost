@@ -7,12 +7,14 @@
 use client::client::{
     Client, ClientConfig, ClientNpc, ClientPlayer, ClientRevision, MiniMenuAction,
 };
+use client::config::if_type::IfType;
 use client::io::{
     load_offline_config_seam, map_client_prot, write_synthetic_cache_dir, CacheArchiveKind,
     CacheManifest289, ClientProt, ClientProt289, ClientStream, Isaac, ServerProt289,
     CACHE_JAG_NAMES_289,
 };
 use client::render::Renderer;
+use client::util::JString;
 use std::io::Write;
 use std::net::TcpListener;
 use std::path::Path;
@@ -326,6 +328,71 @@ fn r289_resume_p_count_dialog_p4() {
     assert_eq!(c.out.pos, 5);
     assert!(!c.dialog_input_open);
     assert_eq!(ClientProt289::RESUME_P_COUNTDIALOG.length, 4);
+}
+
+#[test]
+fn r289_message_public_effect_prefixes_match_java() {
+    // Primary 289 Java: wave=1, wave2=2, shake=3, scroll=4, slide=5.
+    let cases = [
+        ("hello", 0u8),
+        ("wave:hello", 1u8),
+        ("wave2:hello", 2u8),
+        ("shake:hello", 3u8),
+        ("scroll:hello", 4u8),
+        ("slide:hello", 5u8),
+    ];
+    for (input, effect) in cases {
+        let mut c = client_289();
+        let mut player = ClientPlayer::at(1, 1);
+        player.name = Some("Bob".into());
+        c.local_player = Some(player);
+        for ch in input.bytes() {
+            c.shell.apply_key(true, 0, ch as i32);
+        }
+        c.shell.apply_key(true, 0, 13);
+        c.handle_chat_input();
+        assert_eq!(c.out.data()[0], 156, "MESSAGE_PUBLIC id for {input}");
+        assert_eq!(c.out.data()[2], 0, "colour default for {input}");
+        assert_eq!(c.out.data()[3], effect, "effect byte for {input}");
+        assert_eq!(
+            c.local_player.as_ref().unwrap().chat_effect,
+            effect as i32,
+            "local echo effect for {input}"
+        );
+    }
+}
+
+#[test]
+fn r289_send_snapshot_report_abuse_p8_p1_p1() {
+    // Java client_button 601..=612: CLOSE_MODAL then SEND_SNAPSHOT 94
+    // method472 p8 namehash + method466 reason + method466 mute.
+    let mut c = client_289();
+    c.report_abuse_input = "Bob".into();
+    c.report_abuse_mute_option = true;
+    c.main_modal_id = 7;
+    c.set_iface(
+        9,
+        IfType {
+            client_code: 605, // reason 4
+            ..IfType::default()
+        },
+    );
+    assert!(!c.client_button(9), "report-abuse returns false (no IF_BUTTON)");
+    let d = c.out.data();
+    // CLOSE_MODAL 93 then SEND_SNAPSHOT 94 + 10 payload bytes.
+    assert_eq!(d[0], 93, "CLOSE_MODAL first");
+    assert_eq!(d[1], 94, "SEND_SNAPSHOT");
+    let hash = JString::to_userhash("Bob");
+    assert_eq!(&d[2..10], &hash.to_be_bytes());
+    assert_eq!(d[10], 4, "reason = code-601");
+    assert_eq!(d[11], 1, "mute flag");
+    assert_eq!(c.out.pos, 12);
+    assert_eq!(c.main_modal_id, -1);
+    assert_eq!(ClientProt289::SEND_SNAPSHOT.length, 10);
+    assert_eq!(
+        map_client_prot(ClientRevision::R289, ClientProt::REPORT_ABUSE).id,
+        94
+    );
 }
 
 #[test]
