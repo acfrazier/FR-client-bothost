@@ -94,6 +94,10 @@ impl Packet {
         self.frame_end = None;
     }
 
+    pub fn frame_end(&self) -> Option<usize> {
+        self.frame_end
+    }
+
     fn assert_can_read(&self, length: usize) {
         assert!(self.pos.checked_add(length).is_some_and(|end| {
             end <= self.frame_end.unwrap_or(self.data.len())

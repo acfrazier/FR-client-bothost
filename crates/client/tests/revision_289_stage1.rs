@@ -41,26 +41,56 @@ fn client_289() -> Client {
 fn last_login_info_decodes_fields_and_selects_welcome_interface() {
     let mut c = client_289();
     let mut welcome = IfType::default();
-    welcome.id = 42;
+    welcome.id = 99;
+    welcome.layer_id = 42;
     welcome.client_code = 650;
     c.ifaces = Arc::new(vec![Some(Box::new(welcome))]);
     c.side_modal_id = 7;
     c.report_abuse_input = "private".into();
     c.report_abuse_mute_option = true;
 
-    let mut p = Packet::new(vec![1, 2, 3, 4, 0, 9, 200, 0, 10, 1]);
+    let mut p = Packet::new(vec![1, 2, 3, 4, 0, 9, 201, 0, 10, 0]);
     c.handle_packet(ServerProt289::LAST_LOGIN_INFO, &mut p);
 
     assert_eq!(c.last_login_ip, 0x01020304);
     assert_eq!(c.days_since_login, 9);
-    assert_eq!(c.days_since_recovery_change, 200);
+    assert_eq!(c.days_since_recovery_change, 201);
     assert_eq!(c.last_login_message_count, 10);
-    assert_eq!(c.members_warning, 1);
+    assert_eq!(c.members_warning, 0);
     assert_eq!(c.welcome_interface_id, 42);
     assert_eq!(c.main_modal_id, 42);
     assert_eq!(c.side_modal_id, -1);
     assert!(c.report_abuse_input.is_empty());
     assert!(!c.report_abuse_mute_option);
+}
+
+#[test]
+fn last_login_info_selects_members_warning_welcome_655_and_layer() {
+    let mut c = client_289();
+    let mut welcome = IfType::default();
+    welcome.id = 99;
+    welcome.layer_id = 142;
+    welcome.client_code = 655;
+    c.ifaces = Arc::new(vec![Some(Box::new(welcome))]);
+    let mut p = Packet::new(vec![1, 0, 0, 1, 0, 0, 201, 0, 0, 1]);
+    let before = c.gens.iface;
+    c.handle_packet(ServerProt289::LAST_LOGIN_INFO, &mut p);
+    assert_eq!(c.welcome_interface_id, 142);
+    assert_eq!(c.main_modal_id, 142);
+    assert_eq!(c.gens.iface, before + 1);
+}
+
+#[test]
+fn last_login_info_does_not_clear_report_state_when_welcome_gate_is_closed() {
+    let mut c = client_289();
+    c.main_modal_id = 77;
+    c.report_abuse_input = "private".into();
+    c.report_abuse_mute_option = true;
+    let mut p = Packet::new(vec![1, 2, 3, 4, 0, 0, 201, 0, 0, 0]);
+    c.handle_packet(ServerProt289::LAST_LOGIN_INFO, &mut p);
+    assert_eq!(c.main_modal_id, 77);
+    assert_eq!(c.report_abuse_input, "private");
+    assert!(c.report_abuse_mute_option);
 }
 
 fn ensure_inv_slots(c: &mut Client, com_id: usize, n: usize) {

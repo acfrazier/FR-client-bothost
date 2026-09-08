@@ -454,9 +454,11 @@ root-owned prerequisites. No merge/push/remote or host-checkout changes.
 ## Cleanup A implementation boundary (t_358c02ad)
 
 Implemented bounded frame-end enforcement in Packet and production read_packet,
-plus R289 LAST_LOGIN_INFO field/application semantics, generation failure reset,
-and lifecycle reset coverage. Tests: packet 7 and revision_289_stage1 27 passed;
-cargo check -p client passed; git diff --check passed. This is an unreviewed
-same-card handoff; reviewer=reviewer / actual Grok4.5 is required. Sections B-H
-remain future work, and existing unconverted R289 paths are not claimed atomic.
+plus R289 LAST_LOGIN_INFO staged decode/application semantics, Java welcome
+selection, layer publication, generation failure reset, and lifecycle reset
+coverage. Follow-up tests: stage1 29, packet 7, gens 12, logout 7 and
+server_packets 19 passed; cargo check and git diff --check remain required at
+handoff. Same-card review is pending after the correction; reviewer=reviewer /
+actual Grok4.5 is required. Sections B-H remain future work, and existing
+unconverted R289 paths are not claimed atomic.
 Report: docs/revision-289/cleanup-a-report.md.

@@ -3717,7 +3717,6 @@ impl Client {
     pub fn handle_packet(&mut self, ptype: i32, payload: &mut Packet) {
         let ptype1 = self.ptype1;
         let ptype2 = self.ptype2;
-        let before = self.gens;
         let result = catch_unwind(AssertUnwindSafe(|| {
             self.dispatch_packet(ptype, payload);
         }));
@@ -3725,19 +3724,20 @@ impl Client {
             eprintln!("T2 - {ptype},{ptype1},{ptype2}");
             // `logout()` bumps every family (spec: REBUILD/logout → all).
             self.logout();
-        } else if self.gens.npc == before.npc
-            && self.gens.player == before.player
-            && self.gens.inv == before.inv
-            && self.gens.varp == before.varp
-            && self.gens.stat == before.stat
-            && self.gens.chat == before.chat
-            && self.gens.scene == before.scene
-            && self.gens.iface == before.iface
-            && self.gens.camera == before.camera
-            && self.gens.map_flag == before.map_flag
-            && self.gens.world == before.world
-        {
+        } else if self.revision.is_289() {
+            // R289 publication is derived from the successful semantic
+            // operation, never from a before/after comparison of all state.
+            self.bump_gens_289(ptype);
+        } else {
+            // Preserve the established 274 publication behavior verbatim.
             self.bump_gens(ptype);
+        }
+    }
+
+    fn bump_gens_289(&mut self, ptype: i32) {
+        self.bump_gens(ptype);
+        if ptype == ServerProt289::LAST_LOGIN_INFO && self.welcome_interface_id != -1 {
+            self.gens.iface += 1;
         }
     }
 
@@ -4209,37 +4209,42 @@ impl Client {
     /// before applying welcome state. DNS display resolution remains optional
     /// lifecycle/UI work and is never performed or logged in this path.
     pub fn apply_last_login_info(&mut self, payload: &mut Packet) {
-        self.last_login_ip = payload.g4();
-        self.days_since_login = payload.g2();
-        self.days_since_recovery_change = payload.g1();
-        self.last_login_message_count = payload.g2();
-        self.members_warning = payload.g1();
+        // Decode into locals first: a malformed frame must not publish a
+        // partially decoded identity notice.
+        let last_login_ip = payload.g4();
+        let days_since_login = payload.g2();
+        let days_since_recovery_change = payload.g1();
+        let last_login_message_count = payload.g2();
+        let members_warning = payload.g1();
+        self.last_login_ip = last_login_ip;
+        self.days_since_login = days_since_login;
+        self.days_since_recovery_change = days_since_recovery_change;
+        self.last_login_message_count = last_login_message_count;
+        self.members_warning = members_warning;
         self.welcome_interface_id = -1;
         if self.last_login_ip != 0 && self.main_modal_id == -1 {
             self.apply_if_close();
-            let client_code = if self.days_since_recovery_change != 201 {
-                650
-            } else if self.members_warning == 1 {
+            let client_code = if self.days_since_recovery_change != 201
+                || self.members_warning == 1
+            {
                 655
             } else {
-                -1
+                650
             };
-            if client_code != -1 {
-                self.welcome_interface_id = self
-                    .ifaces
-                    .iter()
-                    .flatten()
-                    .find(|component| component.client_code == client_code)
-                    .map(|component| component.id)
-                    .unwrap_or(-1);
-                if self.welcome_interface_id != -1 {
-                    self.main_modal_id = self.welcome_interface_id;
-                    self.redraw_frame = true;
-                }
+            self.welcome_interface_id = self
+                .ifaces
+                .iter()
+                .flatten()
+                .find(|component| component.client_code == client_code)
+                .map(|component| component.layer_id)
+                .unwrap_or(-1);
+            if self.welcome_interface_id != -1 {
+                self.main_modal_id = self.welcome_interface_id;
+                self.redraw_frame = true;
             }
+            self.report_abuse_input.clear();
+            self.report_abuse_mute_option = false;
         }
-        self.report_abuse_input.clear();
-        self.report_abuse_mute_option = false;
     }
 
     /// `addChat` from client-ts (11453): shift the 100 chat slots down one
@@ -11352,6 +11357,9 @@ impl Client {
     /// alloc so `psize` is the frame; tests that skip the socket use the
     /// payload length when `psize` is unset.
     fn inbound_end(&self, payload: &Packet) -> usize {
+        if let Some(end) = payload.frame_end() {
+            return end;
+        }
         let psize = self.psize as usize;
         if psize > 0 && psize <= payload.length() {
             psize
