@@ -479,9 +479,10 @@ Cleanup B implementation (t_36cd00a5) now includes the requested review correcti
 Section C now has bounded decode-before-apply coverage for all nine owned rows:
 28, 46, 75, 76, 97, 107, 154, 172 and 195. R289 full inventory retains the
 u16 count, partial inventory retains uSmart slots, extended counts are staged,
-stop-transmit clears IDs without counts, signed varps/weight and derived stat
-levels are applied, varp sync reconciles, changed tutorial varps dirty chat,
-and stat-family publication is returned for stats/energy/weight. Declared zero
+stop-transmit clears IDs without counts or side redraw, signed varps/weight
+and derived stat levels are applied, varp sync reconciles without tutorial
+chat redraw, changed small/large varps dirty chat, and stat-family publication
+is returned for stats/energy/weight. Declared zero
 inventory frames no longer use stale backing allocation bytes. Report:
 docs/revision-289/cleanup-c-report.md.
 

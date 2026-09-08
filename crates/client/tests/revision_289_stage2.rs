@@ -173,6 +173,7 @@ fn cleanup_c_all_rows_use_bounded_production_apply_and_publication() {
         .link_obj_number
         .as_ref()
         .unwrap()[128];
+    c.redraw_side = false;
     let mut stop = Packet::new(hex_bytes("002a"));
     c.psize = 2;
     c.handle_packet(ServerProt289::UPDATE_INV_STOP_TRANSMIT, &mut stop);
@@ -180,6 +181,7 @@ fn cleanup_c_all_rows_use_bounded_production_apply_and_publication() {
     let inv = c.ifaces_mut[42].as_ref().unwrap();
     assert_eq!(inv.link_obj_type.as_ref().unwrap()[128], 0);
     assert_eq!(inv.link_obj_number.as_ref().unwrap()[128], count_before);
+    assert!(!c.redraw_side);
 
     let mut empty = Packet::new(hex_bytes("002a0000"));
     c.psize = 4;
@@ -190,27 +192,35 @@ fn cleanup_c_all_rows_use_bounded_production_apply_and_publication() {
 
     c.tut_com_id = 548;
     c.redraw_chat = false;
+    let varp_before = c.gens.varp;
     let mut small = Packet::new(hex_bytes("0003fb"));
     c.psize = 3;
     c.handle_packet(ServerProt289::VARP_SMALL, &mut small);
     assert_eq!(c.var[3], -5);
     assert!(c.redraw_chat);
+    assert!(c.gens.varp > varp_before);
     c.redraw_chat = false;
     let mut same = Packet::new(hex_bytes("0003fb"));
     c.psize = 3;
     c.handle_packet(ServerProt289::VARP_SMALL, &mut same);
     assert!(!c.redraw_chat);
+    let varp_before = c.gens.varp;
     let mut large = Packet::new(hex_bytes("0004fffffff0"));
     c.psize = 6;
     c.handle_packet(ServerProt289::VARP_LARGE, &mut large);
     assert_eq!(c.var[4], -16);
+    assert!(c.gens.varp > varp_before);
 
     c.var = vec![11, 22];
     c.var_serv = vec![11, 33];
+    c.redraw_chat = false;
+    let varp_before = c.gens.varp;
     let mut sync = Packet::new(vec![]);
     c.psize = 0;
     c.handle_packet(ServerProt289::VARP_SYNC, &mut sync);
     assert_eq!(c.var, vec![11, 33]);
+    assert!(c.gens.varp > varp_before);
+    assert!(!c.redraw_chat);
 
     let stat_before = c.gens.stat;
     let mut stat = Packet::new(hex_bytes("02000003e807"));

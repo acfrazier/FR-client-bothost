@@ -4502,7 +4502,6 @@ impl Client {
     }
 
     fn apply_inventory_stop_transmit_289(&mut self, component: i32) {
-        self.redraw_side = true;
         if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
             .get_mut(component as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
         {
@@ -4536,7 +4535,6 @@ impl Client {
         }
         if changed {
             self.redraw_side = true;
-            if self.tut_com_id != -1 { self.redraw_chat = true; }
         }
         R289Publication { varp: true, ..Default::default() }
     }

@@ -32,7 +32,7 @@ The R289 path keeps the 274 dispatcher independent.
 - Small varps use signed i8 values, large varps use i32 values, and sync
   reconciles `var_serv` without zeroing missing client entries.
 - Changed small/large varps dirty tutorial chat only when `tut_com_id` is open;
-  unchanged values do not add that redraw.
+  unchanged values and VARP_SYNC reconciliation do not add that redraw.
 - Stats derive base level from XP while retaining the wire effective level.
 - Run weight uses signed i16 and run energy uses the wire u8; both publish the
   stat family.
@@ -50,9 +50,10 @@ Production-path tests added in
 
 - `cleanup_c_all_rows_use_bounded_production_apply_and_publication`: exact
   bytes for all nine C rows, extended count, signed varp/weight, tutorial
-  redraw/no-redraw, varp sync, derived stat level, family publication, sparse
-  slots 127/128/255/256, out-of-range consumption, empty full inventory and
-  stop-transmit count preservation.
+  redraw/no-redraw (including VARP_SYNC no-chat redraw), varp generation
+  advancement for small/large/sync, derived stat level, family publication,
+  sparse slots 127/128/255/256, out-of-range consumption, empty full
+  inventory, and stop-transmit count preservation with no side redraw.
 - `cleanup_c_inventory_rejects_stale_zero_and_truncated_frames_atomically`:
   stale backing data on a declared zero frame and a truncated later full entry
   cannot publish staged inventory data.
