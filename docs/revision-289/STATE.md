@@ -405,7 +405,22 @@ live proof reproduced `T1 - 160,4 - 63,63`. The transitive startup trace is
 `docs/revision-289/startup-colour-failure-report.md`. Java field semantics are
 component g2 + RGB555 colour g2 expanded to the per-client interface overlay.
 
-Verification: stage2 36 passed, stage1 26 passed, contract verifier PASS
-256/82/50, `cargo check -p client -p client-play` passed, and `git diff --check`
-passed. Live acceptance, authentic cache/server pairing, and final Grok4.6
+Exact verification: stage2 test 36 passed, stage1 26 passed, contract verifier PASS
+256/82/50, `cargo check -p client -p client-play` passed, and `git diff --check` passed.
+
+## Full dispatch audit / cleanup contract (t_43f9ff17)
+
+Source/handler audit deliverables are `docs/revision-289/full-dispatch-cleanup-plan.md`
+and `docs/revision-289/full-dispatch-audit.json`. The machine-readable ledger
+enumerates all 256 inbound wire IDs from primary 289 `Class17.anIntArray209`,
+retains exact source anchors, records independent Rust dispatch/handler anchors,
+and includes all 82 outbound rows from `protocol-289.json`. Current bounded
+verdicts are 22 complete, 21 partial, and 213 missing/fail-closed; unresolved
+rows are explicitly not enabled from constants alone. The cleanup contract
+preserves default 274 behavior, strict framing, generation/redraw ownership and
+the `scene_state==1` last-FBO freeze. HINT_ARROW is called out as the isolated
+engine's opcode 115 with an exact six-byte payload and requires its own R289
+source trace. Conditional engine/content script emissions remain reachable until
+excluded by an actual isolated fixture. No code or live proof was performed;
+next implementation must follow the semantic sections and gates in the plan.
 review remain root-owned prerequisites. Same-card reviewer handoff follows.
