@@ -1149,6 +1149,11 @@ fn cleanup_b_modal_animation_reset_distinguishes_single_and_combined_opens() {
     c.handle_packet(ServerProt289::IF_OPENMAIN_SIDE, &mut combined);
     assert_eq!(c.ifaces_mut[21].as_ref().unwrap().anim_frame, 7);
     assert_eq!(c.ifaces_mut[21].as_ref().unwrap().anim_cycle, 8);
+    c.redraw_icons = false;
+    c.psize = 2;
+    let mut side = Packet::new(hex_bytes("000c"));
+    c.handle_packet(ServerProt289::IF_OPENSIDE, &mut side);
+    assert!(c.redraw_icons, "single side-modal open dirties side icons");
 }
 
 #[test]
