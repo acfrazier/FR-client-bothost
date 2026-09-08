@@ -104,6 +104,7 @@ fn feed_frames(c: &mut Client, frame: &[u8], max_polls: usize) -> usize {
 
 #[test]
 fn server_prot_289_stage2_named_opcodes() {
+    assert_eq!(ServerProt289::UPDATE_INV_STOP_TRANSMIT, 28);
     assert_eq!(ServerProt289::CHAT_FILTER_SETTINGS, 13);
     assert_eq!(ServerProt289::PLAYER_INFO, 188);
     assert_eq!(ServerProt289::NPC_INFO, 65);
@@ -123,6 +124,137 @@ fn server_prot_289_stage2_named_opcodes() {
     assert_ne!(ServerProt::LOGOUT, ServerProt289::LOGOUT);
     assert_ne!(ServerProt::PLAYER_INFO, ServerProt289::PLAYER_INFO);
     assert_ne!(ServerProt::REBUILD_NORMAL, ServerProt289::REBUILD_NORMAL);
+}
+
+#[test]
+fn cleanup_c_all_rows_use_bounded_production_apply_and_publication() {
+    let mut c = client_289();
+    ensure_iface(&mut c, 42);
+    {
+        let slots = Arc::make_mut(&mut c.ifaces_mut);
+        let inv = Arc::make_mut(slots[42].as_mut().unwrap());
+        inv.link_obj_type = Some(vec![9; 300]);
+        inv.link_obj_number = Some(vec![8; 300]);
+    }
+
+    let mut full = Packet::new(hex_bytes("002a00020001020003ff00000005"));
+    c.psize = 14;
+    let inv_before = c.gens.inv;
+    c.handle_packet(ServerProt289::UPDATE_INV_FULL, &mut full);
+    assert_eq!(full.pos, 14);
+    assert_eq!(c.gens.inv, inv_before + 1);
+    let inv = c.ifaces_mut[42].as_ref().unwrap();
+    assert_eq!(inv.link_obj_type.as_ref().unwrap()[1], 3);
+    assert_eq!(inv.link_obj_number.as_ref().unwrap()[1], 5);
+
+    let mut partial = Packet::new(hex_bytes("002a7f00010180800002ff00000009"));
+    c.psize = 15;
+    c.handle_packet(ServerProt289::UPDATE_INV_PARTIAL, &mut partial);
+    assert_eq!(partial.pos, 15);
+    let inv = c.ifaces_mut[42].as_ref().unwrap();
+    assert_eq!(inv.link_obj_number.as_ref().unwrap()[127], 1);
+    assert_eq!(inv.link_obj_number.as_ref().unwrap()[128], 9);
+
+    let mut sparse = Packet::new(hex_bytes("002a80ff00090181000008ff00000010"));
+    c.psize = 16;
+    c.handle_packet(ServerProt289::UPDATE_INV_PARTIAL, &mut sparse);
+    let inv = c.ifaces_mut[42].as_ref().unwrap();
+    assert_eq!(inv.link_obj_number.as_ref().unwrap()[255], 1);
+    assert_eq!(inv.link_obj_number.as_ref().unwrap()[256], 16);
+
+    let mut out_of_range = Packet::new(hex_bytes("002a8200000901"));
+    c.psize = 7;
+    c.handle_packet(ServerProt289::UPDATE_INV_PARTIAL, &mut out_of_range);
+    assert_eq!(out_of_range.pos, 7);
+
+    let count_before = c.ifaces_mut[42]
+        .as_ref()
+        .unwrap()
+        .link_obj_number
+        .as_ref()
+        .unwrap()[128];
+    let mut stop = Packet::new(hex_bytes("002a"));
+    c.psize = 2;
+    c.handle_packet(ServerProt289::UPDATE_INV_STOP_TRANSMIT, &mut stop);
+    assert_eq!(stop.pos, 2);
+    let inv = c.ifaces_mut[42].as_ref().unwrap();
+    assert_eq!(inv.link_obj_type.as_ref().unwrap()[128], 0);
+    assert_eq!(inv.link_obj_number.as_ref().unwrap()[128], count_before);
+
+    let mut empty = Packet::new(hex_bytes("002a0000"));
+    c.psize = 4;
+    c.handle_packet(ServerProt289::UPDATE_INV_FULL, &mut empty);
+    let inv = c.ifaces_mut[42].as_ref().unwrap();
+    assert_eq!(inv.link_obj_type.as_ref().unwrap()[0], 0);
+    assert_eq!(inv.link_obj_number.as_ref().unwrap()[0], 0);
+
+    c.tut_com_id = 548;
+    c.redraw_chat = false;
+    let mut small = Packet::new(hex_bytes("0003fb"));
+    c.psize = 3;
+    c.handle_packet(ServerProt289::VARP_SMALL, &mut small);
+    assert_eq!(c.var[3], -5);
+    assert!(c.redraw_chat);
+    c.redraw_chat = false;
+    let mut same = Packet::new(hex_bytes("0003fb"));
+    c.psize = 3;
+    c.handle_packet(ServerProt289::VARP_SMALL, &mut same);
+    assert!(!c.redraw_chat);
+    let mut large = Packet::new(hex_bytes("0004fffffff0"));
+    c.psize = 6;
+    c.handle_packet(ServerProt289::VARP_LARGE, &mut large);
+    assert_eq!(c.var[4], -16);
+
+    c.var = vec![11, 22];
+    c.var_serv = vec![11, 33];
+    let mut sync = Packet::new(vec![]);
+    c.psize = 0;
+    c.handle_packet(ServerProt289::VARP_SYNC, &mut sync);
+    assert_eq!(c.var, vec![11, 33]);
+
+    let stat_before = c.gens.stat;
+    let mut stat = Packet::new(hex_bytes("02000003e807"));
+    c.psize = 6;
+    c.handle_packet(ServerProt289::UPDATE_STAT, &mut stat);
+    assert_eq!(c.stat_xp[2], 1000);
+    assert!(c.stat_base_level[2] > 1);
+    let mut energy = Packet::new(vec![77]);
+    c.psize = 1;
+    c.handle_packet(ServerProt289::UPDATE_RUNENERGY, &mut energy);
+    let mut weight = Packet::new(hex_bytes("ffce"));
+    c.psize = 2;
+    c.handle_packet(ServerProt289::UPDATE_RUNWEIGHT, &mut weight);
+    assert_eq!(c.runenergy, 77);
+    assert_eq!(c.runweight, -50);
+    assert_eq!(c.gens.stat, stat_before + 3);
+}
+
+#[test]
+fn cleanup_c_inventory_rejects_stale_zero_and_truncated_frames_atomically() {
+    let mut c = client_289();
+    ensure_iface(&mut c, 42);
+    {
+        let slots = Arc::make_mut(&mut c.ifaces_mut);
+        let inv = Arc::make_mut(slots[42].as_mut().unwrap());
+        inv.link_obj_type = Some(vec![7; 4]);
+        inv.link_obj_number = Some(vec![11; 4]);
+    }
+
+    // A declared zero-length frame must not fall back to stale backing bytes.
+    let mut stale = Packet::new(hex_bytes("002a0001000101"));
+    c.psize = 0;
+    c.handle_packet(ServerProt289::UPDATE_INV_FULL, &mut stale);
+    let inv = c.ifaces_mut[42].as_ref().unwrap();
+    assert_eq!(inv.link_obj_type.as_ref().unwrap()[0], 7);
+    assert_eq!(inv.link_obj_number.as_ref().unwrap()[0], 11);
+
+    // A later truncated entry must not publish an earlier staged entry.
+    let mut truncated = Packet::new(hex_bytes("002a00020001010002"));
+    c.psize = 9;
+    c.handle_packet(ServerProt289::UPDATE_INV_FULL, &mut truncated);
+    let inv = c.ifaces_mut[42].as_ref().unwrap();
+    assert_eq!(inv.link_obj_type.as_ref().unwrap()[0], 7);
+    assert_eq!(inv.link_obj_number.as_ref().unwrap()[0], 11);
 }
 
 #[test]

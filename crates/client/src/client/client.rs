@@ -386,6 +386,15 @@ enum R289Operation {
     Logout,
     LastLoginInfo(LastLoginInfo),
     Interface(R289InterfaceOperation),
+    InventoryFull { component: i32, entries: Vec<(i32, i32)> },
+    InventoryPartial { component: i32, entries: Vec<(i32, i32, i32)> },
+    InventoryStopTransmit { component: i32 },
+    VarpSmall { id: i32, value: i32 },
+    VarpLarge { id: i32, value: i32 },
+    VarpSync,
+    UpdateStat { stat: i32, xp: i32, level: i32 },
+    RunEnergy(i32),
+    RunWeight(i32),
 }
 
 impl R289Operation {
@@ -446,10 +455,61 @@ impl R289Operation {
                 component: payload.g2(), npc: payload.g2(),
             }),
             ServerProt289::IF_OPENSIDE => Self::Interface(R289InterfaceOperation::IfOpenSide(payload.g2())),
+            ServerProt289::UPDATE_INV_STOP_TRANSMIT => Self::InventoryStopTransmit {
+                component: payload.g2(),
+            },
+            ServerProt289::UPDATE_INV_FULL => {
+                let component = payload.g2();
+                let count = payload.g2();
+                let mut entries = Vec::with_capacity(count as usize);
+                for _ in 0..count {
+                    entries.push(Self::decode_inventory_entry(payload));
+                }
+                Self::InventoryFull { component, entries }
+            }
+            ServerProt289::UPDATE_INV_PARTIAL => {
+                let component = payload.g2();
+                let mut entries = Vec::new();
+                while payload.available() != 0 {
+                    let slot = if payload.data()[payload.pos] < 0x80 {
+                        payload.g1()
+                    } else {
+                        payload.g2() - 0x8000
+                    };
+                    let (object, count) = Self::decode_inventory_entry(payload);
+                    entries.push((slot, object, count));
+                }
+                Self::InventoryPartial { component, entries }
+            }
+            ServerProt289::VARP_SMALL => Self::VarpSmall {
+                id: payload.g2(),
+                value: payload.g1b(),
+            },
+            ServerProt289::VARP_LARGE => Self::VarpLarge {
+                id: payload.g2(),
+                value: payload.g4(),
+            },
+            ServerProt289::VARP_SYNC => Self::VarpSync,
+            ServerProt289::UPDATE_STAT => Self::UpdateStat {
+                stat: payload.g1(),
+                xp: payload.g4(),
+                level: payload.g1(),
+            },
+            ServerProt289::UPDATE_RUNENERGY => Self::RunEnergy(payload.g1()),
+            ServerProt289::UPDATE_RUNWEIGHT => Self::RunWeight(payload.g2b()),
             _ => return None,
         };
         assert_eq!(payload.available(), 0, "unconsumed Section A frame");
         Some(operation)
+    }
+
+    fn decode_inventory_entry(payload: &mut Packet) -> (i32, i32) {
+        let object = payload.g2();
+        let count = match payload.g1() {
+            255 => payload.g4(),
+            count => count,
+        };
+        (object, count)
     }
 }
 
@@ -4372,9 +4432,126 @@ impl Client {
             }
             R289Operation::LastLoginInfo(info) => self.apply_last_login_info(info),
             R289Operation::Interface(operation) => self.apply_interface_operation_289(operation),
+            R289Operation::InventoryFull { component, entries } => {
+                self.apply_inventory_full_289(component, entries);
+                R289Publication { inv: true, ..Default::default() }
+            }
+            R289Operation::InventoryPartial { component, entries } => {
+                self.apply_inventory_partial_289(component, entries);
+                R289Publication { inv: true, ..Default::default() }
+            }
+            R289Operation::InventoryStopTransmit { component } => {
+                self.apply_inventory_stop_transmit_289(component);
+                R289Publication { inv: true, ..Default::default() }
+            }
+            R289Operation::VarpSmall { id, value } => self.apply_varp_289(id, value),
+            R289Operation::VarpLarge { id, value } => self.apply_varp_289(id, value),
+            R289Operation::VarpSync => self.apply_varp_sync_289(),
+            R289Operation::UpdateStat { stat, xp, level } => {
+                self.apply_update_stat_289(stat, xp, level);
+                R289Publication { stat: true, ..Default::default() }
+            }
+            R289Operation::RunEnergy(value) => {
+                if self.active_icon == 12 { self.redraw_side = true; }
+                self.runenergy = value;
+                R289Publication { stat: true, ..Default::default() }
+            }
+            R289Operation::RunWeight(value) => {
+                self.runweight = value;
+                if self.active_icon == 12 { self.redraw_side = true; }
+                R289Publication { stat: true, ..Default::default() }
+            }
         };
         self.ptype = -1;
         R289Outcome::Applied(publication)
+    }
+
+    fn apply_inventory_full_289(&mut self, component: i32, entries: Vec<(i32, i32)>) {
+        self.redraw_side = true;
+        if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
+            .get_mut(component as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+        {
+            if let (Some(types), Some(numbers)) = (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut()) {
+                let n = entries.len().min(types.len());
+                for (i, &(object, count)) in entries.iter().take(n).enumerate() {
+                    types[i] = object;
+                    numbers[i] = count;
+                }
+                for i in n..types.len() {
+                    types[i] = 0;
+                    numbers[i] = 0;
+                }
+            }
+        }
+    }
+
+    fn apply_inventory_partial_289(&mut self, component: i32, entries: Vec<(i32, i32, i32)>) {
+        self.redraw_side = true;
+        if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
+            .get_mut(component as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+        {
+            if let (Some(types), Some(numbers)) = (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut()) {
+                for (slot, object, count) in entries {
+                    if slot >= 0 && (slot as usize) < types.len() {
+                        types[slot as usize] = object;
+                        numbers[slot as usize] = count;
+                    }
+                }
+            }
+        }
+    }
+
+    fn apply_inventory_stop_transmit_289(&mut self, component: i32) {
+        self.redraw_side = true;
+        if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
+            .get_mut(component as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+        {
+            if let Some(types) = inv.link_obj_type.as_mut() {
+                for object in types { *object = 0; }
+            }
+        }
+    }
+
+    fn apply_varp_289(&mut self, id: i32, value: i32) -> R289Publication {
+        let changed = self.var.get(id as usize).copied() != Some(value);
+        grow_write(&mut self.var_serv, id, value);
+        if changed {
+            grow_write(&mut self.var, id, value);
+            self.client_var(id);
+            self.redraw_side = true;
+            if self.tut_com_id != -1 { self.redraw_chat = true; }
+        }
+        R289Publication { varp: true, ..Default::default() }
+    }
+
+    fn apply_varp_sync_289(&mut self) -> R289Publication {
+        let mut changed = false;
+        for i in 0..self.var_serv.len() {
+            let Some(&value) = self.var_serv.get(i) else { continue };
+            if self.var.get(i).copied() != Some(value) {
+                grow_write(&mut self.var, i as i32, value);
+                self.client_var(i as i32);
+                changed = true;
+            }
+        }
+        if changed {
+            self.redraw_side = true;
+            if self.tut_com_id != -1 { self.redraw_chat = true; }
+        }
+        R289Publication { varp: true, ..Default::default() }
+    }
+
+    fn apply_update_stat_289(&mut self, stat: i32, xp: i32, level: i32) {
+        self.redraw_side = true;
+        if let Some(index) = usize::try_from(stat).ok().filter(|&i| i < self.stat_xp.len()) {
+            self.stat_xp[index] = xp;
+            self.stat_effective_level[index] = level;
+            let mut base = 1;
+            for (i, threshold) in level_experience().iter().enumerate().take(98) {
+                if xp >= *threshold { base = (i + 2) as i32; }
+            }
+            self.stat_base_level[index] = base;
+        }
     }
 
     fn apply_interface_operation_289(&mut self, operation: R289InterfaceOperation) -> R289Publication {
@@ -7030,11 +7207,25 @@ impl Client {
         }
     }
 
-    /// Common R289 admission and publication boundary. Section A is fully
-    /// decoded before apply. B-H retain their existing (not all atomic)
+    /// Common R289 admission and publication boundary. R289 operations are
+    /// fully decoded before apply; B-H retain their existing (not all atomic)
     /// handlers; their existing generation effects are returned at those arms.
     fn dispatch_packet_289(&mut self, ptype: i32, payload: &mut Packet) -> R289Outcome {
-        let end = self.inbound_end(payload);
+        // A declared zero-length R289 frame is authoritative even when a
+        // socket-free caller reuses a backing allocation without stamping it.
+        // In particular, inventory zero frames must not decode stale bytes.
+        let end = if payload.frame_end().is_none()
+            && self.psize == 0
+            && matches!(
+                ptype,
+                ServerProt289::UPDATE_INV_FULL
+                    | ServerProt289::UPDATE_INV_PARTIAL
+                    | ServerProt289::UPDATE_INV_STOP_TRANSMIT
+            ) {
+            0
+        } else {
+            self.inbound_end(payload)
+        };
         payload.set_frame_end(end);
         assert_eq!(payload.pos, 0, "frame must start at zero");
         if let Some(&size) = usize::try_from(ptype)
@@ -7114,38 +7305,6 @@ impl Client {
                 }
                 self.ptype = -1;
             }
-            // UPDATE_STAT: stat id, experience, effective level.
-            x if x == ServerProt289::UPDATE_STAT => {
-                self.redraw_side = true;
-                let stat = payload.g1();
-                let xp = payload.g4();
-                let level = payload.g1();
-                if stat >= 0 && (stat as usize) < self.stat_xp.len() {
-                    self.stat_xp[stat as usize] = xp;
-                    self.stat_effective_level[stat as usize] = level;
-                    let mut base = 1;
-                    for i in 0..98 {
-                        if xp >= level_experience()[i] {
-                            base = (i + 2) as i32;
-                        }
-                    }
-                    self.stat_base_level[stat as usize] = base;
-                }
-                self.ptype = -1;
-            }
-            // UPDATE_RUNENERGY: one-byte energy percentage.
-            x if x == ServerProt289::UPDATE_RUNENERGY => {
-                if self.active_icon == 12 {
-                    self.redraw_side = true;
-                }
-                self.runenergy = payload.g1();
-                self.ptype = -1;
-            }
-            // UPDATE_RUNWEIGHT: signed carried weight.
-            x if x == ServerProt289::UPDATE_RUNWEIGHT => {
-                self.apply_update_runweight(payload);
-                self.ptype = -1;
-            }
 
             // First-tick zone bootstrap uses the R289 source-defined zone
             // coordinates and inner opcode table.
@@ -7181,18 +7340,7 @@ impl Client {
                 }
                 self.ptype = -1;
             }
-            // 289 inventory full: g2 component, g2 entry count (client.java:2972-2990).
-            x if x == ServerProt289::UPDATE_INV_FULL => {
-                self.apply_update_inv_full(payload, /*count_is_g2=*/ true);
-                publication.inv = true;
-                self.ptype = -1;
-            }
-            // 289 inventory partial: gsmart slot (client.java:3477-3494).
-            x if x == ServerProt289::UPDATE_INV_PARTIAL => {
-                self.apply_update_inv_partial(payload, /*slot_is_gsmart=*/ true);
-                publication.inv = true;
-                self.ptype = -1;
-            }
+
             // Player update method139/212/185/172/153/128 (client.java:2819-2823).
             // Mask bit layout matches 274 player_update (method128).
             x if x == ServerProt289::PLAYER_INFO => {
@@ -7292,48 +7440,6 @@ impl Client {
             // IF_OPENOVERLAY: signed g2 (client.java:3393-3400).
             x if x == ServerProt289::IF_OPENOVERLAY => {
                 self.apply_if_openoverlay(payload);
-                self.ptype = -1;
-            }
-            // VARP_SMALL: g2 + signed g1 (client.java:3402-3415).
-            x if x == ServerProt289::VARP_SMALL => {
-                publication.varp = true;
-                let varp_id = payload.g2();
-                let value = payload.g1b();
-                grow_write(&mut self.var_serv, varp_id, value);
-                if self.var.get(varp_id as usize).copied() != Some(value) {
-                    grow_write(&mut self.var, varp_id, value);
-                    self.client_var(varp_id);
-                    self.redraw_side = true;
-                }
-                self.ptype = -1;
-            }
-            // VARP_LARGE: g2 + g4 (client.java:3526-3539).
-            x if x == ServerProt289::VARP_LARGE => {
-                publication.varp = true;
-                let varp_id = payload.g2();
-                let value = payload.g4();
-                grow_write(&mut self.var_serv, varp_id, value);
-                if self.var.get(varp_id as usize).copied() != Some(value) {
-                    grow_write(&mut self.var, varp_id, value);
-                    self.client_var(varp_id);
-                    self.redraw_side = true;
-                }
-                self.ptype = -1;
-            }
-            // VARP_SYNC: zero payload bulk copy (client.java:3351-3361).
-            x if x == ServerProt289::VARP_SYNC => {
-                publication.varp = true;
-                for i in 0..self.var.len() {
-                    if self.var_serv.get(i).copied() != Some(self.var[i]) {
-                        if let Some(&value) = self.var_serv.get(i) {
-                            self.var[i] = value;
-                        } else {
-                            self.var[i] = 0;
-                        }
-                        self.client_var(i as i32);
-                        self.redraw_side = true;
-                    }
-                }
                 self.ptype = -1;
             }
             _ => {

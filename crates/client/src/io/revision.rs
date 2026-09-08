@@ -50,6 +50,7 @@ pub struct ServerProt289;
 
 impl ServerProt289 {
     // Stage 1
+    pub const UPDATE_INV_STOP_TRANSMIT: i32 = 28;
     pub const UPDATE_INV_FULL: i32 = 107;
     pub const UPDATE_INV_PARTIAL: i32 = 76;
     // Startup chat modes (primary client.java:2612-2619).

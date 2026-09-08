@@ -473,3 +473,20 @@ Active card remains t_358c02ad, corrective implementation ready for same-card
 reviewer=reviewer / actual Grok4.5. No cleanup implementation commit is accepted
 yet. Report: docs/revision-289/cleanup-a-report.md (exact commands and limitations).
 Cleanup B implementation (t_36cd00a5) now includes the requested review corrections: single-modal animation resets, transformed-NPC player heads, and dedicated production-path fixtures for all 21 rows plus malformed reset and two-client overlay isolation. Report: docs/revision-289/cleanup-b-report.md. Exact isolated serial tests: client lib 73, stage1 46, stage2 40, stage3 23; focused cleanup-B 4; client check and diff check passed after the final side-icon correction. Sections C-H remain root-dispatched future work: inventory/varps/stats, actors, direct/strict zones, social/tutorial kind0, camera/audio/HUD, outbound coverage. Authentic cache/server pairing, live RSA/ISAAC/presentation and final whole-branch Grok4.6 remain separate root gates.
+
+## Cleanup C implementation (t_19843fbb)
+
+Section C now has bounded decode-before-apply coverage for all nine owned rows:
+28, 46, 75, 76, 97, 107, 154, 172 and 195. R289 full inventory retains the
+u16 count, partial inventory retains uSmart slots, extended counts are staged,
+stop-transmit clears IDs without counts, signed varps/weight and derived stat
+levels are applied, varp sync reconciles, changed tutorial varps dirty chat,
+and stat-family publication is returned for stats/energy/weight. Declared zero
+inventory frames no longer use stale backing allocation bytes. Report:
+docs/revision-289/cleanup-c-report.md.
+
+Verification in isolated CARGO_TARGET_DIR: cargo check client PASS; stage1
+46/46; stage2 42/42; server_packets 19/19; focused cleanup C 2/2. The
+combined stage1 serial load-sensitive fixed-empty-sync failure was reproduced
+as pre-existing and passed isolated. Same-card reviewer=reviewer is next;
+Sections D-H and live/cache/Grok4.6 gates remain separate.
