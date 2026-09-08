@@ -52,6 +52,8 @@ impl ServerProt289 {
     // Stage 1
     pub const UPDATE_INV_FULL: i32 = 107;
     pub const UPDATE_INV_PARTIAL: i32 = 76;
+    // Startup chat modes (primary client.java:2612-2619).
+    pub const CHAT_FILTER_SETTINGS: i32 = 13;
     // Stage 2 — login/actors/world/widgets/reset (client.java dispatch)
     pub const LOGOUT: i32 = 121;
     pub const PLAYER_INFO: i32 = 188;
@@ -124,6 +126,10 @@ mod tests {
         assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::VARP_SMALL as usize], 3);
         assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::VARP_LARGE as usize], 6);
         assert_eq!(SERVER_PROT_SIZES_289[ServerProt289::VARP_SYNC as usize], 0);
+        assert_eq!(
+            SERVER_PROT_SIZES_289[ServerProt289::CHAT_FILTER_SETTINGS as usize],
+            3
+        );
     }
 
     #[test]

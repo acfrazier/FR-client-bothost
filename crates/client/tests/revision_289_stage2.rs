@@ -104,6 +104,7 @@ fn feed_frames(c: &mut Client, frame: &[u8], max_polls: usize) -> usize {
 
 #[test]
 fn server_prot_289_stage2_named_opcodes() {
+    assert_eq!(ServerProt289::CHAT_FILTER_SETTINGS, 13);
     assert_eq!(ServerProt289::PLAYER_INFO, 188);
     assert_eq!(ServerProt289::NPC_INFO, 65);
     assert_eq!(ServerProt289::REBUILD_NORMAL, 219);
@@ -121,6 +122,26 @@ fn server_prot_289_stage2_named_opcodes() {
     assert_ne!(ServerProt::LOGOUT, ServerProt289::LOGOUT);
     assert_ne!(ServerProt::PLAYER_INFO, ServerProt289::PLAYER_INFO);
     assert_ne!(ServerProt::REBUILD_NORMAL, ServerProt289::REBUILD_NORMAL);
+}
+
+#[test]
+fn startup_chat_filter_settings_289_dispatches_without_t1() {
+    let mut c = client_289();
+    let mut p = Packet::new(vec![2, 1, 2]);
+    c.psize = 3;
+    let before = c.gens.chat;
+
+    c.handle_packet(ServerProt289::CHAT_FILTER_SETTINGS, &mut p);
+
+    assert_eq!(p.pos, 3, "exact three-byte payload consumption");
+    assert_eq!(c.chat_public_mode, 2);
+    assert_eq!(c.chat_private_mode, 1);
+    assert_eq!(c.chat_trade_mode, 2);
+    assert!(c.redraw_chat_mode);
+    assert!(c.redraw_chat);
+    assert_eq!(c.gens.chat, before + 1);
+    assert_eq!(c.ptype, -1);
+    assert!(c.ingame, "known startup packet must not log out");
 }
 
 // --- login RSA plaintext structure + version -------------------------------

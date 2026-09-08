@@ -3733,6 +3733,8 @@ impl Client {
                 || ptype == ServerProt289::VARP_SYNC
             {
                 self.gens.varp += 1;
+            } else if ptype == ServerProt289::CHAT_FILTER_SETTINGS {
+                self.gens.chat += 1;
             } else if ptype == ServerProt289::REBUILD_NORMAL {
                 self.bump_all_gens();
             }
@@ -6695,6 +6697,12 @@ impl Client {
     /// with 274 handlers) remain unknown/T1. No parallel full 289 decoder.
     fn dispatch_packet_289(&mut self, ptype: i32, payload: &mut Packet) {
         match ptype {
+            // 289 chat filter settings: public/private/trade mode bytes
+            // (client.java:2612-2619; anInt212/anInt234/anInt360).
+            x if x == ServerProt289::CHAT_FILTER_SETTINGS => {
+                self.apply_chat_filter_settings(payload);
+                self.ptype = -1;
+            }
             // 289 inventory full: g2 component, g2 entry count (client.java:2972-2990).
             x if x == ServerProt289::UPDATE_INV_FULL => {
                 self.apply_update_inv_full(payload, /*count_is_g2=*/ true);

@@ -5,8 +5,11 @@ Authorized 2026-09-07. Prepared branch codex/revision-289-client, base
 Current plan: plan.md. Required Grok4.6 whole-branch review t_77d35bfb
 REJECTED HEAD 0030afb — preserve docs/revision-289/branch-review.md.
 Correction t_b04f979b approved 0e3b6a7. Required Grok4.6 re-review
-t_615aa9ac: OFFLINE ACCEPTED (bounded) HEAD 0e3b6a7. See
-docs/revision-289/branch-rereview.md. Whole client / live is not accepted.
+t_615aa9ac: OFFLINE ACCEPTED (bounded) HEAD 0e3b6a7 — preserve
+docs/revision-289/branch-rereview.md. GPU gate t_57ec82eb approved
+fc5516c. Required final Grok4.6 re-review t_f4e2ad64: OFFLINE ACCEPTED
+(bounded) HEAD fc5516c. See docs/revision-289/branch-final-review.md.
+Whole client / live is not accepted.
 
 Primary source pin and supporting host evidence are named in plan.md and
 host-script-evidence.md. The live 289 server/cache pairing is unverified.
@@ -50,8 +53,14 @@ Serialized same-workspace dependency chain:
   t_77d35bfb rejection history. Not whole-client/live acceptance.
 - t_57ec82eb (implementer): post-review workspace GPU gate diagnosis + minimal
   fix (main_modal chrome dirty + scene test lock). See
-  docs/revision-289/gpu-workspace-gate-diagnosis.md. Production GPU fix needs
-  whole-branch re-review; not live acceptance.
+  docs/revision-289/gpu-workspace-gate-diagnosis.md. Same-card Grok4.5
+  approved fc5516c. Not live acceptance.
+- t_f4e2ad64 (branchreviewer): required final Grok4.6 whole-branch re-review
+  after GPU correction — OFFLINE ACCEPTED (bounded) on fc5516c. Model
+  grok-4.6 / xai-oauth. Deliverable docs/revision-289/branch-final-review.md.
+  Does not replace t_77d35bfb rejection or t_615aa9ac bounded accept.
+  Not whole-client/live acceptance. Solo workspace green; concurrent
+  orch maininit flake classified pre-existing /tmp, not fc5516c.
 
 Design boundary: retain 274 public constants and default construction; add
 explicit revision selection at the client/session boundary. Source contract
@@ -262,6 +271,79 @@ Post-fix verification (CARGO_TARGET_DIR this checkout):
 - revision_289 stage1/2/3 → 26+30+23; `--lib` 70; verifier PASS 256/82/50
 - `cargo check -p client -p client-play` → ok
 
-Whole-branch re-review required for this production GPU fix (does not
-replace t_615aa9ac bounded offline receipt; not live acceptance).
-Preserve branch-review.md rejection and branch-rereview.md bounded accept.
+Same-card Grok4.5 approved fc5516c. Whole-branch re-review is t_f4e2ad64
+below. Does not replace t_615aa9ac bounded offline receipt; not live
+acceptance. Preserve branch-review.md rejection and branch-rereview.md
+bounded accept.
+
+## Whole-branch final review (t_f4e2ad64) — OFFLINE ACCEPTED (bounded) fc5516c
+
+Independent Grok4.6 / xai-oauth. Exact HEAD
+fc5516c55e9ff4b95520d39efcccda065ae7bd43 vs prepared 716f79c.
+Deliverable: docs/revision-289/branch-final-review.md.
+t_77d35bfb rejection of 0030afb and t_615aa9ac bounded accept of 0e3b6a7
+are preserved.
+
+GPU production fix accepted: main_modal/main_overlay chrome dirty after
+warmup; test-only GPU_SCENE_TEST_LOCK. Pixel oracles unchanged vs 716f79c.
+freeze_last_scene / last-FBO / minimap hold unchanged vs 4f2048e. Lazy
+chrome when force cases off still proven. Baseline GPU gap attributed by
+`git diff 716f79c..0e3b6a7 -- gpu.rs` empty, not by assertion.
+
+Independent tests (this run, CARGO_TARGET_DIR this checkout):
+
+- `python3 tools/verify_revision_289_contract.py` → PASS 256/82/50
+- `cargo test -p client --test iface_model -- --test-threads=1` → 9 passed
+  (ordinary + frozen main modal)
+- `cargo test -p client --test gpu_texture -- --test-threads=16` → 10 passed
+- revision_289 stage1/2/3 → 26+30+23; `--lib` 70
+- `cargo check -p client -p client-play` → ok
+- `cargo test --workspace --no-fail-fast` (solo) → exit 0, 0 FAILED
+
+Orch concurrent workspace exit 101 on maininit (GPU green) is preserved:
+fixed `/tmp/274-maininit-*` dirs, file unchanged vs 716f79c, not fc5516c.
+Do not treat whole workspace as reliably green under concurrent processes.
+
+Whole client / live acceptance is **not** complete. Missing live
+prerequisites remain external. No follow-up implementer/luna cards. No
+pushes, merges, remotes, submodule, host, live-server, or other-checkout
+work.
+
+## Orchestration handoff (t_95bef768)
+
+Staged offline implementation and actual independent review sequence finished.
+Final source HEAD: fc5516c55e9ff4b95520d39efcccda065ae7bd43.
+Final Grok4.6 receipt: t_f4e2ad64 run 537, bounded offline acceptance;
+preceding GPU correction approval: t_57ec82eb run 534.
+
+Orch independently reproduced `cargo test --workspace --no-fail-fast` SOLO
+at this HEAD: exit 0, log `target/revision-289-orch-workspace-solo.log`.
+Earlier failed concurrent run remains in
+`target/revision-289-orch-workspace.log`; it is not erased by the solo pass.
+Contract verifier independently passed 256 inbound / 82 outbound / 50 fixtures;
+stage2 30 and stage3 23 passed. `git diff --check` passed.
+
+Parent Codex owns integration and authorization of any real 289 cache/endpoint/
+test-account work. No merge/push was done. Final reviewer STATE edits and
+`branch-final-review.md` are handed off uncommitted; source stays at the exact
+reviewed HEAD. Untracked one-shot tracer scripts are not accepted deliverables.
+
+Keep the bounded review limitations visible: packed-chat body and CHANGETYPE
+type-binding evidence are partial; widget string reads lack a separate payload
+cap; non-modal name/cross chrome refresh remains a noted limitation. These are
+not claimed complete by this offline milestone. Live RSA/ISAAC, authentic cache
+pairing, real scene construction and server login/action/logout remain unproven.
+
+## Startup packet parity checkpoint (t_82d212a4)
+
+Active implementation card t_82d212a4 added source-backed R289 opcode 13
+CHAT_FILTER_SETTINGS dispatch after the reproduced `T1 - 13,3 - 219,-1`.
+Primary anchors: `client.java:2612-2619` and `Class17.java:11` in the pinned
+289 deob. Existing opcode 219 REBUILD_NORMAL was audited and retained.
+Deliverable: `docs/revision-289/startup-packet-parity-report.md`.
+
+Exact verification: `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target
+cargo test -p client --test revision_289_stage2 -- --test-threads=1` — 31 passed,
+0 failed. Live RSA/ISAAC, authentic cache/server pairing, and full startup
+sequence remain unproven; root owns the next live run. Same-card reviewer
+handoff is required before accepting this checkpoint.

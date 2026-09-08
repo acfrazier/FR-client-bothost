@@ -183,17 +183,17 @@
       "confidence": "verified-id-and-length; fields-unknown"
     },
     {
-      "name": "camera_or_scene_triplet",
+      "name": "chat_filter_settings",
       "id": 13,
       "length": 3,
       "fields": [
-        "g1 field anInt212",
-        "g1 field anInt234",
-        "g1 field anInt360"
+        "g1 public chat mode (anInt212)",
+        "g1 private chat mode (anInt234)",
+        "g1 trade chat mode (anInt360)"
       ],
       "source_anchors": [
         "Class17.java:11 (anIntArray209[13] packet length)",
-        "client.java:2612-2619"
+        "client.java:2612-2619 (dispatch; redraw flags at 2616-2617)"
       ],
       "confidence": "verified-length-and-fields"
     },
