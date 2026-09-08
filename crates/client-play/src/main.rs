@@ -1,5 +1,6 @@
-//! `client-play`: log into a local 274 engine over TCP and run the client
-//! machine on the calling thread (`Client::new` + `run`). `--user/--pass`
+//! `client-play`: log into a local engine over TCP and run the client machine
+//! on the calling thread. Revision 274 is the default; pass `--revision 289`
+//! to opt into the source-grounded 289 profile. `--user/--pass`
 //! skip title login; without them the title screen is the control plane.
 //! `--window` presents the 765×503 applet (feature `window`, highmem);
 //! omit it for headless (lowmem, bot-host default). `--lowmem`/`--highmem`
@@ -18,7 +19,7 @@
 use std::env;
 use std::process::ExitCode;
 
-use client::client::{Client, ClientConfig};
+use client::client::{Client, ClientConfig, ClientRevision};
 use client::render::Renderer;
 
 #[cfg(feature = "window")]
@@ -46,6 +47,7 @@ struct Args {
     cpu: bool,
     /// `None` = pick from `--window` (windowed highmem, headless/bots lowmem).
     lowmem: Option<bool>,
+    revision: ClientRevision,
 }
 
 fn default_cache_dir() -> String {
@@ -55,53 +57,74 @@ fn default_cache_dir() -> String {
 /// clap-free argv parse: `--key value` pairs plus the `--window`/`--audio`
 /// flags. A missing value or an unknown key prints the usage and exits.
 /// Credentials are optional: the title screen is the control plane.
-fn parse_args() -> Args {
+fn parse_args_from<I>(values: I) -> Result<Args, ()>
+where
+    I: IntoIterator<Item = String>,
+{
     let mut args = Args {
         host: "127.0.0.1".into(),
         port: DEFAULT_PORT,
         http_port: 80,
         user: String::new(),
         pass: String::new(),
-        cache: default_cache_dir(),
+        cache: String::new(),
         window: false,
         audio: false,
         cpu: false,
         lowmem: None,
+        revision: ClientRevision::R274,
     };
-    let mut it = env::args().skip(1);
+    let mut it = values.into_iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
-            "--host" => args.host = value(&mut it),
-            "--port" => args.port = value(&mut it).parse().unwrap_or_else(|_| usage()),
-            "--http-port" => args.http_port = value(&mut it).parse().unwrap_or_else(|_| usage()),
-            "--user" => args.user = value(&mut it),
-            "--pass" => args.pass = value(&mut it),
-            "--cache" => args.cache = value(&mut it),
+            "--host" => args.host = value(&mut it).ok_or(())?,
+            "--port" => args.port = value(&mut it).ok_or(())?.parse().map_err(|_| ())?,
+            "--http-port" => args.http_port = value(&mut it).ok_or(())?.parse().map_err(|_| ())?,
+            "--user" => args.user = value(&mut it).ok_or(())?,
+            "--pass" => args.pass = value(&mut it).ok_or(())?,
+            "--cache" => args.cache = value(&mut it).ok_or(())?,
+            "--revision" => {
+                args.revision = match value(&mut it).ok_or(())?.as_str() {
+                    "274" => ClientRevision::R274,
+                    "289" => ClientRevision::R289,
+                    _ => return Err(()),
+                };
+            }
             "--window" => args.window = true,
             "--audio" => args.audio = true,
             "--cpu" => args.cpu = true,
             "--lowmem" => args.lowmem = Some(true),
             "--highmem" => args.lowmem = Some(false),
-            "--help" | "-h" => usage(),
-            _ => usage(),
+            "--help" | "-h" => return Err(()),
+            _ => return Err(()),
         }
     }
-    args
+    if args.cache.is_empty() {
+        args.cache = default_cache_dir();
+    }
+    Ok(args)
+}
+
+fn parse_args() -> Args {
+    parse_args_from(env::args().skip(1)).unwrap_or_else(|_| usage())
 }
 
 fn usage() -> ! {
     eprintln!(
         "usage: client-play [--user USER --pass PASS] \
          [--host HOST] [--port PORT] [--http-port PORT] [--cache DIR] \
+         [--revision 274|289] \
          [--window] [--audio] [--cpu] [--lowmem|--highmem]"
     );
     std::process::exit(2);
 }
 
-/// Next positional value or usage-exit (`|| usage()` so the never type
-/// coerces where a bare `fn() -> !` item does not).
-fn value(it: &mut std::iter::Skip<env::Args>) -> String {
-    it.next().unwrap_or_else(|| usage())
+/// Next positional value, if one is present.
+fn value<I>(it: &mut I) -> Option<String>
+where
+    I: Iterator<Item = String>,
+{
+    it.next()
 }
 
 fn main() -> ExitCode {
@@ -135,7 +158,7 @@ fn main() -> ExitCode {
         members: true,
         lowmem,
     };
-    let mut client = Client::new(config);
+    let mut client = Client::new_with_revision(config, args.revision);
     // `--http-port N` points the `maininit` jag fetch (and `Client::new`'s
     // pre-unpack `/crc` probe is unaffected: it always tries the default
     // origin) at a non-privileged local engine web port. maininit's
@@ -240,4 +263,54 @@ fn main() -> ExitCode {
         }
     });
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn argv(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn revision_defaults_to_274() {
+        assert_eq!(
+            parse_args_from(Vec::new()).unwrap().revision,
+            ClientRevision::R274
+        );
+    }
+
+    #[test]
+    fn revision_accepts_289_and_preserves_other_options() {
+        let args = parse_args_from(argv(&["--revision", "289", "--port", "1234"])).unwrap();
+        assert_eq!(args.revision, ClientRevision::R289);
+        assert_eq!(args.port, 1234);
+    }
+
+    #[test]
+    fn revision_rejects_invalid_and_missing_values() {
+        assert!(parse_args_from(argv(&["--revision", "290"])).is_err());
+        assert!(parse_args_from(argv(&["--revision"])).is_err());
+    }
+
+    #[test]
+    fn selected_revision_reaches_client_construction() {
+        let config = ClientConfig {
+            host: "127.0.0.1".into(),
+            port: DEFAULT_PORT,
+            cache_dir: "/path/that-does-not-exist".into(),
+            members: true,
+            lowmem: true,
+        };
+        let client = Client::from_shared_with_revision(
+            config,
+            Arc::new(client::config::Cache::default()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+            ClientRevision::R289,
+        );
+        assert_eq!(client.revision(), ClientRevision::R289);
+    }
 }
