@@ -11,9 +11,10 @@ fc5516c. Required final Grok4.6 re-review t_f4e2ad64: OFFLINE ACCEPTED
 (bounded) HEAD fc5516c. See docs/revision-289/branch-final-review.md.
 Whole client / live is not accepted.
 
-Current cleanup checkpoint: D accepted at 5f5148b on t_115f2843 by actual
-Grok4.5. E implementation t_3aa4481e is ready for same-card review (see
-cleanup-e-report.md and the final section below). F-H remain root-owned.
+Current cleanup checkpoint: F accepted at 97341e6 on t_4583da40 by actual
+Grok4.5, after accepted E2a0f774. G implementation t_7f7981c3 is ready for
+same-card review with explicit unresolved inherited fixture failures (see
+cleanup-g-report.md and the final section below). H remains root-owned.
 
 Primary source pin and supporting host evidence are named in plan.md and
 host-script-evidence.md. The live 289 server/cache pairing is unverified.
@@ -580,3 +581,38 @@ logout/current-world sorting and actual notice generations, SET_PLAYER_OP index
 5/nonzero priority, and malformed later fields. Focused cleanup-F tests pass
 6/6; full stage2, client lib/tests, workspace all-features, client-play
 check, contract verifier and diff check pass. Ready for same-card reviewer handoff.
+
+## Cleanup G implementation (t_7f7981c3)
+
+Accepted F foundation: 97341e64aea648b1d92d7f2a10e60080ff682f17,
+actual Grok4.5 review on t_4583da40. G stages all twelve owned rows
+29/73/82/115/133/136/164/177/187/204/208/247 through bounded R289Operation
+decode, packet-free apply and coalesced publication in private misc_289.
+Camera, six-byte unsigned hints, global sound/music gates, flag/timer/minimap
+and multiway HUD behavior have production-path fixtures. R274 constants/default
+and renderer resource/last-FBO ownership remain unchanged. Report:
+cleanup-g-report.md. G is not accepted; same-card reviewer=reviewer is next.
+
+Verification in this checkout's CARGO_TARGET_DIR: default focused G10/10,
+iface_model9/9, gpu_texture10/10 and lib73/73 pass; all-feature workspace check,
+contract verifier256/82/50, new-file rustfmt and diff check pass. Prior native
+workspace passed (199.3s receipt, target/cleanup-g-workspace.log). Earlier
+all-feature run was interrupted exit130/158.4s, not a pass. Preserve it and the
+prior resume log with stage1 welcome/logout, stage2 and E zone failures.
+
+Fresh completed solo all-feature workspace run is NOT GREEN:
+target/cleanup-g-all-features-final.log ends with two failed targets. Stage2
+47/48 rejects the enclosed loc fixture; E zones4/8 rejects loc/object/spotanim
+config IDs. These fixtures use /tmp without populating their required tables;
+their code and production E validators are unchanged from accepted F. No cache
+seeding, weakened bounds or E test edits were made in G. Source attribution is
+not a separately executed baseline build. Final stage1 46/46, G10/10, lib76,
+stage3 23, GPU suites and client-play4 passed. Exact failures and commands are
+in the report; reviewer/root must retain this regression-gate limitation.
+
+No H, live, host/server/cache, remote, merge, push or new-card work. Root retains
+authentic cache/server pairing, live RSA/ISAAC/presentation, resolution of the
+inherited fixture gate and required final whole-branch Grok4.6. Synthetic pixels
+and audio request state are not real presentation/audible proof. Hotspot:
+crates/client/src/client/client.rs remains serialized; inherited untracked
+review/helper artifacts remain unstaged.

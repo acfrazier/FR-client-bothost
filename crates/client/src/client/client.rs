@@ -394,6 +394,8 @@ enum R289InterfaceOperation {
 mod actor_289;
 #[path = "zone_289.rs"]
 mod zone_289;
+#[path = "misc_289.rs"]
+mod misc_289;
 
 /// Validated meaning, never a raw 274/289 opcode alias.
 enum R289Operation {
@@ -415,10 +417,15 @@ enum R289Operation {
     RunEnergy(i32),
     RunWeight(i32),
     Social(R289SocialOperation),
+    Misc(misc_289::MiscOperation),
 }
 
 impl R289Operation {
     fn decode(client: &Client, ptype: i32, payload: &mut Packet) -> Option<Self> {
+        if let Some(operation) = misc_289::MiscOperation::decode(client, ptype, payload) {
+            assert_eq!(payload.available(), 0, "unconsumed miscellaneous frame");
+            return Some(Self::Misc(operation));
+        }
         let operation = match ptype {
             ServerProt289::REBUILD_NORMAL => Self::Rebuild { zone_x: payload.g2(), zone_z: payload.g2() },
             60 | 71 | 83 | 87 | 90 | 91 | 106 | 117 | 144 | 155 | 176 | 194 | 233
@@ -4549,6 +4556,7 @@ impl Client {
                 R289Publication { stat: true, ..Default::default() }
             }
             R289Operation::Social(operation) => self.apply_social_operation_289(operation),
+            R289Operation::Misc(operation) => operation.apply(self),
         };
         self.ptype = -1;
         R289Outcome::Applied(publication)
