@@ -11,11 +11,16 @@ fc5516c. Required final Grok4.6 re-review t_f4e2ad64: OFFLINE ACCEPTED
 (bounded) HEAD fc5516c. See docs/revision-289/branch-final-review.md.
 Whole client / live is not accepted.
 
-Current cleanup checkpoint: G accepted at 9344ee6; cold-cache fixture isolation
-accepted at c9faade on t_0c645ab5. H implementation t_34667a70 is ready for
-same-card reviewer=reviewer (not yet accepted). Current cleanup plan section:
-full-dispatch-cleanup-plan.md H. See cleanup-h-report.md and the final section
-below; preserve earlier failed G/H test receipts and review history.
+Current cleanup checkpoint: A-H offline aggregate accepted at code0406ceb.
+H t_34667a70 approved actual Grok4.5/xai20260908_220159_daf89a; aggregate
+review t_82bfdbb6 approved actual Grok4.5/xai20260908_220659_2e28d6, report
+e4834d7 (cleanup-aggregate-review.md). H full all-features direct receipt is
+exit0/950tests; preserve prior exit101 and its test-only readiness repair.
+Required separate Grok4.6 whole-branch review is next before any live proof.
+Root defers the aggregate non-blocking dead fallback/assert-message/style debt;
+carry those observations and fixture-depth limits into whole-branch review.
+Current plan full-dispatch-cleanup-plan.md final offline/live boundary applies.
+This supersedes older H next-commit/review wording below; old failures remain.
 
 Primary source pin and supporting host evidence are named in plan.md and
 host-script-evidence.md. The live 289 server/cache pairing is unverified.
