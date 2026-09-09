@@ -577,6 +577,9 @@ pub struct GpuBackend {
     chrome_uploaded: bool,
     /// How many chrome atlas `write_texture`s ran (tests / BOT_DEBUG).
     chrome_upload_count: u64,
+    /// Overlay epoch last included in the uploaded chrome texture.
+    /// Entity overlays are animated independently of chrome redraw flags.
+    overlay_uploaded_epoch: u64,
     /// Live minimap/compass layer (172×156), uploaded every `scene_state==2`
     /// frame and composited over the hole punched in the chrome atlas.
     minimap_texture: wgpu::Texture,
@@ -894,6 +897,7 @@ impl GpuBackend {
             chrome_upload_pending: true,
             chrome_uploaded: false,
             chrome_upload_count: 0,
+            overlay_uploaded_epoch: u64::MAX,
             minimap_texture,
             minimap_bind_group,
             minimap_vertex_buf,
@@ -1402,6 +1406,13 @@ impl RenderBackend for GpuBackend {
     /// Then copy the write slot into the stable present texture the host
     /// samples.
     fn finish(&mut self, r: &mut Renderer) -> FrameOutput {
+        // `entity_overlays` writes into the CPU composite after the scene
+        // texture is rendered. Its pixels therefore need a fresh chrome
+        // upload even when side/chat/interface redraw flags are unchanged.
+        // Without this, the GPU keeps the first hint crown position and
+        // blink phase in its persistent chrome texture.
+        self.chrome_upload_pending |=
+            overlay_upload_needed(self.overlay_uploaded_epoch, r.overlay_epoch);
         let write = 1 - self.present_slot;
         let mut copy_encoder =
             self.context
@@ -1490,6 +1501,7 @@ impl RenderBackend for GpuBackend {
             self.chrome_upload_count += 1;
             self.chrome_uploaded = true;
             self.chrome_upload_pending = false;
+            self.overlay_uploaded_epoch = r.overlay_epoch;
             if !punch_minimap {
                 self.minimap_held = false;
             }
@@ -1606,6 +1618,13 @@ pub(crate) fn should_cls_scene_overlays(kind: FrameKind, scene_state: i32) -> bo
     !freeze_last_scene(kind, scene_state)
 }
 
+/// Return whether the persistent GPU chrome texture is missing the current
+/// CPU-rendered entity overlay epoch. NPC movement and hint blink are
+/// overlay-only changes, but the upload still must replace the old pixels.
+pub(crate) fn overlay_upload_needed(uploaded_epoch: u64, current_epoch: u64) -> bool {
+    uploaded_epoch != current_epoch
+}
+
 /// Test helper: allocate + fill chrome RGBA (production reuses `chrome_rgba`
 /// via [`fill_draw_area_rgba`]). When the scene was rendered, the scene
 /// window — the fixed rect x∈[4,516), y∈[4,338) — takes overlay alpha from
@@ -1701,8 +1720,8 @@ fn fill_minimap_rgba(map: &PixMap, bytes_per_row: u32, bytes: &mut Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::{
-        draw_area_rgba, freeze_last_scene, should_cls_scene_overlays, FRAME_H, FRAME_W, SCENE_H,
-        SCENE_W,
+        draw_area_rgba, freeze_last_scene, overlay_upload_needed, should_cls_scene_overlays,
+        FRAME_H, FRAME_W, SCENE_H, SCENE_W,
     };
     use crate::graphics::PixMap;
     use crate::render::backend::FrameKind;
@@ -1736,6 +1755,18 @@ mod tests {
         assert!(
             should_cls_scene_overlays(FrameKind::Game, 2),
             "a live scene still cls overlays so they do not accumulate"
+        );
+    }
+
+    #[test]
+    fn overlay_epoch_upload_tracks_movement_and_blink_without_chrome_redraw() {
+        assert!(
+            overlay_upload_needed(4, 5),
+            "a moved/blinked overlay is new"
+        );
+        assert!(
+            !overlay_upload_needed(5, 5),
+            "an unchanged overlay epoch needs no redundant upload"
         );
     }
 

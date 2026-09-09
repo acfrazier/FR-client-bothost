@@ -108,6 +108,11 @@ pub struct Renderer {
     /// flat `SIZE * SIZE`), so a second entity on a tile defers to the first
     /// this cycle.
     pub tile_last_occupied_cycle: Vec<i32>,
+    /// Bumped whenever the per-frame entity overlay pass redraws. GPU chrome
+    /// upload uses this epoch because entity overlays can change while the
+    /// ordinary chrome redraw flags stay clear (for example NPC hint blink
+    /// and movement).
+    pub(crate) overlay_epoch: u64,
     /// `World.resetVisCalc` has populated `vis_backing` for this client
     /// (TS loadGame calls it once per game load; `game_draw_main` runs it
     /// lazily on the first 3D frame).
@@ -243,6 +248,7 @@ impl Renderer {
             chats: [const { String::new() }; 50],
             scene_cycle: 0,
             tile_last_occupied_cycle: vec![0; (BuildArea::SIZE * BuildArea::SIZE) as usize],
+            overlay_epoch: 0,
             vis_calc_done: false,
             area_game: None,
             area_map: None,

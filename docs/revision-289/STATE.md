@@ -693,3 +693,20 @@ No host/server/cache/account, remote/Windows/live, merge/push or new-card work.
 Injected shell events and synthetic fixtures are not live presentation proof.
 Hotspot client.rs remains serialized; six inherited unrelated untracked
 review/tracer artifacts remain unstaged.
+
+## NPC hint overlay fix (t_1ced5ad3)
+
+Offline source/runtime-path diagnosis confirmed the GPU persistent chrome upload
+was gated only by ordinary chrome redraw flags. `entity_overlays` redraws the
+NPC hint crown into CPU `area_game`, but NPC movement and `loop_cycle` blink do
+not dirty those flags, so GPU presentation retained stale crown pixels. Scoped
+fix adds a renderer overlay epoch and makes GPU `finish` upload when that epoch
+changes; CPU path, scene ownership and scene_state==1 last-FBO freeze are
+preserved. Report: `npc-hint-overlay-fix-report.md`.
+
+Tests: GPU backend unit subset 5/5, overlays integration 6/6, and
+`cargo check -p client -p client-play` passed with the checkout target.
+`git diff --check` passed. Full `cargo fmt --all -- --check` remains nonzero on
+pre-existing reviewed formatting drift; no broad format rewrite was applied.
+Fresh root-owned live visual recheck and required Grok4.5/Grok4.6 review remain
+pending. Same-card implementation commit and reviewer handoff are next.

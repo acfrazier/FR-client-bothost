@@ -1417,6 +1417,10 @@ impl Renderer {
     /// and are pushed up past each other before drawing. `coord_arrow` is a
     /// separate stub.
     pub fn entity_overlays(&mut self, client: &mut Client) {
+        // Entity overlays are a distinct animated layer. In particular, the
+        // NPC hint crown follows the current entity position and blinks from
+        // loop_cycle, neither of which changes the chrome redraw flags.
+        self.overlay_epoch = self.overlay_epoch.wrapping_add(1);
         self.chat_count = 0;
         let mut game = self.area_game.take();
         if let Some(game) = game.as_mut() {
