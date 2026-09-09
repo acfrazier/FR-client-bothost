@@ -1,5 +1,29 @@
 # Revision 289 client campaign state
 
+## Current boundary — 2026-09-09 11:20 UTC
+
+- Presentation03d916a APPROVED actual Grok4.5/xai065921_34e313 and required
+  final Grok4.6/xai070122_467319 t_e73008ec, report171cc31. Material pending
+  presentation finding closed offline; no whole-client/performance claim.
+- Root fresh build at171cc31 passed1.961s, SHA
+  b3b68d2e68d878fbee264c1f8a6fa7c39f3c8a9f880121a401343e2ed0266878.
+  Window-only build, no audio proof. Bounded nativePID99379 logged wgpu/ingame,
+  direct CUA screenshots showed tutorial room/NPC and arrow on/off. Ordinary
+  right-click menu worked; single logout-button click returned to title.
+  Native window close exited0 before300s deadline. NoT1/T2 observed.
+- Ground left click and menu Walk here selection did not move tile3094,3106;
+  NPC Talk-to was not tested. Keep movement unresolved. Source stages exist
+  but separate arm-pick/manual-ground tests do not prove composed path.
+  Root released diagnostic-onlyt_f8eda60b actual Astra/openai071823_e31bdd:
+  trace composed input/GPU terrain pick/game-loop/movement bytes, classify
+  client/server/coordinate confounders; no production fixes or live on card.
+- Proof manifest: lostcity-289/runtime/client-proof-presentation-1109/
+  proof-manifest.json. CUA captures viewed directly, no local images archived.
+  Post-close CUA observation timed out and auto-relaunched bundlePID1458;
+  root verified exact executable and stopped it, confirmed absent. Separate
+  cleanup receipt retained. Do not call stale liveApp: APIs can auto-launch.
+  No client now. Isolated server49444 remains root-owned; supervisor26485.
+
 ## Current boundary — 2026-09-09 10:55 UTC
 
 This section supersedes older next-action wording. Parent tutorial-input
