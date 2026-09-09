@@ -76,6 +76,12 @@ impl Packet {
         self.data.len()
     }
 
+    /// Feature-gated: data Vec capacity (slice getters cannot recover this).
+    #[cfg(feature = "memory-owner-capture")]
+    pub fn owner_data_capacity(&self) -> usize {
+        self.data.capacity()
+    }
+
     pub fn available(&self) -> usize {
         self.data.len() - self.pos
     }

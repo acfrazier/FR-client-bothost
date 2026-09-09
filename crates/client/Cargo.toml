@@ -7,6 +7,8 @@ edition = "2021"
 default = []
 window = ["dep:winit", "dep:softbuffer"]
 audio = ["dep:rustysynth", "dep:cpal"]
+# Opt-in World/Packet owner-capture diagnostic methods (default off).
+memory-owner-capture = []
 
 [dependencies]
 bzip2 = "0.4"

@@ -32,6 +32,12 @@ pub const MAX_OCCLUDERS: usize = 500;
 pub const MAX_DYNAMIC_SPRITES: usize = 5000;
 pub const MAX_ACTIVE_OCCLUDERS: usize = 500;
 
+#[cfg(feature = "memory-owner-capture")]
+#[path = "world_owner_capture.rs"]
+mod world_owner_capture;
+#[cfg(feature = "memory-owner-capture")]
+pub use world_owner_capture::{WorldOwnerBudget, WorldOwnerRow, WorldOwnerRows};
+
 /// `levelHeightmaps[level][x][z]` ground heights, sized
 /// `[maxLevel][maxTileX + 1][maxTileZ + 1]` (one extra row/column of corners).
 pub type LevelHeightmaps = Vec<Vec<Vec<i32>>>;
