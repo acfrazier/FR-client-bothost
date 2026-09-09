@@ -30,6 +30,7 @@ fn frame(backend: &mut GpuBackend, core: &mut Client, r: &mut Renderer) -> Vec<i
 }
 
 #[test]
+#[ignore = "requires a GPU adapter; invoke explicitly for the production overlay proof"]
 fn npc_hint_production_gpu_blink_move_clear_cache_and_freeze() {
     let mut backend = GpuBackend::try_new().expect("GPU required for overlay proof");
     let mut r = Renderer::new(false);

@@ -1,5 +1,23 @@
 # Revision 289 client campaign state
 
+## Current boundary — 2026-09-09 02:59 UTC
+
+This section supersedes stale next-action wording below. Cleanup A-H at
+0406ceb passed aggregate Grok4.5 and required whole-branch Grok4.6, report
+0227f3f. Root bounded live reached a rendered tutorial room, but the user
+reported a nonblinking, delayed NPC hint. Live remains partial; owned client
+was stopped, isolated server61312 remains. No action/logout acceptance yet.
+
+Arrow same-card t_1ced5ad3: 0e998f2 and c9fca37 rejected for broad invalidation
+and incomplete GPU tests. Corrective1b38f18 APPROVED actual Grok4.5/xai
+20260908_225610_906ad2: complete covered-pass signature plus production GPU
+blink/motion/clear/cache/late-writer/freeze proof and two failing mutations.
+Root added only explicit-ignore metadata to the GPU-required test to preserve
+default headless suites. Explicit GPU invocation passes1/0ignored; default
+library passes79/1ignored. Same-card review of this metadata adjustment,
+corrective Grok4.6, fresh native build and live visual recheck are next.
+See npc-hint-overlay-fix-report.md. No host integration or performance claim.
+
 Authorized 2026-09-07. Prepared branch codex/revision-289-client, base
 4f2048ea10f75b3bb92ff45610b35ba7313b0308 (published r274-bh-modular).
 Current plan: plan.md. Required Grok4.6 whole-branch review t_77d35bfb

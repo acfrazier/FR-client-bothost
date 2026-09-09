@@ -116,6 +116,29 @@ cost remain properties of the existing c9fca37 policy, not newly measured claims
 Same-card Grok4.5 review, corrective Grok4.6 review and fresh root live visual
 verification are still required; none is replaced by the GPU fixture.
 
+## Root portability adjustment — 2026-09-09 02:59 UTC
+
+Grok4.5 approved 1b38f18 on the same card, actual session
+20260908_225610_906ad2, with a headless-test portability caveat. Root makes the
+new GPU-required regression explicitly ignored by default. Its body and hard
+adapter requirement are unchanged; a missing adapter still FAILS when this
+proof is invoked. Ordinary headless library suites do not acquire a GPU
+requirement. This does not turn a skip into visual proof.
+
+Root ran both commands serially after this test-attribute-only change:
+
+- `cargo test -p client --all-features --lib npc_hint_production_gpu -- --ignored --nocapture --test-threads=1`:
+  exit0, 1 passed, 0 ignored, explicit GPU-executed marker; receipt log
+  `target/npc-hint-root-explicit-gpu.log`.
+- `cargo test -p client --all-features --lib -- --test-threads=1`:
+  exit0, 79 passed, 1 explicitly ignored GPU proof; receipt log
+  `target/npc-hint-root-default-lib.log`.
+
+Both use CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target.
+Earlier round3 commands/counts remain the pre-attribute evidence, including
+both deliberately failing mutation proofs. Same-card verification of this
+adjustment and required corrective Grok4.6 review precede root live rebuilding.
+
 ## Preserved invariants and limits
 
 - CPU renderer behavior is unchanged.
