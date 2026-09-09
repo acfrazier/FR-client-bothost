@@ -1,5 +1,34 @@
 # Revision 289 client campaign state
 
+## Current boundary — 2026-09-09 11:48 UTC
+
+Diagnostic096864e passed same-card actual Grok4.5/xai20260909_072825_72c707
+on t_f8eda60b. Native ground displacement remains unresolved; no production
+behavior fix follows from the passing synthetic CPU/GPU composed path or the
+legitimate enclosed-source fallback. Earlier native failure receipts remain.
+
+Root-authorized t_2ebebe02 adds diagnostic-only `CLIENT_289_GROUND_TRACE=1`,
+R289-only and disabled by default. One correlated input/menu/render/route/write
+observation per owner, fixed64-line cap including completion, 120s waiting and
+10s attempt bounds. Numeric metadata only; no raw packets/message/account data.
+Missing latch, no WALK, no first-render pick, route failure, missing stream and
+timeouts remain distinct. Stream-write Ok is only the API/queue result, not
+network delivery or server/player displacement. Rendering/picking/input/route/
+packet/lifecycle behavior and scene1 last-FBO ownership remain unchanged.
+
+Report: ground-input-trace-report.md, with exact commands/fields/limits.
+Final serial all-features receipts: do_action13, game_shell3, composed6/1ignored,
+input16, minimenu27, present_pack2, render_backend5, outbound27, walk6 passed;
+trace unit4 passed; explicit actualGPU1 passed/0ignored. Default/all-features
+crate checks, scoped rustfmt and git diff --check passed. Preserve actual REDs
+for missing trace, late-render expiry and missing latch under target/ground-trace-*.
+No native launch/CUA/login/live server/cache edits or host integration occurred.
+
+Candidate is being handed to SAME-card profile reviewer (configured actual
+default grok-4.5/xai-oauth); not review-accepted yet. Root owns required corrective
+whole-branch Grok4.6, fresh reviewed native build and bounded trace afterward.
+hotspot: crates/client/src/client/client.rs — serialized diagnostic seams only.
+
 ## Current boundary — 2026-09-09 11:20 UTC
 
 - Presentation03d916a APPROVED actual Grok4.5/xai065921_34e313 and required

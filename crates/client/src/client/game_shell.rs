@@ -20,6 +20,7 @@ pub struct GameShell {
     pub focused: bool,
     pub(crate) idle_cycles: u32,
     pub(crate) telemetry_289: bool,
+    pub(crate) ground_trace: Option<super::ground_trace_289::GroundTrace>,
     pub(crate) mouse_samples:
         Option<std::sync::Arc<std::sync::Mutex<super::mouse_recorder_289::MouseSamples>>>,
     /// Java `GameShell.mouseButton`: 0 none, 1 left, 2 right.
@@ -68,6 +69,7 @@ impl GameShell {
             focused: true,
             idle_cycles: 0,
             telemetry_289: false,
+            ground_trace: None,
             mouse_samples: None,
             mouse_button: 0,
             mouse_click_button: 0,
@@ -113,6 +115,9 @@ impl GameShell {
     /// Java `mouseDown`: set position/button and latch a click. Java buttons:
     /// 1 left, 2 right.
     pub fn apply_mouse_down(&mut self, button: i32, x: i32, y: i32) {
+        if let Some(trace) = &mut self.ground_trace {
+            trace.record_down(button, x, y);
+        }
         self.idle_cycles = 0;
         // Primary Applet_Sub1:349-352 latches click coordinates separately;
         // only move/drag/exit changes the recorder pointer. Preserve R274.

@@ -8,6 +8,10 @@ use client::render::backend::{FrameOutput, GpuBackend};
 use client::render::Renderer;
 
 fn fixture(gpu: bool) -> (Client, Renderer) {
+    fixture_revision(gpu, ClientRevision::R289)
+}
+
+fn fixture_revision(gpu: bool, revision: ClientRevision) -> (Client, Renderer) {
     let cache_dir = format!(
         "{}/../../target/ground-input-absent-cache-{}",
         env!("CARGO_MANIFEST_DIR"),
@@ -22,7 +26,7 @@ fn fixture(gpu: bool) -> (Client, Renderer) {
             members: true,
             lowmem: false,
         },
-        ClientRevision::R289,
+        revision,
     );
     let mut r = if gpu {
         Renderer::with_backend(
@@ -184,6 +188,133 @@ fn cpu_ground_input_composed() {
         composed(false, menu, true, false);
         composed(false, menu, true, true);
     }
+}
+
+#[test]
+fn ground_trace_receipt() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "cpu_ground_input_composed", "--nocapture"])
+        .env("CLIENT_289_GROUND_TRACE", "1")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let log = String::from_utf8(output.stderr).unwrap();
+    for stage in [
+        "input",
+        "latch",
+        "walk_arm",
+        "post_render",
+        "source",
+        "movement",
+        "route",
+        "write",
+        "complete",
+    ] {
+        assert!(
+            log.contains(&format!("stage={stage} ")),
+            "missing {stage}: {log}"
+        );
+    }
+    assert!(log.contains("nearest=1"), "source fallback must be visible");
+    assert_eq!(log.matches("stage=complete ").count(), 6);
+    assert_eq!(log.matches("stage=walk_arm ").count(), 6);
+    assert_eq!(log.matches("stage=movement ").count(), 6);
+    assert_eq!(log.matches("reason=no_stream_write ").count(), 6);
+    assert!(log.contains("abs_x=50 abs_z=50"));
+    assert!(log.contains("abs_x=50 abs_z=51"));
+    for value in [None, Some("0"), Some("true")] {
+        let mut cmd = std::process::Command::new(std::env::current_exe().unwrap());
+        cmd.args(["--exact", "cpu_ground_input_composed", "--nocapture"]);
+        if let Some(value) = value {
+            cmd.env("CLIENT_289_GROUND_TRACE", value);
+        } else {
+            cmd.env_remove("CLIENT_289_GROUND_TRACE");
+        }
+        let output = cmd.output().unwrap();
+        assert!(output.status.success());
+        assert!(!String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("ground289"));
+    }
+    for (test, expected) in [
+        ("trace_no_pick_control", Some("reason=no_pick_first_render")),
+        ("trace_pending_control", Some("reason=no_walk_selected")),
+        (
+            "trace_missing_latch_control",
+            Some("reason=no_latched_input"),
+        ),
+        ("trace_r274_control", None),
+    ] {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", test, "--nocapture"])
+            .env("CLIENT_289_GROUND_TRACE", "1")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{test}: {:?}", output);
+        let log = String::from_utf8(output.stderr).unwrap();
+        if let Some(expected) = expected {
+            assert!(log.contains(expected), "{log}");
+            assert_eq!(log.matches("stage=complete ").count(), 1);
+            assert!(!log.contains("stage=movement "));
+        } else {
+            assert!(!log.contains("ground289"));
+        }
+        assert!(!log.contains("PRIVATE_SENTINEL"));
+    }
+}
+
+#[test]
+fn trace_no_pick_control() {
+    let (mut c, mut r) = fixture(false);
+    c.shell.apply_mouse_move(20, 20);
+    r.game_draw(&mut c);
+    c.shell.apply_mouse_down(1, 20, 20);
+    tick(&mut c);
+    assert!(c.world.click);
+    r.game_draw(&mut c);
+    assert_eq!(c.world.ground_x, -1);
+    for _ in 0..3 {
+        tick(&mut c);
+        r.game_draw(&mut c);
+    }
+}
+
+#[test]
+fn trace_pending_control() {
+    let (mut c, mut r) = fixture(false);
+    c.shell.apply_mouse_move(260, 138);
+    r.game_draw(&mut c);
+    c.tut_com_message = Some("PRIVATE_SENTINEL".into());
+    c.shell.apply_mouse_down(1, 260, 138);
+    tick(&mut c);
+    assert!(c.tut_com_message.is_none());
+    assert!(!c.world.click);
+}
+
+#[test]
+fn trace_missing_latch_control() {
+    let (mut c, mut r) = fixture(false);
+    tick(&mut c); // enter ingame observation lifetime, before mouse-down
+    c.shell.apply_mouse_move(260, 138);
+    draw(&mut c, &mut r, false);
+    c.shell.apply_mouse_down(1, 260, 138);
+    c.game_loop(); // deliberately omit latch, never fake its answer
+    assert!(!c.world.click);
+}
+
+#[test]
+fn trace_r274_control() {
+    let (mut c, mut r) = fixture_revision(false, ClientRevision::R274);
+    c.shell.apply_mouse_move(260, 138);
+    draw(&mut c, &mut r, false);
+    c.shell.apply_mouse_down(1, 260, 138);
+    tick(&mut c);
+    assert!(c.world.click);
+    draw(&mut c, &mut r, false);
+    let before = c.out.pos;
+    tick(&mut c);
+    assert!(c.out.pos > before);
+    assert_eq!(c.world.ground_x, -1);
 }
 
 #[test]

@@ -183,6 +183,7 @@ mod window {
         #[allow(dead_code)]
         context: softbuffer::Context<Arc<Window>>,
         surface: softbuffer::Surface<Arc<Window>, Arc<Window>>,
+        window: Arc<Window>,
         /// `WindowEvent::MouseInput` carries no position; the last
         /// `CursorMoved` coordinates stand in for the Java `mouseDown` x/y.
         cursor: (i32, i32),
@@ -216,7 +217,7 @@ mod window {
                 )?,
             );
             let context = softbuffer::Context::new(window.clone())?;
-            let mut surface = softbuffer::Surface::new(&context, window)?;
+            let mut surface = softbuffer::Surface::new(&context, window.clone())?;
             let (w, h) = (
                 NonZeroU32::new(width).ok_or(PresentError::InvalidSize(width, height))?,
                 NonZeroU32::new(height).ok_or(PresentError::InvalidSize(width, height))?,
@@ -226,6 +227,7 @@ mod window {
                 event_loop,
                 context,
                 surface,
+                window,
                 cursor: (-1, -1),
                 closed: false,
             })
@@ -250,6 +252,7 @@ mod window {
         /// destroyed.
         pub(super) fn poll(&mut self, shell: &mut GameShell) -> bool {
             let mut app = PollApp {
+                window: &self.window,
                 cursor: &mut self.cursor,
                 closed: &mut self.closed,
                 shell,
@@ -304,6 +307,7 @@ mod window {
     /// One poll's event sink: translates winit `WindowEvent`s into the
     /// `GameShell` while borrowing the `WinitWindow` state it writes back.
     struct PollApp<'a> {
+        window: &'a Window,
         cursor: &'a mut (i32, i32),
         closed: &'a mut bool,
         shell: &'a mut GameShell,
@@ -330,6 +334,23 @@ mod window {
                     self.shell.apply_mouse_move(-1, -1);
                 }
                 WindowEvent::MouseInput { state, button, .. } => {
+                    if state == ElementState::Pressed
+                        && matches!(button, MouseButton::Left | MouseButton::Right)
+                    {
+                        if let Some(t) = &mut self.shell.ground_trace {
+                            let size = self.window.inner_size();
+                            let scale = self.window.scale_factor();
+                            t.native = Some([
+                                self.cursor.0 as i64,
+                                self.cursor.1 as i64,
+                                size.width as i64,
+                                size.height as i64,
+                                (scale * 1_000_000.0).round() as i64,
+                                (size.width as f64 / scale * 1000.0).round() as i64,
+                                (size.height as f64 / scale * 1000.0).round() as i64,
+                            ]);
+                        }
+                    }
                     // Java buttons: 1 left, 2 right (GameShell.ts 152-167).
                     match (state, button) {
                         (ElementState::Pressed, MouseButton::Left) => {

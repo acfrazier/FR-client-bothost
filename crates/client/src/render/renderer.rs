@@ -353,7 +353,46 @@ impl Renderer {
         let backend = guard.backend.as_mut().expect("render backend present");
         let renderer = &mut *guard.renderer;
         backend.begin(client, renderer, kind);
+        if let Some(t) = client
+            .shell
+            .ground_trace
+            .as_mut()
+            .filter(|t| t.active() && t.armed && !t.rendered)
+        {
+            t.event(
+                "scene",
+                &[
+                    ("state", client.scene_state as i64),
+                    ("camera_x", client.cam_x as i64),
+                    ("camera_y", client.cam_y as i64),
+                    ("camera_z", client.cam_z as i64),
+                    ("pitch", client.cam_pitch as i64),
+                    ("yaw", client.cam_yaw as i64),
+                    ("click", client.world.click as i64),
+                ],
+            );
+        }
         backend.scene(client, renderer, kind);
+        if let Some(t) = client
+            .shell
+            .ground_trace
+            .as_mut()
+            .filter(|t| t.active() && t.armed && !t.rendered)
+        {
+            t.rendered = true;
+            t.event(
+                "post_render",
+                &[
+                    ("x", client.world.ground_x as i64),
+                    ("z", client.world.ground_z as i64),
+                    ("click", client.world.click as i64),
+                    ("scene", client.scene_state as i64),
+                ],
+            );
+            if client.world.ground_x == -1 {
+                t.complete("no_pick_first_render");
+            }
+        }
         backend.composite_scene(client, renderer, kind);
         backend.chrome(client, renderer, kind);
         let output = backend.finish(renderer);

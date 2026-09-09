@@ -1275,6 +1275,7 @@ impl Client {
             shell: {
                 let mut shell = GameShell::new();
                 shell.telemetry_289 = revision.is_289();
+                shell.ground_trace = super::ground_trace_289::GroundTrace::from_env(revision.is_289());
                 if revision.is_289() {
                     // Applet_Sub1:53-56 fields start at Java int zero.
                     shell.mouse_x = 0;
@@ -2304,6 +2305,10 @@ impl Client {
         // Session baton carries the stream's revision with ISAAC/frame state
         // so size tables and dispatch cannot silently diverge midstream.
         self.revision = other.revision;
+        if let Some(trace) = &mut self.shell.ground_trace {
+            trace.complete("session_transfer");
+        }
+        self.shell.ground_trace = None;
         self.shell.telemetry_289 = self.revision.is_289();
         self.stream = Some(stream);
         self.random_in = other.random_in.take();
@@ -2727,6 +2732,10 @@ impl Client {
 
         if action >= MiniMenuAction::_PRIORITY {
             action -= MiniMenuAction::_PRIORITY;
+        }
+
+        if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.input_pending) {
+            t.event("selection", &[("walk", (action == MiniMenuAction::WALK) as i64), ("menu_open", self.is_menu_open as i64)]);
         }
 
         if OBJ_OP_ACTIONS.contains(&action) {
@@ -3433,6 +3442,10 @@ impl Client {
                     self.shell.mouse_click_y - 4,
                 );
             }
+            if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.input_pending) {
+                t.armed = true;
+                t.event("walk_arm", &[("menu_open", self.is_menu_open as i64), ("x", self.world.click_x as i64), ("y", self.world.click_y as i64), ("scene", self.scene_state as i64)]);
+            }
         }
 
         if action == MiniMenuAction::FRIENDLIST_ADD
@@ -3876,6 +3889,14 @@ impl Client {
 
             let start_x = self.route_x[length];
             let start_z = self.route_z[length];
+
+            if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.routing) {
+                t.pending_write = true;
+                t.event("movement", &[("type", r#type as i64), ("opcode", crate::io::map_client_prot(self.revision, ClientProt::MOVE_GAMECLICK).id as i64), ("length", (buffer_size + buffer_size + 3) as i64), ("run", (self.shell.key_held[5] == 1) as i64), ("abs_x", ((start_x + self.map_build_base_x) as u16) as i64), ("abs_z", ((start_z + self.map_build_base_z) as u16) as i64), ("turns", buffer_size as i64)]);
+                for i in 1..buffer_size {
+                    t.event("movement_delta", &[("index", i as i64), ("dx", ((self.route_x[length - i] - start_x) as i8) as i64), ("dz", ((self.route_z[length - i] - start_z) as i8) as i64)]);
+                }
+            }
 
             match r#type {
                 0 => {
@@ -8976,6 +8997,7 @@ impl Client {
     /// one-shot `draw_area` cls so no game-frame viewport/chat/side pixel
     /// survives).
     pub fn logout(&mut self) {
+        if let Some(t) = &mut self.shell.ground_trace { t.complete("logout"); }
         self.r289_packet_reset = true;
         if let Some(mut stream) = self.stream.take() {
             stream.close();
@@ -9051,6 +9073,7 @@ impl Client {
     /// save-and-close of the old `ClientStream`. The "Connection lost"
     /// viewport text is not drawn (headless).
     pub fn lost_con(&mut self) {
+        if let Some(t) = &mut self.shell.ground_trace { t.complete("lost_connection"); }
         if self.logout_timer > 0 {
             self.logout();
             return;
@@ -11031,6 +11054,14 @@ impl Client {
     /// idle `NO_TIMEOUT` and flush `out` through `ClientStream::write`.
     /// Write errors are `lostCon` (Java `catch (IOException)`).
     pub fn game_loop(&mut self) {
+        if self.ingame {
+            if let Some(t) = &mut self.shell.ground_trace {
+                t.tick(self.shell.mouse_click_button, self.shell.mouse_click_x, self.shell.mouse_click_y);
+                if t.input_pending {
+                    t.event("input_state", &[("pending_message", self.tut_com_message.is_some() as i64), ("menu_open", self.is_menu_open as i64), ("scene", self.scene_state as i64)]);
+                }
+            }
+        }
         // TS 2043-2048: the reboot countdown holds at 1 while the logout
         // request counts down.
         if self.reboot_timer > 1 {
@@ -11091,6 +11122,9 @@ impl Client {
         // TS 2229-2300: the in-flight obj-drag tick runs before the click
         // handlers so a release consumes the click before `handle_tab_clicks`.
         self.handle_obj_drag();
+        if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.input_pending) {
+            t.event("dispatch_state", &[("pending_message", self.tut_com_message.is_some() as i64), ("menu_open", self.is_menu_open as i64), ("button", self.shell.mouse_click_button as i64)]);
+        }
         // Primary 289 J:6023-6027: after drag consumption, before walking.
         if self.revision.is_289() {
             self.cyclelogic7_289 += 1;
@@ -11115,10 +11149,21 @@ impl Client {
             let ground_x = self.world.ground_x;
             let ground_z = self.world.ground_z;
             self.world.ground_x = -1;
+            if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.armed && t.rendered) {
+                t.routing = true;
+                t.event("source", &[("present", src.is_some() as i64), ("x", src.map_or(-1, |s| s.0) as i64), ("z", src.map_or(-1, |s| s.1) as i64), ("base_x", self.map_build_base_x as i64), ("base_z", self.map_build_base_z as i64), ("plane", self.minusedlevel as i64), ("target_x", ground_x as i64), ("target_z", ground_z as i64)]);
+                if src.is_none() { t.complete("no_local_source"); }
+            }
             if let Some((src_x, src_z)) = src {
                 // TS 2317-2322: a successful walk re-arms the crosshair at
                 // the clicked point (mode 1, cycle 0).
-                if self.tryMove(src_x, src_z, ground_x, ground_z, true, 0, 0, 0, 0, 0, 0) {
+                let moved = self.tryMove(src_x, src_z, ground_x, ground_z, true, 0, 0, 0, 0, 0, 0);
+                if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.routing) {
+                    t.event("route", &[("result", moved as i64), ("nearest", self.try_move_nearest as i64), ("endpoint_x", if moved { self.minimap_flag_x as i64 } else { -1 }), ("endpoint_z", if moved { self.minimap_flag_z as i64 } else { -1 })]);
+                    t.routing = false;
+                    if !moved { t.complete("route_failed"); }
+                }
+                if moved {
                     self.cross_x = self.shell.mouse_click_x;
                     self.cross_y = self.shell.mouse_click_y;
                     self.cross_mode = 1;
@@ -11127,6 +11172,13 @@ impl Client {
             }
         }
         self.mouse_loop();
+        if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.input_pending) {
+            t.event("menu_after", &[("open", self.is_menu_open as i64), ("armed", t.armed as i64), ("button", self.shell.mouse_click_button as i64)]);
+            t.input_pending = false;
+        }
+        if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && !t.armed && !self.is_menu_open) {
+            t.complete("no_walk_selected");
+        }
         self.minimap_loop();
         // Java 9466-9467 then 9580: the entity movement pass runs before
         // the camera pass, so the orbit camera and minimap follow the walk.
@@ -11176,6 +11228,10 @@ impl Client {
         } else {
             None
         };
+        if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.pending_write) {
+            t.event("write", &[("stream", self.stream.is_some() as i64), ("result", match &write_result { Some(Ok(())) => 1, Some(Err(_)) => -1, None => 0 })]);
+            t.complete(match &write_result { Some(Ok(())) => "stream_write_ok", Some(Err(_)) => "stream_write_error", None => "no_stream_write" });
+        }
         match write_result {
             Some(Ok(())) => {
                 self.out.pos = 0;
