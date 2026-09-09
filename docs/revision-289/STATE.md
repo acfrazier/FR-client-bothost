@@ -1,5 +1,28 @@
 # Revision 289 client campaign state
 
+## Current boundary — 2026-09-09 12:16 UTC
+
+Ground trace a7f49098 passed same-card Grok4.5/xai075229_e64b14 and required
+whole-branch Grok4.6/xai075729_f8ae77, final report08a44be7. Root fresh
+window-only build at08a44be7e6ad36327353c978f3103db266809a4f passed;
+SHA a8bab7943c898cf151fe1f25437b843b060747d6c7ea0efda6f73134ec6347c8.
+
+ONE bounded native run passed a ground displacement check: trace scene2,
+WALK selected, picked53,49 from source54,50, base3040,3056; opcode234 length5
+and successful route. Tile logs moved3094,3106 cycle1900 to3093,3105 cycle1950;
+CUA screenshots showed displacement. Logout returned visibly to login title;
+window close exited0 after92.397s and ownedPID25841 is absent. NoT1/T2 seen.
+No production movement fix was made. Prior no-movement receipts remain valid;
+the cause of those particular clicks is still unproven.
+
+Proof: ground-input-trace-native-proof.md; raw receipt and log in
+lostcity-289/runtime/client-proof-groundtrace-1212/proof-manifest.json.
+Stream API Ok alone remains queue/no-op evidence; displacement was established
+separately. No audio, NPC Talk-to/full tutorial, full-client parity, numeric
+latency/cadence or performance acceptance. No289 host integration released.
+Isolated server49444 remains root-owned; no client now. Main274 memory work
+continues independently with its pinned274 navpack and client3456.
+
 ## Current boundary — 2026-09-09 11:48 UTC
 
 Diagnostic096864e passed same-card actual Grok4.5/xai20260909_072825_72c707
