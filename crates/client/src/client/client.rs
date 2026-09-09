@@ -846,7 +846,8 @@ pub struct Client {
     /// `tutComId` (TS): the tutorial chat interface, set by `TUT_OPEN`
     /// (-1 none).
     pub tut_com_id: i32,
-    pub tut_com_message: String,
+    /// Java 289 aString4: None is no acknowledgement; Some("") still is one.
+    pub tut_com_message: Option<String>,
     /// `tutFlashIcon` (TS): the flashing tutorial side tab, set by
     /// `TUT_FLASH` (-1 none).
     pub tut_flash_icon: i32,
@@ -1433,7 +1434,7 @@ impl Client {
             main_modal_id: -1,
             main_overlay_id: -1,
             tut_com_id: -1,
-            tut_com_message: String::new(),
+            tut_com_message: None,
             tut_flash_icon: -1,
             dialog_input_open: false,
             dialog_input: String::new(),
@@ -2482,7 +2483,7 @@ impl Client {
             self.chat_modal_id = -1;
             self.main_modal_id = -1;
             self.tut_com_id = -1;
-            self.tut_com_message.clear();
+            self.tut_com_message = None;
             self.tut_flash_icon = -1;
             self.minimap_level = -1;
             self.minimap_flag_x = 0;
@@ -4665,10 +4666,6 @@ impl Client {
                 self.add_chat(kind, chat_text, player);
             }
         } else {
-            if self.tut_com_id != -1 {
-                self.tut_com_message = message.to_string();
-                self.shell.mouse_click_button = 0;
-            }
             self.add_chat(0, message, "");
         }
     }
@@ -4901,11 +4898,15 @@ impl Client {
     }
 
     /// `addChat` from client-ts (11453): shift the 100 chat slots down one
-    /// (99→1), write the new line at slot 0, and redraw. The `tutComId`
-    /// branch (TS 11454-11458) writes `tutComMessage` and clears the mouse
-    /// click; the tutorial message feature is not ported. Each appended line
-    /// bumps `chat_seq` once (before the slot shift).
+    /// (99→1), write the new line at slot 0, and redraw. R289 Java method99
+    /// (1819-1824) also captures every kind-0 tutorial notice, including
+    /// local notices and empty text; leave the base R274 path unchanged.
+    /// Each appended line bumps `chat_seq` once (before the slot shift).
     pub fn add_chat(&mut self, r#type: i32, text: &str, sender: &str) {
+        if self.revision.is_289() && r#type == 0 && self.tut_com_id != -1 {
+            self.tut_com_message = Some(text.to_string());
+            self.shell.mouse_click_button = 0;
+        }
         if self.chat_modal_id == -1 {
             self.redraw_chat = true;
         }
@@ -5878,13 +5879,15 @@ impl Client {
     /// See `handle_side_if_clicks`: chat-modal button clicks flow through
     /// `build_minimenu` + `mouse_loop`/`doAction`.
     pub fn handle_chat_if_clicks(&mut self) {
-        // Java 6042-6045: a click acknowledges the pending tutorial chat
-        // message, without closing the tutorial interface itself.
-        if self.tut_com_id != -1 && self.shell.mouse_click_button != 0 {
-            if !self.tut_com_message.is_empty() {
-                self.tut_com_message.clear();
-                self.redraw_chat = true;
-            }
+        // Java 289 6042-6046: only LEFT + non-null message acknowledges.
+        // The interface may remain open (or already have closed). R274's
+        // base handler was a no-op; do not add acknowledgement there.
+        if self.revision.is_289()
+            && self.shell.mouse_click_button == 1
+            && self.tut_com_message.is_some()
+        {
+            self.tut_com_message = None;
+            self.redraw_chat = true;
             self.shell.mouse_click_button = 0;
         }
     }

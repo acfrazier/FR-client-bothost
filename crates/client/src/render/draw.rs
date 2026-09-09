@@ -3062,15 +3062,9 @@ impl Renderer {
                 self.draw_interface(client, client.tut_com_id, 0, 0, 0, &mut surface);
                 // Java 5273-5276: tutorial chat text is rendered over the
                 // tutorial interface, followed by its acknowledgement hint.
-                if !client.tut_com_message.is_empty() {
+                if let Some(message) = client.tut_com_message.as_deref() {
                     if let Some(b12) = self.media.b12.as_ref() {
-                        b12.centre_string(
-                            &mut surface,
-                            Some(&client.tut_com_message),
-                            239,
-                            40,
-                            Colour::BLACK,
-                        );
+                        b12.centre_string(&mut surface, Some(message), 239, 40, Colour::BLACK);
                         b12.centre_string(
                             &mut surface,
                             Some("Click to continue"),

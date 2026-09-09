@@ -1,5 +1,42 @@
 # Revision 289 client campaign state
 
+## Current boundary — 2026-09-09 03:28 UTC
+
+This section supersedes next-action wording below. NPC arrow correction
+1b38f18 plus GPU-test portability b03e633 passed actual Grok4.5 and required
+Grok4.6 t_e7dfd2e6 (report commit 411ef13). Root reports live blink on/off
+and arrows tracking moved NPCs. The root-owned bounded arrow-0310 session
+still failed ground/NPC actions and logout, ending at its declared 300-second
+deadline rather than proving logout. Preserve that failure; no performance
+or whole-client acceptance follows.
+
+Input correction t_08298357 is implemented from 411ef13 and being handed to
+same-card profile reviewer. Tutorial message is now nullable: only an R289
+LEFT click with a pending message (including empty) acknowledges and consumes
+input; an open tutorial without a pending message no longer swallows clicks.
+Shared kind-0 capture and cold/reset semantics follow primary; 274's base
+no-op input behavior is deliberately retained. NPC rendering/freeze and the
+explicit ignored GPU-only proof convention are unchanged. Draw changes are
+limited to the necessary nullable-message consumer adaptation.
+
+Exact commands and preserved failed runs: tutorial-input-ack-fix-report.md.
+Final serialized all-features receipts: stage2 55, outbound 27, input 16,
+hud 86, minimenu 27, walk 6, stage3 23, do_action 13, social 23, chat_mode 4,
+game_shell 3, login 10, logout 7, lost_con 4 — 304 passed / 0 failed /
+0 ignored across 14 suites. Earlier actual RED (swallowed widget click),
+local kind-0 RED, test import error, and NPC fixture movement-oracle failure
+remain recorded. git diff --check passes; pre-existing formatting debt stays.
+
+Next: actual same-card Grok4.5 verdict, then root's required corrective
+Grok4.6 review, fresh native build and bounded live action/logout proof.
+No live proof, server/CUA use, merge/push, or host integration occurred here.
+The source audit also identified pre-existing tutorial draw precedence and
+pending-message redraw differences from Java, outside this card's renderer
+scope; see report/card comment for root's separate scope decision.
+
+hotspot: crates/client/src/client/client.rs — serialized campaign file;
+this task touches message state/capture and pre-menu acknowledgement only.
+
 ## Current boundary — 2026-09-09 02:59 UTC
 
 This section supersedes stale next-action wording below. Cleanup A-H at

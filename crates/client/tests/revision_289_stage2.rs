@@ -1475,6 +1475,8 @@ fn logout_opcode_121_clears_stream_modals_gens() {
     c.side_modal_id = 12;
     c.chat_modal_id = 13;
     c.login_user = "bob".into();
+    c.tut_com_id = 123;
+    c.add_chat(0, "pending at logout", "");
     // Attach a live stream so logout production path closes it.
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
@@ -1495,6 +1497,9 @@ fn logout_opcode_121_clears_stream_modals_gens() {
     assert_eq!(c.side_modal_id, -1);
     assert_eq!(c.chat_modal_id, -1);
     assert!(c.login_user.is_empty());
+    // Java does not clear aString4 on logout; cold response 2 does.
+    assert_eq!(c.tut_com_message.as_deref(), Some("pending at logout"));
+    assert_eq!(c.tut_com_id, -1);
     assert!(
         c.gens.player > before.player || c.gens.inv > before.inv || c.gens.scene > before.scene,
         "LOGOUT bumps gens via bump_all_gens"
@@ -1567,8 +1572,12 @@ fn login_response_2_vs_15_distinct_on_r289() {
     c.player_count = 2;
     c.players[5] = Some(Box::new(ClientPlayer::default()));
     c.scene_state = 2;
+    c.tut_com_id = 123;
+    c.add_chat(0, "pending before cold login", "");
     c.login("bob", "pw", false).unwrap();
     assert!(c.ingame);
+    assert!(c.tut_com_message.is_none());
+    assert_eq!(c.tut_com_id, -1);
     assert_eq!(c.npc_count, 0, "response 2 zeros npc_count");
     assert!(c.npc[1].is_none(), "response 2 nulls leftover npcs");
     assert_eq!(c.player_count, 0, "response 2 zeros player_count");
@@ -1586,9 +1595,13 @@ fn login_response_2_vs_15_distinct_on_r289() {
     c.npc_count = 4;
     c.npc[2] = Some(Box::new(ClientNpc::default()));
     c.scene_state = 1;
+    c.tut_com_id = 123;
+    c.add_chat(0, "", "");
 
     c.login("bob", "pw", true).unwrap();
     assert!(c.ingame);
+    assert_eq!(c.tut_com_message.as_deref(), Some(""));
+    assert_eq!(c.tut_com_id, 123);
     assert_eq!(
         c.local_player.as_ref().unwrap().y,
         77,
@@ -1670,12 +1683,281 @@ fn cleanup_f_challenge_body_and_tutorial_click_are_production_path() {
     let mut tutorial = Packet::new(b"Keep going\n".to_vec());
     c.psize = tutorial.length() as i32;
     c.handle_packet(ServerProt289::MESSAGE_GAME, &mut tutorial);
-    assert_eq!(c.tut_com_message, "Keep going");
+    assert_eq!(c.tut_com_message.as_deref(), Some("Keep going"));
     c.shell.mouse_click_button = 1;
     c.handle_chat_if_clicks();
-    assert!(c.tut_com_message.is_empty());
+    assert!(c.tut_com_message.is_none());
     assert_eq!(c.shell.mouse_click_button, 0);
     assert!(c.redraw_chat);
+}
+
+// Synthetic side widget, not a cache/account fixture. Exercise the same
+// pre-menu handlers as game_loop, after the render-time menu build.
+fn tutorial_input_widget(c: &mut Client) {
+    use client::config::if_type::{ButtonType, ComponentType};
+    c.side_icon[3] = 1;
+    c.active_icon = 3;
+    c.set_iface(
+        1,
+        IfType {
+            id: 1,
+            r#type: ComponentType::TYPE_LAYER,
+            width: 190,
+            height: 261,
+            children: Some(vec![2]),
+            child_x: Some(vec![0]),
+            child_y: Some(vec![0]),
+            ..Default::default()
+        },
+    );
+    c.set_iface_mut(1, IfTypeMut::default());
+    c.set_iface(
+        2,
+        IfType {
+            id: 2,
+            r#type: ComponentType::TYPE_RECT,
+            button_text: "Logout fixture".into(),
+            width: 190,
+            height: 20,
+            ..Default::default()
+        },
+    );
+    c.set_iface_mut(
+        2,
+        IfTypeMut {
+            button_type: ButtonType::BUTTON_OK,
+            ..Default::default()
+        },
+    );
+    c.shell.mouse_x = 560;
+    c.shell.mouse_y = 210;
+    c.build_minimenu();
+    assert_eq!(c.menu_num_entries, 2);
+}
+
+fn tutorial_input_pass(c: &mut Client) {
+    c.handle_obj_drag();
+    c.handle_tab_clicks();
+    c.handle_side_if_clicks();
+    c.handle_main_if_clicks();
+    c.handle_chat_if_clicks();
+    c.chat_mode_loop();
+    c.handle_chat_input();
+    c.mouse_loop();
+    c.minimap_loop();
+}
+
+fn tutorial_input_click(c: &mut Client, button: i32, x: i32, y: i32) {
+    c.shell.apply_mouse_down(button, x, y);
+    c.shell.latch_click();
+    tutorial_input_pass(c);
+}
+
+#[test]
+fn cleanup_f_tutorial_without_message_dispatches_widget_once() {
+    let mut c = client_289();
+    c.tut_com_id = 123;
+    tutorial_input_widget(&mut c);
+    tutorial_input_click(&mut c, 1, 560, 210);
+    // Primary 289 IF_BUTTON: opcode 86 then p2 component (Java 11234-11242).
+    assert_eq!(&c.out.data()[..c.out.pos], &[86, 0, 2]);
+    assert_eq!(c.tut_com_id, 123);
+    c.shell.latch_click(); // next tick, no new mouse-down
+    tutorial_input_pass(&mut c);
+    assert_eq!(&c.out.data()[..c.out.pos], &[86, 0, 2]);
+}
+
+#[test]
+fn cleanup_f_tutorial_local_kind0_uses_same_pending_state() {
+    let mut c = client_289();
+    c.tut_com_id = 123;
+    c.shell.apply_mouse_down(1, 560, 210);
+    c.shell.latch_click();
+    // Java method99 is shared by MESSAGE_GAME and local kind-0 notices.
+    c.add_chat(0, "", "");
+    assert_eq!(c.tut_com_message.as_deref(), Some(""));
+    assert_eq!(c.shell.mouse_click_button, 0);
+}
+
+fn tutorial_input_message(c: &mut Client, text: &str) {
+    let mut bytes = text.as_bytes().to_vec();
+    bytes.push(b'\n');
+    let mut p = Packet::new(bytes);
+    c.psize = p.length() as i32;
+    c.handle_packet(ServerProt289::MESSAGE_GAME, &mut p);
+    assert_eq!(p.pos, p.length());
+}
+
+#[test]
+fn cleanup_f_tutorial_pending_left_acknowledges_once_including_empty() {
+    for text in ["Keep going", ""] {
+        let mut c = client_289();
+        c.tut_com_id = 123;
+        tutorial_input_widget(&mut c);
+        c.shell.apply_mouse_down(1, 560, 210);
+        c.shell.latch_click();
+        tutorial_input_message(&mut c, text);
+        assert_eq!(c.tut_com_message.as_deref(), Some(text));
+        assert_eq!(
+            c.shell.mouse_click_button, 0,
+            "arrival consumes stale click"
+        );
+        tutorial_input_pass(&mut c);
+        assert_eq!(c.out.pos, 0);
+        assert_eq!(c.tut_com_message.as_deref(), Some(text));
+
+        c.redraw_chat = false;
+        tutorial_input_click(&mut c, 1, 560, 210);
+        assert!(c.tut_com_message.is_none());
+        assert!(c.redraw_chat);
+        assert_eq!(c.tut_com_id, 123);
+        assert_eq!(c.out.pos, 0, "ack is local, not a widget/pause packet");
+        c.shell.latch_click();
+        tutorial_input_pass(&mut c);
+        assert_eq!(c.out.pos, 0);
+        tutorial_input_click(&mut c, 1, 560, 210);
+        assert_eq!(&c.out.data()[..c.out.pos], &[86, 0, 2]);
+        c.shell.latch_click();
+        tutorial_input_pass(&mut c);
+        assert_eq!(&c.out.data()[..c.out.pos], &[86, 0, 2]);
+    }
+}
+
+#[test]
+fn cleanup_f_tutorial_right_click_opens_menu_with_or_without_pending_message() {
+    for pending in [None, Some("Keep going"), Some("")] {
+        let mut c = client_289();
+        c.tut_com_id = 123;
+        tutorial_input_widget(&mut c);
+        if let Some(text) = pending {
+            tutorial_input_message(&mut c, text);
+        }
+        c.redraw_chat = false;
+        tutorial_input_click(&mut c, 2, 560, 210);
+        assert!(
+            c.is_menu_open,
+            "right click must reach mouse_loop: {pending:?}"
+        );
+        assert_eq!(c.tut_com_message.as_deref(), pending);
+        assert_eq!(c.tut_com_id, 123);
+        assert!(!c.redraw_chat);
+        assert_eq!(c.out.pos, 0);
+        // Select the top widget entry from the actual opened menu. With a
+        // pending message this LEFT is only an ack; a second LEFT dispatches.
+        let x = 553 + c.menu_x + 1;
+        let y = 205 + c.menu_y + 31;
+        c.shell.mouse_x = x;
+        c.shell.mouse_y = y;
+        tutorial_input_click(&mut c, 1, x, y);
+        if pending.is_some() {
+            assert!(c.tut_com_message.is_none());
+            assert_eq!(c.out.pos, 0);
+            assert!(c.is_menu_open);
+            tutorial_input_click(&mut c, 1, x, y);
+        }
+        assert!(!c.is_menu_open);
+        assert_eq!(&c.out.data()[..c.out.pos], &[86, 0, 2]);
+        c.shell.latch_click();
+        tutorial_input_pass(&mut c);
+        assert_eq!(&c.out.data()[..c.out.pos], &[86, 0, 2]);
+    }
+}
+
+#[test]
+fn cleanup_f_tutorial_npc_pick_dispatches_after_ack_only_once() {
+    use client::client::MiniMenuAction;
+    for pending in [None, Some("Talk now"), Some("")] {
+        let mut c = client_289();
+        c.tut_com_id = 123;
+        let cache = Arc::get_mut(&mut c.cache).unwrap();
+        cache.npcs.resize_with(1, Default::default);
+        cache.npcs[0].name = "Guide fixture".into();
+        cache.npcs[0].op = vec![Some("Talk-to".into())];
+        c.local_player = Some(ClientPlayer::at(5, 5));
+        let mut npc = ClientNpc::at(5, 5);
+        npc.r#type = Some(0);
+        c.npc[7] = Some(Box::new(npc));
+        c.pick_count = 1;
+        c.pick_typecodes[0] = (1 << 29) | (7 << 14) | (5 << 7) | 5;
+        c.shell.mouse_x = 100;
+        c.shell.mouse_y = 100;
+        c.build_minimenu();
+        assert_eq!(
+            c.menu_action[c.menu_num_entries as usize - 1],
+            MiniMenuAction::OP_NPC1
+        );
+        if let Some(text) = pending {
+            tutorial_input_message(&mut c, text);
+            tutorial_input_click(&mut c, 1, 100, 100);
+            assert_eq!(c.out.pos, 0);
+            assert!(c.tut_com_message.is_none());
+        }
+        tutorial_input_click(&mut c, 1, 100, 100);
+        // Java 10140-10181 seeds one route point even at the source tile:
+        // MOVE_OPCLICK 67, length 5, run 0, p2 x=5, p2 z=5. Then Java
+        // 11208-11231: OPNPC1 252, p2 NPC slot 7. No copied emit helper.
+        let expected = [67, 5, 0, 0, 5, 0, 5, 252, 0, 7];
+        assert_eq!(&c.out.data()[..c.out.pos], &expected);
+        assert_eq!(c.cross_mode, 2);
+        assert_eq!(c.tut_com_id, 123);
+        c.shell.latch_click();
+        tutorial_input_pass(&mut c);
+        assert_eq!(&c.out.data()[..c.out.pos], &expected);
+    }
+}
+
+#[test]
+fn cleanup_f_tutorial_message_state_is_independent_of_interface_transitions() {
+    let mut c = client_289();
+    assert!(c.tut_com_message.is_none());
+    tutorial_input_message(&mut c, "ordinary chat");
+    assert!(c.tut_com_message.is_none());
+    for id in [123i16, -1, 124] {
+        let mut p = Packet::new(id.to_be_bytes().to_vec());
+        c.psize = 2;
+        c.handle_packet(ServerProt289::TUT_OPEN, &mut p);
+        assert_eq!(c.tut_com_id, i32::from(id));
+        if id == 123 {
+            assert!(c.tut_com_message.is_none());
+            tutorial_input_message(&mut c, "first");
+            tutorial_input_message(&mut c, ""); // replacement, not absence
+        }
+        assert_eq!(c.tut_com_message.as_deref(), Some(""));
+        c.psize = 0;
+        c.handle_packet(ServerProt289::IF_CLOSE, &mut Packet::new(vec![]));
+        assert_eq!(c.tut_com_message.as_deref(), Some(""));
+    }
+    // No interface predicate in Java 6042; closing TUT_OPEN does not ack.
+    c.psize = 2;
+    c.handle_packet(ServerProt289::TUT_OPEN, &mut Packet::new(vec![255, 255]));
+    tutorial_input_widget(&mut c);
+    tutorial_input_click(&mut c, 1, 560, 210);
+    assert!(c.tut_com_message.is_none());
+    assert_eq!(c.out.pos, 0);
+    tutorial_input_click(&mut c, 1, 560, 210);
+    assert_eq!(&c.out.data()[..c.out.pos], &[86, 0, 2]);
+}
+
+#[test]
+fn cleanup_f_tutorial_274_preserves_base_noop_input_and_message_behavior() {
+    for button in [1, 2] {
+        let mut c = Client::new(cfg());
+        c.ingame = true;
+        c.tut_com_id = 123;
+        tutorial_input_widget(&mut c);
+        let mut p = Packet::new(b"legacy notice\n".to_vec());
+        c.psize = p.length() as i32;
+        c.handle_packet(ServerProt::MESSAGE_GAME, &mut p);
+        c.add_chat(0, "local legacy notice", "");
+        assert!(c.tut_com_message.is_none());
+        tutorial_input_click(&mut c, button, 560, 210);
+        if button == 1 {
+            assert_eq!(&c.out.data()[..c.out.pos], &[9, 0, 2]);
+        } else {
+            assert!(c.is_menu_open);
+            assert_eq!(c.out.pos, 0);
+        }
+    }
 }
 
 #[test]
