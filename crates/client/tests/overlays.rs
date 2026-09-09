@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use client::client::{Client, ClientConfig, ClientPlayer};
 use client::config::IdkType;
-use client::dash3d::Model;
+use client::dash3d::{ClientNpc, Model};
 use client::graphics::{Colour, Pix32};
 use client::render::Renderer;
 use std::collections::HashMap;
@@ -185,6 +185,47 @@ fn entity_overlays_collects_chat_bubble() {
         game.pixels.contains(&Colour::YELLOW),
         "the bubble text must draw yellow pixels into area_game"
     );
+}
+
+#[test]
+fn entity_overlays_npc_hint_changes_for_blink_and_movement() {
+    let mut r = Renderer::new(false);
+    let cache = client::cache_dir().display().to_string();
+    if !std::path::Path::new(&cache).join("media").is_file() {
+        return;
+    }
+    let mut c = overlay_client(&cache, &mut r);
+    look_down_z(&mut c);
+    c.hint_type = 1;
+    c.hint_npc = 0;
+    c.npc_count = 1;
+    c.npc_ids = vec![0];
+    let mut npc = ClientNpc::default();
+    npc.entity.x = 384;
+    npc.entity.z = 1280;
+    npc.entity.height = 100;
+    npc.r#type = Some(0);
+    c.npc[0] = Some(Box::new(npc));
+
+    c.loop_cycle = 0;
+    r.area_game.as_mut().unwrap().pixels.fill(0);
+    r.entity_overlays(&mut c);
+    let visible = r.area_game.as_ref().unwrap().pixels.clone();
+    c.loop_cycle = 10;
+    r.area_game.as_mut().unwrap().pixels.fill(0);
+    r.entity_overlays(&mut c);
+    let hidden = r.area_game.as_ref().unwrap().pixels.clone();
+    assert_ne!(
+        visible, hidden,
+        "NPC hint crown must blink off after 10 cycles"
+    );
+
+    c.loop_cycle = 0;
+    c.npc[0].as_mut().unwrap().entity.x = 640;
+    r.area_game.as_mut().unwrap().pixels.fill(0);
+    r.entity_overlays(&mut c);
+    let moved = r.area_game.as_ref().unwrap().pixels.clone();
+    assert_ne!(visible, moved, "NPC hint crown must follow NPC movement");
 }
 
 /// A hand-crafted model 100 above the origin (`min_y` = 100): 3 points, one

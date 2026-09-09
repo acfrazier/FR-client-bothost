@@ -1085,6 +1085,7 @@ impl GpuBackend {
         }
         r.area_game = game;
         r.entity_overlays(core);
+        r.note_overlay_signature(&self.overlay_coverage);
         r.coord_arrow(core);
         r.other_overlays(core);
         drop(_cov_guard);
@@ -1724,7 +1725,8 @@ mod tests {
         FRAME_H, FRAME_W, SCENE_H, SCENE_W,
     };
     use crate::graphics::PixMap;
-    use crate::render::backend::FrameKind;
+    use crate::render::backend::{FrameKind, RenderBackend};
+    use crate::render::Renderer;
 
     #[test]
     fn freeze_last_scene_only_while_the_game_is_loading() {
@@ -1768,6 +1770,82 @@ mod tests {
             !overlay_upload_needed(5, 5),
             "an unchanged overlay epoch needs no redundant upload"
         );
+    }
+
+    #[test]
+    fn overlay_signature_only_invalidates_changed_covered_pixels() {
+        let mut renderer = Renderer::new(false);
+        renderer.area_game = Some(PixMap::new(SCENE_W as i32, SCENE_H as i32));
+        let mut coverage = vec![0u8; (SCENE_W * SCENE_H) as usize];
+        coverage[12] = 255;
+        renderer.area_game.as_mut().unwrap().pixels[12] = 0x00112233;
+
+        renderer.note_overlay_signature(&coverage);
+        assert_eq!(renderer.overlay_epoch, 1, "first overlay uploads");
+        renderer.note_overlay_signature(&coverage);
+        assert_eq!(renderer.overlay_epoch, 1, "unchanged overlay stays cached");
+
+        renderer.area_game.as_mut().unwrap().pixels[12] = 0x00445566;
+        renderer.note_overlay_signature(&coverage);
+        assert_eq!(renderer.overlay_epoch, 2, "blink/pixel change uploads");
+
+        renderer.area_game.as_mut().unwrap().pixels[13] = 0x00abcdef;
+        renderer.note_overlay_signature(&coverage);
+        assert_eq!(renderer.overlay_epoch, 2, "uncovered scene pixels do not upload");
+    }
+
+    #[test]
+    fn gpu_finish_composes_changed_overlay_and_skips_unchanged_upload() {
+        let Ok(mut backend) = super::GpuBackend::try_new() else {
+            return;
+        };
+        let mut renderer = Renderer::new(false);
+        renderer.area_game = Some(PixMap::new(SCENE_W as i32, SCENE_H as i32));
+        let mut core = crate::client::client::Client::new(crate::client::config::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        core.scene_state = 2;
+        let overlay_index = (4 * FRAME_W + 4) as usize;
+        renderer.area_game.as_mut().unwrap().pixels[0] = 0x00112233;
+        renderer.draw_area.pixels[overlay_index] = 0x00112233;
+        backend.overlay_coverage[0] = 255;
+
+        backend.composite_scene(&mut core, &mut renderer, FrameKind::Game);
+        renderer.note_overlay_signature(&backend.overlay_coverage);
+        let first = backend.finish(&mut renderer);
+        let first_pixels = match first {
+            super::FrameOutput::Texture(handle) => handle.read_back(),
+            _ => unreachable!("GPU finish returns a texture"),
+        };
+        let first_uploads = backend.chrome_upload_count();
+        assert_eq!(first_pixels[overlay_index], 0x00112233);
+
+        backend.composite_scene(&mut core, &mut renderer, FrameKind::Game);
+        renderer.note_overlay_signature(&backend.overlay_coverage);
+        let unchanged = backend.finish(&mut renderer);
+        let unchanged_pixels = match unchanged {
+            super::FrameOutput::Texture(handle) => handle.read_back(),
+            _ => unreachable!("GPU finish returns a texture"),
+        };
+        assert_eq!(backend.chrome_upload_count(), first_uploads);
+        assert_eq!(unchanged_pixels[overlay_index], 0x00112233);
+
+        renderer.area_game.as_mut().unwrap().pixels[0] = 0;
+        renderer.draw_area.pixels[overlay_index] = 0;
+        backend.overlay_coverage[0] = 0;
+        backend.composite_scene(&mut core, &mut renderer, FrameKind::Game);
+        renderer.note_overlay_signature(&backend.overlay_coverage);
+        let blink_off = backend.finish(&mut renderer);
+        let blink_off_pixels = match blink_off {
+            super::FrameOutput::Texture(handle) => handle.read_back(),
+            _ => unreachable!("GPU finish returns a texture"),
+        };
+        assert!(backend.chrome_upload_count() > first_uploads);
+        assert_eq!(blink_off_pixels[overlay_index], 0);
     }
 
     #[test]

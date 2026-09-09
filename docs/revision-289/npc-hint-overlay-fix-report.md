@@ -19,24 +19,23 @@ state.
 
 ## Correction
 
-`Renderer` now increments a dedicated `overlay_epoch` whenever the production
-entity-overlay pass redraws. `GpuBackend` records the epoch included in its
-persistent chrome texture and forces the existing upload path when the epochs
-differ. The correction is limited to the overlay upload seam; it does not force
-scene rebuilds, disable caching, alter packet handling, or change CPU/GPU
-ownership. The scene-state-1 last-FBO freeze remains unchanged.
-
-The upload decision is isolated in `overlay_upload_needed`, with regression
-coverage for both a changed epoch (NPC movement/blink) and an unchanged epoch
-(no redundant upload decision).
+`Renderer` now records a hash of the pixels and coverage written by the GPU
+entity-overlay pass. The epoch advances only when covered overlay pixels or
+coverage change, so the existing upload path refreshes a moved/blinking/cleared
+hint while unchanged overlays retain chrome-atlas caching. The 3D scene pixels
+are excluded from the hash. The correction is limited to the overlay upload
+seam; it does not force scene rebuilds, disable caching, alter packet handling,
+or change CPU/GPU ownership. The scene-state-1 last-FBO freeze remains
+unchanged.
 
 ## Verification
 
 All commands used the checkout target directory:
 
-- `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo test -p client --lib render::backend::gpu::tests::overlay_epoch_upload_tracks_movement_and_blink_without_chrome_redraw -- --exact` — PASS, 1 test.
-- `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo test -p client --lib render::backend::gpu::tests:: -- --nocapture` — PASS, 5 tests.
-- `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo test -p client --test overlays` — PASS, 6 tests, including production `entity_overlays` sprite tests.
+- `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo test -p client --lib render::backend::gpu::tests::overlay_signature_only_invalidates_changed_covered_pixels -- --exact` — PASS, 1 test.
+- `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo test -p client --lib render::backend::gpu::tests::gpu_finish_composes_changed_overlay_and_skips_unchanged_upload -- --exact` — PASS, 1 test; composed GPU finish/readback regression proves changed overlay upload and unchanged cache.
+- `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo test -p client --lib render::backend::gpu::tests:: -- --nocapture` — PASS, 7 tests.
+- `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo test -p client --test overlays` — PASS, 7 tests, including production NPC hint blink/movement.
 - `CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo check -p client -p client-play` — PASS.
 - `git diff --check` — PASS.
 

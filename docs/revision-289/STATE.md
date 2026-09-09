@@ -699,12 +699,14 @@ review/tracer artifacts remain unstaged.
 Offline source/runtime-path diagnosis confirmed the GPU persistent chrome upload
 was gated only by ordinary chrome redraw flags. `entity_overlays` redraws the
 NPC hint crown into CPU `area_game`, but NPC movement and `loop_cycle` blink do
-not dirty those flags, so GPU presentation retained stale crown pixels. Scoped
-fix adds a renderer overlay epoch and makes GPU `finish` upload when that epoch
-changes; CPU path, scene ownership and scene_state==1 last-FBO freeze are
-preserved. Report: `npc-hint-overlay-fix-report.md`.
+not dirty those flags, so GPU presentation retained stale crown pixels. The
+scoped fix hashes only GPU overlay-covered pixels/coverage and advances the
+renderer epoch when that rendered overlay set changes; `finish` then uploads
+only changed overlay content. CPU path, scene ownership and scene_state==1
+last-FBO freeze are preserved. Report: `npc-hint-overlay-fix-report.md`.
 
-Tests: GPU backend unit subset 5/5, overlays integration 6/6, and
+Tests: GPU composed finish/readback regression 1/1; GPU backend suite 7/7;
+overlays integration 7/7 including production NPC hint blink/movement; and
 `cargo check -p client -p client-play` passed with the checkout target.
 `git diff --check` passed. Full `cargo fmt --all -- --check` remains nonzero on
 pre-existing reviewed formatting drift; no broad format rewrite was applied.
