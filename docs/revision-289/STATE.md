@@ -711,4 +711,18 @@ overlays integration 7/7 including production NPC hint blink/movement; and
 `git diff --check` passed. Full `cargo fmt --all -- --check` remains nonzero on
 pre-existing reviewed formatting drift; no broad format rewrite was applied.
 Fresh root-owned live visual recheck and required Grok4.5/Grok4.6 review remain
-pending. Same-card implementation commit and reviewer handoff are next.
+pending. The preceding c9fca37 evidence was rejected in round 2 as insufficient:
+manual overlay/signature planting did not prove production wiring.
+
+Round 3 on t_1ced5ad3: signature now follows all covered overlay writers.
+New cache-free R289 NPC/sprite GPU draw/composite/chrome/finish/readback regression
+requires an adapter, keeps scene_ready=true and ordinary chrome flags clear,
+proves blink/movement/clear/no-change caching and actual scene_state1 freeze.
+Early signature failed the late crosshair assertion; independently removing the
+production signature or finish epoch OR failed blink-on readback. All failures
+retained in target/npc-hint-round3-*.log; both mutants restored.
+Final serial all-feature results: lib80, gpu_backend10, gpu_texture10,
+iface_model9, overlays7; client/client-play check, new-file rustfmt and diff
+check passed. Report: npc-hint-overlay-fix-report.md. Round 3 is ready for
+same-card reviewer=reviewer; no hint-fix commit is accepted yet. Root owns the
+corrective Grok4.6 pass and fresh live visual verification before closure.

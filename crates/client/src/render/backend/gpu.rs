@@ -1085,9 +1085,10 @@ impl GpuBackend {
         }
         r.area_game = game;
         r.entity_overlays(core);
-        r.note_overlay_signature(&self.overlay_coverage);
         r.coord_arrow(core);
         r.other_overlays(core);
+        // Include every writer covered by this pass, not just entity crowns.
+        r.note_overlay_signature(&self.overlay_coverage);
         drop(_cov_guard);
     }
 }
@@ -1717,6 +1718,10 @@ fn fill_minimap_rgba(map: &PixMap, bytes_per_row: u32, bytes: &mut Vec<u8>) {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "gpu_overlay_tests.rs"]
+mod overlay_tests;
 
 #[cfg(test)]
 mod tests {
