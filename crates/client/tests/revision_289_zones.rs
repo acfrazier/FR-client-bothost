@@ -3,6 +3,21 @@
 //! (6794-7050), full-follows2755-2773 and rebuild2999-3125. No captures.
 use client::client::{Client, ClientConfig, ClientPlayer, ClientRevision};
 use client::io::Packet;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn empty_cache_dir() -> String {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    std::env::temp_dir()
+        .join(format!(
+            "r289-zones-empty-cache-{}-{stamp}",
+            std::process::id()
+        ))
+        .display()
+        .to_string()
+}
 
 fn zone(c: &mut Client, enclosed: bool, id: u8, bytes: &[u8]) {
     let p = if enclosed {
@@ -142,12 +157,17 @@ fn client() -> Client {
         ClientConfig {
             host: "127.0.0.1".into(),
             port: 43594,
-            cache_dir: "/tmp".into(),
+            cache_dir: empty_cache_dir(),
             members: true,
             lowmem: false,
         },
         ClientRevision::R289,
     );
+    let cache = std::sync::Arc::get_mut(&mut c.cache).expect("isolated fixture cache");
+    cache.objs.resize_with(1, Default::default);
+    cache.locs.resize_with(6, Default::default);
+    cache.seqs.resize_with(8, Default::default);
+    cache.spots.resize_with(4, Default::default);
     c.ingame = true;
     c.loop_cycle = 50;
     c.local_player = Some(ClientPlayer::at(10, 10));

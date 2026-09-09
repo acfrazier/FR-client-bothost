@@ -613,6 +613,30 @@ in the report; reviewer/root must retain this regression-gate limitation.
 No H, live, host/server/cache, remote, merge, push or new-card work. Root retains
 authentic cache/server pairing, live RSA/ISAAC/presentation, resolution of the
 inherited fixture gate and required final whole-branch Grok4.6. Synthetic pixels
-and audio request state are not real presentation/audible proof. Hotspot:
-crates/client/src/client/client.rs remains serialized; inherited untracked
+and audio request state are not real presentation/audible proof.
+Hotspot: crates/client/src/client/client.rs remains serialized; inherited untracked
 review/helper artifacts remain unstaged.
+
+## Offline fixture isolation (t_0c645ab5)
+
+Stage2 enclosed-zone and Cleanup E zone failures were inherited cold-cache fixture
+failures, not production validation regressions: positive packets referenced loc,
+object, sequence and spotanim IDs while `/tmp` loaded an empty Cache table. The
+correction is test-only. Stage2 and zones fixtures now use unique nonexistent
+temporary cache paths and explicitly seed the smallest public default definitions
+needed by positive packets; the enclosed positive uses loc ID 0. Existing negative
+out-of-range/malformed enclosed assertions remain distinct and fail closed.
+
+Report: `docs/revision-289/offline-fixture-isolation-report.md`.
+Three sequential fresh-empty-cache passes passed stage2 enclosed 1/1 and zones
+8/8. Full stage2 passed 48/48; zones passed 8/8; serialized all-features native
+workspace target summaries passed (stage1 46, stage2 48, stage3 23, zones 8,
+legacy zone45, client-play4, GPU suites and doc tests); contract verifier passed
+256/82/50; diff check passed. Preserve wrapper receipt
+`target/offline-fixture-isolation-workspace-final.log`: its Cargo summaries are
+zero-failure, but the tee wrapper ended 255 due empty shell pipeline-status
+extraction. A direct non-pipelined repeat returned Cargo exit 0. No active test
+process remained. Stage1 synchronization code was not changed.
+
+Implementation is committed only after scoped test/report review; root still owns
+H, authentic cache/server pairing, live RSA/ISAAC/presentation, and final Grok4.6.

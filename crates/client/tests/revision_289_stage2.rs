@@ -12,13 +12,27 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+fn empty_cache_dir() -> String {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    std::env::temp_dir()
+        .join(format!(
+            "r289-stage2-empty-cache-{}-{stamp}",
+            std::process::id()
+        ))
+        .display()
+        .to_string()
+}
 
 fn cfg() -> ClientConfig {
     ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: empty_cache_dir(),
         members: true,
         lowmem: false,
     }
@@ -29,6 +43,11 @@ fn client_289() -> Client {
     c.ingame = true;
     c.ptype = -1;
     c
+}
+
+fn seed_zone_config(c: &mut Client) {
+    let cache = Arc::get_mut(&mut c.cache).expect("isolated fixture cache");
+    cache.locs.resize_with(1, Default::default);
 }
 
 fn ensure_iface(c: &mut Client, com_id: usize) {
@@ -521,10 +540,11 @@ fn startup_289_login_script_and_first_tick_packets_dispatch() {
 #[test]
 fn startup_289_enclosed_zone_uses_289_inner_opcodes_and_keeps_framing() {
     let mut c = client_289();
+    seed_zone_config(&mut c);
     c.psize = 11;
     // ServerGameZoneProt: LOC_ADD_CHANGE=90 (pos, info, id) followed by
     // OBJ_DEL=71 (pos, id). Both frames must consume their R289 payloads.
-    let mut enclosed = Packet::new(vec![40, 48, 90, 0x11, 0, 0x12, 0x34, 71, 0x22, 0x00, 0x56]);
+    let mut enclosed = Packet::new(vec![40, 48, 90, 0x11, 0, 0, 0, 71, 0x22, 0, 0]);
     c.handle_packet(ServerProt289::UPDATE_ZONE_PARTIAL_ENCLOSED, &mut enclosed);
     assert_eq!((c.zone_update_x, c.zone_update_z), (40, 48));
     assert_eq!(enclosed.pos, 11);
