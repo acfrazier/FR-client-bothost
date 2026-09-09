@@ -54,6 +54,14 @@ impl RenderBackend for CpuBackend {
             // ahead of this frame's side/chat draws.
             r.prepare_game(core);
 
+            // Primary 289 client.java 9832-9834: pending (even empty)
+            // messages redraw chat every frame. Publish in the shared begin
+            // stage so GPU chrome sees the flag before CPU chrome clears it;
+            // no scene/overlay invalidation or separate upload policy needed.
+            if core.revision().is_289() && core.tut_com_message.is_some() {
+                core.redraw_chat = true;
+            }
+
             if core.redraw_frame {
                 core.redraw_frame = false;
 

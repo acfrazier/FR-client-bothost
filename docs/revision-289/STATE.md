@@ -1,5 +1,38 @@
 # Revision 289 client campaign state
 
+## Current boundary — 2026-09-09 10:55 UTC
+
+This section supersedes older next-action wording. Parent tutorial-input
+91fcadd passed same-card Grok4.5 and required Grok4.6 t_7fe3337b, docs6475746,
+OFFLINE ACCEPTED (bounded), explicitly not tutorial presentation parity.
+Narrow authorized correction t_ea8cdf17 is implemented and ready for same-card
+profile reviewer; no review acceptance yet.
+
+R289 pending Some (including empty) now replaces chat modal/tutorial/plain
+chat directly on chatback, below social/amount priority. Message is black at
+(239,40), continue cue DARKBLUE128 at(239,60). Shared CPU begin marks only
+chat dirty per pending frame before ordinary GPU chrome flag capture. No GPU
+policy, input/packet, NPC overlay signature, or scene1 freeze changes. Both
+new conditions are revision-gated to preserve pinned base274 behavior.
+
+Report: tutorial-presentation-fix-report.md. Synthetic fonts/sprites/interfaces
+exercise production game_draw/backend/draw_chat and inspect real surface and
+composite pixels, repeated clear-flag frames, LEFT ack/restoration/next action,
+prompt priority and 274 behavior, without cache-dependent early success.
+Retained actual REDs: underlying IF precedence, omitted chat dirtiness, and
+isolated BLACK cue mutation; fixture compile/Arc failures remain recorded too.
+Final serialized all-features affected suites: chat_mode4, hud86, input16,
+minimenu27, outbound27, stage2 55, stage3 23, presentation5 — parsed243 passed,
+0 failed, 0 ignored. Exact commands/logs in report. Scoped rustfmt checks and
+git diff --check pass; unrelated draw.rs formatting debt stays.
+
+Next: actual same-card Grok4.5 verdict, root's required corrective whole-branch
+Grok4.6, fresh reviewed native build, bounded native action/logout proof.
+No hardware GPU/native presentation or live acceptance follows from CPU pixels.
+Preserve root arrow-0310 failed actions/logout and300-second deadline; earlier
+NPC live blink/motion report is not logout proof. No apps/server/CUA, external
+checkout/account/cache/endpoint changes, merge/push or host integration here.
+
 ## Current boundary — 2026-09-09 03:28 UTC
 
 This section supersedes next-action wording below. NPC arrow correction
