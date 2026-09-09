@@ -8,6 +8,8 @@ pub use client_build::ClientBuild;
 pub mod config;
 pub use config::ClientConfig;
 pub mod game_shell;
+mod outbound_289;
+mod mouse_recorder_289;
 pub use game_shell::GameShell;
 pub mod key_codes;
 pub use key_codes::lookup;

@@ -6,9 +6,9 @@
 //! `CLIENT_VERSION = 289` engine table. Payload lengths for the basic
 //! action cut (walk, NPC/loc/object/player/held/widget/dialog/count, map
 //! build, chat mode) are counted from the write sequences after each
-//! opcode; shapes match 274 for these families. Untraced social/event rows
-//! keep length markers derived the same way where the write sequence is
-//! unambiguous, otherwise remain unused by production emit.
+//! opcode; shapes match 274 for these families. Cleanup H adds R289-only
+//! input/lifecycle emitters and ordered-byte production-path coverage for
+//! all 82 named rows; see docs/revision-289/cleanup-h-report.md.
 
 use super::ClientProt;
 
@@ -50,7 +50,7 @@ impl ClientProt289 {
     pub const ANTICHEAT_CYCLELOGIC4: ClientProt = ClientProt { id: 137, length: 1 };
     pub const ANTICHEAT_CYCLELOGIC5: ClientProt = ClientProt { id: 85, length: 0 };
     pub const ANTICHEAT_CYCLELOGIC6: ClientProt = ClientProt { id: 255, length: 1 };
-    pub const ANTICHEAT_CYCLELOGIC7: ClientProt = ClientProt { id: 232, length: 1 };
+    pub const ANTICHEAT_CYCLELOGIC7: ClientProt = ClientProt { id: 232, length: 0 };
 
     // Object ops — method216 OPOBJ* : p2 x, p2 z, p2 objId (+ extras for T/U)
     pub const OPOBJ1: ClientProt = ClientProt { id: 97, length: 6 };

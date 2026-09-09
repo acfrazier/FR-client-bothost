@@ -345,6 +345,7 @@ mod window {
                     }
                 }
                 WindowEvent::KeyboardInput { event, .. } => self.key_event(event),
+                WindowEvent::Focused(focused) => self.shell.apply_focus(focused),
                 _ => {}
             }
         }

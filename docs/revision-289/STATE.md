@@ -11,10 +11,11 @@ fc5516c. Required final Grok4.6 re-review t_f4e2ad64: OFFLINE ACCEPTED
 (bounded) HEAD fc5516c. See docs/revision-289/branch-final-review.md.
 Whole client / live is not accepted.
 
-Current cleanup checkpoint: F accepted at 97341e6 on t_4583da40 by actual
-Grok4.5, after accepted E2a0f774. G implementation t_7f7981c3 is ready for
-same-card review with explicit unresolved inherited fixture failures (see
-cleanup-g-report.md and the final section below). H remains root-owned.
+Current cleanup checkpoint: G accepted at 9344ee6; cold-cache fixture isolation
+accepted at c9faade on t_0c645ab5. H implementation t_34667a70 is ready for
+same-card reviewer=reviewer (not yet accepted). Current cleanup plan section:
+full-dispatch-cleanup-plan.md H. See cleanup-h-report.md and the final section
+below; preserve earlier failed G/H test receipts and review history.
 
 Primary source pin and supporting host evidence are named in plan.md and
 host-script-evidence.md. The live 289 server/cache pairing is unverified.
@@ -640,3 +641,50 @@ process remained. Stage1 synchronization code was not changed.
 
 Implementation is committed only after scoped test/report review; root still owns
 H, authentic cache/server pairing, live RSA/ISAAC/presentation, and final Grok4.6.
+
+## Cleanup H implementation (t_34667a70)
+
+Accepted foundation: G9344ee641e09e35a3e0408359e9faca15662be43 and fixture
+isolation c9faadeb673782880a27f7602a0d62a778f0230c. H now supplies the eight
+missing R289 input/lifecycle emitters through game_loop, keyboard polling,
+draw-owned crosshair counters and the scoped Client::run mouse recorder.
+R274 defaults/public constants/chat/report, existing action fields and draw-side
+tutorial/cycle ownership remain preserved. No bot API or renderer-resource
+ownership changes. Report: cleanup-h-report.md, with all82 unique source-to-
+production-to-ordered-byte-test rows and independent declared-length fixtures.
+
+Root explicitly authorized correcting primary J:5829's reversed mouse cursor
+subtraction: forward payload<240 before each whole sample, max243, ordered
+leftovers retained. Short-stream packing, duplicate carry/saturation2047,
+500-sample cap,50ms recorder,40-sample/click admission and sentinel remain source
+semantics. This deliberate framing correction is not literal bug equivalence.
+Corrected protocol camera pitch/yaw order, packed click, delta -32 edge and
+empty232 in source contracts/table/fixtures. Cycle2 deterministic legal choices
+are retained, not claimed Java-random distribution parity.
+
+Preserved first H full-suite failure: target/cleanup-h-workspace.log, exit101
+after184.5s (root-confirmed). Stage1 welcome/logout failed the accepted-frame
+count0 vs1, not generations. Root-authorized test-only readiness repair now
+waits for total-written minus consumed bytes at the receiver before the exact
+prescribed fragment parser polls, with2s bounds and synchronous chunk barriers;
+no production timeouts/validators/assertions were weakened. Explicit delayed
+transport/unread-byte/fragment regression passed1/1.
+
+Serialized direct-subprocess receipts (explicit cwd/env/returncode) in this
+checkout's target: stage1 47/47; stage2 48/48; stage3 23/23; input16/16;
+H outbound27/27 including real driver sampling, signed movement, ISAAC frames,
+mouse/click edges, all40 action rows and counter boundaries. Full native
+workspace all-features PASS exit0 in188.57s,72 passing target summaries /950
+passed tests, including client-play4 and GPU suites. Exact full receipt:
+target/cleanup-h-all-features-final.json and .log. All-feature workspace check,
+contract verifier256/82/50, new-Rust-file rustfmt and git diff --check pass.
+Earlier run918 partial passes and full-suite failure remain preserved.
+
+Next: commit scoped H implementation/tests/contracts/report, same-card review by
+actual Grok4.5. H is offline implementation only and not yet accepted. Root
+retains aggregate integration review, required final whole-branch Grok4.6,
+authentic cache/server pairing and approved live RSA/ISAAC/presentation proof.
+No host/server/cache/account, remote/Windows/live, merge/push or new-card work.
+Injected shell events and synthetic fixtures are not live presentation proof.
+Hotspot client.rs remains serialized; six inherited unrelated untracked
+review/tracer artifacts remain unstaged.

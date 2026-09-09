@@ -4294,8 +4294,8 @@
       "id": 193,
       "length": 4,
       "fields": [
-        "p2 yaw",
-        "p2 pitch"
+        "p2 pitch",
+        "p2 yaw"
       ],
       "source_anchors": [
         "client.java method465(193)"
@@ -4417,8 +4417,7 @@
       "id": 224,
       "length": 4,
       "fields": [
-        "p2 x",
-        "p2 y"
+        "p4 (min(elapsedMillis/50,4095)<<20)+(rightButton<<19)+clampedY*765+clampedX"
       ],
       "source_anchors": [
         "client.java method465(224)"
@@ -4449,10 +4448,11 @@
       "length": -1,
       "fields": [
         "p1 size",
-        "sample p2 (dt<<12)|((dx+32)<<6)|(dy+32) when dt<8 and |dx|,|dy|<=31",
-        "sample p3 (dt<<19)+y*765+x+0x800000 when dt<8 else abs mid",
+        "sample p2 (dt<<12)|((dx+32)<<6)|(dy+32) when dt<8 and -32<=dx,dy<=31",
+        "sample p3 (dt<<19)+coord+0x800000 when dt<8 and either delta outside range",
         "sample p4 (dt<<19)+coord-0x40000000 when dt>=8",
-        "psize1"
+        "coord=clampedY*765+clampedX; raw(-1,-1) sentinel=524287; duplicate count saturates2047",
+        "psize1; authorized forward payload<240 whole-sample budget, leftovers retained"
       ],
       "source_anchors": [
         "client.java mouse recorder method465(229)+method467/method469/method470+method475"
@@ -4464,12 +4464,10 @@
     {
       "name": "ANTICHEAT_CYCLELOGIC7",
       "id": 232,
-      "length": 1,
-      "fields": [
-        "p1 pad"
-      ],
+      "length": 0,
+      "fields": [],
       "source_anchors": [
-        "client.java method465(232)"
+        "client.java:6023-6027 method465(232), no payload"
       ],
       "confidence": "verified-id-length-fields",
       "production_enabled": true,

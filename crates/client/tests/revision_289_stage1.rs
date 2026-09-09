@@ -9,7 +9,7 @@ use client::config::{IfType, IfTypeMut};
 use client::io::{ClientStream, Packet, ServerProt, ServerProt289, SERVER_PROT_SIZES};
 use std::io::Write;
 use std::net::TcpListener;
-use std::sync::{Arc, Barrier, Mutex};
+use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Duration;
 
@@ -196,61 +196,59 @@ fn feed_frames(c: &mut Client, frame: &[u8], max_polls: usize) -> usize {
 fn feed_chunks(c: &mut Client, chunks: &[Vec<u8>], polls_per_chunk: usize) -> usize {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let chunks = chunks.to_vec();
-    let n_chunks = chunks.len();
-    // phase: client waits for server to finish writing chunk i before polling.
-    let written = Arc::new(Mutex::new(0usize));
-    let written_s = Arc::clone(&written);
-    let done = Arc::new(Barrier::new(2));
-    let done_s = Arc::clone(&done);
-    let polled = Arc::new(Barrier::new(2));
-    let polled_s = Arc::clone(&polled);
-    let handle = thread::spawn(move || {
-        let (mut sock, _) = listener.accept().unwrap();
-        for (i, chunk) in chunks.into_iter().enumerate() {
-            sock.write_all(&chunk).unwrap();
-            let _ = sock.flush();
-            *written_s.lock().unwrap() = i + 1;
-            // Do not rely on scheduling/sleeps to prove fragmentation.
-            polled_s.wait();
-        }
-        done_s.wait();
-        let _ = sock.shutdown(std::net::Shutdown::Both);
-    });
-
     c.stream = Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    let (mut sock, _) = listener.accept().unwrap();
+    sock.set_write_timeout(Some(Duration::from_secs(2))).unwrap();
     c.random_in = None;
     c.ptype = -1;
-
     let mut accepted = 0usize;
-    // Wait until first chunk is on the wire.
-    for _ in 0..50 {
-        if *written.lock().unwrap() >= 1 {
-            break;
-        }
-        thread::sleep(Duration::from_millis(5));
-    }
-
-    for chunk_i in 0..n_chunks {
-        // Wait until this chunk has been written.
-        for _ in 0..50 {
-            if *written.lock().unwrap() > chunk_i {
-                break;
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
+    let mut written = 0;
+    for chunk in chunks {
+        sock.write_all(chunk).unwrap();
+        written += chunk.len();
+        // The next chunk cannot be written until the prescribed parser polls
+        // finish. Count unread prior bytes, not a complete logical frame.
+        wait_received(c.stream.as_mut().expect("stream before chunk"), written);
         for _ in 0..polls_per_chunk {
             if c.tcp_in() {
                 accepted += 1;
-            } else {
-                thread::sleep(Duration::from_millis(5));
             }
         }
-        polled.wait();
     }
-    done.wait();
-    handle.join().unwrap();
     accepted
+}
+
+fn wait_received(stream: &mut ClientStream, written: usize) {
+    let unread = written - stream.bytes_in() as usize;
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while (stream.available().unwrap() as usize) < unread {
+        assert!(std::time::Instant::now() < deadline, "chunk not received");
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[test]
+fn transport_readiness_counts_unread_bytes_before_fragment_poll() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mut stream = ClientStream::connect("127.0.0.1", addr.port()).unwrap();
+    let (mut server, _) = listener.accept().unwrap();
+    server.set_write_timeout(Some(Duration::from_secs(2))).unwrap();
+    server.write_all(&[1, 2]).unwrap();
+    wait_received(&mut stream, 2);
+    assert_eq!(stream.read().unwrap(), 1);
+    let writer = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(20));
+        server.write_all(&[3]).unwrap();
+    });
+    wait_received(&mut stream, 3);
+    assert_eq!(stream.available().unwrap(), 2);
+    assert_eq!(stream.read().unwrap(), 2);
+    assert_eq!(stream.read().unwrap(), 3);
+    writer.join().unwrap();
+    let mut c = client_289();
+    assert_eq!(feed_chunks(&mut c, &[vec![13], vec![1], vec![2, 1]], 1), 1);
+    assert_eq!((c.chat_public_mode, c.chat_private_mode, c.chat_trade_mode), (1, 2, 1));
 }
 
 #[test]

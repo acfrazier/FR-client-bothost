@@ -778,6 +778,8 @@ pub struct Client {
     pub oplogic8: i32,
     pub oplogic9: i32,
     pub cyclelogic2: i32,
+    pub(crate) cyclelogic7_289: i32,
+    pub(crate) outbound_289: super::outbound_289::Outbound289,
     /// `Client.cyclelogic6` from client-ts (a TS static, instance here):
     /// anticheat counter sent with `ANTICHEAT_CYCLELOGIC6` from
     /// `addPlayers` when the dest flag is cleared on arrival.
@@ -1269,7 +1271,16 @@ impl Client {
                 BuildArea::LEVELS as usize
             ];
         let mut client = Client {
-            shell: GameShell::new(),
+            shell: {
+                let mut shell = GameShell::new();
+                shell.telemetry_289 = revision.is_289();
+                if revision.is_289() {
+                    // Applet_Sub1:53-56 fields start at Java int zero.
+                    shell.mouse_x = 0;
+                    shell.mouse_y = 0;
+                }
+                shell
+            },
             present: None,
             config,
             revision,
@@ -1379,6 +1390,8 @@ impl Client {
             oplogic8: 0,
             oplogic9: 0,
             cyclelogic2: 0,
+            cyclelogic7_289: 0,
+            outbound_289: Default::default(),
             cyclelogic6: 0,
             report_abuse_input: String::new(),
             report_abuse_mute_option: false,
@@ -2290,6 +2303,7 @@ impl Client {
         // Session baton carries the stream's revision with ISAAC/frame state
         // so size tables and dispatch cannot silently diverge midstream.
         self.revision = other.revision;
+        self.shell.telemetry_289 = self.revision.is_289();
         self.stream = Some(stream);
         self.random_in = other.random_in.take();
         self.out = std::mem::replace(&mut other.out, Packet::alloc(1));
@@ -2444,6 +2458,9 @@ impl Client {
                 .read()
                 .map_err(|_| self.fail_title_login(io_error(), reconnect))?
                 == 1;
+            if self.revision.is_289() {
+                self.cold_login_input_289();
+            }
             self.ingame = true;
             self.out.pos = 0;
             self.r#in.pos = 0;
@@ -9294,6 +9311,15 @@ impl Client {
     /// `toSentenceCase` + `WordFilter.filter` + `add_chat(2, ...)`
     /// (TS 3169-3179).
     pub fn handle_chat_input(&mut self) {
+        if self.revision.is_289() {
+            // J:10743-10750: count poll calls, not queued characters.
+            self.outbound_289.cyclelogic4 += 1;
+            if self.outbound_289.cyclelogic4 > 192 {
+                self.outbound_289.cyclelogic4 = 0;
+                self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC4));
+                self.out.p1(232);
+            }
+        }
         loop {
             let key = self.shell.poll_key();
             if key == -1 {
@@ -11019,6 +11045,9 @@ impl Client {
             return;
         }
         // TS 2191-2192: the scene/minimap pass after the inbound reads.
+        if self.revision.is_289() {
+            self.input_packets_289();
+        }
         // The SIM half runs here unconditionally — `check_scene` →
         // `map_build` (ground, collision, `MAP_BUILD_COMPLETE`,
         // `scene_state = 2`) — independent of `draw`, so a headless client
@@ -11059,6 +11088,14 @@ impl Client {
         // TS 2229-2300: the in-flight obj-drag tick runs before the click
         // handlers so a release consumes the click before `handle_tab_clicks`.
         self.handle_obj_drag();
+        // Primary 289 J:6023-6027: after drag consumption, before walking.
+        if self.revision.is_289() {
+            self.cyclelogic7_289 += 1;
+            if self.cyclelogic7_289 > 62 {
+                self.cyclelogic7_289 = 0;
+                self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC7));
+            }
+        }
         self.handle_tab_clicks();
         self.handle_side_if_clicks();
         self.handle_main_if_clicks();
@@ -11104,6 +11141,15 @@ impl Client {
         }
         for i in 0..5 {
             self.cam_shake_cycle[i] += 1;
+        }
+        if self.revision.is_289() {
+            // J:6067-6071, after input consumption and before keepalive.
+            self.shell.idle_cycles += 1;
+            if self.shell.idle_cycles > 4500 {
+                self.shell.idle_cycles -= 500;
+                self.logout_timer = 250;
+                self.out.p1_enc(self.client_opcode(ClientProt::IDLE_TIMER));
+            }
         }
         // Dead-server watchdog, wall-clock: the 20 ms pass count is not a
         // clock once the host parks the slot (750 passes at one pass per
@@ -11482,6 +11528,7 @@ impl Client {
         if !self.already_started {
             self.maininit_with_progress(Some(&mut |c, m, p| renderer.draw_progress(c, m, p)));
         }
+        let _mouse_recorder = self.shell.start_mouse_recorder();
         while self.shell.state >= 0 {
             if self.shell.state > 0 {
                 self.shell.state -= 1;

@@ -17,6 +17,11 @@ pub struct GameShell {
     /// Java `GameShell.mouseX`/`mouseY`; -1 while the pointer is off-canvas.
     pub mouse_x: i32,
     pub mouse_y: i32,
+    pub focused: bool,
+    pub(crate) idle_cycles: u32,
+    pub(crate) telemetry_289: bool,
+    pub(crate) mouse_samples:
+        Option<std::sync::Arc<std::sync::Mutex<super::mouse_recorder_289::MouseSamples>>>,
     /// Java `GameShell.mouseButton`: 0 none, 1 left, 2 right.
     pub mouse_button: i32,
     /// Click latched each mainloop pass from `next_mouse_click_*`
@@ -24,6 +29,8 @@ pub struct GameShell {
     pub mouse_click_button: i32,
     pub mouse_click_x: i32,
     pub mouse_click_y: i32,
+    pub mouse_click_time: i64,
+    next_mouse_click_time: i64,
     next_mouse_click_button: i32,
     next_mouse_click_x: i32,
     next_mouse_click_y: i32,
@@ -58,10 +65,16 @@ impl GameShell {
             key_held: [0; 128],
             mouse_x: -1,
             mouse_y: -1,
+            focused: true,
+            idle_cycles: 0,
+            telemetry_289: false,
+            mouse_samples: None,
             mouse_button: 0,
             mouse_click_button: 0,
             mouse_click_x: -1,
             mouse_click_y: -1,
+            mouse_click_time: 0,
+            next_mouse_click_time: 0,
             next_mouse_click_button: 0,
             next_mouse_click_x: -1,
             next_mouse_click_y: -1,
@@ -93,35 +106,80 @@ impl GameShell {
         self.mouse_click_button = self.next_mouse_click_button;
         self.mouse_click_x = self.next_mouse_click_x;
         self.mouse_click_y = self.next_mouse_click_y;
+        self.mouse_click_time = self.next_mouse_click_time;
         self.next_mouse_click_button = 0;
     }
 
     /// Java `mouseDown`: set position/button and latch a click. Java buttons:
     /// 1 left, 2 right.
     pub fn apply_mouse_down(&mut self, button: i32, x: i32, y: i32) {
-        self.mouse_x = x;
-        self.mouse_y = y;
+        self.idle_cycles = 0;
+        // Primary Applet_Sub1:349-352 latches click coordinates separately;
+        // only move/drag/exit changes the recorder pointer. Preserve R274.
+        if !self.telemetry_289 {
+            self.mouse_x = x;
+            self.mouse_y = y;
+        }
         self.mouse_button = button;
         self.next_mouse_click_button = button;
         self.next_mouse_click_x = x;
         self.next_mouse_click_y = y;
+        self.next_mouse_click_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
     }
 
     /// Java `mouseUp`: release the button.
     pub fn apply_mouse_up(&mut self) {
+        self.idle_cycles = 0;
         self.mouse_button = 0;
+    }
+
+    /// Primary Applet_Sub1:536-550. Blur releases held keys, not queued text.
+    pub fn apply_focus(&mut self, focused: bool) {
+        self.focused = focused;
+        if !focused && self.telemetry_289 {
+            self.key_held.fill(0);
+        }
     }
 
     /// Java `mouseMove`/`pointerEnter`: update the position only.
     pub fn apply_mouse_move(&mut self, x: i32, y: i32) {
+        self.idle_cycles = 0;
         self.mouse_x = x;
         self.mouse_y = y;
+        self.publish_mouse();
+    }
+
+    fn publish_mouse(&mut self) {
+        if self.telemetry_289 {
+            let shared = self.mouse_samples.get_or_insert_with(Default::default);
+            shared.lock().unwrap().position = (self.mouse_x, self.mouse_y);
+        }
+    }
+
+    /// One recorder observation. Window drivers normally use the scoped timer.
+    pub fn sample_mouse(&mut self) {
+        self.publish_mouse();
+        if let Some(shared) = &self.mouse_samples {
+            shared.lock().unwrap().sample();
+        }
+    }
+
+    pub(crate) fn start_mouse_recorder(&mut self) -> Option<super::mouse_recorder_289::Recorder> {
+        self.publish_mouse();
+        self.mouse_samples
+            .as_ref()
+            .filter(|_| self.telemetry_289)
+            .map(|shared| super::mouse_recorder_289::Recorder::start(shared.clone()))
     }
 
     /// Key down/up: set `key_held[ch]` = 1/0 for `ch` in 0..128, and on
     /// key-down enqueue `ch` into the `key_queue` ring when `ch > 4` (arrows
     /// are held-only), matching Java `GameShell.keyPressed`/`keyReleased`.
     pub fn apply_key(&mut self, down: bool, _java_code: i32, ch: i32) {
+        self.idle_cycles = 0;
         if ch > 0 && ch < 128 {
             self.key_held[ch as usize] = if down { 1 } else { 0 };
         }

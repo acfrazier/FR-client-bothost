@@ -507,6 +507,14 @@ impl Renderer {
                     s.plot_sprite(&mut surface, client.cross_x - 8 - 4, client.cross_y - 8 - 4);
                 }
             } else if client.cross_mode == 2 {
+                // Primary 289 J:1773-1778: count drawn op crosshairs only.
+                if client.revision().is_289() {
+                    client.outbound_289.cyclelogic5 += 1;
+                    if client.outbound_289.cyclelogic5 > 57 {
+                        client.outbound_289.cyclelogic5 = 0;
+                        client.out.p1_enc(client.client_opcode(crate::io::ClientProt::ANTICHEAT_CYCLELOGIC5));
+                    }
+                }
                 let idx = (client.cross_cycle / 100) as usize + 4;
                 if let Some(s) = self.media.cross.get(idx).and_then(|o| o.as_ref()) {
                     s.plot_sprite(&mut surface, client.cross_x - 8 - 4, client.cross_y - 8 - 4);
