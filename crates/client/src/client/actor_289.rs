@@ -435,6 +435,7 @@ impl ActorFrame {
         let mut publication = R289Publication {
             player: !self.npc,
             npc: self.npc,
+            player_info: !self.npc,
             ..Default::default()
         };
         if let Some(plane) = self.plane {

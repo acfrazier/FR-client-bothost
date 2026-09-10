@@ -71,6 +71,9 @@ fn cold_login_opcode_16_success() {
     });
     c.login("bob", "pw", false).unwrap();
     assert!(c.ingame);
+    assert_eq!(c.gens.session, 1);
+    assert_eq!(c.session_start_gens().session, c.gens.session);
+    assert_eq!(c.session_start_gens().invalidations, c.gens.invalidations);
     assert!(c.local_player.is_some());
     assert!(c.players[2047].is_some());
     assert_eq!(c.login_user, "bob");
@@ -230,12 +233,23 @@ fn reconnect_response_15_keeps_game_and_local_player() {
     });
     c.login("bob", "pw", false).unwrap();
     assert!(c.ingame);
+    assert_eq!(c.gens.session, 1);
     let p = c.local_player.as_mut().unwrap();
     p.y = 77; // marker: response 15 must not replace localPlayer
+    c.bump_gens(client::io::ServerProt::PLAYER_INFO);
+    c.bump_gens(client::io::ServerProt::UPDATE_INV_FULL);
+    let previous_start = c.session_start_gens();
     c.login("bob", "pw", true).unwrap();
     assert!(c.ingame);
     assert!(c.stream.is_some());
     assert_eq!(c.local_player.as_ref().unwrap().y, 77);
+    assert_eq!(c.gens.session, 2);
+    let new_start = c.session_start_gens();
+    assert_eq!(new_start.player_info, previous_start.player_info + 1);
+    assert_eq!(new_start.inv, c.gens.inv);
+    c.bump_gens(client::io::ServerProt::PLAYER_INFO);
+    assert_eq!(c.session_start_gens().player_info, new_start.player_info);
+    assert_eq!(c.gens.player_info, new_start.player_info + 1);
     server.join().unwrap();
 }
 
@@ -340,6 +354,8 @@ fn login_code_6_is_error() {
     assert_eq!(e.code, 6);
     assert!(!c.ingame);
     assert_eq!(c.loginscreen, 2, "failed login stays on the title form");
+    assert_eq!(c.gens.session, 0);
+    assert_eq!(c.session_start_gens().session, 0);
 }
 
 /// Response 5 ("already logged in") is a title-screen error, not a process

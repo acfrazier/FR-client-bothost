@@ -86,6 +86,7 @@ fn lost_con_uses_reconnect_login() {
     c.config.port = addr.port();
     c.login("bob", "pw", false).unwrap();
     assert!(c.ingame);
+    assert_eq!(c.gens.session, 1);
     assert_eq!(c.login_user, "bob");
     c.lost_con();
     // the reestablish attempted login(..., reconnect = true) → opcode 18
@@ -93,6 +94,10 @@ fn lost_con_uses_reconnect_login() {
     // the rejecting server made the reestablish fail, so the client logs out
     assert!(!c.ingame);
     assert!(c.login_user.is_empty());
+    assert_eq!(
+        c.gens.session, 1,
+        "a rejected reconnect is not a successful session"
+    );
     server.join().unwrap();
 }
 
@@ -130,6 +135,7 @@ fn silence_watchdog_reconnects_with_response_15() {
     c.config.port = addr.port();
     c.login("bob", "pw", false).unwrap();
     assert!(c.ingame);
+    assert_eq!(c.gens.session, 1);
     let p = c.local_player.as_mut().unwrap();
     p.y = 77; // marker: the reconnect must not replace localPlayer
               // Age the watchdog past the fixed wall-clock bound, then one pass
@@ -142,6 +148,10 @@ fn silence_watchdog_reconnects_with_response_15() {
     assert!(c.stream.is_some());
     assert_eq!(c.login_user, "bob");
     assert_eq!(c.local_player.as_ref().unwrap().y, 77);
+    assert_eq!(
+        c.gens.session, 2,
+        "response 15 publishes a new successful session identity"
+    );
     server.join().unwrap();
 }
 

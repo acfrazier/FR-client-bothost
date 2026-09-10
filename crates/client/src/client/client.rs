@@ -275,10 +275,12 @@ mod ground_obj_size_tests {
 pub const APPLET_W: i32 = 765;
 pub const APPLET_H: i32 = 503;
 
-/// Packet-family generations: monotonic counters the host reads to know
-/// which world slices changed since its last poll. `handle_packet` bumps one
-/// family per applied packet; `REBUILD_NORMAL` and `logout()` (T1/T2/LOGOUT)
-/// bump all.
+/// Packet-family and lifecycle generations the host reads between polls.
+/// `handle_packet` bumps one family per applied packet; `REBUILD_NORMAL` and
+/// `logout()` (T1/T2/LOGOUT) bump all families. `player_info` records only an
+/// actually applied PLAYER_INFO packet, while `session` records only a
+/// successful login or reconnect grant; neither is part of an all-family
+/// invalidation.
 #[derive(Default, Clone, Copy)]
 pub struct ClientGens {
     pub npc: u64,
@@ -292,6 +294,10 @@ pub struct ClientGens {
     pub camera: u64,
     pub map_flag: u64,
     pub world: u64,
+    pub player_info: u64,
+    pub session: u64,
+    /// Explicit all-family invalidations, excluded from packet observations.
+    pub invalidations: u64,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -307,6 +313,8 @@ struct R289Publication {
     camera: bool,
     map_flag: bool,
     world: bool,
+    player_info: bool,
+    invalidation: bool,
 }
 
 impl R289Publication {
@@ -322,6 +330,8 @@ impl R289Publication {
         camera: true,
         map_flag: true,
         world: true,
+        player_info: false,
+        invalidation: true,
     };
 
     fn publish(self, gens: &mut ClientGens) {
@@ -336,6 +346,8 @@ impl R289Publication {
         gens.camera += u64::from(self.camera);
         gens.map_flag += u64::from(self.map_flag);
         gens.world += u64::from(self.world);
+        gens.player_info += u64::from(self.player_info);
+        gens.invalidations += u64::from(self.invalidation);
     }
 }
 
@@ -1304,6 +1316,10 @@ pub struct Client {
     /// after every applied packet so the host can tell which world slices
     /// changed since its last poll.
     pub gens: ClientGens,
+    /// Generation watermark at the most recent successful login grant.
+    /// A packet drain can straddle a reconnect, so its beginning/end alone
+    /// cannot identify which decoded updates belong to the new connection.
+    session_start_gens: ClientGens,
     /// Bridge for unconverted handlers that call logout internally instead of
     /// returning failure. Cleared at R289 dispatch entry, set by lifecycle reset.
     r289_packet_reset: bool,
@@ -1470,6 +1486,12 @@ impl Client {
     /// Read-only session protocol revision (bound at construction or adopt).
     pub fn revision(&self) -> ClientRevision {
         self.revision
+    }
+
+    /// Packet-family generations immediately after the last successful
+    /// login/reconnect grant, before any packets on that connection apply.
+    pub fn session_start_gens(&self) -> ClientGens {
+        self.session_start_gens
     }
 
     pub fn session_profile(&self) -> Option<&Arc<ClientSessionProfile>> {
@@ -1880,6 +1902,7 @@ impl Client {
             no_timeout_timer: 0,
             error_loading: construction.error_loading,
             gens: ClientGens::default(),
+            session_start_gens: ClientGens::default(),
             login_uid: login_uid(),
         };
         if client.error_loading {
@@ -2919,6 +2942,8 @@ impl Client {
             let player = ClientPlayer::default();
             self.players[LOCAL_PLAYER_INDEX as usize] = Some(Box::new(player.clone()));
             self.local_player = Some(player);
+            self.gens.session = self.gens.session.wrapping_add(1);
+            self.session_start_gens = self.gens;
             // Java `Client.java` 3700: `prepareGame()` rebuilds the game
             // frame the title draw consumed (Task 4b nulls the game areas,
             // so the `area_chat` gate does not fire after a title frame).
@@ -2944,6 +2969,8 @@ impl Client {
             self.last_response = Some(Instant::now());
             self.menu_num_entries = 0;
             self.scene_load_start_time = Instant::now();
+            self.gens.session = self.gens.session.wrapping_add(1);
+            self.session_start_gens = self.gens;
             self.stream = Some(stream);
             return Ok(());
         }
@@ -4557,7 +4584,10 @@ impl Client {
         );
         match ptype {
             ServerProt::NPC_INFO => self.gens.npc += 1,
-            ServerProt::PLAYER_INFO => self.gens.player += 1,
+            ServerProt::PLAYER_INFO => {
+                self.gens.player += 1;
+                self.gens.player_info += 1;
+            }
             ServerProt::UPDATE_INV_FULL
             | ServerProt::UPDATE_INV_PARTIAL
             | ServerProt::UPDATE_INV_STOP_TRANSMIT => self.gens.inv += 1,
@@ -4614,6 +4644,7 @@ impl Client {
     /// Bump every family generation (`REBUILD_NORMAL` scene rebuilds and
     /// `logout()` / T2 resets make every slice stale).
     fn bump_all_gens(&mut self) {
+        self.gens.invalidations += 1;
         self.gens.npc += 1;
         self.gens.player += 1;
         self.gens.inv += 1;

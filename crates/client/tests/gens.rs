@@ -5,8 +5,8 @@
 //! packs, so `Client::new` falls back to `Cache::default()` and never
 //! touches the network.
 
-use client::client::{Client, ClientConfig, ClientGens, ClientPlayer};
-use client::io::{Packet, ServerProt};
+use client::client::{Client, ClientConfig, ClientGens, ClientPlayer, ClientRevision};
+use client::io::{Packet, ServerProt, ServerProt289};
 
 fn cfg() -> ClientConfig {
     ClientConfig {
@@ -45,6 +45,7 @@ fn applied_packets_bump_their_family() {
     c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut p);
 
     assert_eq!(c.gens.player, 1);
+    assert_eq!(c.gens.player_info, 1);
     assert_eq!(c.gens.inv, 1);
     assert_eq!(c.gens.npc, 0);
     assert_eq!(c.gens.varp, 0);
@@ -55,6 +56,77 @@ fn applied_packets_bump_their_family() {
     assert_eq!(c.gens.camera, 0);
     assert_eq!(c.gens.map_flag, 0);
     assert_eq!(c.gens.world, 0);
+}
+
+fn bit_packet(fields: &[(usize, u32)]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let mut position = 0;
+    for &(width, value) in fields {
+        assert!(value < (1 << width));
+        for shift in (0..width).rev() {
+            if position % 8 == 0 {
+                bytes.push(0);
+            }
+            *bytes.last_mut().unwrap() |= (((value >> shift) & 1) as u8) << (7 - position % 8);
+            position += 1;
+        }
+    }
+    bytes
+}
+
+#[test]
+fn revision_289_player_info_publication_is_distinct_from_family_invalidation() {
+    let mut c = Client::new_with_revision(cfg(), ClientRevision::R289);
+    c.ingame = true;
+    c.self_slot = 5;
+    c.local_player = Some(ClientPlayer::at(10, 10));
+    c.players[2047] = Some(Box::new(ClientPlayer::at(10, 10)));
+    let frame = bit_packet(&[
+        (1, 1),
+        (2, 3),
+        (2, 2),
+        (7, 80),
+        (7, 81),
+        (1, 1),
+        (1, 0),
+        (8, 0),
+    ]);
+    c.psize = frame.len() as i32;
+    let mut packet = Packet::new(frame);
+    c.handle_packet(ServerProt289::PLAYER_INFO, &mut packet);
+
+    assert!(c.ingame);
+    assert_eq!(c.gens.player, 1);
+    assert_eq!(c.gens.player_info, 1);
+
+    let mut rebuild = Packet::new(vec![0, 16, 0, 32]);
+    c.psize = 4;
+    c.handle_packet(ServerProt289::REBUILD_NORMAL, &mut rebuild);
+    assert!(c.ingame);
+    assert_eq!(c.gens.player, 2);
+    assert_eq!(c.gens.invalidations, 1);
+    assert_eq!(
+        c.gens.player_info, 1,
+        "REBUILD invalidates player state without publishing PLAYER_INFO"
+    );
+}
+
+#[test]
+fn failed_revision_289_player_info_does_not_publish_player_info() {
+    let mut c = Client::new_with_revision(cfg(), ClientRevision::R289);
+    c.ingame = true;
+    c.local_player = Some(ClientPlayer::at(10, 10));
+    c.players[2047] = Some(Box::new(ClientPlayer::at(10, 10)));
+    c.psize = 1;
+    let mut truncated = Packet::new(vec![0xff]);
+
+    c.handle_packet(ServerProt289::PLAYER_INFO, &mut truncated);
+
+    assert!(
+        !c.ingame,
+        "the malformed frame must take the existing T2 reset"
+    );
+    assert_eq!(c.gens.player_info, 0);
 }
 
 /// `bump_gens` maps a `ServerProt` opcode to exactly one family.
@@ -160,6 +232,10 @@ fn rebuild_bumps_all_gens() {
     assert!(c.gens.npc >= 1 && c.gens.player >= 1 && c.gens.inv >= 1);
     assert!(c.gens.varp >= 1 && c.gens.stat >= 1 && c.gens.chat >= 1 && c.gens.scene >= 1);
     assert!(c.gens.iface >= 1 && c.gens.camera >= 1 && c.gens.map_flag >= 1 && c.gens.world >= 1);
+    assert_eq!(
+        c.gens.player_info, 0,
+        "a rebuild invalidates player state but is not PLAYER_INFO"
+    );
 }
 
 /// `LOGOUT` resets the whole world, so the `handle_packet` path bumps every
@@ -199,6 +275,8 @@ fn logout_method_bumps_all_gens() {
     assert_eq!(c.gens.camera, 1);
     assert_eq!(c.gens.map_flag, 1);
     assert_eq!(c.gens.world, 1);
+    assert_eq!(c.gens.player_info, 0);
+    assert_eq!(c.gens.session, 0);
 }
 
 /// T1 unknown opcode logs out without a mapped `bump_gens` arm; `logout()`
