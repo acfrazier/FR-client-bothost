@@ -3,9 +3,12 @@
 //! pending logout request (`logoutTimer > 0`) logs out instead; the in-game
 //! silence watchdog (wall-clock: `last_response` older than the 15 s
 //! `SERVER_TIMEOUT` bound, not 750 pass-counted frames) drives it.
-use client::client::{Client, ClientConfig};
+use client::client::{Client, ClientConfig, ClientPlayer, ClientRevision};
+use client::config::Cache;
+use client::io::{ClientStream, ServerProt, ServerProt289};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -157,4 +160,97 @@ fn silence_watchdog_calls_lost_con_after_wall_clock_silence() {
     assert_eq!(c.last_login_reconnect, Some(true));
     assert!(!c.ingame);
     server.join().unwrap();
+}
+
+#[test]
+fn short_game_frame_does_not_constrain_later_login_seed() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        for (reconnect, adopt) in [(false, false), (true, false), (true, true)] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let (finished, wait_finished) = mpsc::channel();
+            let opcode = match revision {
+                ClientRevision::R274 => ServerProt::UPDATE_RUNENERGY,
+                ClientRevision::R289 => ServerProt289::UPDATE_RUNENERGY,
+            };
+            let server = thread::spawn(move || {
+                let (mut game, _) = listener.accept().unwrap();
+                game.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                // A real one-byte payload passes through tcp_in before login
+                // reuses its input allocation for the eight-byte server seed.
+                game.write_all(&[opcode as u8, 42]).unwrap();
+                if adopt {
+                    serve_login_reconnect15(&mut game);
+                } else {
+                    let (mut login, _) = listener.accept().unwrap();
+                    login
+                        .set_read_timeout(Some(Duration::from_secs(2)))
+                        .unwrap();
+                    if reconnect {
+                        serve_login_reconnect15(&mut login);
+                    } else {
+                        serve_login_success(&mut login);
+                    }
+                    let _ = wait_finished.recv_timeout(Duration::from_secs(2));
+                }
+            });
+            let config = || ClientConfig {
+                host: addr.ip().to_string(),
+                port: addr.port(),
+                cache_dir: "/tmp".into(),
+                members: true,
+                lowmem: false,
+            };
+            let make_client = || {
+                Client::from_shared_with_revision(
+                    config(),
+                    Arc::new(Cache::default()),
+                    Arc::new(vec![]),
+                    vec![],
+                    revision,
+                )
+            };
+            let mut c = make_client();
+            c.stream = Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+            c.ptype = -1;
+            c.ingame = true;
+            c.login_user = "bob".into();
+            c.login_pass = "pw".into();
+            c.local_player = Some(ClientPlayer::at(5, 5));
+            c.local_player.as_mut().unwrap().y = 77;
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while c.runenergy != 42 {
+                assert!(
+                    Instant::now() < deadline,
+                    "short game packet did not arrive"
+                );
+                c.tcp_in();
+                thread::sleep(Duration::from_millis(1));
+            }
+            if adopt {
+                let mut receiver = make_client();
+                receiver.local_player = Some(ClientPlayer::at(5, 5));
+                receiver.local_player.as_mut().unwrap().y = 77;
+                receiver.adopt_from(&mut c).unwrap();
+                c = receiver;
+                c.login("bob", "pw", true).unwrap();
+            } else if reconnect {
+                c.lost_con();
+            } else {
+                c.logout();
+                c.login("bob", "pw", false).unwrap();
+            }
+            assert!(
+                c.ingame,
+                "revision {revision:?}, reconnect={reconnect}, adopt={adopt}"
+            );
+            assert_eq!(c.last_login_reconnect, Some(reconnect));
+            assert_eq!(c.revision(), revision);
+            if reconnect {
+                assert_eq!(c.local_player.as_ref().unwrap().y, 77);
+            }
+            let _ = finished.send(());
+            server.join().unwrap();
+        }
+    }
 }

@@ -167,6 +167,47 @@ fn widget_dialog_and_snapshot_ordered_frames() {
 }
 
 #[test]
+fn report_controls_preserve_274_stubs_and_289_ordered_frames() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let mut c = client(revision);
+        c.report_abuse_input = "a".into();
+        c.set_iface(
+            2,
+            client::config::IfType {
+                client_code: 613,
+                ..Default::default()
+            },
+        );
+        assert!(!c.client_button(2));
+        assert_eq!(c.report_abuse_mute_option, revision == ClientRevision::R289);
+        assert_eq!(c.out.pos, 0, "mute toggle sends no packet");
+        for code in 601..=612 {
+            c.out.pos = 0;
+            c.main_modal_id = 7;
+            c.report_abuse_mute_option = true;
+            c.set_iface(
+                2,
+                client::config::IfType {
+                    client_code: code,
+                    ..Default::default()
+                },
+            );
+            assert!(!c.client_button(2));
+            if revision == ClientRevision::R274 {
+                assert_eq!(c.out.pos, 0, "published 274 report reasons are idle");
+                assert_eq!(c.main_modal_id, 7, "274 stub must not close the modal");
+            } else {
+                assert_eq!(
+                    &c.out.data()[..c.out.pos],
+                    &[93, 94, 0, 0, 0, 0, 0, 0, 0, 1, (code - 601) as u8, 1]
+                );
+                assert_eq!(c.main_modal_id, -1);
+            }
+        }
+    }
+}
+
+#[test]
 fn inventory_drag_real_release_ordered_bytes() {
     use client::config::if_type::{ComponentType, IfType, IfTypeMut};
     let _renderer = client::render::Renderer::new(false);

@@ -2555,6 +2555,10 @@ impl Client {
             .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
 
         if response == 0 {
+            // The reusable input buffer now holds a login seed, not the last
+            // game packet. Its old frame limit may be shorter than eight bytes
+            // after logout, reconnect, or socket adoption.
+            self.r#in.clear_frame_end();
             stream
                 .read_bytes(self.r#in.data_mut(), 0, 8)
                 .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
@@ -5929,8 +5933,9 @@ impl Client {
     /// (205) arms `logoutTimer`, CC_ADD/DEL_IGNORE (501/502) open the
     /// add/delete-ignore prompts, the player-design codes 300-327 cycle
     /// kit/colour, switch gender and send `IDK_SAVEDESIGN`, and the
-    /// report-abuse codes (601-613): 613 toggles mute; 601..=612 closeModal
-    /// then emit REPORT_ABUSE/SEND_SNAPSHOT (p8+p1+p1). Social codes return
+    /// 289 report-abuse codes (601-613): 613 toggles mute; 601..=612 closeModal
+    /// then emit REPORT_ABUSE/SEND_SNAPSHOT (p8+p1+p1). The published 274
+    /// report controls remain incomplete. Social codes return
     /// `false` so the `doAction` IF_BUTTON arm skips the send (TS sets the
     /// prompt and falls through); logout and accept-design return `true`
     /// and the click is sent.
@@ -6042,10 +6047,12 @@ impl Client {
                 self.out.p1(self.idk_design_colour[i]);
             }
             return true;
-        } else if client_code == CC_REPORT_MUTE {
+        } else if self.revision.is_289() && client_code == CC_REPORT_MUTE {
             // Java client_button 613: toggle mute-for-48h without a packet.
             self.report_abuse_mute_option = !self.report_abuse_mute_option;
-        } else if (CC_REPORT_REASON_START..=CC_REPORT_REASON_END).contains(&client_code) {
+        } else if self.revision.is_289()
+            && (CC_REPORT_REASON_START..=CC_REPORT_REASON_END).contains(&client_code)
+        {
             // Java client_button 601..=612: closeModal then SEND_SNAPSHOT /
             // REPORT_ABUSE (289 id 94, length 10): method472 p8 namehash +
             // method466 reason (code-601) + method466 mute flag.
