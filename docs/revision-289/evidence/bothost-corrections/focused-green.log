@@ -1,0 +1,171 @@
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/vendor/fr-client-rust/crates/client)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.87s
+     Running tests/from_shared.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/from_shared-961a032c3c9cb5e8)
+
+running 7 tests
+test from_shared_reuses_one_arc_without_unpack ... ok
+test mut_overlay_template_is_arc_until_first_write ... ok
+test mut_overlay_is_small_and_decode_stays_ptr_eq_after_writes ... ok
+test slot_write_cows_only_the_written_overlay_slot ... ok
+test shared_constructors_preserve_revision_and_arc_identity ... ok
+test adopt_without_live_stream_returns_none ... ok
+test adopt_reconnects_opcode_18_without_tcp_drop ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.84s
+
+     Running tests/login.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/login-f3bf882e9dc50107)
+
+running 10 tests
+test to_userhash_matches_client_ts ... ok
+test login_code_6_is_error ... ok
+test lowmem_login_writes_info_byte_one ... ok
+test cold_login_opcode_16_success ... ok
+test already_logged_in_leaves_title_ready_to_retry ... ok
+test cold_login_clears_entity_tables ... ok
+test failed_login_can_be_retried_on_the_same_client ... ok
+test reconnect_uses_opcode_18 ... ok
+test reconnect_response_15_keeps_game_and_local_player ... ok
+test cold_login_response_2_resets_tab_chat_and_rebuilds_frame ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+     Running tests/lost_con.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/lost_con-56e409fb2120e0fb)
+
+running 5 tests
+test lost_con_with_pending_logout_logs_out_without_reconnecting ... ok
+test lost_con_uses_reconnect_login ... ok
+test silence_watchdog_calls_lost_con_after_wall_clock_silence ... ok
+test short_game_frame_does_not_constrain_later_login_seed ... ok
+test silence_watchdog_reconnects_with_response_15 ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.61s
+
+     Running tests/packet.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/packet-932df2be1d45fc78)
+
+running 7 tests
+test g_roundtrip_signed_and_smart ... ok
+test p1_enc_xors_isaac ... ok
+test crc32_matches_client_ts ... ok
+test p1_p2_p4_big_endian_layout ... ok
+test pjstr_newline_terminated ... ok
+test bounded_frame_hides_reusable_tail_from_strings_and_reads ... ok
+test rsaenc_java_key_hi_1337 ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/revision_289_outbound.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/revision_289_outbound-1bfcf8e40fc24437)
+
+running 28 tests
+test all_82_declared_lengths_match_primary ... ok
+test camera_arrow_latch_and_twenty_loop_gate ... ok
+test cycle4_input_poll_counts_calls_even_without_keys ... ok
+test click_elapsed_units_and_button_clamps ... ok
+test click_is_packed_before_ui_consumes_it ... ok
+test legacy_focus_keeps_existing_held_behavior ... ok
+test deterministic_cycle2_is_a_legal_choice_sequence ... ok
+test idle_real_loop_threshold_and_repeat_subtract_500 ... ok
+test mouse_budget_239_admits_whole_four_byte_sample_then_stops ... ok
+test focus_edges_clear_held_keys_without_idle_reset ... ok
+test inventory_drag_real_release_ordered_bytes ... ok
+test cycle7_real_loop_boundary_and_legacy_default ... ok
+test cold_login_resets_focus_click_and_pending_samples ... ok
+test mouse_recorder_cap_and_whole_sample_budget_retain_order ... ok
+test mouse_three_encodings_and_duplicate_carry ... ok
+test movement_minimap_tail_and_isaac_concatenation ... ok
+test sampled_mouse_encodes_before_click ... ok
+test social_keyboard_and_chat_ordered_frames ... ok
+test widget_dialog_and_snapshot_ordered_frames ... ok
+test movement_signed_turns_through_ground_pick ... ok
+test report_controls_preserve_274_stubs_and_289_ordered_frames ... ok
+test mouse_delta_interval_edges_and_tracking_disabled ... ok
+test design_chat_modes_keepalive_and_map_completion ... ok
+test operation_counter_boundaries_preserve_primary_no_reset ... ok
+test all_action_families_ordered_bytes_and_declared_lengths ... ok
+test real_driver_owns_recorder_and_click_pointer_is_separate ... ok
+test draw_counters_and_tutorial_ordered_payloads ... ok
+test cycle5_counts_only_drawn_mode2_crosshairs ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.67s
+
+     Running tests/revision_289_stage1.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/revision_289_stage1-2fd550b591d930f1)
+
+running 47 tests
+test default_274_last_login_is_noop_and_adjacent_pid_keeps_legacy_meaning ... ok
+test fragmented_last_login_and_adjacent_pid_publish_each_once ... ok
+test fixed_empty_sync_after_welcome_and_unknown_frame_reset_once ... ok
+test fragmented_stream_header_then_payload_completes_once ... ok
+test declared_frame_larger_than_storage_is_not_shortened_to_storage ... ok
+test fragmented_stream_partial_payload_stays_pending ... ok
+test framing_inventory_full_through_tcp_in ... ok
+test framing_variable_g2_complete_fail_closed_not_reset_anims ... ok
+test framing_variable_g2_pending_no_dispatch ... ok
+test framing_fixed_logout_opcode_121_header ... ok
+test default_client_stays_on_274_public_tables ... ok
+test framing_inventory_partial_through_tcp_in_ignores_trailing_outside_declared ... ok
+test in_band_actor_failure_has_reset_not_success_publication ... ok
+test inv_full_274_still_allows_trailing_pad_inside_psize ... ok
+test incomplete_289_inv_full_zero_publication_production_stream ... ok
+test inventory_full_274_unchanged_g1_count ... ok
+test adopt_from_carries_revision_with_stream_baton ... ok
+test adopt_from_failed_leaves_target_entirely_unchanged ... ok
+test adopt_from_failed_across_revisions_does_not_assign_source_revision ... ok
+test inventory_full_g2_count_289_production_dispatch ... ok
+test inventory_partial_274_unchanged_g1_slot ... ok
+test last_login_info_does_not_clear_report_state_when_welcome_gate_is_closed ... ok
+test map_projanim_107_still_zone_on_274_not_inventory ... ok
+test overlong_289_inv_full_exact_end_required_zero_publication ... ok
+test inventory_partial_gsmart_slot_289_production_dispatch ... ok
+test last_login_info_selects_members_warning_welcome_655_and_layer ... ok
+test last_login_info_decodes_fields_and_selects_welcome_interface ... ok
+test overlong_last_login_rejected_before_report_mutation ... ok
+test overlong_289_inv_full_zero_publication_production_stream ... ok
+test last_login_every_short_bound_and_long_never_applies_before_reset ... ok
+test r289_opcode_219_rebuild_not_obj_reveal ... ok
+test production_buffer_truncated_inv_full_ignores_stale_bytes_past_psize ... ok
+test production_buffer_truncated_inv_partial_no_partial_publication ... ok
+test r289_untraced_opcode_fail_closed_not_reset_anims_direct ... ok
+test short_fixed_socket_payload_stays_pending_without_mutation ... ok
+test variable_zero_ignorelist_is_valid_and_preserves_adjacent_pid ... ok
+test truncated_inventory_full_does_not_partially_publish ... ok
+test unterminated_option_does_not_consume_previous_frames_newline ... ok
+test transport_readiness_counts_unread_bytes_before_fragment_poll ... ok
+test welcome_close_without_component_publishes_iface_once ... ok
+test welcome_method110_emits_close_preserves_count_dialog_and_pause_without_modals ... ok
+test welcome_then_logout_resets_fields_and_all_families_exactly_once ... ok
+test variable_zero_after_valid_frame_cannot_read_reusable_tail ... ok
+test revision_bound_at_construction_read_only_getter ... ok
+test welcome_closed_gates_have_no_ui_publication_or_emit_through_socket ... ok
+test all_fixed_sizes_reject_short_and_long_before_decode_on_production_dispatch ... ok
+test welcome_truth_table_through_socket ... ok
+
+test result: ok. 47 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s
+
+     Running tests/revision_289_stage3.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/revision_289_stage3-1180a403fbc8241c)
+
+running 23 tests
+test map_client_prot_r274_identity_r289_remap ... ok
+test client_prot_289_action_family_ids_and_lengths ... ok
+test cache_jag_names_289_login_layout ... ok
+test offline_config_missing_fail_closed ... ok
+test r289_map_build_complete_and_no_timeout_ids ... ok
+test offline_config_loader_synthetic_fixture ... ok
+test r289_op_npc2_payload_length_2 ... ok
+test server_prot_289_still_distinct_from_outbound_table ... ok
+test r289_try_move_writes_move_gameclick_234 ... ok
+test r289_try_move_with_isaac_encodes_opcode_only ... ok
+test r289_resume_p_count_dialog_p4 ... ok
+test r289_inv_button1_payload_length_6 ... ok
+test r289_send_snapshot_report_abuse_p8_p1_p1 ... ok
+test r289_if_button_and_close_modal ... ok
+test r289_op_loc1_encodes_scene_coords_and_loc_id ... ok
+test r274_try_move_still_writes_move_gameclick_207 ... ok
+test r289_op_held1_payload_length_6 ... ok
+test offline_replay_logout_then_action_then_fail_closed_scene ... ok
+test default_revision_message_public_scroll_wave_effects ... ok
+test offline_replay_inventory_full_then_walk_action ... ok
+test offline_replay_inbound_varp_then_widget_then_reset_anims ... ok
+test r289_message_public_effect_prefixes_match_java ... ok
+test r289_draw_paths_emit_289_not_274_opcodes ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.81s
+

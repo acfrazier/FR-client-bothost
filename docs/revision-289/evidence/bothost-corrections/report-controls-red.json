@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "client",
+    "--test",
+    "revision_289_outbound",
+    "report_controls_preserve_274_stubs_and_289_ordered_frames",
+    "--",
+    "--exact",
+    "--nocapture"
+  ],
+  "started_at": "2026-09-10T14:22:41.064573+00:00",
+  "client_base": "8b1a80918f87089e4eb339f1d0e216c1b163348d",
+  "phase": "regression added before correction",
+  "exit_code": 101,
+  "finished_at": "2026-09-10T14:22:41.591989+00:00"
+}

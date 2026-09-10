@@ -1,0 +1,21 @@
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/vendor/fr-client-rust/crates/client)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.49s
+     Running tests/revision_289_outbound.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/revision_289_outbound-1bfcf8e40fc24437)
+
+running 1 test
+
+thread 'report_controls_preserve_274_stubs_and_289_ordered_frames' (2343966) panicked at crates/client/tests/revision_289_outbound.rs:182:9:
+assertion `left == right` failed
+  left: true
+ right: false
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test report_controls_preserve_274_stubs_and_289_ordered_frames ... FAILED
+
+failures:
+
+failures:
+    report_controls_preserve_274_stubs_and_289_ordered_frames
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 27 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p client --test revision_289_outbound`

@@ -1,0 +1,23 @@
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/vendor/fr-client-rust/crates/client)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.32s
+     Running tests/lost_con.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/lost_con-56e409fb2120e0fb)
+
+running 1 test
+
+thread 'short_game_frame_does_not_constrain_later_login_seed' (2347234) panicked at crates/client/src/io/packet.rs:102:9:
+assertion failed: self.pos.checked_add(length).is_some_and(|end|
+        { end <= self.frame_end.unwrap_or(self.data.len()) })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread '<unnamed>' (2347235) panicked at crates/client/tests/lost_con.rs:35:5:
+assertion failed: n > 0
+test short_game_frame_does_not_constrain_later_login_seed ... FAILED
+
+failures:
+
+failures:
+    short_game_frame_does_not_constrain_later_login_seed
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.04s
+
+error: test failed, to rerun pass `-p client --test lost_con`

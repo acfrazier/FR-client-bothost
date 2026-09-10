@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "client",
+    "--",
+    "--ignored"
+  ],
+  "started_at": "2026-09-10T14:27:11.240166+00:00",
+  "client_product_commit": "d14755da758c64d971c1103b2d7703f6fd8379fb",
+  "skip_gpu": false,
+  "reason": "Final client regression after the confirmed lifecycle and 274-preservation corrections.",
+  "exit_code": 0,
+  "finished_at": "2026-09-10T14:27:19.242796+00:00"
+}

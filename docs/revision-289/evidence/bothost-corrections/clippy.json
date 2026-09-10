@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "cargo",
+    "clippy",
+    "--locked",
+    "--workspace",
+    "--all-targets",
+    "--no-deps",
+    "--",
+    "-D",
+    "warnings"
+  ],
+  "started_at": "2026-09-10T14:24:08.176173+00:00",
+  "phase": "after lifecycle and report-control corrections",
+  "exit_code": 0,
+  "finished_at": "2026-09-10T14:24:10.158502+00:00"
+}

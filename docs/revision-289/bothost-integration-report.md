@@ -1,7 +1,9 @@
 # Bothost 274/289 client reconciliation
 
-2026-09-10. Plan step 2; source/regression evidence, awaiting the required
-same-card and whole-client reviews. This report does not qualify host 289
+2026-09-10. Plan step 2; source/regression evidence. The initial candidate
+record below is followed by post-review corrections at product commit
+`d14755da758c64d971c1103b2d7703f6fd8379fb`. Current review acceptance is tracked
+in the host campaign's `docs/compat/STATE.md`. This report does not qualify host 289
 sessions, scripts, live worlds, Linux/Windows execution, or release publication.
 
 ## Inputs and candidate
@@ -10,7 +12,7 @@ sessions, scripts, live worlds, Linux/Windows execution, or release publication.
 - Adopted 289 source: `c18f3a1148e9caee73426e162677328ca64d1a83`.
 - Common ancestor: `4f2048ea10f75b3bb92ff45610b35ba7313b0308`.
 - Root merge: `4098a50fb4803f5d6ec9131af38d18e0ba6a395f`.
-- Reconciled product: `cf386ae5c82071ef661f4a1eb4d38e22b41718d3` on
+- Initial reconciled product: `cf386ae5c82071ef661f4a1eb4d38e22b41718d3` on
   `codex/bothost-274-289`. The report/evidence commit changes no product files.
 
 The merge retains the published base as an ancestor. Root combined the explicit
@@ -91,3 +93,42 @@ GPU shade and Windows CRC timing failures. Available-platform details are in
 host `docs/compat/fixture-inputs.md`. Host profile binding, all direct host
 writers, 289 nav/content, and local live acceptance remain later plan gates.
 The host public gitlink and remote branches have not been changed.
+
+## Post-review corrections
+
+The initial candidate `8b1a80918f87089e4eb339f1d0e216c1b163348d` received the
+same-card Grok 4.5 approval and a fresh Grok 4.6 whole-client approval. The
+independent Astra review found a P1 lifecycle regression and reproduced it with
+debugger state injection. Root accepted that concrete finding; the earlier
+approvals do not establish acceptance of the defective candidate. Original
+independent reports, actual model receipts and root reconciliation are in host
+`docs/compat/reviews/`.
+
+Corrected product: `d14755da758c64d971c1103b2d7703f6fd8379fb`.
+
+- Clear the reusable inbound Packet's old game-frame bound when login begins
+  reading its eight-byte server seed. Game-packet bounds remain in force. A new
+  socket regression receives a real one-byte run-energy packet before cold
+  relogin, reconnect or socket adoption, for both 274 and 289. It reproduces the
+  bounded `g8` panic before the fix and verifies successful handshakes and
+  retained reconnect state after the fix.
+- Root also found that incoming report-button handling completed previously
+  idle 274 controls. Restrict the new mute and reason handlers to 289. A new
+  regression verifies idle 274 controls, the 289 mute toggle, and all twelve
+  ordered 289 report-reason frames. This test also fails before the correction.
+
+Correction receipts are `docs/revision-289/evidence/bothost-corrections/`:
+
+| Check on the corrected product | Result |
+|---|---|
+| Seven affected login/adoption/packet/revision suites | 127 passed, 0 failed, 0 ignored |
+| Full `cargo test --locked --workspace` | 992 passed, 0 failed, 2 ignored GPU tests |
+| Explicit `cargo test --locked -p client -- --ignored` | Both GPU tests passed, 0 failed, 0 ignored |
+| Formatting and strict all-target Clippy | Exit 0 |
+
+The full workspace and explicit GPU receipts name the exact committed product.
+`summary.json` records raw-log hashes and independently recomputed counts.
+`00-login-test-compile.log` records a test-helper compile error; it is distinct
+from the subsequent runtime failure in `login-bound-red.log`. Both meaningful
+red logs are retained. Corrective Grok 4.5 and Grok 4.6 review must cover this
+product before root accepts the integration milestone.

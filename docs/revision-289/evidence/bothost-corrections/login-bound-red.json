@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "client",
+    "--test",
+    "lost_con",
+    "short_game_frame_does_not_constrain_later_login_seed",
+    "--",
+    "--exact",
+    "--nocapture"
+  ],
+  "started_at": "2026-09-10T14:23:15.456284+00:00",
+  "client_base": "8b1a80918f87089e4eb339f1d0e216c1b163348d",
+  "phase": "compiling regression added before correction",
+  "exit_code": 101,
+  "finished_at": "2026-09-10T14:23:15.848494+00:00"
+}

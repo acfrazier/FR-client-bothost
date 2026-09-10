@@ -1,0 +1,77 @@
+{
+  "product_commit": "d14755da758c64d971c1103b2d7703f6fd8379fb",
+  "records": [
+    {
+      "path": "00-login-test-compile.log",
+      "sha256": "afe691a31eb229a1928dc74b23627f5084d6ff90ccb0ede9c9de62de777275f3",
+      "summaries": 0,
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "path": "clippy.log",
+      "sha256": "584106536340faf7a1edb7a48cd8635dff46dbbfec368c919a0f5ed882d27711",
+      "summaries": 0,
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "path": "explicit-gpu.log",
+      "sha256": "d7e5925fe1453444701549d59830ad703d678c910d505ef0200ea18dc0821213",
+      "summaries": 75,
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "path": "focused-green.log",
+      "sha256": "7a60aea40fc62ee9689a36764a66d88f6b94379882c78b88706bba4e110177fa",
+      "summaries": 7,
+      "passed": 127,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "path": "format-check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "summaries": 0,
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "path": "format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "summaries": 0,
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "path": "login-bound-red.log",
+      "sha256": "40d4402f9ca6aa602b50a321e67906b2c47a6abae9be2dba63f9d0a6318b6581",
+      "summaries": 1,
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0
+    },
+    {
+      "path": "report-controls-red.log",
+      "sha256": "a3ec71f3aff870e98ff8f4792adf513ecfb6a3b93ea44595ae66b112ced07c6f",
+      "summaries": 1,
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0
+    },
+    {
+      "path": "workspace.log",
+      "sha256": "7b93447c7dd69a1fe57848196e4ae27ba29817b6ef9065ad4a710594e55ebbdc",
+      "summaries": 76,
+      "passed": 992,
+      "failed": 0,
+      "ignored": 2
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "cargo",
+    "fmt",
+    "--all"
+  ],
+  "started_at": "2026-09-10T14:23:59.273724+00:00",
+  "phase": "after lifecycle and report-control corrections",
+  "exit_code": 0,
+  "finished_at": "2026-09-10T14:23:59.782374+00:00"
+}

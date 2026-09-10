@@ -1,0 +1,27 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "client",
+    "--test",
+    "lost_con",
+    "--test",
+    "login",
+    "--test",
+    "from_shared",
+    "--test",
+    "revision_289_outbound",
+    "--test",
+    "revision_289_stage1",
+    "--test",
+    "revision_289_stage3",
+    "--test",
+    "packet"
+  ],
+  "started_at": "2026-09-10T14:23:59.782737+00:00",
+  "phase": "after lifecycle and report-control corrections",
+  "exit_code": 0,
+  "finished_at": "2026-09-10T14:24:07.667958+00:00"
+}
