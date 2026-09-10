@@ -83,6 +83,11 @@ pub struct DurationCounter {
     total: AtomicU64,
     max: AtomicU64,
 }
+impl Default for DurationCounter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl DurationCounter {
     pub const fn new() -> Self {
         Self {

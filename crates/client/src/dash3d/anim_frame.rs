@@ -285,10 +285,12 @@ mod tests {
         }
     }
 
+    type FrameGroups<'a> = (u16, u8, &'a [(u8, i32, i32, i32)]);
+
     /// Build one OnDemand anim archive entry. Each frame is
     /// `(id, delay, &[(flags, tx, ty, tz); group_count])`.
     fn pack_archive(
-        frames: &[(u16, u8, &[(u8, i32, i32, i32)])],
+        frames: &[FrameGroups<'_>],
         base_types: &[u8],
         base_labels: &[&[u8]],
     ) -> Vec<u8> {

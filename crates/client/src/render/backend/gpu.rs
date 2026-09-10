@@ -533,7 +533,7 @@ pub struct GpuBackend {
     scene_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
     /// Ping-pong pair of full-frame 765×503 write targets (scene at (4, 4)
-    /// + chrome + minimap). `finish` writes the slot the other is not
+    /// plus chrome and minimap). `finish` writes the slot the other is not
     /// resolving from, then copies into [`Self::present_texture`].
     frame_textures: [wgpu::Texture; 2],
     frame_views: [wgpu::TextureView; 2],
@@ -1704,10 +1704,8 @@ fn fill_draw_area_rgba(
             let rgb = draw_area.pixels[(y * FRAME_W + x) as usize];
             let o = (y * bytes_per_row + x * 4) as usize;
             let alpha = if punch_minimap
-                && x >= MINIMAP_X
-                && x < MINIMAP_X + MINIMAP_W
-                && y >= MINIMAP_Y
-                && y < MINIMAP_Y + MINIMAP_H
+                && (MINIMAP_X..MINIMAP_X + MINIMAP_W).contains(&x)
+                && (MINIMAP_Y..MINIMAP_Y + MINIMAP_H).contains(&y)
             {
                 0
             } else if scene_ready
