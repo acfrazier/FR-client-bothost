@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use client::client::{Client, ClientConfig};
+use client::client::{Client, ClientConfig, ClientRevision};
 use client::config::{Cache, IfType, IfTypeMut};
 
 fn cfg() -> ClientConfig {
@@ -85,6 +85,43 @@ fn from_shared_reuses_one_arc_without_unpack() {
     a.iface_mut(1).unwrap().hide = true;
     assert!(a.if_(1).unwrap().hide);
     assert!(!b.if_(1).unwrap().hide);
+}
+
+#[test]
+fn shared_constructors_preserve_revision_and_arc_identity() {
+    let cache = Arc::new(Cache::default());
+    let ifaces = Arc::new(vec![None]);
+    let ifaces_mut = Arc::new(vec![None]);
+    let default_274 = Client::from_shared(
+        cfg(),
+        Arc::clone(&cache),
+        Arc::clone(&ifaces),
+        Arc::clone(&ifaces_mut),
+    );
+    let explicit_274 = Client::from_shared_with_revision(
+        cfg(),
+        Arc::clone(&cache),
+        Arc::clone(&ifaces),
+        Arc::clone(&ifaces_mut),
+        ClientRevision::R274,
+    );
+    let explicit_289 = Client::from_shared_with_revision(
+        cfg(),
+        Arc::clone(&cache),
+        Arc::clone(&ifaces),
+        Arc::clone(&ifaces_mut),
+        ClientRevision::R289,
+    );
+
+    assert_eq!(default_274.revision(), ClientRevision::R274);
+    assert_eq!(explicit_274.revision(), ClientRevision::R274);
+    assert_eq!(explicit_289.revision(), ClientRevision::R289);
+    for client in [&default_274, &explicit_274, &explicit_289] {
+        assert!(client.cache_from_shared);
+        assert!(Arc::ptr_eq(&client.cache, &cache));
+        assert!(Arc::ptr_eq(&client.ifaces, &ifaces));
+        assert!(Arc::ptr_eq(&client.ifaces_mut, &ifaces_mut));
+    }
 }
 
 /// Fifty slots share one IfTypeMut template Arc until a slot writes;

@@ -260,7 +260,7 @@ fn r289_op_npc2_payload_length_2() {
     c.local_player = Some(ClientPlayer::at(5, 5));
     c.npc[42] = Some(Box::new(ClientNpc::at(5, 5)));
     c.doAction(0);
-    let d = &c.out.data()[..c.out.pos as usize];
+    let d = &c.out.data()[..c.out.pos];
     // MOVE_OPCLICK 67 first (same tile → size 5), then OPNPC2 21 + p2 index
     assert_eq!(d[0], 67, "MOVE_OPCLICK");
     assert_eq!(d[1], 5);
@@ -408,7 +408,10 @@ fn r289_send_snapshot_report_abuse_p8_p1_p1() {
             ..IfType::default()
         },
     );
-    assert!(!c.client_button(9), "report-abuse returns false (no IF_BUTTON)");
+    assert!(
+        !c.client_button(9),
+        "report-abuse returns false (no IF_BUTTON)"
+    );
     let d = c.out.data();
     // CLOSE_MODAL 93 then SEND_SNAPSHOT 94 + 10 payload bytes.
     assert_eq!(d[0], 93, "CLOSE_MODAL first");
@@ -499,7 +502,7 @@ fn r289_op_loc1_encodes_scene_coords_and_loc_id() {
     c.menu_param_b[0] = x;
     c.menu_param_c[0] = z;
     c.doAction(0);
-    let d = &c.out.data()[..c.out.pos as usize];
+    let d = &c.out.data()[..c.out.pos];
     // trailing OPLOC1 frame: id 10, p2 x, p2 z, p2 locId
     assert!(d.len() >= 7);
     let tail = &d[d.len() - 7..];
@@ -656,7 +659,7 @@ fn offline_replay_logout_then_action_then_fail_closed_scene() {
     c.menu_param_a[0] = 3;
     c.npc[3] = Some(Box::new(ClientNpc::at(5, 5)));
     c.doAction(0);
-    let d = &c.out.data()[..c.out.pos as usize];
+    let d = &c.out.data()[..c.out.pos];
     assert!(d.windows(3).any(|w| w[0] == 21 && w[1] == 0 && w[2] == 3));
 
     // Scene readiness fail-closed without map prerequisites
@@ -733,5 +736,5 @@ fn r289_try_move_with_isaac_encodes_opcode_only() {
 fn server_prot_289_still_distinct_from_outbound_table() {
     // Sanity: inbound LOGOUT 121 ≠ outbound CLOSE_MODAL 93
     assert_eq!(ServerProt289::LOGOUT, 121);
-    assert_ne!(ServerProt289::LOGOUT as i32, ClientProt289::CLOSE_MODAL.id);
+    assert_ne!(ServerProt289::LOGOUT, ClientProt289::CLOSE_MODAL.id);
 }

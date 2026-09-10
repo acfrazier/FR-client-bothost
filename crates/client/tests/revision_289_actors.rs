@@ -268,7 +268,7 @@ fn new_actor_offsets_metadata_and_readdition_keep_identity() {
 fn new_player_appearance_cache_and_transformed_local_values() {
     let mut c = client();
     cache(&mut c);
-    c.player_appearance_buffer[3] = Some(Packet::new(appearance(false)));
+    c.player_appearance_buffer[3] = Some(Box::new(Packet::new(appearance(false))));
     // Local run east/north first; new player's relative origin is post-move.
     let fields = [
         (1, 1),

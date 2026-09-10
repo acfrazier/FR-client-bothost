@@ -461,7 +461,7 @@ impl ActorFrame {
                             .get_or_insert_with(|| Box::new(ClientPlayer::default()));
                         if let Some(appearance) = appearance {
                             c.player_appearance_buffer[index] =
-                                Some(appearance.apply(player, &c.cache));
+                                Some(Box::new(appearance.apply(player, &c.cache)));
                         }
                         player.teleport(&c.cache, jump, x, z);
                     }
@@ -579,7 +579,7 @@ fn apply_mask(c: &mut Client, npc: bool, index: usize, mask: Mask) -> bool {
         Mask::Appearance(appearance) => {
             let cache = c.cache.clone();
             let raw = appearance.apply(player(c, index), &cache);
-            c.player_appearance_buffer[index] = Some(raw);
+            c.player_appearance_buffer[index] = Some(Box::new(raw));
         }
         Mask::Anim(id, delay) => {
             let cache = c.cache.clone();

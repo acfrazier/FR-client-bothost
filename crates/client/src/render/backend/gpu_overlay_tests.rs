@@ -55,8 +55,10 @@ fn npc_hint_production_gpu_blink_move_clear_cache_and_freeze() {
     cross.data.fill(0x00ffff);
     media.cross[0] = Some(cross);
     r.media = std::sync::Arc::new(media);
-    let mut npc = ClientNpc::default();
-    npc.r#type = Some(0); // is_ready; no NPC config/model needed for a hint
+    let mut npc = ClientNpc {
+        r#type: Some(0), // is_ready; no NPC config/model needed for a hint
+        ..Default::default()
+    };
     npc.entity.x = 384;
     npc.entity.z = 1280;
     npc.entity.height = 100;
@@ -194,15 +196,50 @@ fn npc_hint_production_gpu_blink_move_clear_cache_and_freeze() {
     core.cross_mode = 0;
     assert_eq!(frame(&mut backend, &mut core, &mut r), background);
 
+    // Seed a distinctive minimap through the live production layer, then
+    // poison the corresponding chrome pixel. A freeze overlay upload must
+    // keep punching the held minimap rather than exposing the poison.
+    backend.chrome(&mut core, &mut r, FrameKind::Game);
+    r.area_map = Some(PixMap::new(MINIMAP_W as i32, MINIMAP_H as i32));
+    r.area_map.as_mut().unwrap().pixels.fill(0x00aa11);
+    let FrameOutput::Texture(live_minimap) = backend.finish(&mut r) else {
+        panic!("GPU required")
+    };
+    let minimap_pixel = (MINIMAP_Y * FRAME_W + MINIMAP_X) as usize;
+    assert_eq!(live_minimap.read_back()[minimap_pixel], 0x00aa11);
+    assert!(backend.minimap_held, "live minimap must be held");
+
     core.scene_state = 1;
+    core.hint_type = 1;
+    core.loop_cycle = 0;
+    r.draw_area.pixels[minimap_pixel] = 0xcc2200;
     let scene_cycle = r.scene_cycle;
     uploads = backend.chrome_upload_count();
+    let minimap_uploads = backend.minimap_upload_count();
+    let freeze_hint = frame(&mut backend, &mut core, &mut r);
     assert_eq!(
-        frame(&mut backend, &mut core, &mut r),
-        background,
-        "freeze retains last nonblack 3D FBO"
+        freeze_hint[moved], 0xff00ff,
+        "real NPC hint must update over the frozen scene"
+    );
+    assert_eq!(
+        freeze_hint[minimap_pixel], 0x00aa11,
+        "freeze overlay upload must retain the distinctive held minimap"
+    );
+    assert!(
+        backend.minimap_held,
+        "overlay update must preserve minimap hold"
     );
     assert_eq!(r.scene_cycle, scene_cycle, "freeze must not rebuild scene");
-    assert_eq!(backend.chrome_upload_count(), uploads);
-    eprintln!("GPU overlay proof executed: blink, x/z movement, clear, cache, late writer, last-FBO freeze");
+    assert_eq!(backend.chrome_upload_count(), uploads + 1);
+    assert_eq!(backend.minimap_upload_count(), minimap_uploads);
+
+    core.loop_cycle = 1;
+    uploads = backend.chrome_upload_count();
+    assert_eq!(frame(&mut backend, &mut core, &mut r), freeze_hint);
+    assert_eq!(
+        backend.chrome_upload_count(),
+        uploads,
+        "unchanged freeze overlay stays lazy"
+    );
+    eprintln!("GPU overlay proof executed: blink, x/z movement, clear, cache, late writer, held minimap, last-FBO freeze");
 }

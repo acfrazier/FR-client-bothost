@@ -13,8 +13,8 @@
 use std::fs;
 use std::path::Path;
 
-use crate::config::{Cache, IfType};
 use super::jagfile::JagFile;
+use crate::config::{Cache, IfType};
 
 /// Login CRC slot layout for revision 289 matches the 274 applet contract:
 /// slot 0 is unused (always 0 in the 9×g4 login checksum block); slots 1–8
@@ -298,10 +298,7 @@ pub fn synthetic_interface_data() -> Vec<u8> {
 pub fn write_synthetic_cache_dir(dir: &Path) -> std::io::Result<()> {
     fs::create_dir_all(dir)?;
     let members = synthetic_config_members();
-    let refs: Vec<(&str, &[u8])> = members
-        .iter()
-        .map(|(n, b)| (*n, b.as_slice()))
-        .collect();
+    let refs: Vec<(&str, &[u8])> = members.iter().map(|(n, b)| (*n, b.as_slice())).collect();
     fs::write(dir.join("config"), synthetic_jag(&refs))?;
     let iface = synthetic_interface_data();
     fs::write(
@@ -376,7 +373,7 @@ mod tests {
     #[test]
     fn synthetic_jag_header_excludes_outer_six() {
         let bytes = synthetic_jag(&[("flo.dat", &[1, 2, 3]), ("npc.dat", &[4])]);
-        assert_eq!(bytes.len() >= 6, true);
+        assert!(bytes.len() >= 6);
         let payload = ((bytes[0] as i32) << 16) | ((bytes[1] as i32) << 8) | (bytes[2] as i32);
         let packed = ((bytes[3] as i32) << 16) | ((bytes[4] as i32) << 8) | (bytes[5] as i32);
         assert_eq!(payload, packed);

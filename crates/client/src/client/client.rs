@@ -355,12 +355,28 @@ struct LastLoginInfo {
 
 enum R289SocialOperation {
     IgnoreList(Vec<i64>),
-    Private { from: i64, message_id: i32, staff_mod_level: i32, body: Vec<u8> },
-    Friend { username: i64, world: i32 },
+    Private {
+        from: i64,
+        message_id: i32,
+        staff_mod_level: i32,
+        body: Vec<u8>,
+    },
+    Friend {
+        username: i64,
+        world: i32,
+    },
     FriendLoaded(i32),
-    ChatFilter { public: i32, private: i32, trade: i32 },
+    ChatFilter {
+        public: i32,
+        private: i32,
+        trade: i32,
+    },
     MessageGame(String),
-    SetPlayerOp { index: i32, priority: i32, option: String },
+    SetPlayerOp {
+        index: i32,
+        priority: i32,
+        option: String,
+    },
 }
 
 /// Validated interface meaning for the R289 stream. Keeping these values
@@ -369,51 +385,110 @@ enum R289SocialOperation {
 enum R289InterfaceOperation {
     TutOpen(i32),
     IfClose,
-    IfSetObject { component: i32, object: i32, divisor: i32 },
+    IfSetObject {
+        component: i32,
+        object: i32,
+        divisor: i32,
+    },
     IfSetPlayerHead(i32),
     CountDialog,
-    IfOpenMainSide { main: i32, side: i32 },
-    IfSetText { component: i32, text: String },
-    IfSetTab { component: i32, tab: i32 },
-    IfSetPosition { component: i32, x: i32, y: i32 },
+    IfOpenMainSide {
+        main: i32,
+        side: i32,
+    },
+    IfSetText {
+        component: i32,
+        text: String,
+    },
+    IfSetTab {
+        component: i32,
+        tab: i32,
+    },
+    IfSetPosition {
+        component: i32,
+        x: i32,
+        y: i32,
+    },
     IfOpenChat(i32),
     IfOpenMain(i32),
     IfOpenOverlay(i32),
-    IfSetHide { component: i32, hide: bool },
-    IfSetColour { component: i32, colour: i32 },
+    IfSetHide {
+        component: i32,
+        hide: bool,
+    },
+    IfSetColour {
+        component: i32,
+        colour: i32,
+    },
     TutFlash(i32),
-    IfSetScrollPos { component: i32, position: i32 },
+    IfSetScrollPos {
+        component: i32,
+        position: i32,
+    },
     IfSetTabActive(i32),
-    IfSetAnim { component: i32, sequence: i32 },
-    IfSetModel { component: i32, model: i32 },
-    IfSetNpcHead { component: i32, npc: i32 },
+    IfSetAnim {
+        component: i32,
+        sequence: i32,
+    },
+    IfSetModel {
+        component: i32,
+        model: i32,
+    },
+    IfSetNpcHead {
+        component: i32,
+        npc: i32,
+    },
     IfOpenSide(i32),
 }
 
 #[path = "actor_289.rs"]
 mod actor_289;
-#[path = "zone_289.rs"]
-mod zone_289;
 #[path = "misc_289.rs"]
 mod misc_289;
+#[path = "zone_289.rs"]
+mod zone_289;
 
 /// Validated meaning, never a raw 274/289 opcode alias.
 enum R289Operation {
-    Rebuild { zone_x: i32, zone_z: i32 },
+    Rebuild {
+        zone_x: i32,
+        zone_z: i32,
+    },
     Zones(zone_289::ZoneFrame),
     Actors(actor_289::ActorFrame),
     ResetAnims,
-    UpdatePid { slot: i32, members: i32 },
+    UpdatePid {
+        slot: i32,
+        members: i32,
+    },
     Logout,
     LastLoginInfo(LastLoginInfo),
     Interface(R289InterfaceOperation),
-    InventoryFull { component: i32, entries: Vec<(i32, i32)> },
-    InventoryPartial { component: i32, entries: Vec<(i32, i32, i32)> },
-    InventoryStopTransmit { component: i32 },
-    VarpSmall { id: i32, value: i32 },
-    VarpLarge { id: i32, value: i32 },
+    InventoryFull {
+        component: i32,
+        entries: Vec<(i32, i32)>,
+    },
+    InventoryPartial {
+        component: i32,
+        entries: Vec<(i32, i32, i32)>,
+    },
+    InventoryStopTransmit {
+        component: i32,
+    },
+    VarpSmall {
+        id: i32,
+        value: i32,
+    },
+    VarpLarge {
+        id: i32,
+        value: i32,
+    },
     VarpSync,
-    UpdateStat { stat: i32, xp: i32, level: i32 },
+    UpdateStat {
+        stat: i32,
+        xp: i32,
+        level: i32,
+    },
     RunEnergy(i32),
     RunWeight(i32),
     Social(R289SocialOperation),
@@ -427,8 +502,23 @@ impl R289Operation {
             return Some(Self::Misc(operation));
         }
         let operation = match ptype {
-            ServerProt289::REBUILD_NORMAL => Self::Rebuild { zone_x: payload.g2(), zone_z: payload.g2() },
-            60 | 71 | 83 | 87 | 90 | 91 | 106 | 117 | 144 | 155 | 176 | 194 | 233
+            ServerProt289::REBUILD_NORMAL => Self::Rebuild {
+                zone_x: payload.g2(),
+                zone_z: payload.g2(),
+            },
+            60
+            | 71
+            | 83
+            | 87
+            | 90
+            | 91
+            | 106
+            | 117
+            | 144
+            | 155
+            | 176
+            | 194
+            | 233
             | ServerProt289::UPDATE_ZONE_PARTIAL_ENCLOSED => {
                 Self::Zones(zone_289::ZoneFrame::decode(client, ptype, payload))
             }
@@ -456,7 +546,9 @@ impl R289Operation {
                 let count = payload.available() / 8;
                 assert!(count <= 100, "ignore-list capacity");
                 let mut hashes = Vec::with_capacity(count);
-                for _ in 0..count { hashes.push(payload.g8()); }
+                for _ in 0..count {
+                    hashes.push(payload.g8());
+                }
                 Self::Social(R289SocialOperation::IgnoreList(hashes))
             }
             ServerProt289::MESSAGE_PRIVATE => {
@@ -468,62 +560,118 @@ impl R289Operation {
                 let end = payload.frame_end().unwrap_or(payload.length());
                 let body = payload.data()[start..end].to_vec();
                 payload.pos = end;
-                Self::Social(R289SocialOperation::Private { from, message_id, staff_mod_level, body })
+                Self::Social(R289SocialOperation::Private {
+                    from,
+                    message_id,
+                    staff_mod_level,
+                    body,
+                })
             }
             ServerProt289::UPDATE_FRIENDLIST => Self::Social(R289SocialOperation::Friend {
-                username: payload.g8(), world: payload.g1(),
+                username: payload.g8(),
+                world: payload.g1(),
             }),
-            ServerProt289::FRIENDLIST_LOADED => Self::Social(R289SocialOperation::FriendLoaded(payload.g1())),
+            ServerProt289::FRIENDLIST_LOADED => {
+                Self::Social(R289SocialOperation::FriendLoaded(payload.g1()))
+            }
             ServerProt289::CHAT_FILTER_SETTINGS => Self::Social(R289SocialOperation::ChatFilter {
-                public: payload.g1(), private: payload.g1(), trade: payload.g1(),
+                public: payload.g1(),
+                private: payload.g1(),
+                trade: payload.g1(),
             }),
-            ServerProt289::MESSAGE_GAME => Self::Social(R289SocialOperation::MessageGame(payload.gjstr())),
+            ServerProt289::MESSAGE_GAME => {
+                Self::Social(R289SocialOperation::MessageGame(payload.gjstr()))
+            }
             ServerProt289::SET_PLAYER_OP => Self::Social(R289SocialOperation::SetPlayerOp {
-                index: payload.g1(), priority: payload.g1(), option: payload.gjstr(),
+                index: payload.g1(),
+                priority: payload.g1(),
+                option: payload.gjstr(),
             }),
-            ServerProt289::TUT_OPEN => Self::Interface(R289InterfaceOperation::TutOpen(payload.g2b())),
+            ServerProt289::TUT_OPEN => {
+                Self::Interface(R289InterfaceOperation::TutOpen(payload.g2b()))
+            }
             ServerProt289::IF_CLOSE => Self::Interface(R289InterfaceOperation::IfClose),
             ServerProt289::IF_SETOBJECT => Self::Interface(R289InterfaceOperation::IfSetObject {
-                component: payload.g2(), object: payload.g2(), divisor: payload.g2(),
+                component: payload.g2(),
+                object: payload.g2(),
+                divisor: payload.g2(),
             }),
-            ServerProt289::IF_SETPLAYERHEAD => Self::Interface(R289InterfaceOperation::IfSetPlayerHead(payload.g2())),
+            ServerProt289::IF_SETPLAYERHEAD => {
+                Self::Interface(R289InterfaceOperation::IfSetPlayerHead(payload.g2()))
+            }
             ServerProt289::P_COUNTDIALOG => Self::Interface(R289InterfaceOperation::CountDialog),
-            ServerProt289::IF_OPENMAIN_SIDE => Self::Interface(R289InterfaceOperation::IfOpenMainSide {
-                main: payload.g2(), side: payload.g2(),
-            }),
+            ServerProt289::IF_OPENMAIN_SIDE => {
+                Self::Interface(R289InterfaceOperation::IfOpenMainSide {
+                    main: payload.g2(),
+                    side: payload.g2(),
+                })
+            }
             ServerProt289::IF_SETTEXT => Self::Interface(R289InterfaceOperation::IfSetText {
-                component: payload.g2(), text: payload.gjstr(),
+                component: payload.g2(),
+                text: payload.gjstr(),
             }),
             ServerProt289::IF_SETTAB => Self::Interface(R289InterfaceOperation::IfSetTab {
-                component: { let v = payload.g2(); if v == 65535 { -1 } else { v } }, tab: payload.g1(),
+                component: {
+                    let v = payload.g2();
+                    if v == 65535 {
+                        -1
+                    } else {
+                        v
+                    }
+                },
+                tab: payload.g1(),
             }),
-            ServerProt289::IF_SETPOSITION => Self::Interface(R289InterfaceOperation::IfSetPosition {
-                component: payload.g2(), x: payload.g2b(), y: payload.g2b(),
-            }),
-            ServerProt289::IF_OPENCHAT => Self::Interface(R289InterfaceOperation::IfOpenChat(payload.g2())),
-            ServerProt289::IF_OPENMAIN => Self::Interface(R289InterfaceOperation::IfOpenMain(payload.g2())),
-            ServerProt289::IF_OPENOVERLAY => Self::Interface(R289InterfaceOperation::IfOpenOverlay(payload.g2b())),
+            ServerProt289::IF_SETPOSITION => {
+                Self::Interface(R289InterfaceOperation::IfSetPosition {
+                    component: payload.g2(),
+                    x: payload.g2b(),
+                    y: payload.g2b(),
+                })
+            }
+            ServerProt289::IF_OPENCHAT => {
+                Self::Interface(R289InterfaceOperation::IfOpenChat(payload.g2()))
+            }
+            ServerProt289::IF_OPENMAIN => {
+                Self::Interface(R289InterfaceOperation::IfOpenMain(payload.g2()))
+            }
+            ServerProt289::IF_OPENOVERLAY => {
+                Self::Interface(R289InterfaceOperation::IfOpenOverlay(payload.g2b()))
+            }
             ServerProt289::IF_SETHIDE => Self::Interface(R289InterfaceOperation::IfSetHide {
-                component: payload.g2(), hide: payload.g1() == 1,
+                component: payload.g2(),
+                hide: payload.g1() == 1,
             }),
             ServerProt289::IF_SETCOLOUR => Self::Interface(R289InterfaceOperation::IfSetColour {
-                component: payload.g2(), colour: payload.g2(),
+                component: payload.g2(),
+                colour: payload.g2(),
             }),
-            ServerProt289::TUT_FLASH => Self::Interface(R289InterfaceOperation::TutFlash(payload.g1())),
-            ServerProt289::IF_SETSCROLLPOS => Self::Interface(R289InterfaceOperation::IfSetScrollPos {
-                component: payload.g2(), position: payload.g2(),
-            }),
-            ServerProt289::IF_SETTAB_ACTIVE => Self::Interface(R289InterfaceOperation::IfSetTabActive(payload.g1())),
+            ServerProt289::TUT_FLASH => {
+                Self::Interface(R289InterfaceOperation::TutFlash(payload.g1()))
+            }
+            ServerProt289::IF_SETSCROLLPOS => {
+                Self::Interface(R289InterfaceOperation::IfSetScrollPos {
+                    component: payload.g2(),
+                    position: payload.g2(),
+                })
+            }
+            ServerProt289::IF_SETTAB_ACTIVE => {
+                Self::Interface(R289InterfaceOperation::IfSetTabActive(payload.g1()))
+            }
             ServerProt289::IF_SETANIM => Self::Interface(R289InterfaceOperation::IfSetAnim {
-                component: payload.g2(), sequence: payload.g2b(),
+                component: payload.g2(),
+                sequence: payload.g2b(),
             }),
             ServerProt289::IF_SETMODEL => Self::Interface(R289InterfaceOperation::IfSetModel {
-                component: payload.g2(), model: payload.g2(),
+                component: payload.g2(),
+                model: payload.g2(),
             }),
             ServerProt289::IF_SETNPCHEAD => Self::Interface(R289InterfaceOperation::IfSetNpcHead {
-                component: payload.g2(), npc: payload.g2(),
+                component: payload.g2(),
+                npc: payload.g2(),
             }),
-            ServerProt289::IF_OPENSIDE => Self::Interface(R289InterfaceOperation::IfOpenSide(payload.g2())),
+            ServerProt289::IF_OPENSIDE => {
+                Self::Interface(R289InterfaceOperation::IfOpenSide(payload.g2()))
+            }
             ServerProt289::UPDATE_INV_STOP_TRANSMIT => Self::InventoryStopTransmit {
                 component: payload.g2(),
             },
@@ -1277,7 +1425,8 @@ impl Client {
             shell: {
                 let mut shell = GameShell::new();
                 shell.telemetry_289 = revision.is_289();
-                shell.ground_trace = super::ground_trace_289::GroundTrace::from_env(revision.is_289());
+                shell.ground_trace =
+                    super::ground_trace_289::GroundTrace::from_env(revision.is_289());
                 if revision.is_289() {
                     // Applet_Sub1:53-56 fields start at Java int zero.
                     shell.mouse_x = 0;
@@ -2736,8 +2885,19 @@ impl Client {
             action -= MiniMenuAction::_PRIORITY;
         }
 
-        if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.input_pending) {
-            t.event("selection", &[("walk", (action == MiniMenuAction::WALK) as i64), ("menu_open", self.is_menu_open as i64)]);
+        if let Some(t) = self
+            .shell
+            .ground_trace
+            .as_mut()
+            .filter(|t| t.active() && t.input_pending)
+        {
+            t.event(
+                "selection",
+                &[
+                    ("walk", (action == MiniMenuAction::WALK) as i64),
+                    ("menu_open", self.is_menu_open as i64),
+                ],
+            );
         }
 
         if OBJ_OP_ACTIONS.contains(&action) {
@@ -2762,7 +2922,8 @@ impl Client {
                         self.oplogic7 += 1;
                     }
                     if self.oplogic7 >= 123 {
-                        self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC7));
+                        self.out
+                            .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC7));
                         self.out.p4(0);
                     }
                     self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ1));
@@ -2776,7 +2937,8 @@ impl Client {
                 if action == MiniMenuAction::OP_OBJ4 {
                     self.oplogic8 += c;
                     if self.oplogic8 >= 75 {
-                        self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC8));
+                        self.out
+                            .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC8));
                         self.out.p1(19);
                     }
                     self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ4));
@@ -2784,7 +2946,8 @@ impl Client {
                 if action == MiniMenuAction::OP_OBJ5 {
                     self.oplogic3 += self.map_build_base_z;
                     if self.oplogic3 >= 118 {
-                        self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC3));
+                        self.out
+                            .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC3));
                         self.out.p4(0);
                     }
                     self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ5));
@@ -2968,7 +3131,8 @@ impl Client {
         if action == MiniMenuAction::OP_LOC2 {
             self.oplogic1 += c;
             if self.oplogic1 >= 139 {
-                self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC1));
+                self.out
+                    .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC1));
                 self.out.p4(0);
             }
             self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC2));
@@ -2977,7 +3141,8 @@ impl Client {
         if action == MiniMenuAction::OP_LOC3 {
             self.oplogic2 += 1;
             if self.oplogic2 >= 124 {
-                self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC2));
+                self.out
+                    .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC2));
                 self.out.p2(37954);
             }
             self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC3));
@@ -3042,7 +3207,8 @@ impl Client {
                 if action == MiniMenuAction::OP_PLAYER1 {
                     self.oplogic4 += 1;
                     if self.oplogic4 >= 52 {
-                        self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC4));
+                        self.out
+                            .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC4));
                         self.out.p1(131);
                     }
                     self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER1));
@@ -3056,7 +3222,8 @@ impl Client {
                 if action == MiniMenuAction::OP_PLAYER4 {
                     self.oplogic5 += a;
                     if self.oplogic5 >= 66 {
-                        self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC5));
+                        self.out
+                            .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC5));
                         self.out.p1(154);
                     }
                     self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER4));
@@ -3101,7 +3268,8 @@ impl Client {
                         if action == MiniMenuAction::ACCEPT_TRADEREQ {
                             self.oplogic5 += a;
                             if self.oplogic5 >= 66 {
-                                self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC5));
+                                self.out
+                                    .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC5));
                                 self.out.p1(154);
                             }
                             self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER4));
@@ -3109,7 +3277,8 @@ impl Client {
                         if action == MiniMenuAction::ACCEPT_DUELREQ {
                             self.oplogic4 += 1;
                             if self.oplogic4 >= 52 {
-                                self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC4));
+                                self.out
+                                    .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC4));
                                 self.out.p1(131);
                             }
                             self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER1));
@@ -3195,7 +3364,8 @@ impl Client {
             if action == MiniMenuAction::OP_HELD4 {
                 self.oplogic9 += 1;
                 if self.oplogic9 >= 116 {
-                    self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC9));
+                    self.out
+                        .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC9));
                     self.out.p3(13018169);
                 }
                 self.out.p1_enc(self.client_opcode(ClientProt::OPHELD4));
@@ -3313,7 +3483,8 @@ impl Client {
                     self.oplogic6 += 1;
                 }
                 if self.oplogic6 >= 133 {
-                    self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC6));
+                    self.out
+                        .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC6));
                     self.out.p2(6118);
                 }
                 self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON1));
@@ -3404,7 +3575,8 @@ impl Client {
         if action == MiniMenuAction::PAUSE_BUTTON {
             // TS 9186-9191: RESUME_PAUSEBUTTON, not IF_BUTTON.
             if !self.resumed_pause_button {
-                self.out.p1_enc(self.client_opcode(ClientProt::RESUME_PAUSEBUTTON));
+                self.out
+                    .p1_enc(self.client_opcode(ClientProt::RESUME_PAUSEBUTTON));
                 self.out.p2(c);
                 self.resumed_pause_button = true;
             }
@@ -3444,9 +3616,22 @@ impl Client {
                     self.shell.mouse_click_y - 4,
                 );
             }
-            if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.input_pending) {
+            if let Some(t) = self
+                .shell
+                .ground_trace
+                .as_mut()
+                .filter(|t| t.active() && t.input_pending)
+            {
                 t.armed = true;
-                t.event("walk_arm", &[("menu_open", self.is_menu_open as i64), ("x", self.world.click_x as i64), ("y", self.world.click_y as i64), ("scene", self.scene_state as i64)]);
+                t.event(
+                    "walk_arm",
+                    &[
+                        ("menu_open", self.is_menu_open as i64),
+                        ("x", self.world.click_x as i64),
+                        ("y", self.world.click_y as i64),
+                        ("scene", self.scene_state as i64),
+                    ],
+                );
             }
         }
 
@@ -3533,7 +3718,8 @@ impl Client {
         self.cyclelogic2 += 1;
         if self.cyclelogic2 > 1086 {
             self.cyclelogic2 = 0;
-            self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC2));
+            self.out
+                .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC2));
             self.out.p1(0);
             let start = self.out.pos;
             // the Math.random draws become 0 and both 2.0-roll conditionals
@@ -3892,25 +4078,55 @@ impl Client {
             let start_x = self.route_x[length];
             let start_z = self.route_z[length];
 
-            if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.routing) {
+            if let Some(t) = self
+                .shell
+                .ground_trace
+                .as_mut()
+                .filter(|t| t.active() && t.routing)
+            {
                 t.pending_write = true;
-                t.event("movement", &[("type", r#type as i64), ("opcode", crate::io::map_client_prot(self.revision, ClientProt::MOVE_GAMECLICK).id as i64), ("length", (buffer_size + buffer_size + 3) as i64), ("run", (self.shell.key_held[5] == 1) as i64), ("abs_x", ((start_x + self.map_build_base_x) as u16) as i64), ("abs_z", ((start_z + self.map_build_base_z) as u16) as i64), ("turns", buffer_size as i64)]);
+                t.event(
+                    "movement",
+                    &[
+                        ("type", r#type as i64),
+                        (
+                            "opcode",
+                            crate::io::map_client_prot(self.revision, ClientProt::MOVE_GAMECLICK).id
+                                as i64,
+                        ),
+                        ("length", (buffer_size + buffer_size + 3) as i64),
+                        ("run", (self.shell.key_held[5] == 1) as i64),
+                        ("abs_x", ((start_x + self.map_build_base_x) as u16) as i64),
+                        ("abs_z", ((start_z + self.map_build_base_z) as u16) as i64),
+                        ("turns", buffer_size as i64),
+                    ],
+                );
                 for i in 1..buffer_size {
-                    t.event("movement_delta", &[("index", i as i64), ("dx", ((self.route_x[length - i] - start_x) as i8) as i64), ("dz", ((self.route_z[length - i] - start_z) as i8) as i64)]);
+                    t.event(
+                        "movement_delta",
+                        &[
+                            ("index", i as i64),
+                            ("dx", ((self.route_x[length - i] - start_x) as i8) as i64),
+                            ("dz", ((self.route_z[length - i] - start_z) as i8) as i64),
+                        ],
+                    );
                 }
             }
 
             match r#type {
                 0 => {
-                    self.out.p1_enc(self.client_opcode(ClientProt::MOVE_GAMECLICK));
+                    self.out
+                        .p1_enc(self.client_opcode(ClientProt::MOVE_GAMECLICK));
                     self.out.p1((buffer_size + buffer_size + 3) as i32);
                 }
                 1 => {
-                    self.out.p1_enc(self.client_opcode(ClientProt::MOVE_MINIMAPCLICK));
+                    self.out
+                        .p1_enc(self.client_opcode(ClientProt::MOVE_MINIMAPCLICK));
                     self.out.p1((buffer_size + buffer_size + 3 + 14) as i32);
                 }
                 2 => {
-                    self.out.p1_enc(self.client_opcode(ClientProt::MOVE_OPCLICK));
+                    self.out
+                        .p1_enc(self.client_opcode(ClientProt::MOVE_OPCLICK));
                     self.out.p1((buffer_size + buffer_size + 3) as i32);
                 }
                 _ => {}
@@ -4569,32 +4785,54 @@ impl Client {
             R289Operation::Interface(operation) => self.apply_interface_operation_289(operation),
             R289Operation::InventoryFull { component, entries } => {
                 self.apply_inventory_full_289(component, entries);
-                R289Publication { inv: true, ..Default::default() }
+                R289Publication {
+                    inv: true,
+                    ..Default::default()
+                }
             }
             R289Operation::InventoryPartial { component, entries } => {
                 self.apply_inventory_partial_289(component, entries);
-                R289Publication { inv: true, ..Default::default() }
+                R289Publication {
+                    inv: true,
+                    ..Default::default()
+                }
             }
             R289Operation::InventoryStopTransmit { component } => {
                 self.apply_inventory_stop_transmit_289(component);
-                R289Publication { inv: true, ..Default::default() }
+                R289Publication {
+                    inv: true,
+                    ..Default::default()
+                }
             }
             R289Operation::VarpSmall { id, value } => self.apply_varp_289(id, value),
             R289Operation::VarpLarge { id, value } => self.apply_varp_289(id, value),
             R289Operation::VarpSync => self.apply_varp_sync_289(),
             R289Operation::UpdateStat { stat, xp, level } => {
                 self.apply_update_stat_289(stat, xp, level);
-                R289Publication { stat: true, ..Default::default() }
+                R289Publication {
+                    stat: true,
+                    ..Default::default()
+                }
             }
             R289Operation::RunEnergy(value) => {
-                if self.active_icon == 12 { self.redraw_side = true; }
+                if self.active_icon == 12 {
+                    self.redraw_side = true;
+                }
                 self.runenergy = value;
-                R289Publication { stat: true, ..Default::default() }
+                R289Publication {
+                    stat: true,
+                    ..Default::default()
+                }
             }
             R289Operation::RunWeight(value) => {
                 self.runweight = value;
-                if self.active_icon == 12 { self.redraw_side = true; }
-                R289Publication { stat: true, ..Default::default() }
+                if self.active_icon == 12 {
+                    self.redraw_side = true;
+                }
+                R289Publication {
+                    stat: true,
+                    ..Default::default()
+                }
             }
             R289Operation::Social(operation) => self.apply_social_operation_289(operation),
             R289Operation::Misc(operation) => operation.apply(self),
@@ -4610,7 +4848,12 @@ impl Client {
                 self.ignore_userhash[..hashes.len()].copy_from_slice(&hashes);
                 R289Publication::default()
             }
-            R289SocialOperation::Private { from, message_id, staff_mod_level, body } => {
+            R289SocialOperation::Private {
+                from,
+                message_id,
+                staff_mod_level,
+                body,
+            } => {
                 let before = self.chat_seq;
                 let mut body_packet = Packet::new(body);
 
@@ -4631,36 +4874,59 @@ impl Client {
                         self.add_chat(3, &text, &sender);
                     }
                 }
-                R289Publication { chat: self.chat_seq != before, ..Default::default() }
+                R289Publication {
+                    chat: self.chat_seq != before,
+                    ..Default::default()
+                }
             }
             R289SocialOperation::Friend { username, world } => {
                 let before = self.chat_seq;
                 let mut p = Packet::new(vec![0; 9]);
-                p.p8(username); p.p1(world); p.pos = 0;
+                p.p8(username);
+                p.p1(world);
+                p.pos = 0;
                 self.apply_update_friendlist(&mut p);
-                R289Publication { chat: self.chat_seq != before, ..Default::default() }
+                R289Publication {
+                    chat: self.chat_seq != before,
+                    ..Default::default()
+                }
             }
             R289SocialOperation::FriendLoaded(status) => {
                 self.friend_server_status = status;
                 self.redraw_side = true;
                 R289Publication::default()
             }
-            R289SocialOperation::ChatFilter { public, private, trade } => {
+            R289SocialOperation::ChatFilter {
+                public,
+                private,
+                trade,
+            } => {
                 self.chat_public_mode = public;
                 self.chat_private_mode = private;
                 self.chat_trade_mode = trade;
                 self.redraw_chat_mode = true;
                 self.redraw_chat = true;
-                R289Publication { chat: true, ..Default::default() }
+                R289Publication {
+                    chat: true,
+                    ..Default::default()
+                }
             }
             R289SocialOperation::MessageGame(message) => {
                 let before = self.chat_seq;
                 self.apply_message_game_text_289(&message);
-                R289Publication { chat: self.chat_seq != before, ..Default::default() }
+                R289Publication {
+                    chat: self.chat_seq != before,
+                    ..Default::default()
+                }
             }
-            R289SocialOperation::SetPlayerOp { index, priority, option } => {
+            R289SocialOperation::SetPlayerOp {
+                index,
+                priority,
+                option,
+            } => {
                 if (1..=5).contains(&index) {
-                    self.player_op[(index - 1) as usize] = (!option.eq_ignore_ascii_case("null")).then_some(option);
+                    self.player_op[(index - 1) as usize] =
+                        (!option.eq_ignore_ascii_case("null")).then_some(option);
                     self.player_op_priority[(index - 1) as usize] = priority == 0;
                 }
                 R289Publication::default()
@@ -4669,14 +4935,21 @@ impl Client {
     }
 
     fn apply_message_game_text_289(&mut self, message: &str) {
-        let suffix = if message.ends_with(":tradereq:") { Some((4, "wishes to trade with you.")) }
-            else if message.ends_with(":duelreq:") { Some((8, "wishes to duel with you.")) }
-            else if message.ends_with(":chalreq:") { Some((8, "")) }
-            else { None };
+        let suffix = if message.ends_with(":tradereq:") {
+            Some((4, "wishes to trade with you."))
+        } else if message.ends_with(":duelreq:") {
+            Some((8, "wishes to duel with you."))
+        } else if message.ends_with(":chalreq:") {
+            Some((8, ""))
+        } else {
+            None
+        };
         if let Some((kind, text)) = suffix {
             let player = message.split(':').next().unwrap_or("");
             let hash = JString::to_userhash(player) as i64;
-            if self.chat_disabled == 0 && !self.ignore_userhash[..self.ignore_count as usize].contains(&hash) {
+            if self.chat_disabled == 0
+                && !self.ignore_userhash[..self.ignore_count as usize].contains(&hash)
+            {
                 let chat_text = if message.ends_with(":chalreq:") {
                     // Java 3264-3276 uses the challenge body, excluding the
                     // nine-byte ":chalreq:" suffix, as the chat text.
@@ -4695,9 +4968,13 @@ impl Client {
     fn apply_inventory_full_289(&mut self, component: i32, entries: Vec<(i32, i32)>) {
         self.redraw_side = true;
         if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
-            .get_mut(component as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+            .get_mut(component as usize)
+            .and_then(|o| o.as_mut())
+            .map(Arc::make_mut)
         {
-            if let (Some(types), Some(numbers)) = (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut()) {
+            if let (Some(types), Some(numbers)) =
+                (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut())
+            {
                 let n = entries.len().min(types.len());
                 for (i, &(object, count)) in entries.iter().take(n).enumerate() {
                     types[i] = object;
@@ -4714,9 +4991,13 @@ impl Client {
     fn apply_inventory_partial_289(&mut self, component: i32, entries: Vec<(i32, i32, i32)>) {
         self.redraw_side = true;
         if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
-            .get_mut(component as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+            .get_mut(component as usize)
+            .and_then(|o| o.as_mut())
+            .map(Arc::make_mut)
         {
-            if let (Some(types), Some(numbers)) = (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut()) {
+            if let (Some(types), Some(numbers)) =
+                (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut())
+            {
                 for (slot, object, count) in entries {
                     if slot >= 0 && (slot as usize) < types.len() {
                         types[slot as usize] = object;
@@ -4729,10 +5010,12 @@ impl Client {
 
     fn apply_inventory_stop_transmit_289(&mut self, component: i32) {
         if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
-            .get_mut(component as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+            .get_mut(component as usize)
+            .and_then(|o| o.as_mut())
+            .map(Arc::make_mut)
         {
             if let Some(types) = inv.link_obj_type.as_mut() {
-                for object in types { *object = 0; }
+                types.fill(0);
             }
         }
     }
@@ -4744,15 +5027,22 @@ impl Client {
             grow_write(&mut self.var, id, value);
             self.client_var(id);
             self.redraw_side = true;
-            if self.tut_com_id != -1 { self.redraw_chat = true; }
+            if self.tut_com_id != -1 {
+                self.redraw_chat = true;
+            }
         }
-        R289Publication { varp: true, ..Default::default() }
+        R289Publication {
+            varp: true,
+            ..Default::default()
+        }
     }
 
     fn apply_varp_sync_289(&mut self) -> R289Publication {
         let mut changed = false;
         for i in 0..self.var_serv.len() {
-            let Some(&value) = self.var_serv.get(i) else { continue };
+            let Some(&value) = self.var_serv.get(i) else {
+                continue;
+            };
             if self.var.get(i).copied() != Some(value) {
                 grow_write(&mut self.var, i as i32, value);
                 self.client_var(i as i32);
@@ -4762,25 +5052,38 @@ impl Client {
         if changed {
             self.redraw_side = true;
         }
-        R289Publication { varp: true, ..Default::default() }
+        R289Publication {
+            varp: true,
+            ..Default::default()
+        }
     }
 
     fn apply_update_stat_289(&mut self, stat: i32, xp: i32, level: i32) {
         self.redraw_side = true;
-        if let Some(index) = usize::try_from(stat).ok().filter(|&i| i < self.stat_xp.len()) {
+        if let Some(index) = usize::try_from(stat)
+            .ok()
+            .filter(|&i| i < self.stat_xp.len())
+        {
             self.stat_xp[index] = xp;
             self.stat_effective_level[index] = level;
             let mut base = 1;
             for (i, threshold) in level_experience().iter().enumerate().take(98) {
-                if xp >= *threshold { base = (i + 2) as i32; }
+                if xp >= *threshold {
+                    base = (i + 2) as i32;
+                }
             }
             self.stat_base_level[index] = base;
         }
     }
 
-    fn apply_interface_operation_289(&mut self, operation: R289InterfaceOperation) -> R289Publication {
-        let mut publication = R289Publication::default();
-        publication.iface = true;
+    fn apply_interface_operation_289(
+        &mut self,
+        operation: R289InterfaceOperation,
+    ) -> R289Publication {
+        let publication = R289Publication {
+            iface: true,
+            ..Default::default()
+        };
         match operation {
             R289InterfaceOperation::TutOpen(id) => {
                 self.tut_com_id = id;
@@ -4790,78 +5093,182 @@ impl Client {
             R289InterfaceOperation::TutFlash(icon) => self.apply_tut_flash(icon),
             R289InterfaceOperation::CountDialog => self.apply_p_countdialog(),
             R289InterfaceOperation::IfSetTab { component, tab } => {
-                if (0..14).contains(&tab) { self.side_icon[tab as usize] = component; }
+                if (0..14).contains(&tab) {
+                    self.side_icon[tab as usize] = component;
+                }
                 self.redraw_side = true;
                 self.redraw_icons = true;
             }
             R289InterfaceOperation::IfSetTabActive(icon) => self.apply_if_showicon(icon),
             R289InterfaceOperation::IfSetHide { component, hide } => {
-                if let Some(com) = self.iface_mut(component as usize) { com.hide = hide; }
+                if let Some(com) = self.iface_mut(component as usize) {
+                    com.hide = hide;
+                }
             }
             R289InterfaceOperation::IfSetPosition { component, x, y } => {
-                if let Some(com) = self.iface_mut(component as usize) { com.x = x; com.y = y; }
+                if let Some(com) = self.iface_mut(component as usize) {
+                    com.x = x;
+                    com.y = y;
+                }
             }
             R289InterfaceOperation::IfSetModel { component, model } => {
-                if let Some(com) = self.iface_mut(component as usize) { com.model1_type = 1; com.model1_id = model; }
+                if let Some(com) = self.iface_mut(component as usize) {
+                    com.model1_type = 1;
+                    com.model1_id = model;
+                }
             }
             R289InterfaceOperation::IfSetNpcHead { component, npc } => {
-                if let Some(com) = self.iface_mut(component as usize) { com.model1_type = 2; com.model1_id = npc; }
+                if let Some(com) = self.iface_mut(component as usize) {
+                    com.model1_type = 2;
+                    com.model1_id = npc;
+                }
             }
-            R289InterfaceOperation::IfSetAnim { component, sequence } => {
+            R289InterfaceOperation::IfSetAnim {
+                component,
+                sequence,
+            } => {
                 if let Some(com) = self.iface_mut(component as usize) {
                     com.model_anim = sequence;
-                    if sequence == -1 { com.anim_frame = 0; com.anim_cycle = 0; }
+                    if sequence == -1 {
+                        com.anim_frame = 0;
+                        com.anim_cycle = 0;
+                    }
                 }
             }
             R289InterfaceOperation::IfSetColour { component, colour } => {
                 if let Some(com) = self.iface_mut(component as usize) {
-                    com.colour = ((colour >> 10) & 31) << 19 | ((colour >> 5) & 31) << 11 | (colour & 31) << 3;
+                    com.colour = ((colour >> 10) & 31) << 19
+                        | ((colour >> 5) & 31) << 11
+                        | (colour & 31) << 3;
                 }
             }
             R289InterfaceOperation::IfSetText { component, text } => {
                 let active = self.if_(component as usize).is_some_and(|c| {
-                    (0..14).contains(&self.active_icon) && c.layer_id == self.side_icon[self.active_icon as usize]
+                    (0..14).contains(&self.active_icon)
+                        && c.layer_id == self.side_icon[self.active_icon as usize]
                 });
-                if let Some(com) = self.iface_mut(component as usize) { com.text = text; }
-                if active { self.redraw_side = true; }
+                if let Some(com) = self.iface_mut(component as usize) {
+                    com.text = text;
+                }
+                if active {
+                    self.redraw_side = true;
+                }
             }
-            R289InterfaceOperation::IfSetScrollPos { component, mut position } => {
+            R289InterfaceOperation::IfSetScrollPos {
+                component,
+                mut position,
+            } => {
                 let layer = self.if_(component as usize).map(|c| (c.r#type, c.height));
                 if let Some((kind, height)) = layer {
                     if kind == ComponentType::TYPE_LAYER {
-                        let max = self.if_(component as usize).map(|c| c.scroll_height).unwrap_or(0) - height;
+                        let max = self
+                            .if_(component as usize)
+                            .map(|c| c.scroll_height)
+                            .unwrap_or(0)
+                            - height;
                         position = position.max(0).min(max);
-                        if let Some(com) = self.iface_mut(component as usize) { com.scroll_pos = position; }
+                        if let Some(com) = self.iface_mut(component as usize) {
+                            com.scroll_pos = position;
+                        }
                     }
                 }
             }
-            R289InterfaceOperation::IfSetObject { component, object, divisor } => {
-                let (xan, yan, zoom) = self.cache.objs.get(object as usize)
-                    .map(|o| (o.xan2d, o.yan2d, o.zoom2d)).unwrap_or((0, 0, 0));
+            R289InterfaceOperation::IfSetObject {
+                component,
+                object,
+                divisor,
+            } => {
+                let (xan, yan, zoom) = self
+                    .cache
+                    .objs
+                    .get(object as usize)
+                    .map(|o| (o.xan2d, o.yan2d, o.zoom2d))
+                    .unwrap_or((0, 0, 0));
                 if let Some(com) = self.iface_mut(component as usize) {
-                    if object == 65535 { com.model1_type = 0; com.model1_id = 0; }
-                    else { com.model1_type = 4; com.model1_id = object; com.model_xan = xan; com.model_yan = yan; com.model_zoom = if divisor == 0 { 0 } else { zoom * 100 / divisor }; }
+                    if object == 65535 {
+                        com.model1_type = 0;
+                        com.model1_id = 0;
+                    } else {
+                        com.model1_type = 4;
+                        com.model1_id = object;
+                        com.model_xan = xan;
+                        com.model_yan = yan;
+                        com.model_zoom = if divisor == 0 {
+                            0
+                        } else {
+                            zoom * 100 / divisor
+                        };
+                    }
                 }
             }
             R289InterfaceOperation::IfSetPlayerHead(component) => {
                 // Java prefers the local player's transformed NPC model key;
                 // only ordinary players use the packed kit appearance head.
                 let head = self.local_player.as_ref().map(|local| {
-                    local.transmog.map(|npc_id| npc_id as i32).unwrap_or_else(|| {
-                        (local.appearance[8] as i32) << 6
-                            | (local.appearance[0] as i32) << 12
-                            | (local.colour[0] as i32) << 24
-                            | (local.colour[4] as i32) << 18
-                            | local.appearance[11] as i32
-                    })
+                    local
+                        .transmog
+                        .map(|npc_id| npc_id as i32)
+                        .unwrap_or_else(|| {
+                            (local.appearance[8] as i32) << 6
+                                | (local.appearance[0] as i32) << 12
+                                | (local.colour[0] as i32) << 24
+                                | (local.colour[4] as i32) << 18
+                                | local.appearance[11] as i32
+                        })
                 });
-                if let (Some(com), Some(head)) = (self.iface_mut(component as usize), head) { com.model1_type = 3; com.model1_id = head; }
+                if let (Some(com), Some(head)) = (self.iface_mut(component as usize), head) {
+                    com.model1_type = 3;
+                    com.model1_id = head;
+                }
             }
-            R289InterfaceOperation::IfOpenChat(id) => { self.if_anim_reset(id); self.chat_modal_id = id; self.side_modal_id = -1; self.main_modal_id = -1; self.redraw_chat = true; self.redraw_side = true; self.redraw_icons = true; self.resumed_pause_button = false; }
-            R289InterfaceOperation::IfOpenMain(id) => { self.if_anim_reset(id); self.main_modal_id = id; self.side_modal_id = -1; self.chat_modal_id = -1; self.dialog_input_open = false; self.redraw_chat = true; self.redraw_side = true; self.redraw_icons = true; self.resumed_pause_button = false; }
-            R289InterfaceOperation::IfOpenMainSide { main, side } => { self.main_modal_id = main; self.side_modal_id = side; self.chat_modal_id = -1; self.dialog_input_open = false; self.redraw_chat = true; self.redraw_side = true; self.redraw_icons = true; self.resumed_pause_button = false; }
-            R289InterfaceOperation::IfOpenSide(id) => { self.if_anim_reset(id); self.side_modal_id = id; self.main_modal_id = -1; self.chat_modal_id = -1; self.dialog_input_open = false; self.redraw_chat = true; self.redraw_side = true; self.redraw_icons = true; self.resumed_pause_button = false; }
-            R289InterfaceOperation::IfOpenOverlay(id) => { if id >= 0 { self.if_anim_reset(id); } self.main_overlay_id = id; }
+            R289InterfaceOperation::IfOpenChat(id) => {
+                self.if_anim_reset(id);
+                self.chat_modal_id = id;
+                self.side_modal_id = -1;
+                self.main_modal_id = -1;
+                self.redraw_chat = true;
+                self.redraw_side = true;
+                self.redraw_icons = true;
+                self.resumed_pause_button = false;
+            }
+            R289InterfaceOperation::IfOpenMain(id) => {
+                self.if_anim_reset(id);
+                self.main_modal_id = id;
+                self.side_modal_id = -1;
+                self.chat_modal_id = -1;
+                self.dialog_input_open = false;
+                self.redraw_chat = true;
+                self.redraw_side = true;
+                self.redraw_icons = true;
+                self.resumed_pause_button = false;
+            }
+            R289InterfaceOperation::IfOpenMainSide { main, side } => {
+                self.main_modal_id = main;
+                self.side_modal_id = side;
+                self.chat_modal_id = -1;
+                self.dialog_input_open = false;
+                self.redraw_chat = true;
+                self.redraw_side = true;
+                self.redraw_icons = true;
+                self.resumed_pause_button = false;
+            }
+            R289InterfaceOperation::IfOpenSide(id) => {
+                self.if_anim_reset(id);
+                self.side_modal_id = id;
+                self.main_modal_id = -1;
+                self.chat_modal_id = -1;
+                self.dialog_input_open = false;
+                self.redraw_chat = true;
+                self.redraw_side = true;
+                self.redraw_icons = true;
+                self.resumed_pause_button = false;
+            }
+            R289InterfaceOperation::IfOpenOverlay(id) => {
+                if id >= 0 {
+                    self.if_anim_reset(id);
+                }
+                self.main_overlay_id = id;
+            }
         }
         publication
     }
@@ -5057,7 +5464,8 @@ impl Client {
             self.friend_node_id[self.friend_count as usize] = 0;
             self.friend_count += 1;
             self.redraw_side = true;
-            self.out.p1_enc(self.client_opcode(ClientProt::FRIENDLIST_ADD));
+            self.out
+                .p1_enc(self.client_opcode(ClientProt::FRIENDLIST_ADD));
             self.out.p8(userhash);
         }
     }
@@ -5097,7 +5505,8 @@ impl Client {
         self.ignore_userhash[self.ignore_count as usize] = userhash;
         self.ignore_count += 1;
         self.redraw_side = true;
-        self.out.p1_enc(self.client_opcode(ClientProt::IGNORELIST_ADD));
+        self.out
+            .p1_enc(self.client_opcode(ClientProt::IGNORELIST_ADD));
         self.out.p8(userhash);
     }
 
@@ -5118,7 +5527,8 @@ impl Client {
                     self.friend_node_id[j as usize] = self.friend_node_id[(j + 1) as usize];
                     self.friend_userhash[j as usize] = self.friend_userhash[(j + 1) as usize];
                 }
-                self.out.p1_enc(self.client_opcode(ClientProt::FRIENDLIST_DEL));
+                self.out
+                    .p1_enc(self.client_opcode(ClientProt::FRIENDLIST_DEL));
                 self.out.p8(userhash);
                 return;
             }
@@ -5139,7 +5549,8 @@ impl Client {
                 for j in i..self.ignore_count {
                     self.ignore_userhash[j as usize] = self.ignore_userhash[(j + 1) as usize];
                 }
-                self.out.p1_enc(self.client_opcode(ClientProt::IGNORELIST_DEL));
+                self.out
+                    .p1_enc(self.client_opcode(ClientProt::IGNORELIST_DEL));
                 self.out.p8(userhash);
                 return;
             }
@@ -5621,7 +6032,8 @@ impl Client {
         } else if client_code == CC_ACCEPT_DESIGN {
             // TS 11053-11065: IDK_SAVEDESIGN (id 125, length 13) carries
             // the gender byte, 7 kit bytes and 5 colour bytes.
-            self.out.p1_enc(self.client_opcode(ClientProt::IDK_SAVEDESIGN));
+            self.out
+                .p1_enc(self.client_opcode(ClientProt::IDK_SAVEDESIGN));
             self.out.p1(if self.idk_design_gender { 0 } else { 1 });
             for i in 0..7 {
                 self.out.p1(self.idk_design_part[i]);
@@ -7551,7 +7963,6 @@ impl Client {
                 self.ptype = -1;
             }
 
-
             // IF_SETTEXT: g2 + newline string (client.java:2638-2646).
             x if x == ServerProt289::IF_SETTEXT => {
                 let com_id = payload.g2();
@@ -8470,7 +8881,6 @@ impl Client {
         }
     }
 
-
     /// `zonePacket(buf, opcode)` from client-ts: reads the 8-tile zone
     /// position byte and the TS field widths for each opcode, then applies
     /// the change — loc adds/dels/animations, ground-object adds/dels/
@@ -8999,7 +9409,9 @@ impl Client {
     /// one-shot `draw_area` cls so no game-frame viewport/chat/side pixel
     /// survives).
     pub fn logout(&mut self) {
-        if let Some(t) = &mut self.shell.ground_trace { t.complete("logout"); }
+        if let Some(t) = &mut self.shell.ground_trace {
+            t.complete("logout");
+        }
         self.r289_packet_reset = true;
         if let Some(mut stream) = self.stream.take() {
             stream.close();
@@ -9075,7 +9487,9 @@ impl Client {
     /// save-and-close of the old `ClientStream`. The "Connection lost"
     /// viewport text is not drawn (headless).
     pub fn lost_con(&mut self) {
-        if let Some(t) = &mut self.shell.ground_trace { t.complete("lost_connection"); }
+        if let Some(t) = &mut self.shell.ground_trace {
+            t.complete("lost_connection");
+        }
         if self.logout_timer > 0 {
             self.logout();
             return;
@@ -9276,7 +9690,8 @@ impl Client {
             self.chat_public_mode = (self.chat_public_mode + 1) % 4;
             self.redraw_chat_mode = true;
             self.redraw_chat = true;
-            self.out.p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
+            self.out
+                .p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
             self.out.p1(self.chat_public_mode);
             self.out.p1(self.chat_private_mode);
             self.out.p1(self.chat_trade_mode);
@@ -9289,7 +9704,8 @@ impl Client {
             self.chat_private_mode = (self.chat_private_mode + 1) % 3;
             self.redraw_chat_mode = true;
             self.redraw_chat = true;
-            self.out.p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
+            self.out
+                .p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
             self.out.p1(self.chat_public_mode);
             self.out.p1(self.chat_private_mode);
             self.out.p1(self.chat_trade_mode);
@@ -9302,7 +9718,8 @@ impl Client {
             self.chat_trade_mode = (self.chat_trade_mode + 1) % 3;
             self.redraw_chat_mode = true;
             self.redraw_chat = true;
-            self.out.p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
+            self.out
+                .p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
             self.out.p1(self.chat_public_mode);
             self.out.p1(self.chat_private_mode);
             self.out.p1(self.chat_trade_mode);
@@ -9344,7 +9761,8 @@ impl Client {
             self.outbound_289.cyclelogic4 += 1;
             if self.outbound_289.cyclelogic4 > 192 {
                 self.outbound_289.cyclelogic4 = 0;
-                self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC4));
+                self.out
+                    .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC4));
                 self.out.p1(232);
             }
         }
@@ -9379,7 +9797,8 @@ impl Client {
                         && !self.social_input.is_empty()
                         && self.social_userhash != 0
                     {
-                        self.out.p1_enc(self.client_opcode(ClientProt::MESSAGE_PRIVATE));
+                        self.out
+                            .p1_enc(self.client_opcode(ClientProt::MESSAGE_PRIVATE));
                         self.out.p1(0);
                         let start = self.out.pos;
                         self.out.p8(self.social_userhash);
@@ -9396,7 +9815,8 @@ impl Client {
                         if self.chat_private_mode == 2 {
                             self.chat_private_mode = 1;
                             self.redraw_chat_mode = true;
-                            self.out.p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
+                            self.out
+                                .p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
                             self.out.p1(self.chat_public_mode);
                             self.out.p1(self.chat_private_mode);
                             self.out.p1(self.chat_trade_mode);
@@ -9431,7 +9851,8 @@ impl Client {
                 if key == 13 || key == 10 {
                     if !self.dialog_input.is_empty() {
                         let value: i32 = self.dialog_input.parse().unwrap_or(0);
-                        self.out.p1_enc(self.client_opcode(ClientProt::RESUME_P_COUNTDIALOG));
+                        self.out
+                            .p1_enc(self.client_opcode(ClientProt::RESUME_P_COUNTDIALOG));
                         self.out.p4(value);
                     }
 
@@ -9460,7 +9881,8 @@ impl Client {
 
             if (key == 13 || key == 10) && !self.chat_input.is_empty() {
                 if self.chat_input.starts_with("::") {
-                    self.out.p1_enc(self.client_opcode(ClientProt::CLIENT_CHEAT));
+                    self.out
+                        .p1_enc(self.client_opcode(ClientProt::CLIENT_CHEAT));
                     self.out.p1((self.chat_input.len() - 2 + 1) as i32);
                     self.out.pjstr(&self.chat_input[2..]);
                 } else {
@@ -9547,7 +9969,8 @@ impl Client {
                         }
                     }
 
-                    self.out.p1_enc(self.client_opcode(ClientProt::MESSAGE_PUBLIC));
+                    self.out
+                        .p1_enc(self.client_opcode(ClientProt::MESSAGE_PUBLIC));
                     self.out.p1(0);
                     let start = self.out.pos;
                     self.out.p1(colour);
@@ -9595,7 +10018,8 @@ impl Client {
                     if self.chat_public_mode == 2 {
                         self.chat_public_mode = 3;
                         self.redraw_chat_mode = true;
-                        self.out.p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
+                        self.out
+                            .p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
                         self.out.p1(self.chat_public_mode);
                         self.out.p1(self.chat_private_mode);
                         self.out.p1(self.chat_trade_mode);
@@ -10322,7 +10746,8 @@ impl Client {
 
         self.scene_state = 2;
         self.map_build();
-        self.out.p1_enc(self.client_opcode(ClientProt::MAP_BUILD_COMPLETE));
+        self.out
+            .p1_enc(self.client_opcode(ClientProt::MAP_BUILD_COMPLETE));
         0
     }
 
@@ -11058,9 +11483,20 @@ impl Client {
     pub fn game_loop(&mut self) {
         if self.ingame {
             if let Some(t) = &mut self.shell.ground_trace {
-                t.tick(self.shell.mouse_click_button, self.shell.mouse_click_x, self.shell.mouse_click_y);
+                t.tick(
+                    self.shell.mouse_click_button,
+                    self.shell.mouse_click_x,
+                    self.shell.mouse_click_y,
+                );
                 if t.input_pending {
-                    t.event("input_state", &[("pending_message", self.tut_com_message.is_some() as i64), ("menu_open", self.is_menu_open as i64), ("scene", self.scene_state as i64)]);
+                    t.event(
+                        "input_state",
+                        &[
+                            ("pending_message", self.tut_com_message.is_some() as i64),
+                            ("menu_open", self.is_menu_open as i64),
+                            ("scene", self.scene_state as i64),
+                        ],
+                    );
                 }
             }
         }
@@ -11124,15 +11560,28 @@ impl Client {
         // TS 2229-2300: the in-flight obj-drag tick runs before the click
         // handlers so a release consumes the click before `handle_tab_clicks`.
         self.handle_obj_drag();
-        if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.input_pending) {
-            t.event("dispatch_state", &[("pending_message", self.tut_com_message.is_some() as i64), ("menu_open", self.is_menu_open as i64), ("button", self.shell.mouse_click_button as i64)]);
+        if let Some(t) = self
+            .shell
+            .ground_trace
+            .as_mut()
+            .filter(|t| t.active() && t.input_pending)
+        {
+            t.event(
+                "dispatch_state",
+                &[
+                    ("pending_message", self.tut_com_message.is_some() as i64),
+                    ("menu_open", self.is_menu_open as i64),
+                    ("button", self.shell.mouse_click_button as i64),
+                ],
+            );
         }
         // Primary 289 J:6023-6027: after drag consumption, before walking.
         if self.revision.is_289() {
             self.cyclelogic7_289 += 1;
             if self.cyclelogic7_289 > 62 {
                 self.cyclelogic7_289 = 0;
-                self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC7));
+                self.out
+                    .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC7));
             }
         }
         self.handle_tab_clicks();
@@ -11151,19 +11600,67 @@ impl Client {
             let ground_x = self.world.ground_x;
             let ground_z = self.world.ground_z;
             self.world.ground_x = -1;
-            if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.armed && t.rendered) {
+            if let Some(t) = self
+                .shell
+                .ground_trace
+                .as_mut()
+                .filter(|t| t.active() && t.armed && t.rendered)
+            {
                 t.routing = true;
-                t.event("source", &[("present", src.is_some() as i64), ("x", src.map_or(-1, |s| s.0) as i64), ("z", src.map_or(-1, |s| s.1) as i64), ("base_x", self.map_build_base_x as i64), ("base_z", self.map_build_base_z as i64), ("plane", self.minusedlevel as i64), ("target_x", ground_x as i64), ("target_z", ground_z as i64)]);
-                if src.is_none() { t.complete("no_local_source"); }
+                t.event(
+                    "source",
+                    &[
+                        ("present", src.is_some() as i64),
+                        ("x", src.map_or(-1, |s| s.0) as i64),
+                        ("z", src.map_or(-1, |s| s.1) as i64),
+                        ("base_x", self.map_build_base_x as i64),
+                        ("base_z", self.map_build_base_z as i64),
+                        ("plane", self.minusedlevel as i64),
+                        ("target_x", ground_x as i64),
+                        ("target_z", ground_z as i64),
+                    ],
+                );
+                if src.is_none() {
+                    t.complete("no_local_source");
+                }
             }
             if let Some((src_x, src_z)) = src {
                 // TS 2317-2322: a successful walk re-arms the crosshair at
                 // the clicked point (mode 1, cycle 0).
                 let moved = self.tryMove(src_x, src_z, ground_x, ground_z, true, 0, 0, 0, 0, 0, 0);
-                if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.routing) {
-                    t.event("route", &[("result", moved as i64), ("nearest", self.try_move_nearest as i64), ("endpoint_x", if moved { self.minimap_flag_x as i64 } else { -1 }), ("endpoint_z", if moved { self.minimap_flag_z as i64 } else { -1 })]);
+                if let Some(t) = self
+                    .shell
+                    .ground_trace
+                    .as_mut()
+                    .filter(|t| t.active() && t.routing)
+                {
+                    t.event(
+                        "route",
+                        &[
+                            ("result", moved as i64),
+                            ("nearest", self.try_move_nearest as i64),
+                            (
+                                "endpoint_x",
+                                if moved {
+                                    self.minimap_flag_x as i64
+                                } else {
+                                    -1
+                                },
+                            ),
+                            (
+                                "endpoint_z",
+                                if moved {
+                                    self.minimap_flag_z as i64
+                                } else {
+                                    -1
+                                },
+                            ),
+                        ],
+                    );
                     t.routing = false;
-                    if !moved { t.complete("route_failed"); }
+                    if !moved {
+                        t.complete("route_failed");
+                    }
                 }
                 if moved {
                     self.cross_x = self.shell.mouse_click_x;
@@ -11174,11 +11671,28 @@ impl Client {
             }
         }
         self.mouse_loop();
-        if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.input_pending) {
-            t.event("menu_after", &[("open", self.is_menu_open as i64), ("armed", t.armed as i64), ("button", self.shell.mouse_click_button as i64)]);
+        if let Some(t) = self
+            .shell
+            .ground_trace
+            .as_mut()
+            .filter(|t| t.active() && t.input_pending)
+        {
+            t.event(
+                "menu_after",
+                &[
+                    ("open", self.is_menu_open as i64),
+                    ("armed", t.armed as i64),
+                    ("button", self.shell.mouse_click_button as i64),
+                ],
+            );
             t.input_pending = false;
         }
-        if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && !t.armed && !self.is_menu_open) {
+        if let Some(t) = self
+            .shell
+            .ground_trace
+            .as_mut()
+            .filter(|t| t.active() && !t.armed && !self.is_menu_open)
+        {
             t.complete("no_walk_selected");
         }
         self.minimap_loop();
@@ -11230,9 +11744,31 @@ impl Client {
         } else {
             None
         };
-        if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.pending_write) {
-            t.event("write", &[("stream", self.stream.is_some() as i64), ("result", match &write_result { Some(Ok(())) => 1, Some(Err(_)) => -1, None => 0 })]);
-            t.complete(match &write_result { Some(Ok(())) => "stream_write_ok", Some(Err(_)) => "stream_write_error", None => "no_stream_write" });
+        if let Some(t) = self
+            .shell
+            .ground_trace
+            .as_mut()
+            .filter(|t| t.active() && t.pending_write)
+        {
+            t.event(
+                "write",
+                &[
+                    ("stream", self.stream.is_some() as i64),
+                    (
+                        "result",
+                        match &write_result {
+                            Some(Ok(())) => 1,
+                            Some(Err(_)) => -1,
+                            None => 0,
+                        },
+                    ),
+                ],
+            );
+            t.complete(match &write_result {
+                Some(Ok(())) => "stream_write_ok",
+                Some(Err(_)) => "stream_write_error",
+                None => "no_stream_write",
+            });
         }
         match write_result {
             Some(Ok(())) => {

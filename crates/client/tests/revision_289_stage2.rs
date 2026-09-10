@@ -71,7 +71,7 @@ fn ensure_iface(c: &mut Client, com_id: usize) {
 
 fn hex_bytes(hex: &str) -> Vec<u8> {
     let h = hex.trim();
-    assert!(h.len() % 2 == 0, "odd hex length");
+    assert!(h.len().is_multiple_of(2), "odd hex length");
     (0..h.len())
         .step_by(2)
         .map(|i| u8::from_str_radix(&h[i..i + 2], 16).expect("hex"))
@@ -524,7 +524,10 @@ fn startup_289_login_script_and_first_tick_packets_dispatch() {
 
     c.psize = 2;
     let mut partial_zone = Packet::new(vec![24, 32]);
-    c.handle_packet(ServerProt289::UPDATE_ZONE_PARTIAL_FOLLOWS, &mut partial_zone);
+    c.handle_packet(
+        ServerProt289::UPDATE_ZONE_PARTIAL_FOLLOWS,
+        &mut partial_zone,
+    );
     assert_eq!((c.zone_update_x, c.zone_update_z), (24, 32));
 
     c.psize = 2;
@@ -560,7 +563,7 @@ fn login_rsa_plaintext_structure_ordered() {
     let seed = [0x1111_1111, 0x2222_2222, 0x3333_3333, 0x4444_4444];
     c.login_uid = 0x5555_5555;
     c.write_login_block(seed, "user", "pass");
-    let data = c.out.data()[..c.out.pos as usize].to_vec();
+    let data = c.out.data()[..c.out.pos].to_vec();
     let mut p = Packet::new(data);
     assert_eq!(p.g1(), 10, "rsa block type");
     assert_eq!(p.g4(), seed[0]);
@@ -665,7 +668,7 @@ fn login_wrapper_p2_revision_274_default() {
     loginout.p1(0);
     loginout.p1(255);
     loginout.p2(c.revision().as_i32());
-    let data = loginout.data()[..loginout.pos as usize].to_vec();
+    let data = loginout.data()[..loginout.pos].to_vec();
     assert_eq!(&data[3..5], &[0x01, 0x12], "p2 274 big-endian");
 }
 
@@ -1253,7 +1256,9 @@ fn widget_openoverlay_signed() {
 #[test]
 fn cleanup_b_every_interface_row_reaches_production_dispatch() {
     let mut c = client_289();
-    for id in [5usize, 7, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] {
+    for id in [
+        5usize, 7, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+    ] {
         ensure_iface(&mut c, id);
     }
     c.local_player = Some(ClientPlayer::default());
@@ -1299,9 +1304,22 @@ fn cleanup_b_modal_animation_reset_distinguishes_single_and_combined_opens() {
     for parent in [10usize, 11, 12] {
         ensure_iface(&mut c, parent);
         ensure_iface(&mut c, parent + 10);
-        Arc::make_mut(&mut c.ifaces)[parent].as_mut().unwrap().children = Some(vec![(parent + 10) as i32]);
-        Arc::make_mut(Arc::make_mut(&mut c.ifaces_mut)[parent + 10].as_mut().unwrap()).anim_frame = 7;
-        Arc::make_mut(Arc::make_mut(&mut c.ifaces_mut)[parent + 10].as_mut().unwrap()).anim_cycle = 8;
+        Arc::make_mut(&mut c.ifaces)[parent]
+            .as_mut()
+            .unwrap()
+            .children = Some(vec![(parent + 10) as i32]);
+        Arc::make_mut(
+            Arc::make_mut(&mut c.ifaces_mut)[parent + 10]
+                .as_mut()
+                .unwrap(),
+        )
+        .anim_frame = 7;
+        Arc::make_mut(
+            Arc::make_mut(&mut c.ifaces_mut)[parent + 10]
+                .as_mut()
+                .unwrap(),
+        )
+        .anim_cycle = 8;
     }
     c.psize = 2;
     let mut main = Packet::new(hex_bytes("000a"));
@@ -1324,10 +1342,12 @@ fn cleanup_b_modal_animation_reset_distinguishes_single_and_combined_opens() {
 fn cleanup_b_player_head_uses_transmog_and_malformed_frame_mutates_nothing_first() {
     let mut c = client_289();
     ensure_iface(&mut c, 5);
-    let mut player = ClientPlayer::default();
-    player.appearance = [1; 12];
-    player.colour = [2; 5];
-    player.transmog = Some(321);
+    let player = ClientPlayer {
+        appearance: [1; 12],
+        colour: [2; 5],
+        transmog: Some(321),
+        ..Default::default()
+    };
     c.local_player = Some(player);
     c.psize = 2;
     let mut head = Packet::new(hex_bytes("0005"));
@@ -2004,7 +2024,10 @@ fn cleanup_f_social_frames_cover_fail_closed_and_option_edges() {
     c.psize = edge.length() as i32;
     c.handle_packet(ServerProt289::SET_PLAYER_OP, &mut edge);
     assert_eq!(c.player_op[4].as_deref(), Some("Examine"));
-    assert!(!c.player_op_priority[4], "nonzero priority is not prioritized");
+    assert!(
+        !c.player_op_priority[4],
+        "nonzero priority is not prioritized"
+    );
 
     let mut malformed = Packet::new(b"\x01\x01unterminated".to_vec());
     c.psize = malformed.length() as i32;
@@ -2077,7 +2100,7 @@ fn cleanup_f_private_staff_levels_dedup_and_exact_body_are_production_path() {
     ] {
         let mut c = client_289();
         c.ignore_count = 1;
-        c.ignore_userhash[0] = bob as i64;
+        c.ignore_userhash[0] = bob;
         let mut p = private(100 + staff, staff);
         c.psize = p.length() as i32;
         c.handle_packet(ServerProt289::MESSAGE_PRIVATE, &mut p);

@@ -14,7 +14,6 @@
 //! the `backend` field.
 
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -109,13 +108,7 @@ pub struct Renderer {
     /// flat `SIZE * SIZE`), so a second entity on a tile defers to the first
     /// this cycle.
     pub tile_last_occupied_cycle: Vec<i32>,
-    /// Bumped when the rendered entity-overlay pixels or their coverage
-    /// change. GPU chrome upload uses this epoch because entity overlays can
-    /// change while ordinary chrome redraw flags stay clear.
-    pub(crate) overlay_epoch: u64,
-    /// Hash of the last GPU overlay pixel/coverage set. The 3D scene itself
-    /// is intentionally excluded so unchanged overlays retain chrome caching.
-    overlay_signature: Option<u64>,
+
     /// `World.resetVisCalc` has populated `vis_backing` for this client
     /// (TS loadGame calls it once per game load; `game_draw_main` runs it
     /// lazily on the first 3D frame).
@@ -251,8 +244,7 @@ impl Renderer {
             chats: [const { String::new() }; 50],
             scene_cycle: 0,
             tile_last_occupied_cycle: vec![0; (BuildArea::SIZE * BuildArea::SIZE) as usize],
-            overlay_epoch: 0,
-            overlay_signature: None,
+
             vis_calc_done: false,
             area_game: None,
             area_map: None,
@@ -301,28 +293,6 @@ impl Renderer {
     /// counter; `with_backend` routes through `new` too).
     pub fn constructed() -> usize {
         RENDERER_CONSTRUCTED.load(Ordering::Relaxed)
-    }
-
-    /// Record the pixels written by the GPU overlay pass. This is called
-    /// after `entity_overlays` while its coverage guard is still active.
-    pub(crate) fn note_overlay_signature(&mut self, coverage: &[u8]) {
-        let Some(game) = self.area_game.as_ref() else {
-            return;
-        };
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        coverage.len().hash(&mut hasher);
-        for (index, (&mask, &pixel)) in coverage.iter().zip(&game.pixels).enumerate() {
-            if mask != 0 {
-                index.hash(&mut hasher);
-                mask.hash(&mut hasher);
-                pixel.hash(&mut hasher);
-            }
-        }
-        let signature = hasher.finish();
-        if self.overlay_signature != Some(signature) {
-            self.overlay_epoch = self.overlay_epoch.wrapping_add(1);
-            self.overlay_signature = Some(signature);
-        }
     }
 
     /// Which backend this renderer routes frames through (the selection

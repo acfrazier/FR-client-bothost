@@ -512,7 +512,9 @@ impl Renderer {
                     client.outbound_289.cyclelogic5 += 1;
                     if client.outbound_289.cyclelogic5 > 57 {
                         client.outbound_289.cyclelogic5 = 0;
-                        client.out.p1_enc(client.client_opcode(crate::io::ClientProt::ANTICHEAT_CYCLELOGIC5));
+                        client.out.p1_enc(
+                            client.client_opcode(crate::io::ClientProt::ANTICHEAT_CYCLELOGIC5),
+                        );
                     }
                 }
                 let idx = (client.cross_cycle / 100) as usize + 4;
@@ -723,7 +725,8 @@ impl Renderer {
                 client.cyclelogic6 += 1;
                 if client.cyclelogic6 > 122 {
                     client.cyclelogic6 = 0;
-                    client.out
+                    client
+                        .out
                         .p1_enc(client.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC6));
                     client.out.p1(62);
                 }

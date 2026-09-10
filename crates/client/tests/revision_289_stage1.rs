@@ -40,10 +40,12 @@ fn client_289() -> Client {
 #[test]
 fn last_login_info_decodes_fields_and_selects_welcome_interface() {
     let mut c = client_289();
-    let mut welcome = IfType::default();
-    welcome.id = 99;
-    welcome.layer_id = 42;
-    welcome.client_code = 650;
+    let welcome = IfType {
+        id: 99,
+        layer_id: 42,
+        client_code: 650,
+        ..Default::default()
+    };
     c.ifaces = Arc::new(vec![Some(Box::new(welcome))]);
     c.side_modal_id = 7;
     c.report_abuse_input = "private".into();
@@ -67,10 +69,12 @@ fn last_login_info_decodes_fields_and_selects_welcome_interface() {
 #[test]
 fn last_login_info_selects_members_warning_welcome_655_and_layer() {
     let mut c = client_289();
-    let mut welcome = IfType::default();
-    welcome.id = 99;
-    welcome.layer_id = 142;
-    welcome.client_code = 655;
+    let welcome = IfType {
+        id: 99,
+        layer_id: 142,
+        client_code: 655,
+        ..Default::default()
+    };
     c.ifaces = Arc::new(vec![Some(Box::new(welcome))]);
     let mut p = Packet::new(vec![1, 0, 0, 1, 0, 0, 201, 0, 0, 1]);
     let before = c.gens.iface;
@@ -150,9 +154,11 @@ fn ensure_inv_slots(c: &mut Client, com_id: usize, n: usize) {
         if slots.len() <= com_id {
             slots.resize_with(com_id + 1, || None);
         }
-        let mut m = IfTypeMut::default();
-        m.link_obj_type = Some(vec![0; n]);
-        m.link_obj_number = Some(vec![0; n]);
+        let m = IfTypeMut {
+            link_obj_type: Some(vec![0; n]),
+            link_obj_number: Some(vec![0; n]),
+            ..Default::default()
+        };
         slots[com_id] = Some(Arc::new(m));
     }
     // Shared decode table entry so iface_mut lookups stay consistent.
@@ -177,7 +183,7 @@ fn inv_slot(c: &Client, com_id: usize, slot: usize) -> (i32, i32) {
 
 fn hex_bytes(hex: &str) -> Vec<u8> {
     let h = hex.trim();
-    assert!(h.len() % 2 == 0, "odd hex length");
+    assert!(h.len().is_multiple_of(2), "odd hex length");
     (0..h.len())
         .step_by(2)
         .map(|i| u8::from_str_radix(&h[i..i + 2], 16).expect("hex"))
@@ -198,7 +204,8 @@ fn feed_chunks(c: &mut Client, chunks: &[Vec<u8>], polls_per_chunk: usize) -> us
     let addr = listener.local_addr().unwrap();
     c.stream = Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
     let (mut sock, _) = listener.accept().unwrap();
-    sock.set_write_timeout(Some(Duration::from_secs(2))).unwrap();
+    sock.set_write_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
     c.random_in = None;
     c.ptype = -1;
     let mut accepted = 0usize;
@@ -233,7 +240,9 @@ fn transport_readiness_counts_unread_bytes_before_fragment_poll() {
     let addr = listener.local_addr().unwrap();
     let mut stream = ClientStream::connect("127.0.0.1", addr.port()).unwrap();
     let (mut server, _) = listener.accept().unwrap();
-    server.set_write_timeout(Some(Duration::from_secs(2))).unwrap();
+    server
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
     server.write_all(&[1, 2]).unwrap();
     wait_received(&mut stream, 2);
     assert_eq!(stream.read().unwrap(), 1);
@@ -248,7 +257,10 @@ fn transport_readiness_counts_unread_bytes_before_fragment_poll() {
     writer.join().unwrap();
     let mut c = client_289();
     assert_eq!(feed_chunks(&mut c, &[vec![13], vec![1], vec![2, 1]], 1), 1);
-    assert_eq!((c.chat_public_mode, c.chat_private_mode, c.chat_trade_mode), (1, 2, 1));
+    assert_eq!(
+        (c.chat_public_mode, c.chat_private_mode, c.chat_trade_mode),
+        (1, 2, 1)
+    );
 }
 
 #[test]
@@ -872,14 +884,18 @@ fn generations(c: &Client) -> [u64; 11] {
 }
 
 fn welcome_table(c: &mut Client) {
-    let mut normal = IfType::default();
-    normal.id = 99;
-    normal.layer_id = 42;
-    normal.client_code = 650;
-    let mut warning = IfType::default();
-    warning.id = 199;
-    warning.layer_id = 142;
-    warning.client_code = 655;
+    let normal = IfType {
+        id: 99,
+        layer_id: 42,
+        client_code: 650,
+        ..Default::default()
+    };
+    let warning = IfType {
+        id: 199,
+        layer_id: 142,
+        client_code: 655,
+        ..Default::default()
+    };
     c.ifaces = Arc::new(vec![Some(Box::new(normal)), Some(Box::new(warning))]);
 }
 

@@ -499,7 +499,7 @@ fn movement_minimap_tail_and_isaac_concatenation() {
     let mut decoder = Isaac::new(&[1, 2, 3, 4]);
     let bytes = &c.out.data()[..c.out.pos];
     assert_eq!(bytes.len(), 14);
-    for (frame, opcode) in bytes.chunks_exact(7).zip([234, 67]) {
+    for (frame, opcode) in bytes.as_chunks::<7>().0.iter().zip([234, 67]) {
         assert_eq!(frame[0].wrapping_sub(decoder.next_int() as u8), opcode);
         assert_eq!(&frame[1..], &[5, 0, 0, 10, 0, 10]);
     }
