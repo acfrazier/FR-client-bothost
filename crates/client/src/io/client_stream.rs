@@ -22,7 +22,7 @@ use native_tls::TlsStream;
 use tungstenite::protocol::WebSocket;
 use tungstenite::Message;
 
-use crate::uses_secure_transport;
+use crate::{uses_secure_transport, BotTarget};
 
 const BUF_SIZE: usize = 5000;
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
@@ -91,7 +91,16 @@ impl ClientStream {
     /// the `binary` subprotocol (game port 443); `port` is ignored.
     pub fn connect(host: &str, port: u16) -> io::Result<ClientStream> {
         if uses_secure_transport(crate::bot_target()) {
-            return Self::connect_wss(host);
+            return Self::connect_wss(host, 443);
+        }
+        Self::connect_tcp(host, port)
+    }
+
+    /// Connect using an explicit frozen transport identity. Unlike the legacy
+    /// wrapper, secure sessions honor the supplied port.
+    pub fn connect_for(target: BotTarget, host: &str, port: u16) -> io::Result<ClientStream> {
+        if uses_secure_transport(target) {
+            return Self::connect_wss(host, port);
         }
         Self::connect_tcp(host, port)
     }
@@ -114,9 +123,9 @@ impl ClientStream {
         })
     }
 
-    fn connect_wss(host: &str) -> io::Result<ClientStream> {
+    fn connect_wss(host: &str, port: u16) -> io::Result<ClientStream> {
         use tungstenite::client::IntoClientRequest;
-        let tcp = TcpStream::connect((host, 443))?;
+        let tcp = TcpStream::connect((host, port))?;
         tcp.set_read_timeout(Some(READ_TIMEOUT))?;
         tcp.set_nodelay(true)?;
         #[cfg(unix)]
@@ -125,7 +134,12 @@ impl ClientStream {
         let socket = tcp.as_raw_socket();
         let connector = native_tls::TlsConnector::new().map_err(io_other)?;
         let tls = connector.connect(host, tcp).map_err(io_other)?;
-        let mut req = format!("wss://{host}/")
+        let authority = if port == 443 {
+            host.to_string()
+        } else {
+            format!("{host}:{port}")
+        };
+        let mut req = format!("wss://{authority}/")
             .into_client_request()
             .map_err(io_other)?;
         req.headers_mut().insert(

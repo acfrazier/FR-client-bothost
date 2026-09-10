@@ -50,6 +50,7 @@ use crate::io::{
 use crate::login_rsa;
 use crate::render::nav_debug::NavDebugPaint;
 use crate::render::Renderer;
+use crate::session::ClientSessionProfile;
 use crate::sound::{Fade, JagFX, Midi};
 use crate::util::JString;
 use crate::wordfilter::{WordFilter, WordPack};
@@ -745,6 +746,7 @@ pub struct Client {
     /// carried by a successful [`Client::adopt_from`]. Not publicly mutable
     /// midstream — use [`Client::revision`] to read.
     revision: ClientRevision,
+    session_profile: Option<Arc<ClientSessionProfile>>,
     /// Config type tables (`obj`, `npc`, `loc`, ...), unpacked from the
     /// `config` jag by `Cache::unpack`; empty until loaded. Shared with
     /// every client via `Arc` (the tables are immutable once unpacked);
@@ -1307,6 +1309,14 @@ pub struct Client {
     r289_packet_reset: bool,
 }
 
+struct ClientConstruction {
+    error_loading: bool,
+    jag_checksum: [i32; 9],
+    revision: ClientRevision,
+    session_profile: Option<Arc<ClientSessionProfile>>,
+    on_demand: Option<OnDemand>,
+}
+
 /// Dead-server watchdog bound: the Java client's 750 `gameLoop` passes at
 /// 20 ms (~15 s), but measured in elapsed time so the bound holds at any
 /// pass cadence (a parked host slot runs `gameLoop` once per ~600 ms).
@@ -1349,14 +1359,19 @@ impl Client {
             Ok((cache, ifaces, ifaces_mut)) => (cache, ifaces, Arc::new(ifaces_mut), false),
             Err(()) => (Cache::default(), Vec::new(), Arc::new(Vec::new()), true),
         };
+        let on_demand = Self::load_on_demand(&config, None).unwrap_or(None);
         let mut client = Self::construct(
             config,
             Arc::new(cache),
             Arc::new(ifaces),
             ifaces_mut,
-            error_loading,
-            jag_checksum,
-            revision,
+            ClientConstruction {
+                error_loading,
+                jag_checksum,
+                revision,
+                session_profile: None,
+                on_demand,
+            },
         );
         client.http_port = http_port;
         client
@@ -1386,17 +1401,70 @@ impl Client {
         revision: ClientRevision,
     ) -> Self {
         let jag_checksum = Self::read_jag_checksums(&config.cache_dir);
+        let on_demand = Self::load_on_demand(&config, None).unwrap_or(None);
         let mut client = Self::construct(
             config,
             cache,
             ifaces,
             ifaces_mut.into(),
-            false,
-            jag_checksum,
-            revision,
+            ClientConstruction {
+                error_loading: false,
+                jag_checksum,
+                revision,
+                session_profile: None,
+                on_demand,
+            },
         );
         client.cache_from_shared = true;
         client
+    }
+
+    /// Construct over shared immutable tables with a frozen connection and
+    /// resource profile. Redundant public connection fields are checked before
+    /// the update worker or any other constructor effect.
+    pub fn from_shared_with_profile(
+        config: ClientConfig,
+        cache: Arc<Cache>,
+        ifaces: Arc<Vec<Option<Box<IfType>>>>,
+        ifaces_mut: impl Into<Arc<Vec<Option<Arc<IfTypeMut>>>>>,
+        profile: Arc<ClientSessionProfile>,
+    ) -> Result<Self, String> {
+        let profile_cache = profile
+            .cache_dir()
+            .to_str()
+            .expect("ClientSessionProfile validates UTF-8 cache_dir");
+        if config.host != profile.game_host() {
+            return Err("ClientConfig host does not match session profile".into());
+        }
+        if config.port != profile.game_port() {
+            return Err("ClientConfig port does not match session profile".into());
+        }
+        if config.cache_dir != profile_cache {
+            return Err("ClientConfig cache_dir does not match session profile".into());
+        }
+
+        let jag_checksum = profile
+            .expected_crc()
+            .unwrap_or_else(|| Self::read_jag_checksums(profile_cache));
+        let on_demand = Self::load_on_demand(&config, Some(&profile))?;
+        let revision = profile.revision();
+        let http_port = profile.asset_port();
+        let mut client = Self::construct(
+            config,
+            cache,
+            ifaces,
+            ifaces_mut.into(),
+            ClientConstruction {
+                error_loading: false,
+                jag_checksum,
+                revision,
+                session_profile: Some(profile),
+                on_demand,
+            },
+        );
+        client.cache_from_shared = true;
+        client.http_port = http_port;
+        Ok(client)
     }
 
     /// Read-only session protocol revision (bound at construction or adopt).
@@ -1404,18 +1472,83 @@ impl Client {
         self.revision
     }
 
+    pub fn session_profile(&self) -> Option<&Arc<ClientSessionProfile>> {
+        self.session_profile.as_ref()
+    }
+
+    pub fn session_target(&self) -> crate::BotTarget {
+        self.session_profile
+            .as_ref()
+            .map_or_else(crate::bot_target, |profile| profile.target())
+    }
+
+    fn session_cache_dir(&self) -> String {
+        self.resource_cache_dir().to_string()
+    }
+
+    pub(crate) fn resource_cache_dir(&self) -> &str {
+        self.session_profile
+            .as_ref()
+            .map_or(&self.config.cache_dir, |profile| {
+                profile
+                    .cache_dir()
+                    .to_str()
+                    .expect("ClientSessionProfile validates UTF-8 cache_dir")
+            })
+    }
+
+    fn session_unpack_dir(&self) -> String {
+        self.session_profile
+            .as_ref()
+            .map(|profile| profile.unpack_dir().to_string_lossy().into_owned())
+            .unwrap_or_else(|| crate::unpack_dir().display().to_string())
+    }
+
+    fn session_asset_endpoint(&self) -> (crate::BotTarget, String, u16) {
+        match &self.session_profile {
+            Some(profile) => (
+                profile.target(),
+                profile.asset_host().to_string(),
+                profile.asset_port(),
+            ),
+            None => (
+                crate::bot_target(),
+                self.config.host.clone(),
+                self.http_port,
+            ),
+        }
+    }
+
+    fn session_game_endpoint(&self) -> (Option<crate::BotTarget>, String, u16) {
+        match &self.session_profile {
+            Some(profile) => (
+                Some(profile.target()),
+                profile.game_host().to_string(),
+                profile.game_port(),
+            ),
+            None => (None, self.config.host.clone(), self.config.port),
+        }
+    }
+
     fn construct(
         config: ClientConfig,
         cache: Arc<Cache>,
         ifaces: Arc<Vec<Option<Box<IfType>>>>,
         ifaces_mut: Arc<Vec<Option<Arc<IfTypeMut>>>>,
-        error_loading: bool,
-        jag_checksum: [i32; 9],
-        revision: ClientRevision,
+        construction: ClientConstruction,
     ) -> Self {
-        let on_demand = Self::load_on_demand(&config);
-        let midi = midi_backend(&config.cache_dir);
-        let jagfx = Self::unpack_jagfx(&config.cache_dir, config.lowmem);
+        let resource_cache_dir =
+            construction
+                .session_profile
+                .as_ref()
+                .map_or(config.cache_dir.as_str(), |profile| {
+                    profile
+                        .cache_dir()
+                        .to_str()
+                        .expect("ClientSessionProfile validates UTF-8 cache_dir")
+                });
+        let midi = midi_backend(resource_cache_dir);
+        let jagfx = Self::unpack_jagfx(resource_cache_dir, config.lowmem);
         let groundh: LevelHeightmaps =
             vec![
                 vec![vec![0i32; (BUILD_AREA_SIZE + 1) as usize]; (BUILD_AREA_SIZE + 1) as usize];
@@ -1424,10 +1557,10 @@ impl Client {
         let mut client = Client {
             shell: {
                 let mut shell = GameShell::new();
-                shell.telemetry_289 = revision.is_289();
+                shell.telemetry_289 = construction.revision.is_289();
                 shell.ground_trace =
-                    super::ground_trace_289::GroundTrace::from_env(revision.is_289());
-                if revision.is_289() {
+                    super::ground_trace_289::GroundTrace::from_env(construction.revision.is_289());
+                if construction.revision.is_289() {
                     // Applet_Sub1:53-56 fields start at Java int zero.
                     shell.mouse_x = 0;
                     shell.mouse_y = 0;
@@ -1436,7 +1569,8 @@ impl Client {
             },
             present: None,
             config,
-            revision,
+            revision: construction.revision,
+            session_profile: construction.session_profile,
             cache,
             ifaces,
             ifaces_mut,
@@ -1625,11 +1759,11 @@ impl Client {
             r289_packet_reset: false,
 
             stream: None,
-            on_demand,
+            on_demand: construction.on_demand,
             staffmodlevel: 0,
             mouse_tracked: false,
             random_in: None,
-            jag_checksum,
+            jag_checksum: construction.jag_checksum,
 
             login_user: String::new(),
             login_pass: String::new(),
@@ -1744,7 +1878,7 @@ impl Client {
             reboot_timer: 0,
             last_response: None,
             no_timeout_timer: 0,
-            error_loading,
+            error_loading: construction.error_loading,
             gens: ClientGens::default(),
             login_uid: login_uid(),
         };
@@ -1894,7 +2028,20 @@ impl Client {
     /// way). `None` on connect/read failure or a bodyless response.
     fn http_get(host: &str, port: u16, path: &str) -> Option<Vec<u8>> {
         if crate::uses_secure_transport(crate::bot_target()) {
-            Self::https_get(host, path)
+            Self::https_get(host, 443, path)
+        } else {
+            Self::http_get_plain(host, port, path)
+        }
+    }
+
+    fn http_get_for(
+        target: crate::BotTarget,
+        host: &str,
+        port: u16,
+        path: &str,
+    ) -> Option<Vec<u8>> {
+        if crate::uses_secure_transport(target) {
+            Self::https_get(host, port, path)
         } else {
             Self::http_get_plain(host, port, path)
         }
@@ -1910,9 +2057,9 @@ impl Client {
         Self::split_http_body(&buf)
     }
 
-    fn https_get(host: &str, path: &str) -> Option<Vec<u8>> {
+    fn https_get(host: &str, port: u16, path: &str) -> Option<Vec<u8>> {
         use std::io::{Read, Write};
-        let tcp = std::net::TcpStream::connect((host, 443)).ok()?;
+        let tcp = std::net::TcpStream::connect((host, port)).ok()?;
         tcp.set_read_timeout(Some(Duration::from_secs(8))).ok()?;
         let connector = native_tls::TlsConnector::new().ok()?;
         let mut stream = connector.connect(host, tcp).ok()?;
@@ -1938,6 +2085,19 @@ impl Client {
     /// shows in the per-second countdown.
     fn get_jag_checksums(host: &str, port: u16) -> Result<[i32; 9], &'static str> {
         let body = Self::http_get(host, port, "/crc").ok_or("connection problem")?;
+        Self::parse_jag_checksums(body)
+    }
+
+    pub fn get_jag_checksums_for(
+        target: crate::BotTarget,
+        host: &str,
+        port: u16,
+    ) -> Result<[i32; 9], &'static str> {
+        let body = Self::http_get_for(target, host, port, "/crc").ok_or("connection problem")?;
+        Self::parse_jag_checksums(body)
+    }
+
+    fn parse_jag_checksums(body: Vec<u8>) -> Result<[i32; 9], &'static str> {
         if body.len() < 40 {
             return Err("checksum problem");
         }
@@ -1970,6 +2130,26 @@ impl Client {
         index: usize,
         checksums: &[i32; 9],
     ) -> Option<Vec<u8>> {
+        Self::get_jag_file_for(
+            crate::bot_target(),
+            cache_dir,
+            host,
+            port,
+            filename,
+            index,
+            checksums,
+        )
+    }
+
+    pub fn get_jag_file_for(
+        target: crate::BotTarget,
+        cache_dir: &str,
+        host: &str,
+        port: u16,
+        filename: &str,
+        index: usize,
+        checksums: &[i32; 9],
+    ) -> Option<Vec<u8>> {
         let &crc = checksums.get(index)?;
         let cached = std::fs::read(format!("{cache_dir}/{filename}")).ok();
         if let Some(bytes) = cached {
@@ -1977,7 +2157,7 @@ impl Client {
                 return Some(bytes);
             }
         }
-        let bytes = Self::http_get(host, port, &format!("/{filename}{crc}"))?;
+        let bytes = Self::http_get_for(target, host, port, &format!("/{filename}{crc}"))?;
         if Packet::getcrc(&bytes, 0, bytes.len()) != crc {
             return None;
         }
@@ -1999,31 +2179,47 @@ impl Client {
         checksum
     }
 
-    /// The Task 2 snapshot root (`~/.274bot/unpack`), matching `unpack-cache`.
-    fn unpack_snapshot_dir() -> String {
-        crate::unpack_dir().display().to_string()
-    }
-
     /// Start the OnDemand worker when the cache dir has a `versionlist` pack
     /// (the TS update-server fetch is a cache read here; the engine packs the
     /// same file). Missing cache → `None`, matching TS `onDemand === null`.
     /// A `versionlist` that is not a valid jag (dummy test files) also reads
     /// as `None` — `JagFile`/`OnDemand::new` panic on garbage offsets, so
     /// the whole parse is unwind-caught.
-    fn load_on_demand(config: &ClientConfig) -> Option<OnDemand> {
-        let bytes = std::fs::read(format!("{}/versionlist", config.cache_dir)).ok()?;
+    fn load_on_demand(
+        config: &ClientConfig,
+        profile: Option<&ClientSessionProfile>,
+    ) -> Result<Option<OnDemand>, String> {
+        let cache_dir = profile
+            .map(|profile| profile.cache_dir().to_string_lossy().into_owned())
+            .unwrap_or_else(|| config.cache_dir.clone());
+        let bytes = match std::fs::read(format!("{cache_dir}/versionlist")) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(format!("failed to read bound versionlist: {error}")),
+        };
         catch_unwind(AssertUnwindSafe(|| {
             let versionlist = JagFile::new(bytes);
-            OnDemand::new(
-                &versionlist,
-                &config.host,
-                config.port,
-                &config.cache_dir,
-                Arc::new(AtomicBool::new(false)),
-            )
+            match profile {
+                Some(profile) => OnDemand::new_bound(
+                    &versionlist,
+                    profile.target(),
+                    profile.revision(),
+                    profile.game_host(),
+                    profile.game_port(),
+                    &cache_dir,
+                    profile.content_id(),
+                )
+                .map(Some),
+                None => Ok(OnDemand::new(
+                    &versionlist,
+                    &config.host,
+                    config.port,
+                    &config.cache_dir,
+                    Arc::new(AtomicBool::new(false)),
+                )),
+            }
         }))
-        .ok()
-        .flatten()
+        .map_err(|_| "invalid bound versionlist".to_string())?
     }
 
     /// Record a loading-progress point on `Client` (`last_progress_percent`
@@ -2126,7 +2322,8 @@ impl Client {
         // still re-unpacks after the fresh jag fetch — that unpack is
         // intentional and must not be skipped.
         if !self.cache_from_shared {
-            match Self::load_cache(&self.config.cache_dir) {
+            let cache_dir = self.session_cache_dir();
+            match Self::load_cache(&cache_dir) {
                 Ok((cache, ifaces, ifaces_mut)) => {
                     self.cache = Arc::new(cache);
                     self.ifaces = Arc::new(ifaces);
@@ -2141,7 +2338,7 @@ impl Client {
 
         // TS 1168-1171: unpack sounds.dat after the jag is on disk.
         if !self.config.lowmem {
-            self.jagfx = Self::unpack_jagfx(&self.config.cache_dir, false);
+            self.jagfx = Self::unpack_jagfx(&self.session_cache_dir(), false);
         }
 
         // Java unpacks textures during maininit (progress 45) before any
@@ -2153,14 +2350,23 @@ impl Client {
         // fetch persisted. A missing or corrupt file is skipped — the
         // filter stays identity and maininit must not fail. `unpack` is
         // idempotent (OnceLock), so repeated maininit calls are no-ops.
-        let wordenc_path = format!("{}/wordenc", self.config.cache_dir);
+        let wordenc_path = format!("{}/wordenc", self.session_cache_dir());
         if let Ok(bytes) = std::fs::read(&wordenc_path) {
             let _ = catch_unwind(AssertUnwindSafe(|| {
                 WordFilter::unpack(&JagFile::new(bytes))
             }));
         }
 
-        self.on_demand = Self::load_on_demand(&self.config);
+        let profile = self.session_profile.clone();
+        self.on_demand = match Self::load_on_demand(&self.config, profile.as_deref()) {
+            Ok(on_demand) => on_demand,
+            Err(error) => {
+                self.error_loading = true;
+                self.shell.set_framerate(1);
+                self.report_progress(&mut progress, &error, 60);
+                return;
+            }
+        };
 
         // Java 5164-5182: request scape_main on *this* OnDemand (maininit
         // replaces any Client::new worker) and wait remaining()==0 so
@@ -2204,8 +2410,8 @@ impl Client {
         // Non-fatal: a missing/empty snapshot falls back to the live-cache
         // unpack and the OnDemand floods below unchanged.
         let snapshot_loaded = match crate::unpack::load_snapshot_once(
-            &self.config.cache_dir,
-            &Self::unpack_snapshot_dir(),
+            &self.session_cache_dir(),
+            &self.session_unpack_dir(),
         ) {
             Ok((loaded, first)) => {
                 if first {
@@ -2229,7 +2435,7 @@ impl Client {
         // fetches anything the live cache lacks.
         if !snapshot_loaded {
             if let Some(od) = self.on_demand.as_ref() {
-                od.unpack_models_from_cache(&self.config.cache_dir);
+                od.unpack_models_from_cache(&self.session_cache_dir());
             }
         }
 
@@ -2356,8 +2562,25 @@ impl Client {
         let mut retries = 0;
         loop {
             self.report_progress(progress, "Connecting to web server", 10);
-            let error = match Self::get_jag_checksums(&self.config.host, self.http_port) {
-                Ok(checksums) => return Some(checksums),
+            let (target, host, port) = self.session_asset_endpoint();
+            let fetched = if self.session_profile.is_some() {
+                Self::get_jag_checksums_for(target, &host, port)
+            } else {
+                Self::get_jag_checksums(&host, port)
+            };
+            let error = match fetched {
+                Ok(checksums) => {
+                    if self
+                        .session_profile
+                        .as_ref()
+                        .and_then(|profile| profile.expected_crc())
+                        .is_some_and(|expected| expected != checksums)
+                    {
+                        self.report_progress(progress, "Cache identity mismatch", 10);
+                        return None;
+                    }
+                    return Some(checksums);
+                }
                 Err(error) => error,
             };
             retries += 1;
@@ -2420,14 +2643,14 @@ impl Client {
         let mut retries = 0;
         loop {
             self.report_progress(progress, &format!("Requesting {display}"), pct);
-            if let Some(bytes) = Self::get_jag_file(
-                &self.config.cache_dir,
-                &self.config.host,
-                self.http_port,
-                filename,
-                index,
-                checksums,
-            ) {
+            let cache_dir = self.session_cache_dir();
+            let (target, host, port) = self.session_asset_endpoint();
+            let bytes = if self.session_profile.is_some() {
+                Self::get_jag_file_for(target, &cache_dir, &host, port, filename, index, checksums)
+            } else {
+                Self::get_jag_file(&cache_dir, &host, port, filename, index, checksums)
+            };
+            if let Some(bytes) = bytes {
                 return Some(bytes);
             }
             retries += 1;
@@ -2450,6 +2673,11 @@ impl Client {
     /// adopted socket instead of a fresh TCP. Returns `None` when `other`
     /// has no live stream.
     pub fn adopt_from(&mut self, other: &mut Client) -> Option<()> {
+        match (&self.session_profile, &other.session_profile) {
+            (None, None) => {}
+            (Some(left), Some(right)) if left == right => {}
+            _ => return None,
+        }
         // Take the live stream first. A failed handoff must leave `self`
         // entirely unchanged (including revision and any partial-frame state).
         let stream = other.stream.take()?;
@@ -2520,16 +2748,21 @@ impl Client {
         // still `connect`s a fresh socket.
         let reuse = self.baton;
         self.baton = false;
+        let (target, host, port) = self.session_game_endpoint();
+        let connect = || match target {
+            Some(target) => ClientStream::connect_for(target, &host, port),
+            None => ClientStream::connect(&host, port),
+        };
         let mut stream = if reuse {
             match self.stream.take() {
                 Some(s) => s,
-                None => match ClientStream::connect(&self.config.host, self.config.port) {
+                None => match connect() {
                     Ok(s) => s,
                     Err(_) => return Err(self.fail_title_login(io_error(), reconnect)),
                 },
             }
         } else {
-            match ClientStream::connect(&self.config.host, self.config.port) {
+            match connect() {
                 Ok(s) => s,
                 Err(_) => return Err(self.fail_title_login(io_error(), reconnect)),
             }
@@ -2572,8 +2805,13 @@ impl Client {
             ];
 
             self.write_login_block(seed, username, password);
-            let (n, e) = login_rsa::active_biguints();
-            self.out.rsaenc(&n, &e);
+            if let Some(profile) = &self.session_profile {
+                let (n, e) = profile.rsa_biguints();
+                self.out.rsaenc(n, e);
+            } else {
+                let (n, e) = login_rsa::active_biguints();
+                self.out.rsaenc(&n, &e);
+            }
 
             let mut loginout = Packet::alloc(1);
             if reconnect {
@@ -12068,8 +12306,10 @@ impl Client {
     /// `finish_build` reads it for textured overlay rgb; a headed paint
     /// also copies the renderer's table, but unheaded map_build runs first.
     pub fn load_tex_averages(&mut self) {
-        self.tex_average =
-            crate::graphics::Pix3DDraw::cached_averages(&self.config.cache_dir, self.config.lowmem);
+        self.tex_average = crate::graphics::Pix3DDraw::cached_averages(
+            &self.session_cache_dir(),
+            self.config.lowmem,
+        );
     }
 
     /// Publish the host's nav-debug paint for this frame. Always stores —
@@ -12103,7 +12343,7 @@ impl Client {
         self.config.lowmem = lowmem;
         self.load_tex_averages();
         if !lowmem {
-            self.jagfx = Self::unpack_jagfx(&self.config.cache_dir, false);
+            self.jagfx = Self::unpack_jagfx(&self.session_cache_dir(), false);
             if let Some(od) = &mut self.on_demand {
                 self.midi_song = 0;
                 self.midi_fading = true;

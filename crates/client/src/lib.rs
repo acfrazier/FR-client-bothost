@@ -12,6 +12,7 @@ pub mod graphics;
 pub mod io;
 pub mod login_rsa;
 pub mod render;
+pub mod session;
 pub mod sound;
 pub mod unpack;
 pub mod util;
@@ -24,6 +25,7 @@ pub use bot_target::{
 pub use login_rsa::{
     active_pair, JAVA_LOGIN_RSAE, JAVA_LOGIN_RSAN, PROD_LOGIN_RSAE, PROD_LOGIN_RSAN,
 };
+pub use session::{ClientSessionConfig, ClientSessionProfile};
 
 /// Whether verbose client-side diagnostics are on (`BOT_DEBUG=1`), cached
 /// once per process. Used by the scene-build / on-demand paths to dump the

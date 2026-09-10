@@ -13,12 +13,15 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use flate2::read::GzDecoder;
+use sha2::{Digest, Sha256};
 
 use crate::dash3d::model::ModelProvider;
 use crate::datastruct::{Arena, LinkList, LinkList2, LinkableTrait, Links};
 use crate::io::client_stream::ClientStream;
 use crate::io::jagfile::JagFile;
 use crate::io::packet::Packet;
+use crate::io::ClientRevision;
+use crate::BotTarget;
 
 /// Reconnect gate in Java `OnDemand.send`: the socket is not reopened within
 /// 4 s of the last open. Spawn starts past the gate (first send is not
@@ -135,6 +138,23 @@ struct OnDemandHub {
     running: Arc<AtomicBool>,
     ingame: Arc<AtomicBool>,
     handle: Mutex<Option<JoinHandle<()>>>,
+    identity: Option<HubIdentity>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HubIdentity {
+    target: BotTarget,
+    revision: ClientRevision,
+    cache_dir: String,
+    content_id: String,
+    tables_sha256: [u8; 32],
+}
+
+struct BoundHubIdentity<'a> {
+    target: BotTarget,
+    revision: ClientRevision,
+    cache_dir: &'a str,
+    content_id: &'a str,
 }
 
 static NEXT_SLOT: AtomicUsize = AtomicUsize::new(1);
@@ -238,6 +258,7 @@ struct Worker {
     stream: Option<ClientStream>,
     host: String,
     port: u16,
+    target: Option<BotTarget>,
     /// Some when the `main_file_cache` file store is present (Java
     /// `app.fileStreams[0] != null`).
     cache_dir: Option<String>,
@@ -314,7 +335,43 @@ impl OnDemand {
         cache_dir: &str,
         _ingame: Arc<AtomicBool>,
     ) -> Option<Self> {
-        let versions = read_table(
+        Self::new_inner(versionlist, host, port, cache_dir, None)
+            .ok()
+            .flatten()
+    }
+
+    pub(crate) fn new_bound(
+        versionlist: &JagFile,
+        target: BotTarget,
+        revision: ClientRevision,
+        host: &str,
+        port: u16,
+        cache_dir: &str,
+        content_id: &str,
+    ) -> Result<Self, String> {
+        Self::new_inner(
+            versionlist,
+            host,
+            port,
+            cache_dir,
+            Some(BoundHubIdentity {
+                target,
+                revision,
+                cache_dir,
+                content_id,
+            }),
+        )?
+        .ok_or_else(|| "bound OnDemand versionlist is missing required tables".to_string())
+    }
+
+    fn new_inner(
+        versionlist: &JagFile,
+        host: &str,
+        port: u16,
+        cache_dir: &str,
+        bound: Option<BoundHubIdentity<'_>>,
+    ) -> Result<Option<Self>, String> {
+        let Some(versions) = read_table(
             versionlist,
             &[
                 "model_version",
@@ -324,13 +381,17 @@ impl OnDemand {
             ],
             2,
             |buf| buf.g2(),
-        )?;
-        let crcs = read_table(
+        ) else {
+            return Ok(None);
+        };
+        let Some(crcs) = read_table(
             versionlist,
             &["model_crc", "anim_crc", "midi_crc", "map_crc"],
             4,
             |buf| buf.g4(),
-        )?;
+        ) else {
+            return Ok(None);
+        };
 
         // `modelUse` is sized by the model version count, padded with 0
         // (TS fills `versions[0].length` entries from the raw bytes).
@@ -364,12 +425,19 @@ impl OnDemand {
         let anim_frame_index = read_raw_table(versionlist, "anim_index", 2, |buf| buf.g2());
         let midi_jingle = read_raw_table(versionlist, "midi_index", 1, |buf| buf.g1());
 
+        let identity = bound.as_ref().map(|identity| HubIdentity {
+            target: identity.target,
+            revision: identity.revision,
+            cache_dir: identity.cache_dir.to_string(),
+            content_id: identity.content_id.to_string(),
+            tables_sha256: tables_sha256(&versions, &crcs),
+        });
         let (cmd, message_rx, worker_running, hub_ingame, slot_id) =
-            subscribe_hub(host, port, cache_dir, &versions, &crcs)?;
+            subscribe_hub(host, port, cache_dir, &versions, &crcs, identity)?;
 
         let mut arena = Arena::new();
         let requests = LinkList2::new(&mut arena);
-        Some(OnDemand {
+        Ok(Some(OnDemand {
             versions,
             crcs,
             model_use,
@@ -396,7 +464,7 @@ impl OnDemand {
             slot_id: Some(slot_id),
             want: HashSet::new(),
             reported_ingame: false,
-        })
+        }))
     }
 
     /// TS `OnDemand.stop()`: detach this handle. The hub worker stays up
@@ -816,19 +884,23 @@ fn subscribe_hub(
     cache_dir: &str,
     versions: &[Vec<i32>],
     crcs: &[Vec<i32>],
-) -> Option<WorkerEnds> {
+    identity: Option<HubIdentity>,
+) -> Result<WorkerEnds, String> {
     let key = (host.to_string(), port);
     let slot_id = NEXT_SLOT.fetch_add(1, Ordering::Relaxed) as u64;
     let (msg_tx, msg_rx) = mpsc::channel();
     let mut guard = hubs();
     let map = guard.get_or_insert_with(HashMap::new);
     if let Some(hub) = map.get(&key) {
+        if hub.identity != identity {
+            return Err("OnDemand identity mismatch for occupied endpoint".into());
+        }
         hub.clients.fetch_add(1, Ordering::Relaxed);
         hub.subs
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .insert(slot_id, msg_tx);
-        return Some((
+        return Ok((
             hub.cmd.clone(),
             msg_rx,
             hub.running.clone(),
@@ -869,6 +941,7 @@ fn subscribe_hub(
         stream: None,
         host: host.to_string(),
         port,
+        target: identity.as_ref().map(|identity| identity.target),
         cache_dir: resolve_file_store(cache_dir),
         subs: Arc::clone(&subs),
         running: Arc::clone(&running),
@@ -878,7 +951,7 @@ fn subscribe_hub(
         .name("ondemand".into())
         .stack_size(1024 * 1024)
         .spawn(move || worker_main(worker))
-        .ok()?;
+        .map_err(|error| format!("failed to spawn OnDemand worker: {error}"))?;
     let hub = Arc::new(OnDemandHub {
         cmd: cmd_tx.clone(),
         subs,
@@ -887,9 +960,24 @@ fn subscribe_hub(
         running: Arc::clone(&running),
         ingame: Arc::clone(&ingame),
         handle: Mutex::new(Some(handle)),
+        identity,
     });
     map.insert(key, hub);
-    Some((cmd_tx, msg_rx, running, ingame, slot_id))
+    Ok((cmd_tx, msg_rx, running, ingame, slot_id))
+}
+
+fn tables_sha256(versions: &[Vec<i32>], crcs: &[Vec<i32>]) -> [u8; 32] {
+    let mut digest = Sha256::new();
+    for tables in [versions, crcs] {
+        digest.update((tables.len() as u64).to_be_bytes());
+        for table in tables {
+            digest.update((table.len() as u64).to_be_bytes());
+            for value in table {
+                digest.update(value.to_be_bytes());
+            }
+        }
+    }
+    digest.finalize().into()
 }
 
 /// Worker thread body: Java `OnDemand.run` with the command channel drained
@@ -1298,7 +1386,10 @@ impl Worker {
     /// Java `openSocket(portOff + 43594)`: handshake is byte 15, then the
     /// engine replies with 8 bytes.
     fn open_socket(&mut self) -> io::Result<()> {
-        let mut stream = ClientStream::connect(&self.host, self.port)?;
+        let mut stream = match self.target {
+            Some(target) => ClientStream::connect_for(target, &self.host, self.port)?,
+            None => ClientStream::connect(&self.host, self.port)?,
+        };
         stream.write(&[15], 1)?;
         for _ in 0..8 {
             stream.read()?;

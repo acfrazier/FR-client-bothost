@@ -287,7 +287,7 @@ impl Renderer {
         // The fonts + title content are the process-wide `Media` (task 6):
         // the first title draw decoded them once; each head re-plots its
         // own regions from the shared decodes.
-        self.media = Media::process(&client.config.cache_dir);
+        self.media = Media::process(client.resource_cache_dir());
         self.load_title_background();
         self.load_title_images();
 
@@ -299,7 +299,7 @@ impl Renderer {
     /// title and game draw, so an in-game client that never drew the title
     /// still has `p12` for the chat-mode labels.
     fn load_fonts(&mut self, client: &mut Client) {
-        self.media = Media::process(&client.config.cache_dir);
+        self.media = Media::process(client.resource_cache_dir());
     }
 
     /// `loadTitleBackground` from client-ts (1627): JPEG `title.dat` tiled
@@ -1909,7 +1909,7 @@ impl Renderer {
         // colour table was built in `Client::new`). A missing `textures`
         // jag skips the depacks — textured ground then falls back to the
         // average-colour gouraud branch instead of drawing nothing.
-        let textures_path = format!("{}/textures", client.config.cache_dir);
+        let textures_path = format!("{}/textures", client.resource_cache_dir());
         if let Ok(bytes) = std::fs::read(&textures_path) {
             let jag = JagFile::new(bytes);
             self.pix3d.unpack_textures(&jag);
@@ -2311,7 +2311,7 @@ impl Renderer {
                         if let Ok(index) = index.trim().parse::<i32>() {
                             if let Some(sprite) = Self::graphic_sprite(
                                 &mut self.graphic_sprites,
-                                &client.config.cache_dir,
+                                client.resource_cache_dir(),
                                 name,
                                 index,
                             ) {
@@ -2486,7 +2486,7 @@ impl Renderer {
                                             if let Ok(index) = index.trim().parse::<i32>() {
                                                 if let Some(sprite) = Self::graphic_sprite(
                                                     &mut self.graphic_sprites,
-                                                    &client.config.cache_dir,
+                                                    client.resource_cache_dir(),
                                                     name,
                                                     index,
                                                 ) {
@@ -4245,7 +4245,7 @@ impl Renderer {
         // slot mid-flight.
         if self.pix3d.low_mem != client.config.lowmem {
             self.pix3d.low_mem = client.config.lowmem;
-            if let Ok(bytes) = std::fs::read(format!("{}/textures", client.config.cache_dir)) {
+            if let Ok(bytes) = std::fs::read(format!("{}/textures", client.resource_cache_dir())) {
                 let jag = JagFile::new(bytes);
                 self.pix3d.unpack_textures(&jag);
             }
