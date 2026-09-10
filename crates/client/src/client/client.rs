@@ -12,6 +12,7 @@
 //! decodes a model. `tests/headless.rs` pins the construction counters at
 //! zero through a full login + build + sim run.
 
+use std::collections::HashMap;
 use std::io;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
@@ -298,6 +299,26 @@ pub struct ClientGens {
     pub session: u64,
     /// Explicit all-family invalidations, excluded from packet observations.
     pub invalidations: u64,
+}
+
+/// Successful inventory packet observations for one interface component.
+/// This is a generic client fact: consumers decide what a component means.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct InventoryPacketState {
+    pub generation: u64,
+    pub full_generation: u64,
+    pub transmitting: bool,
+    /// Packet-order stamp of the most recent successful full update.
+    pub full_observation: u64,
+}
+
+/// Packet-order facts for the main-modal session. A replacement open closes
+/// the previous session and opens the next at the same observation stamp.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MainModalPacketState {
+    pub generation: u64,
+    pub opened_observation: u64,
+    pub closed_observation: u64,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -758,6 +779,11 @@ pub struct Client {
     /// carried by a successful [`Client::adopt_from`]. Not publicly mutable
     /// midstream — use [`Client::revision`] to read.
     revision: ClientRevision,
+    /// Generic packet facts used by borrowed host snapshots. They carry no
+    /// bank policy and are cleared at every connection/session boundary.
+    inventory_packet_states: HashMap<i32, InventoryPacketState>,
+    main_modal_packet_state: MainModalPacketState,
+    packet_observation: u64,
     session_profile: Option<Arc<ClientSessionProfile>>,
     /// Config type tables (`obj`, `npc`, `loc`, ...), unpacked from the
     /// `config` jag by `Cache::unpack`; empty until loaded. Shared with
@@ -1494,6 +1520,76 @@ impl Client {
         self.session_start_gens
     }
 
+    /// Last successful inventory packet facts for `component`.
+    pub fn inventory_packet_state(&self, component: i32) -> Option<InventoryPacketState> {
+        self.inventory_packet_states.get(&component).copied()
+    }
+
+    /// Borrow all successful per-component inventory packet facts.
+    pub fn inventory_packet_states(&self) -> &HashMap<i32, InventoryPacketState> {
+        &self.inventory_packet_states
+    }
+
+    /// Main-modal open/close packet ordering for the current session.
+    pub fn main_modal_packet_state(&self) -> MainModalPacketState {
+        self.main_modal_packet_state
+    }
+
+    fn next_packet_observation(&mut self) -> u64 {
+        self.packet_observation = self.packet_observation.wrapping_add(1);
+        self.packet_observation
+    }
+
+    fn observe_inventory_full(&mut self, component: i32) {
+        let observation = self.next_packet_observation();
+        let state = self.inventory_packet_states.entry(component).or_default();
+        state.generation = state.generation.wrapping_add(1);
+        state.full_generation = state.full_generation.wrapping_add(1);
+        state.transmitting = true;
+        state.full_observation = observation;
+    }
+
+    fn observe_inventory_partial(&mut self, component: i32) {
+        self.next_packet_observation();
+        let state = self.inventory_packet_states.entry(component).or_default();
+        state.generation = state.generation.wrapping_add(1);
+        state.transmitting = true;
+    }
+
+    fn observe_inventory_stop(&mut self, component: i32) {
+        self.next_packet_observation();
+        let state = self.inventory_packet_states.entry(component).or_default();
+        state.generation = state.generation.wrapping_add(1);
+        state.transmitting = false;
+    }
+
+    fn observe_main_modal_open(&mut self) {
+        let observation = self.next_packet_observation();
+        if self.main_modal_id != -1 {
+            self.main_modal_packet_state.closed_observation = observation;
+        }
+        self.main_modal_packet_state.generation =
+            self.main_modal_packet_state.generation.wrapping_add(1);
+        self.main_modal_packet_state.opened_observation = observation;
+    }
+
+    fn observe_main_modal_close(&mut self) {
+        if self.main_modal_id == -1 {
+            return;
+        }
+        let observation = self.next_packet_observation();
+        self.main_modal_packet_state.generation =
+            self.main_modal_packet_state.generation.wrapping_add(1);
+        self.main_modal_packet_state.opened_observation = 0;
+        self.main_modal_packet_state.closed_observation = observation;
+    }
+
+    fn reset_packet_observations(&mut self) {
+        self.inventory_packet_states.clear();
+        self.main_modal_packet_state = MainModalPacketState::default();
+        self.packet_observation = 0;
+    }
+
     pub fn session_profile(&self) -> Option<&Arc<ClientSessionProfile>> {
         self.session_profile.as_ref()
     }
@@ -1592,6 +1688,9 @@ impl Client {
             present: None,
             config,
             revision: construction.revision,
+            inventory_packet_states: HashMap::new(),
+            main_modal_packet_state: MainModalPacketState::default(),
+            packet_observation: 0,
             session_profile: construction.session_profile,
             cache,
             ifaces,
@@ -2942,6 +3041,7 @@ impl Client {
             let player = ClientPlayer::default();
             self.players[LOCAL_PLAYER_INDEX as usize] = Some(Box::new(player.clone()));
             self.local_player = Some(player);
+            self.reset_packet_observations();
             self.gens.session = self.gens.session.wrapping_add(1);
             self.session_start_gens = self.gens;
             // Java `Client.java` 3700: `prepareGame()` rebuilds the game
@@ -2969,6 +3069,7 @@ impl Client {
             self.last_response = Some(Instant::now());
             self.menu_num_entries = 0;
             self.scene_load_start_time = Instant::now();
+            self.reset_packet_observations();
             self.gens.session = self.gens.session.wrapping_add(1);
             self.session_start_gens = self.gens;
             self.stream = Some(stream);
@@ -4892,6 +4993,7 @@ impl Client {
     pub fn apply_if_openchat(&mut self, payload: &mut Packet) {
         let com_id = payload.g2();
         self.if_anim_reset(com_id);
+        self.observe_main_modal_close();
 
         if self.side_modal_id != -1 {
             self.side_modal_id = -1;
@@ -4909,6 +5011,7 @@ impl Client {
     pub fn apply_if_openmain(&mut self, payload: &mut Packet) {
         let com_id = payload.g2();
         self.if_anim_reset(com_id);
+        self.observe_main_modal_open();
 
         if self.side_modal_id != -1 {
             self.side_modal_id = -1;
@@ -4932,6 +5035,7 @@ impl Client {
     pub fn apply_if_openmain_side(&mut self, payload: &mut Packet) {
         let main_com_id = payload.g2();
         let side_com_id = payload.g2();
+        self.observe_main_modal_open();
 
         if self.chat_modal_id != -1 {
             self.chat_modal_id = -1;
@@ -4983,6 +5087,7 @@ impl Client {
     pub fn apply_if_openside(&mut self, payload: &mut Packet) {
         let com_id = payload.g2();
         self.if_anim_reset(com_id);
+        self.observe_main_modal_close();
 
         if self.chat_modal_id != -1 {
             self.chat_modal_id = -1;
@@ -5003,6 +5108,7 @@ impl Client {
     /// the enter-name dialog, and the main modal. The packet has no payload
     /// (TS only reads `ptype`).
     pub fn apply_if_close(&mut self) {
+        self.observe_main_modal_close();
         if self.side_modal_id != -1 {
             self.side_modal_id = -1;
             self.redraw_side = true;
@@ -5259,6 +5365,7 @@ impl Client {
                 }
             }
         }
+        self.observe_inventory_full(component);
     }
 
     fn apply_inventory_partial_289(&mut self, component: i32, entries: Vec<(i32, i32, i32)>) {
@@ -5279,6 +5386,7 @@ impl Client {
                 }
             }
         }
+        self.observe_inventory_partial(component);
     }
 
     fn apply_inventory_stop_transmit_289(&mut self, component: i32) {
@@ -5291,6 +5399,7 @@ impl Client {
                 types.fill(0);
             }
         }
+        self.observe_inventory_stop(component);
     }
 
     fn apply_varp_289(&mut self, id: i32, value: i32) -> R289Publication {
@@ -5496,6 +5605,7 @@ impl Client {
             }
             R289InterfaceOperation::IfOpenChat(id) => {
                 self.if_anim_reset(id);
+                self.observe_main_modal_close();
                 self.chat_modal_id = id;
                 self.side_modal_id = -1;
                 self.main_modal_id = -1;
@@ -5506,6 +5616,7 @@ impl Client {
             }
             R289InterfaceOperation::IfOpenMain(id) => {
                 self.if_anim_reset(id);
+                self.observe_main_modal_open();
                 self.main_modal_id = id;
                 self.side_modal_id = -1;
                 self.chat_modal_id = -1;
@@ -5516,6 +5627,7 @@ impl Client {
                 self.resumed_pause_button = false;
             }
             R289InterfaceOperation::IfOpenMainSide { main, side } => {
+                self.observe_main_modal_open();
                 self.main_modal_id = main;
                 self.side_modal_id = side;
                 self.chat_modal_id = -1;
@@ -5527,6 +5639,7 @@ impl Client {
             }
             R289InterfaceOperation::IfOpenSide(id) => {
                 self.if_anim_reset(id);
+                self.observe_main_modal_close();
                 self.side_modal_id = id;
                 self.main_modal_id = -1;
                 self.chat_modal_id = -1;
@@ -7592,6 +7705,7 @@ impl Client {
                         }
                     }
                 }
+                self.observe_inventory_stop(com_id);
                 self.ptype = -1;
             }
 
@@ -9712,6 +9826,7 @@ impl Client {
         self.chat_modal_id = -1;
         self.main_modal_id = -1;
         self.side_modal_id = -1;
+        self.reset_packet_observations();
         self.world.reset_map();
         self.projectiles.clear();
         self.spotanims.clear();
@@ -12873,6 +12988,7 @@ impl Client {
                 }
             }
         }
+        self.observe_inventory_full(com_id);
     }
 
     /// Partial inventory update. 274 uses `g1` slot; 289 uses `gsmart` slot.
@@ -12921,6 +13037,7 @@ impl Client {
                 }
             }
         }
+        self.observe_inventory_partial(com_id);
     }
 }
 

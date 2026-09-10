@@ -261,6 +261,47 @@ fn cleanup_c_all_rows_use_bounded_production_apply_and_publication() {
 }
 
 #[test]
+fn revision_289_inventory_and_modal_packets_publish_ordered_component_facts() {
+    let mut c = client_289();
+    ensure_iface(&mut c, 42);
+
+    let mut open = Packet::new(hex_bytes("0064"));
+    c.psize = 2;
+    c.handle_packet(ServerProt289::IF_OPENMAIN, &mut open);
+    assert_eq!(c.main_modal_packet_state().generation, 1);
+
+    let mut full = Packet::new(hex_bytes("002a0000"));
+    c.psize = 4;
+    c.handle_packet(ServerProt289::UPDATE_INV_FULL, &mut full);
+    let state = c.inventory_packet_state(42).unwrap();
+    assert_eq!(state.generation, 1);
+    assert_eq!(state.full_generation, 1);
+    assert!(state.transmitting);
+
+    let mut stop = Packet::new(hex_bytes("002a"));
+    c.psize = 2;
+    c.handle_packet(ServerProt289::UPDATE_INV_STOP_TRANSMIT, &mut stop);
+    assert!(!c.inventory_packet_state(42).unwrap().transmitting);
+
+    let mut close = Packet::new(vec![]);
+    c.psize = 0;
+    c.handle_packet(ServerProt289::IF_CLOSE, &mut close);
+    let closed = c.main_modal_packet_state();
+    assert_eq!(closed.generation, 2);
+    assert!(closed.closed_observation > state.full_observation);
+
+    let mut fresh = Packet::new(hex_bytes("002a0000"));
+    c.psize = 4;
+    c.handle_packet(ServerProt289::UPDATE_INV_FULL, &mut fresh);
+    let mut reopen = Packet::new(hex_bytes("0064"));
+    c.psize = 2;
+    c.handle_packet(ServerProt289::IF_OPENMAIN, &mut reopen);
+    let fresh_state = c.inventory_packet_state(42).unwrap();
+    assert!(fresh_state.full_observation > closed.closed_observation);
+    assert_eq!(c.main_modal_packet_state().generation, 3);
+}
+
+#[test]
 fn cleanup_c_inventory_rejects_stale_zero_and_truncated_frames_atomically() {
     let mut c = client_289();
     ensure_iface(&mut c, 42);

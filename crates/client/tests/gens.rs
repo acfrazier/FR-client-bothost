@@ -58,6 +58,75 @@ fn applied_packets_bump_their_family() {
     assert_eq!(c.gens.world, 0);
 }
 
+#[test]
+fn inventory_packet_state_preserves_component_and_modal_order() {
+    let mut c = Client::new(cfg());
+
+    // A full packet can precede the modal open. The host compares the
+    // component's packet observation with the preceding modal close.
+    let mut full = Packet::new(vec![0, 42, 0]);
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
+    let before_open = c.inventory_packet_state(42).unwrap();
+    assert_eq!(before_open.generation, 1);
+    assert_eq!(before_open.full_generation, 1);
+    assert!(before_open.transmitting);
+    assert!(before_open.full_observation > c.main_modal_packet_state().closed_observation);
+
+    let mut open = Packet::new(vec![0, 100]);
+    c.handle_packet(ServerProt::IF_OPENMAIN, &mut open);
+    let first_session = c.main_modal_packet_state();
+    assert_eq!(first_session.generation, 1);
+    assert_eq!(first_session.closed_observation, 0);
+
+    // A close, a fresh full, and a reopen can all land inside one host drain.
+    // The packet ordering facts must retain that close/reopen even though the
+    // final modal id is the same as before the drain.
+    c.handle_packet(ServerProt::IF_CLOSE, &mut Packet::new(vec![]));
+    let close = c.main_modal_packet_state();
+    assert_eq!(close.generation, 2);
+    assert!(close.closed_observation > before_open.full_observation);
+
+    let mut fresh = Packet::new(vec![0, 42, 0]);
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut fresh);
+    let fresh_state = c.inventory_packet_state(42).unwrap();
+    assert_eq!(fresh_state.generation, 2);
+    assert_eq!(fresh_state.full_generation, 2);
+    assert!(fresh_state.full_observation > close.closed_observation);
+
+    let mut reopen = Packet::new(vec![0, 100]);
+    c.handle_packet(ServerProt::IF_OPENMAIN, &mut reopen);
+    assert_eq!(c.main_modal_packet_state().generation, 3);
+
+    let mut partial = Packet::new(vec![0, 42]);
+    c.handle_packet(ServerProt::UPDATE_INV_PARTIAL, &mut partial);
+    let partial_state = c.inventory_packet_state(42).unwrap();
+    assert_eq!(partial_state.generation, 3);
+    assert_eq!(partial_state.full_generation, 2);
+    assert!(partial_state.transmitting);
+
+    let mut stop = Packet::new(vec![0, 42]);
+    c.handle_packet(ServerProt::UPDATE_INV_STOP_TRANSMIT, &mut stop);
+    let stopped = c.inventory_packet_state(42).unwrap();
+    assert_eq!(stopped.generation, 4);
+    assert_eq!(stopped.full_generation, 2);
+    assert!(!stopped.transmitting);
+}
+
+#[test]
+fn logout_clears_inventory_and_modal_packet_observations() {
+    let mut c = Client::new(cfg());
+    let mut full = Packet::new(vec![0, 42, 0]);
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
+    let mut open = Packet::new(vec![0, 100]);
+    c.handle_packet(ServerProt::IF_OPENMAIN, &mut open);
+    assert!(c.inventory_packet_state(42).is_some());
+    assert_eq!(c.main_modal_packet_state().generation, 1);
+
+    c.logout();
+    assert!(c.inventory_packet_state(42).is_none());
+    assert_eq!(c.main_modal_packet_state(), Default::default());
+}
+
 fn bit_packet(fields: &[(usize, u32)]) -> Vec<u8> {
     let mut bytes = Vec::new();
     let mut position = 0;
