@@ -5,7 +5,7 @@
 //! Prod is HTTPS `/crc`+jags and WSS `ClientStream`; local stays TCP.
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 /// Operator home for path defaults (`~/.274bot`, engine under `$HOME/...`).
@@ -120,10 +120,21 @@ pub fn engine_dir() -> PathBuf {
 }
 
 /// Jag pack + versioned snapshots (`models.bin` etc.). Prod downloads land here.
+/// `$CLIENT_UNPACK_DIR` overrides the legacy `$HOME/.274bot/unpack` default.
 pub fn unpack_dir() -> PathBuf {
-    match operator_home() {
-        Ok(home) if !home.is_empty() => PathBuf::from(home).join(".274bot/unpack"),
-        _ => PathBuf::from(".274bot/unpack"),
+    unpack_dir_from_env(
+        env::var("CLIENT_UNPACK_DIR").ok().as_deref(),
+        operator_home().ok().as_deref(),
+    )
+}
+
+fn unpack_dir_from_env(client_unpack_dir: Option<&str>, home: Option<&str>) -> PathBuf {
+    if let Some(path) = client_unpack_dir.filter(|path| !path.is_empty()) {
+        return PathBuf::from(path);
+    }
+    match home.filter(|path| !path.is_empty()) {
+        Some(home) => PathBuf::from(home).join(".274bot/unpack"),
+        None => PathBuf::from(".274bot/unpack"),
     }
 }
 
@@ -131,9 +142,13 @@ pub fn unpack_dir() -> PathBuf {
 /// [`unpack_dir`] so HTTPS `/crc`+jags do not overwrite the local engine pack.
 /// Versioned snapshots stay in `{unpack_dir}/{sha256(versionlist)[:8]}/`.
 pub fn cache_dir_for(target: BotTarget) -> PathBuf {
+    cache_dir_for_with_unpack(target, &unpack_dir())
+}
+
+fn cache_dir_for_with_unpack(target: BotTarget, unpack_dir: &Path) -> PathBuf {
     match target {
         BotTarget::Local => engine_dir().join("data/pack/client"),
-        BotTarget::Prod => unpack_dir(),
+        BotTarget::Prod => unpack_dir.to_path_buf(),
     }
 }
 
@@ -199,6 +214,31 @@ mod tests {
             unpack.file_name().map(|s| s.to_string_lossy().into_owned()),
             Some("unpack".into())
         );
+    }
+
+    #[test]
+    fn unpack_dir_override_is_explicit_and_target_specific() {
+        let override_dir = Path::new("/tmp/client-289-unpack");
+        assert_eq!(
+            unpack_dir_from_env(Some(override_dir.to_str().unwrap()), Some("/home/test")),
+            override_dir
+        );
+        assert_eq!(
+            cache_dir_for_with_unpack(BotTarget::Prod, override_dir),
+            override_dir
+        );
+        assert_eq!(
+            cache_dir_for_with_unpack(BotTarget::Local, override_dir),
+            engine_dir().join("data/pack/client")
+        );
+    }
+
+    #[test]
+    fn unpack_dir_override_empty_or_absent_preserves_home_default() {
+        let home = Some("/home/test");
+        let default = Path::new("/home/test/.274bot/unpack");
+        assert_eq!(unpack_dir_from_env(None, home), default);
+        assert_eq!(unpack_dir_from_env(Some(""), home), default);
     }
 
     #[test]

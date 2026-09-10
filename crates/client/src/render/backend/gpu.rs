@@ -102,6 +102,13 @@ static FAILURE_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 /// keeps it at 0.
 static GPU_BACKEND_TRIED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+/// Serializes shared model-texture-array upload + scene render + readback.
+/// Backends share one process-wide `GpuAssets` array; concurrent
+/// `render_scene_for_test` callers otherwise interleave ensure/upload with
+/// another test's draw and read back empty/wrong layers (workspace flake:
+/// clamps green=0, lowmem seen[false;4]).
+static GPU_SCENE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 /// How many times the shared context built its shader modules / pipelines
 /// (task 6): the `OnceLock` means the first `GpuContext::new` builds them
 /// and a second `GpuBackend::try_new` reuses them, so two heads pay one
@@ -572,6 +579,9 @@ pub struct GpuBackend {
     chrome_uploaded: bool,
     /// How many chrome atlas `write_texture`s ran (tests / BOT_DEBUG).
     chrome_upload_count: u64,
+    /// Overlay epoch last included in the uploaded chrome texture.
+    /// Entity overlays are animated independently of chrome redraw flags.
+    overlay_uploaded_epoch: u64,
     /// Live minimap/compass layer (172×156), uploaded every `scene_state==2`
     /// frame and composited over the hole punched in the chrome atlas.
     minimap_texture: wgpu::Texture,
@@ -904,6 +914,7 @@ impl GpuBackend {
             chrome_upload_pending: true,
             chrome_uploaded: false,
             chrome_upload_count: 0,
+            overlay_uploaded_epoch: u64::MAX,
             minimap_texture,
             minimap_bind_group,
             minimap_vertex_buf,
@@ -975,6 +986,9 @@ impl GpuBackend {
     /// production frame never reads back — `finish` hands the texture.
     #[doc(hidden)]
     pub fn render_scene_for_test(&mut self, mesh: SceneMesh, pix: &Pix3DDraw) -> Vec<i32> {
+        let _guard = GPU_SCENE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         self.context
             .assets
             .lock()
@@ -1092,6 +1106,8 @@ impl GpuBackend {
         r.entity_overlays(core);
         r.coord_arrow(core);
         r.other_overlays(core);
+        // Include every writer covered by this pass, not just entity crowns.
+        r.note_overlay_signature(&self.overlay_coverage);
         drop(_cov_guard);
     }
 }
@@ -1361,7 +1377,15 @@ impl RenderBackend for GpuBackend {
                 atlas_dirty = true;
             }
             // Modal open: cpu may set redraw via animate_interface each frame.
-            if core.side_modal_id != -1 || core.chat_modal_id != -1 {
+            // main_modal / main_overlay draw into area_game and are keyed into
+            // the chrome atlas via overlay_coverage in finish — same force as
+            // side/chat, otherwise a post-warmup main modal never re-uploads
+            // and the GPU frame keeps the empty scene hole (0 overlay px).
+            if core.side_modal_id != -1
+                || core.chat_modal_id != -1
+                || core.main_modal_id != -1
+                || core.main_overlay_id != -1
+            {
                 atlas_dirty = true;
             }
             if core.selected_area == 2
@@ -1403,6 +1427,13 @@ impl RenderBackend for GpuBackend {
     /// Then copy the write slot into the stable present texture the host
     /// samples.
     fn finish(&mut self, r: &mut Renderer) -> FrameOutput {
+        // `entity_overlays` writes into the CPU composite after the scene
+        // texture is rendered. Its pixels therefore need a fresh chrome
+        // upload even when side/chat/interface redraw flags are unchanged.
+        // Without this, the GPU keeps the first hint crown position and
+        // blink phase in its persistent chrome texture.
+        self.chrome_upload_pending |=
+            overlay_upload_needed(self.overlay_uploaded_epoch, r.overlay_epoch);
         let write = 1 - self.present_slot;
         let mut copy_encoder =
             self.context
@@ -1507,6 +1538,7 @@ impl RenderBackend for GpuBackend {
             self.chrome_upload_count += 1;
             self.chrome_uploaded = true;
             self.chrome_upload_pending = false;
+            self.overlay_uploaded_epoch = r.overlay_epoch;
             if !punch_minimap {
                 self.minimap_held = false;
             }
@@ -1621,6 +1653,13 @@ pub(crate) fn freeze_last_scene(kind: FrameKind, scene_state: i32) -> bool {
 /// Java binds `areaGame` without `cls` so the last frame stays visible.
 pub(crate) fn should_cls_scene_overlays(kind: FrameKind, scene_state: i32) -> bool {
     !freeze_last_scene(kind, scene_state)
+}
+
+/// Return whether the persistent GPU chrome texture is missing the current
+/// CPU-rendered entity overlay epoch. NPC movement and hint blink are
+/// overlay-only changes, but the upload still must replace the old pixels.
+pub(crate) fn overlay_upload_needed(uploaded_epoch: u64, current_epoch: u64) -> bool {
+    uploaded_epoch != current_epoch
 }
 
 /// Test helper: allocate + fill chrome RGBA (production reuses `chrome_rgba`
@@ -1750,13 +1789,18 @@ fn fill_minimap_rgba(map: &PixMap, bytes_per_row: u32, bytes: &mut Vec<u8>) {
 }
 
 #[cfg(test)]
+#[path = "gpu_overlay_tests.rs"]
+mod overlay_tests;
+
+#[cfg(test)]
 mod tests {
     use super::{
-        draw_area_rgba, freeze_last_scene, should_cls_scene_overlays, FRAME_H, FRAME_W, SCENE_H,
-        SCENE_W,
+        draw_area_rgba, freeze_last_scene, overlay_upload_needed, should_cls_scene_overlays,
+        FRAME_H, FRAME_W, SCENE_H, SCENE_W,
     };
     use crate::graphics::PixMap;
-    use crate::render::backend::FrameKind;
+    use crate::render::backend::{FrameKind, RenderBackend};
+    use crate::render::Renderer;
 
     #[test]
     fn viewport_overlay_moves_and_clears_without_chrome_redraw() {
@@ -1888,6 +1932,94 @@ mod tests {
             should_cls_scene_overlays(FrameKind::Game, 2),
             "a live scene still cls overlays so they do not accumulate"
         );
+    }
+
+    #[test]
+    fn overlay_epoch_upload_tracks_movement_and_blink_without_chrome_redraw() {
+        assert!(
+            overlay_upload_needed(4, 5),
+            "a moved/blinked overlay is new"
+        );
+        assert!(
+            !overlay_upload_needed(5, 5),
+            "an unchanged overlay epoch needs no redundant upload"
+        );
+    }
+
+    #[test]
+    fn overlay_signature_only_invalidates_changed_covered_pixels() {
+        let mut renderer = Renderer::new(false);
+        renderer.area_game = Some(PixMap::new(SCENE_W as i32, SCENE_H as i32));
+        let mut coverage = vec![0u8; (SCENE_W * SCENE_H) as usize];
+        coverage[12] = 255;
+        renderer.area_game.as_mut().unwrap().pixels[12] = 0x00112233;
+
+        renderer.note_overlay_signature(&coverage);
+        assert_eq!(renderer.overlay_epoch, 1, "first overlay uploads");
+        renderer.note_overlay_signature(&coverage);
+        assert_eq!(renderer.overlay_epoch, 1, "unchanged overlay stays cached");
+
+        renderer.area_game.as_mut().unwrap().pixels[12] = 0x00445566;
+        renderer.note_overlay_signature(&coverage);
+        assert_eq!(renderer.overlay_epoch, 2, "blink/pixel change uploads");
+
+        renderer.area_game.as_mut().unwrap().pixels[13] = 0x00abcdef;
+        renderer.note_overlay_signature(&coverage);
+        assert_eq!(renderer.overlay_epoch, 2, "uncovered scene pixels do not upload");
+    }
+
+    #[test]
+    fn gpu_finish_composes_changed_overlay_and_skips_unchanged_upload() {
+        let Ok(mut backend) = super::GpuBackend::try_new() else {
+            return;
+        };
+        let mut renderer = Renderer::new(false);
+        renderer.area_game = Some(PixMap::new(SCENE_W as i32, SCENE_H as i32));
+        let mut core = crate::client::client::Client::new(crate::client::config::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        core.scene_state = 2;
+        let overlay_index = (4 * FRAME_W + 4) as usize;
+        renderer.area_game.as_mut().unwrap().pixels[0] = 0x00112233;
+        renderer.draw_area.pixels[overlay_index] = 0x00112233;
+        backend.overlay_coverage[0] = 255;
+
+        backend.composite_scene(&mut core, &mut renderer, FrameKind::Game);
+        renderer.note_overlay_signature(&backend.overlay_coverage);
+        let first = backend.finish(&mut renderer);
+        let first_pixels = match first {
+            super::FrameOutput::Texture(handle) => handle.read_back(),
+            _ => unreachable!("GPU finish returns a texture"),
+        };
+        let first_uploads = backend.chrome_upload_count();
+        assert_eq!(first_pixels[overlay_index], 0x00112233);
+
+        backend.composite_scene(&mut core, &mut renderer, FrameKind::Game);
+        renderer.note_overlay_signature(&backend.overlay_coverage);
+        let unchanged = backend.finish(&mut renderer);
+        let unchanged_pixels = match unchanged {
+            super::FrameOutput::Texture(handle) => handle.read_back(),
+            _ => unreachable!("GPU finish returns a texture"),
+        };
+        assert_eq!(backend.chrome_upload_count(), first_uploads);
+        assert_eq!(unchanged_pixels[overlay_index], 0x00112233);
+
+        renderer.area_game.as_mut().unwrap().pixels[0] = 0;
+        renderer.draw_area.pixels[overlay_index] = 0;
+        backend.overlay_coverage[0] = 0;
+        backend.composite_scene(&mut core, &mut renderer, FrameKind::Game);
+        renderer.note_overlay_signature(&backend.overlay_coverage);
+        let blink_off = backend.finish(&mut renderer);
+        let blink_off_pixels = match blink_off {
+            super::FrameOutput::Texture(handle) => handle.read_back(),
+            _ => unreachable!("GPU finish returns a texture"),
+        };
+        assert!(backend.chrome_upload_count() > first_uploads);
+        assert_eq!(blink_off_pixels[overlay_index], 0);
     }
 
     #[test]

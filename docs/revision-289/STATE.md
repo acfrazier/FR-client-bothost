@@ -1,0 +1,892 @@
+# Revision 289 client campaign state
+
+## Current boundary — 2026-09-09 12:16 UTC
+
+Ground trace a7f49098 passed same-card Grok4.5/xai075229_e64b14 and required
+whole-branch Grok4.6/xai075729_f8ae77, final report08a44be7. Root fresh
+window-only build at08a44be7e6ad36327353c978f3103db266809a4f passed;
+SHA a8bab7943c898cf151fe1f25437b843b060747d6c7ea0efda6f73134ec6347c8.
+
+ONE bounded native run passed a ground displacement check: trace scene2,
+WALK selected, picked53,49 from source54,50, base3040,3056; opcode234 length5
+and successful route. Tile logs moved3094,3106 cycle1900 to3093,3105 cycle1950;
+CUA screenshots showed displacement. Logout returned visibly to login title;
+window close exited0 after92.397s and ownedPID25841 is absent. NoT1/T2 seen.
+No production movement fix was made. Prior no-movement receipts remain valid;
+the cause of those particular clicks is still unproven.
+
+Proof: ground-input-trace-native-proof.md; raw receipt and log in
+lostcity-289/runtime/client-proof-groundtrace-1212/proof-manifest.json.
+Stream API Ok alone remains queue/no-op evidence; displacement was established
+separately. No audio, NPC Talk-to/full tutorial, full-client parity, numeric
+latency/cadence or performance acceptance. No289 host integration released.
+Isolated server49444 remains root-owned; no client now. Main274 memory work
+continues independently with its pinned274 navpack and client3456.
+
+## Current boundary — 2026-09-09 11:48 UTC
+
+Diagnostic096864e passed same-card actual Grok4.5/xai20260909_072825_72c707
+on t_f8eda60b. Native ground displacement remains unresolved; no production
+behavior fix follows from the passing synthetic CPU/GPU composed path or the
+legitimate enclosed-source fallback. Earlier native failure receipts remain.
+
+Root-authorized t_2ebebe02 adds diagnostic-only `CLIENT_289_GROUND_TRACE=1`,
+R289-only and disabled by default. One correlated input/menu/render/route/write
+observation per owner, fixed64-line cap including completion, 120s waiting and
+10s attempt bounds. Numeric metadata only; no raw packets/message/account data.
+Missing latch, no WALK, no first-render pick, route failure, missing stream and
+timeouts remain distinct. Stream-write Ok is only the API/queue result, not
+network delivery or server/player displacement. Rendering/picking/input/route/
+packet/lifecycle behavior and scene1 last-FBO ownership remain unchanged.
+
+Report: ground-input-trace-report.md, with exact commands/fields/limits.
+Final serial all-features receipts: do_action13, game_shell3, composed6/1ignored,
+input16, minimenu27, present_pack2, render_backend5, outbound27, walk6 passed;
+trace unit4 passed; explicit actualGPU1 passed/0ignored. Default/all-features
+crate checks, scoped rustfmt and git diff --check passed. Preserve actual REDs
+for missing trace, late-render expiry and missing latch under target/ground-trace-*.
+No native launch/CUA/login/live server/cache edits or host integration occurred.
+
+Candidate is being handed to SAME-card profile reviewer (configured actual
+default grok-4.5/xai-oauth); not review-accepted yet. Root owns required corrective
+whole-branch Grok4.6, fresh reviewed native build and bounded trace afterward.
+hotspot: crates/client/src/client/client.rs — serialized diagnostic seams only.
+
+## Current boundary — 2026-09-09 11:20 UTC
+
+- Presentation03d916a APPROVED actual Grok4.5/xai065921_34e313 and required
+  final Grok4.6/xai070122_467319 t_e73008ec, report171cc31. Material pending
+  presentation finding closed offline; no whole-client/performance claim.
+- Root fresh build at171cc31 passed1.961s, SHA
+  b3b68d2e68d878fbee264c1f8a6fa7c39f3c8a9f880121a401343e2ed0266878.
+  Window-only build, no audio proof. Bounded nativePID99379 logged wgpu/ingame,
+  direct CUA screenshots showed tutorial room/NPC and arrow on/off. Ordinary
+  right-click menu worked; single logout-button click returned to title.
+  Native window close exited0 before300s deadline. NoT1/T2 observed.
+- Ground left click and menu Walk here selection did not move tile3094,3106;
+  NPC Talk-to was not tested. Keep movement unresolved. Source stages exist
+  but separate arm-pick/manual-ground tests do not prove composed path.
+  Root released diagnostic-onlyt_f8eda60b actual Astra/openai071823_e31bdd:
+  trace composed input/GPU terrain pick/game-loop/movement bytes, classify
+  client/server/coordinate confounders; no production fixes or live on card.
+- Proof manifest: lostcity-289/runtime/client-proof-presentation-1109/
+  proof-manifest.json. CUA captures viewed directly, no local images archived.
+  Post-close CUA observation timed out and auto-relaunched bundlePID1458;
+  root verified exact executable and stopped it, confirmed absent. Separate
+  cleanup receipt retained. Do not call stale liveApp: APIs can auto-launch.
+  No client now. Isolated server49444 remains root-owned; supervisor26485.
+
+## Current boundary — 2026-09-09 10:55 UTC
+
+This section supersedes older next-action wording. Parent tutorial-input
+91fcadd passed same-card Grok4.5 and required Grok4.6 t_7fe3337b, docs6475746,
+OFFLINE ACCEPTED (bounded), explicitly not tutorial presentation parity.
+Narrow authorized correction t_ea8cdf17 is implemented and ready for same-card
+profile reviewer; no review acceptance yet.
+
+R289 pending Some (including empty) now replaces chat modal/tutorial/plain
+chat directly on chatback, below social/amount priority. Message is black at
+(239,40), continue cue DARKBLUE128 at(239,60). Shared CPU begin marks only
+chat dirty per pending frame before ordinary GPU chrome flag capture. No GPU
+policy, input/packet, NPC overlay signature, or scene1 freeze changes. Both
+new conditions are revision-gated to preserve pinned base274 behavior.
+
+Report: tutorial-presentation-fix-report.md. Synthetic fonts/sprites/interfaces
+exercise production game_draw/backend/draw_chat and inspect real surface and
+composite pixels, repeated clear-flag frames, LEFT ack/restoration/next action,
+prompt priority and 274 behavior, without cache-dependent early success.
+Retained actual REDs: underlying IF precedence, omitted chat dirtiness, and
+isolated BLACK cue mutation; fixture compile/Arc failures remain recorded too.
+Final serialized all-features affected suites: chat_mode4, hud86, input16,
+minimenu27, outbound27, stage2 55, stage3 23, presentation5 — parsed243 passed,
+0 failed, 0 ignored. Exact commands/logs in report. Scoped rustfmt checks and
+git diff --check pass; unrelated draw.rs formatting debt stays.
+
+Next: actual same-card Grok4.5 verdict, root's required corrective whole-branch
+Grok4.6, fresh reviewed native build, bounded native action/logout proof.
+No hardware GPU/native presentation or live acceptance follows from CPU pixels.
+Preserve root arrow-0310 failed actions/logout and300-second deadline; earlier
+NPC live blink/motion report is not logout proof. No apps/server/CUA, external
+checkout/account/cache/endpoint changes, merge/push or host integration here.
+
+## Current boundary — 2026-09-09 03:28 UTC
+
+This section supersedes next-action wording below. NPC arrow correction
+1b38f18 plus GPU-test portability b03e633 passed actual Grok4.5 and required
+Grok4.6 t_e7dfd2e6 (report commit 411ef13). Root reports live blink on/off
+and arrows tracking moved NPCs. The root-owned bounded arrow-0310 session
+still failed ground/NPC actions and logout, ending at its declared 300-second
+deadline rather than proving logout. Preserve that failure; no performance
+or whole-client acceptance follows.
+
+Input correction t_08298357 is implemented from 411ef13 and being handed to
+same-card profile reviewer. Tutorial message is now nullable: only an R289
+LEFT click with a pending message (including empty) acknowledges and consumes
+input; an open tutorial without a pending message no longer swallows clicks.
+Shared kind-0 capture and cold/reset semantics follow primary; 274's base
+no-op input behavior is deliberately retained. NPC rendering/freeze and the
+explicit ignored GPU-only proof convention are unchanged. Draw changes are
+limited to the necessary nullable-message consumer adaptation.
+
+Exact commands and preserved failed runs: tutorial-input-ack-fix-report.md.
+Final serialized all-features receipts: stage2 55, outbound 27, input 16,
+hud 86, minimenu 27, walk 6, stage3 23, do_action 13, social 23, chat_mode 4,
+game_shell 3, login 10, logout 7, lost_con 4 — 304 passed / 0 failed /
+0 ignored across 14 suites. Earlier actual RED (swallowed widget click),
+local kind-0 RED, test import error, and NPC fixture movement-oracle failure
+remain recorded. git diff --check passes; pre-existing formatting debt stays.
+
+Next: actual same-card Grok4.5 verdict, then root's required corrective
+Grok4.6 review, fresh native build and bounded live action/logout proof.
+No live proof, server/CUA use, merge/push, or host integration occurred here.
+The source audit also identified pre-existing tutorial draw precedence and
+pending-message redraw differences from Java, outside this card's renderer
+scope; see report/card comment for root's separate scope decision.
+
+hotspot: crates/client/src/client/client.rs — serialized campaign file;
+this task touches message state/capture and pre-menu acknowledgement only.
+
+## Current boundary — 2026-09-09 02:59 UTC
+
+This section supersedes stale next-action wording below. Cleanup A-H at
+0406ceb passed aggregate Grok4.5 and required whole-branch Grok4.6, report
+0227f3f. Root bounded live reached a rendered tutorial room, but the user
+reported a nonblinking, delayed NPC hint. Live remains partial; owned client
+was stopped, isolated server61312 remains. No action/logout acceptance yet.
+
+Arrow same-card t_1ced5ad3: 0e998f2 and c9fca37 rejected for broad invalidation
+and incomplete GPU tests. Corrective1b38f18 APPROVED actual Grok4.5/xai
+20260908_225610_906ad2: complete covered-pass signature plus production GPU
+blink/motion/clear/cache/late-writer/freeze proof and two failing mutations.
+Root added only explicit-ignore metadata to the GPU-required test to preserve
+default headless suites. Explicit GPU invocation passes1/0ignored; default
+library passes79/1ignored. Same-card review of this metadata adjustment,
+corrective Grok4.6, fresh native build and live visual recheck are next.
+See npc-hint-overlay-fix-report.md. No host integration or performance claim.
+
+Authorized 2026-09-07. Prepared branch codex/revision-289-client, base
+4f2048ea10f75b3bb92ff45610b35ba7313b0308 (published r274-bh-modular).
+Current plan: plan.md. Required Grok4.6 whole-branch review t_77d35bfb
+REJECTED HEAD 0030afb — preserve docs/revision-289/branch-review.md.
+Correction t_b04f979b approved 0e3b6a7. Required Grok4.6 re-review
+t_615aa9ac: OFFLINE ACCEPTED (bounded) HEAD 0e3b6a7 — preserve
+docs/revision-289/branch-rereview.md. GPU gate t_57ec82eb approved
+fc5516c. Required final Grok4.6 re-review t_f4e2ad64: OFFLINE ACCEPTED
+(bounded) HEAD fc5516c. See docs/revision-289/branch-final-review.md.
+Whole client / live is not accepted.
+
+Current cleanup checkpoint: A-H offline aggregate accepted at code0406ceb.
+H t_34667a70 approved actual Grok4.5/xai20260908_220159_daf89a; aggregate
+review t_82bfdbb6 approved actual Grok4.5/xai20260908_220659_2e28d6, report
+e4834d7 (cleanup-aggregate-review.md). H full all-features direct receipt is
+exit0/950tests; preserve prior exit101 and its test-only readiness repair.
+Required separate Grok4.6 whole-branch review is next before any live proof.
+Root defers the aggregate non-blocking dead fallback/assert-message/style debt;
+carry those observations and fixture-depth limits into whole-branch review.
+Current plan full-dispatch-cleanup-plan.md final offline/live boundary applies.
+This supersedes older H next-commit/review wording below; old failures remain.
+
+Primary source pin and supporting host evidence are named in plan.md and
+host-script-evidence.md. The live 289 server/cache pairing is unverified.
+Only this checkout may be edited or built by workers.
+
+## Dispatch checkpoint
+
+Orchestration card: t_95bef768. Implementation stages 1–2 accepted. Corrective
+t_058241ac accepted f766c9a. Stage 3 t_448637e1 rework after d441614 / run496
+changes_requested (preserve rejected receipt). Independent full-stage3
+corrective review: t_5f3a92c0 REJECTED. Correction t_c2922712 approved 0030afb
+(R289 oracles only). Whole-branch t_77d35bfb REJECTED on 0030afb.
+
+Serialized same-workspace dependency chain:
+
+- t_c59985d0 (luna): source/cache inventory, complete protocol contract — DONE
+  (approved round 4 on d2c6318, model grok-4.5).
+- t_3d5171fb (implementer): revision selection, production framing/inventory
+  — DONE (accepted ad68b99).
+- t_da1f1a6a (implementer): login, actors/world/widgets and lifecycle reset
+  — DONE (accepted e8ec353).
+- t_058241ac (implementer): full inventory exact-end + session-revision API
+  — DONE (accepted f766c9a).
+- t_448637e1 (implementer): cache/config, basic actions and offline replay
+  — DONE (accepted a00a641 after run496 reject on d441614; execution-lens).
+- t_5f3a92c0 (reviewer): independent Grok4.5 full-stage3 corrective verdict
+  — REJECTED on a00a641; see docs/revision-289/stage3-corrective-review.md.
+  Preserve d441614/run496 reject receipt.
+- t_c2922712 (implementer): MESSAGE_PUBLIC effects + SEND_SNAPSHOT emit +
+  outbound field-oracle honesty + verifier empty-fields repair — DONE
+  (approved 0030afb, R289-only goldens).
+- t_77d35bfb (branchreviewer): required independent Grok4.6 branch verdict
+  — REJECTED on 0030afb. Model grok-4.6 / xai-oauth. Deliverable
+  docs/revision-289/branch-review.md. **Preserve rejection.**
+- t_b04f979b (implementer): 274 chat-effect revision-gate + opcode 65 NPC
+  field contract / remaining mask goldens — DONE (approved 0e3b6a7, Grok4.5
+  artifact lens). Not branch acceptance.
+- t_615aa9ac (branchreviewer): required final Grok4.6 whole-branch re-review
+  — OFFLINE ACCEPTED (bounded) on 0e3b6a7. Model grok-4.6 / xai-oauth.
+  Deliverable docs/revision-289/branch-rereview.md. Does not replace
+  t_77d35bfb rejection history. Not whole-client/live acceptance.
+- t_57ec82eb (implementer): post-review workspace GPU gate diagnosis + minimal
+  fix (main_modal chrome dirty + scene test lock). See
+  docs/revision-289/gpu-workspace-gate-diagnosis.md. Same-card Grok4.5
+  approved fc5516c. Not live acceptance.
+- t_f4e2ad64 (branchreviewer): required final Grok4.6 whole-branch re-review
+  after GPU correction — OFFLINE ACCEPTED (bounded) on fc5516c. Model
+  grok-4.6 / xai-oauth. Deliverable docs/revision-289/branch-final-review.md.
+  Does not replace t_77d35bfb rejection or t_615aa9ac bounded accept.
+  Not whole-client/live acceptance. Solo workspace green; concurrent
+  orch maininit flake classified pre-existing /tmp, not fc5516c.
+
+Design boundary: retain 274 public constants and default construction; add
+explicit revision selection at the client/session boundary. Source contract
+artifacts: source-contract.md, protocol-289.json, implementation.md and
+crates/client/tests/fixtures/revision_289/manifest.json.
+
+hotspot: crates/client/src/client/client.rs — campaign cards serialized.
+
+## Source milestone (accepted)
+
+Source contract approved on commit d2c6318 (reviewer grok-4.5, round 4).
+Verifier PASS 256/82/50 after t_b04f979b fixture expansion. Known non-blocking
+prerequisites remain: authoritative game-cache pairing/manifest, approved
+endpoint/live authorization, live RSA/ISAAC compatibility proof. Opcode 65
+inbound fields are now source-promoted (method187/226/124/222) while production
+get_npc_pos remains the live decoder.
+
+## Stage 1 checkpoint (t_3d5171fb) — accepted
+
+Commit ad68b99.
+
+## Stage 2 checkpoint (t_da1f1a6a) — accepted
+
+Commit e8ec353 (production base cc86024). Reviewer grok-4.5 round 2 approved.
+Opcode 65 NPC fields were left unknown at that time.
+
+## Corrective checkpoint (t_058241ac) — accepted
+
+Commit f766c9a. Strict INV_FULL end on R289; adopt_from fail-closed; private
+revision construction API.
+
+## Stage 3 checkpoint (t_448637e1) — accepted a00a641 (execution-lens only)
+
+### Rejected receipt (preserve)
+
+Commit d441614 reviewed by independent Grok4.5 (run496, artifact lens):
+changes_requested. Defects:
+
+1. draw.rs bare ClientProt.id for CYCLELOGIC6/1/3 + TUT_CLICKSIDE (274 ids on
+   R289 sessions).
+2. protocol-289.json outbound 75× length unknown while production emit live;
+   source-contract still forbade enabling unknown rows.
+
+### Rework contents (a00a641) — closed run496 items
+
+1. `Client::client_opcode` is `pub(crate)`; draw.rs four sites route through it.
+2. `protocol-289.json` outbound: all production-mapped rows have exact length +
+   ordered fields + source anchors (0 unknown); OPLOC family rows added
+   (method160). `source-contract.md` updated to match enabled emit.
+3. Offline cache/config: `synthetic_jag` outer g3 sizes exclude the six-byte
+   header; `write_synthetic_cache_dir` + tiny source-shaped flo/varp/idk +
+   interface TYPE_RECT records; `load_offline_config_seam` calls production
+   `Cache::unpack` / `IfType::unpack`; Client::new_with_revision binds tables.
+   Authentic cache pairing still external for assets/render/scene proof only.
+4. Stage3 tests: draw-path 289-vs-274 emit, CLOSE_MODAL via CLOSE_BUTTON,
+   RESUME_P_COUNT via keyboard `handle_chat_input`, production cache bind.
+
+### Corrective full-stage3 review (t_5f3a92c0) — REJECTED on a00a641
+
+Independent Grok4.5 (xai-oauth) artifact+source audit:
+`docs/revision-289/stage3-corrective-review.md`. Run496 items remain closed.
+
+### Correction t_c2922712 — accepted 0030afb (R289 oracles; 274 chat later rejected)
+
+Closed residuals from stage3-corrective-review.md + verifier addendum:
+
+1. MESSAGE_PUBLIC effects in `handle_chat_input`: wave2 before wave (so
+   wave2: is not swallowed), then shake/scroll/slide → effects 2/1/3/4/5.
+   Applied on the **shared** path; t_77d35bfb found this breaks 274 `scroll:`=2.
+2. SEND_SNAPSHOT (94) contract fields p8 namehash + p1 reason + p1 mute;
+   client_button 601..=612 close_modal + REPORT_ABUSE emit; 613 mute toggle.
+3. EVENT_MOUSE_MOVE ordered sample encodings; friend/ignore anchors method472.
+4. Zero-payload outbound rows use `["(empty payload)"]`; verifier allows empty
+   fields only when length==0 and still rejects empty fields when length!=0.
+5. Fixture manifest completed for incomplete actor_update_face_entity_mask and
+   outbound/cache doc rows so verifier structural keys pass.
+6. Stage3 tests: `r289_message_public_effect_prefixes_match_java`,
+   `r289_send_snapshot_report_abuse_p8_p1_p1`.
+
+## Whole-branch review (t_77d35bfb) — REJECTED 0030afb (preserve)
+
+Independent Grok4.6 / xai-oauth. Exact HEAD
+0030afbae662ee2b9939a519a23590f5c77fce3f vs prepared 716f79c.
+Deliverable: docs/revision-289/branch-review.md.
+
+Blocking (addressed by t_b04f979b):
+
+1. 274 preserve: shared handle_chat_input emitted scroll effect 4 (289 Java)
+   instead of 274/client-ts 2; wave2/shake/slide added globally.
+2. protocol-289.json opcode 65 still fields-unknown while production
+   get_npc_pos is live; only empty/FACEENTITY NPC goldens. Player 188 0x200
+   gloss said hit/health instead of exact-move.
+
+Whole client / live acceptance is **not** complete. Missing live prerequisites
+are external and are not this rejection:
+
+- Authoritative 289 game-cache pairing, checksums, and real asset/render proof
+- Approved live endpoint, credentials, test-account authorization
+- Live RSA/ISAAC modulus/endpoint compatibility
+- Tutorial / guardian / random-event policy (explicitly not impl this milestone)
+
+ISAAC +50 offset is offline-proven as a seed transform only, not encrypted-login
+correspondence. Synthetic scene_state=2 is not claimed. No pushes, merges,
+remotes, submodule, host, live-server, or other-checkout work.
+
+## Correction t_b04f979b — accepted 0e3b6a7 (same-card Grok4.5)
+
+### Changes
+
+1. `Client::handle_chat_input` MESSAGE_PUBLIC effects gated on
+   `ClientRevision`: R274 sequential wave:=1 / scroll:=2; R289 else-if
+   wave2/wave/shake/scroll/slide → 2/1/3/4/5 (wave2 before wave).
+2. `protocol-289.json` inbound 65 promoted to `npc_info` with method187/226/
+   124/222 ordered fields + anchors; confidence `verified-length-and-fields`.
+3. Inbound 188 method128 0x200 gloss corrected to exact-move (4 g1 + g2 + g2 +
+   g1); 0x400 remains secondary hit. Shared HITMARK timer stays +400.
+4. `source-contract.md` documents NPC 65, exact-move gloss, revision-gated
+   chat effects, and +400 timer preserve.
+5. Independent source-packed goldens + production tests for remaining NPC
+   method222 masks (HITMARK/ANIM/SAY/FACESQUARE/SPOTANIM/HITMARK2/CHANGETYPE)
+   and remaining player method128 masks (SAY/HITMARK/ANIM/FACESQUARE/SPOTANIM/
+   EXACTMOVE/HITMARK2/CHAT empty). Existing FACEENTITY + R289 chat goldens kept.
+6. Explicit default-revision production test
+   `default_revision_message_public_scroll_wave_effects` (scroll→2, wave→1).
+
+### Tests (CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target)
+
+- `cargo test -p client --test revision_289_stage3` → 23 passed
+  (incl. default_revision_message_public_scroll_wave_effects + R289 golden)
+- `cargo test -p client --test revision_289_stage2` → 30 passed
+  (incl. npc_info_remaining_masks_independent +
+  actor_update_remaining_masks_independent)
+- `cargo test -p client --lib` → 70 passed
+- `cargo test -p client --test revision_289_stage1` → 26 passed
+- `cargo test -p client --test do_action --test walk --test prot --test logout
+  --test from_shared --test player_info --test login_rsa --test gens
+  --test server_packets` → green
+- `cargo check -p client -p client-play` → ok
+- `python3 tools/verify_revision_289_contract.py` → PASS 256 inbound, 82
+  outbound, 50 fixtures
+
+Same-card reviewer approved 0e3b6a7 (artifact lens). Not branch acceptance.
+
+## Whole-branch re-review (t_615aa9ac) — OFFLINE ACCEPTED (bounded) 0e3b6a7
+
+Independent Grok4.6 / xai-oauth. Exact HEAD
+0e3b6a719c25b134473b94023807d3c3f90e8d68 vs prepared 716f79c.
+Deliverable: docs/revision-289/branch-rereview.md.
+t_77d35bfb rejection of 0030afb is preserved.
+
+Closed blockers:
+
+1. 274 preserve: handle_chat_input revision-gates MESSAGE_PUBLIC effects.
+   Default Client::new sequential wave:=1 / scroll:=2. R289 else-if five
+   effects retained. Explicit default_revision production test.
+2. protocol-289.json opcode 65 promoted to npc_info with method187/226/124/222
+   fields; remaining NPC/player mask goldens; player 188 0x200 exact-move
+   gloss; HITMARK timer stays +400.
+
+Independent tests (this run, CARGO_TARGET_DIR this checkout):
+
+- `python3 tools/verify_revision_289_contract.py` → PASS 256/82/50
+- `cargo test -p client --test revision_289_stage3` → 23 passed
+- `cargo test -p client --test revision_289_stage2` → 30 passed
+- `cargo test -p client --test revision_289_stage1` → 26 passed
+- `cargo test -p client --lib` → 70 passed
+- do_action 13, walk 6, prot 2, logout 7, from_shared 6, player_info 1,
+  login_rsa 2, gens 12, server_packets 19, freeze_last_scene 1
+- `cargo check -p client -p client-play` → ok
+
+Whole client / live acceptance is **not** complete. Missing live
+prerequisites remain external:
+
+- Authoritative 289 game-cache pairing, checksums, and real asset/render proof
+- Approved live endpoint, credentials, test-account authorization
+- Live RSA/ISAAC modulus/endpoint compatibility
+- Tutorial / guardian / random-event policy (explicitly not impl this milestone)
+
+ISAAC +50 offset is offline-proven as a seed transform only, not encrypted-login
+correspondence. Synthetic scene_state=2 is not claimed. No follow-up
+implementer/luna cards. No pushes, merges, remotes, submodule, host,
+live-server, or other-checkout work.
+
+## Post-review workspace GPU gate (t_57ec82eb)
+
+Orch t_95bef768 gate failed workspace GPU tests on accepted HEAD 0e3b6a7.
+Diagnosis + minimal production fix: see
+`docs/revision-289/gpu-workspace-gate-diagnosis.md` (this card).
+
+Root causes (not 289 protocol regressions; GPU paths were bit-identical to
+prepared 716f79c before this fix):
+
+1. `GpuBackend::chrome` omitted `main_modal_id` / `main_overlay_id` from
+   atlas_dirty — post-warmup main modal left chrome_upload_pending false →
+   0 overlay px on four iface_model GPU tests (deterministic).
+2. Shared process `GpuAssets` model texture array raced under parallel
+   `render_scene_for_test` → intermittent gpu_texture clamps/lowmem fails.
+
+Minimal fix in `crates/client/src/render/backend/gpu.rs`: main_modal/overlay
+dirty gate + `GPU_SCENE_TEST_LOCK` around scene test upload/render/readback.
+scene_state==1 freeze ownership unchanged.
+
+Post-fix verification (CARGO_TARGET_DIR this checkout):
+
+- `cargo test -p client --test iface_model -- --test-threads=1` → 9 passed
+- `cargo test -p client --test gpu_texture -- --test-threads=16` ×5 → 10/10
+- `cargo test --workspace --no-fail-fast` ×2 → 0 FAILED
+- revision_289 stage1/2/3 → 26+30+23; `--lib` 70; verifier PASS 256/82/50
+- `cargo check -p client -p client-play` → ok
+
+Same-card Grok4.5 approved fc5516c. Whole-branch re-review is t_f4e2ad64
+below. Does not replace t_615aa9ac bounded offline receipt; not live
+acceptance. Preserve branch-review.md rejection and branch-rereview.md
+bounded accept.
+
+## Whole-branch final review (t_f4e2ad64) — OFFLINE ACCEPTED (bounded) fc5516c
+
+Independent Grok4.6 / xai-oauth. Exact HEAD
+fc5516c55e9ff4b95520d39efcccda065ae7bd43 vs prepared 716f79c.
+Deliverable: docs/revision-289/branch-final-review.md.
+t_77d35bfb rejection of 0030afb and t_615aa9ac bounded accept of 0e3b6a7
+are preserved.
+
+GPU production fix accepted: main_modal/main_overlay chrome dirty after
+warmup; test-only GPU_SCENE_TEST_LOCK. Pixel oracles unchanged vs 716f79c.
+freeze_last_scene / last-FBO / minimap hold unchanged vs 4f2048e. Lazy
+chrome when force cases off still proven. Baseline GPU gap attributed by
+`git diff 716f79c..0e3b6a7 -- gpu.rs` empty, not by assertion.
+
+Independent tests (this run, CARGO_TARGET_DIR this checkout):
+
+- `python3 tools/verify_revision_289_contract.py` → PASS 256/82/50
+- `cargo test -p client --test iface_model -- --test-threads=1` → 9 passed
+  (ordinary + frozen main modal)
+- `cargo test -p client --test gpu_texture -- --test-threads=16` → 10 passed
+- revision_289 stage1/2/3 → 26+30+23; `--lib` 70
+- `cargo check -p client -p client-play` → ok
+- `cargo test --workspace --no-fail-fast` (solo) → exit 0, 0 FAILED
+
+Orch concurrent workspace exit 101 on maininit (GPU green) is preserved:
+fixed `/tmp/274-maininit-*` dirs, file unchanged vs 716f79c, not fc5516c.
+Do not treat whole workspace as reliably green under concurrent processes.
+
+Whole client / live acceptance is **not** complete. Missing live
+prerequisites remain external. No follow-up implementer/luna cards. No
+pushes, merges, remotes, submodule, host, live-server, or other-checkout
+work.
+
+## Orchestration handoff (t_95bef768)
+
+Staged offline implementation and actual independent review sequence finished.
+Final source HEAD: fc5516c55e9ff4b95520d39efcccda065ae7bd43.
+Final Grok4.6 receipt: t_f4e2ad64 run 537, bounded offline acceptance;
+preceding GPU correction approval: t_57ec82eb run 534.
+
+Orch independently reproduced `cargo test --workspace --no-fail-fast` SOLO
+at this HEAD: exit 0, log `target/revision-289-orch-workspace-solo.log`.
+Earlier failed concurrent run remains in
+`target/revision-289-orch-workspace.log`; it is not erased by the solo pass.
+Contract verifier independently passed 256 inbound / 82 outbound / 50 fixtures;
+stage2 30 and stage3 23 passed. `git diff --check` passed.
+
+Parent Codex owns integration and authorization of any real 289 cache/endpoint/
+test-account work. No merge/push was done. Final reviewer STATE edits and
+`branch-final-review.md` are handed off uncommitted; source stays at the exact
+reviewed HEAD. Untracked one-shot tracer scripts are not accepted deliverables.
+
+Keep the bounded review limitations visible: packed-chat body and CHANGETYPE
+type-binding evidence are partial; widget string reads lack a separate payload
+cap; non-modal name/cross chrome refresh remains a noted limitation. These are
+not claimed complete by this offline milestone. Live RSA/ISAAC, authentic cache
+pairing, real scene construction and server login/action/logout remain unproven.
+
+## Startup packet parity checkpoint (t_82d212a4) — superseded receipt
+
+The initial opcode-13 checkpoint is retained as commit history, but its engine
+comparison was superseded after correcting the source path. The authoritative
+audit uses the absolute isolated engine files named in the corrective sections
+below; it does not claim an engine rebuild-231 mismatch. The reproduced
+`T1 - 13,3 - 219,-1` remains covered by the source-backed opcode-13 and
+opcode-219 handlers. Inherited untracked review/helper artifacts remain
+intentionally preserved and are not task deliverables.
+
+## Startup packet parity correction (t_82d212a4)
+
+Corrected the prior wrong-engine audit using the absolute isolated engine
+paths. `Player.onLogin` and `ServerGameProt.ts` emit the authentic 289 startup
+prefix: 219/4 rebuild, 13/3 chat filter, 235/1 friendlist status, 47/-2
+ignorelist, 23/0 interface close, 120/3 PID, 172/0 var-cache reset, 75/3 or
+97/6 varps, and 201/0 reset animations. Added source-backed R289 dispatch for
+235, 47, 23, and 120; preserved 172 as the existing var-cache synchronization
+semantics. Expanded `startup_289_source_sequence_keeps_stream_in_game` and
+added `startup_289_engine_login_social_and_identity_packets_dispatch`.
+
+Exact verification: stage2 test 33 passed / 0 failed; contract verifier PASS
+256 inbound, 82 outbound, 50 fixtures; cargo check client/client-play passed;
+git diff --check passed. Report corrected at
+`docs/revision-289/startup-packet-parity-report.md`. Live RSA/ISAAC, authentic
+cache/server pairing, script/provider-driven post-login packets, scene
+readiness, and live acceptance remain external. Inherited untracked review
+and helper artifacts remain preserved and unstaged.
+
+## Startup packet parity corrective implementation (t_82d212a4)
+
+Corrected the prior onLogin-only audit by tracing the absolute isolated engine
+`Player.ts:488-533`, `NetworkPlayer.ts:286-395`, `ServerGameProt.ts:1-89`,
+and `content/scripts/login_logout/login.rs2:1-116`. Added source-backed R289
+dispatch for concrete login-trigger packets MESSAGE_GAME 196, CAM_RESET 133,
+MINIMAP_TOGGLE 136, SET_PLAYER_OP 21, IF_SETTAB 63, UPDATE_STAT 154,
+UPDATE_RUNENERGY 195, UPDATE_RUNWEIGHT 46, LAST_LOGIN_INFO 253, and first-tick
+zone bootstrap 155/144/112. Existing actor/inventory handlers cover the other
+concrete first-tick emissions.
+
+The ordered regression now includes script-driven welcome/camera/minimap/player
+options/tabs and stat/energy/weight/identity payloads, with exact cursors and
+state assertions. The parity report was rewritten to enumerate concrete
+onLogin, LOGIN-trigger, and first-tick emissions and to distinguish remaining
+fail-closed non-startup packets without live-guess framing.
+
+### Enclosed-zone correction
+
+The R289 `UPDATE_ZONE_PARTIAL_ENCLOSED` path now translates the isolated
+`ServerGameZoneProt.ts:5-14` IDs (LOC_MERGE 83, LOC_ANIM 106, OBJ_DEL 71,
+OBJ_REVEAL 176, LOC_ADD_CHANGE 90, MAP_PROJANIM 87, LOC_DEL 194,
+OBJ_COUNT 117, MAP_ANIM 233, OBJ_ADD 60) before invoking the shared field
+decoders. A non-empty 289 frame regression proves exact consumption; unknown
+inner IDs terminate at the enclosing frame boundary. The stale IF_CLOSE
+comment was corrected to client.java:3195-3212, and the ordered startup test
+now follows friend -> ignore -> close -> PID before varp/inventory/reset and
+script/first-tick packets.
+
+The enclosed-zone regression now uses the source-defined opcode-first framing
+(90 LOC_ADD_CHANGE payload, then 71 OBJ_DEL payload), asserts the decoded zone
+origin, and verifies exact outer-frame consumption.
+
+## Startup colour corrective implementation (t_5f66df33)
+
+Implemented source-backed R289 `IF_SETCOLOUR` opcode 160/4 after the preserved
+live proof reproduced `T1 - 160,4 - 63,63`. The transitive startup trace is
+`login.rs2` → `initalltabs` / `update_questlist` →
+`send_quest_progress_colour` → `if_setcolour`; the report is
+`docs/revision-289/startup-colour-failure-report.md`. Java field semantics are
+component g2 + RGB555 colour g2 expanded to the per-client interface overlay.
+
+Exact verification: stage2 test 36 passed, stage1 26 passed, contract verifier PASS
+256/82/50, `cargo check -p client -p client-play` passed, and `git diff --check` passed.
+
+## Full dispatch audit / cleanup contract (t_43f9ff17)
+
+The a97b4ae audit was REJECTED by actual Grok4.5 (run840): template table
+expansion did not prove semantic dispatch. Preserve that receipt; its old
+22/21/213 counts and blanket completeness language are superseded, not accepted.
+
+Corrective audit against a97b4ae is in `full-dispatch-audit.json` schema2 and
+`full-dispatch-cleanup-plan.md`. Primary Java has 70 real inbound operations,
+not 256: 2 complete, 41 partial, 27 missing under the stricter semantic and
+publication verdicts. The other 186 byte IDs have no primary dispatch branch;
+even length6 ID122 is unsupported. Each real row has fields, source/actual
+Rust/274 anchors, state/generation/redraw and conservative emission evidence.
+All 82 outbound operations now have emit anchors or explicit absence:
+73 mapped, 1 partial, 8 missing actual emitters. Mapped does not mean live-tested.
+
+Findings include HINT_ARROW115 exact-six including actor/stop padding; direct
+zone routes and primary-only area synth91; full-zone loc expiration; missing
+generation families; tutorial tab-clear sentinel; actor hit timeout/SAY;
+welcome-info consume-only and tutorial/challenge chat omissions. Old outbound
+contract is wrong for packed click224, camera193 field order and EMPTY232
+(Java and isolated engine say0, current Rust/manifest say1). Implementation
+must correct these without changing 274 behavior or weakening the verifier.
+
+The plan partitions all real inbound operations into bounded sections plus
+outbound coverage, settles bounded decode/apply/publication ownership, and
+preserves per-client overlays, CPU/GPU ownership and last-FBO freeze. Concrete
+engine/content witnesses include resumed tutorials, timers/queues, every
+interface command edge and direct/enclosed zone emissions. No actual fixture
+exclusions, code changes or new live proof are claimed.
+
+Verification: primary branch-ID set compared to ledger (70, no missing/extra),
+canonical Java lengths compared per real row (no differences), all82 outbound
+names/unique IDs accounted for, source-reachability groups cover every real
+inbound ID (area91 distinguished as primary-only), and section partition checked.
+`python3 tools/verify_revision_289_contract.py` PASS 256/82/50 and
+`git diff --check` PASS. The existing verifier checks its old manifest/fixtures,
+not these newly found semantic issues; its PASS does not erase them.
+
+Next: same-card reviewer=reviewer (Grok4.5), then root releases implementation
+only after actual approval. No new cards/code/live in this audit. Authentic
+server/cache pairing and later whole-branch Grok4.6/live proof remain separate
+root-owned prerequisites. No merge/push/remote or host-checkout changes.
+
+## Cleanup A implementation boundary (t_358c02ad)
+
+203f176 and c135f60 were rejected by actual Grok4.5; retain both receipts.
+The corrected implementation now has internal decoded Section-A operations,
+apply-returned generation sets and explicit reset outcomes, rather than numeric
+R289 publication lookup or whole-generation comparison. Generic fixed admission
+includes zero; bounded strings require a terminator. Welcome uses the Java
+650/655 truth table/layer and method110 closure/acknowledgement, and publishes
+iface even for close-only effects. R274 dispatch/publication remains separate.
+
+Verified in this checkout/isolated target: stage1 46, stage2 36, stage3 23,
+packet7, gens12, logout7, server_packets19, with default and all features;
+lib73 (including last-FBO freeze), do_action13, walk6, prot2, from_shared6,
+player_info1, login_rsa2, iface_model9 and rebuild12; client/client-play
+all-feature check; verifier PASS256/82/50; git diff --check. The initial
+nonexistent freeze_last_scene integration-target command was corrected to its
+actual lib test, not counted as a pass.
+
+Active card remains t_358c02ad, corrective implementation ready for same-card
+reviewer=reviewer / actual Grok4.5. No cleanup implementation commit is accepted
+yet. Report: docs/revision-289/cleanup-a-report.md (exact commands and limitations).
+Cleanup B implementation (t_36cd00a5) now includes the requested review corrections: single-modal animation resets, transformed-NPC player heads, and dedicated production-path fixtures for all 21 rows plus malformed reset and two-client overlay isolation. Report: docs/revision-289/cleanup-b-report.md. Exact isolated serial tests: client lib 73, stage1 46, stage2 40, stage3 23; focused cleanup-B 4; client check and diff check passed after the final side-icon correction. Sections C-H remain root-dispatched future work: inventory/varps/stats, actors, direct/strict zones, social/tutorial kind0, camera/audio/HUD, outbound coverage. Authentic cache/server pairing, live RSA/ISAAC/presentation and final whole-branch Grok4.6 remain separate root gates.
+
+## Cleanup C implementation (t_19843fbb)
+
+Section C now has bounded decode-before-apply coverage for all nine owned rows:
+28, 46, 75, 76, 97, 107, 154, 172 and 195. R289 full inventory retains the
+u16 count, partial inventory retains uSmart slots, extended counts are staged,
+stop-transmit clears IDs without counts or side redraw, signed varps/weight
+and derived stat levels are applied, varp sync reconciles without tutorial
+chat redraw, changed small/large varps dirty chat, and stat-family publication
+is returned for stats/energy/weight. Declared zero
+inventory frames no longer use stale backing allocation bytes. Report:
+docs/revision-289/cleanup-c-report.md.
+
+Verification in isolated CARGO_TARGET_DIR: cargo check client PASS; stage1
+46/46; stage2 42/42; server_packets 19/19; focused cleanup C 2/2. The
+combined stage1 serial load-sensitive fixed-empty-sync failure was reproduced
+as pre-existing and passed isolated. Same-card reviewer=reviewer is next;
+Sections D-H and live/cache/Grok4.6 gates remain separate.
+
+## Cleanup D implementation (t_115f2843)
+
+Accepted C foundation: 4a2f5aa (t_19843fbb, actual Grok4.5 approved).
+Active D card t_115f2843 implements IDs65/188/201 through private staged actor
+decode, packet-free apply and operation-returned publication. Full movement,
+mask and appearance frames validate before semantic mutation. Actor identity,
+local ownership and R274 behavior remain intact; R289 hit timers are +300,
+SAY/public chat publish only actual log changes, reset-anims publishes both
+actor families. Report: cleanup-d-report.md. Pending same-card Grok4.5 review;
+no D commit is accepted yet.
+
+Verification: actor suite13; full native workspace all-features PASS, including
+lib76, stage1 46, stage2 42, stage3 23, server_packets19 and client-play4;
+workspace all-feature check, new-file rustfmt, contract verifier256/82/50 and
+diff check PASS. Preserve first workspace failure in target/cleanup-d-workspace.log:
+old stage2 +400 expectations corrected to primary +300; known stage1 sync
+intermittent failed once, passed subsequent full run. Final passing output is
+target/cleanup-d-all-features.log. No test result implies live compatibility.
+
+Next: same-card reviewer=reviewer, then root decides E-H. Authentic cache/server
+pairing, live RSA/ISAAC/presentation and required final whole-branch Grok4.6
+remain root gates. No host/server/live or renderer ownership changes.
+
+## Cleanup E implementation (t_3aa4481e)
+
+Accepted D foundation: 5f5148b (t_115f2843, actual Grok4.5 approved).
+E stages all eleven primary zone operations in direct and enclosed paths;
+entire enclosed frames validate before origin/effects/publication. Adds
+area-synth91, full-zone pending-loc expiry, primary LOC_ANIM bounds/heights,
+typed rebuild application and coalesced scene/player merge publication.
+R274 and rendering/cache ownership remain intact. Independent production
+fixtures and source anchors: cleanup-e-report.md. E is not yet accepted;
+same-card reviewer=reviewer is next.
+
+Final verification: zones8, full native workspace and workspace all-features
+PASS (including actors13, stage1 46, stage2 42, stage3 23, server_packets19,
+legacy zone45 and client-play4). All-feature check, new-file rustfmt,
+contract verifier256/82/50 and diff check PASS. Exact commands and failed
+TDD/early stage1 runs are preserved in cleanup-e-report.md; passing logs:
+target/cleanup-e-workspace-final.log and target/cleanup-e-all-features-final.log.
+Earlier native run timed out at180s; earlier all-features run had transient
+stage1 sync/welcome failures, both passing in final full runs without timing
+test edits. Offline gates do not establish live compatibility.
+
+Next: same-card Grok4.5 review of E; root then decides F-H. Authentic
+cache/server pairing, live RSA/ISAAC/presentation and final whole-branch
+Grok4.6 remain required. Hotspot client.rs remains serialized. No push,
+merge, remote/live, host/server changes or F-H implementation.
+
+## Cleanup F implementation (t_4583da40)
+
+Accepted E foundation: 2a0f774 (t_3aa4481e, actual Grok4.5 approved).
+F stages social/chat/player-option rows 13, 21, 47, 168, 196, 235 and 243
+through bounded R289 decode, packet-free apply and outcome publication. It
+adds strict ignore-list framing/capacity validation, private-message short
+header and exact-body staging, friend notice publication only on actual chat
+changes, all trade/duel/challenge request suffixes, tutorial kind-0 storage
+and click clearing, null/index-safe player options, and declared chat filter
+publication with redraw flags. R274 behavior and public constants remain
+unchanged. Report: cleanup-f-report.md. Same-card reviewer=reviewer is next.
+
+Verification: client check PASS; stage2 42/42; client lib/tests PASS including
+zone45; workspace all-features PASS including stage1 46, stage2 42, stage3 23,
+server_packets19, zones8, legacy zone45, renderer suites and client-play4;
+contract verifier PASS 256/82/50; diff check PASS. This is offline proof only:
+authentic cache/server pairing, live RSA/ISAAC/presentation and required final
+whole-branch Grok4.6 remain root gates. Hotspot client.rs remains serialized;
+no host/server, renderer ownership, remote, merge or push changes.
+
+Review correction in progress: chalreq now extracts the Java-defined body;
+tutorial kind0 renders message plus `Click to continue` and click dismissal
+clears the stored message while retaining the tutorial interface. Added
+production-path stage2 fixtures for those behaviors, ignore remainder/capacity,
+private short header, ignored exact consumption, all request suffixes and
+player-option null/OOR edges. Focused cleanup-F tests pass 3/3; full affected
+suites and same-card reviewer remain next.
+
+Follow-up review correction added production-path stage2 coverage for private
+deduplication, a nonzero ignored private ID with WordPack body and exact frame
+consumption, staff levels 0/1/2/3, UPDATE_FRIENDLIST add/same-world/login/
+logout/current-world sorting and actual notice generations, SET_PLAYER_OP index
+5/nonzero priority, and malformed later fields. Focused cleanup-F tests pass
+6/6; full stage2, client lib/tests, workspace all-features, client-play
+check, contract verifier and diff check pass. Ready for same-card reviewer handoff.
+
+## Cleanup G implementation (t_7f7981c3)
+
+Accepted F foundation: 97341e64aea648b1d92d7f2a10e60080ff682f17,
+actual Grok4.5 review on t_4583da40. G stages all twelve owned rows
+29/73/82/115/133/136/164/177/187/204/208/247 through bounded R289Operation
+decode, packet-free apply and coalesced publication in private misc_289.
+Camera, six-byte unsigned hints, global sound/music gates, flag/timer/minimap
+and multiway HUD behavior have production-path fixtures. R274 constants/default
+and renderer resource/last-FBO ownership remain unchanged. Report:
+cleanup-g-report.md. G is not accepted; same-card reviewer=reviewer is next.
+
+Verification in this checkout's CARGO_TARGET_DIR: default focused G10/10,
+iface_model9/9, gpu_texture10/10 and lib73/73 pass; all-feature workspace check,
+contract verifier256/82/50, new-file rustfmt and diff check pass. Prior native
+workspace passed (199.3s receipt, target/cleanup-g-workspace.log). Earlier
+all-feature run was interrupted exit130/158.4s, not a pass. Preserve it and the
+prior resume log with stage1 welcome/logout, stage2 and E zone failures.
+
+Fresh completed solo all-feature workspace run is NOT GREEN:
+target/cleanup-g-all-features-final.log ends with two failed targets. Stage2
+47/48 rejects the enclosed loc fixture; E zones4/8 rejects loc/object/spotanim
+config IDs. These fixtures use /tmp without populating their required tables;
+their code and production E validators are unchanged from accepted F. No cache
+seeding, weakened bounds or E test edits were made in G. Source attribution is
+not a separately executed baseline build. Final stage1 46/46, G10/10, lib76,
+stage3 23, GPU suites and client-play4 passed. Exact failures and commands are
+in the report; reviewer/root must retain this regression-gate limitation.
+
+No H, live, host/server/cache, remote, merge, push or new-card work. Root retains
+authentic cache/server pairing, live RSA/ISAAC/presentation, resolution of the
+inherited fixture gate and required final whole-branch Grok4.6. Synthetic pixels
+and audio request state are not real presentation/audible proof.
+Hotspot: crates/client/src/client/client.rs remains serialized; inherited untracked
+review/helper artifacts remain unstaged.
+
+## Offline fixture isolation (t_0c645ab5)
+
+Stage2 enclosed-zone and Cleanup E zone failures were inherited cold-cache fixture
+failures, not production validation regressions: positive packets referenced loc,
+object, sequence and spotanim IDs while `/tmp` loaded an empty Cache table. The
+correction is test-only. Stage2 and zones fixtures now use unique nonexistent
+temporary cache paths and explicitly seed the smallest public default definitions
+needed by positive packets; the enclosed positive uses loc ID 0. Existing negative
+out-of-range/malformed enclosed assertions remain distinct and fail closed.
+
+Report: `docs/revision-289/offline-fixture-isolation-report.md`.
+Three sequential fresh-empty-cache passes passed stage2 enclosed 1/1 and zones
+8/8. Full stage2 passed 48/48; zones passed 8/8; serialized all-features native
+workspace target summaries passed (stage1 46, stage2 48, stage3 23, zones 8,
+legacy zone45, client-play4, GPU suites and doc tests); contract verifier passed
+256/82/50; diff check passed. Preserve wrapper receipt
+`target/offline-fixture-isolation-workspace-final.log`: its Cargo summaries are
+zero-failure, but the tee wrapper ended 255 due empty shell pipeline-status
+extraction. A direct non-pipelined repeat returned Cargo exit 0. No active test
+process remained. Stage1 synchronization code was not changed.
+
+Implementation is committed only after scoped test/report review; root still owns
+H, authentic cache/server pairing, live RSA/ISAAC/presentation, and final Grok4.6.
+
+## Cleanup H implementation (t_34667a70)
+
+Accepted foundation: G9344ee641e09e35a3e0408359e9faca15662be43 and fixture
+isolation c9faadeb673782880a27f7602a0d62a778f0230c. H now supplies the eight
+missing R289 input/lifecycle emitters through game_loop, keyboard polling,
+draw-owned crosshair counters and the scoped Client::run mouse recorder.
+R274 defaults/public constants/chat/report, existing action fields and draw-side
+tutorial/cycle ownership remain preserved. No bot API or renderer-resource
+ownership changes. Report: cleanup-h-report.md, with all82 unique source-to-
+production-to-ordered-byte-test rows and independent declared-length fixtures.
+
+Root explicitly authorized correcting primary J:5829's reversed mouse cursor
+subtraction: forward payload<240 before each whole sample, max243, ordered
+leftovers retained. Short-stream packing, duplicate carry/saturation2047,
+500-sample cap,50ms recorder,40-sample/click admission and sentinel remain source
+semantics. This deliberate framing correction is not literal bug equivalence.
+Corrected protocol camera pitch/yaw order, packed click, delta -32 edge and
+empty232 in source contracts/table/fixtures. Cycle2 deterministic legal choices
+are retained, not claimed Java-random distribution parity.
+
+Preserved first H full-suite failure: target/cleanup-h-workspace.log, exit101
+after184.5s (root-confirmed). Stage1 welcome/logout failed the accepted-frame
+count0 vs1, not generations. Root-authorized test-only readiness repair now
+waits for total-written minus consumed bytes at the receiver before the exact
+prescribed fragment parser polls, with2s bounds and synchronous chunk barriers;
+no production timeouts/validators/assertions were weakened. Explicit delayed
+transport/unread-byte/fragment regression passed1/1.
+
+Serialized direct-subprocess receipts (explicit cwd/env/returncode) in this
+checkout's target: stage1 47/47; stage2 48/48; stage3 23/23; input16/16;
+H outbound27/27 including real driver sampling, signed movement, ISAAC frames,
+mouse/click edges, all40 action rows and counter boundaries. Full native
+workspace all-features PASS exit0 in188.57s,72 passing target summaries /950
+passed tests, including client-play4 and GPU suites. Exact full receipt:
+target/cleanup-h-all-features-final.json and .log. All-feature workspace check,
+contract verifier256/82/50, new-Rust-file rustfmt and git diff --check pass.
+Earlier run918 partial passes and full-suite failure remain preserved.
+
+Next: commit scoped H implementation/tests/contracts/report, same-card review by
+actual Grok4.5. H is offline implementation only and not yet accepted. Root
+retains aggregate integration review, required final whole-branch Grok4.6,
+authentic cache/server pairing and approved live RSA/ISAAC/presentation proof.
+No host/server/cache/account, remote/Windows/live, merge/push or new-card work.
+Injected shell events and synthetic fixtures are not live presentation proof.
+Hotspot client.rs remains serialized; six inherited unrelated untracked
+review/tracer artifacts remain unstaged.
+
+## NPC hint overlay fix (t_1ced5ad3)
+
+Offline source/runtime-path diagnosis confirmed the GPU persistent chrome upload
+was gated only by ordinary chrome redraw flags. `entity_overlays` redraws the
+NPC hint crown into CPU `area_game`, but NPC movement and `loop_cycle` blink do
+not dirty those flags, so GPU presentation retained stale crown pixels. The
+scoped fix hashes only GPU overlay-covered pixels/coverage and advances the
+renderer epoch when that rendered overlay set changes; `finish` then uploads
+only changed overlay content. CPU path, scene ownership and scene_state==1
+last-FBO freeze are preserved. Report: `npc-hint-overlay-fix-report.md`.
+
+Tests: GPU composed finish/readback regression 1/1; GPU backend suite 7/7;
+overlays integration 7/7 including production NPC hint blink/movement; and
+`cargo check -p client -p client-play` passed with the checkout target.
+`git diff --check` passed. Full `cargo fmt --all -- --check` remains nonzero on
+pre-existing reviewed formatting drift; no broad format rewrite was applied.
+Fresh root-owned live visual recheck and required Grok4.5/Grok4.6 review remain
+pending. The preceding c9fca37 evidence was rejected in round 2 as insufficient:
+manual overlay/signature planting did not prove production wiring.
+
+Round 3 on t_1ced5ad3: signature now follows all covered overlay writers.
+New cache-free R289 NPC/sprite GPU draw/composite/chrome/finish/readback regression
+requires an adapter, keeps scene_ready=true and ordinary chrome flags clear,
+proves blink/movement/clear/no-change caching and actual scene_state1 freeze.
+Early signature failed the late crosshair assertion; independently removing the
+production signature or finish epoch OR failed blink-on readback. All failures
+retained in target/npc-hint-round3-*.log; both mutants restored.
+Final serial all-feature results: lib80, gpu_backend10, gpu_texture10,
+iface_model9, overlays7; client/client-play check, new-file rustfmt and diff
+check passed. Report: npc-hint-overlay-fix-report.md. Round 3 is ready for
+same-card reviewer=reviewer; no hint-fix commit is accepted yet. Root owns the
+corrective Grok4.6 pass and fresh live visual verification before closure.

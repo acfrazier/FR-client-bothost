@@ -44,7 +44,8 @@ pub use crate::dash3d::{ClientNpc, ClientPlayer};
 use crate::datastruct::LinkList;
 use crate::graphics::Pix3D;
 use crate::io::{
-    ClientProt, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt, SERVER_PROT_SIZES,
+    ClientProt, ClientRevision, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt,
+    ServerProt289,
 };
 use crate::login_rsa;
 use crate::render::nav_debug::NavDebugPaint;
@@ -56,7 +57,7 @@ use crate::wordfilter::{WordFilter, WordPack};
 const MAX_PLAYER_COUNT: usize = 2048;
 const MAX_NPC_COUNT: usize = 16384;
 const MENU_CAPACITY: usize = 500;
-const CLIENT_VERSION: i32 = 274;
+// Login version word comes from `self.revision.as_i32()` (274 default / 289 profile).
 
 /// Client code of the red "Click here to logout" control; `clientButton`
 /// arms `logoutTimer` (Java `Client.java` 8746).
@@ -155,6 +156,10 @@ const PLAYER_OP_ACTIONS: [i32; 5] = [
 /// `main_modal_id` from the first interface with this code (TS
 /// `ClientCode.CC_REPORT_INPUT`).
 const CC_REPORT_INPUT: i32 = 600;
+/// Report-abuse reason buttons 601..=612 and mute toggle 613 (Java client_button).
+const CC_REPORT_REASON_START: i32 = 601;
+const CC_REPORT_REASON_END: i32 = 612;
+const CC_REPORT_MUTE: i32 = 613;
 
 /// Index of the local player in `players` (`Client.ts` `LOCAL_PLAYER_INDEX`);
 /// `game_draw_main`'s `addPlayers` uses it for the local-player typecode.
@@ -288,6 +293,295 @@ pub struct ClientGens {
     pub world: u64,
 }
 
+#[derive(Clone, Copy, Default)]
+struct R289Publication {
+    npc: bool,
+    player: bool,
+    inv: bool,
+    varp: bool,
+    stat: bool,
+    chat: bool,
+    scene: bool,
+    iface: bool,
+    camera: bool,
+    map_flag: bool,
+    world: bool,
+}
+
+impl R289Publication {
+    const ALL: Self = Self {
+        npc: true,
+        player: true,
+        inv: true,
+        varp: true,
+        stat: true,
+        chat: true,
+        scene: true,
+        iface: true,
+        camera: true,
+        map_flag: true,
+        world: true,
+    };
+
+    fn publish(self, gens: &mut ClientGens) {
+        gens.npc += u64::from(self.npc);
+        gens.player += u64::from(self.player);
+        gens.inv += u64::from(self.inv);
+        gens.varp += u64::from(self.varp);
+        gens.stat += u64::from(self.stat);
+        gens.chat += u64::from(self.chat);
+        gens.scene += u64::from(self.scene);
+        gens.iface += u64::from(self.iface);
+        gens.camera += u64::from(self.camera);
+        gens.map_flag += u64::from(self.map_flag);
+        gens.world += u64::from(self.world);
+    }
+}
+
+/// A reset already invalidated every family through logout; it is not a
+/// successful operation with an additional publication to perform.
+enum R289Outcome {
+    Applied(R289Publication),
+    Reset,
+}
+
+struct LastLoginInfo {
+    ip: i32,
+    days: i32,
+    recovery_days: i32,
+    messages: i32,
+    members_warning: i32,
+}
+
+enum R289SocialOperation {
+    IgnoreList(Vec<i64>),
+    Private { from: i64, message_id: i32, staff_mod_level: i32, body: Vec<u8> },
+    Friend { username: i64, world: i32 },
+    FriendLoaded(i32),
+    ChatFilter { public: i32, private: i32, trade: i32 },
+    MessageGame(String),
+    SetPlayerOp { index: i32, priority: i32, option: String },
+}
+
+/// Validated interface meaning for the R289 stream. Keeping these values
+/// decoded before apply prevents malformed frames from partially changing a
+/// client overlay or reaching the R274 dispatcher.
+enum R289InterfaceOperation {
+    TutOpen(i32),
+    IfClose,
+    IfSetObject { component: i32, object: i32, divisor: i32 },
+    IfSetPlayerHead(i32),
+    CountDialog,
+    IfOpenMainSide { main: i32, side: i32 },
+    IfSetText { component: i32, text: String },
+    IfSetTab { component: i32, tab: i32 },
+    IfSetPosition { component: i32, x: i32, y: i32 },
+    IfOpenChat(i32),
+    IfOpenMain(i32),
+    IfOpenOverlay(i32),
+    IfSetHide { component: i32, hide: bool },
+    IfSetColour { component: i32, colour: i32 },
+    TutFlash(i32),
+    IfSetScrollPos { component: i32, position: i32 },
+    IfSetTabActive(i32),
+    IfSetAnim { component: i32, sequence: i32 },
+    IfSetModel { component: i32, model: i32 },
+    IfSetNpcHead { component: i32, npc: i32 },
+    IfOpenSide(i32),
+}
+
+#[path = "actor_289.rs"]
+mod actor_289;
+#[path = "zone_289.rs"]
+mod zone_289;
+#[path = "misc_289.rs"]
+mod misc_289;
+
+/// Validated meaning, never a raw 274/289 opcode alias.
+enum R289Operation {
+    Rebuild { zone_x: i32, zone_z: i32 },
+    Zones(zone_289::ZoneFrame),
+    Actors(actor_289::ActorFrame),
+    ResetAnims,
+    UpdatePid { slot: i32, members: i32 },
+    Logout,
+    LastLoginInfo(LastLoginInfo),
+    Interface(R289InterfaceOperation),
+    InventoryFull { component: i32, entries: Vec<(i32, i32)> },
+    InventoryPartial { component: i32, entries: Vec<(i32, i32, i32)> },
+    InventoryStopTransmit { component: i32 },
+    VarpSmall { id: i32, value: i32 },
+    VarpLarge { id: i32, value: i32 },
+    VarpSync,
+    UpdateStat { stat: i32, xp: i32, level: i32 },
+    RunEnergy(i32),
+    RunWeight(i32),
+    Social(R289SocialOperation),
+    Misc(misc_289::MiscOperation),
+}
+
+impl R289Operation {
+    fn decode(client: &Client, ptype: i32, payload: &mut Packet) -> Option<Self> {
+        if let Some(operation) = misc_289::MiscOperation::decode(client, ptype, payload) {
+            assert_eq!(payload.available(), 0, "unconsumed miscellaneous frame");
+            return Some(Self::Misc(operation));
+        }
+        let operation = match ptype {
+            ServerProt289::REBUILD_NORMAL => Self::Rebuild { zone_x: payload.g2(), zone_z: payload.g2() },
+            60 | 71 | 83 | 87 | 90 | 91 | 106 | 117 | 144 | 155 | 176 | 194 | 233
+            | ServerProt289::UPDATE_ZONE_PARTIAL_ENCLOSED => {
+                Self::Zones(zone_289::ZoneFrame::decode(client, ptype, payload))
+            }
+            ServerProt289::PLAYER_INFO => {
+                Self::Actors(actor_289::ActorFrame::decode(client, false, payload))
+            }
+            ServerProt289::NPC_INFO => {
+                Self::Actors(actor_289::ActorFrame::decode(client, true, payload))
+            }
+            ServerProt289::RESET_ANIMS => Self::ResetAnims,
+            ServerProt289::UPDATE_PID => Self::UpdatePid {
+                slot: payload.g2(),
+                members: payload.g1(),
+            },
+            ServerProt289::LOGOUT => Self::Logout,
+            ServerProt289::LAST_LOGIN_INFO => Self::LastLoginInfo(LastLoginInfo {
+                ip: payload.g4(),
+                days: payload.g2(),
+                recovery_days: payload.g1(),
+                messages: payload.g2(),
+                members_warning: payload.g1(),
+            }),
+            ServerProt289::UPDATE_IGNORELIST => {
+                assert_eq!(payload.available() % 8, 0, "ignore-list frame remainder");
+                let count = payload.available() / 8;
+                assert!(count <= 100, "ignore-list capacity");
+                let mut hashes = Vec::with_capacity(count);
+                for _ in 0..count { hashes.push(payload.g8()); }
+                Self::Social(R289SocialOperation::IgnoreList(hashes))
+            }
+            ServerProt289::MESSAGE_PRIVATE => {
+                assert!(payload.available() >= 13, "private message short header");
+                let from = payload.g8();
+                let message_id = payload.g4();
+                let staff_mod_level = payload.g1();
+                let start = payload.pos;
+                let end = payload.frame_end().unwrap_or(payload.length());
+                let body = payload.data()[start..end].to_vec();
+                payload.pos = end;
+                Self::Social(R289SocialOperation::Private { from, message_id, staff_mod_level, body })
+            }
+            ServerProt289::UPDATE_FRIENDLIST => Self::Social(R289SocialOperation::Friend {
+                username: payload.g8(), world: payload.g1(),
+            }),
+            ServerProt289::FRIENDLIST_LOADED => Self::Social(R289SocialOperation::FriendLoaded(payload.g1())),
+            ServerProt289::CHAT_FILTER_SETTINGS => Self::Social(R289SocialOperation::ChatFilter {
+                public: payload.g1(), private: payload.g1(), trade: payload.g1(),
+            }),
+            ServerProt289::MESSAGE_GAME => Self::Social(R289SocialOperation::MessageGame(payload.gjstr())),
+            ServerProt289::SET_PLAYER_OP => Self::Social(R289SocialOperation::SetPlayerOp {
+                index: payload.g1(), priority: payload.g1(), option: payload.gjstr(),
+            }),
+            ServerProt289::TUT_OPEN => Self::Interface(R289InterfaceOperation::TutOpen(payload.g2b())),
+            ServerProt289::IF_CLOSE => Self::Interface(R289InterfaceOperation::IfClose),
+            ServerProt289::IF_SETOBJECT => Self::Interface(R289InterfaceOperation::IfSetObject {
+                component: payload.g2(), object: payload.g2(), divisor: payload.g2(),
+            }),
+            ServerProt289::IF_SETPLAYERHEAD => Self::Interface(R289InterfaceOperation::IfSetPlayerHead(payload.g2())),
+            ServerProt289::P_COUNTDIALOG => Self::Interface(R289InterfaceOperation::CountDialog),
+            ServerProt289::IF_OPENMAIN_SIDE => Self::Interface(R289InterfaceOperation::IfOpenMainSide {
+                main: payload.g2(), side: payload.g2(),
+            }),
+            ServerProt289::IF_SETTEXT => Self::Interface(R289InterfaceOperation::IfSetText {
+                component: payload.g2(), text: payload.gjstr(),
+            }),
+            ServerProt289::IF_SETTAB => Self::Interface(R289InterfaceOperation::IfSetTab {
+                component: { let v = payload.g2(); if v == 65535 { -1 } else { v } }, tab: payload.g1(),
+            }),
+            ServerProt289::IF_SETPOSITION => Self::Interface(R289InterfaceOperation::IfSetPosition {
+                component: payload.g2(), x: payload.g2b(), y: payload.g2b(),
+            }),
+            ServerProt289::IF_OPENCHAT => Self::Interface(R289InterfaceOperation::IfOpenChat(payload.g2())),
+            ServerProt289::IF_OPENMAIN => Self::Interface(R289InterfaceOperation::IfOpenMain(payload.g2())),
+            ServerProt289::IF_OPENOVERLAY => Self::Interface(R289InterfaceOperation::IfOpenOverlay(payload.g2b())),
+            ServerProt289::IF_SETHIDE => Self::Interface(R289InterfaceOperation::IfSetHide {
+                component: payload.g2(), hide: payload.g1() == 1,
+            }),
+            ServerProt289::IF_SETCOLOUR => Self::Interface(R289InterfaceOperation::IfSetColour {
+                component: payload.g2(), colour: payload.g2(),
+            }),
+            ServerProt289::TUT_FLASH => Self::Interface(R289InterfaceOperation::TutFlash(payload.g1())),
+            ServerProt289::IF_SETSCROLLPOS => Self::Interface(R289InterfaceOperation::IfSetScrollPos {
+                component: payload.g2(), position: payload.g2(),
+            }),
+            ServerProt289::IF_SETTAB_ACTIVE => Self::Interface(R289InterfaceOperation::IfSetTabActive(payload.g1())),
+            ServerProt289::IF_SETANIM => Self::Interface(R289InterfaceOperation::IfSetAnim {
+                component: payload.g2(), sequence: payload.g2b(),
+            }),
+            ServerProt289::IF_SETMODEL => Self::Interface(R289InterfaceOperation::IfSetModel {
+                component: payload.g2(), model: payload.g2(),
+            }),
+            ServerProt289::IF_SETNPCHEAD => Self::Interface(R289InterfaceOperation::IfSetNpcHead {
+                component: payload.g2(), npc: payload.g2(),
+            }),
+            ServerProt289::IF_OPENSIDE => Self::Interface(R289InterfaceOperation::IfOpenSide(payload.g2())),
+            ServerProt289::UPDATE_INV_STOP_TRANSMIT => Self::InventoryStopTransmit {
+                component: payload.g2(),
+            },
+            ServerProt289::UPDATE_INV_FULL => {
+                let component = payload.g2();
+                let count = payload.g2();
+                let mut entries = Vec::with_capacity(count as usize);
+                for _ in 0..count {
+                    entries.push(Self::decode_inventory_entry(payload));
+                }
+                Self::InventoryFull { component, entries }
+            }
+            ServerProt289::UPDATE_INV_PARTIAL => {
+                let component = payload.g2();
+                let mut entries = Vec::new();
+                while payload.available() != 0 {
+                    let slot = if payload.data()[payload.pos] < 0x80 {
+                        payload.g1()
+                    } else {
+                        payload.g2() - 0x8000
+                    };
+                    let (object, count) = Self::decode_inventory_entry(payload);
+                    entries.push((slot, object, count));
+                }
+                Self::InventoryPartial { component, entries }
+            }
+            ServerProt289::VARP_SMALL => Self::VarpSmall {
+                id: payload.g2(),
+                value: payload.g1b(),
+            },
+            ServerProt289::VARP_LARGE => Self::VarpLarge {
+                id: payload.g2(),
+                value: payload.g4(),
+            },
+            ServerProt289::VARP_SYNC => Self::VarpSync,
+            ServerProt289::UPDATE_STAT => Self::UpdateStat {
+                stat: payload.g1(),
+                xp: payload.g4(),
+                level: payload.g1(),
+            },
+            ServerProt289::UPDATE_RUNENERGY => Self::RunEnergy(payload.g1()),
+            ServerProt289::UPDATE_RUNWEIGHT => Self::RunWeight(payload.g2b()),
+            _ => return None,
+        };
+        assert_eq!(payload.available(), 0, "unconsumed Section A frame");
+        Some(operation)
+    }
+
+    fn decode_inventory_entry(payload: &mut Packet) -> (i32, i32) {
+        let object = payload.g2();
+        let count = match payload.g1() {
+            255 => payload.g4(),
+            count => count,
+        };
+        (object, count)
+    }
+}
+
 pub struct Client {
     pub shell: GameShell,
     /// The frame target the driver attaches (task 6 `PresentTarget`). `run`
@@ -297,6 +591,12 @@ pub struct Client {
     /// host attaches a target to receive frames without a window.
     pub present: Option<Box<dyn crate::client::present::PresentTarget>>,
     pub config: ClientConfig,
+    /// Protocol revision profile for framing and inbound dispatch. Bound at
+    /// construction ([`Client::new`] / [`Client::new_with_revision`] /
+    /// [`Client::from_shared`] / [`Client::from_shared_with_revision`]) or
+    /// carried by a successful [`Client::adopt_from`]. Not publicly mutable
+    /// midstream — use [`Client::revision`] to read.
+    revision: ClientRevision,
     /// Config type tables (`obj`, `npc`, `loc`, ...), unpacked from the
     /// `config` jag by `Cache::unpack`; empty until loaded. Shared with
     /// every client via `Arc` (the tables are immutable once unpacked);
@@ -480,6 +780,8 @@ pub struct Client {
     pub oplogic8: i32,
     pub oplogic9: i32,
     pub cyclelogic2: i32,
+    pub(crate) cyclelogic7_289: i32,
+    pub(crate) outbound_289: super::outbound_289::Outbound289,
     /// `Client.cyclelogic6` from client-ts (a TS static, instance here):
     /// anticheat counter sent with `ANTICHEAT_CYCLELOGIC6` from
     /// `addPlayers` when the dest flag is cleared on arrival.
@@ -546,6 +848,8 @@ pub struct Client {
     /// `tutComId` (TS): the tutorial chat interface, set by `TUT_OPEN`
     /// (-1 none).
     pub tut_com_id: i32,
+    /// Java 289 aString4: None is no acknowledgement; Some("") still is one.
+    pub tut_com_message: Option<String>,
     /// `tutFlashIcon` (TS): the flashing tutorial side tab, set by
     /// `TUT_FLASH` (-1 none).
     pub tut_flash_icon: i32,
@@ -782,6 +1086,15 @@ pub struct Client {
     pub friend_username: [String; 200],
     pub friend_node_id: [i32; 200],
     pub friend_server_status: i32,
+    /// LAST_LOGIN_INFO fields and the selected welcome component. The IP is
+    /// retained for state parity but is never included in diagnostics.
+    pub last_login_ip: i32,
+    pub days_since_login: i32,
+    pub days_since_recovery_change: i32,
+    pub last_login_message_count: i32,
+    pub members_warning: i32,
+    pub welcome_interface_id: i32,
+    pub last_login_dns_display: Option<String>,
     pub private_message_ids: [i32; 100],
     pub private_message_count: i32,
     pub node_id: i32,
@@ -841,6 +1154,9 @@ pub struct Client {
     /// after every applied packet so the host can tell which world slices
     /// changed since its last poll.
     pub gens: ClientGens,
+    /// Bridge for unconverted handlers that call logout internally instead of
+    /// returning failure. Cleared at R289 dispatch entry, set by lifecycle reset.
+    r289_packet_reset: bool,
 }
 
 /// Dead-server watchdog bound: the Java client's 750 `gameLoop` passes at
@@ -849,25 +1165,53 @@ pub struct Client {
 const SERVER_TIMEOUT: Duration = Duration::from_secs(15);
 
 impl Client {
+    /// Default construction: revision 274 public tables and framing.
     pub fn new(config: ClientConfig) -> Self {
-        // TS `getJagChecksums` downloads `/crc` from the web origin (port 80).
+        Self::new_with_revision(config, ClientRevision::R274)
+    }
+
+    /// Construct with an explicit protocol revision bound for the session.
+    /// Prefer this (or [`Client::from_shared_with_revision`]) over any
+    /// midstream revision mutation — the profile is immutable after build
+    /// except via successful [`Client::adopt_from`].
+    pub fn new_with_revision(config: ClientConfig, revision: ClientRevision) -> Self {
+        Self::new_with_revision_and_http_port(
+            config,
+            revision,
+            crate::jag_fetch_port_for(crate::bot_target()),
+        )
+    }
+
+    /// Construct with an explicit protocol revision and web-origin port.
+    /// Binding the port before the initial cache/checksum work matters for
+    /// standalone local engines, whose HTTP listener is not privileged port
+    /// 80. The old constructor remains a 274-compatible 80-port wrapper.
+    pub fn new_with_revision_and_http_port(
+        config: ClientConfig,
+        revision: ClientRevision,
+        http_port: u16,
+    ) -> Self {
+        // TS `getJagChecksums` downloads `/crc` from the web origin.
         // Local pack/client is missing `wordenc`, so file CRCs fail the
         // engine's CrcBuffer32 check (login code 6). Prefer /crc; fall back
         // to files for tests without a web server.
-        let jag_checksum = Self::get_jag_checksums(&config.host, 80)
+        let jag_checksum = Self::get_jag_checksums(&config.host, http_port)
             .unwrap_or_else(|_| Self::read_jag_checksums(&config.cache_dir));
         let (cache, ifaces, ifaces_mut, error_loading) = match Self::load_cache(&config.cache_dir) {
             Ok((cache, ifaces, ifaces_mut)) => (cache, ifaces, Arc::new(ifaces_mut), false),
             Err(()) => (Cache::default(), Vec::new(), Arc::new(Vec::new()), true),
         };
-        Self::construct(
+        let mut client = Self::construct(
             config,
             Arc::new(cache),
             Arc::new(ifaces),
             ifaces_mut,
             error_loading,
             jag_checksum,
-        )
+            revision,
+        );
+        client.http_port = http_port;
+        client
     }
 
     /// Host construct: inject a process-wide `Arc<Cache>`, the shared
@@ -875,12 +1219,23 @@ impl Client {
     /// `load_cache` and the `/crc` probe; the host unpacks once per
     /// `cache_dir` and every client short-circuits the `maininit` re-unpack
     /// via `cache_from_shared`. `error_loading` is false so `mainloop` is
-    /// not a no-op after a successful inject.
+    /// not a no-op after a successful inject. Defaults to revision 274.
     pub fn from_shared(
         config: ClientConfig,
         cache: Arc<Cache>,
         ifaces: Arc<Vec<Option<Box<IfType>>>>,
         ifaces_mut: impl Into<Arc<Vec<Option<Arc<IfTypeMut>>>>>,
+    ) -> Self {
+        Self::from_shared_with_revision(config, cache, ifaces, ifaces_mut, ClientRevision::R274)
+    }
+
+    /// Host construct with an explicit protocol revision bound for the session.
+    pub fn from_shared_with_revision(
+        config: ClientConfig,
+        cache: Arc<Cache>,
+        ifaces: Arc<Vec<Option<Box<IfType>>>>,
+        ifaces_mut: impl Into<Arc<Vec<Option<Arc<IfTypeMut>>>>>,
+        revision: ClientRevision,
     ) -> Self {
         let jag_checksum = Self::read_jag_checksums(&config.cache_dir);
         let mut client = Self::construct(
@@ -890,9 +1245,15 @@ impl Client {
             ifaces_mut.into(),
             false,
             jag_checksum,
+            revision,
         );
         client.cache_from_shared = true;
         client
+    }
+
+    /// Read-only session protocol revision (bound at construction or adopt).
+    pub fn revision(&self) -> ClientRevision {
+        self.revision
     }
 
     fn construct(
@@ -902,6 +1263,7 @@ impl Client {
         ifaces_mut: Arc<Vec<Option<Arc<IfTypeMut>>>>,
         error_loading: bool,
         jag_checksum: [i32; 9],
+        revision: ClientRevision,
     ) -> Self {
         let on_demand = Self::load_on_demand(&config);
         let midi = midi_backend(&config.cache_dir);
@@ -912,9 +1274,20 @@ impl Client {
                 BuildArea::LEVELS as usize
             ];
         let mut client = Client {
-            shell: GameShell::new(),
+            shell: {
+                let mut shell = GameShell::new();
+                shell.telemetry_289 = revision.is_289();
+                shell.ground_trace = super::ground_trace_289::GroundTrace::from_env(revision.is_289());
+                if revision.is_289() {
+                    // Applet_Sub1:53-56 fields start at Java int zero.
+                    shell.mouse_x = 0;
+                    shell.mouse_y = 0;
+                }
+                shell
+            },
             present: None,
             config,
+            revision,
             cache,
             ifaces,
             ifaces_mut,
@@ -1021,6 +1394,8 @@ impl Client {
             oplogic8: 0,
             oplogic9: 0,
             cyclelogic2: 0,
+            cyclelogic7_289: 0,
+            outbound_289: Default::default(),
             cyclelogic6: 0,
             report_abuse_input: String::new(),
             report_abuse_mute_option: false,
@@ -1062,6 +1437,7 @@ impl Client {
             main_modal_id: -1,
             main_overlay_id: -1,
             tut_com_id: -1,
+            tut_com_message: None,
             tut_flash_icon: -1,
             dialog_input_open: false,
             dialog_input: String::new(),
@@ -1096,6 +1472,8 @@ impl Client {
             ptype1: 0,
             ptype2: 0,
             psize: 0,
+
+            r289_packet_reset: false,
 
             stream: None,
             on_demand,
@@ -1189,6 +1567,13 @@ impl Client {
             friend_username: [const { String::new() }; 200],
             friend_node_id: [0; 200],
             friend_server_status: 0,
+            last_login_ip: 0,
+            days_since_login: 0,
+            days_since_recovery_change: 0,
+            last_login_message_count: 0,
+            members_warning: 0,
+            welcome_interface_id: -1,
+            last_login_dns_display: None,
             private_message_ids: [0; 100],
             private_message_count: 0,
             node_id: 10,
@@ -1916,7 +2301,18 @@ impl Client {
     /// adopted socket instead of a fresh TCP. Returns `None` when `other`
     /// has no live stream.
     pub fn adopt_from(&mut self, other: &mut Client) -> Option<()> {
-        self.stream = Some(other.stream.take()?);
+        // Take the live stream first. A failed handoff must leave `self`
+        // entirely unchanged (including revision and any partial-frame state).
+        let stream = other.stream.take()?;
+        // Session baton carries the stream's revision with ISAAC/frame state
+        // so size tables and dispatch cannot silently diverge midstream.
+        self.revision = other.revision;
+        if let Some(trace) = &mut self.shell.ground_trace {
+            trace.complete("session_transfer");
+        }
+        self.shell.ground_trace = None;
+        self.shell.telemetry_289 = self.revision.is_289();
+        self.stream = Some(stream);
         self.random_in = other.random_in.take();
         self.out = std::mem::replace(&mut other.out, Packet::alloc(1));
         self.r#in = std::mem::replace(&mut other.r#in, Packet::alloc(1));
@@ -2034,7 +2430,8 @@ impl Client {
             }
             loginout.p1((self.out.pos + 36 + 1 + 1 + 2) as i32);
             loginout.p1(255);
-            loginout.p2(CLIENT_VERSION);
+            // 274 default / 289 explicit session profile (client.java:8378 p2 289).
+            loginout.p2(self.revision.as_i32());
             loginout.p1(if self.config.lowmem { 1 } else { 0 });
             for i in 0..9 {
                 loginout.p4(self.jag_checksum[i]);
@@ -2069,6 +2466,9 @@ impl Client {
                 .read()
                 .map_err(|_| self.fail_title_login(io_error(), reconnect))?
                 == 1;
+            if self.revision.is_289() {
+                self.cold_login_input_289();
+            }
             self.ingame = true;
             self.out.pos = 0;
             self.r#in.pos = 0;
@@ -2090,6 +2490,7 @@ impl Client {
             self.chat_modal_id = -1;
             self.main_modal_id = -1;
             self.tut_com_id = -1;
+            self.tut_com_message = None;
             self.tut_flash_icon = -1;
             self.minimap_level = -1;
             self.minimap_flag_x = 0;
@@ -2243,6 +2644,14 @@ impl Client {
         (x * BUILD_AREA_SIZE + z) as usize
     }
 
+    /// Revision-selected outbound opcode id. R274 keeps public ClientProt
+    /// constants; R289 maps through ClientProt289 (fail-closed on unmapped).
+    /// `pub(crate)` so render/draw paths share the same emit remap as
+    /// `client.rs` interact sites (stage-3 production gate).
+    pub(crate) fn client_opcode(&self, p: crate::io::ClientProt) -> i32 {
+        crate::io::map_client_prot(self.revision, p).id
+    }
+
     /// Walk `dir_map` from dest back to src, recording every tile, then
     /// reverse so the path is src → dest. This is the BFS the click
     /// actually walked, not the direction-change waypoints in `route_x`.
@@ -2327,6 +2736,10 @@ impl Client {
             action -= MiniMenuAction::_PRIORITY;
         }
 
+        if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.input_pending) {
+            t.event("selection", &[("walk", (action == MiniMenuAction::WALK) as i64), ("menu_open", self.is_menu_open as i64)]);
+        }
+
         if OBJ_OP_ACTIONS.contains(&action) {
             // TS 8568-8623: walk to the obj tile (with the 1x1 retry),
             // arm the crosshair, then the per-op anticheat preamble.
@@ -2349,32 +2762,32 @@ impl Client {
                         self.oplogic7 += 1;
                     }
                     if self.oplogic7 >= 123 {
-                        self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC7.id);
+                        self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC7));
                         self.out.p4(0);
                     }
-                    self.out.p1_enc(ClientProt::OPOBJ1.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ1));
                 }
                 if action == MiniMenuAction::OP_OBJ2 {
-                    self.out.p1_enc(ClientProt::OPOBJ2.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ2));
                 }
                 if action == MiniMenuAction::OP_OBJ3 {
-                    self.out.p1_enc(ClientProt::OPOBJ3.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ3));
                 }
                 if action == MiniMenuAction::OP_OBJ4 {
                     self.oplogic8 += c;
                     if self.oplogic8 >= 75 {
-                        self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC8.id);
+                        self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC8));
                         self.out.p1(19);
                     }
-                    self.out.p1_enc(ClientProt::OPOBJ4.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ4));
                 }
                 if action == MiniMenuAction::OP_OBJ5 {
                     self.oplogic3 += self.map_build_base_z;
                     if self.oplogic3 >= 118 {
-                        self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC3.id);
+                        self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC3));
                         self.out.p4(0);
                     }
-                    self.out.p1_enc(ClientProt::OPOBJ5.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ5));
                 }
 
                 self.out.p2(b + self.map_build_base_x);
@@ -2409,7 +2822,7 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(ClientProt::OPOBJT.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPOBJT));
                 self.out.p2(b + self.map_build_base_x);
                 self.out.p2(c + self.map_build_base_z);
                 self.out.p2(a);
@@ -2432,7 +2845,7 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(ClientProt::OPOBJU.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPOBJU));
                 self.out.p2(b + self.map_build_base_x);
                 self.out.p2(c + self.map_build_base_z);
                 self.out.p2(a);
@@ -2468,11 +2881,11 @@ impl Client {
                 self.cross_cycle = 0;
 
                 let opcode = match action {
-                    MiniMenuAction::OP_NPC1 => ClientProt::OPNPC1.id,
-                    MiniMenuAction::OP_NPC2 => ClientProt::OPNPC2.id,
-                    MiniMenuAction::OP_NPC3 => ClientProt::OPNPC3.id,
-                    MiniMenuAction::OP_NPC4 => ClientProt::OPNPC4.id,
-                    _ => ClientProt::OPNPC5.id,
+                    MiniMenuAction::OP_NPC1 => self.client_opcode(ClientProt::OPNPC1),
+                    MiniMenuAction::OP_NPC2 => self.client_opcode(ClientProt::OPNPC2),
+                    MiniMenuAction::OP_NPC3 => self.client_opcode(ClientProt::OPNPC3),
+                    MiniMenuAction::OP_NPC4 => self.client_opcode(ClientProt::OPNPC4),
+                    _ => self.client_opcode(ClientProt::OPNPC5),
                 };
                 self.out.p1_enc(opcode);
                 self.out.p2(a);
@@ -2516,7 +2929,7 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(ClientProt::OPNPCT.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPNPCT));
                 self.out.p2(a);
                 self.out.p2(self.target_com_id);
             }
@@ -2540,7 +2953,7 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(ClientProt::OPNPCU.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPNPCU));
                 self.out.p2(a);
                 self.out.p2(self.obj_com_id);
                 self.out.p2(self.obj_selected_slot);
@@ -2549,33 +2962,33 @@ impl Client {
         }
 
         if action == MiniMenuAction::OP_LOC1 {
-            self.interact_with_loc(b, c, a, ClientProt::OPLOC1.id);
+            self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC1));
         }
 
         if action == MiniMenuAction::OP_LOC2 {
             self.oplogic1 += c;
             if self.oplogic1 >= 139 {
-                self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC1.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC1));
                 self.out.p4(0);
             }
-            self.interact_with_loc(b, c, a, ClientProt::OPLOC2.id);
+            self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC2));
         }
 
         if action == MiniMenuAction::OP_LOC3 {
             self.oplogic2 += 1;
             if self.oplogic2 >= 124 {
-                self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC2.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC2));
                 self.out.p2(37954);
             }
-            self.interact_with_loc(b, c, a, ClientProt::OPLOC3.id);
+            self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC3));
         }
 
         if action == MiniMenuAction::OP_LOC4 {
-            self.interact_with_loc(b, c, a, ClientProt::OPLOC4.id);
+            self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC4));
         }
 
         if action == MiniMenuAction::OP_LOC5 {
-            self.interact_with_loc(b, c, a, ClientProt::OPLOC5.id);
+            self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC5));
         }
 
         if action == MiniMenuAction::OP_LOC6 {
@@ -2593,13 +3006,13 @@ impl Client {
         }
 
         if action == MiniMenuAction::TGT_LOC
-            && self.interact_with_loc(b, c, a, ClientProt::OPLOCT.id)
+            && self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOCT))
         {
             self.out.p2(self.target_com_id);
         }
 
         if action == MiniMenuAction::USEHELD_ONLOC
-            && self.interact_with_loc(b, c, a, ClientProt::OPLOCU.id)
+            && self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOCU))
         {
             self.out.p2(self.obj_com_id);
             self.out.p2(self.obj_selected_slot);
@@ -2629,27 +3042,27 @@ impl Client {
                 if action == MiniMenuAction::OP_PLAYER1 {
                     self.oplogic4 += 1;
                     if self.oplogic4 >= 52 {
-                        self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC4.id);
+                        self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC4));
                         self.out.p1(131);
                     }
-                    self.out.p1_enc(ClientProt::OPPLAYER1.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER1));
                 }
                 if action == MiniMenuAction::OP_PLAYER2 {
-                    self.out.p1_enc(ClientProt::OPPLAYER2.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER2));
                 }
                 if action == MiniMenuAction::OP_PLAYER3 {
-                    self.out.p1_enc(ClientProt::OPPLAYER3.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER3));
                 }
                 if action == MiniMenuAction::OP_PLAYER4 {
                     self.oplogic5 += a;
                     if self.oplogic5 >= 66 {
-                        self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC5.id);
+                        self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC5));
                         self.out.p1(154);
                     }
-                    self.out.p1_enc(ClientProt::OPPLAYER4.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER4));
                 }
                 if action == MiniMenuAction::OP_PLAYER5 {
-                    self.out.p1_enc(ClientProt::OPPLAYER5.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER5));
                 }
                 self.out.p2(a);
             }
@@ -2688,18 +3101,18 @@ impl Client {
                         if action == MiniMenuAction::ACCEPT_TRADEREQ {
                             self.oplogic5 += a;
                             if self.oplogic5 >= 66 {
-                                self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC5.id);
+                                self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC5));
                                 self.out.p1(154);
                             }
-                            self.out.p1_enc(ClientProt::OPPLAYER4.id);
+                            self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER4));
                         }
                         if action == MiniMenuAction::ACCEPT_DUELREQ {
                             self.oplogic4 += 1;
                             if self.oplogic4 >= 52 {
-                                self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC4.id);
+                                self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC4));
                                 self.out.p1(131);
                             }
-                            self.out.p1_enc(ClientProt::OPPLAYER1.id);
+                            self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYER1));
                         }
                         self.out.p2(index as i32);
                         found = true;
@@ -2730,7 +3143,7 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(ClientProt::OPPLAYERT.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYERT));
                 self.out.p2(a);
                 self.out.p2(self.target_com_id);
             }
@@ -2754,7 +3167,7 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(ClientProt::OPPLAYERU.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPPLAYERU));
                 self.out.p2(a);
                 self.out.p2(self.obj_com_id);
                 self.out.p2(self.obj_selected_slot);
@@ -2771,24 +3184,24 @@ impl Client {
             // TS 8956-8997: p2(obj) p2(slot) p2(com), then the selected
             // outline fields.
             if action == MiniMenuAction::OP_HELD1 {
-                self.out.p1_enc(ClientProt::OPHELD1.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPHELD1));
             }
             if action == MiniMenuAction::OP_HELD2 {
-                self.out.p1_enc(ClientProt::OPHELD2.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPHELD2));
             }
             if action == MiniMenuAction::OP_HELD3 {
-                self.out.p1_enc(ClientProt::OPHELD3.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPHELD3));
             }
             if action == MiniMenuAction::OP_HELD4 {
                 self.oplogic9 += 1;
                 if self.oplogic9 >= 116 {
-                    self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC9.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC9));
                     self.out.p3(13018169);
                 }
-                self.out.p1_enc(ClientProt::OPHELD4.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPHELD4));
             }
             if action == MiniMenuAction::OP_HELD5 {
-                self.out.p1_enc(ClientProt::OPHELD5.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::OPHELD5));
             }
             self.out.p2(a);
             self.out.p2(b);
@@ -2868,7 +3281,7 @@ impl Client {
         }
 
         if action == MiniMenuAction::TGT_HELD {
-            self.out.p1_enc(ClientProt::OPHELDT.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::OPHELDT));
             self.out.p2(a);
             self.out.p2(b);
             self.out.p2(c);
@@ -2877,7 +3290,7 @@ impl Client {
         }
 
         if action == MiniMenuAction::USEHELD_ONHELD {
-            self.out.p1_enc(ClientProt::OPHELDU.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::OPHELDU));
             self.out.p2(a);
             self.out.p2(b);
             self.out.p2(c);
@@ -2900,22 +3313,22 @@ impl Client {
                     self.oplogic6 += 1;
                 }
                 if self.oplogic6 >= 133 {
-                    self.out.p1_enc(ClientProt::ANTICHEAT_OPLOGIC6.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC6));
                     self.out.p2(6118);
                 }
-                self.out.p1_enc(ClientProt::INV_BUTTON1.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON1));
             }
             if action == MiniMenuAction::INV_BUTTON2 {
-                self.out.p1_enc(ClientProt::INV_BUTTON2.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON2));
             }
             if action == MiniMenuAction::INV_BUTTON3 {
-                self.out.p1_enc(ClientProt::INV_BUTTON3.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON3));
             }
             if action == MiniMenuAction::INV_BUTTON4 {
-                self.out.p1_enc(ClientProt::INV_BUTTON4.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON4));
             }
             if action == MiniMenuAction::INV_BUTTON5 {
-                self.out.p1_enc(ClientProt::INV_BUTTON5.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON5));
             }
             self.out.p2(a);
             self.out.p2(b);
@@ -2938,13 +3351,13 @@ impl Client {
                 notify = self.client_button(c);
             }
             if notify {
-                self.out.p1_enc(ClientProt::IF_BUTTON.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::IF_BUTTON));
                 self.out.p2(c);
             }
         }
 
         if action == MiniMenuAction::TOGGLE_BUTTON {
-            self.out.p1_enc(ClientProt::IF_BUTTON.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::IF_BUTTON));
             self.out.p2(c);
             // An owned script copy: the varp writes below need `&mut self`
             // while the script is read (the view borrow would conflict).
@@ -2964,7 +3377,7 @@ impl Client {
         }
 
         if action == MiniMenuAction::SELECT_BUTTON {
-            self.out.p1_enc(ClientProt::IF_BUTTON.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::IF_BUTTON));
             self.out.p2(c);
             let script = self
                 .if_(c as usize)
@@ -2991,7 +3404,7 @@ impl Client {
         if action == MiniMenuAction::PAUSE_BUTTON {
             // TS 9186-9191: RESUME_PAUSEBUTTON, not IF_BUTTON.
             if !self.resumed_pause_button {
-                self.out.p1_enc(ClientProt::RESUME_PAUSEBUTTON.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::RESUME_PAUSEBUTTON));
                 self.out.p2(c);
                 self.resumed_pause_button = true;
             }
@@ -3030,6 +3443,10 @@ impl Client {
                     self.shell.mouse_click_x - 4,
                     self.shell.mouse_click_y - 4,
                 );
+            }
+            if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.input_pending) {
+                t.armed = true;
+                t.event("walk_arm", &[("menu_open", self.is_menu_open as i64), ("x", self.world.click_x as i64), ("y", self.world.click_y as i64), ("scene", self.scene_state as i64)]);
             }
         }
 
@@ -3116,7 +3533,7 @@ impl Client {
         self.cyclelogic2 += 1;
         if self.cyclelogic2 > 1086 {
             self.cyclelogic2 = 0;
-            self.out.p1_enc(ClientProt::ANTICHEAT_CYCLELOGIC2.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC2));
             self.out.p1(0);
             let start = self.out.pos;
             // the Math.random draws become 0 and both 2.0-roll conditionals
@@ -3475,17 +3892,25 @@ impl Client {
             let start_x = self.route_x[length];
             let start_z = self.route_z[length];
 
+            if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.routing) {
+                t.pending_write = true;
+                t.event("movement", &[("type", r#type as i64), ("opcode", crate::io::map_client_prot(self.revision, ClientProt::MOVE_GAMECLICK).id as i64), ("length", (buffer_size + buffer_size + 3) as i64), ("run", (self.shell.key_held[5] == 1) as i64), ("abs_x", ((start_x + self.map_build_base_x) as u16) as i64), ("abs_z", ((start_z + self.map_build_base_z) as u16) as i64), ("turns", buffer_size as i64)]);
+                for i in 1..buffer_size {
+                    t.event("movement_delta", &[("index", i as i64), ("dx", ((self.route_x[length - i] - start_x) as i8) as i64), ("dz", ((self.route_z[length - i] - start_z) as i8) as i64)]);
+                }
+            }
+
             match r#type {
                 0 => {
-                    self.out.p1_enc(ClientProt::MOVE_GAMECLICK.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::MOVE_GAMECLICK));
                     self.out.p1((buffer_size + buffer_size + 3) as i32);
                 }
                 1 => {
-                    self.out.p1_enc(ClientProt::MOVE_MINIMAPCLICK.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::MOVE_MINIMAPCLICK));
                     self.out.p1((buffer_size + buffer_size + 3 + 14) as i32);
                 }
                 2 => {
-                    self.out.p1_enc(ClientProt::MOVE_OPCLICK.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::MOVE_OPCLICK));
                     self.out.p1((buffer_size + buffer_size + 3) as i32);
                 }
                 _ => {}
@@ -3518,9 +3943,9 @@ impl Client {
     }
 
     /// In-game inbound read, 1:1 of `Client.ts` `tcpIn` (5871-7150) on the
-    /// Java-style blocking stream: Isaac-decoded `ptype`, `psize` from
-    /// `SERVER_PROT_SIZES` (-1/-2 variable-length forms), full-payload read,
-    /// then the `ptype` switch. Returns false when no complete frame is
+    /// Java-style blocking stream: Isaac-decoded `ptype`, `psize` from the
+    /// revision-selected size table (-1/-2 variable-length forms), full-payload
+    /// read, then the `ptype` switch. Returns false when no complete frame is
     /// available yet; `gameLoop` drives it up to 5 times per frame.
     pub fn tcp_in(&mut self) -> bool {
         match self.read_packet() {
@@ -3566,17 +3991,19 @@ impl Client {
         }
 
         if self.ptype == -1 {
+            self.r#in.clear_frame_end();
             stream.read_bytes(self.r#in.data_mut(), 0, 1)?;
             self.ptype = self.r#in.data()[0] as i32 & 0xff;
             if let Some(random) = self.random_in.as_mut() {
                 self.ptype = self.ptype.wrapping_sub(random.next_int()) & 0xff;
             }
-            self.psize = SERVER_PROT_SIZES[self.ptype as usize];
+            self.psize = self.revision.server_prot_sizes()[self.ptype as usize];
             available -= 1;
         }
 
         if self.psize == -1 {
             if available <= 0 {
+                // Incomplete variable-length header: no partial publication.
                 return Ok(false);
             }
             stream.read_bytes(self.r#in.data_mut(), 0, 1)?;
@@ -3586,6 +4013,7 @@ impl Client {
 
         if self.psize == -2 {
             if available <= 1 {
+                // Incomplete g2 length header: wait for both length bytes.
                 return Ok(false);
             }
             stream.read_bytes(self.r#in.data_mut(), 0, 2)?;
@@ -3595,6 +4023,7 @@ impl Client {
         }
 
         if available < self.psize {
+            // Fixed or declared payload not fully buffered yet.
             return Ok(false);
         }
 
@@ -3606,6 +4035,7 @@ impl Client {
 
         self.r#in.pos = 0;
         stream.read_bytes(self.r#in.data_mut(), 0, self.psize as usize)?;
+        self.r#in.set_frame_end(self.psize as usize);
         // a full packet restamps the in-game silence watchdog (Java tcpIn)
         self.last_response = Some(Instant::now());
         self.ptype2 = self.ptype1;
@@ -3625,6 +4055,23 @@ impl Client {
     pub fn handle_packet(&mut self, ptype: i32, payload: &mut Packet) {
         let ptype1 = self.ptype1;
         let ptype2 = self.ptype2;
+        if self.revision.is_289() {
+            self.r289_packet_reset = false;
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                self.dispatch_packet_289(ptype, payload)
+            }));
+            match result {
+                Ok(R289Outcome::Applied(publication)) => publication.publish(&mut self.gens),
+                Ok(R289Outcome::Reset) => {}
+                Err(_) => {
+                    eprintln!("T2 - {ptype},{ptype1},{ptype2}");
+                    if !self.r289_packet_reset {
+                        self.logout();
+                    }
+                }
+            }
+            return;
+        }
         let result = catch_unwind(AssertUnwindSafe(|| {
             self.dispatch_packet(ptype, payload);
         }));
@@ -3633,6 +4080,7 @@ impl Client {
             // `logout()` bumps every family (spec: REBUILD/logout → all).
             self.logout();
         } else {
+            // Preserve the established 274 publication behavior verbatim.
             self.bump_gens(ptype);
         }
     }
@@ -3641,7 +4089,14 @@ impl Client {
     /// invalidates every family (new scene). `LOGOUT` and unknown T1
     /// opcodes reach here after `dispatch` already called `logout()`, which
     /// bumps all; they must not double-bump.
+    ///
+    /// R274-only compatibility helper. R289 dispatch returns its publication
+    /// from apply and must never consult a second numeric family table.
     pub fn bump_gens(&mut self, ptype: i32) {
+        assert!(
+            self.revision.is_274(),
+            "R289 publication requires an apply outcome"
+        );
         match ptype {
             ServerProt::NPC_INFO => self.gens.npc += 1,
             ServerProt::PLAYER_INFO => self.gens.player += 1,
@@ -4076,12 +4531,405 @@ impl Client {
         self.resumed_pause_button = false;
     }
 
+    fn apply_operation_289(&mut self, operation: R289Operation) -> R289Outcome {
+        let publication = match operation {
+            R289Operation::Rebuild { zone_x, zone_z } => {
+                self.apply_rebuild_zones(zone_x, zone_z);
+                R289Publication::ALL
+            }
+            R289Operation::Zones(frame) => frame.apply(self),
+            R289Operation::Actors(frame) => frame.apply(self),
+            R289Operation::ResetAnims => {
+                for player in self.players.iter_mut().flatten() {
+                    player.primary_anim = -1;
+                }
+                for npc in self.npc.iter_mut().flatten() {
+                    npc.primary_anim = -1;
+                }
+                if let Some(local) = self.local_player.as_mut() {
+                    local.primary_anim = -1;
+                }
+                R289Publication {
+                    player: true,
+                    npc: true,
+                    ..Default::default()
+                }
+            }
+            R289Operation::UpdatePid { slot, members } => {
+                self.self_slot = slot;
+                self.members_account = members;
+                R289Publication::default()
+            }
+            R289Operation::Logout => {
+                self.logout();
+                self.ptype = -1;
+                return R289Outcome::Reset;
+            }
+            R289Operation::LastLoginInfo(info) => self.apply_last_login_info(info),
+            R289Operation::Interface(operation) => self.apply_interface_operation_289(operation),
+            R289Operation::InventoryFull { component, entries } => {
+                self.apply_inventory_full_289(component, entries);
+                R289Publication { inv: true, ..Default::default() }
+            }
+            R289Operation::InventoryPartial { component, entries } => {
+                self.apply_inventory_partial_289(component, entries);
+                R289Publication { inv: true, ..Default::default() }
+            }
+            R289Operation::InventoryStopTransmit { component } => {
+                self.apply_inventory_stop_transmit_289(component);
+                R289Publication { inv: true, ..Default::default() }
+            }
+            R289Operation::VarpSmall { id, value } => self.apply_varp_289(id, value),
+            R289Operation::VarpLarge { id, value } => self.apply_varp_289(id, value),
+            R289Operation::VarpSync => self.apply_varp_sync_289(),
+            R289Operation::UpdateStat { stat, xp, level } => {
+                self.apply_update_stat_289(stat, xp, level);
+                R289Publication { stat: true, ..Default::default() }
+            }
+            R289Operation::RunEnergy(value) => {
+                if self.active_icon == 12 { self.redraw_side = true; }
+                self.runenergy = value;
+                R289Publication { stat: true, ..Default::default() }
+            }
+            R289Operation::RunWeight(value) => {
+                self.runweight = value;
+                if self.active_icon == 12 { self.redraw_side = true; }
+                R289Publication { stat: true, ..Default::default() }
+            }
+            R289Operation::Social(operation) => self.apply_social_operation_289(operation),
+            R289Operation::Misc(operation) => operation.apply(self),
+        };
+        self.ptype = -1;
+        R289Outcome::Applied(publication)
+    }
+
+    fn apply_social_operation_289(&mut self, operation: R289SocialOperation) -> R289Publication {
+        match operation {
+            R289SocialOperation::IgnoreList(hashes) => {
+                self.ignore_count = hashes.len() as i32;
+                self.ignore_userhash[..hashes.len()].copy_from_slice(&hashes);
+                R289Publication::default()
+            }
+            R289SocialOperation::Private { from, message_id, staff_mod_level, body } => {
+                let before = self.chat_seq;
+                let mut body_packet = Packet::new(body);
+
+                let duplicate = self.private_message_ids[..100].contains(&message_id);
+                let ignored = staff_mod_level <= 1
+                    && self.ignore_userhash[..self.ignore_count as usize].contains(&from);
+                if !duplicate && !ignored && self.chat_disabled == 0 {
+                    self.private_message_ids[self.private_message_count as usize] = message_id;
+                    self.private_message_count = (self.private_message_count + 1) % 100;
+                    let body_len = body_packet.length();
+                    let text = WordFilter::filter(&WordPack::unpack(&mut body_packet, body_len));
+                    let sender = JString::to_screen_name(&JString::to_raw_username(from));
+                    if staff_mod_level == 2 || staff_mod_level == 3 {
+                        self.add_chat(7, &text, &format!("@cr2@{sender}"));
+                    } else if staff_mod_level == 1 {
+                        self.add_chat(7, &text, &format!("@cr1@{sender}"));
+                    } else {
+                        self.add_chat(3, &text, &sender);
+                    }
+                }
+                R289Publication { chat: self.chat_seq != before, ..Default::default() }
+            }
+            R289SocialOperation::Friend { username, world } => {
+                let before = self.chat_seq;
+                let mut p = Packet::new(vec![0; 9]);
+                p.p8(username); p.p1(world); p.pos = 0;
+                self.apply_update_friendlist(&mut p);
+                R289Publication { chat: self.chat_seq != before, ..Default::default() }
+            }
+            R289SocialOperation::FriendLoaded(status) => {
+                self.friend_server_status = status;
+                self.redraw_side = true;
+                R289Publication::default()
+            }
+            R289SocialOperation::ChatFilter { public, private, trade } => {
+                self.chat_public_mode = public;
+                self.chat_private_mode = private;
+                self.chat_trade_mode = trade;
+                self.redraw_chat_mode = true;
+                self.redraw_chat = true;
+                R289Publication { chat: true, ..Default::default() }
+            }
+            R289SocialOperation::MessageGame(message) => {
+                let before = self.chat_seq;
+                self.apply_message_game_text_289(&message);
+                R289Publication { chat: self.chat_seq != before, ..Default::default() }
+            }
+            R289SocialOperation::SetPlayerOp { index, priority, option } => {
+                if (1..=5).contains(&index) {
+                    self.player_op[(index - 1) as usize] = (!option.eq_ignore_ascii_case("null")).then_some(option);
+                    self.player_op_priority[(index - 1) as usize] = priority == 0;
+                }
+                R289Publication::default()
+            }
+        }
+    }
+
+    fn apply_message_game_text_289(&mut self, message: &str) {
+        let suffix = if message.ends_with(":tradereq:") { Some((4, "wishes to trade with you.")) }
+            else if message.ends_with(":duelreq:") { Some((8, "wishes to duel with you.")) }
+            else if message.ends_with(":chalreq:") { Some((8, "")) }
+            else { None };
+        if let Some((kind, text)) = suffix {
+            let player = message.split(':').next().unwrap_or("");
+            let hash = JString::to_userhash(player) as i64;
+            if self.chat_disabled == 0 && !self.ignore_userhash[..self.ignore_count as usize].contains(&hash) {
+                let chat_text = if message.ends_with(":chalreq:") {
+                    // Java 3264-3276 uses the challenge body, excluding the
+                    // nine-byte ":chalreq:" suffix, as the chat text.
+                    let start = message.find(':').map(|i| i + 1).unwrap_or(0);
+                    let end = message.len().saturating_sub(9);
+                    message.get(start..end).unwrap_or("")
+                } else {
+                    text
+                };
+                self.add_chat(kind, chat_text, player);
+            }
+        } else {
+            self.add_chat(0, message, "");
+        }
+    }
+    fn apply_inventory_full_289(&mut self, component: i32, entries: Vec<(i32, i32)>) {
+        self.redraw_side = true;
+        if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
+            .get_mut(component as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+        {
+            if let (Some(types), Some(numbers)) = (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut()) {
+                let n = entries.len().min(types.len());
+                for (i, &(object, count)) in entries.iter().take(n).enumerate() {
+                    types[i] = object;
+                    numbers[i] = count;
+                }
+                for i in n..types.len() {
+                    types[i] = 0;
+                    numbers[i] = 0;
+                }
+            }
+        }
+    }
+
+    fn apply_inventory_partial_289(&mut self, component: i32, entries: Vec<(i32, i32, i32)>) {
+        self.redraw_side = true;
+        if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
+            .get_mut(component as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+        {
+            if let (Some(types), Some(numbers)) = (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut()) {
+                for (slot, object, count) in entries {
+                    if slot >= 0 && (slot as usize) < types.len() {
+                        types[slot as usize] = object;
+                        numbers[slot as usize] = count;
+                    }
+                }
+            }
+        }
+    }
+
+    fn apply_inventory_stop_transmit_289(&mut self, component: i32) {
+        if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
+            .get_mut(component as usize).and_then(|o| o.as_mut()).map(Arc::make_mut)
+        {
+            if let Some(types) = inv.link_obj_type.as_mut() {
+                for object in types { *object = 0; }
+            }
+        }
+    }
+
+    fn apply_varp_289(&mut self, id: i32, value: i32) -> R289Publication {
+        let changed = self.var.get(id as usize).copied() != Some(value);
+        grow_write(&mut self.var_serv, id, value);
+        if changed {
+            grow_write(&mut self.var, id, value);
+            self.client_var(id);
+            self.redraw_side = true;
+            if self.tut_com_id != -1 { self.redraw_chat = true; }
+        }
+        R289Publication { varp: true, ..Default::default() }
+    }
+
+    fn apply_varp_sync_289(&mut self) -> R289Publication {
+        let mut changed = false;
+        for i in 0..self.var_serv.len() {
+            let Some(&value) = self.var_serv.get(i) else { continue };
+            if self.var.get(i).copied() != Some(value) {
+                grow_write(&mut self.var, i as i32, value);
+                self.client_var(i as i32);
+                changed = true;
+            }
+        }
+        if changed {
+            self.redraw_side = true;
+        }
+        R289Publication { varp: true, ..Default::default() }
+    }
+
+    fn apply_update_stat_289(&mut self, stat: i32, xp: i32, level: i32) {
+        self.redraw_side = true;
+        if let Some(index) = usize::try_from(stat).ok().filter(|&i| i < self.stat_xp.len()) {
+            self.stat_xp[index] = xp;
+            self.stat_effective_level[index] = level;
+            let mut base = 1;
+            for (i, threshold) in level_experience().iter().enumerate().take(98) {
+                if xp >= *threshold { base = (i + 2) as i32; }
+            }
+            self.stat_base_level[index] = base;
+        }
+    }
+
+    fn apply_interface_operation_289(&mut self, operation: R289InterfaceOperation) -> R289Publication {
+        let mut publication = R289Publication::default();
+        publication.iface = true;
+        match operation {
+            R289InterfaceOperation::TutOpen(id) => {
+                self.tut_com_id = id;
+                self.redraw_chat = true;
+            }
+            R289InterfaceOperation::IfClose => self.apply_if_close(),
+            R289InterfaceOperation::TutFlash(icon) => self.apply_tut_flash(icon),
+            R289InterfaceOperation::CountDialog => self.apply_p_countdialog(),
+            R289InterfaceOperation::IfSetTab { component, tab } => {
+                if (0..14).contains(&tab) { self.side_icon[tab as usize] = component; }
+                self.redraw_side = true;
+                self.redraw_icons = true;
+            }
+            R289InterfaceOperation::IfSetTabActive(icon) => self.apply_if_showicon(icon),
+            R289InterfaceOperation::IfSetHide { component, hide } => {
+                if let Some(com) = self.iface_mut(component as usize) { com.hide = hide; }
+            }
+            R289InterfaceOperation::IfSetPosition { component, x, y } => {
+                if let Some(com) = self.iface_mut(component as usize) { com.x = x; com.y = y; }
+            }
+            R289InterfaceOperation::IfSetModel { component, model } => {
+                if let Some(com) = self.iface_mut(component as usize) { com.model1_type = 1; com.model1_id = model; }
+            }
+            R289InterfaceOperation::IfSetNpcHead { component, npc } => {
+                if let Some(com) = self.iface_mut(component as usize) { com.model1_type = 2; com.model1_id = npc; }
+            }
+            R289InterfaceOperation::IfSetAnim { component, sequence } => {
+                if let Some(com) = self.iface_mut(component as usize) {
+                    com.model_anim = sequence;
+                    if sequence == -1 { com.anim_frame = 0; com.anim_cycle = 0; }
+                }
+            }
+            R289InterfaceOperation::IfSetColour { component, colour } => {
+                if let Some(com) = self.iface_mut(component as usize) {
+                    com.colour = ((colour >> 10) & 31) << 19 | ((colour >> 5) & 31) << 11 | (colour & 31) << 3;
+                }
+            }
+            R289InterfaceOperation::IfSetText { component, text } => {
+                let active = self.if_(component as usize).is_some_and(|c| {
+                    (0..14).contains(&self.active_icon) && c.layer_id == self.side_icon[self.active_icon as usize]
+                });
+                if let Some(com) = self.iface_mut(component as usize) { com.text = text; }
+                if active { self.redraw_side = true; }
+            }
+            R289InterfaceOperation::IfSetScrollPos { component, mut position } => {
+                let layer = self.if_(component as usize).map(|c| (c.r#type, c.height));
+                if let Some((kind, height)) = layer {
+                    if kind == ComponentType::TYPE_LAYER {
+                        let max = self.if_(component as usize).map(|c| c.scroll_height).unwrap_or(0) - height;
+                        position = position.max(0).min(max);
+                        if let Some(com) = self.iface_mut(component as usize) { com.scroll_pos = position; }
+                    }
+                }
+            }
+            R289InterfaceOperation::IfSetObject { component, object, divisor } => {
+                let (xan, yan, zoom) = self.cache.objs.get(object as usize)
+                    .map(|o| (o.xan2d, o.yan2d, o.zoom2d)).unwrap_or((0, 0, 0));
+                if let Some(com) = self.iface_mut(component as usize) {
+                    if object == 65535 { com.model1_type = 0; com.model1_id = 0; }
+                    else { com.model1_type = 4; com.model1_id = object; com.model_xan = xan; com.model_yan = yan; com.model_zoom = if divisor == 0 { 0 } else { zoom * 100 / divisor }; }
+                }
+            }
+            R289InterfaceOperation::IfSetPlayerHead(component) => {
+                // Java prefers the local player's transformed NPC model key;
+                // only ordinary players use the packed kit appearance head.
+                let head = self.local_player.as_ref().map(|local| {
+                    local.transmog.map(|npc_id| npc_id as i32).unwrap_or_else(|| {
+                        (local.appearance[8] as i32) << 6
+                            | (local.appearance[0] as i32) << 12
+                            | (local.colour[0] as i32) << 24
+                            | (local.colour[4] as i32) << 18
+                            | local.appearance[11] as i32
+                    })
+                });
+                if let (Some(com), Some(head)) = (self.iface_mut(component as usize), head) { com.model1_type = 3; com.model1_id = head; }
+            }
+            R289InterfaceOperation::IfOpenChat(id) => { self.if_anim_reset(id); self.chat_modal_id = id; self.side_modal_id = -1; self.main_modal_id = -1; self.redraw_chat = true; self.redraw_side = true; self.redraw_icons = true; self.resumed_pause_button = false; }
+            R289InterfaceOperation::IfOpenMain(id) => { self.if_anim_reset(id); self.main_modal_id = id; self.side_modal_id = -1; self.chat_modal_id = -1; self.dialog_input_open = false; self.redraw_chat = true; self.redraw_side = true; self.redraw_icons = true; self.resumed_pause_button = false; }
+            R289InterfaceOperation::IfOpenMainSide { main, side } => { self.main_modal_id = main; self.side_modal_id = side; self.chat_modal_id = -1; self.dialog_input_open = false; self.redraw_chat = true; self.redraw_side = true; self.redraw_icons = true; self.resumed_pause_button = false; }
+            R289InterfaceOperation::IfOpenSide(id) => { self.if_anim_reset(id); self.side_modal_id = id; self.main_modal_id = -1; self.chat_modal_id = -1; self.dialog_input_open = false; self.redraw_chat = true; self.redraw_side = true; self.redraw_icons = true; self.resumed_pause_button = false; }
+            R289InterfaceOperation::IfOpenOverlay(id) => { if id >= 0 { self.if_anim_reset(id); } self.main_overlay_id = id; }
+        }
+        publication
+    }
+
+    /// Java client.java:3159-3183, applied only after exact-frame decode.
+    /// DNS is optional lifecycle-owned display state, not packet-time IO.
+    fn apply_last_login_info(&mut self, info: LastLoginInfo) -> R289Publication {
+        self.last_login_ip = info.ip;
+        self.days_since_login = info.days;
+        self.days_since_recovery_change = info.recovery_days;
+        self.last_login_message_count = info.messages;
+        self.members_warning = info.members_warning;
+        self.last_login_dns_display = None;
+        self.welcome_interface_id = -1;
+        let mut publication = R289Publication::default();
+        if self.last_login_ip != 0 && self.main_modal_id == -1 {
+            // Java method110, not the inbound IF_CLOSE operation: emit the
+            // close acknowledgement, retain count-dialog state, and only
+            // clear resumed pause when a side/chat modal was closed.
+            self.out.p1_enc(self.client_opcode(ClientProt::CLOSE_MODAL));
+            if self.side_modal_id != -1 {
+                self.side_modal_id = -1;
+                self.redraw_side = true;
+                self.redraw_icons = true;
+                self.resumed_pause_button = false;
+            }
+            if self.chat_modal_id != -1 {
+                self.chat_modal_id = -1;
+                self.redraw_chat = true;
+                self.resumed_pause_button = false;
+            }
+            // Closing alone is an iface effect, even with no matching welcome
+            // component. Conservative once-per-operation publication also
+            // covers the report state reset and an already-closed UI.
+            publication.iface = true;
+            let client_code = if self.days_since_recovery_change != 201 || self.members_warning == 1
+            {
+                655
+            } else {
+                650
+            };
+            self.welcome_interface_id = self
+                .ifaces
+                .iter()
+                .flatten()
+                .find(|component| component.client_code == client_code)
+                .map(|component| component.layer_id)
+                .unwrap_or(-1);
+            if self.welcome_interface_id != -1 {
+                self.main_modal_id = self.welcome_interface_id;
+                self.redraw_frame = true;
+            }
+            self.report_abuse_input.clear();
+            self.report_abuse_mute_option = false;
+        }
+        publication
+    }
+
     /// `addChat` from client-ts (11453): shift the 100 chat slots down one
-    /// (99→1), write the new line at slot 0, and redraw. The `tutComId`
-    /// branch (TS 11454-11458) writes `tutComMessage` and clears the mouse
-    /// click; the tutorial message feature is not ported. Each appended line
-    /// bumps `chat_seq` once (before the slot shift).
+    /// (99→1), write the new line at slot 0, and redraw. R289 Java method99
+    /// (1819-1824) also captures every kind-0 tutorial notice, including
+    /// local notices and empty text; leave the base R274 path unchanged.
+    /// Each appended line bumps `chat_seq` once (before the slot shift).
     pub fn add_chat(&mut self, r#type: i32, text: &str, sender: &str) {
+        if self.revision.is_289() && r#type == 0 && self.tut_com_id != -1 {
+            self.tut_com_message = Some(text.to_string());
+            self.shell.mouse_click_button = 0;
+        }
         if self.chat_modal_id == -1 {
             self.redraw_chat = true;
         }
@@ -4209,7 +5057,7 @@ impl Client {
             self.friend_node_id[self.friend_count as usize] = 0;
             self.friend_count += 1;
             self.redraw_side = true;
-            self.out.p1_enc(ClientProt::FRIENDLIST_ADD.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::FRIENDLIST_ADD));
             self.out.p8(userhash);
         }
     }
@@ -4249,7 +5097,7 @@ impl Client {
         self.ignore_userhash[self.ignore_count as usize] = userhash;
         self.ignore_count += 1;
         self.redraw_side = true;
-        self.out.p1_enc(ClientProt::IGNORELIST_ADD.id);
+        self.out.p1_enc(self.client_opcode(ClientProt::IGNORELIST_ADD));
         self.out.p8(userhash);
     }
 
@@ -4270,7 +5118,7 @@ impl Client {
                     self.friend_node_id[j as usize] = self.friend_node_id[(j + 1) as usize];
                     self.friend_userhash[j as usize] = self.friend_userhash[(j + 1) as usize];
                 }
-                self.out.p1_enc(ClientProt::FRIENDLIST_DEL.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::FRIENDLIST_DEL));
                 self.out.p8(userhash);
                 return;
             }
@@ -4291,7 +5139,7 @@ impl Client {
                 for j in i..self.ignore_count {
                     self.ignore_userhash[j as usize] = self.ignore_userhash[(j + 1) as usize];
                 }
-                self.out.p1_enc(ClientProt::IGNORELIST_DEL.id);
+                self.out.p1_enc(self.client_opcode(ClientProt::IGNORELIST_DEL));
                 self.out.p8(userhash);
                 return;
             }
@@ -4600,7 +5448,7 @@ impl Client {
                             com.swap_slots(src, dst);
                         }
                     }
-                    self.out.p1_enc(ClientProt::INV_BUTTOND.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTOND));
                     self.out.p2(self.obj_drag_com_id);
                     self.out.p2(self.obj_drag_slot);
                     self.out.p2(self.hovered_slot);
@@ -4670,7 +5518,8 @@ impl Client {
     /// (205) arms `logoutTimer`, CC_ADD/DEL_IGNORE (501/502) open the
     /// add/delete-ignore prompts, the player-design codes 300-327 cycle
     /// kit/colour, switch gender and send `IDK_SAVEDESIGN`, and the
-    /// report-abuse codes (601-613) are slice 6. Social codes return
+    /// report-abuse codes (601-613): 613 toggles mute; 601..=612 closeModal
+    /// then emit REPORT_ABUSE/SEND_SNAPSHOT (p8+p1+p1). Social codes return
     /// `false` so the `doAction` IF_BUTTON arm skips the send (TS sets the
     /// prompt and falls through); logout and accept-design return `true`
     /// and the click is sent.
@@ -4772,7 +5621,7 @@ impl Client {
         } else if client_code == CC_ACCEPT_DESIGN {
             // TS 11053-11065: IDK_SAVEDESIGN (id 125, length 13) carries
             // the gender byte, 7 kit bytes and 5 colour bytes.
-            self.out.p1_enc(ClientProt::IDK_SAVEDESIGN.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::IDK_SAVEDESIGN));
             self.out.p1(if self.idk_design_gender { 0 } else { 1 });
             for i in 0..7 {
                 self.out.p1(self.idk_design_part[i]);
@@ -4781,6 +5630,23 @@ impl Client {
                 self.out.p1(self.idk_design_colour[i]);
             }
             return true;
+        } else if client_code == CC_REPORT_MUTE {
+            // Java client_button 613: toggle mute-for-48h without a packet.
+            self.report_abuse_mute_option = !self.report_abuse_mute_option;
+        } else if (CC_REPORT_REASON_START..=CC_REPORT_REASON_END).contains(&client_code) {
+            // Java client_button 601..=612: closeModal then SEND_SNAPSHOT /
+            // REPORT_ABUSE (289 id 94, length 10): method472 p8 namehash +
+            // method466 reason (code-601) + method466 mute flag.
+            self.close_modal();
+            if !self.report_abuse_input.is_empty() {
+                let userhash = JString::to_userhash(&self.report_abuse_input) as i64;
+                self.out
+                    .p1_enc(self.client_opcode(ClientProt::REPORT_ABUSE));
+                self.out.p8(userhash);
+                self.out.p1(client_code - CC_REPORT_REASON_START);
+                self.out
+                    .p1(if self.report_abuse_mute_option { 1 } else { 0 });
+            }
         }
         false
     }
@@ -5035,7 +5901,19 @@ impl Client {
 
     /// See `handle_side_if_clicks`: chat-modal button clicks flow through
     /// `build_minimenu` + `mouse_loop`/`doAction`.
-    pub fn handle_chat_if_clicks(&mut self) {}
+    pub fn handle_chat_if_clicks(&mut self) {
+        // Java 289 6042-6046: only LEFT + non-null message acknowledges.
+        // The interface may remain open (or already have closed). R274's
+        // base handler was a no-op; do not add acknowledgement there.
+        if self.revision.is_289()
+            && self.shell.mouse_click_button == 1
+            && self.tut_com_message.is_some()
+        {
+            self.tut_com_message = None;
+            self.redraw_chat = true;
+            self.shell.mouse_click_button = 0;
+        }
+    }
 
     /// `closeModal` from client-ts (10941-10958): send CLOSE_MODAL and
     /// close the side and chat modals locally; `main_modal_id` is reset
@@ -5045,7 +5923,7 @@ impl Client {
     /// `redrawSide`/`redrawIcons`/`redrawChat`. Not to be confused with the
     /// incoming-server `apply_if_close`.
     fn close_modal(&mut self) {
-        self.out.p1_enc(ClientProt::CLOSE_MODAL.id);
+        self.out.p1_enc(self.client_opcode(ClientProt::CLOSE_MODAL));
         if self.side_modal_id != -1 {
             self.side_modal_id = -1;
             self.redraw_side = true;
@@ -5752,183 +6630,10 @@ impl Client {
     }
 
     fn dispatch_packet(&mut self, ptype: i32, payload: &mut Packet) {
+        // Established R274 path; R289 is decoded separately by handle_packet.
         match ptype {
             ServerProt::REBUILD_NORMAL => {
-                let zone_x = payload.g2();
-                let zone_z = payload.g2();
-
-                if self.map_build_centre_zone_x == zone_x
-                    && self.map_build_centre_zone_z == zone_z
-                    && self.scene_state == 2
-                {
-                    self.ptype = -1;
-                    return;
-                }
-
-                self.map_build_centre_zone_x = zone_x;
-                self.map_build_centre_zone_z = zone_z;
-                self.map_build_base_x = (self.map_build_centre_zone_x - 6) * 8;
-                self.map_build_base_z = (self.map_build_centre_zone_z - 6) * 8;
-
-                self.within_tutorial_island = ((self.map_build_centre_zone_x / 8 == 48
-                    || self.map_build_centre_zone_x / 8 == 49)
-                    && self.map_build_centre_zone_z / 8 == 48)
-                    || (self.map_build_centre_zone_x / 8 == 48
-                        && self.map_build_centre_zone_z / 8 == 148);
-
-                self.scene_state = 1;
-                self.scene_load_start_time = Instant::now();
-
-                // The loading splash is drawn by the renderer: `check_minimap`
-                // paints it (and builds the scene) on the next `mainredraw`.
-
-                let start_x = (self.map_build_centre_zone_x - 6) / 8;
-                let end_x = (self.map_build_centre_zone_x + 6) / 8;
-                let start_z = (self.map_build_centre_zone_z - 6) / 8;
-                let end_z = (self.map_build_centre_zone_z + 6) / 8;
-                let regions = ((end_x - start_x + 1) * (end_z - start_z + 1)) as usize;
-
-                self.map_build_ground_data = vec![None; regions];
-                self.map_build_location_data = vec![None; regions];
-                self.map_build_index = vec![0; regions];
-                self.map_build_ground_file = vec![0; regions];
-                self.map_build_location_file = vec![0; regions];
-
-                let mut map_count = 0;
-                for x in start_x..=end_x {
-                    for z in start_z..=end_z {
-                        self.map_build_index[map_count] = (x << 8) + z;
-
-                        if self.within_tutorial_island
-                            && (z == 49 || z == 149 || z == 147 || x == 50 || (x == 49 && z == 47))
-                        {
-                            self.map_build_ground_file[map_count] = -1;
-                            self.map_build_location_file[map_count] = -1;
-                            map_count += 1;
-                        } else if let Some(od) = &mut self.on_demand {
-                            let land_file = od.get_map_file(x, z, 0);
-                            self.map_build_ground_file[map_count] = land_file;
-                            if land_file != -1 {
-                                od.request(3, land_file);
-                            }
-                            let loc_file = od.get_map_file(x, z, 1);
-                            self.map_build_location_file[map_count] = loc_file;
-                            if loc_file != -1 {
-                                od.request(3, loc_file);
-                            }
-                            map_count += 1;
-                        }
-                    }
-                }
-
-                let dx = self.map_build_base_x - self.map_build_prev_base_x;
-                let dz = self.map_build_base_z - self.map_build_prev_base_z;
-                self.map_build_prev_base_x = self.map_build_base_x;
-                self.map_build_prev_base_z = self.map_build_base_z;
-
-                for npc in self.npc.iter_mut().flatten() {
-                    for j in 0..10 {
-                        npc.route_x[j] -= dx;
-                        npc.route_z[j] -= dz;
-                    }
-                    npc.x -= dx * 128;
-                    npc.z -= dz * 128;
-                }
-
-                for player in self.players.iter_mut().flatten() {
-                    for j in 0..10 {
-                        player.route_x[j] -= dx;
-                        player.route_z[j] -= dz;
-                    }
-                    player.x -= dx * 128;
-                    player.z -= dz * 128;
-                }
-
-                // Java `localPlayer` IS `players[LOCAL_PLAYER_INDEX]`, so the
-                // shift loop above also moves the local body with the build
-                // origin; the Rust clone must follow or NPC_INFO places new
-                // NPCs relative to an unshifted local.
-                if let Some(local) = self.local_player.as_mut() {
-                    for j in 0..10 {
-                        local.route_x[j] -= dx;
-                        local.route_z[j] -= dz;
-                    }
-                    local.x -= dx * 128;
-                    local.z -= dz * 128;
-                }
-
-                self.awaiting_player_info = true;
-
-                // TS 6907-6948: carry groundObj and locChanges across the
-                // build-area move. The scan runs in the signed direction of
-                // dx/dz so a positive delta copies tiles that are still
-                // needed; a naive `0..SIZE` sweep would overwrite them.
-                // A zero delta is a no-op (TS self-assigns, preserving every
-                // stacked item), so skip the whole shift.
-                if dx != 0 || dz != 0 {
-                    let mut start_tile_x = 0;
-                    let mut end_tile_x = BuildArea::SIZE;
-                    let mut dir_x = 1;
-                    if dx < 0 {
-                        start_tile_x = BuildArea::SIZE - 1;
-                        end_tile_x = -1;
-                        dir_x = -1;
-                    }
-
-                    let mut start_tile_z = 0;
-                    let mut end_tile_z = BuildArea::SIZE;
-                    let mut dir_z = 1;
-                    if dz < 0 {
-                        start_tile_z = BuildArea::SIZE - 1;
-                        end_tile_z = -1;
-                        dir_z = -1;
-                    }
-
-                    let mut x = start_tile_x;
-                    while x != end_tile_x {
-                        let mut z = start_tile_z;
-                        while z != end_tile_z {
-                            let last_x = x + dx;
-                            let last_z = z + dz;
-                            for level in 0..BuildArea::LEVELS {
-                                let cell = if last_x >= 0
-                                    && last_z >= 0
-                                    && last_x < BuildArea::SIZE
-                                    && last_z < BuildArea::SIZE
-                                {
-                                    self.ground_obj[level as usize][last_x as usize]
-                                        [last_z as usize]
-                                        .take()
-                                } else {
-                                    None
-                                };
-                                self.ground_obj[level as usize][x as usize][z as usize] = cell;
-                            }
-                            z += dir_z;
-                        }
-                        x += dir_x;
-                    }
-
-                    let mut node = self.loc_changes.head();
-                    while let Some(loc) = node {
-                        loc.x -= dx;
-                        loc.z -= dz;
-                        if loc.x < 0
-                            || loc.z < 0
-                            || loc.x >= BuildArea::SIZE
-                            || loc.z >= BuildArea::SIZE
-                        {
-                            self.loc_changes.unlink_last();
-                        }
-                        node = self.loc_changes.next_node();
-                    }
-
-                    if self.minimap_flag_x != 0 {
-                        self.minimap_flag_x -= dx;
-                        self.minimap_flag_z -= dz;
-                    }
-                }
-
+                self.apply_rebuild_normal(payload);
                 self.ptype = -1;
             }
 
@@ -6202,67 +6907,15 @@ impl Client {
                 self.ptype = -1;
             }
 
+            // 274 inventory full: g2 component, g1 entry count, then slots.
             ServerProt::UPDATE_INV_FULL => {
-                self.redraw_side = true;
-
-                let com_id = payload.g2();
-                let size = payload.g1();
-
-                // Always consume the frame (TS still reads when the iface is
-                // missing; skipping here would desync once ifaces load).
-                let mut slots = Vec::with_capacity(size as usize);
-                for _ in 0..size {
-                    slots.push(Self::read_inv_count(payload));
-                }
-
-                if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
-                    .get_mut(com_id as usize)
-                    .and_then(|o| o.as_mut())
-                    .map(Arc::make_mut)
-                {
-                    if let (Some(link_types), Some(link_numbers)) =
-                        (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut())
-                    {
-                        let n = size.min(link_types.len() as i32) as usize;
-                        for i in 0..n {
-                            link_types[i] = slots[i].0;
-                            link_numbers[i] = slots[i].1;
-                        }
-                        for i in n..link_types.len() {
-                            link_types[i] = 0;
-                            link_numbers[i] = 0;
-                        }
-                    }
-                }
+                self.apply_update_inv_full(payload, /*count_is_g2=*/ false);
                 self.ptype = -1;
             }
 
+            // 274 inventory partial: g1 slot index per entry.
             ServerProt::UPDATE_INV_PARTIAL => {
-                self.redraw_side = true;
-
-                let com_id = payload.g2();
-                let end = self.inbound_end(payload);
-
-                // Consume every slot even if the component is missing.
-                while payload.pos < end {
-                    let slot = payload.g1();
-                    let (id, count) = Self::read_inv_count(payload);
-
-                    if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
-                        .get_mut(com_id as usize)
-                        .and_then(|o| o.as_mut())
-                        .map(Arc::make_mut)
-                    {
-                        if let (Some(link_types), Some(link_numbers)) =
-                            (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut())
-                        {
-                            if slot >= 0 && (slot as usize) < link_types.len() {
-                                link_types[slot as usize] = id;
-                                link_numbers[slot as usize] = count;
-                            }
-                        }
-                    }
-                }
+                self.apply_update_inv_partial(payload, /*slot_is_gsmart=*/ false);
                 self.ptype = -1;
             }
 
@@ -6597,17 +7250,17 @@ impl Client {
                 self.ptype = -1;
             }
 
-            // zone protocol, direct dispatch like the TS
+            // zone protocol, direct dispatch like the TS.
             ServerProt::OBJ_COUNT
             | ServerProt::P_LOCMERGE
             | ServerProt::OBJ_REVEAL
             | ServerProt::MAP_ANIM
-            | ServerProt::MAP_PROJANIM
             | ServerProt::OBJ_DEL
             | ServerProt::OBJ_ADD
             | ServerProt::LOC_ANIM
             | ServerProt::LOC_DEL
-            | ServerProt::LOC_ADD_CHANGE => {
+            | ServerProt::LOC_ADD_CHANGE
+            | ServerProt::MAP_PROJANIM => {
                 self.zone_packet(payload, ptype);
                 self.ptype = -1;
             }
@@ -6620,6 +7273,365 @@ impl Client {
                 );
                 self.logout();
             }
+        }
+    }
+
+    /// Legacy decoder; both revisions share only packet-free application.
+    fn apply_rebuild_normal(&mut self, payload: &mut Packet) {
+        let zone_x = payload.g2();
+        let zone_z = payload.g2();
+        self.apply_rebuild_zones(zone_x, zone_z);
+    }
+
+    fn apply_rebuild_zones(&mut self, zone_x: i32, zone_z: i32) {
+        if self.map_build_centre_zone_x == zone_x
+            && self.map_build_centre_zone_z == zone_z
+            && self.scene_state == 2
+        {
+            self.ptype = -1;
+            return;
+        }
+
+        self.map_build_centre_zone_x = zone_x;
+        self.map_build_centre_zone_z = zone_z;
+        self.map_build_base_x = (self.map_build_centre_zone_x - 6) * 8;
+        self.map_build_base_z = (self.map_build_centre_zone_z - 6) * 8;
+
+        self.within_tutorial_island = ((self.map_build_centre_zone_x / 8 == 48
+            || self.map_build_centre_zone_x / 8 == 49)
+            && self.map_build_centre_zone_z / 8 == 48)
+            || (self.map_build_centre_zone_x / 8 == 48 && self.map_build_centre_zone_z / 8 == 148);
+
+        self.scene_state = 1;
+        self.scene_load_start_time = Instant::now();
+
+        // The loading splash is drawn by the renderer: `check_minimap`
+        // paints it (and builds the scene) on the next `mainredraw`.
+
+        let start_x = (self.map_build_centre_zone_x - 6) / 8;
+        let end_x = (self.map_build_centre_zone_x + 6) / 8;
+        let start_z = (self.map_build_centre_zone_z - 6) / 8;
+        let end_z = (self.map_build_centre_zone_z + 6) / 8;
+        let regions = ((end_x - start_x + 1) * (end_z - start_z + 1)) as usize;
+
+        self.map_build_ground_data = vec![None; regions];
+        self.map_build_location_data = vec![None; regions];
+        self.map_build_index = vec![0; regions];
+        self.map_build_ground_file = vec![0; regions];
+        self.map_build_location_file = vec![0; regions];
+
+        let mut map_count = 0;
+        for x in start_x..=end_x {
+            for z in start_z..=end_z {
+                self.map_build_index[map_count] = (x << 8) + z;
+
+                if self.within_tutorial_island
+                    && (z == 49 || z == 149 || z == 147 || x == 50 || (x == 49 && z == 47))
+                {
+                    self.map_build_ground_file[map_count] = -1;
+                    self.map_build_location_file[map_count] = -1;
+                    map_count += 1;
+                } else if let Some(od) = &mut self.on_demand {
+                    let land_file = od.get_map_file(x, z, 0);
+                    self.map_build_ground_file[map_count] = land_file;
+                    if land_file != -1 {
+                        od.request(3, land_file);
+                    }
+                    let loc_file = od.get_map_file(x, z, 1);
+                    self.map_build_location_file[map_count] = loc_file;
+                    if loc_file != -1 {
+                        od.request(3, loc_file);
+                    }
+                    map_count += 1;
+                }
+            }
+        }
+
+        let dx = self.map_build_base_x - self.map_build_prev_base_x;
+        let dz = self.map_build_base_z - self.map_build_prev_base_z;
+        self.map_build_prev_base_x = self.map_build_base_x;
+        self.map_build_prev_base_z = self.map_build_base_z;
+
+        for npc in self.npc.iter_mut().flatten() {
+            for j in 0..10 {
+                npc.route_x[j] -= dx;
+                npc.route_z[j] -= dz;
+            }
+            npc.x -= dx * 128;
+            npc.z -= dz * 128;
+        }
+
+        for player in self.players.iter_mut().flatten() {
+            for j in 0..10 {
+                player.route_x[j] -= dx;
+                player.route_z[j] -= dz;
+            }
+            player.x -= dx * 128;
+            player.z -= dz * 128;
+        }
+
+        // Java `localPlayer` IS `players[LOCAL_PLAYER_INDEX]`, so the
+        // shift loop above also moves the local body with the build
+        // origin; the Rust clone must follow or NPC_INFO places new
+        // NPCs relative to an unshifted local.
+        if let Some(local) = self.local_player.as_mut() {
+            for j in 0..10 {
+                local.route_x[j] -= dx;
+                local.route_z[j] -= dz;
+            }
+            local.x -= dx * 128;
+            local.z -= dz * 128;
+        }
+
+        self.awaiting_player_info = true;
+
+        // TS 6907-6948: carry groundObj and locChanges across the
+        // build-area move. The scan runs in the signed direction of
+        // dx/dz so a positive delta copies tiles that are still
+        // needed; a naive `0..SIZE` sweep would overwrite them.
+        // A zero delta is a no-op (TS self-assigns, preserving every
+        // stacked item), so skip the whole shift.
+        if dx != 0 || dz != 0 {
+            let mut start_tile_x = 0;
+            let mut end_tile_x = BuildArea::SIZE;
+            let mut dir_x = 1;
+            if dx < 0 {
+                start_tile_x = BuildArea::SIZE - 1;
+                end_tile_x = -1;
+                dir_x = -1;
+            }
+
+            let mut start_tile_z = 0;
+            let mut end_tile_z = BuildArea::SIZE;
+            let mut dir_z = 1;
+            if dz < 0 {
+                start_tile_z = BuildArea::SIZE - 1;
+                end_tile_z = -1;
+                dir_z = -1;
+            }
+
+            let mut x = start_tile_x;
+            while x != end_tile_x {
+                let mut z = start_tile_z;
+                while z != end_tile_z {
+                    let last_x = x + dx;
+                    let last_z = z + dz;
+                    for level in 0..BuildArea::LEVELS {
+                        let cell = if last_x >= 0
+                            && last_z >= 0
+                            && last_x < BuildArea::SIZE
+                            && last_z < BuildArea::SIZE
+                        {
+                            self.ground_obj[level as usize][last_x as usize][last_z as usize].take()
+                        } else {
+                            None
+                        };
+                        self.ground_obj[level as usize][x as usize][z as usize] = cell;
+                    }
+                    z += dir_z;
+                }
+                x += dir_x;
+            }
+
+            let mut node = self.loc_changes.head();
+            while let Some(loc) = node {
+                loc.x -= dx;
+                loc.z -= dz;
+                if loc.x < 0 || loc.z < 0 || loc.x >= BuildArea::SIZE || loc.z >= BuildArea::SIZE {
+                    self.loc_changes.unlink_last();
+                }
+                node = self.loc_changes.next_node();
+            }
+
+            if self.minimap_flag_x != 0 {
+                self.minimap_flag_x -= dx;
+                self.minimap_flag_z -= dz;
+            }
+        }
+    }
+
+    /// Common R289 admission and publication boundary. R289 operations are
+    /// fully decoded before apply; B-H retain their existing (not all atomic)
+    /// handlers; their existing generation effects are returned at those arms.
+    fn dispatch_packet_289(&mut self, ptype: i32, payload: &mut Packet) -> R289Outcome {
+        // A declared zero-length R289 frame is authoritative even when a
+        // socket-free caller reuses a backing allocation without stamping it.
+        // In particular, inventory zero frames must not decode stale bytes.
+        let end = if payload.frame_end().is_none()
+            && self.psize == 0
+            && matches!(
+                ptype,
+                ServerProt289::UPDATE_INV_FULL
+                    | ServerProt289::UPDATE_INV_PARTIAL
+                    | ServerProt289::UPDATE_INV_STOP_TRANSMIT
+                    | ServerProt289::PLAYER_INFO
+                    | ServerProt289::NPC_INFO
+            ) {
+            0
+        } else {
+            self.inbound_end(payload)
+        };
+        payload.set_frame_end(end);
+        assert_eq!(payload.pos, 0, "frame must start at zero");
+        if let Some(&size) = usize::try_from(ptype)
+            .ok()
+            .and_then(|id| self.revision.server_prot_sizes().get(id))
+        {
+            if size >= 0 {
+                assert_eq!(end, size as usize, "fixed frame length mismatch");
+            }
+        }
+        if let Some(operation) = R289Operation::decode(self, ptype, payload) {
+            return self.apply_operation_289(operation);
+        }
+        let mut publication = R289Publication::default();
+        match ptype {
+            // 289 chat filter settings: public/private/trade mode bytes
+            // (client.java:2612-2619; anInt212/anInt234/anInt360).
+            x if x == ServerProt289::CHAT_FILTER_SETTINGS => {
+                self.apply_chat_filter_settings(payload);
+                publication.chat = true;
+                self.ptype = -1;
+            }
+            // IF_CLOSE: clear interface modals (client.java:3195-3212).
+            x if x == ServerProt289::IF_CLOSE => {
+                self.apply_if_close();
+                self.ptype = -1;
+            }
+            // UPDATE_IGNORELIST: one g8 user hash per entry
+            // (client.java:3372-3378).
+            x if x == ServerProt289::UPDATE_IGNORELIST => {
+                self.apply_update_ignorelist(payload, self.psize);
+                self.ptype = -1;
+            }
+            // FRIENDLIST_LOADED: social-server status byte
+            // (client.java:3471-3475).
+            x if x == ServerProt289::FRIENDLIST_LOADED => {
+                self.apply_friendlist_loaded(payload);
+                self.ptype = -1;
+            }
+
+            // MESSAGE_GAME: login welcome and server notices (client.java
+            // message-game branch; engine MessageGameEncoder).
+            x if x == ServerProt289::MESSAGE_GAME => {
+                self.apply_message_game(payload);
+                self.ptype = -1;
+            }
+            // CAM_RESET: leave cutscene camera and clear camera shakes.
+            x if x == ServerProt289::CAM_RESET => {
+                self.apply_cam_reset(payload);
+                self.ptype = -1;
+            }
+            // MINIMAP_TOGGLE: one-byte minimap lock state.
+            x if x == ServerProt289::MINIMAP_TOGGLE => {
+                self.apply_minimap_toggle(payload);
+                self.ptype = -1;
+            }
+            // SET_PLAYER_OP: index, priority, newline-terminated option.
+            x if x == ServerProt289::SET_PLAYER_OP => {
+                let index = payload.g1();
+                let priority = payload.g1();
+                let op = payload.gjstr();
+                if (1..=5).contains(&index) {
+                    self.player_op[(index - 1) as usize] =
+                        (!op.eq_ignore_ascii_case("null")).then_some(op);
+                    self.player_op_priority[(index - 1) as usize] = priority == 0;
+                }
+                self.ptype = -1;
+            }
+            // IF_SETTAB: component id and side-tab index.
+            x if x == ServerProt289::IF_SETTAB => {
+                let com_id = payload.g2();
+                let tab = payload.g1();
+                if (0..14).contains(&tab) {
+                    self.side_icon[tab as usize] = com_id;
+                    self.redraw_side = true;
+                    self.redraw_icons = true;
+                }
+                self.ptype = -1;
+            }
+
+
+            // IF_SETTEXT: g2 + newline string (client.java:2638-2646).
+            x if x == ServerProt289::IF_SETTEXT => {
+                let com_id = payload.g2();
+                let text = payload.gjstr();
+                let on_active_tab = self
+                    .if_(com_id as usize)
+                    .is_some_and(|com| com.layer_id == self.side_icon[self.active_icon as usize]);
+                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut)
+                    .get_mut(com_id as usize)
+                    .and_then(|o| o.as_mut())
+                    .map(Arc::make_mut)
+                {
+                    com.text = text;
+                    if on_active_tab {
+                        self.redraw_side = true;
+                    }
+                }
+                self.ptype = -1;
+            }
+            // IF_SETANIM: g2 + signed g2 (client.java:2722-2732).
+            x if x == ServerProt289::IF_SETANIM => {
+                let com_id = payload.g2();
+                let seq_id = payload.g2b();
+                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut)
+                    .get_mut(com_id as usize)
+                    .and_then(|o| o.as_mut())
+                    .map(Arc::make_mut)
+                {
+                    com.model_anim = seq_id;
+                    if seq_id == -1 {
+                        com.anim_frame = 0;
+                        com.anim_cycle = 0;
+                    }
+                }
+                self.ptype = -1;
+            }
+            // IF_SETCOLOUR: component g2 + RGB555 colour g2
+            // (client.java:3362-3370; ServerGameProt.ts:13).
+            x if x == ServerProt289::IF_SETCOLOUR => {
+                let com_id = payload.g2();
+                let colour = payload.g2();
+                let r = (colour >> 10) & 0x1f;
+                let g = (colour >> 5) & 0x1f;
+                let b = colour & 0x1f;
+                if let Some(com) = Arc::make_mut(&mut self.ifaces_mut)
+                    .get_mut(com_id as usize)
+                    .and_then(|o| o.as_mut())
+                    .map(Arc::make_mut)
+                {
+                    com.colour = (r << 19) + (g << 11) + (b << 3);
+                }
+                self.ptype = -1;
+            }
+            // IF_OPENMAIN_SIDE: two g2 (client.java:2593-2610).
+            x if x == ServerProt289::IF_OPENMAIN_SIDE => {
+                self.apply_if_openmain_side(payload);
+                self.ptype = -1;
+            }
+            // IF_OPENSIDE: one g2 (client.java:2665-2682).
+            x if x == ServerProt289::IF_OPENSIDE => {
+                self.apply_if_openside(payload);
+                self.ptype = -1;
+            }
+            // IF_OPENOVERLAY: signed g2 (client.java:3393-3400).
+            x if x == ServerProt289::IF_OPENOVERLAY => {
+                self.apply_if_openoverlay(payload);
+                self.ptype = -1;
+            }
+            _ => {
+                eprintln!(
+                    "T1 - {ptype},{} - {},{}",
+                    self.psize, self.ptype1, self.ptype2
+                );
+                self.logout();
+            }
+        }
+        if self.r289_packet_reset {
+            R289Outcome::Reset
+        } else {
+            R289Outcome::Applied(publication)
         }
     }
 
@@ -7458,6 +8470,7 @@ impl Client {
         }
     }
 
+
     /// `zonePacket(buf, opcode)` from client-ts: reads the 8-tile zone
     /// position byte and the TS field widths for each opcode, then applies
     /// the change — loc adds/dels/animations, ground-object adds/dels/
@@ -7986,6 +8999,8 @@ impl Client {
     /// one-shot `draw_area` cls so no game-frame viewport/chat/side pixel
     /// survives).
     pub fn logout(&mut self) {
+        if let Some(t) = &mut self.shell.ground_trace { t.complete("logout"); }
+        self.r289_packet_reset = true;
         if let Some(mut stream) = self.stream.take() {
             stream.close();
         }
@@ -8015,6 +9030,13 @@ impl Client {
         self.loc_changes = LinkList::new();
         self.friend_server_status = 0;
         self.friend_count = 0;
+        self.last_login_ip = 0;
+        self.days_since_login = 0;
+        self.days_since_recovery_change = 0;
+        self.last_login_message_count = 0;
+        self.members_warning = 0;
+        self.welcome_interface_id = -1;
+        self.last_login_dns_display = None;
         self.social_input_open = false;
         for level in 0..BuildArea::LEVELS {
             for x in 0..BuildArea::SIZE {
@@ -8053,6 +9075,7 @@ impl Client {
     /// save-and-close of the old `ClientStream`. The "Connection lost"
     /// viewport text is not drawn (headless).
     pub fn lost_con(&mut self) {
+        if let Some(t) = &mut self.shell.ground_trace { t.complete("lost_connection"); }
         if self.logout_timer > 0 {
             self.logout();
             return;
@@ -8253,7 +9276,7 @@ impl Client {
             self.chat_public_mode = (self.chat_public_mode + 1) % 4;
             self.redraw_chat_mode = true;
             self.redraw_chat = true;
-            self.out.p1_enc(ClientProt::CHAT_SETMODE.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
             self.out.p1(self.chat_public_mode);
             self.out.p1(self.chat_private_mode);
             self.out.p1(self.chat_trade_mode);
@@ -8266,7 +9289,7 @@ impl Client {
             self.chat_private_mode = (self.chat_private_mode + 1) % 3;
             self.redraw_chat_mode = true;
             self.redraw_chat = true;
-            self.out.p1_enc(ClientProt::CHAT_SETMODE.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
             self.out.p1(self.chat_public_mode);
             self.out.p1(self.chat_private_mode);
             self.out.p1(self.chat_trade_mode);
@@ -8279,7 +9302,7 @@ impl Client {
             self.chat_trade_mode = (self.chat_trade_mode + 1) % 3;
             self.redraw_chat_mode = true;
             self.redraw_chat = true;
-            self.out.p1_enc(ClientProt::CHAT_SETMODE.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
             self.out.p1(self.chat_public_mode);
             self.out.p1(self.chat_private_mode);
             self.out.p1(self.chat_trade_mode);
@@ -8316,6 +9339,15 @@ impl Client {
     /// `toSentenceCase` + `WordFilter.filter` + `add_chat(2, ...)`
     /// (TS 3169-3179).
     pub fn handle_chat_input(&mut self) {
+        if self.revision.is_289() {
+            // J:10743-10750: count poll calls, not queued characters.
+            self.outbound_289.cyclelogic4 += 1;
+            if self.outbound_289.cyclelogic4 > 192 {
+                self.outbound_289.cyclelogic4 = 0;
+                self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC4));
+                self.out.p1(232);
+            }
+        }
         loop {
             let key = self.shell.poll_key();
             if key == -1 {
@@ -8347,7 +9379,7 @@ impl Client {
                         && !self.social_input.is_empty()
                         && self.social_userhash != 0
                     {
-                        self.out.p1_enc(ClientProt::MESSAGE_PRIVATE.id);
+                        self.out.p1_enc(self.client_opcode(ClientProt::MESSAGE_PRIVATE));
                         self.out.p1(0);
                         let start = self.out.pos;
                         self.out.p8(self.social_userhash);
@@ -8364,7 +9396,7 @@ impl Client {
                         if self.chat_private_mode == 2 {
                             self.chat_private_mode = 1;
                             self.redraw_chat_mode = true;
-                            self.out.p1_enc(ClientProt::CHAT_SETMODE.id);
+                            self.out.p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
                             self.out.p1(self.chat_public_mode);
                             self.out.p1(self.chat_private_mode);
                             self.out.p1(self.chat_trade_mode);
@@ -8399,7 +9431,7 @@ impl Client {
                 if key == 13 || key == 10 {
                     if !self.dialog_input.is_empty() {
                         let value: i32 = self.dialog_input.parse().unwrap_or(0);
-                        self.out.p1_enc(ClientProt::RESUME_P_COUNTDIALOG.id);
+                        self.out.p1_enc(self.client_opcode(ClientProt::RESUME_P_COUNTDIALOG));
                         self.out.p4(value);
                     }
 
@@ -8428,7 +9460,7 @@ impl Client {
 
             if (key == 13 || key == 10) && !self.chat_input.is_empty() {
                 if self.chat_input.starts_with("::") {
-                    self.out.p1_enc(ClientProt::CLIENT_CHEAT.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::CLIENT_CHEAT));
                     self.out.p1((self.chat_input.len() - 2 + 1) as i32);
                     self.out.pjstr(&self.chat_input[2..]);
                 } else {
@@ -8482,18 +9514,40 @@ impl Client {
                         colour = 11;
                         text = text[6..].to_string();
                     }
-                    // TS 3147-3155 effect prefixes.
+                    // MESSAGE_PUBLIC effect prefixes are revision-gated.
+                    // R274/client-ts: sequential ifs — wave:=1, scroll:=2.
+                    // R289 Java table (else-if): wave2 before wave so "wave2:"
+                    // is not swallowed; wave/wave2/shake/scroll/slide → 1/2/3/4/5.
                     let mut effect = 0;
-                    if text.starts_with("wave:") {
-                        effect = 1;
-                        text = text[5..].to_string();
-                    }
-                    if text.starts_with("scroll:") {
-                        effect = 2;
-                        text = text[7..].to_string();
+                    if self.revision.is_289() {
+                        if text.starts_with("wave2:") {
+                            effect = 2;
+                            text = text[6..].to_string();
+                        } else if text.starts_with("wave:") {
+                            effect = 1;
+                            text = text[5..].to_string();
+                        } else if text.starts_with("shake:") {
+                            effect = 3;
+                            text = text[6..].to_string();
+                        } else if text.starts_with("scroll:") {
+                            effect = 4;
+                            text = text[7..].to_string();
+                        } else if text.starts_with("slide:") {
+                            effect = 5;
+                            text = text[6..].to_string();
+                        }
+                    } else {
+                        if text.starts_with("wave:") {
+                            effect = 1;
+                            text = text[5..].to_string();
+                        }
+                        if text.starts_with("scroll:") {
+                            effect = 2;
+                            text = text[7..].to_string();
+                        }
                     }
 
-                    self.out.p1_enc(ClientProt::MESSAGE_PUBLIC.id);
+                    self.out.p1_enc(self.client_opcode(ClientProt::MESSAGE_PUBLIC));
                     self.out.p1(0);
                     let start = self.out.pos;
                     self.out.p1(colour);
@@ -8541,7 +9595,7 @@ impl Client {
                     if self.chat_public_mode == 2 {
                         self.chat_public_mode = 3;
                         self.redraw_chat_mode = true;
-                        self.out.p1_enc(ClientProt::CHAT_SETMODE.id);
+                        self.out.p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
                         self.out.p1(self.chat_public_mode);
                         self.out.p1(self.chat_private_mode);
                         self.out.p1(self.chat_trade_mode);
@@ -9268,7 +10322,7 @@ impl Client {
 
         self.scene_state = 2;
         self.map_build();
-        self.out.p1_enc(ClientProt::MAP_BUILD_COMPLETE.id);
+        self.out.p1_enc(self.client_opcode(ClientProt::MAP_BUILD_COMPLETE));
         0
     }
 
@@ -9376,7 +10430,7 @@ impl Client {
         }
 
         if !self.map_build_ground_data.is_empty() {
-            self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
 
             for i in 0..self.map_build_ground_data.len() {
                 let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
@@ -9411,7 +10465,7 @@ impl Client {
         self.world.groundh.clone_from(&self.groundh);
 
         if !self.map_build_location_data.is_empty() {
-            self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
 
             for i in 0..self.map_build_location_data.len() {
                 if let Some(data) = &self.map_build_location_data[i] {
@@ -9432,7 +10486,7 @@ impl Client {
             }
         }
 
-        self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
+        self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
 
         build.finish_build(
             &self.cache,
@@ -9453,7 +10507,7 @@ impl Client {
         // loc list from the fresh world, never the previous build's locs.
         self.gens.scene += 1;
 
-        self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
+        self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
 
         for x in 0..BuildArea::SIZE {
             for z in 0..BuildArea::SIZE {
@@ -9504,6 +10558,7 @@ impl Client {
     }
 
     pub(crate) fn show_object(&mut self, x: i32, z: i32) {
+        let revision = self.revision();
         let level = self.minusedlevel as usize;
         if self.ground_obj[level][x as usize][z as usize].is_none() {
             self.world.del_obj(self.minusedlevel, x, z);
@@ -9528,7 +10583,13 @@ impl Client {
                 let typ = self.cache.obj(id as usize);
                 let mut cost = typ.cost;
                 if typ.stackable {
-                    cost *= count + 1;
+                    if revision == ClientRevision::R289 {
+                        // Java int arithmetic; valid piles must not panic after
+                        // a staged zone frame has begun applying.
+                        cost = cost.wrapping_mul(count.wrapping_add(1));
+                    } else {
+                        cost *= count + 1;
+                    }
                 }
                 if cost > top_cost {
                     top_cost = cost;
@@ -9995,6 +11056,14 @@ impl Client {
     /// idle `NO_TIMEOUT` and flush `out` through `ClientStream::write`.
     /// Write errors are `lostCon` (Java `catch (IOException)`).
     pub fn game_loop(&mut self) {
+        if self.ingame {
+            if let Some(t) = &mut self.shell.ground_trace {
+                t.tick(self.shell.mouse_click_button, self.shell.mouse_click_x, self.shell.mouse_click_y);
+                if t.input_pending {
+                    t.event("input_state", &[("pending_message", self.tut_com_message.is_some() as i64), ("menu_open", self.is_menu_open as i64), ("scene", self.scene_state as i64)]);
+                }
+            }
+        }
         // TS 2043-2048: the reboot countdown holds at 1 while the logout
         // request counts down.
         if self.reboot_timer > 1 {
@@ -10012,6 +11081,9 @@ impl Client {
             return;
         }
         // TS 2191-2192: the scene/minimap pass after the inbound reads.
+        if self.revision.is_289() {
+            self.input_packets_289();
+        }
         // The SIM half runs here unconditionally — `check_scene` →
         // `map_build` (ground, collision, `MAP_BUILD_COMPLETE`,
         // `scene_state = 2`) — independent of `draw`, so a headless client
@@ -10052,6 +11124,17 @@ impl Client {
         // TS 2229-2300: the in-flight obj-drag tick runs before the click
         // handlers so a release consumes the click before `handle_tab_clicks`.
         self.handle_obj_drag();
+        if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.input_pending) {
+            t.event("dispatch_state", &[("pending_message", self.tut_com_message.is_some() as i64), ("menu_open", self.is_menu_open as i64), ("button", self.shell.mouse_click_button as i64)]);
+        }
+        // Primary 289 J:6023-6027: after drag consumption, before walking.
+        if self.revision.is_289() {
+            self.cyclelogic7_289 += 1;
+            if self.cyclelogic7_289 > 62 {
+                self.cyclelogic7_289 = 0;
+                self.out.p1_enc(self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC7));
+            }
+        }
         self.handle_tab_clicks();
         self.handle_side_if_clicks();
         self.handle_main_if_clicks();
@@ -10068,10 +11151,21 @@ impl Client {
             let ground_x = self.world.ground_x;
             let ground_z = self.world.ground_z;
             self.world.ground_x = -1;
+            if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.armed && t.rendered) {
+                t.routing = true;
+                t.event("source", &[("present", src.is_some() as i64), ("x", src.map_or(-1, |s| s.0) as i64), ("z", src.map_or(-1, |s| s.1) as i64), ("base_x", self.map_build_base_x as i64), ("base_z", self.map_build_base_z as i64), ("plane", self.minusedlevel as i64), ("target_x", ground_x as i64), ("target_z", ground_z as i64)]);
+                if src.is_none() { t.complete("no_local_source"); }
+            }
             if let Some((src_x, src_z)) = src {
                 // TS 2317-2322: a successful walk re-arms the crosshair at
                 // the clicked point (mode 1, cycle 0).
-                if self.tryMove(src_x, src_z, ground_x, ground_z, true, 0, 0, 0, 0, 0, 0) {
+                let moved = self.tryMove(src_x, src_z, ground_x, ground_z, true, 0, 0, 0, 0, 0, 0);
+                if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.routing) {
+                    t.event("route", &[("result", moved as i64), ("nearest", self.try_move_nearest as i64), ("endpoint_x", if moved { self.minimap_flag_x as i64 } else { -1 }), ("endpoint_z", if moved { self.minimap_flag_z as i64 } else { -1 })]);
+                    t.routing = false;
+                    if !moved { t.complete("route_failed"); }
+                }
+                if moved {
                     self.cross_x = self.shell.mouse_click_x;
                     self.cross_y = self.shell.mouse_click_y;
                     self.cross_mode = 1;
@@ -10080,6 +11174,13 @@ impl Client {
             }
         }
         self.mouse_loop();
+        if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.input_pending) {
+            t.event("menu_after", &[("open", self.is_menu_open as i64), ("armed", t.armed as i64), ("button", self.shell.mouse_click_button as i64)]);
+            t.input_pending = false;
+        }
+        if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && !t.armed && !self.is_menu_open) {
+            t.complete("no_walk_selected");
+        }
         self.minimap_loop();
         // Java 9466-9467 then 9580: the entity movement pass runs before
         // the camera pass, so the orbit camera and minimap follow the walk.
@@ -10098,6 +11199,15 @@ impl Client {
         for i in 0..5 {
             self.cam_shake_cycle[i] += 1;
         }
+        if self.revision.is_289() {
+            // J:6067-6071, after input consumption and before keepalive.
+            self.shell.idle_cycles += 1;
+            if self.shell.idle_cycles > 4500 {
+                self.shell.idle_cycles -= 500;
+                self.logout_timer = 250;
+                self.out.p1_enc(self.client_opcode(ClientProt::IDLE_TIMER));
+            }
+        }
         // Dead-server watchdog, wall-clock: the 20 ms pass count is not a
         // clock once the host parks the slot (750 passes at one pass per
         // ~600 ms would take ~450 s); elapsed time since the last response
@@ -10108,7 +11218,7 @@ impl Client {
 
         self.no_timeout_timer += 1;
         if self.no_timeout_timer > 50 {
-            self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
+            self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
         }
 
         let write_result = if let Some(stream) = self.stream.as_mut() {
@@ -10120,6 +11230,10 @@ impl Client {
         } else {
             None
         };
+        if let Some(t) = self.shell.ground_trace.as_mut().filter(|t| t.active() && t.pending_write) {
+            t.event("write", &[("stream", self.stream.is_some() as i64), ("result", match &write_result { Some(Ok(())) => 1, Some(Err(_)) => -1, None => 0 })]);
+            t.complete(match &write_result { Some(Ok(())) => "stream_write_ok", Some(Err(_)) => "stream_write_error", None => "no_stream_write" });
+        }
         match write_result {
             Some(Ok(())) => {
                 self.out.pos = 0;
@@ -10475,6 +11589,7 @@ impl Client {
         if !self.already_started {
             self.maininit_with_progress(Some(&mut |c, m, p| renderer.draw_progress(c, m, p)));
         }
+        let _mouse_recorder = self.shell.start_mouse_recorder();
         while self.shell.state >= 0 {
             if self.shell.state > 0 {
                 self.shell.state -= 1;
@@ -10856,6 +11971,17 @@ impl Client {
     /// alloc so `psize` is the frame; tests that skip the socket use the
     /// payload length when `psize` is unset.
     fn inbound_end(&self, payload: &Packet) -> usize {
+        if let Some(end) = payload.frame_end() {
+            return end;
+        }
+        // Compatibility for socket-free callers with an explicit nonzero
+        // psize. Production always stamps frame_end, including declared zero.
+        // Never silently shorten an impossible R289 declaration to allocation.
+        if self.revision.is_289() && self.psize != 0 {
+            let end = usize::try_from(self.psize).expect("incomplete frame header");
+            assert!(end <= payload.length(), "declared frame exceeds storage");
+            return end;
+        }
         let psize = self.psize as usize;
         if psize > 0 && psize <= payload.length() {
             psize
@@ -10864,15 +11990,123 @@ impl Client {
         }
     }
 
-    /// One `UPDATE_INV_*` slot: `g2` id + `g1` count, with `255` promoting
-    /// to `g4` (TS `UPDATE_INV_FULL` / `UPDATE_INV_PARTIAL`).
-    fn read_inv_count(payload: &mut Packet) -> (i32, i32) {
+    /// Require `n` bytes still available inside the declared frame end.
+    /// Panics on shortfall so `handle_packet` maps it to T2 + logout without
+    /// publishing partial inventory state.
+    fn require_frame_bytes(payload: &Packet, end: usize, n: usize) {
+        if payload.pos + n > end {
+            panic!("inventory frame truncated or overrun past psize");
+        }
+    }
+
+    /// One `UPDATE_INV_*` slot bounded to the declared frame end: `g2` id +
+    /// `g1` count, with `255` promoting to `g4` (same on 274 and 289).
+    fn read_inv_count_bounded(payload: &mut Packet, end: usize) -> (i32, i32) {
+        Self::require_frame_bytes(payload, end, 2);
         let id = payload.g2();
+        Self::require_frame_bytes(payload, end, 1);
         let mut count = payload.g1();
         if count == 255 {
+            Self::require_frame_bytes(payload, end, 4);
             count = payload.g4();
         }
         (id, count)
+    }
+
+    /// Full inventory replace. 274 uses `g1` entry count; 289 uses `g2`.
+    /// Decodes entirely within `[0, psize)` into a staging buffer, then
+    /// publishes once. Overrun/truncation panics before any slot write.
+    fn apply_update_inv_full(&mut self, payload: &mut Packet, count_is_g2: bool) {
+        self.redraw_side = true;
+        let end = self.inbound_end(payload);
+
+        Self::require_frame_bytes(payload, end, 2);
+        let com_id = payload.g2();
+        let size = if count_is_g2 {
+            Self::require_frame_bytes(payload, end, 2);
+            payload.g2()
+        } else {
+            Self::require_frame_bytes(payload, end, 1);
+            payload.g1()
+        };
+
+        let mut slots = Vec::with_capacity(size.max(0) as usize);
+        for _ in 0..size {
+            slots.push(Self::read_inv_count_bounded(payload, end));
+        }
+        // R289: exact declared payload end before any inventory publication.
+        // 274 retains historical allowance for leftover pad inside psize.
+        if self.revision.is_289() && payload.pos != end {
+            panic!("R289 UPDATE_INV_FULL must consume exact declared payload end");
+        }
+
+        if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
+            .get_mut(com_id as usize)
+            .and_then(|o| o.as_mut())
+            .map(Arc::make_mut)
+        {
+            if let (Some(link_types), Some(link_numbers)) =
+                (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut())
+            {
+                let n = size.min(link_types.len() as i32) as usize;
+                for i in 0..n {
+                    link_types[i] = slots[i].0;
+                    link_numbers[i] = slots[i].1;
+                }
+                for i in n..link_types.len() {
+                    link_types[i] = 0;
+                    link_numbers[i] = 0;
+                }
+            }
+        }
+    }
+
+    /// Partial inventory update. 274 uses `g1` slot; 289 uses `gsmart` slot.
+    /// Stages every complete entry inside the declared frame, then commits
+    /// once — a truncated later entry does not leave earlier slots applied.
+    fn apply_update_inv_partial(&mut self, payload: &mut Packet, slot_is_gsmart: bool) {
+        self.redraw_side = true;
+        let end = self.inbound_end(payload);
+
+        Self::require_frame_bytes(payload, end, 2);
+        let com_id = payload.g2();
+
+        let mut staged: Vec<(i32, i32, i32)> = Vec::new();
+        while payload.pos < end {
+            let slot = if slot_is_gsmart {
+                // gsmart peeks one byte then consumes 1 or 2.
+                Self::require_frame_bytes(payload, end, 1);
+                let first = payload.data()[payload.pos];
+                if first < 0x80 {
+                    payload.g1()
+                } else {
+                    Self::require_frame_bytes(payload, end, 2);
+                    payload.g2() - 0x8000
+                }
+            } else {
+                Self::require_frame_bytes(payload, end, 1);
+                payload.g1()
+            };
+            let (id, count) = Self::read_inv_count_bounded(payload, end);
+            staged.push((slot, id, count));
+        }
+
+        if let Some(inv) = Arc::make_mut(&mut self.ifaces_mut)
+            .get_mut(com_id as usize)
+            .and_then(|o| o.as_mut())
+            .map(Arc::make_mut)
+        {
+            if let (Some(link_types), Some(link_numbers)) =
+                (inv.link_obj_type.as_mut(), inv.link_obj_number.as_mut())
+            {
+                for (slot, id, count) in staged {
+                    if slot >= 0 && (slot as usize) < link_types.len() {
+                        link_types[slot as usize] = id;
+                        link_numbers[slot as usize] = count;
+                    }
+                }
+            }
+        }
     }
 }
 

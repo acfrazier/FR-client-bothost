@@ -507,6 +507,14 @@ impl Renderer {
                     s.plot_sprite(&mut surface, client.cross_x - 8 - 4, client.cross_y - 8 - 4);
                 }
             } else if client.cross_mode == 2 {
+                // Primary 289 J:1773-1778: count drawn op crosshairs only.
+                if client.revision().is_289() {
+                    client.outbound_289.cyclelogic5 += 1;
+                    if client.outbound_289.cyclelogic5 > 57 {
+                        client.outbound_289.cyclelogic5 = 0;
+                        client.out.p1_enc(client.client_opcode(crate::io::ClientProt::ANTICHEAT_CYCLELOGIC5));
+                    }
+                }
                 let idx = (client.cross_cycle / 100) as usize + 4;
                 if let Some(s) = self.media.cross.get(idx).and_then(|o| o.as_ref()) {
                     s.plot_sprite(&mut surface, client.cross_x - 8 - 4, client.cross_y - 8 - 4);
@@ -522,6 +530,13 @@ impl Renderer {
             }
             if client.is_menu_open && client.menu_area == 0 {
                 self.draw_minimenu(client, &mut surface);
+            }
+            // R289 Java:1799-1800: multiway HUD, headicons[1] at (472,296).
+            // Keep the default R274 presentation unchanged.
+            if client.revision().is_289() && client.in_multizone == 1 {
+                if let Some(icon) = self.media.headicons[1].as_ref() {
+                    icon.plot_sprite(&mut surface, 472, 296);
+                }
             }
             // TS 4901-4911: the reboot countdown line, drawn after the
             // private-chat overlay (which reserves its row when active).
@@ -708,7 +723,8 @@ impl Renderer {
                 client.cyclelogic6 += 1;
                 if client.cyclelogic6 > 122 {
                     client.cyclelogic6 = 0;
-                    client.out.p1_enc(ClientProt::ANTICHEAT_CYCLELOGIC6.id);
+                    client.out
+                        .p1_enc(client.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC6));
                     client.out.p1(62);
                 }
             }
@@ -937,7 +953,9 @@ impl Renderer {
         if self.cyclelogic1 > 1174 {
             self.cyclelogic1 = 0;
 
-            client.out.p1_enc(ClientProt::ANTICHEAT_CYCLELOGIC1.id);
+            client
+                .out
+                .p1_enc(client.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC1));
             client.out.p1(0);
             let start = client.out.pos;
             if (random_float() * 2.0) as i32 == 0 {
@@ -3034,6 +3052,25 @@ impl Renderer {
                         Colour::DARKBLUE,
                     );
                 }
+            } else if client.revision().is_289() && client.tut_com_message.is_some() {
+                // Primary 289 method129 (5273-5275): pending text replaces
+                // interfaces/chat, even after the tutorial closes or if empty.
+                if let Some(b12) = self.media.b12.as_ref() {
+                    b12.centre_string(
+                        &mut surface,
+                        client.tut_com_message.as_deref(),
+                        239,
+                        40,
+                        Colour::BLACK,
+                    );
+                    b12.centre_string(
+                        &mut surface,
+                        Some("Click to continue"),
+                        239,
+                        60,
+                        Colour::DARKBLUE,
+                    );
+                }
             } else if client.chat_modal_id != -1 {
                 // TS 11142-11146: a chat interface replaces the chat lines
                 // (the chatback frame still plots underneath it).
@@ -3295,7 +3332,9 @@ impl Renderer {
     pub(crate) fn draw_icons(&mut self, client: &mut Client) {
         if client.tut_flash_icon != -1 && client.tut_flash_icon == client.active_icon {
             client.tut_flash_icon = -1;
-            client.out.p1_enc(ClientProt::TUT_CLICKSIDE.id);
+            client
+                .out
+                .p1_enc(client.client_opcode(ClientProt::TUT_CLICKSIDE));
             client.out.p1(client.active_icon);
         }
         if let Some(area) = self.area_backhmid1.as_mut() {
@@ -4175,7 +4214,9 @@ impl Renderer {
         if self.cyclelogic3 > 112 {
             self.cyclelogic3 = 0;
 
-            client.out.p1_enc(ClientProt::ANTICHEAT_CYCLELOGIC3.id);
+            client
+                .out
+                .p1_enc(client.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC3));
             client.out.p1(50);
         }
     }
