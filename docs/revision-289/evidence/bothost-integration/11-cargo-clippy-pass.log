@@ -1,0 +1,133 @@
+    Checking client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/vendor/fr-client-rust/crates/client)
+    Checking client-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/vendor/fr-client-rust/crates/client-play)
+error: manual implementation of `.is_multiple_of()`
+  --> crates/client/tests/revision_289_stage2.rs:74:13
+   |
+74 |     assert!(h.len() % 2 == 0, "odd hex length");
+   |             ^^^^^^^^^^^^^^^^ help: replace with: `h.len().is_multiple_of(2)`
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_is_multiple_of
+   = note: `-D clippy::manual-is-multiple-of` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::manual_is_multiple_of)]`
+
+error: casting to the same type is unnecessary (`usize` -> `usize`)
+   --> crates/client/tests/revision_289_stage2.rs:566:31
+    |
+566 |     let data = c.out.data()[..c.out.pos as usize].to_vec();
+    |                               ^^^^^^^^^^^^^^^^^^ help: try: `c.out.pos`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unnecessary_cast
+    = note: `-D clippy::unnecessary-cast` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::unnecessary_cast)]`
+
+error: casting to the same type is unnecessary (`usize` -> `usize`)
+   --> crates/client/tests/revision_289_stage2.rs:671:34
+    |
+671 |     let data = loginout.data()[..loginout.pos as usize].to_vec();
+    |                                  ^^^^^^^^^^^^^^^^^^^^^ help: try: `loginout.pos`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unnecessary_cast
+
+error: field assignment outside of initializer for an instance created with Default::default()
+    --> crates/client/tests/revision_289_stage2.rs:1346:5
+     |
+1346 |     player.appearance = [1; 12];
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+note: consider initializing the variable with `client::client::ClientPlayer { appearance: [1; 12], colour: [2; 5], transmog: Some(321), ..Default::default() }` and removing relevant reassignments
+    --> crates/client/tests/revision_289_stage2.rs:1345:5
+     |
+1345 |     let mut player = ClientPlayer::default();
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#field_reassign_with_default
+     = note: `-D clippy::field-reassign-with-default` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::field_reassign_with_default)]`
+
+error: casting to the same type is unnecessary (`i64` -> `i64`)
+    --> crates/client/tests/revision_289_stage2.rs:2101:32
+     |
+2101 |         c.ignore_userhash[0] = bob as i64;
+     |                                ^^^^^^^^^^ help: try: `bob`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unnecessary_cast
+
+error: could not compile `client` (test "revision_289_stage2") due to 5 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: field assignment outside of initializer for an instance created with Default::default()
+  --> crates/client/tests/revision_289_stage1.rs:44:5
+   |
+44 |     welcome.id = 99;
+   |     ^^^^^^^^^^^^^^^^
+   |
+note: consider initializing the variable with `client::config::IfType { id: 99, layer_id: 42, client_code: 650, ..Default::default() }` and removing relevant reassignments
+  --> crates/client/tests/revision_289_stage1.rs:43:5
+   |
+43 |     let mut welcome = IfType::default();
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#field_reassign_with_default
+   = note: `-D clippy::field-reassign-with-default` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::field_reassign_with_default)]`
+
+error: field assignment outside of initializer for an instance created with Default::default()
+  --> crates/client/tests/revision_289_stage1.rs:71:5
+   |
+71 |     welcome.id = 99;
+   |     ^^^^^^^^^^^^^^^^
+   |
+note: consider initializing the variable with `client::config::IfType { id: 99, layer_id: 142, client_code: 655, ..Default::default() }` and removing relevant reassignments
+  --> crates/client/tests/revision_289_stage1.rs:70:5
+   |
+70 |     let mut welcome = IfType::default();
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#field_reassign_with_default
+
+error: field assignment outside of initializer for an instance created with Default::default()
+   --> crates/client/tests/revision_289_stage1.rs:154:9
+    |
+154 |         m.link_obj_type = Some(vec![0; n]);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: consider initializing the variable with `client::config::IfTypeMut { link_obj_type: Some(vec![0; n]), link_obj_number: Some(vec![0; n]), ..Default::default() }` and removing relevant reassignments
+   --> crates/client/tests/revision_289_stage1.rs:153:9
+    |
+153 |         let mut m = IfTypeMut::default();
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#field_reassign_with_default
+
+error: manual implementation of `.is_multiple_of()`
+   --> crates/client/tests/revision_289_stage1.rs:180:13
+    |
+180 |     assert!(h.len() % 2 == 0, "odd hex length");
+    |             ^^^^^^^^^^^^^^^^ help: replace with: `h.len().is_multiple_of(2)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_is_multiple_of
+    = note: `-D clippy::manual-is-multiple-of` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::manual_is_multiple_of)]`
+
+error: field assignment outside of initializer for an instance created with Default::default()
+   --> crates/client/tests/revision_289_stage1.rs:882:5
+    |
+882 |     normal.id = 99;
+    |     ^^^^^^^^^^^^^^^
+    |
+note: consider initializing the variable with `client::config::IfType { id: 99, layer_id: 42, client_code: 650, ..Default::default() }` and removing relevant reassignments
+   --> crates/client/tests/revision_289_stage1.rs:881:5
+    |
+881 |     let mut normal = IfType::default();
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#field_reassign_with_default
+
+error: field assignment outside of initializer for an instance created with Default::default()
+   --> crates/client/tests/revision_289_stage1.rs:886:5
+    |
+886 |     warning.id = 199;
+    |     ^^^^^^^^^^^^^^^^^
+    |
+note: consider initializing the variable with `client::config::IfType { id: 199, layer_id: 142, client_code: 655, ..Default::default() }` and removing relevant reassignments
+   --> crates/client/tests/revision_289_stage1.rs:885:5
+    |
+885 |     let mut warning = IfType::default();
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#field_reassign_with_default
+
+error: could not compile `client` (test "revision_289_stage1") due to 6 previous errors

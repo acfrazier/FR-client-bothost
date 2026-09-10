@@ -1,0 +1,21 @@
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/vendor/fr-client-rust/crates/client)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.77s
+     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/client-116207f0c42a23ac)
+
+running 1 test
+
+thread 'render::backend::gpu::overlay_tests::npc_hint_production_gpu_blink_move_clear_cache_and_freeze' (2146578) panicked at crates/client/src/render/backend/gpu_overlay_tests.rs:222:5:
+assertion `left == right` failed: freeze overlay upload must retain the distinctive held minimap
+  left: 13378048
+ right: 43537
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test render::backend::gpu::overlay_tests::npc_hint_production_gpu_blink_move_clear_cache_and_freeze ... FAILED
+
+failures:
+
+failures:
+    render::backend::gpu::overlay_tests::npc_hint_production_gpu_blink_move_clear_cache_and_freeze
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 92 filtered out; finished in 0.36s
+
+error: test failed, to rerun pass `-p client --lib`

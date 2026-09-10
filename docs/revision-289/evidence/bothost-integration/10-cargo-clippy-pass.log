@@ -1,0 +1,14 @@
+    Checking client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/vendor/fr-client-rust/crates/client)
+    Checking client-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/vendor/fr-client-rust/crates/client-play)
+error: using `chunks_exact` with a constant chunk size
+   --> crates/client/tests/revision_289_outbound.rs:502:34
+    |
+502 |     for (frame, opcode) in bytes.chunks_exact(7).zip([234, 67]) {
+    |                                  ^^^^^^^^^^^^^^^ help: consider using `as_chunks` instead: `as_chunks::<7>().0.iter()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#chunks_exact_to_as_chunks
+    = note: `-D clippy::chunks-exact-to-as-chunks` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::chunks_exact_to_as_chunks)]`
+
+error: could not compile `client` (test "revision_289_outbound") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...

@@ -1,0 +1,15 @@
+    Checking client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/vendor/fr-client-rust/crates/client)
+error: variable does not need to be mutable
+    --> crates/client/src/client/client.rs:5083:13
+     |
+5083 |         let mut publication = R289Publication {
+     |             ----^^^^^^^^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `-D unused-mut` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(unused_mut)]`
+
+error: could not compile `client` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `client` (lib test) due to 1 previous error

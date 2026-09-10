@@ -1,0 +1,193 @@
+   Compiling unicode-ident v1.0.24
+    Checking bitflags v2.13.1
+    Checking objc2-encode v4.1.0
+    Checking cfg-if v1.0.4
+    Checking core-foundation-sys v0.8.7
+    Checking once_cell v1.21.4
+    Checking libc v0.2.189
+    Checking raw-window-handle v0.6.2
+    Checking log v0.4.33
+    Checking libm v0.2.16
+    Checking foldhash v0.2.0
+    Checking bit-vec v0.9.1
+    Checking hashbrown v0.17.1
+    Checking unicode-width v0.2.2
+    Checking equivalent v1.0.2
+    Checking typenum v1.20.1
+   Compiling proc-macro2 v1.0.107
+    Checking hexf-parse v0.2.1
+    Checking arrayvec v0.7.8
+    Checking scopeguard v1.2.0
+    Checking hashbrown v0.16.1
+    Checking smallvec v1.15.2
+    Checking rustc-hash v1.1.0
+    Checking bit-set v0.9.1
+    Checking objc-sys v0.3.5
+    Checking profiling v1.0.18
+    Checking objc2 v0.6.4
+    Checking lock_api v0.4.14
+    Checking codespan-reporting v0.13.1
+    Checking fastrand v2.5.0
+    Checking tracing-core v0.1.36
+    Checking foreign-types-shared v0.3.1
+    Checking bitflags v1.3.2
+    Checking dispatch v0.2.0
+    Checking objc2 v0.5.2
+    Checking pin-project-lite v0.2.17
+    Checking adler2 v2.0.1
+    Checking simd-adler32 v0.3.10
+    Checking zune-core v0.5.3
+    Checking itoa v1.0.18
+    Checking bytes v1.12.1
+   Compiling quote v1.0.47
+    Checking indexmap v2.14.0
+    Checking pxfm v0.1.30
+    Checking parking_lot_core v0.9.12
+    Checking getrandom v0.2.17
+    Checking errno v0.3.14
+    Checking cpufeatures v0.2.17
+    Checking getrandom v0.4.3
+    Checking generic-array v0.14.7
+    Checking core-foundation v0.9.4
+    Checking security-framework-sys v2.17.0
+    Checking core-foundation v0.10.1
+    Checking rustix v1.1.4
+    Checking rand_core v0.6.4
+   Compiling syn v3.0.3
+   Compiling syn v2.0.119
+    Checking parking_lot v0.12.5
+    Checking tracing v0.1.44
+    Checking zune-jpeg v0.5.15
+    Checking miniz_oxide v0.8.9
+    Checking num-traits v0.2.19
+    Checking http v1.5.0
+    Checking core-graphics-types v0.1.3
+    Checking security-framework v3.7.0
+    Checking bzip2-sys v0.1.13+1.0.8
+    Checking crc32fast v1.5.0
+    Checking httparse v1.10.1
+    Checking dasp_sample v0.11.0
+    Checking byteorder-lite v0.1.0
+    Checking block2 v0.5.1
+    Checking mach2 v0.6.0
+    Checking block2 v0.6.2
+    Checking dispatch2 v0.3.1
+    Checking block-buffer v0.10.4
+    Checking crypto-common v0.1.7
+    Checking objc2-core-audio-types v0.3.2
+    Checking byteorder v1.5.0
+    Checking objc2-foundation v0.2.2
+    Checking data-encoding v2.11.1
+    Checking digest v0.10.7
+    Checking cursor-icon v1.2.0
+    Checking dpi v0.1.2
+    Checking static_assertions v1.1.0
+    Checking num-integer v0.1.47
+    Checking utf-8 v0.7.6
+    Checking sha1 v0.10.7
+    Checking smol_str v0.2.2
+    Checking tempfile v3.27.0
+    Checking sha2 v0.10.9
+    Checking flate2 v1.1.9
+    Checking objc2-core-foundation v0.3.2
+    Checking bzip2 v0.4.4
+    Checking rustysynth v1.3.6
+    Checking pollster v0.4.0
+    Checking native-tls v0.2.18
+    Checking num-bigint v0.4.8
+    Checking moxcms v0.8.1
+   Compiling bytemuck_derive v1.12.0
+   Compiling thiserror-impl v2.0.20
+   Compiling foreign-types-macros v0.2.4
+   Compiling zerocopy-derive v0.8.56
+   Compiling thiserror-impl v1.0.69
+    Checking objc2-foundation v0.3.2
+    Checking objc2-core-graphics v0.3.2
+    Checking foreign-types v0.5.0
+    Checking core-graphics v0.23.2
+    Checking objc2-app-kit v0.2.2
+    Checking thiserror v1.0.69
+    Checking bytemuck v1.25.2
+    Checking thiserror v2.0.20
+    Checking zerocopy v0.8.56
+    Checking wgpu-types v29.0.4
+    Checking objc2-metal v0.3.2
+    Checking objc2-core-audio v0.3.2
+    Checking objc2-audio-toolbox v0.3.2
+    Checking image v0.25.10
+    Checking coreaudio-rs v0.14.2
+    Checking cpal v0.18.2
+    Checking winit v0.30.13
+    Checking half v2.7.1
+    Checking ppv-lite86 v0.2.21
+    Checking rand_chacha v0.3.1
+    Checking naga v29.0.4
+    Checking rand v0.8.8
+    Checking objc2-quartz-core v0.3.2
+    Checking tungstenite v0.24.0
+    Checking raw-window-metal v1.1.0
+    Checking softbuffer v0.4.8
+    Checking wgpu-naga-bridge v29.0.4
+    Checking wgpu-hal v29.0.4
+    Checking wgpu-core-deps-apple v29.0.4
+    Checking wgpu-core v29.0.4
+    Checking wgpu v29.0.4
+    Checking client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/vendor/fr-client-rust/crates/client)
+error: manually filling a slice
+    --> crates/client/src/client/client.rs:5018:17
+     |
+5018 | /                 for object in types {
+5019 | |                     *object = 0;
+5020 | |                 }
+     | |_________________^ help: try: `types.fill(0);`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_slice_fill
+     = note: `-D clippy::manual-slice-fill` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::manual_slice_fill)]`
+
+error: field assignment outside of initializer for an instance created with Default::default()
+    --> crates/client/src/client/client.rs:5086:9
+     |
+5086 |         publication.iface = true;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+note: consider initializing the variable with `client::client::R289Publication { iface: true, ..Default::default() }` and removing relevant reassignments
+    --> crates/client/src/client/client.rs:5085:9
+     |
+5085 |         let mut publication = R289Publication::default();
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#field_reassign_with_default
+     = note: `-D clippy::field-reassign-with-default` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::field_reassign_with_default)]`
+
+error: could not compile `client` (lib) due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: used `assert_eq!` with a literal bool
+   --> crates/client/src/io/cache_289.rs:376:9
+    |
+376 |         assert_eq!(bytes.len() >= 6, true);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#bool_assert_comparison
+    = note: `-D clippy::bool-assert-comparison` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::bool_assert_comparison)]`
+help: replace it with `assert!(..)`
+    |
+376 -         assert_eq!(bytes.len() >= 6, true);
+376 +         assert!(bytes.len() >= 6);
+    |
+
+error: field assignment outside of initializer for an instance created with Default::default()
+  --> crates/client/src/render/backend/gpu_overlay_tests.rs:59:5
+   |
+59 |     npc.r#type = Some(0); // is_ready; no NPC config/model needed for a hint
+   |     ^^^^^^^^^^^^^^^^^^^^^
+   |
+note: consider initializing the variable with `dash3d::client_npc::ClientNpc { type: Some(0), ..Default::default() }` and removing relevant reassignments
+  --> crates/client/src/render/backend/gpu_overlay_tests.rs:58:5
+   |
+58 |     let mut npc = ClientNpc::default();
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#field_reassign_with_default
+
+error: could not compile `client` (lib test) due to 4 previous errors

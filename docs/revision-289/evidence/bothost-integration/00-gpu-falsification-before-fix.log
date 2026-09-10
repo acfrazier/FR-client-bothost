@@ -1,0 +1,73 @@
+   Compiling syn v3.0.3
+   Compiling objc2-core-foundation v0.3.2
+   Compiling objc2-foundation v0.3.2
+   Compiling bytemuck_derive v1.12.0
+   Compiling thiserror-impl v2.0.20
+   Compiling bytemuck v1.25.2
+   Compiling thiserror v2.0.20
+   Compiling naga v29.0.4
+   Compiling wgpu-types v29.0.4
+   Compiling image v0.25.10
+   Compiling objc2-metal v0.3.2
+   Compiling objc2-quartz-core v0.3.2
+   Compiling raw-window-metal v1.1.0
+   Compiling wgpu-naga-bridge v29.0.4
+   Compiling wgpu-hal v29.0.4
+   Compiling wgpu-core-deps-apple v29.0.4
+   Compiling wgpu-core v29.0.4
+   Compiling wgpu v29.0.4
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/vendor/fr-client-rust/crates/client)
+error[E0308]: mismatched types
+   --> crates/client/src/client/actor_289.rs:464:38
+    |
+464 | ...                   Some(appearance.apply(player, &c.cache));
+    |                       ---- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Box<Packet>`, found `Packet`
+    |                       |
+    |                       arguments to this enum variant are incorrect
+    |
+    = note: expected struct `Box<packet::Packet>`
+               found struct `packet::Packet`
+    = note: for more on the distinction between the stack and the heap, read https://doc.rust-lang.org/book/ch15-01-box.html, https://doc.rust-lang.org/rust-by-example/std/box.html, and https://doc.rust-lang.org/std/boxed/index.html
+help: the type constructed contains `packet::Packet` due to the type of the argument passed
+   --> crates/client/src/client/actor_289.rs:464:33
+    |
+464 | ...                   Some(appearance.apply(player, &c.cache));
+    |                       ^^^^^----------------------------------^
+    |                            |
+    |                            this argument influences the type of `Some`
+note: tuple variant defined here
+   --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/option.rs:606:4
+help: store this in the heap by calling `Box::new`
+    |
+464 |                                 Some(Box::new(appearance.apply(player, &c.cache)));
+    |                                      +++++++++                                  +
+
+error[E0308]: mismatched types
+   --> crates/client/src/client/actor_289.rs:582:54
+    |
+582 |             c.player_appearance_buffer[index] = Some(raw);
+    |                                                 ---- ^^^ expected `Box<Packet>`, found `Packet`
+    |                                                 |
+    |                                                 arguments to this enum variant are incorrect
+    |
+    = note: expected struct `Box<packet::Packet>`
+               found struct `packet::Packet`
+    = note: for more on the distinction between the stack and the heap, read https://doc.rust-lang.org/book/ch15-01-box.html, https://doc.rust-lang.org/rust-by-example/std/box.html, and https://doc.rust-lang.org/std/boxed/index.html
+help: the type constructed contains `packet::Packet` due to the type of the argument passed
+   --> crates/client/src/client/actor_289.rs:582:49
+    |
+582 |             c.player_appearance_buffer[index] = Some(raw);
+    |                                                 ^^^^^---^
+    |                                                      |
+    |                                                      this argument influences the type of `Some`
+note: tuple variant defined here
+   --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/option.rs:606:4
+help: store this in the heap by calling `Box::new`
+    |
+582 |             c.player_appearance_buffer[index] = Some(Box::new(raw));
+    |                                                      +++++++++   +
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `client` (lib) due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `client` (lib test) due to 2 previous errors

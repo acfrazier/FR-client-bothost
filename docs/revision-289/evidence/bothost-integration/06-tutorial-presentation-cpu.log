@@ -1,0 +1,12 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running tests/tutorial_presentation.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/tutorial_presentation-de62ba23764dc053)
+
+running 5 tests
+test pending_replaces_tutorial_on_chatback_with_primary_colours ... ok
+test social_then_amount_still_outrank_pending_message ... ok
+test pending_redraws_each_frame_without_other_dirty_regions ... ok
+test legacy_274_keeps_base_interface_order_and_no_pending_frame_dirtiness ... ok
+test pending_empty_and_nonempty_replace_all_underlying_modes_then_ack_restores ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+

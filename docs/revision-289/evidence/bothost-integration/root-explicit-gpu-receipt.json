@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "client",
+    "--",
+    "--ignored"
+  ],
+  "started_at": "2026-09-10T13:47:23.769350+00:00",
+  "runner": "root",
+  "skip_gpu": false,
+  "note": "Run both ignored GPU tests after the full candidate workspace suite.",
+  "exit_code": 0,
+  "finished_at": "2026-09-10T13:47:32.487568+00:00"
+}

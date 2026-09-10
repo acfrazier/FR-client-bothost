@@ -1,0 +1,37 @@
+    Checking client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/vendor/fr-client-rust/crates/client)
+error: casting to the same type is unnecessary (`usize` -> `usize`)
+   --> crates/client/tests/revision_289_stage3.rs:263:29
+    |
+263 |     let d = &c.out.data()[..c.out.pos as usize];
+    |                             ^^^^^^^^^^^^^^^^^^ help: try: `c.out.pos`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unnecessary_cast
+    = note: `-D clippy::unnecessary-cast` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::unnecessary_cast)]`
+
+error: casting to the same type is unnecessary (`usize` -> `usize`)
+   --> crates/client/tests/revision_289_stage3.rs:505:29
+    |
+505 |     let d = &c.out.data()[..c.out.pos as usize];
+    |                             ^^^^^^^^^^^^^^^^^^ help: try: `c.out.pos`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unnecessary_cast
+
+error: casting to the same type is unnecessary (`usize` -> `usize`)
+   --> crates/client/tests/revision_289_stage3.rs:662:29
+    |
+662 |     let d = &c.out.data()[..c.out.pos as usize];
+    |                             ^^^^^^^^^^^^^^^^^^ help: try: `c.out.pos`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unnecessary_cast
+
+error: casting to the same type is unnecessary (`i32` -> `i32`)
+   --> crates/client/tests/revision_289_stage3.rs:739:16
+    |
+739 |     assert_ne!(ServerProt289::LOGOUT as i32, ClientProt289::CLOSE_MODAL.id);
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: try: `ServerProt289::LOGOUT`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unnecessary_cast
+
+error: could not compile `client` (test "revision_289_stage3") due to 4 previous errors
+warning: build failed, waiting for other jobs to finish...
