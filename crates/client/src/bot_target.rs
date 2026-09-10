@@ -230,7 +230,8 @@ mod tests {
             );
             assert!(operator_home_from(missing.clone(), || missing.clone()).is_err());
             assert_eq!(
-                operator_home_from(Err(VarError::NotUnicode("x".into())), || Ok("/p".into())).unwrap(),
+                operator_home_from(Err(VarError::NotUnicode("x".into())), || Ok("/p".into()))
+                    .unwrap(),
                 "/p"
             );
         }
@@ -247,11 +248,18 @@ mod tests {
     #[test]
     fn operator_home_never_queries_profile_for_explicit_home() {
         assert_eq!(
-            super::operator_home_from(Ok("/explicit".into()), || panic!("unexpected USERPROFILE read")).unwrap(),
+            super::operator_home_from(Ok("/explicit".into()), || panic!(
+                "unexpected USERPROFILE read"
+            ))
+            .unwrap(),
             "/explicit"
         );
         #[cfg(not(windows))]
-        assert!(super::operator_home_from(Err(std::env::VarError::NotPresent), || panic!("Unix queried USERPROFILE")).is_err());
+        assert!(
+            super::operator_home_from(Err(std::env::VarError::NotPresent), || panic!(
+                "Unix queried USERPROFILE"
+            ))
+            .is_err()
+        );
     }
-
 }

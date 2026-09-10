@@ -866,12 +866,22 @@ impl GpuBackend {
         let chrome_bytes_per_row = (FRAME_W * 4).div_ceil(256) * 256;
         let minimap_bytes_per_row = (MINIMAP_W * 4).div_ceil(256) * 256;
 
-        let textures = [&scene_texture, &depth_texture, &frame_texture_a, &frame_texture_b,
-            &present_texture, &chrome_texture, &minimap_texture].into_iter().map(crate::profiling::texture_bytes).sum();
-        let buffers = brightness_buf.size()+chrome_vertex_buf.size()+minimap_vertex_buf.size();
+        let textures = [
+            &scene_texture,
+            &depth_texture,
+            &frame_texture_a,
+            &frame_texture_b,
+            &present_texture,
+            &chrome_texture,
+            &minimap_texture,
+        ]
+        .into_iter()
+        .map(crate::profiling::texture_bytes)
+        .sum();
+        let buffers = brightness_buf.size() + chrome_vertex_buf.size() + minimap_vertex_buf.size();
         Ok(GpuBackend {
-            _gpu_storage: crate::profiling::Allocation::new(buffers,textures),
-            vertex_storage: crate::profiling::Allocation::new(vertex_buf.size(),0),
+            _gpu_storage: crate::profiling::Allocation::new(buffers, textures),
+            vertex_storage: crate::profiling::Allocation::new(vertex_buf.size(), 0),
             context,
             scene_texture,
             scene_view,
@@ -994,7 +1004,7 @@ impl GpuBackend {
         }
         let bytes = vertices.len() * std::mem::size_of::<GpuVertex>();
         if bytes > self.vertex_buf_capacity {
-            let storage = crate::profiling::Allocation::new(bytes as u64,0);
+            let storage = crate::profiling::Allocation::new(bytes as u64, 0);
             self.vertex_buf_capacity = bytes;
             self.vertex_buf = self.context.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("r274 scene vertices"),
@@ -1753,7 +1763,8 @@ mod tests {
     #[test]
     fn viewport_overlay_moves_and_clears_without_chrome_redraw() {
         use crate::render::backend::{FrameOutput, RenderBackend};
-        let mut backend = super::GpuBackend::try_new().expect("GPU required for overlay regression");
+        let mut backend =
+            super::GpuBackend::try_new().expect("GPU required for overlay regression");
         let mut r = crate::render::Renderer::new(false);
         backend.last_kind = FrameKind::Game;
         // A newly allocated GPU texture is zero-initialized. Hold it as
@@ -1765,31 +1776,44 @@ mod tests {
         let first = (4 * FRAME_W + 4) as usize;
         r.draw_area.pixels[first] = 0xff0000;
         backend.overlay_coverage[0] = 255;
-        let FrameOutput::Texture(frame) = backend.finish(&mut r) else { panic!("GPU frame"); };
+        let FrameOutput::Texture(frame) = backend.finish(&mut r) else {
+            panic!("GPU frame");
+        };
         assert_eq!(frame.read_back()[first], 0xff0000);
         let uploads = backend.chrome_upload_count();
         let minimap_pixel = (4 * FRAME_W + 550) as usize;
         assert_eq!(frame.read_back()[minimap_pixel], 0x0000ff);
         backend.minimap_live = false; // loading retains the last minimap
-        // Same live/frozen scene texture, new overlay pixels, no UI redraw.
+                                      // Same live/frozen scene texture, new overlay pixels, no UI redraw.
         r.draw_area.pixels[first] = 0;
         r.draw_area.pixels[first + 1] = 0x00ff00;
         backend.overlay_coverage[0] = 0;
         backend.overlay_coverage[1] = 255;
-        let FrameOutput::Texture(frame) = backend.finish(&mut r) else { panic!("GPU frame"); };
+        let FrameOutput::Texture(frame) = backend.finish(&mut r) else {
+            panic!("GPU frame");
+        };
         let pixels = frame.read_back();
-        assert_eq!(pixels[minimap_pixel], 0x0000ff, "freeze overlay upload must retain minimap");
+        assert_eq!(
+            pixels[minimap_pixel], 0x0000ff,
+            "freeze overlay upload must retain minimap"
+        );
         assert_eq!(pixels[first], 0, "old overlay must disappear");
         assert_eq!(pixels[first + 1], 0x00ff00, "new overlay must appear");
         assert_eq!(backend.chrome_upload_count(), uploads + 1);
         // Coverage-only removal must clear even when RGB storage is retained.
         backend.overlay_coverage[1] = 0;
-        let FrameOutput::Texture(frame) = backend.finish(&mut r) else { panic!("GPU frame"); };
+        let FrameOutput::Texture(frame) = backend.finish(&mut r) else {
+            panic!("GPU frame");
+        };
         assert_eq!(frame.read_back()[first + 1], 0);
         let uploads = backend.chrome_upload_count();
         r.draw_area.pixels[first + 1] = 0xff00ff; // invisible RGB is immaterial
         backend.finish(&mut r);
-        assert_eq!(backend.chrome_upload_count(), uploads, "unchanged visible overlay stays lazy");
+        assert_eq!(
+            backend.chrome_upload_count(),
+            uploads,
+            "unchanged visible overlay stays lazy"
+        );
     }
 
     /// Empty mesh leaves `scene_ready` false (synthetic main-modal fixture).
@@ -1809,7 +1833,11 @@ mod tests {
         let FrameOutput::Texture(frame) = backend.finish(&mut r) else {
             panic!("GPU frame");
         };
-        assert_eq!(frame.read_back()[first], 0, "sealed empty window starts black");
+        assert_eq!(
+            frame.read_back()[first],
+            0,
+            "sealed empty window starts black"
+        );
         let uploads = backend.chrome_upload_count();
         // Full-path main-modal: coverage is marked but scene_ready stays false.
         r.draw_area.pixels[first] = 0x0033_6699;

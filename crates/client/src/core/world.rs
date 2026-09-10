@@ -873,7 +873,12 @@ impl World {
             }
         }
 
-        let index = if dynamic { self.free_dynamic_sprites.pop() } else { None }.unwrap_or_else(|| {
+        let index = if dynamic {
+            self.free_dynamic_sprites.pop()
+        } else {
+            None
+        }
+        .unwrap_or_else(|| {
             let index = self.sprites.len();
             self.sprites.push(None);
             index
@@ -1023,7 +1028,7 @@ impl World {
     /// Called only by render teardown after a dynamic sprite's frame ends.
     /// Static scenery indices are never recycled.
     pub(crate) fn release_dynamic_sprite(&mut self, index: usize) {
-        if self.sprites.get(index).is_some_and(|slot|slot.is_some()) {
+        if self.sprites.get(index).is_some_and(|slot| slot.is_some()) {
             self.del_sprite(index);
             self.free_dynamic_sprites.push(index);
         }
@@ -1183,26 +1188,37 @@ mod sprite_reuse_tests {
     use super::*;
     #[test]
     fn dynamic_sprite_slots_stay_bounded_across_frames() {
-        let mut world = World::new(vec![vec![vec![0;5];5]],4,1,4);
+        let mut world = World::new(vec![vec![vec![0; 5]; 5]], 4, 1, 4);
         let mut render = crate::render::world::RenderWorld::new();
-        let static_index = world.set_sprite(64,64,0,0,0,0,1,1,1,0,0,false,0,0,0,0).unwrap();
+        let static_index = world
+            .set_sprite(64, 64, 0, 0, 0, 0, 1, 1, 1, 0, 0, false, 0, 0, 0, 0)
+            .unwrap();
         for _ in 0..1000 {
-            let index = world.set_sprite(192,192,0,0,1,1,1,1,2,0,0,true,0,0,0,0).unwrap();
-            render.set_sprite_model(&world,index,None);
-            assert_eq!(world.last_sprite_index(),Some(index));
+            let index = world
+                .set_sprite(192, 192, 0, 0, 1, 1, 1, 1, 2, 0, 0, true, 0, 0, 0, 0)
+                .unwrap();
+            render.set_sprite_model(&world, index, None);
+            assert_eq!(world.last_sprite_index(), Some(index));
             render.remove_sprites(&mut world);
             assert!(world.sprites[static_index].is_some());
-            assert_eq!(world.square(0,1,1).unwrap().sprite_count,0);
+            assert_eq!(world.square(0, 1, 1).unwrap().sprite_count, 0);
         }
-        assert_eq!(world.sprites.len(),2,"one static and one reusable dynamic slot");
+        assert_eq!(
+            world.sprites.len(),
+            2,
+            "one static and one reusable dynamic slot"
+        );
         // Repeated teardown cannot enqueue the same free index twice.
         render.remove_sprites(&mut world);
-        assert_eq!(world.free_dynamic_sprites.len(),1);
+        assert_eq!(world.free_dynamic_sprites.len(), 1);
         world.reset_map();
         assert!(world.free_dynamic_sprites.is_empty());
-        assert_eq!(world.last_sprite_index(),None);
-        assert_eq!(world.set_sprite(64,64,0,0,0,0,1,1,3,0,0,true,0,0,0,0),Some(0));
-        let independent = World::new(vec![vec![vec![0;5];5]],4,1,4);
+        assert_eq!(world.last_sprite_index(), None);
+        assert_eq!(
+            world.set_sprite(64, 64, 0, 0, 0, 0, 1, 1, 3, 0, 0, true, 0, 0, 0, 0),
+            Some(0)
+        );
+        let independent = World::new(vec![vec![vec![0; 5]; 5]], 4, 1, 4);
         assert!(independent.sprites.is_empty());
         assert!(independent.free_dynamic_sprites.is_empty());
     }

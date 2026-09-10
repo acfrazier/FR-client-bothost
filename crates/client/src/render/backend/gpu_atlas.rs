@@ -157,7 +157,10 @@ impl GpuAtlas {
         });
         let view = texture.create_view(&Default::default());
         GpuAtlas {
-            storage: crate::profiling::Allocation::new(0,crate::profiling::texture_bytes(&texture)),
+            storage: crate::profiling::Allocation::new(
+                0,
+                crate::profiling::texture_bytes(&texture),
+            ),
             texture,
             view,
             size,
@@ -272,7 +275,8 @@ impl GpuAtlas {
             },
         );
         queue.submit([encoder.finish()]);
-        let storage = crate::profiling::Allocation::new(0,crate::profiling::texture_bytes(&new_texture));
+        let storage =
+            crate::profiling::Allocation::new(0, crate::profiling::texture_bytes(&new_texture));
         self.texture = new_texture;
         self.storage = storage;
         self.view = self.texture.create_view(&Default::default());
@@ -711,7 +715,10 @@ impl GpuAssets {
             &chrome_bind_group_layout,
         );
         let mut assets = GpuAssets {
-            _model_storage: crate::profiling::Allocation::new(0,crate::profiling::texture_bytes(&model_atlas)),
+            _model_storage: crate::profiling::Allocation::new(
+                0,
+                crate::profiling::texture_bytes(&model_atlas),
+            ),
             device: device.clone(),
             queue: queue.clone(),
             model_atlas,

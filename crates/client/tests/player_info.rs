@@ -92,11 +92,7 @@ fn pack_bits(fields: &[(u32, usize)]) -> Vec<u8> {
             let shift = nbits - 8;
             out.push(((acc >> shift) & 0xff) as u8);
             nbits -= 8;
-            acc &= if nbits == 0 {
-                0
-            } else {
-                (1u64 << nbits) - 1
-            };
+            acc &= if nbits == 0 { 0 } else { (1u64 << nbits) - 1 };
         }
     }
     if nbits > 0 {
@@ -185,10 +181,7 @@ fn player_info_cached_appearance_reapplied_after_remove_reentry() {
     // Distinct boxed slots must not alias: mutating one packet body must not
     // change the other slot's stored bytes.
     let len5 = c.player_appearance_buffer[5].as_ref().unwrap().length();
-    c.player_appearance_buffer[5]
-        .as_mut()
-        .unwrap()
-        .data_mut()[18] = 0xAB; // fifth colour byte after 12 zero parts
+    c.player_appearance_buffer[5].as_mut().unwrap().data_mut()[18] = 0xAB; // fifth colour byte after 12 zero parts
     assert_ne!(
         c.player_appearance_buffer[7].as_ref().unwrap().data()[18],
         0xAB,
