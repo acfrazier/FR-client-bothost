@@ -2538,14 +2538,19 @@ impl Client {
             Ok((loaded, first)) => {
                 if first {
                     eprintln!(
-                        "274bot: loaded snapshot ({} models, {} anim records)",
-                        loaded.models, loaded.anim_records
+                        "{}bot: loaded snapshot ({} models, {} anim records)",
+                        self.revision().as_i32(),
+                        loaded.models,
+                        loaded.anim_records
                     );
                 }
                 true
             }
             Err(e) => {
-                eprintln!("274bot: snapshot load skipped: {e}");
+                eprintln!(
+                    "{}bot: snapshot load skipped: {e}",
+                    self.revision().as_i32()
+                );
                 false
             }
         };
