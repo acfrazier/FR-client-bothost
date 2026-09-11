@@ -102,6 +102,88 @@ pub(crate) fn get_av_h(
     (y00 * (128 - tile_local_z) + y11 * tile_local_z) >> 7
 }
 
+/// Project one scene point into the fixed 512×334 `area_game` surface.
+/// This is the renderer's `getOverlayPos` math without mutable projection
+/// scratch; `None` means the point is outside the playable scene or behind
+/// the camera.
+pub fn project_area_game(client: &Client, x: i32, z: i32, height: i32) -> Option<(i32, i32)> {
+    let point = project_overlay_at(client, x, z, height, 256, 167);
+    (point != (-1, -1)).then_some(point)
+}
+
+/// The eight projected corners of one live NPC's footprint-height box in
+/// overlay-canvas pixels. The ground ring comes first, followed by the top
+/// ring in the same winding. The client canvas blits `area_game` at (4, 4).
+pub fn npc_overlay_box(client: &Client, index: usize) -> Option<[(i32, i32); 8]> {
+    if !client.ingame || client.scene_state != 2 {
+        return None;
+    }
+    let npc = client.npc.get(index)?.as_deref()?;
+    if !npc.is_ready() || npc.size <= 0 || npc.height <= 0 {
+        return None;
+    }
+    let half = npc.size.checked_mul(64)?;
+    let corners = [(-half, -half), (half, -half), (half, half), (-half, half)];
+    let mut out = [(0, 0); 8];
+    for (ring, height) in [0, npc.height].into_iter().enumerate() {
+        for (corner, (dx, dz)) in corners.into_iter().enumerate() {
+            let (x, y) = project_area_game(
+                client,
+                npc.x.checked_add(dx)?,
+                npc.z.checked_add(dz)?,
+                height,
+            )?;
+            out[ring * 4 + corner] = (x.checked_add(4)?, y.checked_add(4)?);
+        }
+    }
+    Some(out)
+}
+
+fn project_overlay_at(
+    client: &Client,
+    x: i32,
+    z: i32,
+    height: i32,
+    origin_x: i32,
+    origin_y: i32,
+) -> (i32, i32) {
+    if x < 128 || z < 128 || x > 13056 || z > 13056 {
+        return (-1, -1);
+    }
+    let y = get_av_h(&client.groundh, &client.mapl, x, z, client.minusedlevel) - height;
+    let dx = x - client.cam_x;
+    let dy = y - client.cam_y;
+    let dz = z - client.cam_z;
+    let sin_pitch = Pix3D::sin_table()[(client.cam_pitch & 0x7ff) as usize];
+    let cos_pitch = Pix3D::cos_table()[(client.cam_pitch & 0x7ff) as usize];
+    let sin_yaw = Pix3D::sin_table()[(client.cam_yaw & 0x7ff) as usize];
+    let cos_yaw = Pix3D::cos_table()[(client.cam_yaw & 0x7ff) as usize];
+    let projected_x = dz
+        .wrapping_mul(sin_yaw)
+        .wrapping_add(dx.wrapping_mul(cos_yaw))
+        >> 16;
+    let depth_yaw = dz
+        .wrapping_mul(cos_yaw)
+        .wrapping_sub(dx.wrapping_mul(sin_yaw))
+        >> 16;
+    let projected_y = dy
+        .wrapping_mul(cos_pitch)
+        .wrapping_sub(depth_yaw.wrapping_mul(sin_pitch))
+        >> 16;
+    let depth = dy
+        .wrapping_mul(sin_pitch)
+        .wrapping_add(depth_yaw.wrapping_mul(cos_pitch))
+        >> 16;
+    if depth >= 50 {
+        (
+            origin_x + (projected_x << 9) / depth,
+            origin_y + (projected_y << 9) / depth,
+        )
+    } else {
+        (-1, -1)
+    }
+}
+
 impl Renderer {
     /// `drawProgress` from client-ts (3840): the loading-progress bar.
     /// Always records `last_progress_percent`/`last_progress_message`;
@@ -1373,43 +1455,14 @@ impl Renderer {
         z: i32,
         height: i32,
     ) -> (i32, i32) {
-        if x < 128 || z < 128 || x > 13056 || z > 13056 {
-            return (-1, -1);
-        }
-        let y = get_av_h(&client.groundh, &client.mapl, x, z, client.minusedlevel) - height;
-        let dx = x - client.cam_x;
-        let dy = y - client.cam_y;
-        let dz = z - client.cam_z;
-        let sin_pitch = Pix3D::sin_table()[(client.cam_pitch & 0x7ff) as usize];
-        let cos_pitch = Pix3D::cos_table()[(client.cam_pitch & 0x7ff) as usize];
-        let sin_yaw = Pix3D::sin_table()[(client.cam_yaw & 0x7ff) as usize];
-        let cos_yaw = Pix3D::cos_table()[(client.cam_yaw & 0x7ff) as usize];
-        // Java 2039-2044: the wrapped products only feed the `>> 16`
-        // (Java int arithmetic wraps; Rust debug builds would panic).
-        let var13 = dz
-            .wrapping_mul(sin_yaw)
-            .wrapping_add(dx.wrapping_mul(cos_yaw))
-            >> 16;
-        let var14 = dz
-            .wrapping_mul(cos_yaw)
-            .wrapping_sub(dx.wrapping_mul(sin_yaw))
-            >> 16;
-        let var16 = dy
-            .wrapping_mul(cos_pitch)
-            .wrapping_sub(var14.wrapping_mul(sin_pitch))
-            >> 16;
-        let var17 = dy
-            .wrapping_mul(sin_pitch)
-            .wrapping_add(var14.wrapping_mul(cos_pitch))
-            >> 16;
-        if var17 >= 50 {
-            (
-                self.pix3d.origin_x + (var13 << 9) / var17,
-                self.pix3d.origin_y + (var16 << 9) / var17,
-            )
-        } else {
-            (-1, -1)
-        }
+        project_overlay_at(
+            client,
+            x,
+            z,
+            height,
+            self.pix3d.origin_x,
+            self.pix3d.origin_y,
+        )
     }
 
     /// `entityOverlays` from Java (8870-end): the overhead prayer headicons,

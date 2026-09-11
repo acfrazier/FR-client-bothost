@@ -8,7 +8,7 @@ use client::client::{Client, ClientConfig, ClientPlayer};
 use client::config::IdkType;
 use client::dash3d::{ClientNpc, Model};
 use client::graphics::{Colour, Pix32};
-use client::render::Renderer;
+use client::render::{project_area_game, Renderer};
 use std::collections::HashMap;
 
 fn client() -> Client {
@@ -87,6 +87,10 @@ fn get_overlay_pos_projects_in_front_of_camera() {
     r.get_overlay_pos(&mut c, 640, 1280, 0);
     assert_eq!(r.project_x, 256 + (640 * 512) / 1280);
     assert_eq!(r.project_y, 167);
+    assert_eq!(
+        project_area_game(&c, 640, 1280, 0),
+        Some((r.project_x, r.project_y))
+    );
     // A point at the same height as the camera projects onto the y origin.
     r.get_overlay_pos(&mut c, 384, 1280, 0);
     assert!(r.project_x > -1 && r.project_y > -1);
