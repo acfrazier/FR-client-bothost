@@ -83,6 +83,12 @@ pub struct World {
     /// Bumped by `reset_map`; the render side clears its lazy model cache
     /// when it changes (Task 3b).
     pub(crate) build_generation: u64,
+    /// Bumped when static scenery is actually added or removed, and when
+    /// the map is reset. Snapshot loc rebuilds consume this so a queued
+    /// LOC_DEL/add that does not bump tile `model_stamp` still dirties the
+    /// API loc cache after the packet's scene gen was already consumed.
+    /// Dynamic sprites never touch it.
+    static_loc_generation: u64,
     /// Set by `ClientBuild::finish_build` in place of the old sim-side
     /// `share_light` call; the render side runs the share-light pass over
     /// its lazily-resolved models on the first frame after a build
@@ -139,6 +145,7 @@ impl World {
             // bumps it and invalidates the render-side cache. The
             // constructor needs no reset (all grids are already empty).
             build_generation: 0,
+            static_loc_generation: 0,
             share_light_pending: false,
             overlay_mesh: true,
             overlay_pending: false,
@@ -147,6 +154,7 @@ impl World {
 
     pub fn reset_map(&mut self) {
         self.build_generation = self.build_generation.wrapping_add(1);
+        self.bump_static_loc_generation();
 
         for level in 0..self.max_tile_level {
             for x in 0..self.max_tile_x {
@@ -513,11 +521,16 @@ impl World {
     ) -> bool {
         let scene_x = tile_x * 128 + width * 64;
         let scene_z = tile_z * 128 + length * 64;
-        self.set_sprite(
-            scene_x, scene_z, y, level, tile_x, tile_z, width, length, typecode, info, yaw, false,
-            h_sw, h_se, h_ne, h_nw,
-        )
-        .is_some()
+        let added = self
+            .set_sprite(
+                scene_x, scene_z, y, level, tile_x, tile_z, width, length, typecode, info, yaw,
+                false, h_sw, h_se, h_ne, h_nw,
+            )
+            .is_some();
+        if added {
+            self.bump_static_loc_generation();
+        }
+        added
     }
 
     /// `addDynamic` from client-ts: place a dynamic sprite (players/npcs/
@@ -637,7 +650,18 @@ impl World {
         };
         if let Some(index) = index {
             self.del_sprite(index);
+            self.bump_static_loc_generation();
         }
+    }
+
+    /// Observation generation for static scenery add/remove/reset. Render
+    /// stamps and dynamic sprite reuse do not use this counter.
+    pub fn static_loc_generation(&self) -> u64 {
+        self.static_loc_generation
+    }
+
+    fn bump_static_loc_generation(&mut self) {
+        self.static_loc_generation = self.static_loc_generation.wrapping_add(1);
     }
 
     /// Read access to one tile (`squares` is private; the scene tests and
@@ -1221,5 +1245,90 @@ mod sprite_reuse_tests {
         let independent = World::new(vec![vec![vec![0; 5]; 5]], 4, 1, 4);
         assert!(independent.sprites.is_empty());
         assert!(independent.free_dynamic_sprites.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod static_loc_observation_tests {
+    use super::*;
+
+    fn tiny_world() -> World {
+        World::new(vec![vec![vec![0; 8]; 8]; 1], 7, 1, 7)
+    }
+
+    fn scene_typecode(id: i32) -> i32 {
+        0x4000_0000 | (id << 14)
+    }
+
+    #[test]
+    fn static_add_and_remove_bump_generation_without_tile_stamps() {
+        let mut world = tiny_world();
+        assert_eq!(world.static_loc_generation(), 0);
+        assert_eq!(world.tile_model_stamp(0, 2, 3), i32::MIN);
+
+        assert!(world.add_scenery(0, 2, 3, 0, scene_typecode(9), 10, 1, 1, 0, 0, 0, 0, 0));
+        assert_eq!(world.static_loc_generation(), 1);
+        let stamp = world.tile_model_stamp(0, 2, 3);
+        assert_eq!(stamp, 0, "static scenery must not bump the render stamp");
+        assert!(world.get_scene(0, 2, 3).is_some());
+
+        world.del_loc(0, 2, 3);
+        assert_eq!(world.static_loc_generation(), 2);
+        assert_eq!(world.tile_model_stamp(0, 2, 3), stamp);
+        assert!(world.get_scene(0, 2, 3).is_none());
+    }
+
+    #[test]
+    fn no_op_and_failed_static_ops_do_not_bump() {
+        let mut world = tiny_world();
+        world.del_loc(0, 2, 3);
+        assert_eq!(world.static_loc_generation(), 0);
+
+        assert!(!world.add_scenery(0, 20, 20, 0, scene_typecode(1), 10, 1, 1, 0, 0, 0, 0, 0));
+        assert_eq!(world.static_loc_generation(), 0);
+
+        for id in 0..5 {
+            assert!(world.add_scenery(0, 1, 1, 0, scene_typecode(id), 10, 1, 1, 0, 0, 0, 0, 0));
+        }
+        let gen = world.static_loc_generation();
+        assert_eq!(gen, 5);
+        assert!(!world.add_scenery(0, 1, 1, 0, scene_typecode(5), 10, 1, 1, 0, 0, 0, 0, 0));
+        assert_eq!(world.static_loc_generation(), gen);
+    }
+
+    #[test]
+    fn multi_tile_static_loc_bumps_once() {
+        let mut world = tiny_world();
+        assert!(world.add_scenery(0, 2, 2, 0, scene_typecode(4), 10, 2, 2, 0, 0, 0, 0, 0));
+        assert_eq!(world.static_loc_generation(), 1);
+        world.del_loc(0, 2, 2);
+        assert_eq!(world.static_loc_generation(), 2);
+        assert!(world.get_scene(0, 2, 2).is_none());
+    }
+
+    #[test]
+    fn dynamic_churn_does_not_bump_static_generation() {
+        let mut world = tiny_world();
+        assert!(world.add_scenery(0, 1, 1, 0, scene_typecode(8), 10, 1, 1, 0, 0, 0, 0, 0));
+        let gen = world.static_loc_generation();
+        let stamp = world.tile_model_stamp(0, 1, 1);
+        let index = world
+            .add_dynamic(0, 192, 0, 192, scene_typecode(2), 0, 0, false)
+            .expect("dynamic sprite");
+        world.release_dynamic_sprite(index);
+        assert_eq!(world.static_loc_generation(), gen);
+        assert_eq!(world.tile_model_stamp(0, 1, 1), stamp);
+        assert!(world.get_scene(0, 1, 1).is_some());
+    }
+
+    #[test]
+    fn reset_map_bumps_static_generation() {
+        let mut world = tiny_world();
+        assert!(world.add_scenery(0, 1, 1, 0, scene_typecode(8), 10, 1, 1, 0, 0, 0, 0, 0));
+        world.reset_map();
+        assert_eq!(world.static_loc_generation(), 2);
+        assert!(world.get_scene(0, 1, 1).is_none());
+        world.reset_map();
+        assert_eq!(world.static_loc_generation(), 3);
     }
 }
