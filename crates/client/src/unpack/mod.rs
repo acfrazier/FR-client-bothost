@@ -241,6 +241,10 @@ fn publish_snapshot(
     let dir = dir_path.to_string_lossy().into_owned();
     let staging = staging_dir(out_dir, &version);
     let _ = std::fs::remove_dir_all(&staging);
+    // The snapshot root is created for the staging directory; when this
+    // attempt fails before anything is published it is removed again, so a
+    // rejected profile leaves no half-made snapshot root behind.
+    let root_created = !Path::new(out_dir).exists();
     std::fs::create_dir_all(out_dir).map_err(|e| UnpackError::io("create snapshot root", e))?;
     std::fs::create_dir_all(&staging)
         .map_err(|e| UnpackError::io("create snapshot staging dir", e))?;
@@ -255,15 +259,24 @@ fn publish_snapshot(
     );
     if let Err(e) = staged {
         let _ = std::fs::remove_dir_all(&staging);
+        cleanup_empty_root(out_dir, root_created);
         return Err(e);
     }
 
     // The selected version is the cache's identity: if the cache changed
     // while it was being read, the staged payload is a mix and must not be
     // published.
-    let source = read_versionlist(cache_dir)?;
+    let source = match read_versionlist(cache_dir) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&staging);
+            cleanup_empty_root(out_dir, root_created);
+            return Err(e);
+        }
+    };
     if source != versionlist {
         let _ = std::fs::remove_dir_all(&staging);
+        cleanup_empty_root(out_dir, root_created);
         return Err(UnpackError::new(
             "cache versionlist changed during preparation; retry",
         ));
@@ -393,6 +406,17 @@ fn staging_dir(out_dir: &str, version: &str) -> PathBuf {
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ))
+}
+
+/// Remove the snapshot root again when this attempt created it and nothing
+/// was published: a preparation that fails (no store, no source, a cache that
+/// changed mid-read) leaves no snapshot root behind. `remove_dir` only
+/// succeeds on an empty directory, so a concurrently published snapshot is
+/// never disturbed.
+fn cleanup_empty_root(out_dir: &str, created: bool) {
+    if created {
+        let _ = std::fs::remove_dir(out_dir);
+    }
 }
 
 /// First 8 bytes of the SHA-256 of the versionlist content, hex-encoded.
@@ -907,6 +931,7 @@ pub fn load_snapshot(cache_dir: &str, out_dir: &str) -> Result<Loaded, UnpackErr
 pub fn load_snapshot_once(cache_dir: &str, out_dir: &str) -> Result<(Loaded, bool), UnpackError> {
     let key = snapshot_key(cache_dir, out_dir);
     let (outcome, ran) = once_per_key(&SNAPSHOT_INJECT, &key, || {
+        PREPARE_INJECTS.fetch_add(1, Ordering::Relaxed);
         match load_snapshot(cache_dir, out_dir) {
             Ok(loaded) => Outcome::Success(Ok(loaded)),
             Err(e) => Outcome::Failure(Err(e.to_string())),
@@ -972,6 +997,9 @@ pub struct PrepareCounters {
     /// Attempts whose snapshot was filled from the update-server entry
     /// protocol instead of the local file store.
     pub network_fills: u64,
+    /// Snapshot injects actually run: the process-wide boot inject loads the
+    /// stores once per cache identity, so two clients share one injection.
+    pub injections: u64,
 }
 
 /// Ordered preparation for the selected cache version: validate the snapshot,
@@ -1007,6 +1035,7 @@ pub fn prepare_counters() -> PrepareCounters {
         snapshots_published: PREPARE_PUBLISHED.load(Ordering::Relaxed),
         warm_reuses: PREPARE_REUSED.load(Ordering::Relaxed),
         network_fills: PREPARE_NETWORK.load(Ordering::Relaxed),
+        injections: PREPARE_INJECTS.load(Ordering::Relaxed),
     }
 }
 
@@ -1017,37 +1046,12 @@ fn attempt_prepare(
     source: Option<&mut dyn EntrySource>,
 ) -> SnapshotPreparation {
     PREPARE_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
-    let versionlist = match read_versionlist(cache_dir) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            return SnapshotPreparation::Unavailable {
-                reason: format!("selected cache versionlist unreadable: {e}"),
-            };
-        }
-    };
-    let version = version_hash(&versionlist);
 
-    if let SnapshotState::Ready(manifest) =
-        snapshot_state_for_version(out_dir, &version, &versionlist)
-    {
-        PREPARE_REUSED.fetch_add(1, Ordering::Relaxed);
-        return SnapshotPreparation::Ready {
-            version,
-            dir: manifest.dir,
-            models: manifest.models.unpacked,
-            anim_records: manifest.anims.unpacked,
-            source: if manifest.source == "update-server" {
-                "update-server"
-            } else {
-                "local-store"
-            },
-            fetched: Vec::new(),
-            published: false,
-        };
-    }
-
-    // Fetch only pack files that are genuinely absent. A present file is
-    // validated by the profile's cache identity check, not re-downloaded.
+    // Fetch genuinely missing pack files first, through the update server's
+    // real `/crc` + `getJagFile` machinery: `versionlist` is one of the pack
+    // files, so a genuinely empty cache directory has no version to read at
+    // all until this fetch has run. A present file is validated by the
+    // profile's cache identity check, not re-downloaded.
     let missing: Vec<&str> = JAGS
         .into_iter()
         .filter(|name| !Path::new(cache_dir).join(name).is_file())
@@ -1072,6 +1076,35 @@ fn attempt_prepare(
             }
         }
     };
+
+    let versionlist = match read_versionlist(cache_dir) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return SnapshotPreparation::Unavailable {
+                reason: format!("selected cache versionlist unreadable after fetch: {e}"),
+            };
+        }
+    };
+    let version = version_hash(&versionlist);
+
+    if let SnapshotState::Ready(manifest) =
+        snapshot_state_for_version(out_dir, &version, &versionlist)
+    {
+        PREPARE_REUSED.fetch_add(1, Ordering::Relaxed);
+        return SnapshotPreparation::Ready {
+            version,
+            dir: manifest.dir,
+            models: manifest.models.unpacked,
+            anim_records: manifest.anims.unpacked,
+            source: if manifest.source == "update-server" {
+                "update-server"
+            } else {
+                "local-store"
+            },
+            fetched: Vec::new(),
+            published: false,
+        };
+    }
 
     // Source order: the local file store first (no network, engine-authored
     // data), then the update-server entry protocol for a cache whose store is
@@ -1304,6 +1337,7 @@ static PREPARE_FETCHED: AtomicU64 = AtomicU64::new(0);
 static PREPARE_PUBLISHED: AtomicU64 = AtomicU64::new(0);
 static PREPARE_REUSED: AtomicU64 = AtomicU64::new(0);
 static PREPARE_NETWORK: AtomicU64 = AtomicU64::new(0);
+static PREPARE_INJECTS: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(test)]
 pub fn reset_snapshot_inject_for_tests() {
