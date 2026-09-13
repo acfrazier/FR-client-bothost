@@ -756,11 +756,7 @@ impl OnDemand {
     /// engine sends gzip + a 2-byte version trailer; TS strips the trailer
     /// before gunzipping), and unlink the request from `requests`.
     pub fn loop_request(&mut self) -> Option<OnDemandRequest> {
-        let mut req = self.completed.pop_front()?;
-        if let Some(id) = self.find_request_id(req.archive, req.file) {
-            self.arena.unlink2(id);
-            self.arena.take(id);
-        }
+        let mut req = self.pop_completed_raw()?;
         if let Some(data) = req.data.take() {
             let body = if data.len() >= 2 {
                 &data[..data.len() - 2]
@@ -770,6 +766,30 @@ impl OnDemand {
             req.data = Some(gunzip(body));
         }
         Some(req)
+    }
+
+    /// Pop one completed request with its **raw** payload (gzip + the 2-byte
+    /// version trailer, exactly as the wire/store carry it) and unlink it from
+    /// `requests`. Cold cache preparation needs the raw bytes to run
+    /// `validate` against the versionlist crc/version tables before gunzipping.
+    pub(crate) fn pop_completed_raw(&mut self) -> Option<OnDemandRequest> {
+        let req = self.completed.pop_front()?;
+        if let Some(id) = self.find_request_id(req.archive, req.file) {
+            self.arena.unlink2(id);
+            self.arena.take(id);
+        }
+        Some(req)
+    }
+
+    /// Version/CRC table entries for `(archive, file)`, or `None` when the
+    /// tables do not cover the file. `OnDemand.validate` arguments.
+    pub(crate) fn version_crc(&self, archive: i32, file: i32) -> Option<(i32, i32)> {
+        if archive < 0 || file < 0 {
+            return None;
+        }
+        let version = *self.versions.get(archive as usize)?.get(file as usize)?;
+        let crc = *self.crcs.get(archive as usize)?.get(file as usize)?;
+        Some((version, crc))
     }
 
     /// `OnDemand.run()` heartbeat: sync the shared ingame flag, bump `cycle`,
@@ -1593,9 +1613,98 @@ fn cache_read_in(cache_dir: &str, archive: i32, file: i32) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Cold-cache entry source: the client's update-protocol worker. The `unpack`
+/// module drives snapshot preparation through this trait, so the snapshot
+/// writer never owns a socket and the worker never owns the snapshot format.
+/// Implementations must return only payloads that validate against the
+/// versionlist crc/version tables (Java `OnDemand.validate`).
+impl crate::unpack::EntrySource for OnDemand {
+    fn fetch_entries(
+        &mut self,
+        archive: i32,
+        files: &[i32],
+    ) -> Result<Vec<(i32, Vec<u8>)>, String> {
+        files.iter().try_for_each(|file| {
+            if self.has_tables && !self.valid_file(archive, *file) {
+                return Err(format!(
+                    "archive {archive} file {file}: not a required versionlist entry"
+                ));
+            }
+            Ok(())
+        })?;
+        for file in files {
+            self.request(archive, *file);
+        }
+        let mut out = Vec::with_capacity(files.len());
+        let mut last_progress = Instant::now();
+        while out.len() < files.len() {
+            self.run(false);
+            while let Some(mut req) = self.pop_completed_raw() {
+                if req.archive != archive || !files.contains(&req.file) {
+                    continue;
+                }
+                let Some((version, crc)) = self.version_crc(req.archive, req.file) else {
+                    return Err(format!(
+                        "archive {archive} file {}: no versionlist entry",
+                        req.file
+                    ));
+                };
+                let Some(data) = req.data.take() else {
+                    return Err(format!(
+                        "archive {archive} file {}: the engine reports the entry absent",
+                        req.file
+                    ));
+                };
+                if !validate(crc, version, Some(&data)) {
+                    return Err(format!(
+                        "archive {archive} file {}: downloaded payload failed the versionlist \
+                         version/CRC check",
+                        req.file
+                    ));
+                }
+                let body = if data.len() >= 2 {
+                    &data[..data.len() - 2]
+                } else {
+                    &data
+                };
+                let raw = {
+                    let mut raw = Vec::new();
+                    GzDecoder::new(body).read_to_end(&mut raw).map_err(|_| {
+                        format!(
+                            "archive {archive} file {}: downloaded payload is not a gzip stream",
+                            req.file
+                        )
+                    })?;
+                    raw
+                };
+                out.push((req.file, raw));
+                last_progress = Instant::now();
+            }
+            if out.len() < files.len() {
+                if last_progress.elapsed() > FETCH_IDLE_TIMEOUT {
+                    return Err(format!(
+                        "archive {archive}: update server completed {}/{} files; no progress for \
+                         {FETCH_IDLE_TIMEOUT:?}",
+                        out.len(),
+                        files.len()
+                    ));
+                }
+                thread::sleep(FETCH_POLL);
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// Idle bound for one cold-cache fetch batch: no completed file for this long
+/// fails the batch (the caller reports the degraded fallback honestly).
+const FETCH_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Poll interval while draining a cold-cache fetch batch.
+const FETCH_POLL: Duration = Duration::from_millis(5);
+
 /// Java `OnDemand.validate`: the 2-byte version trailer must match and the
 /// CRC32 of the payload must match the versionlist table.
-fn validate(crc: i32, version: i32, src: Option<&[u8]>) -> bool {
+pub(crate) fn validate(crc: i32, version: i32, src: Option<&[u8]>) -> bool {
     let Some(src) = src else { return false };
     if src.len() < 2 {
         return false;

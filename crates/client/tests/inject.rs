@@ -1,19 +1,33 @@
-//! Task 2 boot inject: load a Task 1 snapshot into the process-wide model
-//! and anim-frame stores. Uses the exact `[id][len][raw]` record format and
-//! checks the stores end up populated (or a missing snapshot errors cleanly).
+//! Boot inject: load a prepared snapshot into the process-wide model and
+//! anim-frame stores. Uses the exact `[id][len][raw]` record format and the
+//! completeness contract the writer publishes: a snapshot is only loadable
+//! when its completion manifest matches the selected cache version and every
+//! payload file is present with the recorded size.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use client::dash3d::model::ModelProvider;
 use client::dash3d::{AnimFrame, Model};
-use client::unpack::{load_snapshot, unpack_cache, version_hash};
+use client::unpack::{load_snapshot, snapshot_state, unpack_cache, version_hash, SnapshotState};
+
+/// The jag packs a complete snapshot carries, in the writer's order.
+const JAGS: [&str; 8] = [
+    "config",
+    "interface",
+    "textures",
+    "media",
+    "title",
+    "sounds",
+    "wordenc",
+    "versionlist",
+];
 
 /// Serialise the store-touching tests in this binary: the model/anim stores
 /// are process-wide, so concurrent loads would interleave their assertions.
 static STORE_LOCK: Mutex<()> = Mutex::new(());
 
-/// `[id: u32 LE][len: u32 LE][len bytes]` — the exact Task 1 record format.
+/// `[id: u32 LE][len: u32 LE][len bytes]` — the exact record format.
 fn encode_record(id: u32, data: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + data.len());
     out.extend_from_slice(&id.to_le_bytes());
@@ -67,6 +81,47 @@ fn lock() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// Lay out the snapshot a successful preparation would publish for this
+/// versionlist: every jag copy, both record streams, and the completion
+/// manifest written last. Returns the version directory.
+fn plant_complete_snapshot(out: &Path, versionlist: &[u8], models: &[u8], anims: &[u8]) -> PathBuf {
+    let version = version_hash(versionlist);
+    let dir = out.join(&version);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut manifest = String::new();
+    manifest.push_str(&format!("version={version}\n"));
+    manifest.push_str(&format!("dir={}\n", dir.display()));
+    manifest.push_str("source=test-fixture\n");
+    manifest.push_str("complete=1\n");
+    for name in JAGS {
+        let bytes: &[u8] = if name == "versionlist" {
+            versionlist
+        } else {
+            &[0u8, 0, 6, 0, 0, 6, 0, 0]
+        };
+        std::fs::write(dir.join(name), bytes).unwrap();
+        manifest.push_str(&format!("jag.{name}.bytes={}\n", bytes.len()));
+    }
+    std::fs::write(dir.join("models.bin"), models).unwrap();
+    std::fs::write(dir.join("anims.bin"), anims).unwrap();
+    std::fs::write(dir.join("midi.bin"), [0u8]).unwrap();
+    std::fs::write(dir.join("maps.bin"), [0u8]).unwrap();
+    for (name, bytes) in [("models", models), ("anims", anims)] {
+        manifest.push_str(&format!("{name}.total=1\n"));
+        manifest.push_str(&format!("{name}.unpacked=1\n"));
+        manifest.push_str(&format!("{name}.skipped=0\n"));
+        manifest.push_str(&format!("{name}.bytes={}\n", bytes.len()));
+    }
+    for name in ["midi", "maps"] {
+        manifest.push_str(&format!("{name}.total=1\n"));
+        manifest.push_str(&format!("{name}.unpacked=1\n"));
+        manifest.push_str(&format!("{name}.skipped=0\n"));
+        manifest.push_str(&format!("{name}.bytes=1\n"));
+    }
+    std::fs::write(dir.join("manifest"), manifest).unwrap();
+    dir
+}
+
 #[test]
 fn loads_fake_snapshot_into_stores() {
     let _guard = lock();
@@ -75,16 +130,12 @@ fn loads_fake_snapshot_into_stores() {
     let out = tmp_dir("inject-fake-out");
     let versionlist = b"fake versionlist content";
     std::fs::write(cache.join("versionlist"), versionlist).unwrap();
-
-    let version = version_hash(versionlist);
-    let dir = out.join(&version);
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(
-        dir.join("models.bin"),
-        [model_record(30002), model_record(30003)].concat(),
-    )
-    .unwrap();
-    std::fs::write(dir.join("anims.bin"), anim_record()).unwrap();
+    plant_complete_snapshot(
+        &out,
+        versionlist,
+        &[model_record(30002), model_record(30003)].concat(),
+        &anim_record(),
+    );
 
     // Pre-size the anim store so the high (collision-free) frame id fits.
     AnimFrame::init(40000);
@@ -120,34 +171,72 @@ fn missing_snapshot_dir_is_an_error() {
 
     let cache = tmp_dir("inject-missing-cache");
     let out = tmp_dir("inject-missing-out");
-    std::fs::write(cache.join("versionlist"), b"missing-snapshot").unwrap();
+    let versionlist = b"missing-snapshot";
+    std::fs::write(cache.join("versionlist"), versionlist).unwrap();
 
+    let version = version_hash(versionlist);
+    assert_eq!(
+        snapshot_state(cache.to_str().unwrap(), out.to_str().unwrap()).unwrap(),
+        SnapshotState::Missing
+    );
     let err = load_snapshot(cache.to_str().unwrap(), out.to_str().unwrap()).unwrap_err();
     assert!(
-        err.to_string().contains("models.bin"),
-        "missing snapshot dir must be an Err naming the read, got: {err}"
+        err.to_string().contains(&version) && err.to_string().contains("snapshot missing"),
+        "an absent snapshot must be an Err naming the selected version, got: {err}"
     );
 }
 
+/// A payload without its completion manifest is an interrupted (or pre-marker)
+/// publication: it must never be admitted as ready, even though the directory
+/// is nonempty and both record streams look loadable.
 #[test]
-fn empty_snapshot_file_is_an_error() {
+fn snapshot_without_a_manifest_is_not_ready() {
+    let _guard = lock();
+
+    let cache = tmp_dir("inject-interrupted-cache");
+    let out = tmp_dir("inject-interrupted-out");
+    let versionlist = b"interrupted snapshot versionlist";
+    std::fs::write(cache.join("versionlist"), versionlist).unwrap();
+    let dir = plant_complete_snapshot(&out, versionlist, &model_record(30004), &anim_record());
+    std::fs::remove_file(dir.join("manifest")).unwrap();
+
+    let state = snapshot_state(cache.to_str().unwrap(), out.to_str().unwrap()).unwrap();
+    assert!(
+        matches!(&state, SnapshotState::Incomplete(reason) if reason.contains("manifest")),
+        "a snapshot with no completion manifest must be incomplete, got {state:?}"
+    );
+    let err = load_snapshot(cache.to_str().unwrap(), out.to_str().unwrap()).unwrap_err();
+    assert!(
+        err.to_string().contains("incomplete"),
+        "an interrupted snapshot must not load, got: {err}"
+    );
+}
+
+/// A snapshot whose archive file is empty is incomplete: the readiness gate
+/// counts records, not just the presence of a file.
+#[test]
+fn empty_snapshot_archive_is_not_ready() {
     let _guard = lock();
 
     let cache = tmp_dir("inject-empty-cache");
     let out = tmp_dir("inject-empty-out");
     let versionlist = b"empty snapshot versionlist";
     std::fs::write(cache.join("versionlist"), versionlist).unwrap();
+    let dir = plant_complete_snapshot(&out, versionlist, &[], &anim_record());
 
-    let version = version_hash(versionlist);
-    let dir = out.join(&version);
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("models.bin"), b"").unwrap();
-    std::fs::write(dir.join("anims.bin"), b"").unwrap();
-
+    let state = snapshot_state(cache.to_str().unwrap(), out.to_str().unwrap()).unwrap();
+    assert!(
+        matches!(&state, SnapshotState::Incomplete(reason) if reason.contains("models.bin")),
+        "an empty models.bin must be incomplete, got {state:?}"
+    );
+    assert!(
+        dir.join("manifest").is_file(),
+        "the fixture's manifest itself is complete; the archive is what fails"
+    );
     let err = load_snapshot(cache.to_str().unwrap(), out.to_str().unwrap()).unwrap_err();
     assert!(
-        err.to_string().contains("empty"),
-        "empty snapshot file must be an Err, got: {err}"
+        err.to_string().contains("models.bin"),
+        "an empty snapshot archive must be an Err naming it, got: {err}"
     );
 }
 

@@ -2527,18 +2527,36 @@ impl Client {
             }
         }
 
-        // Task 2 boot inject: load the Task 1 snapshot (models + anims) first
-        // so every model/anim is available before the scene places its locs.
-        // Non-fatal: a missing/empty snapshot falls back to the live-cache
-        // unpack and the OnDemand floods below unchanged.
-        let snapshot_loaded = match crate::unpack::load_snapshot_once(
+        // P1a ordered cache preparation + process-wide boot inject: validate
+        // the selected version's snapshot, fetch only genuinely missing pack
+        // files through the update-server fetch, unpack from the local store
+        // or fill from this client's OnDemand worker when the store is absent
+        // or incomplete, then inject once for the whole process. Concurrent
+        // clients share one attempt (including a failed one); `first` gates
+        // the status line so slots do not repeat it. Non-fatal: a snapshot
+        // that cannot be prepared keeps the OnDemand fallback below.
+        let (asset_target, asset_host, asset_port) = self.session_asset_endpoint();
+        let snapshot_loaded = match crate::unpack::boot_snapshot(
             &self.session_cache_dir(),
             &self.session_unpack_dir(),
+            Some(crate::unpack::FetchEndpoint {
+                target: asset_target,
+                host: &asset_host,
+                port: asset_port,
+            }),
+            self.on_demand
+                .as_mut()
+                .map(|od| od as &mut dyn crate::unpack::EntrySource),
         ) {
-            Ok((loaded, first)) => {
+            crate::unpack::SnapshotBoot::Ready {
+                loaded,
+                first,
+                published,
+            } => {
                 if first {
+                    let action = if published { "prepared" } else { "reusing" };
                     eprintln!(
-                        "{}bot: loaded snapshot ({} models, {} anim records)",
+                        "{}bot: {action} cache snapshot ({} models, {} anim records)",
                         self.revision().as_i32(),
                         loaded.models,
                         loaded.anim_records
@@ -2546,11 +2564,13 @@ impl Client {
                 }
                 true
             }
-            Err(e) => {
-                eprintln!(
-                    "{}bot: snapshot load skipped: {e}",
-                    self.revision().as_i32()
-                );
+            crate::unpack::SnapshotBoot::Degraded { reason, first } => {
+                if first {
+                    eprintln!(
+                        "{}bot: cache snapshot unavailable: {reason}; using OnDemand fallback",
+                        self.revision().as_i32()
+                    );
+                }
                 false
             }
         };
