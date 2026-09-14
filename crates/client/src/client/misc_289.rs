@@ -161,6 +161,7 @@ impl MiscOperation {
             Self::Minimap(state) => c.minimap_state = state,
             Self::MapFlagClear => {
                 c.minimap_flag_x = 0;
+                c.try_move_path.clear();
                 publication.map_flag = true;
             }
             Self::Multiway(value) => {

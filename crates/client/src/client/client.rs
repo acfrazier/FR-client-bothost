@@ -987,7 +987,9 @@ pub struct Client {
     /// Every scene tile of the last successful `tryMove` BFS (src → dest).
     /// The `route_x`/`route_z` lists below that are only direction-change
     /// waypoints for the MOVE packet (capped at 25). Nav debug paints this
-    /// full path; it is empty until the first accepted click.
+    /// full path while the click is live; arrival, cancel (`UNSET_MAP_FLAG`),
+    /// logout/login, and off-path publish retire it. Scene rebuild shifts
+    /// the stored scene coords with the origin so world tiles stay stable.
     pub try_move_path: Vec<(i32, i32)>,
     pub try_move_nearest: i32,
     pub minimap_flag_x: i32,
@@ -3033,6 +3035,7 @@ impl Client {
             self.minimap_level = -1;
             self.minimap_flag_x = 0;
             self.minimap_flag_z = 0;
+            self.try_move_path.clear();
             for entry in self.chat_text.iter_mut() {
                 *entry = String::new();
             }
@@ -7809,6 +7812,7 @@ impl Client {
 
             ServerProt::UNSET_MAP_FLAG => {
                 self.minimap_flag_x = 0;
+                self.try_move_path.clear();
                 self.ptype = -1;
             }
 
@@ -8273,6 +8277,10 @@ impl Client {
             if self.minimap_flag_x != 0 {
                 self.minimap_flag_x -= dx;
                 self.minimap_flag_z -= dz;
+            }
+            for (x, z) in &mut self.try_move_path {
+                *x -= dx;
+                *z -= dz;
             }
         }
     }
@@ -9840,6 +9848,7 @@ impl Client {
             od.drop_socket();
         }
         self.ingame = false;
+        self.try_move_path.clear();
         self.loginscreen = 0;
         self.login_user.clear();
         self.login_pass.clear();
@@ -13264,6 +13273,52 @@ mod try_move_path {
         c.iface_mut(152).unwrap().hide = true;
         c.iface_mut(153).unwrap().hide = false;
         assert!(!c.run_enabled());
+    }
+
+    #[test]
+    fn unset_map_flag_retires_try_move_path() {
+        let mut c = empty_client();
+        c.try_move_path = vec![(1, 2), (3, 4)];
+        c.minimap_flag_x = 5;
+        c.minimap_flag_z = 6;
+        let mut p = Packet::alloc(0);
+        c.handle_packet(ServerProt::UNSET_MAP_FLAG, &mut p);
+        assert!(
+            c.try_move_path.is_empty(),
+            "UNSET_MAP_FLAG must retire the debug trail, not only the minimap flag"
+        );
+        assert_eq!(c.minimap_flag_x, 0);
+        assert_eq!(c.minimap_flag_z, 6);
+    }
+
+    #[test]
+    fn logout_retires_try_move_path() {
+        let mut c = empty_client();
+        c.try_move_path = vec![(8, 9)];
+        c.logout();
+        assert!(
+            c.try_move_path.is_empty(),
+            "logout must drop the previous session's debug trail"
+        );
+    }
+
+    #[test]
+    fn rebuild_shifts_try_move_path_with_scene_origin() {
+        let mut c = empty_client();
+        c.map_build_centre_zone_x = 50;
+        c.map_build_centre_zone_z = 50;
+        c.map_build_base_x = (50 - 6) * 8;
+        c.map_build_base_z = (50 - 6) * 8;
+        c.map_build_prev_base_x = c.map_build_base_x;
+        c.map_build_prev_base_z = c.map_build_base_z;
+        c.scene_state = 2;
+        c.try_move_path = vec![(10, 5), (11, 5)];
+        c.apply_rebuild_zones(51, 50);
+        assert_eq!(
+            c.try_move_path,
+            vec![(2, 5), (3, 5)],
+            "scene rebuild must keep world-stable trail tiles"
+        );
     }
 }
 
