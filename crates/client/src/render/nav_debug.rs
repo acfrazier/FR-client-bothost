@@ -226,7 +226,7 @@ pub(crate) fn draw(client: &mut Client, r: &mut Renderer, surface: &mut Pix2D) {
 
     // Edges are independent of fills so face-only standable cells remain
     // visible. Diagonal bits are short corner markers, not full diagonals.
-    if paint.show_collision || paint.show_nsew {
+    if paint.show_collision {
         let mut edges = std::collections::HashSet::new();
         for cell in &paint.collision {
             for (bit, x, z, ex, ez) in cardinal_edges(cell) {
@@ -465,7 +465,7 @@ fn cardinal_edges(cell: &NavDebugCell) -> [(u8, i32, i32, i32, i32); 4] {
     ]
 }
 
-/// Short L-shaped markers at blocked diagonal crossings. Each marker is
+/// Short inward markers at blocked diagonal crossings. Each marker is
 /// clipped to the corner and never implies that the whole tile is blocked.
 fn corner_strokes(cell: &NavDebugCell) -> [(u8, i32, i32, i32, i32); 4] {
     let x = cell.lx.wrapping_mul(TILE);
