@@ -772,6 +772,16 @@ mod tests {
             Some((rgb(colors.collision), WALK_FILL_ALPHA)),
             "walls keep the collision fill"
         );
+        let reached_edge = NavDebugCell {
+            bits: FACE_N | CORNER_NE,
+            reach: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            cell_fill(&reached_edge, &colors),
+            None,
+            "reached standable edge/corner cells have no fill"
+        );
     }
 
     #[test]
@@ -805,6 +815,24 @@ mod tests {
         assert_eq!((south.1, south.2), (10 * TILE + TILE / 2, 20 * TILE));
         assert_eq!((east.1, east.2), (11 * TILE, 20 * TILE + TILE / 2));
         assert_eq!((west.1, west.2), (10 * TILE, 20 * TILE + TILE / 2));
+    }
+
+    #[test]
+    fn cardinal_edges_span_each_oriented_tile_boundary() {
+        let cell = NavDebugCell {
+            lx: 10,
+            lz: 20,
+            ..Default::default()
+        };
+        assert_eq!(
+            cardinal_edges(&cell),
+            [
+                (FACE_N, 10 * TILE, 21 * TILE, 11 * TILE, 21 * TILE),
+                (FACE_S, 10 * TILE, 20 * TILE, 11 * TILE, 20 * TILE),
+                (FACE_E, 11 * TILE, 20 * TILE, 11 * TILE, 21 * TILE),
+                (FACE_W, 10 * TILE, 20 * TILE, 10 * TILE, 21 * TILE),
+            ]
+        );
     }
 
     #[test]
