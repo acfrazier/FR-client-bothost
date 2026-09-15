@@ -21,14 +21,17 @@ pub const FACE_N: u8 = 0x1;
 pub const FACE_S: u8 = 0x2;
 pub const FACE_E: u8 = 0x4;
 pub const FACE_W: u8 = 0x8;
+pub const CORNER_NE: u8 = 0x10;
+pub const CORNER_SE: u8 = 0x20;
+pub const CORNER_NW: u8 = 0x40;
+pub const CORNER_SW: u8 = 0x80;
 
 /// One painted collision tile: scene coords + packed face-block bits.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NavDebugCell {
     pub lx: i32,
     pub lz: i32,
-    /// Packed N/S/E/W face-block bits (`FACE_N` | `FACE_S` | `FACE_E` |
-    /// `FACE_W`).
+    /// Packed N/S/E/W face and diagonal corner-block bits.
     pub bits: u8,
     /// Blanket blocked ground. Only blocked tiles paint the collision
     /// fill; a face-only cell (bare `W_*` flag) keeps its NSEW letters
@@ -221,6 +224,50 @@ pub(crate) fn draw(client: &mut Client, r: &mut Renderer, surface: &mut Pix2D) {
         stroke_quad(surface, quad);
     }
 
+    // Edges are independent of fills so face-only standable cells remain
+    // visible. Diagonal bits are short corner markers, not full diagonals.
+    if paint.show_collision || paint.show_nsew {
+        let mut edges = std::collections::HashSet::new();
+        for cell in &paint.collision {
+            for (bit, x, z, ex, ez) in cardinal_edges(cell) {
+                if cell.bits & bit == 0 || !edges.insert((x, z, ex, ez)) {
+                    continue;
+                }
+                let a = r.project_overlay(client, x, z, 0);
+                let b = r.project_overlay(client, ex, ez, 0);
+                if a.0 != -1 && b.0 != -1 {
+                    stroke_line(
+                        surface,
+                        a.0,
+                        a.1,
+                        b.0,
+                        b.1,
+                        rgb(paint.colors.collision),
+                        STROKE_ALPHA,
+                    );
+                }
+            }
+            for (bit, ax, az, bx, bz) in corner_strokes(cell) {
+                if cell.bits & bit == 0 {
+                    continue;
+                }
+                let a = r.project_overlay(client, ax, az, 0);
+                let b = r.project_overlay(client, bx, bz, 0);
+                if a.0 != -1 && b.0 != -1 {
+                    stroke_line(
+                        surface,
+                        a.0,
+                        a.1,
+                        b.0,
+                        b.1,
+                        rgb(paint.colors.collision),
+                        STROKE_ALPHA,
+                    );
+                }
+            }
+        }
+    }
+
     if paint.show_nsew {
         for cell in &paint.collision {
             draw_nsew(client, r, surface, cell, rgb(paint.colors.nsew));
@@ -404,6 +451,31 @@ fn nsew_centres(cell: &NavDebugCell) -> [(u8, i32, i32); 4] {
         (FACE_S, x + TILE / 2, z),
         (FACE_E, x + TILE, z + TILE / 2),
         (FACE_W, x, z + TILE / 2),
+    ]
+}
+
+fn cardinal_edges(cell: &NavDebugCell) -> [(u8, i32, i32, i32, i32); 4] {
+    let x = cell.lx.wrapping_mul(TILE);
+    let z = cell.lz.wrapping_mul(TILE);
+    [
+        (FACE_N, x, z + TILE, x + TILE, z + TILE),
+        (FACE_S, x, z, x + TILE, z),
+        (FACE_E, x + TILE, z, x + TILE, z + TILE),
+        (FACE_W, x, z, x, z + TILE),
+    ]
+}
+
+/// Short L-shaped markers at blocked diagonal crossings. Each marker is
+/// clipped to the corner and never implies that the whole tile is blocked.
+fn corner_strokes(cell: &NavDebugCell) -> [(u8, i32, i32, i32, i32); 4] {
+    let x = cell.lx.wrapping_mul(TILE);
+    let z = cell.lz.wrapping_mul(TILE);
+    let q = TILE / 4;
+    [
+        (CORNER_NE, x + TILE, z + TILE, x + TILE - q, z + TILE - q),
+        (CORNER_SE, x + TILE, z, x + TILE - q, z + q),
+        (CORNER_NW, x, z + TILE, x + q, z + TILE - q),
+        (CORNER_SW, x, z, x + q, z + q),
     ]
 }
 
@@ -733,6 +805,33 @@ mod tests {
         assert_eq!((south.1, south.2), (10 * TILE + TILE / 2, 20 * TILE));
         assert_eq!((east.1, east.2), (11 * TILE, 20 * TILE + TILE / 2));
         assert_eq!((west.1, west.2), (10 * TILE, 20 * TILE + TILE / 2));
+    }
+
+    #[test]
+    fn diagonal_markers_point_inward_from_each_corner() {
+        let cell = NavDebugCell {
+            lx: 2,
+            lz: 3,
+            ..Default::default()
+        };
+        let q = TILE / 4;
+        let marks = corner_strokes(&cell);
+        assert_eq!(
+            marks[0],
+            (CORNER_NE, 3 * TILE, 4 * TILE, 3 * TILE - q, 4 * TILE - q)
+        );
+        assert_eq!(
+            marks[1],
+            (CORNER_SE, 3 * TILE, 3 * TILE, 3 * TILE - q, 3 * TILE + q)
+        );
+        assert_eq!(
+            marks[2],
+            (CORNER_NW, 2 * TILE, 4 * TILE, 2 * TILE + q, 4 * TILE - q)
+        );
+        assert_eq!(
+            marks[3],
+            (CORNER_SW, 2 * TILE, 3 * TILE, 2 * TILE + q, 3 * TILE + q)
+        );
     }
 
     #[test]
