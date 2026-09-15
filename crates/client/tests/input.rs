@@ -248,3 +248,30 @@ fn chat_accepts_colon_then_tilde_in_cheat() {
     c.handle_chat_input();
     assert_eq!(c.chat_input, "::~");
 }
+
+#[test]
+fn consume_chat_key_types_dialog_without_draining_the_ring() {
+    use client::client::{Client, ClientConfig};
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    c.apply_p_countdialog();
+    c.shell.apply_key(true, 10, 10);
+    let before = (c.shell.key_queue_read, c.shell.key_queue_write);
+    c.consume_chat_key(b'2' as i32);
+    assert_eq!(c.dialog_input, "2");
+    assert_eq!(
+        (c.shell.key_queue_read, c.shell.key_queue_write),
+        before,
+        "consume_chat_key must not poll pending user keys"
+    );
+    assert!(c.chat_input.is_empty());
+    c.handle_chat_input();
+    assert!(!c.dialog_input_open);
+    assert!(c.chat_input.is_empty());
+}

@@ -10196,252 +10196,54 @@ impl Client {
             if key == -1 {
                 break;
             }
+            self.consume_chat_key(key);
+        }
+    }
 
-            if self.social_input_open {
-                if (32..=122).contains(&key) && self.social_input.len() < 80 {
-                    self.social_input.push(char::from_u32(key as u32).unwrap());
-                    self.redraw_chat = true;
-                }
-                if key == 8 && !self.social_input.is_empty() {
-                    self.social_input.pop();
-                    self.redraw_chat = true;
-                }
-                if key == 13 || key == 10 {
-                    self.social_input_open = false;
-                    self.redraw_chat = true;
-
-                    if self.social_input_type == 1 {
-                        let userhash = JString::to_userhash(&self.social_input) as i64;
-                        self.add_friend(userhash);
-                    }
-                    if self.social_input_type == 2 && self.friend_count > 0 {
-                        let userhash = JString::to_userhash(&self.social_input) as i64;
-                        self.del_friend(userhash);
-                    }
-                    if self.social_input_type == 3
-                        && !self.social_input.is_empty()
-                        && self.social_userhash != 0
-                    {
-                        self.out
-                            .p1_enc(self.client_opcode(ClientProt::MESSAGE_PRIVATE));
-                        self.out.p1(0);
-                        let start = self.out.pos;
-                        self.out.p8(self.social_userhash);
-                        WordPack::pack(&mut self.out, &self.social_input);
-                        self.out.psize1((self.out.pos - start) as i32);
-
-                        let mut text = JString::to_sentence_case(&self.social_input);
-                        text = WordFilter::filter(&text);
-                        let screen_name = JString::to_screen_name(&JString::to_raw_username(
-                            self.social_userhash,
-                        ));
-                        self.add_chat(6, &text, &screen_name);
-
-                        if self.chat_private_mode == 2 {
-                            self.chat_private_mode = 1;
-                            self.redraw_chat_mode = true;
-                            self.out
-                                .p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
-                            self.out.p1(self.chat_public_mode);
-                            self.out.p1(self.chat_private_mode);
-                            self.out.p1(self.chat_trade_mode);
-                        }
-                    }
-                    if self.social_input_type == 4 && self.ignore_count < 100 {
-                        let userhash = JString::to_userhash(&self.social_input) as i64;
-                        self.add_ignore(userhash);
-                    }
-                    if self.social_input_type == 5 && self.ignore_count > 0 {
-                        let userhash = JString::to_userhash(&self.social_input) as i64;
-                        self.del_ignore(userhash);
-                    }
-                }
-                continue;
-            }
-
-            // TS 3022-3047: the enter-amount dialog — digits append up to
-            // 10 chars, 8 backspaces, and 10/13 sends the amount back with
-            // RESUME_P_COUNTDIALOG.
-            if self.dialog_input_open {
-                if (48..=57).contains(&key) && self.dialog_input.len() < 10 {
-                    self.dialog_input.push(char::from_u32(key as u32).unwrap());
-                    self.redraw_chat = true;
-                }
-
-                if key == 8 && !self.dialog_input.is_empty() {
-                    self.dialog_input.pop();
-                    self.redraw_chat = true;
-                }
-
-                if key == 13 || key == 10 {
-                    if !self.dialog_input.is_empty() {
-                        let value: i32 = self.dialog_input.parse().unwrap_or(0);
-                        self.out
-                            .p1_enc(self.client_opcode(ClientProt::RESUME_P_COUNTDIALOG));
-                        self.out.p4(value);
-                    }
-
-                    self.dialog_input_open = false;
-                    self.redraw_chat = true;
-                }
-                continue;
-            }
-
-            if self.chat_modal_id != -1 {
-                continue;
-            }
-
-            if key >= 32
-                && (key <= 122 || (self.chat_input.starts_with("::") && key <= 126))
-                && self.chat_input.len() < 80
-            {
-                self.chat_input.push(char::from_u32(key as u32).unwrap());
+    /// Existing single-character `handleInputKey` chat-branch body.
+    /// Does not count a revision-289 per-frame input poll.
+    pub fn consume_chat_key(&mut self, key: i32) {
+        if self.social_input_open {
+            if (32..=122).contains(&key) && self.social_input.len() < 80 {
+                self.social_input.push(char::from_u32(key as u32).unwrap());
                 self.redraw_chat = true;
             }
-
-            if key == 8 && !self.chat_input.is_empty() {
-                self.chat_input.pop();
+            if key == 8 && !self.social_input.is_empty() {
+                self.social_input.pop();
                 self.redraw_chat = true;
             }
+            if key == 13 || key == 10 {
+                self.social_input_open = false;
+                self.redraw_chat = true;
 
-            if (key == 13 || key == 10) && !self.chat_input.is_empty() {
-                if self.chat_input.starts_with("::") {
+                if self.social_input_type == 1 {
+                    let userhash = JString::to_userhash(&self.social_input) as i64;
+                    self.add_friend(userhash);
+                }
+                if self.social_input_type == 2 && self.friend_count > 0 {
+                    let userhash = JString::to_userhash(&self.social_input) as i64;
+                    self.del_friend(userhash);
+                }
+                if self.social_input_type == 3
+                    && !self.social_input.is_empty()
+                    && self.social_userhash != 0
+                {
                     self.out
-                        .p1_enc(self.client_opcode(ClientProt::CLIENT_CHEAT));
-                    self.out.p1((self.chat_input.len() - 2 + 1) as i32);
-                    self.out.pjstr(&self.chat_input[2..]);
-                } else {
-                    let mut text = self.chat_input.clone();
-                    let mut colour = 0;
-                    // TS 3097-3145 colour prefixes (sequential ifs, as TS).
-                    if text.starts_with("yellow:") {
-                        text = text[7..].to_string();
-                    }
-                    if text.starts_with("red:") {
-                        colour = 1;
-                        text = text[4..].to_string();
-                    }
-                    if text.starts_with("green:") {
-                        colour = 2;
-                        text = text[6..].to_string();
-                    }
-                    if text.starts_with("cyan:") {
-                        colour = 3;
-                        text = text[5..].to_string();
-                    }
-                    if text.starts_with("purple:") {
-                        colour = 4;
-                        text = text[7..].to_string();
-                    }
-                    if text.starts_with("white:") {
-                        colour = 5;
-                        text = text[6..].to_string();
-                    }
-                    if text.starts_with("flash1:") {
-                        colour = 6;
-                        text = text[7..].to_string();
-                    }
-                    if text.starts_with("flash2:") {
-                        colour = 7;
-                        text = text[7..].to_string();
-                    }
-                    if text.starts_with("flash3:") {
-                        colour = 8;
-                        text = text[7..].to_string();
-                    }
-                    if text.starts_with("glow1:") {
-                        colour = 9;
-                        text = text[6..].to_string();
-                    }
-                    if text.starts_with("glow2:") {
-                        colour = 10;
-                        text = text[6..].to_string();
-                    }
-                    if text.starts_with("glow3:") {
-                        colour = 11;
-                        text = text[6..].to_string();
-                    }
-                    // MESSAGE_PUBLIC effect prefixes are revision-gated.
-                    // R274/client-ts: sequential ifs — wave:=1, scroll:=2.
-                    // R289 Java table (else-if): wave2 before wave so "wave2:"
-                    // is not swallowed; wave/wave2/shake/scroll/slide → 1/2/3/4/5.
-                    let mut effect = 0;
-                    if self.revision.is_289() {
-                        if text.starts_with("wave2:") {
-                            effect = 2;
-                            text = text[6..].to_string();
-                        } else if text.starts_with("wave:") {
-                            effect = 1;
-                            text = text[5..].to_string();
-                        } else if text.starts_with("shake:") {
-                            effect = 3;
-                            text = text[6..].to_string();
-                        } else if text.starts_with("scroll:") {
-                            effect = 4;
-                            text = text[7..].to_string();
-                        } else if text.starts_with("slide:") {
-                            effect = 5;
-                            text = text[6..].to_string();
-                        }
-                    } else {
-                        if text.starts_with("wave:") {
-                            effect = 1;
-                            text = text[5..].to_string();
-                        }
-                        if text.starts_with("scroll:") {
-                            effect = 2;
-                            text = text[7..].to_string();
-                        }
-                    }
-
-                    self.out
-                        .p1_enc(self.client_opcode(ClientProt::MESSAGE_PUBLIC));
+                        .p1_enc(self.client_opcode(ClientProt::MESSAGE_PRIVATE));
                     self.out.p1(0);
                     let start = self.out.pos;
-                    self.out.p1(colour);
-                    self.out.p1(effect);
-                    WordPack::pack(&mut self.out, &text);
+                    self.out.p8(self.social_userhash);
+                    WordPack::pack(&mut self.out, &self.social_input);
                     self.out.psize1((self.out.pos - start) as i32);
 
-                    // Echo the own message as TS 3169-3179:
-                    // toSentenceCase then WordFilter (identity until the
-                    // wordenc jag loads), stamping the local player's chat
-                    // bubble only once it has a name (TS 3168-3174). Name
-                    // falls back to the login user, then "player", so the
-                    // echo is never dropped pre-spawn.
-                    text = JString::to_sentence_case(&text);
+                    let mut text = JString::to_sentence_case(&self.social_input);
                     text = WordFilter::filter(&text);
-                    if let Some(p) = self.local_player.as_mut() {
-                        if p.name.is_some() {
-                            p.chat_message = Some(text.clone());
-                            p.chat_colour = colour;
-                            p.chat_effect = effect;
-                            p.chat_timer = 150;
-                        }
-                    }
-                    let name = self
-                        .local_player
-                        .as_ref()
-                        .and_then(|p| p.name.clone())
-                        .or_else(|| {
-                            let user = self.login_user.clone();
-                            (!user.is_empty()).then_some(user)
-                        })
-                        .unwrap_or_else(|| "player".to_string());
-                    let sender = if self.staffmodlevel == 2 {
-                        format!("@cr2@{name}")
-                    } else if self.staffmodlevel == 1 {
-                        format!("@cr1@{name}")
-                    } else {
-                        name
-                    };
-                    self.add_chat(2, &text, &sender);
+                    let screen_name =
+                        JString::to_screen_name(&JString::to_raw_username(self.social_userhash));
+                    self.add_chat(6, &text, &screen_name);
 
-                    // TS 3183-3189: a public send while the mode is "off"
-                    // (2) auto-hides the bubble by switching to "friends"
-                    // (3) and telling the server.
-                    if self.chat_public_mode == 2 {
-                        self.chat_public_mode = 3;
+                    if self.chat_private_mode == 2 {
+                        self.chat_private_mode = 1;
                         self.redraw_chat_mode = true;
                         self.out
                             .p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
@@ -10450,9 +10252,211 @@ impl Client {
                         self.out.p1(self.chat_trade_mode);
                     }
                 }
-                self.chat_input.clear();
+                if self.social_input_type == 4 && self.ignore_count < 100 {
+                    let userhash = JString::to_userhash(&self.social_input) as i64;
+                    self.add_ignore(userhash);
+                }
+                if self.social_input_type == 5 && self.ignore_count > 0 {
+                    let userhash = JString::to_userhash(&self.social_input) as i64;
+                    self.del_ignore(userhash);
+                }
+            }
+            return;
+        }
+
+        // TS 3022-3047: the enter-amount dialog — digits append up to
+        // 10 chars, 8 backspaces, and 10/13 sends the amount back with
+        // RESUME_P_COUNTDIALOG.
+        if self.dialog_input_open {
+            if (48..=57).contains(&key) && self.dialog_input.len() < 10 {
+                self.dialog_input.push(char::from_u32(key as u32).unwrap());
                 self.redraw_chat = true;
             }
+
+            if key == 8 && !self.dialog_input.is_empty() {
+                self.dialog_input.pop();
+                self.redraw_chat = true;
+            }
+
+            if key == 13 || key == 10 {
+                if !self.dialog_input.is_empty() {
+                    let value: i32 = self.dialog_input.parse().unwrap_or(0);
+                    self.out
+                        .p1_enc(self.client_opcode(ClientProt::RESUME_P_COUNTDIALOG));
+                    self.out.p4(value);
+                }
+
+                self.dialog_input_open = false;
+                self.redraw_chat = true;
+            }
+            return;
+        }
+
+        if self.chat_modal_id != -1 {
+            return;
+        }
+
+        if key >= 32
+            && (key <= 122 || (self.chat_input.starts_with("::") && key <= 126))
+            && self.chat_input.len() < 80
+        {
+            self.chat_input.push(char::from_u32(key as u32).unwrap());
+            self.redraw_chat = true;
+        }
+
+        if key == 8 && !self.chat_input.is_empty() {
+            self.chat_input.pop();
+            self.redraw_chat = true;
+        }
+
+        if (key == 13 || key == 10) && !self.chat_input.is_empty() {
+            if self.chat_input.starts_with("::") {
+                self.out
+                    .p1_enc(self.client_opcode(ClientProt::CLIENT_CHEAT));
+                self.out.p1((self.chat_input.len() - 2 + 1) as i32);
+                self.out.pjstr(&self.chat_input[2..]);
+            } else {
+                let mut text = self.chat_input.clone();
+                let mut colour = 0;
+                // TS 3097-3145 colour prefixes (sequential ifs, as TS).
+                if text.starts_with("yellow:") {
+                    text = text[7..].to_string();
+                }
+                if text.starts_with("red:") {
+                    colour = 1;
+                    text = text[4..].to_string();
+                }
+                if text.starts_with("green:") {
+                    colour = 2;
+                    text = text[6..].to_string();
+                }
+                if text.starts_with("cyan:") {
+                    colour = 3;
+                    text = text[5..].to_string();
+                }
+                if text.starts_with("purple:") {
+                    colour = 4;
+                    text = text[7..].to_string();
+                }
+                if text.starts_with("white:") {
+                    colour = 5;
+                    text = text[6..].to_string();
+                }
+                if text.starts_with("flash1:") {
+                    colour = 6;
+                    text = text[7..].to_string();
+                }
+                if text.starts_with("flash2:") {
+                    colour = 7;
+                    text = text[7..].to_string();
+                }
+                if text.starts_with("flash3:") {
+                    colour = 8;
+                    text = text[7..].to_string();
+                }
+                if text.starts_with("glow1:") {
+                    colour = 9;
+                    text = text[6..].to_string();
+                }
+                if text.starts_with("glow2:") {
+                    colour = 10;
+                    text = text[6..].to_string();
+                }
+                if text.starts_with("glow3:") {
+                    colour = 11;
+                    text = text[6..].to_string();
+                }
+                // MESSAGE_PUBLIC effect prefixes are revision-gated.
+                // R274/client-ts: sequential ifs — wave:=1, scroll:=2.
+                // R289 Java table (else-if): wave2 before wave so "wave2:"
+                // is not swallowed; wave/wave2/shake/scroll/slide → 1/2/3/4/5.
+                let mut effect = 0;
+                if self.revision.is_289() {
+                    if text.starts_with("wave2:") {
+                        effect = 2;
+                        text = text[6..].to_string();
+                    } else if text.starts_with("wave:") {
+                        effect = 1;
+                        text = text[5..].to_string();
+                    } else if text.starts_with("shake:") {
+                        effect = 3;
+                        text = text[6..].to_string();
+                    } else if text.starts_with("scroll:") {
+                        effect = 4;
+                        text = text[7..].to_string();
+                    } else if text.starts_with("slide:") {
+                        effect = 5;
+                        text = text[6..].to_string();
+                    }
+                } else {
+                    if text.starts_with("wave:") {
+                        effect = 1;
+                        text = text[5..].to_string();
+                    }
+                    if text.starts_with("scroll:") {
+                        effect = 2;
+                        text = text[7..].to_string();
+                    }
+                }
+
+                self.out
+                    .p1_enc(self.client_opcode(ClientProt::MESSAGE_PUBLIC));
+                self.out.p1(0);
+                let start = self.out.pos;
+                self.out.p1(colour);
+                self.out.p1(effect);
+                WordPack::pack(&mut self.out, &text);
+                self.out.psize1((self.out.pos - start) as i32);
+
+                // Echo the own message as TS 3169-3179:
+                // toSentenceCase then WordFilter (identity until the
+                // wordenc jag loads), stamping the local player's chat
+                // bubble only once it has a name (TS 3168-3174). Name
+                // falls back to the login user, then "player", so the
+                // echo is never dropped pre-spawn.
+                text = JString::to_sentence_case(&text);
+                text = WordFilter::filter(&text);
+                if let Some(p) = self.local_player.as_mut() {
+                    if p.name.is_some() {
+                        p.chat_message = Some(text.clone());
+                        p.chat_colour = colour;
+                        p.chat_effect = effect;
+                        p.chat_timer = 150;
+                    }
+                }
+                let name = self
+                    .local_player
+                    .as_ref()
+                    .and_then(|p| p.name.clone())
+                    .or_else(|| {
+                        let user = self.login_user.clone();
+                        (!user.is_empty()).then_some(user)
+                    })
+                    .unwrap_or_else(|| "player".to_string());
+                let sender = if self.staffmodlevel == 2 {
+                    format!("@cr2@{name}")
+                } else if self.staffmodlevel == 1 {
+                    format!("@cr1@{name}")
+                } else {
+                    name
+                };
+                self.add_chat(2, &text, &sender);
+
+                // TS 3183-3189: a public send while the mode is "off"
+                // (2) auto-hides the bubble by switching to "friends"
+                // (3) and telling the server.
+                if self.chat_public_mode == 2 {
+                    self.chat_public_mode = 3;
+                    self.redraw_chat_mode = true;
+                    self.out
+                        .p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
+                    self.out.p1(self.chat_public_mode);
+                    self.out.p1(self.chat_private_mode);
+                    self.out.p1(self.chat_trade_mode);
+                }
+            }
+            self.chat_input.clear();
+            self.redraw_chat = true;
         }
     }
 

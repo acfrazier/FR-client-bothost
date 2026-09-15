@@ -949,3 +949,43 @@ fn real_driver_owns_recorder_and_click_pointer_is_separate() {
     });
     assert!(observed);
 }
+
+#[test]
+fn consume_chat_key_does_not_count_a_revision289_input_poll() {
+    let mut c = client(ClientRevision::R289);
+    c.ingame = true;
+    c.dialog_input_open = true;
+    for _ in 0..192 {
+        c.handle_chat_input();
+    }
+    assert_eq!(c.out.pos, 0);
+    for _ in 0..50 {
+        c.consume_chat_key(b'1' as i32);
+    }
+    assert_eq!(c.dialog_input, "1111111111");
+    assert_eq!(
+        c.out.pos, 0,
+        "character consumption must not emit ANTICHEAT_CYCLELOGIC4"
+    );
+    c.handle_chat_input();
+    assert_eq!(&c.out.data()[..c.out.pos], &[137, 232]);
+}
+
+#[test]
+fn handle_chat_input_counts_one_frame_for_many_queued_keys() {
+    let mut c = client(ClientRevision::R289);
+    c.ingame = true;
+    for _ in 0..192 {
+        c.handle_chat_input();
+    }
+    c.shell.apply_key(true, 0, b'a' as i32);
+    c.shell.apply_key(true, 0, b'b' as i32);
+    c.shell.apply_key(true, 0, b'c' as i32);
+    c.handle_chat_input();
+    assert_eq!(c.chat_input, "abc");
+    assert_eq!(
+        &c.out.data()[..c.out.pos],
+        &[137, 232],
+        "one poll with three keys is still one cyclelogic4 frame"
+    );
+}
