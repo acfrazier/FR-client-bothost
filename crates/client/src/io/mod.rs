@@ -1,5 +1,5 @@
 pub mod bzip2;
-pub use bzip2::bunzip2;
+pub use bzip2::{bunzip2, try_bunzip2};
 pub mod client_prot;
 pub use client_prot::ClientProt;
 pub mod client_prot_289;

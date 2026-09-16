@@ -5,6 +5,7 @@
 pub mod bot_target;
 pub mod client;
 pub mod config;
+pub mod content_identity;
 pub mod core;
 pub mod dash3d;
 pub mod datastruct;
