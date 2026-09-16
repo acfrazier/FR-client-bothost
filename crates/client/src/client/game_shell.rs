@@ -112,6 +112,12 @@ impl GameShell {
         self.next_mouse_click_button = 0;
     }
 
+    /// Drop an unlatched click without promoting it through [`Self::latch_click`].
+    /// Leaves `mouse_click_*` and the held button alone.
+    pub fn clear_unlatched_click(&mut self) {
+        self.next_mouse_click_button = 0;
+    }
+
     /// Java `mouseDown`: set position/button and latch a click. Java buttons:
     /// 1 left, 2 right.
     pub fn apply_mouse_down(&mut self, button: i32, x: i32, y: i32) {
