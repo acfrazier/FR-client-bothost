@@ -60,8 +60,51 @@ struct TcpInner {
     writer_thread: Option<JoinHandle<()>>,
 }
 
+/// Underlying WS transport. Production is TLS; plain TCP is test-only loopback
+/// so regressions do not need a production TLS trust bypass.
+enum WsConn {
+    Tls(WebSocket<TlsStream<TcpStream>>),
+    /// Loopback plain WS used by unit tests only (no TLS trust bypass).
+    #[cfg(test)]
+    Plain(WebSocket<TcpStream>),
+}
+
+impl WsConn {
+    fn read_message(&mut self) -> Result<Message, tungstenite::Error> {
+        match self {
+            WsConn::Tls(ws) => ws.read(),
+            #[cfg(test)]
+            WsConn::Plain(ws) => ws.read(),
+        }
+    }
+
+    fn send_message(&mut self, msg: Message) -> Result<(), tungstenite::Error> {
+        match self {
+            WsConn::Tls(ws) => ws.send(msg),
+            #[cfg(test)]
+            WsConn::Plain(ws) => ws.send(msg),
+        }
+    }
+
+    fn close(&mut self) -> Result<(), tungstenite::Error> {
+        match self {
+            WsConn::Tls(ws) => ws.close(None),
+            #[cfg(test)]
+            WsConn::Plain(ws) => ws.close(None),
+        }
+    }
+
+    fn set_nonblocking(&mut self, nonblocking: bool) -> io::Result<()> {
+        match self {
+            WsConn::Tls(ws) => ws.get_ref().get_ref().set_nonblocking(nonblocking),
+            #[cfg(test)]
+            WsConn::Plain(ws) => ws.get_ref().set_nonblocking(nonblocking),
+        }
+    }
+}
+
 struct WsInner {
-    ws: Mutex<WebSocket<TlsStream<TcpStream>>>,
+    ws: Mutex<WsConn>,
     leftover: Mutex<VecDeque<u8>>,
     dummy: Mutex<bool>,
     /// Underlying TCP handle for zero-time readability probes (WSS).
@@ -149,7 +192,7 @@ impl ClientStream {
         let (ws, _) = tungstenite::client::client(req, tls).map_err(io_other)?;
         Ok(ClientStream {
             inner: Inner::Ws(Box::new(WsInner {
-                ws: Mutex::new(ws),
+                ws: Mutex::new(WsConn::Tls(ws)),
                 leftover: Mutex::new(VecDeque::new()),
                 dummy: Mutex::new(false),
                 #[cfg(unix)]
@@ -225,7 +268,7 @@ impl ClientStream {
                 if *w.dummy.lock().unwrap() {
                     return Ok(0);
                 }
-                fill_ws(w)?;
+                fill_ws_blocking(w)?;
                 let mut leftover = w.leftover.lock().unwrap();
                 if leftover.is_empty() {
                     return Ok(-1);
@@ -270,6 +313,9 @@ impl ClientStream {
     /// estimate). `Client::tcp_in` (Task 16) relies on the exact count for its
     /// `available < psize` back-pressure check, so this is a full peek, not a
     /// 0/1 probe.
+    ///
+    /// For WSS this also drains binary frames already held in tungstenite/TLS
+    /// buffers even when the TCP socket is quiet (`poll` would return 0).
     pub fn available(&mut self) -> io::Result<i32> {
         match &mut self.inner {
             Inner::Tcp(t) => {
@@ -294,17 +340,23 @@ impl ClientStream {
                 if *w.dummy.lock().unwrap() {
                     return Ok(0);
                 }
-                {
-                    let n = w.leftover.lock().unwrap().len();
-                    if n > 0 {
-                        return Ok(n as i32);
+                // Always attempt a non-blocking drain: leftover alone is not
+                // the full picture (further frames may already sit in
+                // tungstenite/TLS), and a quiet TCP fd does not mean no app
+                // data remains buffered above the kernel.
+                match fill_ws_nonblocking(w) {
+                    Ok(()) => {}
+                    Err(e) => {
+                        let n = w.leftover.lock().unwrap().len();
+                        if n == 0 {
+                            return Err(e);
+                        }
+                        // Prefer already-buffered payload over losing it to a
+                        // transient drain error; next call can surface the err.
                     }
                 }
-                if !socket_readable_now(wss_wait_handle(w)) {
-                    return Ok(0);
-                }
-                let _ = fill_ws(w);
-                Ok(w.leftover.lock().unwrap().len() as i32)
+                let n = w.leftover.lock().unwrap().len().min(AVAILABLE_BUF);
+                Ok(n as i32)
             }
         }
     }
@@ -321,7 +373,7 @@ impl ClientStream {
                 let payload = buf[..len].to_vec();
                 w.ws.lock()
                     .unwrap()
-                    .send(Message::Binary(payload))
+                    .send_message(Message::Binary(payload))
                     .map_err(io_other)?;
                 self.bytes_out.fetch_add(len as u64, Ordering::Relaxed);
                 Ok(())
@@ -350,25 +402,91 @@ impl ClientStream {
             }
             Inner::Ws(w) => {
                 *w.dummy.lock().unwrap() = true;
-                let _ = w.ws.lock().unwrap().close(None);
+                let _ = w.ws.lock().unwrap().close();
             }
         }
     }
 }
 
-fn fill_ws(w: &WsInner) -> io::Result<()> {
+/// Blocking fill used by reads: wait for the next binary payload (or close).
+/// Control frames are not payload and must not be treated as EOF.
+fn fill_ws_blocking(w: &WsInner) -> io::Result<()> {
     if !w.leftover.lock().unwrap().is_empty() {
         return Ok(());
     }
     let mut ws = w.ws.lock().unwrap();
-    match ws.read() {
-        Ok(Message::Binary(b)) => {
-            w.leftover.lock().unwrap().extend(b);
-            Ok(())
+    loop {
+        match ws.read_message() {
+            Ok(Message::Binary(b)) => {
+                if !b.is_empty() {
+                    w.leftover.lock().unwrap().extend(b);
+                }
+                // Empty binary is a no-op frame; keep waiting for payload/close.
+                if !w.leftover.lock().unwrap().is_empty() {
+                    return Ok(());
+                }
+            }
+            Ok(Message::Ping(p)) => {
+                ws.send_message(Message::Pong(p)).map_err(io_other)?;
+            }
+            Ok(Message::Pong(_)) | Ok(Message::Frame(_)) | Ok(Message::Text(_)) => {}
+            Ok(Message::Close(_))
+            | Err(tungstenite::Error::ConnectionClosed)
+            | Err(tungstenite::Error::AlreadyClosed) => {
+                return Ok(());
+            }
+            Err(e) => return Err(map_ws_err(e)),
         }
-        Ok(Message::Close(_)) | Err(tungstenite::Error::ConnectionClosed) => Ok(()),
-        Ok(_) => Ok(()),
-        Err(e) => Err(io_other(e)),
+    }
+}
+
+/// Non-blocking drain used by `available`: pull every ready binary frame into
+/// leftover (capped), including frames already held in tungstenite/TLS when
+/// the TCP socket is quiet.
+fn fill_ws_nonblocking(w: &WsInner) -> io::Result<()> {
+    let mut ws = w.ws.lock().unwrap();
+    ws.set_nonblocking(true)?;
+    let result = (|| loop {
+        {
+            let n = w.leftover.lock().unwrap().len();
+            if n >= AVAILABLE_BUF {
+                return Ok(());
+            }
+        }
+        match ws.read_message() {
+            Ok(Message::Binary(b)) => {
+                if !b.is_empty() {
+                    w.leftover.lock().unwrap().extend(b);
+                }
+            }
+            Ok(Message::Ping(p)) => {
+                ws.send_message(Message::Pong(p)).map_err(io_other)?;
+            }
+            Ok(Message::Pong(_)) | Ok(Message::Frame(_)) | Ok(Message::Text(_)) => {}
+            Ok(Message::Close(_))
+            | Err(tungstenite::Error::ConnectionClosed)
+            | Err(tungstenite::Error::AlreadyClosed) => {
+                return Ok(());
+            }
+            Err(tungstenite::Error::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
+                return Ok(());
+            }
+            Err(e) => return Err(map_ws_err(e)),
+        }
+    })();
+    // Always restore blocking mode for subsequent blocking reads.
+    let restore = ws.set_nonblocking(false);
+    match (result, restore) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(e), _) => Err(e),
+        (Ok(()), Err(e)) => Err(e),
+    }
+}
+
+fn map_ws_err(err: tungstenite::Error) -> io::Error {
+    match err {
+        tungstenite::Error::Io(e) => e,
+        other => io_other(other),
     }
 }
 
@@ -452,18 +570,18 @@ fn writer_loop(shared: Arc<Mutex<WriterState>>, condvar: Arc<Condvar>, mut sock:
     }
 }
 
-/// Zero-time readability probe handle for WSS `available`.
-#[cfg(unix)]
+/// Zero-time readability probe handle for WSS diagnostics/tests.
+#[cfg(all(test, unix))]
 fn wss_wait_handle(w: &WsInner) -> RawFd {
     w.fd
 }
 
-#[cfg(windows)]
+#[cfg(all(test, windows))]
 fn wss_wait_handle(w: &WsInner) -> RawSocket {
     w.socket
 }
 
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 fn socket_readable_now(fd: RawFd) -> bool {
     let mut fds = [libc::pollfd {
         fd,
@@ -474,7 +592,7 @@ fn socket_readable_now(fd: RawFd) -> bool {
     rc > 0
 }
 
-#[cfg(windows)]
+#[cfg(all(test, windows))]
 fn socket_readable_now(socket: RawSocket) -> bool {
     use windows_sys::Win32::Networking::WinSock::{WSAPoll, POLLIN, SOCKET, WSAPOLLFD};
     let mut fds = [WSAPOLLFD {
@@ -490,6 +608,50 @@ fn socket_readable_now(socket: RawSocket) -> bool {
 mod tests {
     use super::*;
     use std::net::TcpListener;
+    use std::sync::mpsc;
+    use tungstenite::WebSocket as TungsteniteWs;
+
+    /// Plain WS client over loopback (no TLS). Test-only transport.
+    fn connect_ws_plain(host: &str, port: u16) -> io::Result<ClientStream> {
+        use tungstenite::client::IntoClientRequest;
+        let tcp = TcpStream::connect((host, port))?;
+        tcp.set_read_timeout(Some(READ_TIMEOUT))?;
+        tcp.set_nodelay(true)?;
+        #[cfg(unix)]
+        let fd = tcp.as_raw_fd();
+        #[cfg(windows)]
+        let socket = tcp.as_raw_socket();
+        let req = format!("ws://{host}:{port}/")
+            .into_client_request()
+            .map_err(io_other)?;
+        let (ws, _) = tungstenite::client::client(req, tcp).map_err(io_other)?;
+        Ok(ClientStream {
+            inner: Inner::Ws(Box::new(WsInner {
+                ws: Mutex::new(WsConn::Plain(ws)),
+                leftover: Mutex::new(VecDeque::new()),
+                dummy: Mutex::new(false),
+                #[cfg(unix)]
+                fd,
+                #[cfg(windows)]
+                socket,
+            })),
+            bytes_in: AtomicU64::new(0),
+            bytes_out: AtomicU64::new(0),
+        })
+    }
+
+    fn spawn_ws_server(
+        on_ready: impl FnOnce(TungsteniteWs<TcpStream>) + Send + 'static,
+    ) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let ws = tungstenite::accept(stream).unwrap();
+            on_ready(ws);
+        });
+        (addr, handle)
+    }
 
     #[test]
     fn reader_handle_tracks_the_socket_and_wakes_on_data() {
@@ -528,5 +690,190 @@ mod tests {
             stream.raw_socket()
                 != windows_sys::Win32::Networking::WinSock::INVALID_SOCKET as RawSocket
         );
+    }
+
+    /// Coalesced WS binary frames with no further TCP traffic: `available`
+    /// must report the full application payload, not only the first frame
+    /// that a single `ws.read()` pulled (remainder may sit only in
+    /// tungstenite's buffer while the kernel fd is quiet).
+    #[test]
+    fn ws_available_drains_coalesced_frames_when_socket_quiet() {
+        let (addr, server) = spawn_ws_server(|mut ws| {
+            ws.send(Message::Binary(vec![1, 2, 3])).unwrap();
+            ws.send(Message::Binary(vec![4, 5, 6])).unwrap();
+            // Hold the connection open but send nothing else so the client
+            // side goes quiet after the frames are absorbed above TCP.
+            let _ = ws.read(); // wait for client close
+        });
+        let mut stream = connect_ws_plain(&addr.ip().to_string(), addr.port()).unwrap();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let mut n = 0;
+        while std::time::Instant::now() < deadline {
+            n = stream.available().unwrap();
+            if n == 6 {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            n, 6,
+            "available must coalesce both binary frames without more TCP sends"
+        );
+
+        // After first fill, fd may be quiet; a second available must not drop
+        // to a partial leftover-only view.
+        assert_eq!(stream.available().unwrap(), 6);
+
+        let mut buf = [0u8; 6];
+        stream.read_bytes(&mut buf, 0, 6).unwrap();
+        assert_eq!(&buf, &[1, 2, 3, 4, 5, 6]);
+        assert_eq!(stream.available().unwrap(), 0);
+        stream.close();
+        let _ = server.join();
+    }
+
+    /// Split protocol payload across two WS frames: partial leftover must not
+    /// freeze available below the total buffered application bytes.
+    #[test]
+    fn ws_available_appends_while_partial_leftover_exists() {
+        let (tx, rx) = mpsc::channel::<()>();
+        let (addr, server) = spawn_ws_server(move |mut ws| {
+            ws.send(Message::Binary(vec![0xaa])).unwrap();
+            // Pause until the client has observed the first byte so leftover
+            // is non-empty before the second frame is considered.
+            let _ = rx.recv_timeout(Duration::from_secs(2));
+            ws.send(Message::Binary(vec![0xbb, 0xcc])).unwrap();
+            let _ = ws.read();
+        });
+        let mut stream = connect_ws_plain(&addr.ip().to_string(), addr.port()).unwrap();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while stream.available().unwrap() < 1 {
+            assert!(std::time::Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(stream.available().unwrap(), 1);
+        tx.send(()).unwrap();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let mut n = 1;
+        while std::time::Instant::now() < deadline {
+            n = stream.available().unwrap();
+            if n == 3 {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(n, 3, "second frame must extend leftover, not stall at 1");
+
+        let mut buf = [0u8; 3];
+        stream.read_bytes(&mut buf, 0, 3).unwrap();
+        assert_eq!(&buf, &[0xaa, 0xbb, 0xcc]);
+        stream.close();
+        let _ = server.join();
+    }
+
+    /// Control frames are not payload and must not surface as EOF on read.
+    #[test]
+    fn ws_read_skips_ping_and_continues_to_binary() {
+        let (addr, server) = spawn_ws_server(|mut ws| {
+            ws.send(Message::Ping(vec![9])).unwrap();
+            ws.send(Message::Binary(vec![7, 8])).unwrap();
+            // Consume the automatic pong if any, then wait for close.
+            let _ = ws.read();
+            let _ = ws.read();
+        });
+        let mut stream = connect_ws_plain(&addr.ip().to_string(), addr.port()).unwrap();
+        assert_eq!(stream.read().unwrap(), 7);
+        assert_eq!(stream.read().unwrap(), 8);
+        stream.close();
+        let _ = server.join();
+    }
+
+    #[test]
+    fn ws_close_then_read_is_dummy_zero_not_error() {
+        let (addr, server) = spawn_ws_server(|mut ws| {
+            ws.send(Message::Binary(vec![1])).unwrap();
+            let _ = ws.close(None);
+            let _ = ws.read();
+        });
+        let mut stream = connect_ws_plain(&addr.ip().to_string(), addr.port()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while stream.available().unwrap() < 1 {
+            assert!(std::time::Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(stream.read().unwrap(), 1);
+        // Peer close: further blocking read reports EOF (-1) once drained.
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            match stream.read() {
+                Ok(-1) | Ok(0) => break,
+                Ok(_) => {}
+                Err(_) => break,
+            }
+            assert!(std::time::Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+        stream.close();
+        assert_eq!(stream.read().unwrap(), 0);
+        let _ = server.join();
+    }
+
+    #[test]
+    fn ws_dummy_write_is_noop_and_available_zero() {
+        let (addr, server) = spawn_ws_server(|ws| {
+            let _ = ws;
+        });
+        let mut stream = connect_ws_plain(&addr.ip().to_string(), addr.port()).unwrap();
+        stream.close();
+        assert_eq!(stream.available().unwrap(), 0);
+        assert_eq!(stream.read().unwrap(), 0);
+        stream.write(&[1, 2, 3], 3).unwrap();
+        assert_eq!(stream.bytes_out(), 0);
+        let _ = server.join();
+    }
+
+    /// Quiet nonblocking readiness: after frames are fully absorbed above TCP,
+    /// available still reports leftover without requiring POLLIN.
+    #[test]
+    fn ws_available_with_leftover_when_fd_not_readable() {
+        let (addr, server) = spawn_ws_server(|mut ws| {
+            ws.send(Message::Binary(vec![10, 11, 12, 13])).unwrap();
+            let _ = ws.read();
+        });
+        let mut stream = connect_ws_plain(&addr.ip().to_string(), addr.port()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while stream.available().unwrap() < 4 {
+            assert!(std::time::Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+        // Drain one byte so leftover is partial, then ensure fd can go quiet.
+        assert_eq!(stream.read().unwrap(), 10);
+        // Spin until poll says not readable (data held only in leftover).
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let readable = match &stream.inner {
+                Inner::Ws(w) => socket_readable_now(wss_wait_handle(w)),
+                _ => unreachable!(),
+            };
+            if !readable {
+                break;
+            }
+            // Nudge any residual kernel byte without consuming leftover via available.
+            assert!(std::time::Instant::now() < deadline, "fd never went quiet");
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            stream.available().unwrap(),
+            3,
+            "leftover must remain visible when TCP poll is quiet"
+        );
+        let mut buf = [0u8; 3];
+        stream.read_bytes(&mut buf, 0, 3).unwrap();
+        assert_eq!(&buf, &[11, 12, 13]);
+        stream.close();
+        let _ = server.join();
     }
 }
