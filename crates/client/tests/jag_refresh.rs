@@ -91,6 +91,17 @@ fn serve_packs(
     packs: Arc<Vec<(String, Vec<u8>)>>,
     max_file_serves: usize,
 ) -> (u16, thread::JoinHandle<Vec<String>>) {
+    serve_packs_with_body(packs, max_file_serves, None)
+}
+
+/// Same fixture as [`serve_packs`], with an optional corrupt pack body.
+/// `/crc` always uses the honest checksum table so the client proceeds to the
+/// CRC-checked pack GET; only pack responses may be replaced.
+fn serve_packs_with_body(
+    packs: Arc<Vec<(String, Vec<u8>)>>,
+    max_file_serves: usize,
+    corrupt_file_body: Option<&'static [u8]>,
+) -> (u16, thread::JoinHandle<Vec<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let handle = thread::spawn(move || {
@@ -133,7 +144,11 @@ fn serve_packs(
                 .find(|(pack, _)| *pack == name)
                 .map(|(_, bytes)| bytes.clone())
                 .unwrap();
-            respond(&mut sock, &bytes);
+            if let Some(corrupt) = corrupt_file_body {
+                respond(&mut sock, corrupt);
+            } else {
+                respond(&mut sock, &bytes);
+            }
             served.push(name);
         }
         served
@@ -306,36 +321,7 @@ fn download_must_be_persisted_before_refresh_succeeds() {
 fn corrupt_download_fails_closed() {
     let dest = tmp("corrupt-dest");
     let packs = Arc::new(fixture_packs(b"wanted"));
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let server = thread::spawn(move || {
-        listener.set_nonblocking(true).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            if Instant::now() > deadline {
-                break;
-            }
-            let (mut sock, _) = match listener.accept() {
-                Ok(conn) => conn,
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(5));
-                    continue;
-                }
-                Err(_) => break,
-            };
-            let request = read_http_request(&mut sock);
-            let path = request
-                .split_whitespace()
-                .nth(1)
-                .unwrap_or_default()
-                .to_string();
-            if path == "/crc" {
-                respond(&mut sock, &crc_body(&packs));
-            } else {
-                respond(&mut sock, b"not-the-crc-payload");
-            }
-        }
-    });
+    let (port, server) = serve_packs_with_body(packs, 1, Some(b"not-the-crc-payload"));
 
     let err = refresh_jags(
         &[],
@@ -347,10 +333,11 @@ fn corrupt_download_fails_closed() {
         },
     )
     .expect_err("corrupt body must fail");
+    let err = err.to_string();
     assert!(
-        err.to_string().contains("CRC") || err.to_string().contains("fetch"),
-        "got: {err}"
+        err.contains("title: fetch or CRC check failed"),
+        "CRC-checked pack download must fail closed, got: {err}"
     );
-    drop(server);
+    assert_eq!(server.join().unwrap(), vec!["title".to_string()]);
     let _ = std::fs::remove_dir_all(&dest);
 }
