@@ -205,7 +205,20 @@ impl SnapshotState {
 /// for this version is returned untouched (warm reuse, no rewrite); an
 /// incomplete or legacy one is republished.
 pub fn unpack_cache(cache_dir: &str, out_dir: &str) -> Result<Manifest, UnpackError> {
-    publish_snapshot(cache_dir, out_dir, None)
+    publish_snapshot(cache_dir, out_dir, cache_dir, None)
+}
+
+mod runtime;
+pub use runtime::{prepare_runtime_cache, PreparedRuntimeCache, RuntimeCacheRequest};
+
+/// Read a selected local store without moving or writing its files. The
+/// negotiated jag directory supplies the authoritative version/CRC tables.
+pub fn unpack_cache_from_store(
+    cache_dir: &str,
+    out_dir: &str,
+    store_dir: &str,
+) -> Result<Manifest, UnpackError> {
+    publish_snapshot(cache_dir, out_dir, store_dir, None)
 }
 
 /// Cold start without a usable local file store: fetch every required entry
@@ -218,7 +231,7 @@ pub fn fetch_snapshot(
     out_dir: &str,
     source: &mut dyn EntrySource,
 ) -> Result<Manifest, UnpackError> {
-    publish_snapshot(cache_dir, out_dir, Some(source))
+    publish_snapshot(cache_dir, out_dir, cache_dir, Some(source))
 }
 
 /// Shared staged publication for both sources: [`unpack_cache`] reads the
@@ -227,6 +240,7 @@ pub fn fetch_snapshot(
 fn publish_snapshot(
     cache_dir: &str,
     out_dir: &str,
+    store_dir: &str,
     mut source: Option<&mut dyn EntrySource>,
 ) -> Result<Manifest, UnpackError> {
     let versionlist = read_versionlist(cache_dir)?;
@@ -251,6 +265,7 @@ fn publish_snapshot(
 
     let staged = stage_snapshot(
         cache_dir,
+        store_dir,
         &staging,
         &dir,
         &version,
@@ -301,6 +316,7 @@ fn publish_snapshot(
 /// same for both sources.
 fn stage_snapshot(
     cache_dir: &str,
+    store_dir: &str,
     staging: &Path,
     dir: &str,
     version: &str,
@@ -334,7 +350,7 @@ fn stage_snapshot(
                 unpack_archive(staging, &tables, store_idx, file_name, &mut payload)?
             }
             None => {
-                let mut payload = StorePayload::open(cache_dir, store_idx, &tables)?;
+                let mut payload = StorePayload::open(store_dir, store_idx, &tables)?;
                 unpack_archive(staging, &tables, store_idx, file_name, &mut payload)?
             }
         };
@@ -953,6 +969,18 @@ pub struct FetchEndpoint<'a> {
     pub port: u16,
 }
 
+/// Result of a pre-freeze `/crc` negotiation that materializes jags into an
+/// explicit destination directory. Source directories are read-only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JagRefresh {
+    /// Negotiated 9-slot checksum array (`title`..`sounds` at 1..8).
+    pub checksums: [i32; 9],
+    /// Packs downloaded into `dest` because they were missing or mismatched.
+    pub fetched: Vec<String>,
+    /// Packs reused from dest or a source file whose CRC already matched.
+    pub reused: Vec<String>,
+}
+
 /// What ordered preparation achieved for one cache identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SnapshotPreparation {
@@ -1188,6 +1216,112 @@ fn fetch_jags(
     }
     PREPARE_FETCHED.fetch_add(fetched.len() as u64, Ordering::Relaxed);
     Ok(fetched)
+}
+
+/// Negotiate `/crc` and materialize every jag into `dest`.
+///
+/// Existing dest files whose CRC matches the server slot are kept. Otherwise a
+/// matching file is copied from `sources` (never written). Remaining packs are
+/// fetched with CRC-checked persist into `dest` only. `sources` are not
+/// modified.
+pub fn refresh_jags(
+    sources: &[&Path],
+    dest: &Path,
+    endpoint: FetchEndpoint<'_>,
+) -> Result<JagRefresh, UnpackError> {
+    if sources.iter().any(|source| same_path(source, dest)) {
+        return Err(UnpackError::new(
+            "jag destination must not be a source directory",
+        ));
+    }
+    let checksums = Client::get_jag_checksums_for(endpoint.target, endpoint.host, endpoint.port)
+        .map_err(|e| UnpackError::new(format!("update server /crc: {e}")))?;
+    refresh_jags_with_checksums(sources, dest, endpoint, checksums)
+}
+
+fn refresh_jags_with_checksums(
+    sources: &[&Path],
+    dest: &Path,
+    endpoint: FetchEndpoint<'_>,
+    checksums: [i32; 9],
+) -> Result<JagRefresh, UnpackError> {
+    if sources.iter().any(|source| same_path(source, dest)) {
+        return Err(UnpackError::new(
+            "jag destination must not be a source directory",
+        ));
+    }
+    let dest_str = dest.to_str().ok_or_else(|| {
+        UnpackError::new(format!("cache dest {} must be valid UTF-8", dest.display()))
+    })?;
+    std::fs::create_dir_all(dest).map_err(|e| UnpackError::io("create jag dest", e))?;
+
+    let mut fetched = Vec::new();
+    let mut reused = Vec::new();
+    for &(name, index) in &JAG_INDEX {
+        let expected = checksums[index];
+        let dest_file = dest.join(name);
+        if file_crc_matches(&dest_file, expected) {
+            reused.push(name.to_string());
+            continue;
+        }
+        let mut copied = false;
+        for source in sources {
+            let candidate = source.join(name);
+            if file_crc_matches(&candidate, expected) {
+                let bytes = std::fs::read(&candidate)
+                    .map_err(|e| UnpackError::io(&format!("reuse {name}"), e))?;
+                if Packet::getcrc(&bytes, 0, bytes.len()) != expected {
+                    return Err(UnpackError::new(format!(
+                        "source {name} changed during preparation"
+                    )));
+                }
+                std::fs::write(&dest_file, &bytes)
+                    .map_err(|e| UnpackError::io(&format!("reuse {name}"), e))?;
+                reused.push(name.to_string());
+                copied = true;
+                break;
+            }
+        }
+        if copied {
+            continue;
+        }
+        Client::get_jag_file_for(
+            endpoint.target,
+            dest_str,
+            endpoint.host,
+            endpoint.port,
+            name,
+            index,
+            &checksums,
+        )
+        .ok_or_else(|| UnpackError::new(format!("{name}: fetch or CRC check failed")))?;
+        if !file_crc_matches(&dest_file, expected) {
+            return Err(UnpackError::new(format!(
+                "{name}: CRC-checked download was not persisted"
+            )));
+        }
+        fetched.push(name.to_string());
+    }
+    PREPARE_FETCHED.fetch_add(fetched.len() as u64, Ordering::Relaxed);
+    Ok(JagRefresh {
+        checksums,
+        fetched,
+        reused,
+    })
+}
+
+fn file_crc_matches(path: &Path, crc: i32) -> bool {
+    match std::fs::read(path) {
+        Ok(bytes) => Packet::getcrc(&bytes, 0, bytes.len()) == crc,
+        Err(_) => false,
+    }
+}
+
+fn same_path(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => a == b,
+    }
 }
 
 /// The client boot path: ordered preparation followed by the process-wide
