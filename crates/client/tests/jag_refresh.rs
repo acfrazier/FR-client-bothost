@@ -107,6 +107,10 @@ fn serve_packs(
                 }
                 Err(e) => panic!("accept: {e}"),
             };
+            // Accepted sockets inherit O_NONBLOCK on some platforms. The
+            // fixture must wait for the client's request, not treat WouldBlock
+            // as an empty HTTP message.
+            sock.set_nonblocking(false).unwrap();
             sock.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
             let request = read_http_request(&mut sock);
             let path = request
