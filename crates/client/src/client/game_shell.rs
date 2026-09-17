@@ -18,7 +18,9 @@ pub struct GameShell {
     pub mouse_x: i32,
     pub mouse_y: i32,
     pub focused: bool,
-    pub(crate) idle_cycles: u32,
+    /// Java `idleCycles`. Mouse/key entrypoints zero this; the 289 game loop
+    /// emits IDLE_TIMER above 4500. Host input-class sends may zero it too.
+    pub idle_cycles: u32,
     pub(crate) telemetry_289: bool,
     pub(crate) ground_trace: Option<super::ground_trace_289::GroundTrace>,
     pub(crate) mouse_samples:
