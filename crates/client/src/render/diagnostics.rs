@@ -291,6 +291,13 @@ fn loc_kind(typecode: i32) -> u8 {
     ((typecode >> 29) & 0x3) as u8
 }
 
+/// Both wall slots share `Wall.typecode`. `typecode2` is the signed
+/// shape/angle info byte (`((angle << 6) + shape)`), not a loc typecode.
+pub fn wall_shade_typecode(typecode: i32, typecode2: i32) -> i32 {
+    let _ = typecode2;
+    typecode
+}
+
 fn kind_name(kind: u8) -> &'static str {
     match kind {
         0 => "player",
@@ -884,5 +891,25 @@ mod tests {
         assert_ne!(wall, other_tile);
         assert_ne!(wall, ground);
         assert_eq!(wall.id, 1417);
+    }
+
+    #[test]
+    fn wall2_shade_identity_uses_loc_typecode_not_info_byte() {
+        // addLoc: loc id in bits 14.., kind loc via 0x40000000; typecode2 is
+        // the signed ((angle << 6) + shape) info byte (cave wall angle 3).
+        let typecode = (1417i32 << 14).wrapping_add(0x4000_0000);
+        let typecode2 = ((3i32 << 6) + 0).wrapping_shl(24) >> 24;
+        assert_eq!(loc_id(typecode), 1417);
+        assert_eq!(loc_kind(typecode), 2);
+        assert_ne!(loc_id(typecode2), 1417);
+        assert_ne!(loc_kind(typecode2), 2);
+        let wall2 = wall_shade_typecode(typecode, typecode2);
+        assert_eq!(wall2, typecode);
+        assert_eq!(loc_id(wall2), 1417);
+        assert_eq!(loc_kind(wall2), 2);
+        assert_eq!(
+            wall_shade_typecode(typecode, typecode2),
+            wall_shade_typecode(typecode, 0)
+        );
     }
 }

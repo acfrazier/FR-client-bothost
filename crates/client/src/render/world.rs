@@ -777,11 +777,15 @@ impl RenderWorld {
         };
         if let Some(tile) = tile_at(&world.squares, level, tile_x, tile_z) {
             if let Some(wall) = tile.wall.as_deref() {
+                let typecode = crate::render::diagnostics::wall_shade_typecode(
+                    wall.typecode,
+                    wall.typecode2,
+                );
                 if let Some(model) = slot.wall_model1.as_ref() {
-                    dump_loc_shades(tile_x, tile_z, wall.typecode, "wall", model);
+                    dump_loc_shades(tile_x, tile_z, typecode, "wall", model);
                 }
                 if let Some(model) = slot.wall_model2.as_ref() {
-                    dump_loc_shades(tile_x, tile_z, wall.typecode2, "wall2", model);
+                    dump_loc_shades(tile_x, tile_z, typecode, "wall2", model);
                 }
             }
             if let Some(decor) = tile.decor.as_deref() {
