@@ -47,6 +47,111 @@ macro_rules! render_trace {
 
 const MAX_SPRITE_BUFFER: usize = 100;
 
+/// Java `World.fill` sprite-buffer tie-break (`32f30626` World.java:1481-1488):
+/// equal tile-manhattan distance prefers the larger wrapping `dx*dx+dz*dz`
+/// from the camera, matching Java 32-bit `int` overflow.
+fn sprite_farther_than(
+    candidate_distance: i32,
+    candidate_x: i32,
+    candidate_z: i32,
+    best_distance: i32,
+    best_x: i32,
+    best_z: i32,
+    cx: i32,
+    cz: i32,
+) -> bool {
+    if candidate_distance > best_distance {
+        return true;
+    }
+    if candidate_distance != best_distance {
+        return false;
+    }
+    let dx = candidate_x.wrapping_sub(cx);
+    let dz = candidate_z.wrapping_sub(cz);
+    let bx = best_x.wrapping_sub(cx);
+    let bz = best_z.wrapping_sub(cz);
+    dx.wrapping_mul(dx).wrapping_add(dz.wrapping_mul(dz))
+        > bx.wrapping_mul(bx).wrapping_add(bz.wrapping_mul(bz))
+}
+
+/// Unit-test fill trace. Entire module is `cfg(test)` so integration
+/// crates and release/normal lib builds do not compile any recorder,
+/// TLS, or per-draw calls.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FillKind {
+    Visit,
+    Wall,
+    Buffered,
+    Sprite,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+struct FillEvent {
+    visit: u32,
+    tile_x: i32,
+    tile_z: i32,
+    kind: FillKind,
+    typecode: i32,
+}
+
+#[cfg(test)]
+mod fill_trace {
+    use super::{FillEvent, FillKind};
+    use std::cell::{Cell, RefCell};
+
+    thread_local! {
+        static ON: Cell<bool> = const { Cell::new(false) };
+        static VISIT: Cell<u32> = const { Cell::new(0) };
+        static EVENTS: RefCell<Vec<FillEvent>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub fn start() {
+        VISIT.set(0);
+        EVENTS.with(|e| e.borrow_mut().clear());
+        ON.set(true);
+    }
+
+    pub fn take() -> Vec<FillEvent> {
+        ON.set(false);
+        EVENTS.with(|e| std::mem::take(&mut *e.borrow_mut()))
+    }
+
+    pub fn begin_tile(tile_x: i32, tile_z: i32) {
+        if !ON.get() {
+            return;
+        }
+        VISIT.set(VISIT.get().saturating_add(1));
+        let visit = VISIT.get();
+        EVENTS.with(|e| {
+            e.borrow_mut().push(FillEvent {
+                visit,
+                tile_x,
+                tile_z,
+                kind: FillKind::Visit,
+                typecode: 0,
+            });
+        });
+    }
+
+    pub fn record(tile_x: i32, tile_z: i32, kind: FillKind, typecode: i32) {
+        if !ON.get() || typecode == 0 {
+            return;
+        }
+        let visit = VISIT.get();
+        EVENTS.with(|e| {
+            e.borrow_mut().push(FillEvent {
+                visit,
+                tile_x,
+                tile_z,
+                kind,
+                typecode,
+            });
+        });
+    }
+}
+
 /// `World.visBacking[8][32][51][51]` flat row offset of the pitch/yaw pair
 /// that `render_all` binds as `visBackingDirty`.
 const VIS_ROW_SIZE: usize = 51 * 51;
@@ -3153,6 +3258,8 @@ impl RenderWorld {
                 }
                 break (x, z, level);
             };
+            #[cfg(test)]
+            fill_trace::begin_tile(tile_x, tile_z);
 
             // TS `World` statics that never change during a fill.
             let gx = self.gx;
@@ -3438,6 +3545,8 @@ impl RenderWorld {
                                 .0
                                 .as_mut()
                             {
+                                #[cfg(test)]
+                                fill_trace::record(tile_x, tile_z, FillKind::Wall, typecode);
                                 model.world_render(
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
@@ -3460,6 +3569,8 @@ impl RenderWorld {
                                 .1
                                 .as_mut()
                             {
+                                #[cfg(test)]
+                                fill_trace::record(tile_x, tile_z, FillKind::Wall, typecode);
                                 model.world_render(
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
@@ -3767,6 +3878,8 @@ impl RenderWorld {
                                 .0
                                 .as_mut()
                             {
+                                #[cfg(test)]
+                                fill_trace::record(tile_x, tile_z, FillKind::Wall, typecode);
                                 model.world_render(
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
@@ -3856,6 +3969,19 @@ impl RenderWorld {
                             if (spans & other.corner_sides) != sides_after {
                                 continue;
                             }
+                            // Java World.fill (32f30626:1450-1453): matching
+                            // sidesAfterCorner defers this sprite and keeps
+                            // drawSprites so a later visit paints it after
+                            // the leftover corner wall. Client-TS 274 dropped
+                            // the body.
+                            draw_sprites = true;
+                            if let Some(tile) =
+                                tile_at_mut(&mut world.squares, level, tile_x, tile_z)
+                            {
+                                tile.draw_sprites = true;
+                            }
+                            skip = true;
+                            break 'sprite_bounds;
                         }
                     }
 
@@ -3876,6 +4002,8 @@ impl RenderWorld {
                     if let Some(slot) = self.sprite_buffer.get_mut(sprite_buffer_size as usize) {
                         *slot = Some(sprite_index);
                     }
+                    #[cfg(test)]
+                    fill_trace::record(tile_x, tile_z, FillKind::Buffered, sprite.typecode);
                     sprite_buffer_size += 1;
                     render_trace!(sprite(
                         min_x,
@@ -3913,6 +4041,8 @@ impl RenderWorld {
                 loop {
                     let mut farthest_distance = -50i32;
                     let mut farthest_index = -1i32;
+                    let mut farthest_x = 0i32;
+                    let mut farthest_z = 0i32;
 
                     for index in 0..sprite_buffer_size as usize {
                         let Some(sprite) = self.sprite_buffer.get(index).copied().flatten() else {
@@ -3923,9 +4053,23 @@ impl RenderWorld {
                             continue;
                         };
 
-                        if sprite.distance > farthest_distance && sprite.cycle != cycle_no {
+                        if sprite.cycle == cycle_no {
+                            continue;
+                        }
+                        if sprite_farther_than(
+                            sprite.distance,
+                            sprite.x,
+                            sprite.z,
+                            farthest_distance,
+                            farthest_x,
+                            farthest_z,
+                            cx,
+                            cz,
+                        ) {
                             farthest_distance = sprite.distance;
                             farthest_index = index as i32;
+                            farthest_x = sprite.x;
+                            farthest_z = sprite.z;
                         }
                     }
 
@@ -3979,6 +4123,8 @@ impl RenderWorld {
                             .sprite_model_mut(&*world, cache, loop_cycle, farthest)
                             .as_mut()
                         {
+                            #[cfg(test)]
+                            fill_trace::record(tile_x, tile_z, FillKind::Sprite, typecode);
                             model.world_render(
                                 cache,
                                 loop_cycle,
@@ -4361,6 +4507,8 @@ impl RenderWorld {
                                 .1
                                 .as_mut()
                             {
+                                #[cfg(test)]
+                                fill_trace::record(tile_x, tile_z, FillKind::Wall, typecode);
                                 model.world_render(
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
@@ -4383,6 +4531,8 @@ impl RenderWorld {
                                 .0
                                 .as_mut()
                             {
+                                #[cfg(test)]
+                                fill_trace::record(tile_x, tile_z, FillKind::Wall, typecode);
                                 model.world_render(
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
@@ -6704,5 +6854,334 @@ mod near_plane_tests {
         assert_eq!(p.z, 50);
         assert_eq!(p.x, 50, "half-way between x=0 and x=100");
         assert_eq!(p.y, 0);
+    }
+}
+
+#[cfg(test)]
+mod fill_java_order_tests {
+    use super::{
+        fill_trace, sprite_farther_than, FillEvent, FillKind, RenderWorld,
+    };
+    use crate::config::Cache;
+    use crate::core::World;
+    use crate::dash3d::{Model, SceneModel, TerrainOverlayShape};
+    use crate::graphics::{Pix2D, Pix3D, Pix3DDraw, PixMap};
+
+    const SHADE: i32 = 200 * 128 + 100;
+    const SOUTH_SHADE: i32 = 40 * 128 + 80;
+    const NORTH_SHADE: i32 = 90 * 128 + 40;
+    const WALL_SHADE: i32 = 70 * 128 + 30;
+
+    fn game_distance_table() -> [i32; 9] {
+        let mut distance = [0i32; 9];
+        for (x, slot) in distance.iter_mut().enumerate() {
+            let angle = x as i32 * 32 + 128 + 15;
+            let offset = angle * 3 + 600;
+            let sin = Pix3D::sin_table()[angle as usize];
+            *slot = (offset * sin) >> 16;
+        }
+        distance
+    }
+
+    fn ns_box_model() -> Model {
+        let mut model = Model {
+            num_points: 8,
+            point_x: Some(vec![-128, 128, 128, -128, -128, 128, 128, -128]),
+            point_y: Some(vec![0, 0, -200, -200, 0, 0, -200, -200]),
+            point_z: Some(vec![-128, -128, -128, -128, 128, 128, 128, 128]),
+            num_faces: 4,
+            ..Default::default()
+        };
+        model.face_vertex_a = Some(vec![0, 0, 4, 4]);
+        model.face_vertex_b = Some(vec![1, 2, 6, 7]);
+        model.face_vertex_c = Some(vec![2, 3, 5, 6]);
+        model.face_colour = Some(vec![SOUTH_SHADE, SOUTH_SHADE, NORTH_SHADE, NORTH_SHADE]);
+        model.calculate_normals(64, 768, -50, -10, -50, false);
+        model.face_colour_a = Some(vec![SOUTH_SHADE, SOUTH_SHADE, NORTH_SHADE, NORTH_SHADE]);
+        model.face_colour_b = Some(vec![SOUTH_SHADE, SOUTH_SHADE, NORTH_SHADE, NORTH_SHADE]);
+        model.face_colour_c = Some(vec![SOUTH_SHADE, SOUTH_SHADE, NORTH_SHADE, NORTH_SHADE]);
+        model
+    }
+
+    fn corner_wall_model() -> Model {
+        let mut model = Model {
+            num_points: 4,
+            point_x: Some(vec![-60, 60, 60, -60]),
+            point_y: Some(vec![0, 0, -180, -180]),
+            point_z: Some(vec![0, 0, 0, 0]),
+            num_faces: 2,
+            ..Default::default()
+        };
+        model.face_vertex_a = Some(vec![0, 0]);
+        model.face_vertex_b = Some(vec![1, 2]);
+        model.face_vertex_c = Some(vec![2, 3]);
+        model.face_colour_a = Some(vec![WALL_SHADE, WALL_SHADE]);
+        model.face_colour_b = Some(vec![WALL_SHADE, WALL_SHADE]);
+        model.face_colour_c = Some(vec![WALL_SHADE, WALL_SHADE]);
+        model.calc_bounding_cylinder();
+        model
+    }
+
+    fn set_flat_ground(world: &mut World, x: i32, z: i32) {
+        world.set_ground(
+            0,
+            x,
+            z,
+            TerrainOverlayShape::PLAIN,
+            0,
+            -1,
+            0,
+            0,
+            0,
+            0,
+            SHADE,
+            SHADE,
+            SHADE,
+            SHADE,
+            SHADE,
+            SHADE,
+            SHADE,
+            SHADE,
+            0,
+            0,
+        );
+    }
+
+    fn flat_world(max_tile: i32) -> World {
+        let groundh = vec![vec![vec![2000i32; max_tile as usize + 1]; max_tile as usize + 1]; 1];
+        let mut world = World::new(groundh, max_tile, 1, max_tile);
+        world.fill_base_level(0);
+        for x in 0..max_tile {
+            for z in 0..max_tile {
+                set_flat_ground(&mut world, x, z);
+            }
+        }
+        world
+    }
+
+    fn sparse_world(max_tile: i32, tiles: &[(i32, i32)]) -> World {
+        // Height gate `groundh - eye_y >= 2000` marks these tiles visible
+        // even when visBacking is empty around a sparse island.
+        let groundh = vec![vec![vec![4000i32; max_tile as usize + 1]; max_tile as usize + 1]; 1];
+        let mut world = World::new(groundh, max_tile, 1, max_tile);
+        world.fill_base_level(0);
+        for &(x, z) in tiles {
+            set_flat_ground(&mut world, x, z);
+        }
+        world
+    }
+
+    fn place_scenery(
+        rw: &mut RenderWorld,
+        world: &mut World,
+        x: i32,
+        z: i32,
+        model: Model,
+        typecode: i32,
+        width: i32,
+        length: i32,
+    ) {
+        world.add_scenery(0, x, z, 2000, typecode, 0, width, length, 0, 0, 0, 0, 0);
+        let index = world.last_sprite_index().expect("sprite pushed");
+        rw.set_sprite_model(world, index, Some(SceneModel::Model(model)));
+    }
+
+    fn place_wall(
+        rw: &mut RenderWorld,
+        world: &mut World,
+        x: i32,
+        z: i32,
+        typecode: i32,
+        angle1: i32,
+    ) {
+        world.set_wall(0, x, z, 2000, angle1, 0, typecode, 0, 0, 0, 0, 0);
+        rw.set_wall_model(
+            world,
+            0,
+            x,
+            z,
+            Some(SceneModel::Model(corner_wall_model())),
+            None,
+        );
+    }
+
+    fn render_traced(
+        world: &mut World,
+        rw: &mut RenderWorld,
+        eye_x: i32,
+        eye_z: i32,
+    ) -> Vec<FillEvent> {
+        Pix3D::init_colour_table(0.6);
+        rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+        let mut pix = Pix3DDraw::default();
+        let mut map = PixMap::new(512, 334);
+        fill_trace::start();
+        {
+            let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+            pix.set_render_clipping(&surface);
+            pix.trans = 0;
+            rw.render_all(
+                world,
+                &mut pix,
+                &mut surface,
+                &Cache::default(),
+                0,
+                eye_x,
+                1950,
+                eye_z,
+                3,
+                0,
+                128,
+            );
+        }
+        fill_trace::take()
+    }
+
+    /// Drive the real `fill` visit of the leftover-corner wall after the
+    /// closer handshake tile has already finished its RING front pass
+    /// (`drawFront` cleared). Full `render_all` on a 3-tile island lets
+    /// checkAdjacent keep that closer tile waiting, so the Java body and
+    /// the `drawFront` skip hide each other; this is the mid-frame state
+    /// fill actually reaches once the closer tile has been drawn.
+    fn leftover_corner_wall_visit(
+        world: &mut World,
+        rw: &mut RenderWorld,
+        eye_x: i32,
+        eye_z: i32,
+        closer_x: i32,
+        closer_z: i32,
+        wall_x: i32,
+        wall_z: i32,
+    ) -> Vec<FillEvent> {
+        Pix3D::init_colour_table(0.6);
+        rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+        let mut pix = Pix3DDraw::default();
+        let mut map = PixMap::new(512, 334);
+        fill_trace::start();
+        {
+            let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+            pix.set_render_clipping(&surface);
+            pix.trans = 0;
+            let cache = Cache::default();
+            rw.prepare_scene(
+                world, &cache, 0, eye_x, 1950, eye_z, 3, 0, 128,
+            );
+            if let Some(tile) = world.squares[0][closer_x as usize][closer_z as usize].as_deref_mut()
+            {
+                tile.draw_front = false;
+            }
+            rw.fill(
+                world,
+                &mut pix,
+                &mut surface,
+                &cache,
+                0,
+                (0, wall_x, wall_z),
+                false,
+            );
+        }
+        fill_trace::take()
+    }
+
+    #[test]
+    fn equal_tile_distance_prefers_larger_wrapping_xz() {
+        assert!(sprite_farther_than(2, 896, 1088, 2, 960, 1024, 1024, 1024));
+        assert!(!sprite_farther_than(2, 960, 1024, 2, 896, 1088, 1024, 1024));
+        assert!(sprite_farther_than(3, 0, 0, 2, 0, 0, 0, 0));
+        assert!(!sprite_farther_than(1, 0, 0, 2, 0, 0, 0, 0));
+        let wrapped = sprite_farther_than(1, 46341, 0, 1, 20000, 0, 0, 0);
+        let naive = (46341i64 * 46341) > (20000i64 * 20000);
+        assert_ne!(
+            wrapped, naive,
+            "tie-break must use wrapping squares, not i64"
+        );
+    }
+
+    /// Java World.java:1450-1453 on the real fill path.
+    ///
+    /// Camera (gx=7,gz=10) makes (7,8) direction=7. Angle 16 is in
+    /// MIDTAB[7] (not PRETAB), so fill sets cornerSides=3,
+    /// sidesBefore=MIDDEP_16[7]=1, sidesAfter=2 and does not front-paint
+    /// the wall. The 2×1 at (6,8) has spriteSpan 1, so
+    /// `(span & 3) == 1` delays the corner pass. The 1×2 at (7,8) occupies
+    /// the wall with spans=2; after the closer north tile has already
+    /// cleared drawFront, `(2 & 3) == 2` is the only skip. Without the
+    /// 1450-1453 body fill buffers loc 200 on that visit; with it the loc
+    /// is not buffered there. A separate full `render_all` still paints
+    /// both the wall and the loc.
+    #[test]
+    fn java_sides_after_corner_defers_buffer_until_later_visit() {
+        let mut world = sparse_world(16, &[(6, 8), (7, 8), (7, 9)]);
+        let mut rw = RenderWorld::new();
+        place_scenery(&mut rw, &mut world, 7, 8, ns_box_model(), 200, 1, 2);
+        place_scenery(&mut rw, &mut world, 6, 8, ns_box_model(), 300, 2, 1);
+        place_wall(&mut rw, &mut world, 7, 8, 100, 16);
+        let leftover = leftover_corner_wall_visit(
+            &mut world,
+            &mut rw,
+            7 * 128,
+            10 * 128,
+            7,
+            9,
+            7,
+            8,
+        );
+        let wall_visit = leftover
+            .iter()
+            .find(|e| e.kind == FillKind::Visit && e.tile_x == 7 && e.tile_z == 8)
+            .map(|e| e.visit)
+            .expect("fill must visit leftover-corner tile (7,8)");
+        assert!(
+            leftover.iter().all(|e| {
+                !(e.visit == wall_visit
+                    && e.typecode == 200
+                    && matches!(e.kind, FillKind::Buffered | FillKind::Sprite))
+            }),
+            "Java sidesAfterCorner must not buffer or paint loc 200 on leftover-corner visit {wall_visit}; events={leftover:?}"
+        );
+
+        let mut world = sparse_world(16, &[(6, 8), (7, 8), (7, 9)]);
+        let mut rw = RenderWorld::new();
+        place_scenery(&mut rw, &mut world, 7, 8, ns_box_model(), 200, 1, 2);
+        place_scenery(&mut rw, &mut world, 6, 8, ns_box_model(), 300, 2, 1);
+        place_wall(&mut rw, &mut world, 7, 8, 100, 16);
+        let full = render_traced(&mut world, &mut rw, 7 * 128, 10 * 128);
+        assert!(
+            full.iter().any(|e| e.kind == FillKind::Wall && e.typecode == 100),
+            "MIDTAB corner wall typecode 100 must still paint; events={full:?}"
+        );
+        assert!(
+            full.iter().any(|e| e.kind == FillKind::Sprite && e.typecode == 200),
+            "handshake loc typecode 200 must still paint after the defer; events={full:?}"
+        );
+    }
+
+    /// Two overlapping-footprint locs on shared tile (7,8), same tile-manhattan
+    /// from camera (gx=8,gz=8). Java paints the farther camera-xz first.
+    #[test]
+    fn java_sprite_distance_tie_paints_farther_xz_first() {
+        let mut world = flat_world(16);
+        let mut rw = RenderWorld::new();
+        place_scenery(&mut rw, &mut world, 7, 7, ns_box_model(), 10, 1, 2);
+        place_scenery(&mut rw, &mut world, 6, 8, ns_box_model(), 20, 2, 1);
+        let events = render_traced(&mut world, &mut rw, 8 * 128, 8 * 128);
+        let order: Vec<i32> = events
+            .iter()
+            .filter(|e| e.kind == FillKind::Sprite)
+            .map(|e| e.typecode)
+            .collect();
+        eprintln!("sprite distance tie sprite paints={order:?}");
+        let near = order.iter().position(|&t| t == 10);
+        let far = order.iter().position(|&t| t == 20);
+        assert!(
+            near.is_some() && far.is_some(),
+            "both tie-break locs must paint ({order:?})"
+        );
+        assert!(
+            far < near,
+            "Java World.fill (32f30626:1481-1488) paints the farther camera-xz loc first on a tile-distance tie; got far@{:?} near@{:?} order={order:?}",
+            far,
+            near
+        );
     }
 }
