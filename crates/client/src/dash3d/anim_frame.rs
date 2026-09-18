@@ -685,4 +685,155 @@ mod tests {
             "old base must drop when last private record is replaced"
         );
     }
+
+    /// Isolated high IDs for `mask_animate` Java-oracle fixtures. Do not
+    /// reuse 0 / 30001 / 41010–43014 from other AnimFrame tests.
+    const MASK_PRI: u16 = 45101;
+    const MASK_SEC: u16 = 45102;
+    const ORIG_PRI: u16 = 45103;
+    const ORIG_SEC: u16 = 45104;
+
+    /// Java `SeqType.decode` walkmerge terminator (`SeqType.java` 142).
+    const WALKMERGE_SENTINEL: i32 = 9_999_999;
+
+    fn points(model: &Model) -> (Vec<i32>, Vec<i32>, Vec<i32>) {
+        (
+            model.point_x.clone().unwrap(),
+            model.point_y.clone().unwrap(),
+            model.point_z.clone().unwrap(),
+        )
+    }
+
+    /// Two labelled vertices: group 1 / label 0 is primary (non-walkmerge),
+    /// group 2 / label 1 is secondary (walkmerge). Skeleton types
+    /// ORIGIN, TRANSLATE, TRANSLATE.
+    fn membership_model() -> Model {
+        Model {
+            num_points: 2,
+            point_x: Some(vec![0, 0]),
+            point_y: Some(vec![0, 0]),
+            point_z: Some(vec![0, 0]),
+            label_vertices: Some(vec![Some(vec![0]), Some(vec![1])]),
+            ..Default::default()
+        }
+    }
+
+    /// v0 origin source, v1 scaled walkmerge vertex, v2 primary-only
+    /// translate target (not asserted: primary membership is the other
+    /// fixture). Skeleton ORIGIN, TRANSLATE, SCALE.
+    fn origin_model() -> Model {
+        Model {
+            num_points: 3,
+            point_x: Some(vec![10, 50, 0]),
+            point_y: Some(vec![20, 20, 0]),
+            point_z: Some(vec![30, 30, 0]),
+            label_vertices: Some(vec![Some(vec![0]), Some(vec![1]), Some(vec![2])]),
+            ..Default::default()
+        }
+    }
+
+    /// Primary walkmerge membership is Java `!=` (type 0 always).
+    ///
+    /// Java 274 `Model.maskAnimate` 1132–1134 applies a primary group when
+    /// `ti != walkmerge || type == 0`. Secondary 1147–1148 uses `==`.
+    /// Frozen c603 primary used the secondary predicate, so walkmerge
+    /// (legs) received the combat translate and the non-masked vertex did
+    /// not. TRANSLATE ignores origin, so this fixture is independent of
+    /// the discarded-secondary-origin defect.
+    ///
+    /// Expected vertices from original Java `animate2` type 1
+    /// (`Model.java` 1183–1195), confirmed by
+    /// `/tmp/mask-animate-oracle` excerpt of those methods:
+    /// v0=(10,20,30) v1=(7,8,9). Missing `AnimFrame` would leave identity
+    /// (0,0,0)/(0,0,0); inverted membership yields (0,0,0)/(107,208,309).
+    #[test]
+    fn mask_animate_primary_applies_nonmasked_skips_walkmerge() {
+        let _g = test_lock();
+        let types = [
+            AnimTransform::ORIGIN as u8,
+            AnimTransform::TRANSLATE as u8,
+            AnimTransform::TRANSLATE as u8,
+        ];
+        let labels: &[&[u8]] = &[&[0], &[0], &[1]];
+        let primary: &[(u8, i32, i32, i32)] =
+            &[(0, 0, 0, 0), (0x7, 10, 20, 30), (0x7, 100, 200, 300)];
+        let secondary: &[(u8, i32, i32, i32)] =
+            &[(0, 0, 0, 0), (0x7, 1, 2, 3), (0x7, 7, 8, 9)];
+        AnimFrame::unpack(&pack_archive(
+            &[(MASK_PRI, 1, primary), (MASK_SEC, 1, secondary)],
+            &types,
+            labels,
+        ));
+        let pri = AnimFrame::get(MASK_PRI as i32).expect("primary frame published");
+        let sec = AnimFrame::get(MASK_SEC as i32).expect("secondary frame published");
+        assert_eq!(pri.ti.as_deref(), Some([0, 1, 2].as_slice()));
+        assert_eq!(pri.tx.as_deref(), Some([0, 10, 100].as_slice()));
+        assert_eq!(sec.ti.as_deref(), Some([0, 1, 2].as_slice()));
+        assert_eq!(sec.tx.as_deref(), Some([0, 1, 7].as_slice()));
+
+        let mut model = membership_model();
+        model.mask_animate(
+            MASK_PRI as i32,
+            MASK_SEC as i32,
+            Some(&[2, WALKMERGE_SENTINEL]),
+        );
+        let (x, y, z) = points(&model);
+        assert_eq!(
+            (&x[..], &y[..], &z[..]),
+            ([10, 7].as_slice(), [20, 8].as_slice(), [30, 9].as_slice()),
+            "Java primary != walkmerge on v0, secondary == walkmerge on v1"
+        );
+    }
+
+    /// Secondary ORIGIN must update the origin used by a later SCALE.
+    ///
+    /// Java `animate2` type 0 writes instance `oX/oY/oZ`
+    /// (`Model.java` 1156–1182); type 3 SCALE subtracts that origin
+    /// (`Model.java` 1236–1253). Frozen c603 reset origin for the
+    /// secondary pass but discarded `animate2`'s return, so SCALE used
+    /// (0,0,0). Primary here only translates v2 (not asserted) so a
+    /// membership-only fault cannot produce the discarded-origin vertex.
+    ///
+    /// Origin = v0 + (5,0,0) = (15,20,30). SCALE (256,128,128) on v1:
+    /// ((50-15)*256/128+15, 20, 30) = (85,20,30). Scale about (0,0,0)
+    /// yields (100,20,30). Missing frames would leave v1 at (50,20,30).
+    #[test]
+    fn mask_animate_secondary_scale_uses_origin_from_prior_group() {
+        let _g = test_lock();
+        let types = [
+            AnimTransform::ORIGIN as u8,
+            AnimTransform::TRANSLATE as u8,
+            AnimTransform::SCALE as u8,
+        ];
+        let labels: &[&[u8]] = &[&[0], &[2], &[1]];
+        let primary: &[(u8, i32, i32, i32)] = &[(0, 0, 0, 0), (0x1, 4, 0, 0), (0, 0, 0, 0)];
+        let secondary: &[(u8, i32, i32, i32)] =
+            &[(0x1, 5, 0, 0), (0, 0, 0, 0), (0x7, 256, 128, 128)];
+        AnimFrame::unpack(&pack_archive(
+            &[(ORIG_PRI, 1, primary), (ORIG_SEC, 1, secondary)],
+            &types,
+            labels,
+        ));
+        let pri = AnimFrame::get(ORIG_PRI as i32).expect("primary frame published");
+        let sec = AnimFrame::get(ORIG_SEC as i32).expect("secondary frame published");
+        assert_eq!(pri.ti.as_deref(), Some([0, 1].as_slice()));
+        assert_eq!(sec.ti.as_deref(), Some([0, 2].as_slice()));
+        assert_eq!(sec.tx.as_deref(), Some([5, 256].as_slice()));
+        assert_eq!(sec.ty.as_deref(), Some([0, 128].as_slice()));
+        assert_eq!(sec.tz.as_deref(), Some([0, 128].as_slice()));
+
+        let mut model = origin_model();
+        model.mask_animate(
+            ORIG_PRI as i32,
+            ORIG_SEC as i32,
+            Some(&[2, WALKMERGE_SENTINEL]),
+        );
+        let (x, y, z) = points(&model);
+        assert_eq!((x[0], y[0], z[0]), (10, 20, 30), "origin source vertex stays");
+        assert_eq!(
+            (x[1], y[1], z[1]),
+            (85, 20, 30),
+            "SCALE about Java origin (15,20,30), not (0,0,0)"
+        );
+    }
 }

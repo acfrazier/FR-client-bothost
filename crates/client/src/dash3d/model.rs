@@ -1284,7 +1284,9 @@ impl Model {
                 mask_base = mask[counter];
                 counter += 1;
             }
-            if base == mask_base
+            // Java Model.maskAnimate primary: `ti != walkmerge || type == 0`
+            // (type 0 ORIGIN always). Secondary below uses `==`.
+            if base != mask_base
                 || skeleton_type.get(base as usize).copied().unwrap_or(0) as i32 == 0
             {
                 if let Some(labels) = skeleton_labels
@@ -1328,7 +1330,9 @@ impl Model {
                     .get(base as usize)
                     .and_then(|l| l.as_deref())
                 {
-                    self.animate2(
+                    // Java animate2 mutates instance oX/oY/oZ; thread the
+                    // returned origin so a later ROTATE/SCALE uses it.
+                    origin = self.animate2(
                         tx[i],
                         ty[i],
                         tz[i],
