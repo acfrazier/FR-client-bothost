@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+use crate::client::client::{APPLET_H, APPLET_W};
 use crate::dash3d::{BuildArea, Model};
 
 /// Cap unique shade identities so a wide region cannot grow a dump set.
@@ -155,6 +156,60 @@ static BACKEND_LOGGED: AtomicBool = AtomicBool::new(false);
 static STOPPED: AtomicBool = AtomicBool::new(false);
 static ARMED: AtomicBool = AtomicBool::new(false);
 static SHADE_DUMPED: OnceLock<Mutex<HashSet<ShadeKey>>> = OnceLock::new();
+/// Once-per-run CPU slot hist (`area_game` + post-blit `draw_area`).
+static PIXEL_ROI_DUMPED: AtomicBool = AtomicBool::new(false);
+/// Once-per-run panel upload hist (packed + expand of the same pixmap).
+static PANEL_UPLOAD_DUMPED: AtomicBool = AtomicBool::new(false);
+/// Once-per-run PNG hist on an existing screenshot write.
+static PNG_ROI_DUMPED: AtomicBool = AtomicBool::new(false);
+static CAPTURE_IDENTITY: Mutex<Option<String>> = Mutex::new(None);
+static GAME_IMAGE_FB: Mutex<Option<GameImageFb>> = Mutex::new(None);
+
+/// Inclusive scene-space slot on `area_game` (512×334). Verified from
+/// `CpuBackend::scene` (`set_clipping(game.width, game.height)` after
+/// `cls`) and the hop-4 still census 617–746 × 160–240 via
+/// `x=40+2*sx`, `y=2*sy`. Not a product viewport.
+pub const CAVE_SLOT_SX0: i32 = 288;
+pub const CAVE_SLOT_SX1: i32 = 353;
+pub const CAVE_SLOT_SY0: i32 = 80;
+pub const CAVE_SLOT_SY1: i32 = 120;
+/// `area_game.blit_into(draw_area, 4, 4)` in `CpuBackend::composite_scene`.
+pub const AREA_GAME_BLIT_X: i32 = 4;
+pub const AREA_GAME_BLIT_Y: i32 = 4;
+pub const PACKED_ZERO: u32 = 0x0000_0000;
+/// `colour_table[2]` at brightness 0.8 (Hermes-corrected gouraud
+/// `(((S<<15)>>7)>>8)=S` → table[2], not table[256]).
+pub const PACKED_PALETTE2: u32 = 0x0009_0707;
+pub const PACKED_RGB2: u32 = 0x0002_0202;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PackedHist {
+    pub n: u32,
+    pub zero: u32,
+    pub palette2: u32,
+    pub rgb2: u32,
+    pub other: u32,
+}
+
+impl PackedHist {
+    const EMPTY: Self = Self {
+        n: 0,
+        zero: 0,
+        palette2: 0,
+        rgb2: 0,
+        other: 0,
+    };
+}
+
+#[derive(Clone, Copy, Debug)]
+struct GameImageFb {
+    min_x: f32,
+    min_y: f32,
+    size_x: f32,
+    size_y: f32,
+    fb_x: f32,
+    fb_y: f32,
+}
 
 /// Compact identity: layer 0=ground, 1=wall, 2=wall2, 3=decor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -734,6 +789,433 @@ pub fn ground_shades(
     );
 }
 
+/// Inclusive applet rectangle of the cave slot after the (4,4) blit.
+pub fn cave_slot_applet() -> (i32, i32, i32, i32) {
+    (
+        AREA_GAME_BLIT_X + CAVE_SLOT_SX0,
+        AREA_GAME_BLIT_Y + CAVE_SLOT_SY0,
+        AREA_GAME_BLIT_X + CAVE_SLOT_SX1,
+        AREA_GAME_BLIT_Y + CAVE_SLOT_SY1,
+    )
+}
+
+/// Sample only an armed `scene_state==2` frame, once. `scene_state==1`
+/// is the last-FBO freeze and must not touch pixels.
+pub fn pixel_roi_should_sample(scene_state: i32, armed: bool, already: bool) -> bool {
+    scene_state == 2 && armed && !already
+}
+
+pub fn tracing_enabled() -> bool {
+    tracing()
+}
+
+pub fn pixel_roi_cpu_emitted() -> bool {
+    PIXEL_ROI_DUMPED.load(Ordering::Relaxed)
+}
+
+/// Layout-only stash of the Game Image rect (no pixel copy). Ordinary
+/// builds never compile this module.
+pub fn note_game_image_fb(min_x: f32, min_y: f32, size_x: f32, size_y: f32, fb_x: f32, fb_y: f32) {
+    if !tracing() {
+        return;
+    }
+    if let Ok(mut g) = GAME_IMAGE_FB.lock() {
+        *g = Some(GameImageFb {
+            min_x,
+            min_y,
+            size_x,
+            size_y,
+            fb_x,
+            fb_y,
+        });
+    }
+}
+
+pub fn note_capture_identity(identity: &str) {
+    if !tracing() {
+        return;
+    }
+    if let Ok(mut g) = CAPTURE_IDENTITY.lock() {
+        *g = Some(identity.to_string());
+    }
+}
+
+fn capture_identity() -> String {
+    CAPTURE_IDENTITY
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn clamp_roi(width: i32, height: i32, x0: i32, y0: i32, x1: i32, y1: i32) -> Option<(i32, i32, i32, i32)> {
+    if width <= 0 || height <= 0 {
+        return None;
+    }
+    let x0 = x0.max(0);
+    let y0 = y0.max(0);
+    let x1 = x1.min(width - 1);
+    let y1 = y1.min(height - 1);
+    if x0 > x1 || y0 > y1 {
+        return None;
+    }
+    Some((x0, y0, x1, y1))
+}
+
+fn bucket(packed: u32, h: &mut PackedHist) {
+    h.n += 1;
+    match packed & 0x00ff_ffff {
+        PACKED_ZERO => h.zero += 1,
+        PACKED_PALETTE2 => h.palette2 += 1,
+        PACKED_RGB2 => h.rgb2 += 1,
+        _ => h.other += 1,
+    }
+}
+
+pub fn packed_roi_hist(
+    pixels: &[i32],
+    width: i32,
+    height: i32,
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+) -> PackedHist {
+    let mut h = PackedHist::EMPTY;
+    let Some((x0, y0, x1, y1)) = clamp_roi(width, height, x0, y0, x1, y1) else {
+        return h;
+    };
+    for y in y0..=y1 {
+        let row = (y * width) as usize;
+        for x in x0..=x1 {
+            let i = row + x as usize;
+            if let Some(p) = pixels.get(i) {
+                bucket(*p as u32, &mut h);
+            }
+        }
+    }
+    h
+}
+
+pub fn packed_u32_roi_hist(
+    pixels: &[u32],
+    width: i32,
+    height: i32,
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+) -> PackedHist {
+    let mut h = PackedHist::EMPTY;
+    let Some((x0, y0, x1, y1)) = clamp_roi(width, height, x0, y0, x1, y1) else {
+        return h;
+    };
+    for y in y0..=y1 {
+        let row = (y * width) as usize;
+        for x in x0..=x1 {
+            let i = row + x as usize;
+            if let Some(p) = pixels.get(i) {
+                bucket(*p, &mut h);
+            }
+        }
+    }
+    h
+}
+
+pub fn rgba_roi_hist(
+    rgba: &[u8],
+    width: i32,
+    height: i32,
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+) -> PackedHist {
+    let mut h = PackedHist::EMPTY;
+    let Some((x0, y0, x1, y1)) = clamp_roi(width, height, x0, y0, x1, y1) else {
+        return h;
+    };
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            let i = ((y * width + x) as usize) * 4;
+            if i + 2 < rgba.len() {
+                let packed = ((rgba[i] as u32) << 16) | ((rgba[i + 1] as u32) << 8) | (rgba[i + 2] as u32);
+                bucket(packed, &mut h);
+            }
+        }
+    }
+    h
+}
+
+pub fn packed_roi_fp(
+    pixels: &[i32],
+    width: i32,
+    height: i32,
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+) -> u64 {
+    let Some((x0, y0, x1, y1)) = clamp_roi(width, height, x0, y0, x1, y1) else {
+        return 0;
+    };
+    let mut fp = 0u64;
+    let mut i = 1u64;
+    for y in y0..=y1 {
+        let row = (y * width) as usize;
+        for x in x0..=x1 {
+            if let Some(p) = pixels.get(row + x as usize) {
+                fp ^= (*p as u32 as u64).wrapping_mul(i);
+                i = i.wrapping_add(1);
+            }
+        }
+    }
+    fp
+}
+
+fn packed_u32_roi_fp(
+    pixels: &[u32],
+    width: i32,
+    height: i32,
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+) -> u64 {
+    let Some((x0, y0, x1, y1)) = clamp_roi(width, height, x0, y0, x1, y1) else {
+        return 0;
+    };
+    let mut fp = 0u64;
+    let mut i = 1u64;
+    for y in y0..=y1 {
+        let row = (y * width) as usize;
+        for x in x0..=x1 {
+            if let Some(p) = pixels.get(row + x as usize) {
+                fp ^= (*p as u64).wrapping_mul(i);
+                i = i.wrapping_add(1);
+            }
+        }
+    }
+    fp
+}
+
+fn roi_samples(pixels: &[i32], width: i32, height: i32, x0: i32, y0: i32, x1: i32, y1: i32) -> String {
+    let Some((x0, y0, x1, y1)) = clamp_roi(width, height, x0, y0, x1, y1) else {
+        return String::new();
+    };
+    let mut out = Vec::new();
+    'walk: for y in y0..=y1 {
+        let row = (y * width) as usize;
+        for x in x0..=x1 {
+            if let Some(p) = pixels.get(row + x as usize) {
+                out.push(format!("{:06x}", *p as u32 & 0x00ff_ffff));
+                if out.len() == 8 {
+                    break 'walk;
+                }
+            }
+        }
+    }
+    out.join(",")
+}
+
+fn roi_samples_u32(pixels: &[u32], width: i32, height: i32, x0: i32, y0: i32, x1: i32, y1: i32) -> String {
+    let Some((x0, y0, x1, y1)) = clamp_roi(width, height, x0, y0, x1, y1) else {
+        return String::new();
+    };
+    let mut out = Vec::new();
+    'walk: for y in y0..=y1 {
+        let row = (y * width) as usize;
+        for x in x0..=x1 {
+            if let Some(p) = pixels.get(row + x as usize) {
+                out.push(format!("{:06x}", *p & 0x00ff_ffff));
+                if out.len() == 8 {
+                    break 'walk;
+                }
+            }
+        }
+    }
+    out.join(",")
+}
+
+fn roi_samples_rgba(rgba: &[u8], width: i32, height: i32, x0: i32, y0: i32, x1: i32, y1: i32) -> String {
+    let Some((x0, y0, x1, y1)) = clamp_roi(width, height, x0, y0, x1, y1) else {
+        return String::new();
+    };
+    let mut out = Vec::new();
+    'walk: for y in y0..=y1 {
+        for x in x0..=x1 {
+            let i = ((y * width + x) as usize) * 4;
+            if i + 2 < rgba.len() {
+                let packed = ((rgba[i] as u32) << 16) | ((rgba[i + 1] as u32) << 8) | (rgba[i + 2] as u32);
+                out.push(format!("{packed:06x}"));
+                if out.len() == 8 {
+                    break 'walk;
+                }
+            }
+        }
+    }
+    out.join(",")
+}
+
+/// Map the inclusive applet slot through the Game Image rect into PNG
+/// framebuffer pixels. `size` is the ImGui Image size; `fb_*` is the
+/// window framebuffer scale (HiDPI).
+pub fn cave_slot_png_roi(
+    min_x: f32,
+    min_y: f32,
+    size_x: f32,
+    size_y: f32,
+    fb_x: f32,
+    fb_y: f32,
+    applet_w: f32,
+    applet_h: f32,
+) -> (i32, i32, i32, i32) {
+    let (ax0, ay0, ax1, ay1) = cave_slot_applet();
+    let sx = if applet_w > 0.0 { size_x / applet_w } else { 1.0 };
+    let sy = if applet_h > 0.0 { size_y / applet_h } else { 1.0 };
+    let x0 = ((min_x + ax0 as f32 * sx) * fb_x).floor() as i32;
+    let y0 = ((min_y + ay0 as f32 * sy) * fb_y).floor() as i32;
+    let x1 = ((min_x + ax1 as f32 * sx) * fb_x).floor() as i32;
+    let y1 = ((min_y + ay1 as f32 * sy) * fb_y).floor() as i32;
+    (x0, y0, x1, y1)
+}
+
+fn emit_hist_line(
+    stage: &str,
+    dim_w: i32,
+    dim_h: i32,
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+    h: PackedHist,
+    fp: u64,
+    sample: &str,
+    extra: &str,
+) {
+    let cam = LIVE.lock().ok().and_then(|g| g.as_ref().map(|l| l.cam));
+    let (cycle, eye, yaw, pitch, origin) = match cam {
+        Some(c) => (
+            c.cycle,
+            format!("{},{},{}", c.eye_x, c.eye_y, c.eye_z),
+            c.yaw,
+            c.pitch,
+            format!("{},{}", c.base_x, c.base_z),
+        ),
+        None => (0, "-".into(), 0, 0, "-".into()),
+    };
+    eprintln!(
+        "{PREFIX} pixel-roi stage={stage} f={} cycle={cycle} eye={eye} yaw={yaw} pitch={pitch} origin={origin} id={} dim={dim_w}x{dim_h} roi={x0}..{x1},{y0}..{y1} n={} zero={} palette2={} rgb2={} other={} fp={fp:016x} sample={sample}{extra}",
+        frame_no(),
+        capture_identity(),
+        h.n,
+        h.zero,
+        h.palette2,
+        h.rgb2,
+        h.other,
+    );
+}
+
+/// After the (4,4) blit: sample `area_game` (scene ROI) and post-blit
+/// `draw_area` (applet ROI) on the same armed `scene_state==2` frame.
+pub fn dump_cpu_slot_pixels(
+    area_game: Option<(&[i32], i32, i32)>,
+    draw_area: Option<(&[i32], i32, i32)>,
+    scene_state: i32,
+) {
+    if !tracing() {
+        return;
+    }
+    let already = PIXEL_ROI_DUMPED.load(Ordering::Relaxed);
+    if !pixel_roi_should_sample(scene_state, armed(), already) {
+        return;
+    }
+    if PIXEL_ROI_DUMPED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    if let Some((px, w, h)) = area_game {
+        let hist = packed_roi_hist(px, w, h, CAVE_SLOT_SX0, CAVE_SLOT_SY0, CAVE_SLOT_SX1, CAVE_SLOT_SY1);
+        let fp = packed_roi_fp(px, w, h, CAVE_SLOT_SX0, CAVE_SLOT_SY0, CAVE_SLOT_SX1, CAVE_SLOT_SY1);
+        let sample = roi_samples(px, w, h, CAVE_SLOT_SX0, CAVE_SLOT_SY0, CAVE_SLOT_SX1, CAVE_SLOT_SY1);
+        emit_hist_line(
+            "area_game",
+            w,
+            h,
+            CAVE_SLOT_SX0,
+            CAVE_SLOT_SY0,
+            CAVE_SLOT_SX1,
+            CAVE_SLOT_SY1,
+            hist,
+            fp,
+            &sample,
+            "",
+        );
+    } else {
+        eprintln!("{PREFIX} pixel-roi stage=area_game skipped=no-buffer");
+    }
+    if let Some((px, w, h)) = draw_area {
+        let (x0, y0, x1, y1) = cave_slot_applet();
+        let hist = packed_roi_hist(px, w, h, x0, y0, x1, y1);
+        let fp = packed_roi_fp(px, w, h, x0, y0, x1, y1);
+        let sample = roi_samples(px, w, h, x0, y0, x1, y1);
+        emit_hist_line("draw_area", w, h, x0, y0, x1, y1, hist, fp, &sample, "");
+    }
+}
+
+/// Packed CPU applet + the exact `expand_rgba` bytes about to upload.
+/// Gated on the CPU dump so the camera was already station-ready.
+pub fn dump_panel_upload(packed: &[u32], rgba: &[u8], width: i32, height: i32) {
+    if !tracing() || !pixel_roi_cpu_emitted() {
+        return;
+    }
+    if PANEL_UPLOAD_DUMPED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let (x0, y0, x1, y1) = cave_slot_applet();
+    let packed_h = packed_u32_roi_hist(packed, width, height, x0, y0, x1, y1);
+    let fp = packed_u32_roi_fp(packed, width, height, x0, y0, x1, y1);
+    let sample = roi_samples_u32(packed, width, height, x0, y0, x1, y1);
+    emit_hist_line("upload-packed", width, height, x0, y0, x1, y1, packed_h, fp, &sample, "");
+    let rgba_h = rgba_roi_hist(rgba, width, height, x0, y0, x1, y1);
+    let rgba_sample = roi_samples_rgba(rgba, width, height, x0, y0, x1, y1);
+    emit_hist_line("upload-rgba", width, height, x0, y0, x1, y1, rgba_h, fp, &rgba_sample, "");
+}
+
+/// Histogram the existing screenshot write. Uses the last Game Image
+/// rect; no extra frame copy. Skips if the CPU dump has not fired.
+pub fn dump_png_slot(rgba: &[u8], width: i32, height: i32, label: &str) {
+    if !tracing() || !pixel_roi_cpu_emitted() {
+        return;
+    }
+    if PNG_ROI_DUMPED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let extra = format!(" label={label}");
+    let Some(fb) = GAME_IMAGE_FB.lock().ok().and_then(|g| *g) else {
+        eprintln!(
+            "{PREFIX} pixel-roi stage=png dim={width}x{height} skipped=no-game-image-rect{extra}"
+        );
+        return;
+    };
+    let (x0, y0, x1, y1) = cave_slot_png_roi(
+        fb.min_x,
+        fb.min_y,
+        fb.size_x,
+        fb.size_y,
+        fb.fb_x,
+        fb.fb_y,
+        APPLET_W as f32,
+        APPLET_H as f32,
+    );
+    let hist = rgba_roi_hist(rgba, width, height, x0, y0, x1, y1);
+    let sample = roi_samples_rgba(rgba, width, height, x0, y0, x1, y1);
+    let extra = format!(
+        " label={label} image={:.1},{:.1},{:.1}x{:.1} fb={:.2},{:.2}",
+        fb.min_x, fb.min_y, fb.size_x, fb.size_y, fb.fb_x, fb.fb_y
+    );
+    emit_hist_line("png", width, height, x0, y0, x1, y1, hist, 0, &sample, &extra);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -891,6 +1373,89 @@ mod tests {
         assert_ne!(wall, other_tile);
         assert_ne!(wall, ground);
         assert_eq!(wall.id, 1417);
+    }
+
+    #[test]
+    fn packed_roi_hist_counts_zero_palette2_rgb2_other_and_clamps() {
+        // 4×3 surface; slot request extends past the right edge.
+        let mut px = vec![0i32; 12];
+        px[0] = 0x0000_0000;
+        px[1] = 0x0009_0707;
+        px[2] = 0x0002_0202;
+        px[3] = 0x00ff_0000;
+        px[4] = 0x0009_0707;
+        px[5] = 0x0002_0202;
+        px[6] = 0x00ff_0000;
+        px[7] = 0x00ff_0000;
+        let h = packed_roi_hist(&px, 4, 3, 0, 0, 5, 1);
+        assert_eq!(
+            h,
+            PackedHist {
+                n: 8,
+                zero: 1,
+                palette2: 2,
+                rgb2: 2,
+                other: 3,
+            }
+        );
+        let empty = packed_roi_hist(&px, 4, 3, 9, 9, 10, 10);
+        assert_eq!(empty.n, 0);
+        assert_eq!(empty.zero + empty.palette2 + empty.rgb2 + empty.other, 0);
+    }
+
+    #[test]
+    fn rgba_roi_hist_maps_expand_channels_to_the_same_buckets() {
+        // expand_rgba: 0x00RRGGBB → [R,G,B,255]
+        let rgba = [
+            0x00, 0x00, 0x00, 255, // zero
+            0x09, 0x07, 0x07, 255, // colour_table[2] @ 0.8
+            0x02, 0x02, 0x02, 255, // measured PNG hole
+            0x74, 0x59, 0x2a, 255, // gold-ish other
+        ];
+        let h = rgba_roi_hist(&rgba, 4, 1, 0, 0, 3, 0);
+        assert_eq!(
+            h,
+            PackedHist {
+                n: 4,
+                zero: 1,
+                palette2: 1,
+                rgb2: 1,
+                other: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn cave_slot_applet_is_area_game_blit_plus_scene_roi() {
+        let (x0, y0, x1, y1) = cave_slot_applet();
+        assert_eq!(AREA_GAME_BLIT_X, 4);
+        assert_eq!(AREA_GAME_BLIT_Y, 4);
+        assert_eq!(x0, AREA_GAME_BLIT_X + CAVE_SLOT_SX0);
+        assert_eq!(y0, AREA_GAME_BLIT_Y + CAVE_SLOT_SY0);
+        assert_eq!(x1, AREA_GAME_BLIT_X + CAVE_SLOT_SX1);
+        assert_eq!(y1, AREA_GAME_BLIT_Y + CAVE_SLOT_SY1);
+        assert_eq!((CAVE_SLOT_SX0, CAVE_SLOT_SY0, CAVE_SLOT_SX1, CAVE_SLOT_SY1), (288, 80, 353, 120));
+        let n = packed_roi_hist(&vec![0i32; 512 * 334], 512, 334, CAVE_SLOT_SX0, CAVE_SLOT_SY0, CAVE_SLOT_SX1, CAVE_SLOT_SY1);
+        assert_eq!(n.n, 66 * 41);
+    }
+
+    #[test]
+    fn pixel_roi_sample_requires_scene2_and_armed_and_is_once() {
+        assert!(!pixel_roi_should_sample(1, true, false), "last-FBO freeze must not sample");
+        assert!(!pixel_roi_should_sample(2, false, false), "unarmed TRACE must not sample");
+        assert!(!pixel_roi_should_sample(2, true, true), "already dumped");
+        assert!(pixel_roi_should_sample(2, true, false));
+    }
+
+    #[test]
+    fn cave_slot_png_roi_scales_applet_through_game_image() {
+        let (x0, y0, x1, y1) = cave_slot_png_roi(16.0, 0.0, 765.0, 503.0, 2.0, 2.0, 765.0, 503.0);
+        let (ax0, ay0, ax1, ay1) = cave_slot_applet();
+        assert_eq!(x0, ((16.0 + ax0 as f32) * 2.0) as i32);
+        assert_eq!(y0, (ay0 as f32 * 2.0) as i32);
+        assert_eq!(x1, ((16.0 + ax1 as f32) * 2.0) as i32);
+        assert_eq!(y1, (ay1 as f32 * 2.0) as i32);
+        assert_eq!((ax0, ay0, ax1, ay1), (292, 84, 357, 124));
     }
 
     #[test]

@@ -294,6 +294,18 @@ impl RenderBackend for CpuBackend {
             if let Some(game) = &r.area_game {
                 game.blit_into(&mut r.draw_area, 4, 4);
             }
+            #[cfg(feature = "render-diagnostics")]
+            crate::render::diagnostics::dump_cpu_slot_pixels(
+                r.area_game
+                    .as_ref()
+                    .map(|g| (g.pixels.as_slice(), g.width, g.height)),
+                Some((
+                    r.draw_area.pixels.as_slice(),
+                    r.draw_area.width,
+                    r.draw_area.height,
+                )),
+                core.scene_state,
+            );
         }
     }
 
