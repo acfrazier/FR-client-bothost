@@ -2027,6 +2027,8 @@ impl Model {
 
         let max_z = mid_z + radius_cos_eye_pitch;
         if max_z <= 50 || mid_z >= 3500 {
+            #[cfg(feature = "render-diagnostics")]
+            crate::render::diagnostics::paint(typecode, "near-plane", mid_z, max_z);
             return;
         }
 
@@ -2036,11 +2038,15 @@ impl Model {
             >> 16;
         let mut left_x = (mid_x - self.radius) << 9;
         if left_x.wrapping_div(max_z) >= surface.max_x {
+            #[cfg(feature = "render-diagnostics")]
+            crate::render::diagnostics::paint(typecode, "frustum-left", mid_z, max_z);
             return;
         }
 
         let mut right_x = (mid_x + self.radius) << 9;
         if right_x.wrapping_div(max_z) <= -surface.max_x {
+            #[cfg(feature = "render-diagnostics")]
+            crate::render::diagnostics::paint(typecode, "frustum-right", mid_z, max_z);
             return;
         }
 
@@ -2052,16 +2058,23 @@ impl Model {
 
         let mut bottom_y = (mid_y + radius_sin_eye_pitch) << 9;
         if bottom_y.wrapping_div(max_z) <= -surface.max_y {
+            #[cfg(feature = "render-diagnostics")]
+            crate::render::diagnostics::paint(typecode, "frustum-bottom", mid_z, max_z);
             return;
         }
 
         let y_prime = radius_sin_eye_pitch + ((self.min_y.wrapping_mul(cos_eye_pitch)) >> 16);
         let mut top_y = (mid_y - y_prime) << 9;
         if top_y.wrapping_div(max_z) >= surface.max_y {
+            #[cfg(feature = "render-diagnostics")]
+            crate::render::diagnostics::paint(typecode, "frustum-top", mid_z, max_z);
             return;
         }
 
         let radius_z = radius_cos_eye_pitch + ((self.min_y.wrapping_mul(sin_eye_pitch)) >> 16);
+
+        #[cfg(feature = "render-diagnostics")]
+        crate::render::diagnostics::paint(typecode, "accepted", mid_z, max_z);
 
         let mut clipped = mid_z - radius_z <= 50;
         let mut picking = false;

@@ -1,4 +1,6 @@
 pub mod backend;
+#[cfg(feature = "render-diagnostics")]
+pub mod diagnostics;
 pub mod draw;
 pub mod media;
 pub mod nav_debug;

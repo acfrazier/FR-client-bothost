@@ -34,6 +34,17 @@ use crate::dash3d::{
 };
 use crate::graphics::{Pix2D, Pix3D, Pix3DDraw};
 
+#[cfg(feature = "render-diagnostics")]
+macro_rules! render_trace {
+    ($($arg:tt)*) => {
+        crate::render::diagnostics::$($arg)*
+    };
+}
+#[cfg(not(feature = "render-diagnostics"))]
+macro_rules! render_trace {
+    ($($arg:tt)*) => {};
+}
+
 const MAX_SPRITE_BUFFER: usize = 100;
 
 /// `World.visBacking[8][32][51][51]` flat row offset of the pitch/yaw pair
@@ -2807,6 +2818,16 @@ impl RenderWorld {
                 if let Some(sprite) = world.sprites.get_mut(index).and_then(|s| s.as_mut()) {
                     sprite.cycle = cycle_no;
                 }
+                render_trace!(sprite(
+                    min_tile_x,
+                    min_tile_z,
+                    max_tile_x,
+                    max_tile_z,
+                    typecode,
+                    0,
+                    "occluded",
+                    true,
+                ));
                 return;
             }
         }
@@ -3140,6 +3161,31 @@ impl RenderWorld {
             let draw_front = tile_at(&world.squares, level, tile_x, tile_z)
                 .map(|t| t.draw_front)
                 .unwrap_or(false);
+            #[cfg(feature = "render-diagnostics")]
+            {
+                let (draw_back, corner_sides, sides_before, sides_after) =
+                    tile_at(&world.squares, level, tile_x, tile_z)
+                        .map(|t| {
+                            (
+                                t.draw_back,
+                                t.corner_sides,
+                                t.sides_before_corner,
+                                t.sides_after_corner,
+                            )
+                        })
+                        .unwrap_or((false, 0, 0, 0));
+                crate::render::diagnostics::visit(
+                    tile_x,
+                    tile_z,
+                    level,
+                    draw_front,
+                    draw_back,
+                    corner_sides,
+                    sides_before,
+                    sides_after,
+                    check_adjacent,
+                );
+            }
 
             if draw_front {
                 if check_adjacent {
@@ -3366,34 +3412,40 @@ impl RenderWorld {
                         }
                     }
 
-                    if (angle1 & front_wall_types) != 0
-                        && !self.wall_occluded(world, original_level, tile_x, tile_z, angle1)
-                    {
-                        if let Some(model) = self
-                            .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
-                            .0
-                            .as_mut()
-                        {
-                            model.world_render(
-                                cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw,
-                                cos_yaw, wall_x, wall_y, wall_z, typecode,
-                            );
+                    if (angle1 & front_wall_types) != 0 {
+                        let occluded =
+                            self.wall_occluded(world, original_level, tile_x, tile_z, angle1);
+                        if !occluded {
+                            if let Some(model) = self
+                                .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                                .0
+                                .as_mut()
+                            {
+                                model.world_render(
+                                    cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
+                                    sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
+                                );
+                            }
                         }
+                        render_trace!(wall(tile_x, tile_z, typecode, "front", occluded, !occluded));
                     }
 
-                    if (angle2 & front_wall_types) != 0
-                        && !self.wall_occluded(world, original_level, tile_x, tile_z, angle2)
-                    {
-                        if let Some(model) = self
-                            .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
-                            .1
-                            .as_mut()
-                        {
-                            model.world_render(
-                                cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw,
-                                cos_yaw, wall_x, wall_y, wall_z, typecode,
-                            );
+                    if (angle2 & front_wall_types) != 0 {
+                        let occluded =
+                            self.wall_occluded(world, original_level, tile_x, tile_z, angle2);
+                        if !occluded {
+                            if let Some(model) = self
+                                .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                                .1
+                                .as_mut()
+                            {
+                                model.world_render(
+                                    cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
+                                    sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
+                                );
+                            }
                         }
+                        render_trace!(wall(tile_x, tile_z, typecode, "front", occluded, !occluded));
                     }
                 }
 
@@ -3407,9 +3459,24 @@ impl RenderWorld {
                         .as_ref()
                         .map(|m| m.min_y())
                         .unwrap_or(1000);
-                    if !self.sprite_occluded(world, original_level, tile_x, tile_z, min_y) {
-                        if (wshape & front_wall_types) != 0 {
-                            if let Some(decor) = self
+                    let decor_occluded =
+                        self.sprite_occluded(world, original_level, tile_x, tile_z, min_y);
+                    if decor_occluded {
+                        render_trace!(decor(
+                            tile_x,
+                            tile_z,
+                            typecode,
+                            wshape,
+                            angle as i32,
+                            "front",
+                            true,
+                            "occluded",
+                            "n/a",
+                            false,
+                        ));
+                    } else if (wshape & front_wall_types) != 0 {
+                            #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
+                            let model = if let Some(decor) = self
                                 .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
                                 .as_mut()
                             {
@@ -3417,7 +3484,22 @@ impl RenderWorld {
                                     cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode,
                                 );
-                            }
+                                "resolved"
+                            } else {
+                                "missing"
+                            };
+                            render_trace!(decor(
+                                tile_x,
+                                tile_z,
+                                typecode,
+                                wshape,
+                                angle as i32,
+                                "front",
+                                false,
+                                "front-wall",
+                                model,
+                                model == "resolved",
+                            ));
                         } else if (wshape & 0x300) != 0 {
                             let nearest_x = if angle == LocAngle::NORTH || angle == LocAngle::EAST {
                                 -decor_x
@@ -3488,9 +3570,34 @@ impl RenderWorld {
                                     );
                                 }
                             }
+                            render_trace!(decor(
+                                tile_x,
+                                tile_z,
+                                typecode,
+                                wshape,
+                                angle,
+                                "front",
+                                false,
+                                "offset",
+                                "resolved",
+                                (wshape & 0x100) != 0 && nearest_z < nearest_x
+                                    || (wshape & 0x200) != 0 && nearest_z > nearest_x,
+                            ));
+                        } else {
+                            render_trace!(decor(
+                                tile_x,
+                                tile_z,
+                                typecode,
+                                wshape,
+                                angle,
+                                "front",
+                                false,
+                                "wshape-miss",
+                                "n/a",
+                                false,
+                            ));
                         }
                     }
-                }
 
                 // Ground decor + ground objects (stack height 0) on a drawn tile.
                 if tile_drawn {
@@ -3668,6 +3775,8 @@ impl RenderWorld {
                     let max_x = sprite.max_tile_x;
                     let min_z = sprite.min_tile_z;
                     let max_z = sprite.max_tile_z;
+                    #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
+                    let sprite_typecode = sprite.typecode;
 
                     let mut skip = false;
                     'sprite_bounds: for x in min_x..=max_x {
@@ -3712,6 +3821,16 @@ impl RenderWorld {
                     }
 
                     if skip {
+                        render_trace!(sprite(
+                            min_x,
+                            min_z,
+                            max_x,
+                            max_z,
+                            sprite_typecode,
+                            0,
+                            "deferred",
+                            false,
+                        ));
                         continue 'iterate_sprites;
                     }
 
@@ -3719,6 +3838,16 @@ impl RenderWorld {
                         *slot = Some(sprite_index);
                     }
                     sprite_buffer_size += 1;
+                    render_trace!(sprite(
+                        min_x,
+                        min_z,
+                        max_x,
+                        max_z,
+                        sprite_typecode,
+                        0,
+                        "buffered",
+                        false,
+                    ));
 
                     let mut min_tile_distance_x = gx - sprite.min_tile_x;
                     let max_tile_distance_x = sprite.max_tile_x - gx;
@@ -3770,7 +3899,8 @@ impl RenderWorld {
                         sprite.cycle = cycle_no;
                     }
 
-                    let (min_x, max_x, min_z, max_z, yaw, typecode, sx, sy, sz) = {
+                    #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
+                    let (min_x, max_x, min_z, max_z, yaw, typecode, sx, sy, sz, distance) = {
                         let Some(sprite) = world.sprites.get(farthest).and_then(|s| s.as_ref())
                         else {
                             continue;
@@ -3785,6 +3915,7 @@ impl RenderWorld {
                             sprite.x,
                             sprite.y,
                             sprite.z,
+                            sprite.distance,
                         )
                     };
                     let model_min_y = self
@@ -3793,7 +3924,7 @@ impl RenderWorld {
                         .map(|m| m.min_y())
                         .unwrap_or(0);
 
-                    if !self.sprite_occluded2(
+                    let sprite_occluded = self.sprite_occluded2(
                         world,
                         original_level,
                         min_x,
@@ -3801,7 +3932,8 @@ impl RenderWorld {
                         min_z,
                         max_z,
                         model_min_y,
-                    ) {
+                    );
+                    if !sprite_occluded {
                         if let Some(model) = self
                             .sprite_model_mut(&*world, cache, loop_cycle, farthest)
                             .as_mut()
@@ -3823,6 +3955,16 @@ impl RenderWorld {
                             );
                         }
                     }
+                    render_trace!(sprite(
+                        min_x,
+                        min_z,
+                        max_x,
+                        max_z,
+                        typecode,
+                        distance,
+                        if sprite_occluded { "occluded" } else { "drawn" },
+                        sprite_occluded,
+                    ));
 
                     for x in min_x..=max_x {
                         for z in min_z..=max_z {
@@ -3999,9 +4141,24 @@ impl RenderWorld {
                         .as_ref()
                         .map(|m| m.min_y())
                         .unwrap_or(1000);
-                    if !self.sprite_occluded(world, original_level, tile_x, tile_z, min_y) {
-                        if (wshape & back_wall_types) != 0 {
-                            if let Some(decor) = self
+                    let decor_occluded =
+                        self.sprite_occluded(world, original_level, tile_x, tile_z, min_y);
+                    if decor_occluded {
+                        render_trace!(decor(
+                            tile_x,
+                            tile_z,
+                            typecode,
+                            wshape,
+                            angle,
+                            "back",
+                            true,
+                            "occluded",
+                            "n/a",
+                            false,
+                        ));
+                    } else if (wshape & back_wall_types) != 0 {
+                            #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
+                            let model = if let Some(decor) = self
                                 .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
                                 .as_mut()
                             {
@@ -4009,7 +4166,22 @@ impl RenderWorld {
                                     cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode,
                                 );
-                            }
+                                "resolved"
+                            } else {
+                                "missing"
+                            };
+                            render_trace!(decor(
+                                tile_x,
+                                tile_z,
+                                typecode,
+                                wshape,
+                                angle,
+                                "back",
+                                false,
+                                "back-wall",
+                                model,
+                                model == "resolved",
+                            ));
                         } else if (wshape & 0x300) != 0 {
                             let nearest_x = if angle == LocAngle::NORTH || angle == LocAngle::EAST {
                                 -decor_x
@@ -4080,42 +4252,73 @@ impl RenderWorld {
                                     );
                                 }
                             }
+                            render_trace!(decor(
+                                tile_x,
+                                tile_z,
+                                typecode,
+                                wshape,
+                                angle,
+                                "back",
+                                false,
+                                "offset",
+                                "resolved",
+                                (wshape & 0x100) != 0 && nearest_z >= nearest_x
+                                    || (wshape & 0x200) != 0 && nearest_z <= nearest_x,
+                            ));
+                        } else {
+                            render_trace!(decor(
+                                tile_x,
+                                tile_z,
+                                typecode,
+                                wshape,
+                                angle,
+                                "back",
+                                false,
+                                "wshape-miss",
+                                "n/a",
+                                false,
+                            ));
                         }
                     }
-                }
 
                 let wall_data = tile_at(&world.squares, level, tile_x, tile_z)
                     .and_then(|t| t.wall.as_deref())
                     .map(|w| (w.angle1, w.angle2, w.typecode, w.x - cx, w.y - cy, w.z - cz));
                 if let Some((angle1, angle2, typecode, wall_x, wall_y, wall_z)) = wall_data {
-                    if (angle2 & back_wall_types) != 0
-                        && !self.wall_occluded(world, original_level, tile_x, tile_z, angle2)
-                    {
-                        if let Some(model) = self
-                            .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
-                            .1
-                            .as_mut()
-                        {
-                            model.world_render(
-                                cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw,
-                                cos_yaw, wall_x, wall_y, wall_z, typecode,
-                            );
+                    if (angle2 & back_wall_types) != 0 {
+                        let occluded =
+                            self.wall_occluded(world, original_level, tile_x, tile_z, angle2);
+                        if !occluded {
+                            if let Some(model) = self
+                                .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                                .1
+                                .as_mut()
+                            {
+                                model.world_render(
+                                    cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
+                                    sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
+                                );
+                            }
                         }
+                        render_trace!(wall(tile_x, tile_z, typecode, "back", occluded, !occluded));
                     }
 
-                    if (angle1 & back_wall_types) != 0
-                        && !self.wall_occluded(world, original_level, tile_x, tile_z, angle1)
-                    {
-                        if let Some(model) = self
-                            .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
-                            .0
-                            .as_mut()
-                        {
-                            model.world_render(
-                                cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw,
-                                cos_yaw, wall_x, wall_y, wall_z, typecode,
-                            );
+                    if (angle1 & back_wall_types) != 0 {
+                        let occluded =
+                            self.wall_occluded(world, original_level, tile_x, tile_z, angle1);
+                        if !occluded {
+                            if let Some(model) = self
+                                .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                                .0
+                                .as_mut()
+                            {
+                                model.world_render(
+                                    cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
+                                    sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
+                                );
+                            }
                         }
+                        render_trace!(wall(tile_x, tile_z, typecode, "back", occluded, !occluded));
                     }
                 }
             }
@@ -5437,6 +5640,7 @@ fn emit_scene_model(
     typecode: i32,
     wall: bool,
 ) {
+    render_trace!(mesh_id(typecode, if wall { "emitted-wall" } else { "emitted" }));
     if crate::render_debug_enabled() {
         let loc_id = (typecode >> 14) & 0x7fff;
         static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<i32>>> =

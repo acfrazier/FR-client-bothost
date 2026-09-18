@@ -279,6 +279,14 @@ impl Renderer {
         } else {
             Box::new(CpuBackend)
         });
+        #[cfg(feature = "render-diagnostics")]
+        {
+            let kind = match renderer.backend_kind() {
+                crate::render::backend::BackendKind::Cpu => "cpu",
+                crate::render::backend::BackendKind::Gpu => "gpu",
+            };
+            crate::render::diagnostics::backend(kind);
+        }
         renderer
     }
 

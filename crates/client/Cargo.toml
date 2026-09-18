@@ -7,6 +7,7 @@ edition = "2021"
 default = []
 window = ["dep:winit", "dep:softbuffer"]
 audio = ["dep:rustysynth", "dep:cpal"]
+render-diagnostics = []
 
 [dependencies]
 bzip2 = "0.4"

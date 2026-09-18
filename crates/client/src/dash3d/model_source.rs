@@ -135,6 +135,9 @@ impl SceneModel {
                 relative_z,
                 typecode,
             );
+        } else {
+            #[cfg(feature = "render-diagnostics")]
+            crate::render::diagnostics::paint(typecode, "unresolved", 0, 0);
         }
     }
 }

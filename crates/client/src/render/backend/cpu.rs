@@ -195,6 +195,28 @@ impl RenderBackend for CpuBackend {
         let (cam_x, cam_y, cam_z, cam_pitch, cam_yaw) =
             r.cam_shake_jitter(core, eye_x, eye_y, eye_z, eye_pitch, eye_yaw);
 
+        #[cfg(feature = "render-diagnostics")]
+        crate::render::diagnostics::begin_frame(crate::render::diagnostics::FrameCam {
+            cycle: core.loop_cycle,
+            eye_x: cam_x,
+            eye_y: cam_y,
+            eye_z: cam_z,
+            yaw: cam_yaw,
+            pitch: cam_pitch,
+            pre_jitter_x: eye_x,
+            pre_jitter_y: eye_y,
+            pre_jitter_z: eye_z,
+            orbit_x: core.orbit_camera_x,
+            orbit_z: core.orbit_camera_z,
+            orbit_yaw: core.orbit_camera_yaw,
+            orbit_pitch: core.orbit_camera_pitch,
+            macro_x: core.macro_camera_x,
+            macro_z: core.macro_camera_z,
+            macro_angle: core.macro_camera_angle,
+            base_x: core.map_build_base_x,
+            base_z: core.map_build_base_z,
+        });
+
         // `World.resetVisCalc` (Client.ts loadGame 1222-1235): once per
         // game, so `vis_backing` is populated before `render_all` binds its
         // pitch/yaw row.
