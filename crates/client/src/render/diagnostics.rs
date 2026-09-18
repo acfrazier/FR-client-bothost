@@ -283,7 +283,12 @@ thread_local! {
 }
 
 static UI_TAKEN_ROI: Mutex<Option<(PixelRoiMeta, String, u64)>> = Mutex::new(None);
-static PRESENTED_ROI: Mutex<Option<PixelRoiMeta>> = Mutex::new(None);
+static PRESENTED_ROI: Mutex<Option<(PixelRoiMeta, String)>> = Mutex::new(None);
+static READBACK_CTX: Mutex<Option<String>> = Mutex::new(None);
+static GAME_IMAGE_PRESENT: AtomicU32 = AtomicU32::new(0);
+const GAME_IMAGE_NONE: u32 = 0;
+const GAME_IMAGE_CPU: u32 = 1;
+const GAME_IMAGE_GPU: u32 = 2;
 
 static PIXEL_ROI_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -327,11 +332,6 @@ pub fn bind_shot(meta: PixelRoiMeta, image: PixelRoiImage) -> PixelRoiShotBind {
 
 pub fn label_cam<'a>(bind: &'a PixelRoiShotBind, _live_now: Option<&PixelRoiCam>) -> &'a PixelRoiCam {
     &bind.meta.cam
-}
-
-/// Stamping an armed frame is not a proof and must not burn the request.
-pub fn pixel_roi_stamp_consumes_proof() -> bool {
-    false
 }
 
 pub fn pixel_roi_proof(screenshot_requested: bool, bind: Option<&PixelRoiShotBind>) -> PixelRoiProof {
@@ -991,9 +991,6 @@ pub fn tracing_enabled() -> bool {
 
 /// Layout-only stash of this UI frame's Game Image rect (no pixel copy).
 pub fn note_game_image_fb(min_x: f32, min_y: f32, size_x: f32, size_y: f32, fb_x: f32, fb_y: f32) {
-    if !tracing() {
-        return;
-    }
     if let Ok(mut g) = GAME_IMAGE_FB.lock() {
         *g = Some(GameImageFb {
             min_x,
@@ -1027,15 +1024,107 @@ pub fn take_ui_taken_roi() -> Option<(PixelRoiMeta, String, u64)> {
     UI_TAKEN_ROI.lock().ok().and_then(|mut g| g.take())
 }
 
-pub fn set_presented_roi(meta: PixelRoiMeta) {
-    if let Ok(mut g) = PRESENTED_ROI.lock() {
-        *g = Some(meta);
+fn clear_ui_taken_roi() {
+    if let Ok(mut g) = UI_TAKEN_ROI.lock() {
+        *g = None;
     }
 }
 
+fn set_presented_roi(meta: PixelRoiMeta, slot: &str) {
+    if let Ok(mut g) = PRESENTED_ROI.lock() {
+        *g = Some((meta, slot.to_string()));
+    }
+}
+
+fn clear_presented_roi() {
+    if let Ok(mut g) = PRESENTED_ROI.lock() {
+        *g = None;
+    }
+}
+
+/// Focused Game Image is about to upload a CPU pixmap. `None` clears any
+/// leftover taken stamp so an untracked present cannot keep a prior ROI.
+pub fn prepare_present_roi(roi: Option<(PixelRoiMeta, &str, u64)>) {
+    match roi {
+        Some((meta, slot, generation)) => set_ui_taken_roi(meta, slot, generation),
+        None => clear_ui_taken_roi(),
+    }
+}
+
+/// Arm the next focused Game Image CPU upload so a missing stamp clears
+/// presented instead of leaving the previous bot frame attached.
+pub fn arm_game_image_cpu_upload() {
+    GAME_IMAGE_PRESENT.store(GAME_IMAGE_CPU, Ordering::Relaxed);
+}
+
+/// Arm the next Game Image GPU bind so a texture change clears presented
+/// and a same-texture last-FBO hold does not.
+pub fn arm_game_image_gpu_present() {
+    GAME_IMAGE_PRESENT.store(GAME_IMAGE_GPU, Ordering::Relaxed);
+}
+
+fn take_game_image_arm(kind: u32) -> bool {
+    GAME_IMAGE_PRESENT
+        .compare_exchange(kind, GAME_IMAGE_NONE, Ordering::Relaxed, Ordering::Relaxed)
+        .is_ok()
+}
+
+/// Finish a CPU upload: attach when a stamp travelled with this present,
+/// otherwise drop presented if this upload is the focused Game Image.
+pub fn complete_cpu_upload(packed: &[u32], rgba: &[u8], width: i32, height: i32) {
+    let armed = take_game_image_arm(GAME_IMAGE_CPU);
+    match take_ui_taken_roi() {
+        Some((mut meta, slot, generation)) => {
+            attach_panel_upload(&mut meta, packed, rgba, width, height, &slot, generation);
+            set_presented_roi(meta, &slot);
+        }
+        None if armed => clear_presented_roi(),
+        None => {}
+    }
+}
+
+/// New GPU texture on the focused Game Image: prior CPU ROI is not that image.
+/// Rail/tile rebinds are not armed and must not drop the Game Image stamp.
+pub fn note_gpu_texture_changed() {
+    if take_game_image_arm(GAME_IMAGE_GPU) {
+        clear_ui_taken_roi();
+        clear_presented_roi();
+    }
+}
+
+/// Same actual GPU texture as last present (last-FBO / bind no-op).
+pub fn note_gpu_texture_held() {
+    let _ = take_game_image_arm(GAME_IMAGE_GPU);
+}
+
+/// Slot identity of the texture being copied at readback enqueue.
+pub fn note_readback_context(slot: &str) {
+    if let Ok(mut g) = READBACK_CTX.lock() {
+        *g = Some(slot.to_string());
+    }
+}
+
+pub fn reset_pixel_roi_ui() {
+    clear_ui_taken_roi();
+    clear_presented_roi();
+    if let Ok(mut g) = READBACK_CTX.lock() {
+        *g = None;
+    }
+    if let Ok(mut g) = GAME_IMAGE_FB.lock() {
+        *g = None;
+    }
+    GAME_IMAGE_PRESENT.store(GAME_IMAGE_NONE, Ordering::Relaxed);
+}
+
 /// Snapshot presented CPU meta + this-frame logical image at readback enqueue.
+/// Bound to the held-texture slot: another slot's context cannot wear this ROI.
 pub fn snapshot_shot_bind() -> Option<PixelRoiShotBind> {
-    let meta = PRESENTED_ROI.lock().ok().and_then(|g| g.clone())?;
+    let (meta, slot) = PRESENTED_ROI.lock().ok().and_then(|g| g.clone())?;
+    if let Some(ctx) = READBACK_CTX.lock().ok().and_then(|g| g.clone()) {
+        if ctx != slot {
+            return None;
+        }
+    }
     let image = this_frame_image()?;
     Some(bind_shot(meta, image))
 }
@@ -1308,6 +1397,27 @@ fn emit_hist_line(
     );
 }
 
+/// Hist + TLS stamp for this production pixmap. Does not emit and does
+/// not consume a later screenshot proof.
+pub fn stamp_cpu_slot_pixels(
+    area_game: Option<(&[i32], i32, i32)>,
+    draw_area: Option<(&[i32], i32, i32)>,
+    cam: PixelRoiCam,
+) -> Option<PixelRoiMeta> {
+    let mut meta = PixelRoiMeta::produced(next_pixel_roi_id(), cam, PackedHist::EMPTY, PackedHist::EMPTY);
+    if let Some((px, w, h)) = area_game {
+        meta.area_game = packed_roi_hist(px, w, h, CAVE_SLOT_SX0, CAVE_SLOT_SY0, CAVE_SLOT_SX1, CAVE_SLOT_SY1);
+        meta.area_game_fp = packed_roi_fp(px, w, h, CAVE_SLOT_SX0, CAVE_SLOT_SY0, CAVE_SLOT_SX1, CAVE_SLOT_SY1);
+    }
+    if let Some((px, w, h)) = draw_area {
+        let (x0, y0, x1, y1) = cave_slot_applet();
+        meta.draw_area = packed_roi_hist(px, w, h, x0, y0, x1, y1);
+        meta.draw_area_fp = packed_roi_fp(px, w, h, x0, y0, x1, y1);
+    }
+    stamp_thread_pixel_roi(meta.clone());
+    Some(meta)
+}
+
 /// Stamp this armed `scene_state==2` frame onto the slot-thread TLS.
 /// Does not emit and does not consume a later screenshot proof.
 pub fn dump_cpu_slot_pixels(
@@ -1338,17 +1448,7 @@ pub fn dump_cpu_slot_pixels(
             origin_z: 0,
             trace_frame: frame_no(),
         });
-    let mut meta = PixelRoiMeta::produced(next_pixel_roi_id(), cam, PackedHist::EMPTY, PackedHist::EMPTY);
-    if let Some((px, w, h)) = area_game {
-        meta.area_game = packed_roi_hist(px, w, h, CAVE_SLOT_SX0, CAVE_SLOT_SY0, CAVE_SLOT_SX1, CAVE_SLOT_SY1);
-        meta.area_game_fp = packed_roi_fp(px, w, h, CAVE_SLOT_SX0, CAVE_SLOT_SY0, CAVE_SLOT_SX1, CAVE_SLOT_SY1);
-    }
-    if let Some((px, w, h)) = draw_area {
-        let (x0, y0, x1, y1) = cave_slot_applet();
-        meta.draw_area = packed_roi_hist(px, w, h, x0, y0, x1, y1);
-        meta.draw_area_fp = packed_roi_fp(px, w, h, x0, y0, x1, y1);
-    }
-    stamp_thread_pixel_roi(meta);
+    let _ = stamp_cpu_slot_pixels(area_game, draw_area, cam);
 }
 
 /// Attach upload hists to the mailbox meta that travelled with this pixmap.
@@ -1791,28 +1891,117 @@ mod tests {
         );
     }
 
+    fn slot_pixels(tag: i32) -> (Vec<i32>, Vec<i32>) {
+        let game = vec![tag; 512 * 334];
+        let mut draw = vec![0i32; 765 * 503];
+        for y in 0..334 {
+            for x in 0..512 {
+                draw[((y + 4) * 765 + (x + 4)) as usize] = tag;
+            }
+        }
+        (game, draw)
+    }
+
     #[test]
-    fn first_armed_stamp_without_screenshot_does_not_consume_proof() {
-        let first = PixelRoiMeta::produced(1, cam(1, 1), PackedHist { n: 8, ..PackedHist::EMPTY }, PackedHist::EMPTY);
+    fn later_armed_stamp_is_the_screenshot_proof_not_the_first() {
+        let (g1, d1) = slot_pixels(0x020202);
+        let (g2, d2) = slot_pixels(0x090707);
+        let first = stamp_cpu_slot_pixels(
+            Some((&g1, 512, 334)),
+            Some((&d1, 765, 503)),
+            cam(1, 1),
+        )
+        .expect("first stamp");
+        let later = stamp_cpu_slot_pixels(
+            Some((&g2, 512, 334)),
+            Some((&d2, 765, 503)),
+            cam(2, 2),
+        )
+        .expect("later stamp");
+        assert_ne!(first.frame_id, later.frame_id);
+        assert_eq!(first.area_game.rgb2, 66 * 41);
+        assert_eq!(later.area_game.palette2, 66 * 41);
         assert_eq!(
             pixel_roi_proof(false, None),
             PixelRoiProof::RejectUnavailable {
                 reason: "no-screenshot-request"
             }
         );
-        assert!(!pixel_roi_stamp_consumes_proof());
-        let later = PixelRoiMeta::produced(2, cam(2, 2), PackedHist { n: 8, ..PackedHist::EMPTY }, PackedHist::EMPTY);
-        let bind = bind_shot(later, image(16.0));
+        let bind = bind_shot(later.clone(), image(16.0));
         assert_eq!(
             pixel_roi_proof(true, Some(&bind)),
-            PixelRoiProof::Accept { frame_id: 2 }
+            PixelRoiProof::Accept {
+                frame_id: later.frame_id
+            }
         );
-        assert_ne!(first.frame_id, 2);
+        assert_ne!(
+            pixel_roi_proof(true, Some(&bind)),
+            PixelRoiProof::Accept {
+                frame_id: first.frame_id
+            }
+        );
         assert_eq!(
             pixel_roi_proof(true, None),
             PixelRoiProof::RejectUnavailable {
                 reason: "no-attached-bind"
             }
+        );
+    }
+
+    #[test]
+    fn tracked_then_untracked_cpu_or_gpu_or_other_slot_rejects_stale_presented() {
+        reset_pixel_roi_ui();
+        let alice = PixelRoiMeta::produced(
+            4,
+            cam(10, 1),
+            PackedHist { n: 8, ..PackedHist::EMPTY },
+            PackedHist::EMPTY,
+        );
+        prepare_present_roi(Some((alice.clone(), "alice", 1)));
+        arm_game_image_cpu_upload();
+        complete_cpu_upload(&[0u32; 4], &[0u8; 16], 2, 2);
+        note_game_image_fb(16.0, 0.0, 765.0, 503.0, 2.0, 2.0);
+        note_readback_context("alice");
+        assert_eq!(
+            snapshot_shot_bind().expect("tracked alice").meta.frame_id,
+            4
+        );
+
+        prepare_present_roi(None);
+        arm_game_image_cpu_upload();
+        complete_cpu_upload(&[1u32; 4], &[1u8; 16], 2, 2);
+        note_readback_context("alice");
+        assert!(
+            snapshot_shot_bind().is_none(),
+            "untracked CPU present must drop alice ROI"
+        );
+
+        prepare_present_roi(Some((alice.clone(), "alice", 2)));
+        arm_game_image_cpu_upload();
+        complete_cpu_upload(&[0u32; 4], &[0u8; 16], 2, 2);
+        note_readback_context("alice");
+        assert!(snapshot_shot_bind().is_some());
+        arm_game_image_gpu_present();
+        note_gpu_texture_changed();
+        note_readback_context("alice");
+        assert!(
+            snapshot_shot_bind().is_none(),
+            "new GPU texture must drop prior CPU ROI"
+        );
+
+        prepare_present_roi(Some((alice, "alice", 3)));
+        arm_game_image_cpu_upload();
+        complete_cpu_upload(&[0u32; 4], &[0u8; 16], 2, 2);
+        note_gpu_texture_held();
+        note_readback_context("alice");
+        assert_eq!(
+            snapshot_shot_bind().expect("held GPU/CPU image").meta.frame_id,
+            4
+        );
+        note_readback_context("bob");
+        assert!(
+            snapshot_shot_bind().is_none(),
+            "readback context for another slot must not accept alice ROI"
         );
     }
 
