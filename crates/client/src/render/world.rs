@@ -2845,7 +2845,8 @@ impl RenderWorld {
         } else {
             (0, 0)
         };
-        if let Some(model) = self
+        #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
+        let sprite_submitted = if let Some(model) = self
             .sprite_model_mut(&*world, cache, loop_cycle, index)
             .as_mut()
         {
@@ -2863,7 +2864,21 @@ impl RenderWorld {
                 typecode,
                 false,
             );
-        }
+            true
+        } else {
+            false
+        };
+        render_trace!(sprite(
+            min_tile_x,
+            min_tile_z,
+            max_tile_x,
+            max_tile_z,
+            typecode,
+            0,
+            if sprite_submitted { "submitted" } else { "missing" },
+            false,
+        ));
+        let _ = sprite_submitted;
         if let Some(sprite) = world.sprites.get_mut(index).and_then(|s| s.as_mut()) {
             sprite.cycle = cycle_no;
         }
@@ -3415,6 +3430,8 @@ impl RenderWorld {
                     if (angle1 & front_wall_types) != 0 {
                         let occluded =
                             self.wall_occluded(world, original_level, tile_x, tile_z, angle1);
+                        #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
+                        let mut submitted = false;
                         if !occluded {
                             if let Some(model) = self
                                 .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
@@ -3425,14 +3442,18 @@ impl RenderWorld {
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
                                 );
+                                submitted = true;
                             }
                         }
-                        render_trace!(wall(tile_x, tile_z, typecode, "front", occluded, !occluded));
+                        render_trace!(wall(tile_x, tile_z, typecode, "front", occluded, submitted));
+                        let _ = submitted;
                     }
 
                     if (angle2 & front_wall_types) != 0 {
                         let occluded =
                             self.wall_occluded(world, original_level, tile_x, tile_z, angle2);
+                        #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
+                        let mut submitted = false;
                         if !occluded {
                             if let Some(model) = self
                                 .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
@@ -3443,9 +3464,11 @@ impl RenderWorld {
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
                                 );
+                                submitted = true;
                             }
                         }
-                        render_trace!(wall(tile_x, tile_z, typecode, "front", occluded, !occluded));
+                        render_trace!(wall(tile_x, tile_z, typecode, "front", occluded, submitted));
+                        let _ = submitted;
                     }
                 }
 
@@ -3513,6 +3536,14 @@ impl RenderWorld {
                                 decor_z
                             };
 
+                            #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
+                            let offset_front = (wshape & 0x100) != 0 && nearest_z < nearest_x
+                                || (wshape & 0x200) != 0 && nearest_z > nearest_x;
+                            #[cfg_attr(
+                                not(feature = "render-diagnostics"),
+                                allow(unused_assignments, unused_variables)
+                            )]
+                            let mut offset_submitted = false;
                             if (wshape & 0x100) != 0 && nearest_z < nearest_x {
                                 let draw_x =
                                     decor_x + DECORXOF.get(angle as usize).copied().unwrap_or(0);
@@ -3539,6 +3570,7 @@ impl RenderWorld {
                                         draw_z,
                                         typecode,
                                     );
+                                    offset_submitted = true;
                                 }
                             }
 
@@ -3568,6 +3600,7 @@ impl RenderWorld {
                                         draw_z,
                                         typecode,
                                     );
+                                    offset_submitted = true;
                                 }
                             }
                             render_trace!(decor(
@@ -3579,10 +3612,16 @@ impl RenderWorld {
                                 "front",
                                 false,
                                 "offset",
-                                "resolved",
-                                (wshape & 0x100) != 0 && nearest_z < nearest_x
-                                    || (wshape & 0x200) != 0 && nearest_z > nearest_x,
+                                if offset_submitted {
+                                    "resolved"
+                                } else if offset_front {
+                                    "missing"
+                                } else {
+                                    "n/a"
+                                },
+                                offset_submitted,
                             ));
+                            let _ = offset_submitted;
                         } else {
                             render_trace!(decor(
                                 tile_x,
@@ -3933,6 +3972,8 @@ impl RenderWorld {
                         max_z,
                         model_min_y,
                     );
+                    #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
+                    let mut sprite_submitted = false;
                     if !sprite_occluded {
                         if let Some(model) = self
                             .sprite_model_mut(&*world, cache, loop_cycle, farthest)
@@ -3953,6 +3994,7 @@ impl RenderWorld {
                                 sz - cz,
                                 typecode,
                             );
+                            sprite_submitted = true;
                         }
                     }
                     render_trace!(sprite(
@@ -3962,9 +4004,16 @@ impl RenderWorld {
                         max_z,
                         typecode,
                         distance,
-                        if sprite_occluded { "occluded" } else { "drawn" },
+                        if sprite_occluded {
+                            "occluded"
+                        } else if sprite_submitted {
+                            "submitted"
+                        } else {
+                            "missing"
+                        },
                         sprite_occluded,
                     ));
+                    let _ = sprite_submitted;
 
                     for x in min_x..=max_x {
                         for z in min_z..=max_z {
@@ -4195,6 +4244,14 @@ impl RenderWorld {
                                 decor_z
                             };
 
+                            #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
+                            let offset_back = (wshape & 0x100) != 0 && nearest_z >= nearest_x
+                                || (wshape & 0x200) != 0 && nearest_z <= nearest_x;
+                            #[cfg_attr(
+                                not(feature = "render-diagnostics"),
+                                allow(unused_assignments, unused_variables)
+                            )]
+                            let mut offset_submitted = false;
                             if (wshape & 0x100) != 0 && nearest_z >= nearest_x {
                                 let draw_x =
                                     decor_x + DECORXOF.get(angle as usize).copied().unwrap_or(0);
@@ -4221,6 +4278,7 @@ impl RenderWorld {
                                         draw_z,
                                         typecode,
                                     );
+                                    offset_submitted = true;
                                 }
                             }
 
@@ -4250,6 +4308,7 @@ impl RenderWorld {
                                         draw_z,
                                         typecode,
                                     );
+                                    offset_submitted = true;
                                 }
                             }
                             render_trace!(decor(
@@ -4261,10 +4320,16 @@ impl RenderWorld {
                                 "back",
                                 false,
                                 "offset",
-                                "resolved",
-                                (wshape & 0x100) != 0 && nearest_z >= nearest_x
-                                    || (wshape & 0x200) != 0 && nearest_z <= nearest_x,
+                                if offset_submitted {
+                                    "resolved"
+                                } else if offset_back {
+                                    "missing"
+                                } else {
+                                    "n/a"
+                                },
+                                offset_submitted,
                             ));
+                            let _ = offset_submitted;
                         } else {
                             render_trace!(decor(
                                 tile_x,
@@ -4288,6 +4353,8 @@ impl RenderWorld {
                     if (angle2 & back_wall_types) != 0 {
                         let occluded =
                             self.wall_occluded(world, original_level, tile_x, tile_z, angle2);
+                        #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
+                        let mut submitted = false;
                         if !occluded {
                             if let Some(model) = self
                                 .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
@@ -4298,14 +4365,18 @@ impl RenderWorld {
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
                                 );
+                                submitted = true;
                             }
                         }
-                        render_trace!(wall(tile_x, tile_z, typecode, "back", occluded, !occluded));
+                        render_trace!(wall(tile_x, tile_z, typecode, "back", occluded, submitted));
+                        let _ = submitted;
                     }
 
                     if (angle1 & back_wall_types) != 0 {
                         let occluded =
                             self.wall_occluded(world, original_level, tile_x, tile_z, angle1);
+                        #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
+                        let mut submitted = false;
                         if !occluded {
                             if let Some(model) = self
                                 .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
@@ -4316,9 +4387,11 @@ impl RenderWorld {
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
                                 );
+                                submitted = true;
                             }
                         }
-                        render_trace!(wall(tile_x, tile_z, typecode, "back", occluded, !occluded));
+                        render_trace!(wall(tile_x, tile_z, typecode, "back", occluded, submitted));
+                        let _ = submitted;
                     }
                 }
             }
