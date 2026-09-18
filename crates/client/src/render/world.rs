@@ -5797,6 +5797,26 @@ pub struct SceneMesh {
 }
 
 impl SceneMesh {
+    /// Texture layers referenced by the mesh submitted for this paint.
+    /// This is deliberately a fixed-size set: it neither consumes/copies
+    /// the mesh nor materializes CPU texels. Presence establishes submitted
+    /// textured geometry, not that rasterization produced a visible fragment.
+    pub(crate) fn sampled_texture_ids(&self) -> [bool; 50] {
+        let mut sampled = [false; 50];
+        for vertex in self
+            .opaque
+            .iter()
+            .chain(&self.walls)
+            .chain(&self.translucent)
+        {
+            let id_plus_one = (vertex.uv_tex & 0xffff) as usize;
+            if (1..=50).contains(&id_plus_one) {
+                sampled[id_plus_one - 1] = true;
+            }
+        }
+        sampled
+    }
+
     /// The mesh as one opaque-first vertex list (scenery, then walls,
     /// then translucent).
     pub fn vertices(self) -> Vec<GpuVertex> {

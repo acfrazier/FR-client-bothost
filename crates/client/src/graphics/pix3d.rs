@@ -553,6 +553,17 @@ impl Pix3DDraw {
         }
     }
 
+    /// Record that a submitted GPU mesh references this texture. The CPU
+    /// path gets the same stamp from `get_texels`; this does not allocate or
+    /// materialize a CPU texel row the GPU will never sample.
+    pub(crate) fn note_texture_used(&mut self, id: usize) {
+        if id >= self.tex_cycle.len() {
+            return;
+        }
+        self.tex_cycle[id] = self.cycle;
+        self.cycle += 1;
+    }
+
     /// TS `getTexels`: the unpacked texel row for `id`, built from the
     /// texture on first use this cycle (pool pop or LRU eviction). The TS
     /// keeps the row in `activeTexels` and hands out a reference; here the
@@ -566,8 +577,7 @@ impl Pix3DDraw {
         if id >= 50 {
             return None;
         }
-        self.tex_cycle[id] = self.cycle;
-        self.cycle += 1;
+        self.note_texture_used(id);
         if self.active_texels[id].is_some() {
             self.opaque = !self.tex_trans[id];
             return self.active_texels[id].take();

@@ -25,6 +25,7 @@ const SHADE: i32 = 200 * 128 + 100;
 const TEX_SHADE: i32 = 0;
 const TEXTURE_RED: i32 = 7;
 const TEXTURE_BLUE: i32 = 12;
+const TEXTURE_ANIMATED: i32 = 17;
 /// Distinct from [`TEXTURE_RED`]: `GpuAssets::ensure_model_textures` uploads
 /// each id once per process. Sibling tests bake id 7 as solid red first, so
 /// a quadrant texture on 7 never reaches the GPU and this test only sees red.
@@ -137,6 +138,65 @@ fn quadrant_texture() -> Pix8 {
         }
     }
     tex
+}
+
+/// A realistic high-memory 128×128 animated texture. Eight-row red/green
+/// bands make Java's two-row-per-update scroll visible without depending on
+/// a single texel or a layer readback hook.
+fn animated_texture() -> Pix8 {
+    let mut tex = Pix8::new(128, 128, vec![0, 0xff0000, 0x00ff00]);
+    for y in 0..128 {
+        let index = if (y / 8) % 2 == 0 { 1 } else { 2 };
+        for x in 0..128 {
+            tex.data[(y * 128 + x) as usize] = index;
+        }
+    }
+    tex
+}
+
+fn animated_wall_model() -> client::dash3d::Model {
+    let mut model = textured_wall_model();
+    model.face_colour = Some(vec![TEXTURE_ANIMATED, TEXTURE_ANIMATED]);
+    model
+}
+
+fn animated_frame(
+    backend: GpuBackend,
+    cache_dir: &std::path::Path,
+) -> (Renderer, client::client::Client) {
+    let mut renderer = Renderer::with_backend(Box::new(backend), false);
+    Pix3D::init_colour_table(0.6);
+    let mut client = client(cache_dir);
+    client.set_draw(true);
+    client.ingame = true;
+    client.scene_state = 2;
+    client.cam_x = 192;
+    client.cam_y = 1950;
+    client.cam_z = 192;
+    client.cam_pitch = 128;
+    client.world = flat_world();
+    client.world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+    renderer.world.set_wall_model(
+        &client.world,
+        0,
+        1,
+        2,
+        Some(SceneModel::Model(animated_wall_model())),
+        None,
+    );
+    renderer.pix3d.textures[TEXTURE_ANIMATED as usize] = Some(animated_texture());
+    renderer.pix3d.tex_pal[TEXTURE_ANIMATED as usize] = Some(vec![0, 0xff0000, 0x00ff00]);
+    renderer.pix3d.cycle = 41;
+    client.world_update_num = 1;
+    (renderer, client)
+}
+
+fn scene_window(frame: &[i32]) -> Vec<i32> {
+    let mut scene = Vec::with_capacity(512 * 334);
+    for y in 4..338 {
+        scene.extend_from_slice(&frame[y * 765 + 4..y * 765 + 516]);
+    }
+    scene
 }
 
 /// A `Pix3DDraw` with solid red/blue textures depacked at ids 7 and 12
@@ -709,6 +769,101 @@ fn composite_lands_the_scene_in_the_full_frame() {
             "a covered minimenu pixel at ({fx}, {fy}) must be opaque over the scene"
         );
     }
+}
+
+/// Production temporal path: the submitted texture-17 mesh stamps Pix3D,
+/// the post-render scroll refreshes only that atlas layer for the next
+/// paint, and loading reuses the last scene without another scroll. Mesh
+/// presence establishes submission, not that every triangle produced a
+/// visible fragment; the full-frame Metal readbacks below establish the
+/// fixture's rasterized pixels actually changed.
+#[test]
+fn gpu_texture_17_scrolls_across_two_paints_and_freezes_while_loading() {
+    Pix3D::init_colour_table(0.6);
+    let Ok(backend) = GpuBackend::try_new() else {
+        eprintln!("NO ADAPTER: texture-17 temporal GPU check did not pass");
+        return;
+    };
+    let cache_dir =
+        std::env::temp_dir().join(format!("r274-gpu-texture-scroll-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&cache_dir);
+    let (mut renderer, mut client) = animated_frame(backend, &cache_dir);
+    let original = renderer.pix3d.textures[TEXTURE_ANIMATED as usize]
+        .as_ref()
+        .unwrap()
+        .data
+        .clone();
+    let cycle_before = renderer.pix3d.cycle;
+
+    let FrameOutput::Texture(first) = renderer.game_draw(&mut client) else {
+        panic!("GPU frame must return a texture");
+    };
+    let first_scene = scene_window(&first.read_back());
+    assert_eq!(
+        renderer.pix3d.tex_cycle[TEXTURE_ANIMATED as usize], cycle_before,
+        "the submitted texture-17 mesh must stamp exactly once this paint"
+    );
+    assert_eq!(
+        renderer.pix3d.cycle,
+        cycle_before + 1,
+        "duplicate vertices must not stamp a texture more than once"
+    );
+    assert!(
+        renderer.pix3d.active_texels[TEXTURE_ANIMATED as usize].is_none(),
+        "the GPU stamp must not materialize a CPU texel row"
+    );
+    assert_ne!(
+        renderer.pix3d.textures[TEXTURE_ANIMATED as usize]
+            .as_ref()
+            .unwrap()
+            .data,
+        original,
+        "the first live paint must prepare the scrolled Pix8 for the next paint"
+    );
+
+    client.world_update_num = 1;
+    let FrameOutput::Texture(second) = renderer.game_draw(&mut client) else {
+        panic!("GPU frame must return a texture");
+    };
+    let second_scene = scene_window(&second.read_back());
+    let red_green_flips = first_scene
+        .iter()
+        .zip(&second_scene)
+        .filter(|&(&before, &after)| {
+            let (br, bg, bb) = ((before >> 16) & 0xff, (before >> 8) & 0xff, before & 0xff);
+            let (ar, ag, ab) = ((after >> 16) & 0xff, (after >> 8) & 0xff, after & 0xff);
+            (br > 128 && bg < 64 && bb < 64 && ag > 128 && ar < 64 && ab < 64)
+                || (bg > 128 && br < 64 && bb < 64 && ar > 128 && ag < 64 && ab < 64)
+        })
+        .count();
+    assert!(
+        red_green_flips > 500,
+        "two live readbacks must show rasterized red/green texture motion (flips={red_green_flips})"
+    );
+
+    let before_freeze = renderer.pix3d.textures[TEXTURE_ANIMATED as usize]
+        .as_ref()
+        .unwrap()
+        .data
+        .clone();
+    client.scene_state = 1;
+    client.world_update_num = 1;
+    let FrameOutput::Texture(frozen) = renderer.game_draw(&mut client) else {
+        panic!("GPU frame must return a texture");
+    };
+    let frozen_scene = scene_window(&frozen.read_back());
+    assert_eq!(
+        renderer.pix3d.textures[TEXTURE_ANIMATED as usize]
+            .as_ref()
+            .unwrap()
+            .data,
+        before_freeze,
+        "scene_state 1 must not scroll the CPU texture"
+    );
+    assert_eq!(
+        frozen_scene, second_scene,
+        "scene_state 1 must composite the last rendered scene unchanged"
+    );
 }
 
 /// A client with an empty cache (the GPU fixture frames need only the

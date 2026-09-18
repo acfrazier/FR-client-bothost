@@ -1037,72 +1037,80 @@ impl GpuAssets {
         }
     }
 
+    /// Rewrite one model-texture array layer from the current Pix8 bytes.
+    /// Used for both first upload and the narrow post-scroll refresh.
+    pub(crate) fn refresh_model_texture(&mut self, pix: &Pix3DDraw, id: usize) -> bool {
+        if id >= self.model_regions.len() {
+            return false;
+        }
+        let (Some(texture), Some(palette)) = (&pix.textures[id], &pix.tex_pal[id]) else {
+            if crate::render_debug_enabled() {
+                eprintln!(
+                    "[gpu-atlas] texture {id} skipped (texture={} palette={})",
+                    pix.textures[id].is_some(),
+                    pix.tex_pal[id].is_some()
+                );
+            }
+            return false;
+        };
+        let mut rgba = vec![0u8; (MODEL_CELL * MODEL_CELL * 4) as usize];
+        if texture.wi == 128 {
+            for y in 0..MODEL_CELL as usize {
+                for x in 0..MODEL_CELL as usize {
+                    let data = texture
+                        .data
+                        .get(x + y * MODEL_CELL as usize)
+                        .copied()
+                        .unwrap_or(0);
+                    let rgb = palette_lookup(palette, data);
+                    let i = (y * MODEL_CELL as usize + x) * 4;
+                    rgba[i] = ((rgb >> 16) & 0xff) as u8;
+                    rgba[i + 1] = ((rgb >> 8) & 0xff) as u8;
+                    rgba[i + 2] = (rgb & 0xff) as u8;
+                    rgba[i + 3] = if rgb != 0 { 255 } else { 0 };
+                }
+            }
+        } else {
+            // 64×64 → 2×2 upscale, the CPU high-mem `getTexels` repeat.
+            for y in 0..MODEL_CELL as usize {
+                for x in 0..MODEL_CELL as usize {
+                    let data = texture
+                        .data
+                        .get((x >> 1) + ((y >> 1) << 6))
+                        .copied()
+                        .unwrap_or(0);
+                    let rgb = palette_lookup(palette, data);
+                    let i = (y * MODEL_CELL as usize + x) * 4;
+                    rgba[i] = ((rgb >> 16) & 0xff) as u8;
+                    rgba[i + 1] = ((rgb >> 8) & 0xff) as u8;
+                    rgba[i + 2] = (rgb & 0xff) as u8;
+                    rgba[i + 3] = if rgb != 0 { 255 } else { 0 };
+                }
+            }
+        }
+        self.write_model_mips(id as u32, &rgba);
+        self.model_regions[id] = true;
+        if crate::render_debug_enabled() {
+            let opaque = rgba.iter().skip(3).step_by(4).filter(|&&a| a != 0).count();
+            eprintln!(
+                "[gpu-atlas] texture {id} uploaded wi={} hi={} opaque={}/{}",
+                texture.wi,
+                texture.hi,
+                opaque,
+                MODEL_CELL * MODEL_CELL
+            );
+        }
+        true
+    }
+
     /// Upload any of the renderer's model textures not yet in the array
     /// (once per process, keyed by texture id). A renderer without the
     /// `textures` jag (or a failed depack) leaves its id unset; the scene
     /// mesh then samples nothing for those faces.
     pub fn ensure_model_textures(&mut self, pix: &Pix3DDraw) {
         for id in 0..50 {
-            if self.model_regions[id] {
-                continue;
-            }
-            let (Some(texture), Some(palette)) = (&pix.textures[id], &pix.tex_pal[id]) else {
-                if crate::render_debug_enabled() {
-                    eprintln!(
-                        "[gpu-atlas] texture {id} skipped (texture={} palette={})",
-                        pix.textures[id].is_some(),
-                        pix.tex_pal[id].is_some()
-                    );
-                }
-                continue;
-            };
-            let mut rgba = vec![0u8; (MODEL_CELL * MODEL_CELL * 4) as usize];
-            if texture.wi == 128 {
-                for y in 0..MODEL_CELL as usize {
-                    for x in 0..MODEL_CELL as usize {
-                        let data = texture
-                            .data
-                            .get(x + y * MODEL_CELL as usize)
-                            .copied()
-                            .unwrap_or(0);
-                        let rgb = palette_lookup(palette, data);
-                        let i = (y * MODEL_CELL as usize + x) * 4;
-                        rgba[i] = ((rgb >> 16) & 0xff) as u8;
-                        rgba[i + 1] = ((rgb >> 8) & 0xff) as u8;
-                        rgba[i + 2] = (rgb & 0xff) as u8;
-                        rgba[i + 3] = if rgb != 0 { 255 } else { 0 };
-                    }
-                }
-            } else {
-                // 64×64 → 2×2 upscale, the CPU high-mem `getTexels` repeat.
-                for y in 0..MODEL_CELL as usize {
-                    for x in 0..MODEL_CELL as usize {
-                        let data = texture
-                            .data
-                            .get((x >> 1) + ((y >> 1) << 6))
-                            .copied()
-                            .unwrap_or(0);
-                        let rgb = palette_lookup(palette, data);
-                        let i = (y * MODEL_CELL as usize + x) * 4;
-                        rgba[i] = ((rgb >> 16) & 0xff) as u8;
-                        rgba[i + 1] = ((rgb >> 8) & 0xff) as u8;
-                        rgba[i + 2] = (rgb & 0xff) as u8;
-                        rgba[i + 3] = if rgb != 0 { 255 } else { 0 };
-                    }
-                }
-            }
-            let layer = id as u32;
-            self.write_model_mips(layer, &rgba);
-            self.model_regions[id] = true;
-            if crate::render_debug_enabled() {
-                let opaque = rgba.iter().skip(3).step_by(4).filter(|&&a| a != 0).count();
-                eprintln!(
-                    "[gpu-atlas] texture {id} uploaded wi={} hi={} opaque={}/{}",
-                    texture.wi,
-                    texture.hi,
-                    opaque,
-                    MODEL_CELL * MODEL_CELL
-                );
+            if !self.model_regions[id] {
+                self.refresh_model_texture(pix, id);
             }
         }
     }

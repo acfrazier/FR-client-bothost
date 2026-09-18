@@ -61,6 +61,9 @@ pub struct Renderer {
     /// `Pix3D::init_colour_table` stays process-wide; the 3D pass binds
     /// `area_game` to it via `set_clipping` before `World::render_all`.
     pub pix3d: Pix3DDraw,
+    /// Java `Client.textureBuffer`: the fixed 128×128 byte scratch that
+    /// `textureRunAnims` swaps with animated textures 17 and 24.
+    pub(crate) texture_buffer: Vec<i8>,
     /// The process-wide fonts + static media sprites (task 6: one copy of
     /// immutable; attaching a head clones a pointer). The first frame
     /// swaps this for the shared depacked copy; a never-drawn renderer
@@ -218,6 +221,7 @@ impl Renderer {
                 crate::client::client::APPLET_H,
             ),
             pix3d: Pix3DDraw::default(),
+            texture_buffer: vec![0; 128 * 128],
             image_title0: None,
             image_title1: None,
             image_title2: None,

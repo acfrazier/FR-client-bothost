@@ -1349,10 +1349,26 @@ impl RenderBackend for GpuBackend {
         let mesh = r
             .world
             .build_scene_mesh(&mut core.world, cache, loop_cycle, &mut r.pix3d);
+        for (id, sampled) in mesh.sampled_texture_ids().into_iter().enumerate() {
+            if sampled {
+                r.pix3d.note_texture_used(id);
+            }
+        }
         self.render_scene(mesh);
 
         r.world.remove_sprites(&mut core.world);
-        r.texture_run_anims(core, cycle);
+        let scrolled = r.texture_run_anims(core, cycle);
+        if scrolled.iter().any(|&scrolled| scrolled) {
+            // `render_scene` submitted this frame before these queue writes.
+            // The refreshed layers are therefore ordered after its sampling
+            // and before the next scene submission: Java's next-frame timing.
+            let mut assets = self.context.assets.lock().unwrap();
+            for (did_scroll, id) in scrolled.into_iter().zip([17usize, 24]) {
+                if did_scroll {
+                    assets.refresh_model_texture(&r.pix3d, id);
+                }
+            }
+        }
         core.pick_count = r.pix3d.picked_count;
         core.pick_typecodes
             .copy_from_slice(&r.pix3d.picked_entity_typecode);
