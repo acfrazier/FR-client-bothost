@@ -12,7 +12,7 @@ use client::dash3d::LocAngle;
 use client::dash3d::{LocShape, Model, SceneModel, TerrainOverlayShape};
 use client::graphics::{Pix2D, Pix3D, Pix3DDraw, PixMap};
 use client::io::JagFile;
-use client::render::RenderWorld;
+use client::render::{start_fill_typecode_log, take_fill_typecode_log, RenderWorld};
 
 /// Shade whose colour-table entry is non-zero (same constant as the model
 /// tests: index y=200/x=100).
@@ -1790,6 +1790,231 @@ fn camera_facing_box_faces_draw_as_2x2_scenery() {
     assert!(
         north_back > 50,
         "2x2 scenery north face painted {north_back} pixels from a north camera; live cabinets pop in/out as the camera rotates"
+    );
+}
+
+/// Java `World.fill` (Client-Java 274 `32f30626` World.java:1450-1453): when a
+/// multi-tile loc occupies a corner-wall tile and
+/// `(spans & cornerSides) == sidesAfterCorner`, the sprite is deferred and
+/// `drawSprites` stays set so a later visit paints it after that wall.
+/// Client-TS 274 and this Rust port both dropped the body and only
+/// `continue`d the inner tile walk, so the loc paints immediately and later
+/// tiles eat the facing side.
+const CORNER_WALL_SHADE: i32 = 70 * 128 + 30;
+
+fn corner_wall_model() -> Model {
+    let mut model = south_wall_model(true);
+    model.face_colour_a = Some(vec![CORNER_WALL_SHADE, CORNER_WALL_SHADE]);
+    model.face_colour_b = Some(vec![CORNER_WALL_SHADE, CORNER_WALL_SHADE]);
+    model.face_colour_c = Some(vec![CORNER_WALL_SHADE, CORNER_WALL_SHADE]);
+    model
+}
+
+fn fill_order_with_corner_wall(wall_x: i32, wall_z: i32) -> Vec<i32> {
+    Pix3D::init_colour_table(0.6);
+    let max_tile = 16i32;
+    let groundh = vec![vec![vec![2000i32; max_tile as usize + 1]; max_tile as usize + 1]; 1];
+    let mut world = World::new(groundh, max_tile, 1, max_tile);
+    world.fill_base_level(0);
+    for x in 0..max_tile {
+        for z in 0..max_tile {
+            world.set_ground(
+                0,
+                x,
+                z,
+                TerrainOverlayShape::PLAIN,
+                0,
+                -1,
+                0,
+                0,
+                0,
+                0,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                0,
+                0,
+            );
+        }
+    }
+    let mut rw = RenderWorld::new();
+    place_scenery(
+        &mut rw,
+        &mut world,
+        0,
+        6,
+        8,
+        2000,
+        SceneModel::Model(ns_box_model(true)),
+        200,
+        0,
+        2,
+        2,
+        0,
+    );
+    place_wall(
+        &mut rw,
+        &mut world,
+        0,
+        wall_x,
+        wall_z,
+        2000,
+        16,
+        0,
+        Some(SceneModel::Model(corner_wall_model())),
+        None,
+        100,
+        0,
+    );
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let mut pix = Pix3DDraw::default();
+    let mut map = PixMap::new(512, 334);
+    start_fill_typecode_log();
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        viewport(&mut pix, &mut surface);
+        // South of the loc: gx=7, gz=6 → wall tile (7,8) is direction 1,
+        // MIDDEP_16[1]=0, sidesAfterCorner=3. Loc footprint (6,8)-(7,9) on
+        // (7,8) has spans=3, so `(3 & 3) == 3` is the Java defer.
+        rw.render_all(
+            &mut world,
+            &mut pix,
+            &mut surface,
+            &Cache::default(),
+            0,
+            7 * 128,
+            1950,
+            6 * 128,
+            3,
+            0,
+            128,
+        );
+    }
+    take_fill_typecode_log()
+}
+
+#[test]
+fn java_sides_after_corner_still_paints_2x2_loc() {
+    let miss = fill_order_with_corner_wall(7, 9);
+    let hit = fill_order_with_corner_wall(7, 8);
+    eprintln!("corner handshake fill order: miss-tile(7,9)={miss:?} hit-tile(7,8)={hit:?}");
+    assert!(
+        hit.contains(&200),
+        "2x2 loc typecode 200 must still paint after the Java sidesAfterCorner defer ({hit:?})"
+    );
+    assert!(
+        hit.contains(&100),
+        "corner wall typecode 100 must paint on the handshake tile ({hit:?})"
+    );
+    let _ = miss;
+}
+
+/// Two overlapping-footprint locs on shared tile (7,8), same tile-manhattan
+/// distance from camera (gx=8,gz=8). Java World.fill picks the larger
+/// wrapping camera-xz square (World.java:1481-1488) so the farther loc
+/// paints first. Rust inherited the TS port, which uses buffer order on ties.
+#[test]
+fn java_sprite_distance_tie_paints_farther_xz_first() {
+    Pix3D::init_colour_table(0.6);
+    let max_tile = 16i32;
+    let groundh = vec![vec![vec![2000i32; max_tile as usize + 1]; max_tile as usize + 1]; 1];
+    let mut world = World::new(groundh, max_tile, 1, max_tile);
+    world.fill_base_level(0);
+    for x in 0..max_tile {
+        for z in 0..max_tile {
+            world.set_ground(
+                0,
+                x,
+                z,
+                TerrainOverlayShape::PLAIN,
+                0,
+                -1,
+                0,
+                0,
+                0,
+                0,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                SHADE,
+                0,
+                0,
+            );
+        }
+    }
+    let mut rw = RenderWorld::new();
+    // Nearer xz (typecode 10) is inserted first so a buffer-order tie picks it.
+    place_scenery(
+        &mut rw,
+        &mut world,
+        0,
+        7,
+        7,
+        2000,
+        SceneModel::Model(ns_box_model(true)),
+        10,
+        0,
+        1,
+        2,
+        0,
+    );
+    place_scenery(
+        &mut rw,
+        &mut world,
+        0,
+        6,
+        8,
+        2000,
+        SceneModel::Model(ns_box_model(true)),
+        20,
+        0,
+        2,
+        1,
+        0,
+    );
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    let mut pix = Pix3DDraw::default();
+    let mut map = PixMap::new(512, 334);
+    start_fill_typecode_log();
+    {
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        viewport(&mut pix, &mut surface);
+        rw.render_all(
+            &mut world,
+            &mut pix,
+            &mut surface,
+            &Cache::default(),
+            0,
+            8 * 128,
+            1950,
+            8 * 128,
+            3,
+            0,
+            128,
+        );
+    }
+    let order = take_fill_typecode_log();
+    eprintln!("sprite distance tie fill order={order:?}");
+    let near = order.iter().position(|&t| t == 10);
+    let far = order.iter().position(|&t| t == 20);
+    assert!(
+        near.is_some() && far.is_some(),
+        "both tie-break locs must paint ({order:?})"
+    );
+    assert!(
+        far < near,
+        "Java World.fill (32f30626:1481-1488) paints the farther camera-xz loc first on a tile-distance tie; got far@{:?} near@{:?} order={order:?}",
+        far,
+        near
     );
 }
 

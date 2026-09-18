@@ -22,6 +22,7 @@
 #![allow(clippy::manual_range_contains)]
 #![allow(clippy::too_many_arguments)]
 
+use std::cell::RefCell;
 use std::collections::VecDeque;
 
 use crate::config::Cache;
@@ -35,6 +36,58 @@ use crate::dash3d::{
 use crate::graphics::{Pix2D, Pix3D, Pix3DDraw};
 
 const MAX_SPRITE_BUFFER: usize = 100;
+
+thread_local! {
+    static FILL_TYPECODE_LOG: RefCell<Option<Vec<i32>>> = const { RefCell::new(None) };
+}
+
+/// Capture `World.fill` `worldRender` typecodes for Java-order tests.
+/// Inert unless a test calls [`start_fill_typecode_log`].
+pub fn start_fill_typecode_log() {
+    FILL_TYPECODE_LOG.with(|c| *c.borrow_mut() = Some(Vec::new()));
+}
+
+pub fn take_fill_typecode_log() -> Vec<i32> {
+    FILL_TYPECODE_LOG.with(|c| c.borrow_mut().take().unwrap_or_default())
+}
+
+fn log_fill_typecode(typecode: i32) {
+    if typecode == 0 {
+        return;
+    }
+    FILL_TYPECODE_LOG.with(|c| {
+        if let Some(log) = c.borrow_mut().as_mut() {
+            log.push(typecode);
+        }
+    });
+}
+
+/// Java `World.fill` sprite-buffer tie-break (`32f30626` World.java:1481-1488):
+/// equal tile-manhattan distance prefers the larger wrapping `dx*dx+dz*dz`
+/// from the camera, matching Java 32-bit `int` overflow.
+fn sprite_farther_than(
+    candidate_distance: i32,
+    candidate_x: i32,
+    candidate_z: i32,
+    best_distance: i32,
+    best_x: i32,
+    best_z: i32,
+    cx: i32,
+    cz: i32,
+) -> bool {
+    if candidate_distance > best_distance {
+        return true;
+    }
+    if candidate_distance != best_distance {
+        return false;
+    }
+    let dx = candidate_x.wrapping_sub(cx);
+    let dz = candidate_z.wrapping_sub(cz);
+    let bx = best_x.wrapping_sub(cx);
+    let bz = best_z.wrapping_sub(cz);
+    dx.wrapping_mul(dx).wrapping_add(dz.wrapping_mul(dz))
+        > bx.wrapping_mul(bx).wrapping_add(bz.wrapping_mul(bz))
+}
 
 /// `World.visBacking[8][32][51][51]` flat row offset of the pitch/yaw pair
 /// that `render_all` binds as `visBackingDirty`.
@@ -3374,6 +3427,7 @@ impl RenderWorld {
                             .0
                             .as_mut()
                         {
+                            log_fill_typecode(typecode);
                             model.world_render(
                                 cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw,
                                 cos_yaw, wall_x, wall_y, wall_z, typecode,
@@ -3389,6 +3443,7 @@ impl RenderWorld {
                             .1
                             .as_mut()
                         {
+                            log_fill_typecode(typecode);
                             model.world_render(
                                 cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw,
                                 cos_yaw, wall_x, wall_y, wall_z, typecode,
@@ -3621,6 +3676,7 @@ impl RenderWorld {
                                 .0
                                 .as_mut()
                             {
+                                log_fill_typecode(typecode);
                                 model.world_render(
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
@@ -3708,6 +3764,18 @@ impl RenderWorld {
                             if (spans & other.corner_sides) != sides_after {
                                 continue;
                             }
+                            // Java World.fill (32f30626:1450-1453): matching
+                            // sidesAfterCorner defers this sprite and keeps
+                            // drawSprites so a later visit paints it after
+                            // the corner wall. Client-TS 274 dropped the body.
+                            draw_sprites = true;
+                            if let Some(tile) =
+                                tile_at_mut(&mut world.squares, level, tile_x, tile_z)
+                            {
+                                tile.draw_sprites = true;
+                            }
+                            skip = true;
+                            break 'sprite_bounds;
                         }
                     }
 
@@ -3745,6 +3813,8 @@ impl RenderWorld {
                 loop {
                     let mut farthest_distance = -50i32;
                     let mut farthest_index = -1i32;
+                    let mut farthest_x = 0i32;
+                    let mut farthest_z = 0i32;
 
                     for index in 0..sprite_buffer_size as usize {
                         let Some(sprite) = self.sprite_buffer.get(index).copied().flatten() else {
@@ -3755,9 +3825,23 @@ impl RenderWorld {
                             continue;
                         };
 
-                        if sprite.distance > farthest_distance && sprite.cycle != cycle_no {
+                        if sprite.cycle == cycle_no {
+                            continue;
+                        }
+                        if sprite_farther_than(
+                            sprite.distance,
+                            sprite.x,
+                            sprite.z,
+                            farthest_distance,
+                            farthest_x,
+                            farthest_z,
+                            cx,
+                            cz,
+                        ) {
                             farthest_distance = sprite.distance;
                             farthest_index = index as i32;
+                            farthest_x = sprite.x;
+                            farthest_z = sprite.z;
                         }
                     }
 
@@ -3806,6 +3890,7 @@ impl RenderWorld {
                             .sprite_model_mut(&*world, cache, loop_cycle, farthest)
                             .as_mut()
                         {
+                            log_fill_typecode(typecode);
                             model.world_render(
                                 cache,
                                 loop_cycle,
@@ -4096,6 +4181,7 @@ impl RenderWorld {
                             .1
                             .as_mut()
                         {
+                            log_fill_typecode(typecode);
                             model.world_render(
                                 cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw,
                                 cos_yaw, wall_x, wall_y, wall_z, typecode,
@@ -4111,6 +4197,7 @@ impl RenderWorld {
                             .0
                             .as_mut()
                         {
+                            log_fill_typecode(typecode);
                             model.world_render(
                                 cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw,
                                 cos_yaw, wall_x, wall_y, wall_z, typecode,
@@ -6427,5 +6514,27 @@ mod near_plane_tests {
         assert_eq!(p.z, 50);
         assert_eq!(p.x, 50, "half-way between x=0 and x=100");
         assert_eq!(p.y, 0);
+    }
+}
+
+#[cfg(test)]
+mod fill_java_order_tests {
+    use super::sprite_farther_than;
+
+    #[test]
+    fn equal_tile_distance_prefers_larger_wrapping_xz() {
+        // Java World.java:1486-1488: dx*dx+dz*dz with 32-bit wrap.
+        assert!(sprite_farther_than(2, 896, 1088, 2, 960, 1024, 1024, 1024));
+        assert!(!sprite_farther_than(2, 960, 1024, 2, 896, 1088, 1024, 1024));
+        assert!(sprite_farther_than(3, 0, 0, 2, 0, 0, 0, 0));
+        assert!(!sprite_farther_than(1, 0, 0, 2, 0, 0, 0, 0));
+        // 46341^2 wraps in i32; the farther-in-Java sense must follow wrap.
+        assert_eq!(46341i32.wrapping_mul(46341), 46341i32.wrapping_mul(46341));
+        let wrapped = sprite_farther_than(1, 46341, 0, 1, 20000, 0, 0, 0);
+        let naive = (46341i64 * 46341) > (20000i64 * 20000);
+        assert_ne!(
+            wrapped, naive,
+            "tie-break must use wrapping squares, not i64"
+        );
     }
 }

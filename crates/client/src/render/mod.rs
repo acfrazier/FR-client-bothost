@@ -8,4 +8,4 @@ pub mod world;
 pub use draw::{npc_overlay_box, project_area_game};
 pub use media::Media;
 pub use renderer::Renderer;
-pub use world::RenderWorld;
+pub use world::{start_fill_typecode_log, take_fill_typecode_log, RenderWorld};
