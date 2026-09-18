@@ -6,8 +6,9 @@
 //! parsed. Enable at runtime with `BOT_RENDER_TRACE=1` plus a tile region
 //! and/or loc IDs; output stops after `BOT_RENDER_TRACE_FRAMES` (max 300).
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use crate::client::client::{APPLET_H, APPLET_W};
@@ -156,13 +157,6 @@ static BACKEND_LOGGED: AtomicBool = AtomicBool::new(false);
 static STOPPED: AtomicBool = AtomicBool::new(false);
 static ARMED: AtomicBool = AtomicBool::new(false);
 static SHADE_DUMPED: OnceLock<Mutex<HashSet<ShadeKey>>> = OnceLock::new();
-/// Once-per-run CPU slot hist (`area_game` + post-blit `draw_area`).
-static PIXEL_ROI_DUMPED: AtomicBool = AtomicBool::new(false);
-/// Once-per-run panel upload hist (packed + expand of the same pixmap).
-static PANEL_UPLOAD_DUMPED: AtomicBool = AtomicBool::new(false);
-/// Once-per-run PNG hist on an existing screenshot write.
-static PNG_ROI_DUMPED: AtomicBool = AtomicBool::new(false);
-static CAPTURE_IDENTITY: Mutex<Option<String>> = Mutex::new(None);
 static GAME_IMAGE_FB: Mutex<Option<GameImageFb>> = Mutex::new(None);
 
 /// Inclusive scene-space slot on `area_game` (512×334). Verified from
@@ -192,13 +186,199 @@ pub struct PackedHist {
 }
 
 impl PackedHist {
-    const EMPTY: Self = Self {
+    pub const EMPTY: Self = Self {
         n: 0,
         zero: 0,
         palette2: 0,
         rgb2: 0,
         other: 0,
     };
+}
+
+/// Camera copied at pixel production. Never reread from `LIVE` to label
+/// a later upload or PNG.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PixelRoiCam {
+    pub cycle: i32,
+    pub eye_x: i32,
+    pub eye_y: i32,
+    pub eye_z: i32,
+    pub yaw: i32,
+    pub pitch: i32,
+    pub origin_x: i32,
+    pub origin_z: i32,
+    pub trace_frame: u32,
+}
+
+/// ImGui `HiDpiMode::Default`: item rects are logical; PNG is physical
+/// (`logical * display_framebuffer_scale`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PixelRoiCoordDomain {
+    LogicalImGui,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PixelRoiImage {
+    pub logical_min: [f32; 2],
+    pub logical_size: [f32; 2],
+    pub fb_scale: [f32; 2],
+    pub domain: PixelRoiCoordDomain,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PixelRoiUpload {
+    pub frame_id: u64,
+    pub packed: PackedHist,
+    pub rgba: PackedHist,
+    pub packed_fp: u64,
+    pub slot: String,
+    pub generation: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PixelRoiMeta {
+    pub frame_id: u64,
+    pub cam: PixelRoiCam,
+    pub area_game: PackedHist,
+    pub draw_area: PackedHist,
+    pub area_game_fp: u64,
+    pub draw_area_fp: u64,
+    pub upload: Option<PixelRoiUpload>,
+}
+
+impl PixelRoiMeta {
+    pub fn produced(
+        frame_id: u64,
+        cam: PixelRoiCam,
+        area_game: PackedHist,
+        draw_area: PackedHist,
+    ) -> Self {
+        Self {
+            frame_id,
+            cam,
+            area_game,
+            draw_area,
+            area_game_fp: 0,
+            draw_area_fp: 0,
+            upload: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PixelRoiShotBind {
+    pub meta: PixelRoiMeta,
+    pub image: PixelRoiImage,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PixelRoiProof {
+    Accept { frame_id: u64 },
+    RejectUnavailable { reason: &'static str },
+    RejectMismatch { reason: &'static str },
+}
+
+thread_local! {
+    static THREAD_PIXEL_ROI: RefCell<Option<PixelRoiMeta>> = const { RefCell::new(None) };
+}
+
+static UI_TAKEN_ROI: Mutex<Option<(PixelRoiMeta, String, u64)>> = Mutex::new(None);
+static PRESENTED_ROI: Mutex<Option<PixelRoiMeta>> = Mutex::new(None);
+
+static PIXEL_ROI_ID: AtomicU64 = AtomicU64::new(1);
+
+pub fn next_pixel_roi_id() -> u64 {
+    PIXEL_ROI_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+pub fn stamp_thread_pixel_roi(meta: PixelRoiMeta) {
+    THREAD_PIXEL_ROI.with(|slot| *slot.borrow_mut() = Some(meta));
+}
+
+pub fn take_thread_pixel_roi() -> Option<PixelRoiMeta> {
+    THREAD_PIXEL_ROI.with(|slot| slot.borrow_mut().take())
+}
+
+pub fn clear_thread_pixel_roi() {
+    THREAD_PIXEL_ROI.with(|slot| *slot.borrow_mut() = None);
+}
+
+pub fn attach_upload(
+    meta: &mut PixelRoiMeta,
+    packed: PackedHist,
+    rgba: PackedHist,
+    packed_fp: u64,
+    slot: &str,
+    generation: u64,
+) {
+    meta.upload = Some(PixelRoiUpload {
+        frame_id: meta.frame_id,
+        packed,
+        rgba,
+        packed_fp,
+        slot: slot.to_string(),
+        generation,
+    });
+}
+
+pub fn bind_shot(meta: PixelRoiMeta, image: PixelRoiImage) -> PixelRoiShotBind {
+    PixelRoiShotBind { meta, image }
+}
+
+pub fn label_cam<'a>(bind: &'a PixelRoiShotBind, _live_now: Option<&PixelRoiCam>) -> &'a PixelRoiCam {
+    &bind.meta.cam
+}
+
+/// Stamping an armed frame is not a proof and must not burn the request.
+pub fn pixel_roi_stamp_consumes_proof() -> bool {
+    false
+}
+
+pub fn pixel_roi_proof(screenshot_requested: bool, bind: Option<&PixelRoiShotBind>) -> PixelRoiProof {
+    if !screenshot_requested {
+        return PixelRoiProof::RejectUnavailable {
+            reason: "no-screenshot-request",
+        };
+    }
+    let Some(bind) = bind else {
+        return PixelRoiProof::RejectUnavailable {
+            reason: "no-attached-bind",
+        };
+    };
+    if bind.meta.frame_id == 0 {
+        return PixelRoiProof::RejectUnavailable {
+            reason: "no-frame-id",
+        };
+    }
+    PixelRoiProof::Accept {
+        frame_id: bind.meta.frame_id,
+    }
+}
+
+pub fn pixel_roi_ids_agree(cpu_id: u64, other_id: Option<u64>) -> PixelRoiProof {
+    match other_id {
+        Some(id) if id == cpu_id && cpu_id != 0 => PixelRoiProof::Accept { frame_id: cpu_id },
+        Some(_) => PixelRoiProof::RejectMismatch {
+            reason: "frame-id-mismatch",
+        },
+        None => PixelRoiProof::RejectUnavailable {
+            reason: "missing-stage-id",
+        },
+    }
+}
+
+pub fn cam_from_live(cam: FrameCam) -> PixelRoiCam {
+    PixelRoiCam {
+        cycle: cam.cycle,
+        eye_x: cam.eye_x,
+        eye_y: cam.eye_y,
+        eye_z: cam.eye_z,
+        yaw: cam.yaw,
+        pitch: cam.pitch,
+        origin_x: cam.base_x,
+        origin_z: cam.base_z,
+        trace_frame: frame_no(),
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -809,12 +989,7 @@ pub fn tracing_enabled() -> bool {
     tracing()
 }
 
-pub fn pixel_roi_cpu_emitted() -> bool {
-    PIXEL_ROI_DUMPED.load(Ordering::Relaxed)
-}
-
-/// Layout-only stash of the Game Image rect (no pixel copy). Ordinary
-/// builds never compile this module.
+/// Layout-only stash of this UI frame's Game Image rect (no pixel copy).
 pub fn note_game_image_fb(min_x: f32, min_y: f32, size_x: f32, size_y: f32, fb_x: f32, fb_y: f32) {
     if !tracing() {
         return;
@@ -831,21 +1006,38 @@ pub fn note_game_image_fb(min_x: f32, min_y: f32, size_x: f32, size_y: f32, fb_x
     }
 }
 
-pub fn note_capture_identity(identity: &str) {
-    if !tracing() {
-        return;
-    }
-    if let Ok(mut g) = CAPTURE_IDENTITY.lock() {
-        *g = Some(identity.to_string());
+pub fn this_frame_image() -> Option<PixelRoiImage> {
+    GAME_IMAGE_FB.lock().ok().and_then(|g| {
+        g.map(|fb| PixelRoiImage {
+            logical_min: [fb.min_x, fb.min_y],
+            logical_size: [fb.size_x, fb.size_y],
+            fb_scale: [fb.fb_x, fb.fb_y],
+            domain: PixelRoiCoordDomain::LogicalImGui,
+        })
+    })
+}
+
+pub fn set_ui_taken_roi(meta: PixelRoiMeta, slot: &str, generation: u64) {
+    if let Ok(mut g) = UI_TAKEN_ROI.lock() {
+        *g = Some((meta, slot.to_string(), generation));
     }
 }
 
-fn capture_identity() -> String {
-    CAPTURE_IDENTITY
-        .lock()
-        .ok()
-        .and_then(|g| g.clone())
-        .unwrap_or_else(|| "-".to_string())
+pub fn take_ui_taken_roi() -> Option<(PixelRoiMeta, String, u64)> {
+    UI_TAKEN_ROI.lock().ok().and_then(|mut g| g.take())
+}
+
+pub fn set_presented_roi(meta: PixelRoiMeta) {
+    if let Ok(mut g) = PRESENTED_ROI.lock() {
+        *g = Some(meta);
+    }
+}
+
+/// Snapshot presented CPU meta + this-frame logical image at readback enqueue.
+pub fn snapshot_shot_bind() -> Option<PixelRoiShotBind> {
+    let meta = PRESENTED_ROI.lock().ok().and_then(|g| g.clone())?;
+    let image = this_frame_image()?;
+    Some(bind_shot(meta, image))
 }
 
 fn clamp_roi(width: i32, height: i32, x0: i32, y0: i32, x1: i32, y1: i32) -> Option<(i32, i32, i32, i32)> {
@@ -999,6 +1191,7 @@ fn packed_u32_roi_fp(
     fp
 }
 
+#[allow(dead_code)]
 fn roi_samples(pixels: &[i32], width: i32, height: i32, x0: i32, y0: i32, x1: i32, y1: i32) -> String {
     let Some((x0, y0, x1, y1)) = clamp_roi(width, height, x0, y0, x1, y1) else {
         return String::new();
@@ -1018,6 +1211,7 @@ fn roi_samples(pixels: &[i32], width: i32, height: i32, x0: i32, y0: i32, x1: i3
     out.join(",")
 }
 
+#[allow(dead_code)]
 fn roi_samples_u32(pixels: &[u32], width: i32, height: i32, x0: i32, y0: i32, x1: i32, y1: i32) -> String {
     let Some((x0, y0, x1, y1)) = clamp_roi(width, height, x0, y0, x1, y1) else {
         return String::new();
@@ -1082,6 +1276,8 @@ pub fn cave_slot_png_roi(
 
 fn emit_hist_line(
     stage: &str,
+    cam: PixelRoiCam,
+    frame_id: u64,
     dim_w: i32,
     dim_h: i32,
     x0: i32,
@@ -1093,21 +1289,17 @@ fn emit_hist_line(
     sample: &str,
     extra: &str,
 ) {
-    let cam = LIVE.lock().ok().and_then(|g| g.as_ref().map(|l| l.cam));
-    let (cycle, eye, yaw, pitch, origin) = match cam {
-        Some(c) => (
-            c.cycle,
-            format!("{},{},{}", c.eye_x, c.eye_y, c.eye_z),
-            c.yaw,
-            c.pitch,
-            format!("{},{}", c.base_x, c.base_z),
-        ),
-        None => (0, "-".into(), 0, 0, "-".into()),
-    };
     eprintln!(
-        "{PREFIX} pixel-roi stage={stage} f={} cycle={cycle} eye={eye} yaw={yaw} pitch={pitch} origin={origin} id={} dim={dim_w}x{dim_h} roi={x0}..{x1},{y0}..{y1} n={} zero={} palette2={} rgb2={} other={} fp={fp:016x} sample={sample}{extra}",
-        frame_no(),
-        capture_identity(),
+        "{PREFIX} pixel-roi stage={stage} frame_id={frame_id} f={} cycle={} eye={},{},{} yaw={} pitch={} origin={},{} dim={dim_w}x{dim_h} roi={x0}..{x1},{y0}..{y1} n={} zero={} palette2={} rgb2={} other={} fp={fp:016x} sample={sample}{extra}",
+        cam.trace_frame,
+        cam.cycle,
+        cam.eye_x,
+        cam.eye_y,
+        cam.eye_z,
+        cam.yaw,
+        cam.pitch,
+        cam.origin_x,
+        cam.origin_z,
         h.n,
         h.zero,
         h.palette2,
@@ -1116,104 +1308,193 @@ fn emit_hist_line(
     );
 }
 
-/// After the (4,4) blit: sample `area_game` (scene ROI) and post-blit
-/// `draw_area` (applet ROI) on the same armed `scene_state==2` frame.
+/// Stamp this armed `scene_state==2` frame onto the slot-thread TLS.
+/// Does not emit and does not consume a later screenshot proof.
 pub fn dump_cpu_slot_pixels(
     area_game: Option<(&[i32], i32, i32)>,
     draw_area: Option<(&[i32], i32, i32)>,
     scene_state: i32,
 ) {
     if !tracing() {
+        clear_thread_pixel_roi();
         return;
     }
-    let already = PIXEL_ROI_DUMPED.load(Ordering::Relaxed);
-    if !pixel_roi_should_sample(scene_state, armed(), already) {
+    if !pixel_roi_should_sample(scene_state, armed(), false) {
+        clear_thread_pixel_roi();
         return;
     }
-    if PIXEL_ROI_DUMPED.swap(true, Ordering::Relaxed) {
-        return;
-    }
+    let cam = LIVE
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|l| cam_from_live(l.cam)))
+        .unwrap_or(PixelRoiCam {
+            cycle: 0,
+            eye_x: 0,
+            eye_y: 0,
+            eye_z: 0,
+            yaw: 0,
+            pitch: 0,
+            origin_x: 0,
+            origin_z: 0,
+            trace_frame: frame_no(),
+        });
+    let mut meta = PixelRoiMeta::produced(next_pixel_roi_id(), cam, PackedHist::EMPTY, PackedHist::EMPTY);
     if let Some((px, w, h)) = area_game {
-        let hist = packed_roi_hist(px, w, h, CAVE_SLOT_SX0, CAVE_SLOT_SY0, CAVE_SLOT_SX1, CAVE_SLOT_SY1);
-        let fp = packed_roi_fp(px, w, h, CAVE_SLOT_SX0, CAVE_SLOT_SY0, CAVE_SLOT_SX1, CAVE_SLOT_SY1);
-        let sample = roi_samples(px, w, h, CAVE_SLOT_SX0, CAVE_SLOT_SY0, CAVE_SLOT_SX1, CAVE_SLOT_SY1);
-        emit_hist_line(
-            "area_game",
-            w,
-            h,
-            CAVE_SLOT_SX0,
-            CAVE_SLOT_SY0,
-            CAVE_SLOT_SX1,
-            CAVE_SLOT_SY1,
-            hist,
-            fp,
-            &sample,
-            "",
-        );
-    } else {
-        eprintln!("{PREFIX} pixel-roi stage=area_game skipped=no-buffer");
+        meta.area_game = packed_roi_hist(px, w, h, CAVE_SLOT_SX0, CAVE_SLOT_SY0, CAVE_SLOT_SX1, CAVE_SLOT_SY1);
+        meta.area_game_fp = packed_roi_fp(px, w, h, CAVE_SLOT_SX0, CAVE_SLOT_SY0, CAVE_SLOT_SX1, CAVE_SLOT_SY1);
     }
     if let Some((px, w, h)) = draw_area {
         let (x0, y0, x1, y1) = cave_slot_applet();
-        let hist = packed_roi_hist(px, w, h, x0, y0, x1, y1);
-        let fp = packed_roi_fp(px, w, h, x0, y0, x1, y1);
-        let sample = roi_samples(px, w, h, x0, y0, x1, y1);
-        emit_hist_line("draw_area", w, h, x0, y0, x1, y1, hist, fp, &sample, "");
+        meta.draw_area = packed_roi_hist(px, w, h, x0, y0, x1, y1);
+        meta.draw_area_fp = packed_roi_fp(px, w, h, x0, y0, x1, y1);
     }
+    stamp_thread_pixel_roi(meta);
 }
 
-/// Packed CPU applet + the exact `expand_rgba` bytes about to upload.
-/// Gated on the CPU dump so the camera was already station-ready.
-pub fn dump_panel_upload(packed: &[u32], rgba: &[u8], width: i32, height: i32) {
-    if !tracing() || !pixel_roi_cpu_emitted() {
-        return;
-    }
-    if PANEL_UPLOAD_DUMPED.swap(true, Ordering::Relaxed) {
+/// Attach upload hists to the mailbox meta that travelled with this pixmap.
+pub fn attach_panel_upload(
+    meta: &mut PixelRoiMeta,
+    packed: &[u32],
+    rgba: &[u8],
+    width: i32,
+    height: i32,
+    slot: &str,
+    generation: u64,
+) {
+    if !tracing() {
         return;
     }
     let (x0, y0, x1, y1) = cave_slot_applet();
     let packed_h = packed_u32_roi_hist(packed, width, height, x0, y0, x1, y1);
     let fp = packed_u32_roi_fp(packed, width, height, x0, y0, x1, y1);
-    let sample = roi_samples_u32(packed, width, height, x0, y0, x1, y1);
-    emit_hist_line("upload-packed", width, height, x0, y0, x1, y1, packed_h, fp, &sample, "");
     let rgba_h = rgba_roi_hist(rgba, width, height, x0, y0, x1, y1);
-    let rgba_sample = roi_samples_rgba(rgba, width, height, x0, y0, x1, y1);
-    emit_hist_line("upload-rgba", width, height, x0, y0, x1, y1, rgba_h, fp, &rgba_sample, "");
+    let _ = (width, height, y1);
+    attach_upload(meta, packed_h, rgba_h, fp, slot, generation);
 }
 
-/// Histogram the existing screenshot write. Uses the last Game Image
-/// rect; no extra frame copy. Skips if the CPU dump has not fired.
-pub fn dump_png_slot(rgba: &[u8], width: i32, height: i32, label: &str) {
-    if !tracing() || !pixel_roi_cpu_emitted() {
+/// Emit the triad from the bind attached at readback enqueue, or reject.
+/// Never reads current `LIVE` / last Game Image rect.
+pub fn dump_png_slot(
+    rgba: &[u8],
+    width: i32,
+    height: i32,
+    label: &str,
+    screenshot_requested: bool,
+    bind: Option<&PixelRoiShotBind>,
+) {
+    if !tracing() {
         return;
     }
-    if PNG_ROI_DUMPED.swap(true, Ordering::Relaxed) {
-        return;
+    match pixel_roi_proof(screenshot_requested, bind) {
+        PixelRoiProof::RejectUnavailable { reason } => {
+            eprintln!("{PREFIX} pixel-roi rejected=unavailable reason={reason} label={label} dim={width}x{height}");
+            return;
+        }
+        PixelRoiProof::RejectMismatch { reason } => {
+            eprintln!("{PREFIX} pixel-roi rejected=mismatch reason={reason} label={label}");
+            return;
+        }
+        PixelRoiProof::Accept { frame_id } => {
+            let Some(bind) = bind else { return };
+            if let Some(upload) = bind.meta.upload.as_ref() {
+                if let PixelRoiProof::RejectMismatch { reason } =
+                    pixel_roi_ids_agree(frame_id, Some(upload.frame_id))
+                {
+                    eprintln!("{PREFIX} pixel-roi rejected=mismatch reason={reason} label={label} frame_id={frame_id}");
+                    return;
+                }
+            }
+            let cam = bind.meta.cam;
+            let (sx0, sy0, sx1, sy1) = (CAVE_SLOT_SX0, CAVE_SLOT_SY0, CAVE_SLOT_SX1, CAVE_SLOT_SY1);
+            let (ax0, ay0, ax1, ay1) = cave_slot_applet();
+            emit_hist_line(
+                "area_game",
+                cam,
+                frame_id,
+                512,
+                334,
+                sx0,
+                sy0,
+                sx1,
+                sy1,
+                bind.meta.area_game,
+                bind.meta.area_game_fp,
+                "",
+                "",
+            );
+            emit_hist_line(
+                "draw_area",
+                cam,
+                frame_id,
+                765,
+                503,
+                ax0,
+                ay0,
+                ax1,
+                ay1,
+                bind.meta.draw_area,
+                bind.meta.draw_area_fp,
+                "",
+                "",
+            );
+            if let Some(upload) = bind.meta.upload.as_ref() {
+                let extra = format!(" slot={} gen={}", upload.slot, upload.generation);
+                emit_hist_line(
+                    "upload-packed",
+                    cam,
+                    frame_id,
+                    765,
+                    503,
+                    ax0,
+                    ay0,
+                    ax1,
+                    ay1,
+                    upload.packed,
+                    upload.packed_fp,
+                    "",
+                    &extra,
+                );
+                emit_hist_line(
+                    "upload-rgba",
+                    cam,
+                    frame_id,
+                    765,
+                    503,
+                    ax0,
+                    ay0,
+                    ax1,
+                    ay1,
+                    upload.rgba,
+                    upload.packed_fp,
+                    "",
+                    &extra,
+                );
+            }
+            let img = bind.image;
+            let (x0, y0, x1, y1) = cave_slot_png_roi(
+                img.logical_min[0],
+                img.logical_min[1],
+                img.logical_size[0],
+                img.logical_size[1],
+                img.fb_scale[0],
+                img.fb_scale[1],
+                APPLET_W as f32,
+                APPLET_H as f32,
+            );
+            let hist = rgba_roi_hist(rgba, width, height, x0, y0, x1, y1);
+            let sample = roi_samples_rgba(rgba, width, height, x0, y0, x1, y1);
+            let extra = format!(
+                " label={label} domain=logical-imgui image={:.1},{:.1},{:.1}x{:.1} fb={:.2},{:.2}",
+                img.logical_min[0],
+                img.logical_min[1],
+                img.logical_size[0],
+                img.logical_size[1],
+                img.fb_scale[0],
+                img.fb_scale[1]
+            );
+            emit_hist_line("png", cam, frame_id, width, height, x0, y0, x1, y1, hist, 0, &sample, &extra);
+        }
     }
-    let extra = format!(" label={label}");
-    let Some(fb) = GAME_IMAGE_FB.lock().ok().and_then(|g| *g) else {
-        eprintln!(
-            "{PREFIX} pixel-roi stage=png dim={width}x{height} skipped=no-game-image-rect{extra}"
-        );
-        return;
-    };
-    let (x0, y0, x1, y1) = cave_slot_png_roi(
-        fb.min_x,
-        fb.min_y,
-        fb.size_x,
-        fb.size_y,
-        fb.fb_x,
-        fb.fb_y,
-        APPLET_W as f32,
-        APPLET_H as f32,
-    );
-    let hist = rgba_roi_hist(rgba, width, height, x0, y0, x1, y1);
-    let sample = roi_samples_rgba(rgba, width, height, x0, y0, x1, y1);
-    let extra = format!(
-        " label={label} image={:.1},{:.1},{:.1}x{:.1} fb={:.2},{:.2}",
-        fb.min_x, fb.min_y, fb.size_x, fb.size_y, fb.fb_x, fb.fb_y
-    );
-    emit_hist_line("png", width, height, x0, y0, x1, y1, hist, 0, &sample, &extra);
 }
 
 #[cfg(test)]
@@ -1447,8 +1728,96 @@ mod tests {
         assert!(pixel_roi_should_sample(2, true, false));
     }
 
+    fn cam(cycle: i32, eye_x: i32) -> PixelRoiCam {
+        PixelRoiCam {
+            cycle,
+            eye_x,
+            eye_y: -664,
+            eye_z: 5924,
+            yaw: 0,
+            pitch: 128,
+            origin_x: 2960,
+            origin_z: 9760,
+            trace_frame: 1,
+        }
+    }
+
+    fn image(min_x: f32) -> PixelRoiImage {
+        PixelRoiImage {
+            logical_min: [min_x, 0.0],
+            logical_size: [765.0, 503.0],
+            fb_scale: [2.0, 2.0],
+            domain: PixelRoiCoordDomain::LogicalImGui,
+        }
+    }
+
     #[test]
-    fn cave_slot_png_roi_scales_applet_through_game_image() {
+    fn delayed_readback_keeps_production_cam_when_live_changes() {
+        let produced = PixelRoiMeta::produced(7, cam(100, 6607), PackedHist::EMPTY, PackedHist::EMPTY);
+        let mut live = cam(200, 1);
+        attach_upload(&mut produced.clone(), PackedHist::EMPTY, PackedHist::EMPTY, 0, "alice", 3);
+        let bind = bind_shot(produced, image(16.0));
+        live.cycle = 999;
+        live.eye_x = 0;
+        assert_eq!(label_cam(&bind, Some(&live)).cycle, 100);
+        assert_eq!(label_cam(&bind, Some(&live)).eye_x, 6607);
+        assert_eq!(bind.image.logical_min[0], 16.0);
+        assert_eq!(bind.image.domain, PixelRoiCoordDomain::LogicalImGui);
+        assert_eq!(
+            pixel_roi_proof(true, Some(&bind)),
+            PixelRoiProof::Accept { frame_id: 7 }
+        );
+    }
+
+    #[test]
+    fn selection_change_does_not_relabel_enqueued_bind() {
+        let mut meta = PixelRoiMeta::produced(4, cam(10, 1), PackedHist { n: 1, ..PackedHist::EMPTY }, PackedHist::EMPTY);
+        attach_upload(&mut meta, PackedHist { n: 1, ..PackedHist::EMPTY }, PackedHist::EMPTY, 0, "alice", 1);
+        let bind = bind_shot(meta, image(8.0));
+        let later = PixelRoiMeta::produced(9, cam(11, 2), PackedHist::EMPTY, PackedHist::EMPTY);
+        assert_eq!(bind.meta.frame_id, 4);
+        assert_eq!(bind.meta.upload.as_ref().map(|u| u.slot.as_str()), Some("alice"));
+        assert_eq!(bind.meta.upload.as_ref().map(|u| u.generation), Some(1));
+        assert_ne!(later.frame_id, bind.meta.frame_id);
+        assert_eq!(
+            pixel_roi_ids_agree(bind.meta.frame_id, bind.meta.upload.as_ref().map(|u| u.frame_id)),
+            PixelRoiProof::Accept { frame_id: 4 }
+        );
+        assert_eq!(
+            pixel_roi_ids_agree(bind.meta.frame_id, Some(later.frame_id)),
+            PixelRoiProof::RejectMismatch {
+                reason: "frame-id-mismatch"
+            }
+        );
+    }
+
+    #[test]
+    fn first_armed_stamp_without_screenshot_does_not_consume_proof() {
+        let first = PixelRoiMeta::produced(1, cam(1, 1), PackedHist { n: 8, ..PackedHist::EMPTY }, PackedHist::EMPTY);
+        assert_eq!(
+            pixel_roi_proof(false, None),
+            PixelRoiProof::RejectUnavailable {
+                reason: "no-screenshot-request"
+            }
+        );
+        assert!(!pixel_roi_stamp_consumes_proof());
+        let later = PixelRoiMeta::produced(2, cam(2, 2), PackedHist { n: 8, ..PackedHist::EMPTY }, PackedHist::EMPTY);
+        let bind = bind_shot(later, image(16.0));
+        assert_eq!(
+            pixel_roi_proof(true, Some(&bind)),
+            PixelRoiProof::Accept { frame_id: 2 }
+        );
+        assert_ne!(first.frame_id, 2);
+        assert_eq!(
+            pixel_roi_proof(true, None),
+            PixelRoiProof::RejectUnavailable {
+                reason: "no-attached-bind"
+            }
+        );
+    }
+
+    #[test]
+    fn cave_slot_png_roi_is_logical_imgui_times_framebuffer_scale() {
         let (x0, y0, x1, y1) = cave_slot_png_roi(16.0, 0.0, 765.0, 503.0, 2.0, 2.0, 765.0, 503.0);
         let (ax0, ay0, ax1, ay1) = cave_slot_applet();
         assert_eq!(x0, ((16.0 + ax0 as f32) * 2.0) as i32);
