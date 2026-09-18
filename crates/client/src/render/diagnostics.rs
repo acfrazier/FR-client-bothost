@@ -6,10 +6,17 @@
 //! parsed. Enable at runtime with `BOT_RENDER_TRACE=1` plus a tile region
 //! and/or loc IDs; output stops after `BOT_RENDER_TRACE_FRAMES` (max 300).
 
+use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-use crate::dash3d::BuildArea;
+use crate::dash3d::{BuildArea, Model};
+
+/// Cap unique shade identities so a wide region cannot grow a dump set.
+const MAX_SHADE_KEYS: usize = 4096;
+/// Cap histogram buckets so one loc cannot flood the log.
+const MAX_HIST_BUCKETS: usize = 24;
+const SENTINEL: i32 = 12_345_678;
 
 /// Betty north-wall default when TRACE is on but X/Z are omitted.
 const DEFAULT_X: i32 = 3012;
@@ -147,6 +154,16 @@ static SEQ: AtomicU32 = AtomicU32::new(0);
 static BACKEND_LOGGED: AtomicBool = AtomicBool::new(false);
 static STOPPED: AtomicBool = AtomicBool::new(false);
 static ARMED: AtomicBool = AtomicBool::new(false);
+static SHADE_DUMPED: OnceLock<Mutex<HashSet<ShadeKey>>> = OnceLock::new();
+
+/// Compact identity: layer 0=ground, 1=wall, 2=wall2, 3=decor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ShadeKey {
+    layer: u8,
+    world_x: i32,
+    world_z: i32,
+    id: i32,
+}
 
 fn parse_ids(raw: &str) -> Vec<i32> {
     raw.split(',')
@@ -536,6 +553,180 @@ pub fn paint(typecode: i32, reason: &'static str, mid_z: i32, max_z: i32) {
     );
 }
 
+fn shade_once(key: ShadeKey) -> bool {
+    let dumped = SHADE_DUMPED.get_or_init(|| Mutex::new(HashSet::new()));
+    let Ok(mut dumped) = dumped.lock() else {
+        return false;
+    };
+    if dumped.contains(&key) {
+        return false;
+    }
+    if dumped.len() >= MAX_SHADE_KEYS {
+        return false;
+    }
+    dumped.insert(key);
+    true
+}
+
+fn format_hist(values: &[i32]) -> String {
+    if values.is_empty() {
+        return "none".to_string();
+    }
+    let mut counts: BTreeMap<i32, u32> = BTreeMap::new();
+    for &v in values {
+        *counts.entry(v).or_insert(0) += 1;
+    }
+    let unique = counts.len();
+    let mut parts: Vec<String> = counts
+        .iter()
+        .take(MAX_HIST_BUCKETS)
+        .map(|(v, n)| format!("{v}:{n}"))
+        .collect();
+    if unique > MAX_HIST_BUCKETS {
+        parts.push(format!("+{}", unique - MAX_HIST_BUCKETS));
+    }
+    parts.join(",")
+}
+
+fn shade_stats(values: &[i32]) -> (i32, i32, u32, u32, u32) {
+    let mut min = i32::MAX;
+    let mut max = i32::MIN;
+    let mut unlit = 0u32;
+    let mut shade2 = 0u32;
+    let mut sentinel = 0u32;
+    for &v in values {
+        min = min.min(v);
+        max = max.max(v);
+        if v == 0 {
+            unlit += 1;
+        }
+        if v == SENTINEL {
+            sentinel += 1;
+        }
+        // HSL lightness is the low 7 bits after get_colour / get_ocol.
+        // Exact 2 is the untextured clamp; DEBUG lit counts treat 2 as lit.
+        if v != SENTINEL && (v & 0x7f) == 2 {
+            shade2 += 1;
+        }
+    }
+    if values.is_empty() {
+        min = 0;
+        max = 0;
+    }
+    (min, max, unlit, shade2, sentinel)
+}
+
+fn rtype_hist(render_type: Option<&[i32]>, n: usize) -> (u32, String) {
+    let Some(rt) = render_type else {
+        return (0, "none".to_string());
+    };
+    let slice = &rt[..n.min(rt.len())];
+    let hidden = slice.iter().filter(|&&t| t == -1).count() as u32;
+    (hidden, format_hist(slice))
+}
+
+fn tex_summary(model: &Model, n: usize) -> String {
+    let textured_rt = model
+        .face_render_type
+        .as_ref()
+        .map(|rt| {
+            rt.iter()
+                .take(n)
+                .filter(|&&t| t != -1 && t & 0x2 == 0x2)
+                .count()
+        })
+        .unwrap_or(0);
+    format!("faces={textured_rt} num_t={}", model.num_t)
+}
+
+/// Wall/decor face shades, once per loc+tile+layer for this armed run.
+/// `layer` is `wall`, `wall2`, or `decor`. Identity is tile + loc id.
+pub fn loc_shades(local_x: i32, local_z: i32, typecode: i32, layer: &'static str, model: &Model) {
+    let Some((wx, wz, id, kind)) = accept_tile_id(local_x, local_z, typecode) else {
+        return;
+    };
+    let layer_code = match layer {
+        "wall" => 1,
+        "wall2" => 2,
+        "decor" => 3,
+        _ => 4,
+    };
+    if !shade_once(ShadeKey {
+        layer: layer_code,
+        world_x: wx,
+        world_z: wz,
+        id,
+    }) {
+        return;
+    }
+    let n = (model.num_faces as usize)
+        .min(model.face_colour_a.as_ref().map(|v| v.len()).unwrap_or(0));
+    let fca = model
+        .face_colour_a
+        .as_ref()
+        .map(|v| &v[..n])
+        .unwrap_or(&[]);
+    let (fca_min, fca_max, unlit, shade2, sentinel) = shade_stats(fca);
+    let (hidden, rtypes) = rtype_hist(model.face_render_type.as_deref(), model.num_faces as usize);
+    let hsl = model
+        .face_colour
+        .as_ref()
+        .map(|v| format_hist(&v[..n.min(v.len())]))
+        .unwrap_or_else(|| "none".to_string());
+    let seq = next_seq();
+    eprintln!(
+        "{PREFIX} f={} seq={seq} shade loc tile={wx},{wz} local={local_x},{local_z} id={id} kind={} tc={typecode} layer={layer} faces={} hidden={hidden} unlit={unlit} shade2={shade2} sentinel={sentinel} fca_min={fca_min} fca_max={fca_max} hist={} rtype={rtypes} tex={} hsl={hsl}",
+        frame_no(),
+        kind_name(kind),
+        model.num_faces,
+        format_hist(fca),
+        tex_summary(model, model.num_faces as usize)
+    );
+}
+
+/// Ground overlay / quick / stamp shades, once per tile for this armed run.
+pub fn ground_shades(
+    local_x: i32,
+    local_z: i32,
+    src: &'static str,
+    shape: i32,
+    rotation: i32,
+    texture: i32,
+    overlay: i32,
+    underlay: i32,
+    face_colour_a: &[i32],
+    colours: [i32; 4],
+    colour2: [i32; 4],
+) {
+    let Some((wx, wz)) = accept_tile(local_x, local_z) else {
+        return;
+    };
+    if !shade_once(ShadeKey {
+        layer: 0,
+        world_x: wx,
+        world_z: wz,
+        id: 0,
+    }) {
+        return;
+    }
+    let (fca_min, fca_max, unlit, shade2, sentinel) = shade_stats(face_colour_a);
+    let seq = next_seq();
+    eprintln!(
+        "{PREFIX} f={} seq={seq} shade ground tile={wx},{wz} local={local_x},{local_z} src={src} shape={shape} rot={rotation} tex={texture} overlay={overlay} underlay={underlay} faces={} hidden=0 unlit={unlit} shade2={shade2} sentinel={sentinel} fca_min={fca_min} fca_max={fca_max} hist={} colours={},{},{},{} colour2={},{},{},{}",
+        frame_no(),
+        face_colour_a.len(),
+        format_hist(face_colour_a),
+        colours[0],
+        colours[1],
+        colours[2],
+        colours[3],
+        colour2[0],
+        colour2[1],
+        colour2[2],
+        colour2[3]
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -646,5 +837,52 @@ mod tests {
         assert_eq!(handoff_action(false, false, "missing"), "missing");
         assert_eq!(handoff_action(false, false, "n/a"), "skipped");
         assert_eq!(handoff_action(false, false, ""), "missing");
+    }
+
+    #[test]
+    fn shade_hist_orders_values_and_caps_buckets() {
+        assert_eq!(format_hist(&[]), "none");
+        assert_eq!(format_hist(&[2, 2, 3778, 2]), "2:3,3778:1");
+        let many: Vec<i32> = (0..30).collect();
+        let hist = format_hist(&many);
+        assert!(hist.starts_with("0:1,1:1"));
+        assert!(hist.ends_with("+6"), "{hist}");
+        assert_eq!(hist.matches(',').count(), MAX_HIST_BUCKETS);
+    }
+
+    #[test]
+    fn shade_stats_count_lightness_2_not_as_unlit() {
+        let (min, max, unlit, shade2, sentinel) = shade_stats(&[0, 2, 3778, SENTINEL, 130]);
+        assert_eq!(min, 0);
+        assert_eq!(max, SENTINEL);
+        assert_eq!(unlit, 1);
+        // 2 and 130 (0x82) both have lightness 2; sentinel is excluded.
+        assert_eq!(shade2, 2);
+        assert_eq!(sentinel, 1);
+    }
+
+    #[test]
+    fn shade_identity_connects_primitive_and_tile() {
+        let wall = ShadeKey {
+            layer: 1,
+            world_x: 3011,
+            world_z: 9816,
+            id: 1417,
+        };
+        let other_tile = ShadeKey {
+            layer: 1,
+            world_x: 3010,
+            world_z: 9816,
+            id: 1417,
+        };
+        let ground = ShadeKey {
+            layer: 0,
+            world_x: 3011,
+            world_z: 9816,
+            id: 0,
+        };
+        assert_ne!(wall, other_tile);
+        assert_ne!(wall, ground);
+        assert_eq!(wall.id, 1417);
     }
 }

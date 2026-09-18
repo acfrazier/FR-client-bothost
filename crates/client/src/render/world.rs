@@ -45,6 +45,149 @@ macro_rules! render_trace {
     ($($arg:tt)*) => {};
 }
 
+#[cfg(not(feature = "render-diagnostics"))]
+fn dump_loc_shades(
+    _local_x: i32,
+    _local_z: i32,
+    _typecode: i32,
+    _layer: &'static str,
+    _model: &SceneModel,
+) {
+}
+
+#[cfg(not(feature = "render-diagnostics"))]
+fn dump_ground_shades(_world: &World, _level: i32, _tile_x: i32, _tile_z: i32) {}
+
+#[cfg(feature = "render-diagnostics")]
+fn dump_loc_shades(
+    local_x: i32,
+    local_z: i32,
+    typecode: i32,
+    layer: &'static str,
+    model: &SceneModel,
+) {
+    if let Some(m) = model.as_model() {
+        crate::render::diagnostics::loc_shades(local_x, local_z, typecode, layer, m);
+    }
+}
+
+#[cfg(feature = "render-diagnostics")]
+fn dump_ground_shades(world: &World, level: i32, tile_x: i32, tile_z: i32) {
+    let Some(tile) = tile_at(&world.squares, level, tile_x, tile_z) else {
+        crate::render::diagnostics::ground_shades(
+            tile_x,
+            tile_z,
+            "none",
+            0,
+            0,
+            -1,
+            0,
+            0,
+            &[],
+            [0; 4],
+            [0; 4],
+        );
+        return;
+    };
+    if let Some(ground) = tile.ground.as_deref() {
+        let stamp = tile.overlay_stamp.as_deref();
+        let n = ground.faces();
+        crate::render::diagnostics::ground_shades(
+            tile_x,
+            tile_z,
+            "overlay",
+            stamp.map(|s| s.shape).unwrap_or(ground.overlay_shape),
+            stamp.map(|s| s.rotation).unwrap_or(ground.overlay_rotation),
+            stamp.map(|s| s.texture).unwrap_or(-1),
+            stamp.map(|s| s.overlay).unwrap_or(ground.minimap_overlay),
+            stamp.map(|s| s.underlay).unwrap_or(ground.minimap_underlay),
+            &ground.face_colour_a[..n],
+            [
+                stamp.map(|s| s.colour_sw).unwrap_or(0),
+                stamp.map(|s| s.colour_se).unwrap_or(0),
+                stamp.map(|s| s.colour_ne).unwrap_or(0),
+                stamp.map(|s| s.colour_nw).unwrap_or(0),
+            ],
+            [
+                stamp.map(|s| s.colour2_sw).unwrap_or(0),
+                stamp.map(|s| s.colour2_se).unwrap_or(0),
+                stamp.map(|s| s.colour2_ne).unwrap_or(0),
+                stamp.map(|s| s.colour2_nw).unwrap_or(0),
+            ],
+        );
+        return;
+    }
+    if let Some(quick) = tile.quick_ground {
+        let stamp = tile.overlay_stamp.as_deref();
+        let colours = [
+            quick.colour_sw,
+            quick.colour_se,
+            quick.colour_ne,
+            quick.colour_nw,
+        ];
+        crate::render::diagnostics::ground_shades(
+            tile_x,
+            tile_z,
+            "quick",
+            stamp.map(|s| s.shape).unwrap_or(0),
+            stamp.map(|s| s.rotation).unwrap_or(0),
+            if quick.texture != -1 {
+                quick.texture
+            } else {
+                stamp.map(|s| s.texture).unwrap_or(-1)
+            },
+            stamp.map(|s| s.overlay).unwrap_or(quick.minimap_rgb),
+            stamp.map(|s| s.underlay).unwrap_or(0),
+            &colours,
+            colours,
+            stamp
+                .map(|s| [s.colour2_sw, s.colour2_se, s.colour2_ne, s.colour2_nw])
+                .unwrap_or([0; 4]),
+        );
+        return;
+    }
+    if let Some(stamp) = tile.overlay_stamp.as_deref() {
+        let colours = [
+            stamp.colour_sw,
+            stamp.colour_se,
+            stamp.colour_ne,
+            stamp.colour_nw,
+        ];
+        crate::render::diagnostics::ground_shades(
+            tile_x,
+            tile_z,
+            "stamp",
+            stamp.shape,
+            stamp.rotation,
+            stamp.texture,
+            stamp.overlay,
+            stamp.underlay,
+            &colours,
+            colours,
+            [
+                stamp.colour2_sw,
+                stamp.colour2_se,
+                stamp.colour2_ne,
+                stamp.colour2_nw,
+            ],
+        );
+        return;
+    }
+    crate::render::diagnostics::ground_shades(
+        tile_x,
+        tile_z,
+        "none",
+        0,
+        0,
+        -1,
+        0,
+        0,
+        &[],
+        [0; 4],
+        [0; 4],
+    );
+}
+
 const MAX_SPRITE_BUFFER: usize = 100;
 
 /// Java `World.fill` sprite-buffer tie-break (`32f30626` World.java:1481-1488):
@@ -623,6 +766,30 @@ impl RenderWorld {
     /// Flat index into `tile_models`/`linked_models` for a tile.
     fn tile_index(&self, world: &World, level: i32, x: i32, z: i32) -> usize {
         ((level * world.max_tile_x + x) * world.max_tile_z + z) as usize
+    }
+
+    /// Read already-resolved loc models without `ensure_tile_resolved`.
+    #[cfg(feature = "render-diagnostics")]
+    fn dump_resolved_loc_shades(&self, world: &World, level: i32, tile_x: i32, tile_z: i32) {
+        let index = self.tile_index(world, level, tile_x, tile_z);
+        let Some(slot) = self.tile_models.get(index).and_then(|t| t.as_ref()) else {
+            return;
+        };
+        if let Some(tile) = tile_at(&world.squares, level, tile_x, tile_z) {
+            if let Some(wall) = tile.wall.as_deref() {
+                if let Some(model) = slot.wall_model1.as_ref() {
+                    dump_loc_shades(tile_x, tile_z, wall.typecode, "wall", model);
+                }
+                if let Some(model) = slot.wall_model2.as_ref() {
+                    dump_loc_shades(tile_x, tile_z, wall.typecode2, "wall2", model);
+                }
+            }
+            if let Some(decor) = tile.decor.as_deref() {
+                if let Some(model) = slot.decor_model.as_ref() {
+                    dump_loc_shades(tile_x, tile_z, decor.typecode, "decor", model);
+                }
+            }
+        }
     }
 
     fn grow_tile_models(&mut self, index: usize) {
@@ -2596,6 +2763,7 @@ impl RenderWorld {
         let original_level = tile_at(&world.squares, level, tile_x, tile_z)
             .map(|t| t.original_level)
             .unwrap_or(level);
+        dump_ground_shades(world, level, tile_x, tile_z);
 
         // Linked square (a level pushed down under this tile). Copy the
         // content out first: the emits below borrow the world mutably.
@@ -2671,6 +2839,7 @@ impl RenderWorld {
                 .0
                 .as_mut()
             {
+                dump_loc_shades(tile_x, tile_z, typecode, "wall", model);
                 emit_scene_model(
                     model, cache, loop_cycle, pix, mesh, cam, 0, wall_x, wall_y, wall_z, typecode,
                     true,
@@ -2681,6 +2850,7 @@ impl RenderWorld {
                 .1
                 .as_mut()
             {
+                dump_loc_shades(tile_x, tile_z, typecode, "wall2", model);
                 emit_scene_model(
                     model, cache, loop_cycle, pix, mesh, cam, 0, wall_x, wall_y, wall_z, typecode,
                     true,
@@ -2722,6 +2892,7 @@ impl RenderWorld {
                     .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
                     .as_mut()
                 {
+                    dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
                     emit_scene_model(
                         decor, cache, loop_cycle, pix, mesh, cam, angle, decor_x, decor_y, decor_z,
                         typecode, true,
@@ -2745,6 +2916,7 @@ impl RenderWorld {
                         .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
                         .as_mut()
                     {
+                        dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
                         emit_scene_model(
                             decor,
                             cache,
@@ -2768,6 +2940,7 @@ impl RenderWorld {
                         .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
                         .as_mut()
                     {
+                        dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
                         emit_scene_model(
                             decor,
                             cache,
@@ -3307,6 +3480,8 @@ impl RenderWorld {
                     sides_after,
                     check_adjacent,
                 );
+                dump_ground_shades(world, level, tile_x, tile_z);
+                self.dump_resolved_loc_shades(world, level, tile_x, tile_z);
             }
 
             if draw_front {
@@ -3547,6 +3722,7 @@ impl RenderWorld {
                             {
                                 #[cfg(test)]
                                 fill_trace::record(tile_x, tile_z, FillKind::Wall, typecode);
+                                dump_loc_shades(tile_x, tile_z, typecode, "wall", model);
                                 model.world_render(
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
@@ -3571,6 +3747,7 @@ impl RenderWorld {
                             {
                                 #[cfg(test)]
                                 fill_trace::record(tile_x, tile_z, FillKind::Wall, typecode);
+                                dump_loc_shades(tile_x, tile_z, typecode, "wall2", model);
                                 model.world_render(
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
@@ -3614,6 +3791,7 @@ impl RenderWorld {
                                 .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
                                 .as_mut()
                             {
+                                dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
                                 decor.world_render(
                                     cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode,
@@ -3666,6 +3844,7 @@ impl RenderWorld {
                                     )
                                     .as_mut()
                                 {
+                                    dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
                                     decor.world_render(
                                         cache,
                                         loop_cycle,
@@ -3696,6 +3875,7 @@ impl RenderWorld {
                                     )
                                     .as_mut()
                                 {
+                                    dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
                                     decor.world_render(
                                         cache,
                                         loop_cycle,
@@ -4357,6 +4537,7 @@ impl RenderWorld {
                                 .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
                                 .as_mut()
                             {
+                                dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
                                 decor.world_render(
                                     cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode,
@@ -4409,6 +4590,7 @@ impl RenderWorld {
                                     )
                                     .as_mut()
                                 {
+                                    dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
                                     decor.world_render(
                                         cache,
                                         loop_cycle,
@@ -4439,6 +4621,7 @@ impl RenderWorld {
                                     )
                                     .as_mut()
                                 {
+                                    dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
                                     decor.world_render(
                                         cache,
                                         loop_cycle,
@@ -4509,6 +4692,7 @@ impl RenderWorld {
                             {
                                 #[cfg(test)]
                                 fill_trace::record(tile_x, tile_z, FillKind::Wall, typecode);
+                                dump_loc_shades(tile_x, tile_z, typecode, "wall2", model);
                                 model.world_render(
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
@@ -4533,6 +4717,7 @@ impl RenderWorld {
                             {
                                 #[cfg(test)]
                                 fill_trace::record(tile_x, tile_z, FillKind::Wall, typecode);
+                                dump_loc_shades(tile_x, tile_z, typecode, "wall", model);
                                 model.world_render(
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
