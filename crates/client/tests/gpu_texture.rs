@@ -30,6 +30,11 @@ const TEXTURE_ANIMATED: i32 = 17;
 /// each id once per process. Sibling tests bake id 7 as solid red first, so
 /// a quadrant texture on 7 never reaches the GPU and this test only sees red.
 const TEXTURE_QUAD: i32 = 31;
+// Unused static layers for the high/low-memory controls in the water-filter
+// regression. Static atlas layers upload once per process, so each mode owns
+// a distinct id while animated layer 17 is refreshed before every submit.
+const TEXTURE_FILTER_CONTROL_HIGH: i32 = 43;
+const TEXTURE_FILTER_CONTROL_LOW: i32 = 44;
 
 /// 3×3 flat world at height 2000 with a plain-coloured tile on every cell
 /// (same fixture as gpu_mesh.rs).
@@ -138,6 +143,53 @@ fn quadrant_texture() -> Pix8 {
         }
     }
     tex
+}
+
+/// A red/transparent checker. Its mip levels average RGB with transparent
+/// zero neighbours, while LOD0 retains pure red at every covered sample.
+fn sparse_filter_texture(size: i32) -> Pix8 {
+    let mut tex = Pix8::new(size, size, vec![0, 0xff0000]);
+    for y in 0..size {
+        for x in 0..size {
+            if (x + y) & 1 == 0 {
+                tex.data[(y * size + x) as usize] = 1;
+            }
+        }
+    }
+    tex
+}
+
+/// A deliberately minified wall: its 8×12 model-space extent projects to
+/// roughly 32×48 pixels while spanning the full 128px atlas layer.
+fn filter_probe_model(texture: i32) -> client::dash3d::Model {
+    let mut model = textured_wall_model();
+    model.point_x = Some(vec![-4, 4, 4, -4]);
+    model.point_y = Some(vec![0, 0, -12, -12]);
+    model.face_colour = Some(vec![texture, texture]);
+    model.calc_bounding_cylinder();
+    model
+}
+
+fn filter_probe_mesh(
+    pix: &mut Pix3DDraw,
+    texture: Option<i32>,
+) -> client::render::world::SceneMesh {
+    let mut world = flat_world();
+    let mut rw = RenderWorld::new();
+    if let Some(texture) = texture {
+        world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+        rw.set_wall_model(
+            &world,
+            0,
+            1,
+            2,
+            Some(SceneModel::Model(filter_probe_model(texture))),
+            None,
+        );
+    }
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
+    rw.build_scene_mesh(&mut world, &Cache::default(), 0, pix)
 }
 
 /// A realistic high-memory 128×128 animated texture. Eight-row red/green
@@ -665,6 +717,81 @@ fn gpu_lowmem_texture_samples_the_full_128px_layer() {
         seen.iter().filter(|&&s| s).count() >= 2,
         "the low-mem textured face must sample more than the top-left quarter of the 128px layer (seen {seen:?})"
     );
+}
+
+/// Sparse Java-animated water (texture 17) keeps LOD0 colour so transparent
+/// RGB-zero neighbours cannot darken retained samples. An otherwise identical
+/// non-water layer must retain mip filtering, and both layers must keep the
+/// same LOD0-alpha coverage. The two memory modes exercise both atlas upload
+/// branches; low-memory temporal scrolling remains intentionally disabled.
+#[test]
+fn gpu_texture_17_uses_lod0_colour_without_disabling_other_mips() {
+    Pix3D::init_colour_table(0.6);
+    let mut backend =
+        GpuBackend::try_new().expect("ACTUAL GPU REQUIRED for texture-17 filter regression");
+
+    for (low_mem, size, control) in [
+        (false, 128, TEXTURE_FILTER_CONTROL_HIGH),
+        (true, 64, TEXTURE_FILTER_CONTROL_LOW),
+    ] {
+        let texture = sparse_filter_texture(size);
+        let mut pix = Pix3DDraw::default();
+        pix.set_clipping(512, 334);
+        pix.low_mem = low_mem;
+        pix.textures[TEXTURE_ANIMATED as usize] = Some(texture.clone());
+        pix.tex_pal[TEXTURE_ANIMATED as usize] = Some(vec![0, 0xff0000]);
+        pix.textures[control as usize] = Some(texture);
+        pix.tex_pal[control as usize] = Some(vec![0, 0xff0000]);
+
+        let background = backend.render_scene_for_test(filter_probe_mesh(&mut pix, None), &pix);
+        let water = backend
+            .render_scene_for_test(filter_probe_mesh(&mut pix, Some(TEXTURE_ANIMATED)), &pix);
+        let non_water =
+            backend.render_scene_for_test(filter_probe_mesh(&mut pix, Some(control)), &pix);
+        let water_mask: Vec<bool> = water
+            .iter()
+            .zip(&background)
+            .map(|(sample, background)| sample != background)
+            .collect();
+        let non_water_mask: Vec<bool> = non_water
+            .iter()
+            .zip(&background)
+            .map(|(sample, background)| sample != background)
+            .collect();
+
+        assert_eq!(
+            water_mask, non_water_mask,
+            "texture 17 and the non-water control must preserve identical LOD0-alpha coverage (low_mem={low_mem})"
+        );
+        let covered = water_mask.iter().filter(|&&covered| covered).count();
+        assert!(
+            covered > 20,
+            "the minified sparse fixture must produce meaningful coverage (low_mem={low_mem}, covered={covered})"
+        );
+
+        let mean_channel = |image: &[i32], shift: i32| {
+            image
+                .iter()
+                .zip(&water_mask)
+                .filter(|(_, covered)| **covered)
+                .map(|(rgb, _)| (rgb >> shift) & 0xff)
+                .sum::<i32>() as f32
+                / covered as f32
+        };
+        let water_red = mean_channel(&water, 16);
+        let water_green = mean_channel(&water, 8);
+        let water_blue = mean_channel(&water, 0);
+        let non_water_red = mean_channel(&non_water, 16);
+
+        assert!(
+            water_red > 245.0 && water_green < 2.0 && water_blue < 2.0,
+            "texture 17 retained samples must keep pure LOD0 red (low_mem={low_mem}, rgb={water_red:.1}/{water_green:.1}/{water_blue:.1})"
+        );
+        assert!(
+            non_water_red < water_red - 40.0,
+            "the non-water control must remain mip-filtered (low_mem={low_mem}, water={water_red:.1}, control={non_water_red:.1})"
+        );
+    }
 }
 
 /// The composite: a real in-game frame through the wgpu backend returns
