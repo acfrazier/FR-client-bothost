@@ -25,6 +25,7 @@ const SHADE: i32 = 200 * 128 + 100;
 const TEX_SHADE: i32 = 0;
 const TEXTURE_RED: i32 = 7;
 const TEXTURE_BLUE: i32 = 12;
+const TEXTURE_RIPPLED_UNDERLAY: i32 = 1;
 const TEXTURE_ANIMATED: i32 = 17;
 /// Distinct from [`TEXTURE_RED`]: `GpuAssets::ensure_model_textures` uploads
 /// each id once per process. Sibling tests bake id 7 as solid red first, so
@@ -790,6 +791,102 @@ fn gpu_texture_17_uses_lod0_colour_without_disabling_other_mips() {
         assert!(
             non_water_red < water_red - 40.0,
             "the non-water control must remain mip-filtered (low_mem={low_mem}, water={water_red:.1}, control={non_water_red:.1})"
+        );
+    }
+}
+
+/// Texture 1 is the fountain's fine rippled underlay. Like the texture-17
+/// flecks above, it keeps LOD0 colour while an otherwise identical non-water
+/// layer remains mip-filtered. Texture 1 is a static atlas layer uploaded once
+/// per process, so each memory mode runs in a fresh child process rather than
+/// accidentally reusing the first mode's layer.
+#[test]
+fn gpu_texture_1_uses_lod0_colour_in_high_and_low_memory() {
+    const CHILD_MODE: &str = "R274_TEXTURE_1_LOD0_CHILD_MODE";
+    if let Ok(mode) = std::env::var(CHILD_MODE) {
+        Pix3D::init_colour_table(0.6);
+        let (low_mem, size, control) = match mode.as_str() {
+            "high" => (false, 128, TEXTURE_FILTER_CONTROL_HIGH),
+            "low" => (true, 64, TEXTURE_FILTER_CONTROL_LOW),
+            _ => panic!("unexpected texture-1 child mode {mode}"),
+        };
+        let mut backend =
+            GpuBackend::try_new().expect("ACTUAL GPU REQUIRED for texture-1 filter regression");
+        let texture = sparse_filter_texture(size);
+        let mut pix = Pix3DDraw::default();
+        pix.set_clipping(512, 334);
+        pix.low_mem = low_mem;
+        pix.textures[TEXTURE_RIPPLED_UNDERLAY as usize] = Some(texture.clone());
+        pix.tex_pal[TEXTURE_RIPPLED_UNDERLAY as usize] = Some(vec![0, 0xff0000]);
+        pix.textures[control as usize] = Some(texture);
+        pix.tex_pal[control as usize] = Some(vec![0, 0xff0000]);
+
+        let background = backend.render_scene_for_test(filter_probe_mesh(&mut pix, None), &pix);
+        let underlay = backend.render_scene_for_test(
+            filter_probe_mesh(&mut pix, Some(TEXTURE_RIPPLED_UNDERLAY)),
+            &pix,
+        );
+        let non_water =
+            backend.render_scene_for_test(filter_probe_mesh(&mut pix, Some(control)), &pix);
+        let underlay_mask: Vec<bool> = underlay
+            .iter()
+            .zip(&background)
+            .map(|(sample, background)| sample != background)
+            .collect();
+        let non_water_mask: Vec<bool> = non_water
+            .iter()
+            .zip(&background)
+            .map(|(sample, background)| sample != background)
+            .collect();
+        assert_eq!(
+            underlay_mask, non_water_mask,
+            "texture 1 and the non-water control must preserve identical LOD0-alpha coverage (low_mem={low_mem})"
+        );
+        let covered = underlay_mask.iter().filter(|&&covered| covered).count();
+        assert!(
+            covered > 20,
+            "the minified texture-1 fixture must produce meaningful coverage (low_mem={low_mem}, covered={covered})"
+        );
+        let mean_channel = |image: &[i32], shift: i32| {
+            image
+                .iter()
+                .zip(&underlay_mask)
+                .filter(|(_, covered)| **covered)
+                .map(|(rgb, _)| (rgb >> shift) & 0xff)
+                .sum::<i32>() as f32
+                / covered as f32
+        };
+        let underlay_red = mean_channel(&underlay, 16);
+        let underlay_green = mean_channel(&underlay, 8);
+        let underlay_blue = mean_channel(&underlay, 0);
+        let non_water_red = mean_channel(&non_water, 16);
+        assert!(
+            underlay_red > 245.0 && underlay_green < 2.0 && underlay_blue < 2.0,
+            "texture 1 retained samples must keep pure LOD0 red (low_mem={low_mem}, rgb={underlay_red:.1}/{underlay_green:.1}/{underlay_blue:.1})"
+        );
+        assert!(
+            non_water_red < underlay_red - 40.0,
+            "the non-water control must remain mip-filtered (low_mem={low_mem}, underlay={underlay_red:.1}, control={non_water_red:.1})"
+        );
+        return;
+    }
+
+    let executable = std::env::current_exe().expect("current GPU test executable");
+    for mode in ["high", "low"] {
+        let output = std::process::Command::new(&executable)
+            .args([
+                "--exact",
+                "gpu_texture_1_uses_lod0_colour_in_high_and_low_memory",
+                "--nocapture",
+            ])
+            .env(CHILD_MODE, mode)
+            .output()
+            .unwrap_or_else(|error| panic!("spawn texture-1 {mode} child: {error}"));
+        assert!(
+            output.status.success(),
+            "texture-1 {mode} child failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
         );
     }
 }

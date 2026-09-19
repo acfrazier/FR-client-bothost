@@ -463,10 +463,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let block = (s >> 4u) & 3u;
         let block_factor = array<f32, 4>(1.0, 0.875, 0.75, 0.625)[block];
         let factor = block_factor * select(1.0, 0.5, (s >> 6u) == 1u);
-        // Texture 17 is the canonical Java-animated water layer. Its sparse
-        // flecks must not average RGB-zero transparent neighbours into the
-        // retained colour; every other texture keeps mip-filtered colour.
-        let colour = select(t.rgb, t0.rgb, id == 17u);
+        // Texture 1's fine ripples and texture 17's sparse animated flecks
+        // lose their intended water detail when colour is mip-averaged.
+        // Other texture ids retain mip-filtered colour.
+        let colour = select(t.rgb, t0.rgb, id == 1u || id == 17u);
         return vec4<f32>(colour * factor, in.alpha);
     }
     return vec4<f32>(in.color, in.alpha);
