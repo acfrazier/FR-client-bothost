@@ -1120,12 +1120,14 @@ impl GpuAssets {
         }
     }
 
-    /// Force the two Java-animated layers to the calling slot's current
+    /// Force each sampled Java-animated layer to the calling slot's current
     /// Pix8 phase. The caller serializes these writes through its scene
     /// submission so another slot cannot replace them before sampling.
-    pub(crate) fn stage_animated_model_textures(&mut self, pix: &Pix3DDraw) {
+    pub(crate) fn stage_animated_model_textures(&mut self, pix: &Pix3DDraw, sampled: &[bool; 50]) {
         for id in [17, 24] {
-            self.refresh_model_texture(pix, id);
+            if sampled[id] {
+                self.refresh_model_texture(pix, id);
+            }
         }
     }
 }

@@ -984,11 +984,12 @@ impl GpuBackend {
     /// production frame never reads back — `finish` hands the texture.
     #[doc(hidden)]
     pub fn render_scene_for_test(&mut self, mesh: SceneMesh, pix: &Pix3DDraw) -> Vec<i32> {
+        let sampled_texture_ids = mesh.sampled_texture_ids();
         let _guard = GPU_SCENE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         {
             let mut assets = self.context.assets.lock().unwrap();
             assets.ensure_model_textures(pix);
-            assets.stage_animated_model_textures(pix);
+            assets.stage_animated_model_textures(pix, &sampled_texture_ids);
         }
         self.render_scene(mesh);
         let handle = TextureHandle {
@@ -1327,7 +1328,7 @@ impl RenderBackend for GpuBackend {
         // mouse picks and runs the ground click raycast), render it
         // into `scene_texture`.
         // Static model textures upload into the shared array once per id.
-        // Animated ids 17/24 are always staged later, immediately before
+        // Sampled animated ids 17/24 are staged later, immediately before
         // this slot's scene submission.
         self.context
             .assets
@@ -1348,7 +1349,8 @@ impl RenderBackend for GpuBackend {
         let mesh = r
             .world
             .build_scene_mesh(&mut core.world, cache, loop_cycle, &mut r.pix3d);
-        for (id, sampled) in mesh.sampled_texture_ids().into_iter().enumerate() {
+        let sampled_texture_ids = mesh.sampled_texture_ids();
+        for (id, sampled) in sampled_texture_ids.iter().copied().enumerate() {
             if sampled {
                 r.pix3d.note_texture_used(id);
             }
@@ -1359,7 +1361,7 @@ impl RenderBackend for GpuBackend {
                 .assets
                 .lock()
                 .unwrap()
-                .stage_animated_model_textures(&r.pix3d);
+                .stage_animated_model_textures(&r.pix3d, &sampled_texture_ids);
             self.render_scene(mesh);
         }
 
