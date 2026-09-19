@@ -102,12 +102,11 @@ static FAILURE_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 /// keeps it at 0.
 static GPU_BACKEND_TRIED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// Serializes shared model-texture-array upload + scene render + readback.
-/// Backends share one process-wide `GpuAssets` array; concurrent
-/// `render_scene_for_test` callers otherwise interleave ensure/upload with
-/// another test's draw and read back empty/wrong layers (workspace flake:
-/// clamps green=0, lowmem seen[false;4]).
-static GPU_SCENE_TEST_LOCK: Mutex<()> = Mutex::new(());
+/// Serializes each slot's animated model-layer staging through its scene
+/// submission. Backends share one process-wide `GpuAssets` array, so another
+/// slot must not replace layers 17/24 between the current slot's staging
+/// writes and `queue.submit`. Tests use the same production ordering scope.
+static GPU_SCENE_LOCK: Mutex<()> = Mutex::new(());
 
 /// How many times the shared context built its shader modules / pipelines
 /// (task 6): the `OnceLock` means the first `GpuContext::new` builds them
@@ -124,7 +123,8 @@ struct GpuContext {
     device: wgpu::Device,
     queue: wgpu::Queue,
     /// The shared asset store (model texture array; the chrome atlases in
-    /// the later slices). Uploads happen once per process on first use.
+    /// the later slices). Static uploads happen once per process; animated
+    /// model layers are restaged for each scene submission.
     assets: Arc<Mutex<GpuAssets>>,
     /// The scene-uniforms bind group layout (the per-backend brightness
     /// buffer binds against it).
@@ -984,14 +984,12 @@ impl GpuBackend {
     /// production frame never reads back — `finish` hands the texture.
     #[doc(hidden)]
     pub fn render_scene_for_test(&mut self, mesh: SceneMesh, pix: &Pix3DDraw) -> Vec<i32> {
-        let _guard = GPU_SCENE_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        self.context
-            .assets
-            .lock()
-            .unwrap()
-            .ensure_model_textures(pix);
+        let _guard = GPU_SCENE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        {
+            let mut assets = self.context.assets.lock().unwrap();
+            assets.ensure_model_textures(pix);
+            assets.stage_animated_model_textures(pix);
+        }
         self.render_scene(mesh);
         let handle = TextureHandle {
             device: self.context.device.clone(),
@@ -1328,8 +1326,9 @@ impl RenderBackend for GpuBackend {
         // mesh (this also resolves the lazy model caches, appends loc
         // mouse picks and runs the ground click raycast), render it
         // into `scene_texture`.
-        // Model textures upload into the shared array once (per texture
-        // id), before the mesh is built so the ids resolve to layers.
+        // Static model textures upload into the shared array once per id.
+        // Animated ids 17/24 are always staged later, immediately before
+        // this slot's scene submission.
         self.context
             .assets
             .lock()
@@ -1354,21 +1353,18 @@ impl RenderBackend for GpuBackend {
                 r.pix3d.note_texture_used(id);
             }
         }
-        self.render_scene(mesh);
+        {
+            let _scene_guard = GPU_SCENE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            self.context
+                .assets
+                .lock()
+                .unwrap()
+                .stage_animated_model_textures(&r.pix3d);
+            self.render_scene(mesh);
+        }
 
         r.world.remove_sprites(&mut core.world);
-        let scrolled = r.texture_run_anims(core, cycle);
-        if scrolled.iter().any(|&scrolled| scrolled) {
-            // `render_scene` submitted this frame before these queue writes.
-            // The refreshed layers are therefore ordered after its sampling
-            // and before the next scene submission: Java's next-frame timing.
-            let mut assets = self.context.assets.lock().unwrap();
-            for (did_scroll, id) in scrolled.into_iter().zip([17usize, 24]) {
-                if did_scroll {
-                    assets.refresh_model_texture(&r.pix3d, id);
-                }
-            }
-        }
+        r.texture_run_anims(core, cycle);
         core.pick_count = r.pix3d.picked_count;
         core.pick_typecodes
             .copy_from_slice(&r.pix3d.picked_entity_typecode);

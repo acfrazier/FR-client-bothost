@@ -488,8 +488,8 @@ pub struct GpuAssets {
     pub model_bind_group_layout: wgpu::BindGroupLayout,
     /// The scene pipeline's bind group, bound once per frame.
     pub model_bind_group: wgpu::BindGroup,
-    /// Which texture ids are already in the array (upload once per
-    /// process; a missing texture on this renderer just stays unset).
+    /// Which static texture ids are already in the array (upload once per
+    /// process). Animated ids 17/24 are restaged for every scene.
     model_regions: [bool; 50],
     /// The chrome sprite atlas layers (bindings 0..7) and the font atlas
     /// (binding 8), plus the chrome bind group (sampler binding 9). The
@@ -1038,8 +1038,8 @@ impl GpuAssets {
     }
 
     /// Rewrite one model-texture array layer from the current Pix8 bytes.
-    /// Used for both first upload and the narrow post-scroll refresh.
-    pub(crate) fn refresh_model_texture(&mut self, pix: &Pix3DDraw, id: usize) -> bool {
+    /// Used for static first upload and animated pre-submit staging.
+    fn refresh_model_texture(&mut self, pix: &Pix3DDraw, id: usize) -> bool {
         if id >= self.model_regions.len() {
             return false;
         }
@@ -1103,15 +1103,29 @@ impl GpuAssets {
         true
     }
 
-    /// Upload any of the renderer's model textures not yet in the array
-    /// (once per process, keyed by texture id). A renderer without the
-    /// `textures` jag (or a failed depack) leaves its id unset; the scene
-    /// mesh then samples nothing for those faces.
+    /// Upload any static model textures not yet in the array (once per
+    /// process, keyed by texture id). Animated layers 17 and 24 are staged
+    /// separately for every scene so one slot cannot leave its phase behind
+    /// for another slot. A renderer without the `textures` jag (or a failed
+    /// depack) leaves its id unset; the scene mesh then samples nothing for
+    /// those faces.
     pub fn ensure_model_textures(&mut self, pix: &Pix3DDraw) {
         for id in 0..50 {
+            if matches!(id, 17 | 24) {
+                continue;
+            }
             if !self.model_regions[id] {
                 self.refresh_model_texture(pix, id);
             }
+        }
+    }
+
+    /// Force the two Java-animated layers to the calling slot's current
+    /// Pix8 phase. The caller serializes these writes through its scene
+    /// submission so another slot cannot replace them before sampling.
+    pub(crate) fn stage_animated_model_textures(&mut self, pix: &Pix3DDraw) {
+        for id in [17, 24] {
+            self.refresh_model_texture(pix, id);
         }
     }
 }

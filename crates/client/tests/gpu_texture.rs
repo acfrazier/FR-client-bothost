@@ -866,6 +866,140 @@ fn gpu_texture_17_scrolls_across_two_paints_and_freezes_while_loading() {
     );
 }
 
+/// Process-shared `GpuAssets` must stage each slot's current texture-17
+/// phase before that slot submits its scene. Slot B and the stationary
+/// low-memory slot C both start at phase 0 after slot A advances, so their
+/// first paints must still sample phase 0 rather than A's shared-atlas phase.
+#[test]
+fn gpu_texture_17_shared_assets_isolate_phase_across_backends() {
+    Pix3D::init_colour_table(0.6);
+    let Ok(backend_a) = GpuBackend::try_new() else {
+        eprintln!("NO ADAPTER: shared-assets A/B ownership check did not pass");
+        return;
+    };
+    let Ok(backend_b) = GpuBackend::try_new() else {
+        eprintln!("NO ADAPTER: shared-assets A/B ownership check did not pass");
+        return;
+    };
+    let cache_a =
+        std::env::temp_dir().join(format!("r274-gpu-texture-ab-a-{}", std::process::id()));
+    let cache_b =
+        std::env::temp_dir().join(format!("r274-gpu-texture-ab-b-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&cache_a);
+    let _ = std::fs::create_dir_all(&cache_b);
+
+    let (mut renderer_a, mut client_a) = animated_frame(backend_a, &cache_a);
+    let phase0_cpu = renderer_a.pix3d.textures[TEXTURE_ANIMATED as usize]
+        .as_ref()
+        .unwrap()
+        .data
+        .clone();
+
+    let FrameOutput::Texture(first_a) = renderer_a.game_draw(&mut client_a) else {
+        panic!("slot A first paint must return a texture");
+    };
+    let phase0_scene = scene_window(&first_a.read_back());
+    assert_ne!(
+        renderer_a.pix3d.textures[TEXTURE_ANIMATED as usize]
+            .as_ref()
+            .unwrap()
+            .data,
+        phase0_cpu,
+        "slot A must scroll Pix8 after the first paint"
+    );
+
+    client_a.world_update_num = 1;
+    let FrameOutput::Texture(second_a) = renderer_a.game_draw(&mut client_a) else {
+        panic!("slot A second paint must return a texture");
+    };
+    let phase1_scene = scene_window(&second_a.read_back());
+    let a_flips = phase0_scene
+        .iter()
+        .zip(&phase1_scene)
+        .filter(|&(&before, &after)| {
+            let (br, bg, bb) = ((before >> 16) & 0xff, (before >> 8) & 0xff, before & 0xff);
+            let (ar, ag, ab) = ((after >> 16) & 0xff, (after >> 8) & 0xff, after & 0xff);
+            (br > 128 && bg < 64 && bb < 64 && ag > 128 && ar < 64 && ab < 64)
+                || (bg > 128 && br < 64 && bb < 64 && ar > 128 && ag < 64 && ab < 64)
+        })
+        .count();
+    assert!(
+        a_flips > 500,
+        "slot A must show temporal scroll between paints (flips={a_flips})"
+    );
+
+    let (mut renderer_b, mut client_b) = animated_frame(backend_b, &cache_b);
+    assert_eq!(
+        renderer_b.pix3d.textures[TEXTURE_ANIMATED as usize]
+            .as_ref()
+            .unwrap()
+            .data,
+        phase0_cpu,
+        "slot B must start with unscrolled phase-0 Pix8"
+    );
+    let FrameOutput::Texture(first_b) = renderer_b.game_draw(&mut client_b) else {
+        panic!("slot B first paint must return a texture");
+    };
+    let b_scene = scene_window(&first_b.read_back());
+    let b_vs_phase0 = phase0_scene
+        .iter()
+        .zip(&b_scene)
+        .filter(|&(&before, &after)| {
+            let (br, bg, bb) = ((before >> 16) & 0xff, (before >> 8) & 0xff, before & 0xff);
+            let (ar, ag, ab) = ((after >> 16) & 0xff, (after >> 8) & 0xff, after & 0xff);
+            (br > 128 && bg < 64 && bb < 64 && ag > 128 && ar < 64 && ab < 64)
+                || (bg > 128 && br < 64 && bb < 64 && ar > 128 && ag < 64 && ab < 64)
+        })
+        .count();
+    assert_eq!(
+        b_vs_phase0, 0,
+        "slot B's phase-0 Pix8 must replace A's shared-atlas phase before submit"
+    );
+
+    let Ok(backend_c) = GpuBackend::try_new() else {
+        eprintln!("NO ADAPTER: lowmem sibling ownership check did not pass");
+        return;
+    };
+    let cache_c =
+        std::env::temp_dir().join(format!("r274-gpu-texture-ab-c-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&cache_c);
+    let (mut renderer_c, mut client_c) = animated_frame(backend_c, &cache_c);
+    renderer_c.pix3d.low_mem = true;
+    assert_eq!(
+        renderer_c.pix3d.textures[TEXTURE_ANIMATED as usize]
+            .as_ref()
+            .unwrap()
+            .data,
+        phase0_cpu
+    );
+    let FrameOutput::Texture(first_c) = renderer_c.game_draw(&mut client_c) else {
+        panic!("lowmem sibling paint must return a texture");
+    };
+    let c_scene = scene_window(&first_c.read_back());
+    let c_vs_phase0 = phase0_scene
+        .iter()
+        .zip(&c_scene)
+        .filter(|&(&before, &after)| {
+            let (br, bg, bb) = ((before >> 16) & 0xff, (before >> 8) & 0xff, before & 0xff);
+            let (ar, ag, ab) = ((after >> 16) & 0xff, (after >> 8) & 0xff, after & 0xff);
+            (br > 128 && bg < 64 && bb < 64 && ag > 128 && ar < 64 && ab < 64)
+                || (bg > 128 && br < 64 && bb < 64 && ar > 128 && ag < 64 && ab < 64)
+        })
+        .count();
+    assert_eq!(
+        c_vs_phase0, 0,
+        "lowmem slot's stationary phase-0 Pix8 must replace A's shared-atlas phase before submit"
+    );
+    assert_eq!(
+        renderer_c.pix3d.textures[TEXTURE_ANIMATED as usize]
+            .as_ref()
+            .unwrap()
+            .data,
+        phase0_cpu,
+        "lowmem must not mutate Pix8 via texture_run_anims"
+    );
+}
+
 /// A client with an empty cache (the GPU fixture frames need only the
 /// world/camera; no media sprites/fonts/textures load, so the menu
 /// position and the fixture textures stay deterministic).
