@@ -540,13 +540,16 @@ impl GpuAssets {
             view_formats: &[],
         });
         let model_view = model_atlas.create_view(&Default::default());
-        // RuneLite default anisotropic=1: mag nearest, min NEAREST_MIPMAP_LINEAR
-        // (nearest in-mip, linear between mips). Linear-without-mips was the
-        // notice-board / ground-clutter crawl.
+        // Match Java's model raster: U is clamped before lookup, while V
+        // wraps through the texture-height mask (`0x3f80` high-memory,
+        // `0xfc0` low-memory). Keep RuneLite's anisotropic=1 filtering:
+        // mag nearest, min NEAREST_MIPMAP_LINEAR (nearest in-mip, linear
+        // between mips). Linear-without-mips caused notice-board / ground-
+        // clutter crawl.
         let model_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("r274 model sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::Repeat,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,

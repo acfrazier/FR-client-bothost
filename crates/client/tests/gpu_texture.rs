@@ -36,6 +36,9 @@ const TEXTURE_QUAD: i32 = 31;
 // a distinct id while animated layer 17 is refreshed before every submit.
 const TEXTURE_FILTER_CONTROL_HIGH: i32 = 43;
 const TEXTURE_FILTER_CONTROL_LOW: i32 = 44;
+const TEXTURE_ADDRESS_V: i32 = 45;
+const TEXTURE_ADDRESS_U: i32 = 46;
+const TEXTURE_ADDRESS_SOLID: i32 = 47;
 
 /// 3×3 flat world at height 2000 with a plain-coloured tile on every cell
 /// (same fixture as gpu_mesh.rs).
@@ -158,6 +161,94 @@ fn sparse_filter_texture(size: i32) -> Pix8 {
         }
     }
     tex
+}
+
+fn address_texture(size: i32, vertical_wrap_probe: bool) -> Pix8 {
+    let mut tex = Pix8::new(size, size, vec![0, 0xff0000, 0x0000ff, 0x00ff00, 0xffffff]);
+    for y in 0..size {
+        for x in 0..size {
+            let index = if vertical_wrap_probe {
+                if y >= size * 7 / 8 {
+                    2 // blue clamp edge: the broken V-clamp result
+                } else if x < size / 2 {
+                    0 // transparent cutout inside every wrapped row
+                } else {
+                    1 // red wrapped sample
+                }
+            } else if x >= size * 3 / 4 {
+                3 // green U-clamp edge
+            } else {
+                1 // red would leak if U repeated
+            };
+            tex.data[(y * size + x) as usize] = index;
+        }
+    }
+    tex
+}
+
+fn address_probe_model(texture: i32, vertical_wrap_probe: bool) -> client::dash3d::Model {
+    let mut points_x = vec![-60, 60, 60, -60];
+    let mut points_y = vec![0, 0, -180, -180];
+    let mut points_z = vec![0; 4];
+    if vertical_wrap_probe {
+        // Face U spans 0..1. V spans -1.75..-1.25, so Java's V mask
+        // samples the texture at 0.25..0.75 while a clamp samples its edge.
+        points_x.extend([-60, 60, -60]);
+        points_y.extend([450, 450, 810]);
+    } else {
+        // Face U spans 1.25..1.75 and V spans 0.25..0.75. U must retain
+        // Java's clamp rather than adopting V's wrapping contract.
+        points_x.extend([-360, -120, -360]);
+        points_y.extend([90, 90, -270]);
+    }
+    points_z.extend([0; 3]);
+    let mut model = client::dash3d::Model {
+        num_points: 7,
+        point_x: Some(points_x),
+        point_y: Some(points_y),
+        point_z: Some(points_z),
+        num_faces: 2,
+        face_vertex_a: Some(vec![0, 0]),
+        face_vertex_b: Some(vec![1, 2]),
+        face_vertex_c: Some(vec![2, 3]),
+        face_render_type: Some(vec![2, 2]),
+        face_colour: Some(vec![texture, texture]),
+        face_colour_a: Some(vec![TEX_SHADE, TEX_SHADE]),
+        face_colour_b: Some(vec![TEX_SHADE, TEX_SHADE]),
+        face_colour_c: Some(vec![TEX_SHADE, TEX_SHADE]),
+        face_texture_p: Some(vec![4]),
+        face_texture_m: Some(vec![5]),
+        face_texture_n: Some(vec![6]),
+        ..Default::default()
+    };
+    model.calc_bounding_cylinder();
+    model
+}
+
+fn address_probe_mesh(
+    pix: &mut Pix3DDraw,
+    texture: Option<i32>,
+    vertical_wrap_probe: bool,
+) -> client::render::world::SceneMesh {
+    let mut world = flat_world();
+    let mut rw = RenderWorld::new();
+    if let Some(texture) = texture {
+        world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+        rw.set_wall_model(
+            &world,
+            0,
+            1,
+            2,
+            Some(SceneModel::Model(address_probe_model(
+                texture,
+                vertical_wrap_probe,
+            ))),
+            None,
+        );
+    }
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
+    rw.build_scene_mesh(&mut world, &Cache::default(), 0, pix)
 }
 
 /// A deliberately minified wall: its 8×12 model-space extent projects to
@@ -718,6 +809,119 @@ fn gpu_lowmem_texture_samples_the_full_128px_layer() {
         seen.iter().filter(|&&s| s).count() >= 2,
         "the low-mem textured face must sample more than the top-left quarter of the 128px layer (seen {seen:?})"
     );
+}
+
+/// Java's model raster clamps U but wraps V (`cur_v & 0x3f80` in high
+/// memory, `cur_v & 0xfc0` in low memory). Exercise actual GPU sampling
+/// with negative V, out-of-range U, and a transparent cutout. Each memory
+/// mode runs in a fresh child because static atlas layers upload once.
+#[test]
+fn gpu_model_texture_wraps_v_clamps_u_and_preserves_cutouts() {
+    const CHILD_MODE: &str = "R274_TEXTURE_ADDRESS_CHILD_MODE";
+    if let Ok(mode) = std::env::var(CHILD_MODE) {
+        Pix3D::init_colour_table(0.6);
+        let (low_mem, size) = match mode.as_str() {
+            "high" => (false, 128),
+            "low" => (true, 64),
+            _ => panic!("unexpected texture-address child mode {mode}"),
+        };
+        let mut backend =
+            GpuBackend::try_new().expect("ACTUAL GPU REQUIRED for texture-address regression");
+        let mut pix = Pix3DDraw::default();
+        pix.set_clipping(512, 334);
+        pix.low_mem = low_mem;
+        pix.textures[TEXTURE_ADDRESS_V as usize] = Some(address_texture(size, true));
+        pix.tex_pal[TEXTURE_ADDRESS_V as usize] =
+            Some(vec![0, 0xff0000, 0x0000ff, 0x00ff00, 0xffffff]);
+        pix.textures[TEXTURE_ADDRESS_U as usize] = Some(address_texture(size, false));
+        pix.tex_pal[TEXTURE_ADDRESS_U as usize] =
+            Some(vec![0, 0xff0000, 0x0000ff, 0x00ff00, 0xffffff]);
+        pix.textures[TEXTURE_ADDRESS_SOLID as usize] = Some(solid_texture(0xffffff));
+        pix.tex_pal[TEXTURE_ADDRESS_SOLID as usize] = Some(vec![0, 0xffffff]);
+
+        let background =
+            backend.render_scene_for_test(address_probe_mesh(&mut pix, None, true), &pix);
+        let solid = backend.render_scene_for_test(
+            address_probe_mesh(&mut pix, Some(TEXTURE_ADDRESS_SOLID), true),
+            &pix,
+        );
+        let wrapped = backend.render_scene_for_test(
+            address_probe_mesh(&mut pix, Some(TEXTURE_ADDRESS_V), true),
+            &pix,
+        );
+        let u_clamped = backend.render_scene_for_test(
+            address_probe_mesh(&mut pix, Some(TEXTURE_ADDRESS_U), false),
+            &pix,
+        );
+        let wall_mask: Vec<bool> = solid
+            .iter()
+            .zip(&background)
+            .map(|(wall, background)| wall != background)
+            .collect();
+        let coverage = wall_mask.iter().filter(|&&covered| covered).count();
+        assert!(
+            coverage > 500,
+            "address probe must cover meaningful screen area (low_mem={low_mem}, coverage={coverage})"
+        );
+        let colour_count = |image: &[i32], channel: usize| {
+            image
+                .iter()
+                .zip(&wall_mask)
+                .filter(|(rgb, covered)| {
+                    if !**covered {
+                        return false;
+                    }
+                    let channels = [(**rgb >> 16) & 0xff, (**rgb >> 8) & 0xff, **rgb & 0xff];
+                    channels[channel] > 128
+                        && channels[(channel + 1) % 3] < 64
+                        && channels[(channel + 2) % 3] < 64
+                })
+                .count()
+        };
+        let wrapped_red = colour_count(&wrapped, 0);
+        let wrapped_blue = colour_count(&wrapped, 2);
+        let cutouts = wrapped
+            .iter()
+            .zip(&background)
+            .zip(&wall_mask)
+            .filter(|((sample, background), covered)| **covered && sample == background)
+            .count();
+        assert!(
+            wrapped_red > 100 && wrapped_blue < 20,
+            "negative V must wrap into red texture rows, not clamp to blue edge (low_mem={low_mem}, red={wrapped_red}, blue={wrapped_blue})"
+        );
+        assert!(
+            cutouts > 100,
+            "wrapped transparent texels must discard to the background (low_mem={low_mem}, cutouts={cutouts})"
+        );
+
+        let clamped_green = colour_count(&u_clamped, 1);
+        let repeated_red = colour_count(&u_clamped, 0);
+        assert!(
+            clamped_green > 100 && repeated_red < 20,
+            "out-of-range U must stay clamped to the green edge (low_mem={low_mem}, green={clamped_green}, red={repeated_red})"
+        );
+        return;
+    }
+
+    let executable = std::env::current_exe().expect("current GPU test executable");
+    for mode in ["high", "low"] {
+        let output = std::process::Command::new(&executable)
+            .args([
+                "--exact",
+                "gpu_model_texture_wraps_v_clamps_u_and_preserves_cutouts",
+                "--nocapture",
+            ])
+            .env(CHILD_MODE, mode)
+            .output()
+            .unwrap_or_else(|error| panic!("spawn texture-address {mode} child: {error}"));
+        assert!(
+            output.status.success(),
+            "texture-address {mode} child failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
 }
 
 /// Sparse Java-animated water (texture 17) keeps LOD0 colour so transparent
