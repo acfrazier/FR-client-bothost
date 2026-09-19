@@ -2805,7 +2805,7 @@ impl RenderWorld {
             {
                 emit_scene_model(
                     model, cache, loop_cycle, pix, mesh, cam, 0, wall_x, wall_y, wall_z, typecode,
-                    true,
+                    OpaqueGroup::Wall,
                 );
             }
         }
@@ -2846,7 +2846,7 @@ impl RenderWorld {
                 dump_loc_shades(tile_x, tile_z, typecode, "wall", model);
                 emit_scene_model(
                     model, cache, loop_cycle, pix, mesh, cam, 0, wall_x, wall_y, wall_z, typecode,
-                    true,
+                    OpaqueGroup::Wall,
                 );
             }
             if let Some(model) = self
@@ -2857,7 +2857,7 @@ impl RenderWorld {
                 dump_loc_shades(tile_x, tile_z, typecode, "wall2", model);
                 emit_scene_model(
                     model, cache, loop_cycle, pix, mesh, cam, 0, wall_x, wall_y, wall_z, typecode,
-                    true,
+                    OpaqueGroup::Wall,
                 );
             }
         }
@@ -2899,7 +2899,7 @@ impl RenderWorld {
                     dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
                     emit_scene_model(
                         decor, cache, loop_cycle, pix, mesh, cam, angle, decor_x, decor_y, decor_z,
-                        typecode, true,
+                        typecode, OpaqueGroup::WallDecor,
                     );
                 }
             } else if (wshape & 0x300) != 0 {
@@ -2933,7 +2933,7 @@ impl RenderWorld {
                             decor_y,
                             draw_z,
                             typecode,
-                            true,
+                            OpaqueGroup::WallDecor,
                         );
                     }
                 }
@@ -2957,7 +2957,7 @@ impl RenderWorld {
                             decor_y,
                             draw_z,
                             typecode,
-                            true,
+                            OpaqueGroup::WallDecor,
                         );
                     }
                 }
@@ -2981,7 +2981,8 @@ impl RenderWorld {
                 .as_mut()
             {
                 emit_scene_model(
-                    model, cache, loop_cycle, pix, mesh, cam, 0, gd_x, gd_y, gd_z, typecode, false,
+                    model, cache, loop_cycle, pix, mesh, cam, 0, gd_x, gd_y, gd_z, typecode,
+                    OpaqueGroup::Scenery,
                 );
             }
         }
@@ -3003,17 +3004,20 @@ impl RenderWorld {
                     self.obj_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z);
                 if let Some(model) = bottom.as_mut() {
                     emit_scene_model(
-                        model, cache, loop_cycle, pix, mesh, cam, 0, ox, oy, oz, typecode, false,
+                        model, cache, loop_cycle, pix, mesh, cam, 0, ox, oy, oz, typecode,
+                        OpaqueGroup::Scenery,
                     );
                 }
                 if let Some(model) = middle.as_mut() {
                     emit_scene_model(
-                        model, cache, loop_cycle, pix, mesh, cam, 0, ox, oy, oz, typecode, false,
+                        model, cache, loop_cycle, pix, mesh, cam, 0, ox, oy, oz, typecode,
+                        OpaqueGroup::Scenery,
                     );
                 }
                 if let Some(model) = top.as_mut() {
                     emit_scene_model(
-                        model, cache, loop_cycle, pix, mesh, cam, 0, ox, oy, oz, typecode, false,
+                        model, cache, loop_cycle, pix, mesh, cam, 0, ox, oy, oz, typecode,
+                        OpaqueGroup::Scenery,
                     );
                 }
             }
@@ -3144,7 +3148,7 @@ impl RenderWorld {
                 y - cam.eye_y,
                 z - cam.eye_z + nudge_z,
                 typecode,
-                false,
+                OpaqueGroup::Scenery,
             );
             true
         } else {
@@ -5785,15 +5789,24 @@ impl GpuVertex {
     }
 }
 
-/// The GPU scene mesh: scenery/ground opaque first, then walls, then
-/// translucent. Walls draw after scenery so a same-tile booth that
+/// The GPU scene mesh: scenery/ground opaque first, then walls, then wall
+/// decorations, then translucent. Walls draw after scenery so a same-tile booth that
 /// occupies the wall's thickness loses `LessEqual` to the wall facade
-/// (the CPU's back-wall pass after sprites).
+/// (the CPU's back-wall pass after sprites). Wall decorations remain
+/// depth-tested but resolve coplanar ties after their supporting walls.
 #[derive(Default, Clone)]
 pub struct SceneMesh {
     opaque: Vec<GpuVertex>,
     walls: Vec<GpuVertex>,
+    wall_decor: Vec<GpuVertex>,
     translucent: Vec<GpuVertex>,
+}
+
+#[derive(Clone, Copy)]
+enum OpaqueGroup {
+    Scenery,
+    Wall,
+    WallDecor,
 }
 
 impl SceneMesh {
@@ -5807,6 +5820,7 @@ impl SceneMesh {
             .opaque
             .iter()
             .chain(&self.walls)
+            .chain(&self.wall_decor)
             .chain(&self.translucent)
         {
             let id_plus_one = (vertex.uv_tex & 0xffff) as usize;
@@ -5822,6 +5836,7 @@ impl SceneMesh {
     pub fn vertices(self) -> Vec<GpuVertex> {
         let mut all = self.opaque;
         all.extend(self.walls);
+        all.extend(self.wall_decor);
         all.extend(self.translucent);
         all
     }
@@ -5842,21 +5857,31 @@ impl SceneMesh {
         }
         sort_group(&mut self.opaque);
         sort_group(&mut self.walls);
+        sort_group(&mut self.wall_decor);
     }
 
     /// Vertex count of the opaque prefix (`vertices()[..n]`), including
     /// the wall bucket.
     pub fn opaque_len(&self) -> usize {
-        self.opaque.len() + self.walls.len()
+        self.opaque.len() + self.walls.len() + self.wall_decor.len()
     }
 
-    fn push(&mut self, v0: GpuVertex, v1: GpuVertex, v2: GpuVertex, translucent: bool, wall: bool) {
+    fn push(
+        &mut self,
+        v0: GpuVertex,
+        v1: GpuVertex,
+        v2: GpuVertex,
+        translucent: bool,
+        group: OpaqueGroup,
+    ) {
         if translucent {
             self.translucent.extend([v0, v1, v2]);
-        } else if wall {
-            self.walls.extend([v0, v1, v2]);
         } else {
-            self.opaque.extend([v0, v1, v2]);
+            match group {
+                OpaqueGroup::Scenery => self.opaque.extend([v0, v1, v2]),
+                OpaqueGroup::Wall => self.walls.extend([v0, v1, v2]),
+                OpaqueGroup::WallDecor => self.wall_decor.extend([v0, v1, v2]),
+            }
         }
     }
 }
@@ -6070,9 +6095,16 @@ fn emit_scene_model(
     rel_y: i32,
     rel_z: i32,
     typecode: i32,
-    wall: bool,
+    group: OpaqueGroup,
 ) {
-    render_trace!(mesh_id(typecode, if wall { "emitted-wall" } else { "emitted" }));
+    render_trace!(mesh_id(
+        typecode,
+        if matches!(group, OpaqueGroup::Scenery) {
+            "emitted"
+        } else {
+            "emitted-wall"
+        }
+    ));
     if crate::render_debug_enabled() {
         let loc_id = (typecode >> 14) & 0x7fff;
         static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<i32>>> =
@@ -6138,12 +6170,12 @@ fn emit_scene_model(
     match model {
         SceneModel::Model(model) => {
             emit_model_faces(
-                model, pix, mesh, cam, yaw, rel_x, rel_y, rel_z, typecode, wall,
+                model, pix, mesh, cam, yaw, rel_x, rel_y, rel_z, typecode, group,
             );
         }
         SceneModel::Shared(model) => {
             emit_model_faces(
-                model, pix, mesh, cam, yaw, rel_x, rel_y, rel_z, typecode, wall,
+                model, pix, mesh, cam, yaw, rel_x, rel_y, rel_z, typecode, group,
             );
         }
         _ => {
@@ -6159,7 +6191,7 @@ fn emit_scene_model(
                     SceneModel::Model(_) | SceneModel::Shared(_) => unreachable!(),
                 }
                 emit_model_faces(
-                    &temp, pix, mesh, cam, yaw, rel_x, rel_y, rel_z, typecode, wall,
+                    &temp, pix, mesh, cam, yaw, rel_x, rel_y, rel_z, typecode, group,
                 );
             }
         }
@@ -6184,7 +6216,7 @@ fn emit_model_faces(
     rel_y: i32,
     rel_z: i32,
     typecode: i32,
-    wall: bool,
+    group: OpaqueGroup,
 ) {
     // The area_game viewport the projection origin was set for.
     const SCENE_W: i32 = 512;
@@ -6575,7 +6607,7 @@ fn emit_model_faces(
                         tex_id_plus_1,
                     ),
                     translucent,
-                    wall,
+                    group,
                 );
             } else {
                 mesh.push(
@@ -6583,7 +6615,7 @@ fn emit_model_faces(
                     GpuVertex::new(v1.x, v1.y, v1.z, v1.shade, alpha, bias),
                     GpuVertex::new(v2.x, v2.y, v2.z, v2.shade, alpha, bias),
                     translucent,
-                    wall,
+                    group,
                 );
             }
         }
@@ -6764,7 +6796,7 @@ fn emit_ground(
                 GpuVertex::textured(x1, y1, z1, u1, v1, colour_b, 255, 0, tex + 1),
                 GpuVertex::textured(x2, y2, z2, u2, v2, colour_c, 255, 0, tex + 1),
                 false,
-                false,
+                OpaqueGroup::Scenery,
             );
         } else {
             let shade_of = |c: i32| match tex_average {
@@ -6776,7 +6808,7 @@ fn emit_ground(
                 GpuVertex::new(x1, y1, z1, shade_of(colour_b), 255, 0),
                 GpuVertex::new(x2, y2, z2, shade_of(colour_c), 255, 0),
                 false,
-                false,
+                OpaqueGroup::Scenery,
             );
         }
     }
@@ -6918,7 +6950,7 @@ fn emit_quick_ground(
                         tex + 1,
                     ),
                     false,
-                    false,
+                    OpaqueGroup::Scenery,
                 );
             } else {
                 mesh.push(
@@ -6926,7 +6958,7 @@ fn emit_quick_ground(
                     GpuVertex::new(x[3], y[3], z[3], shade_of(ground.colour_nw), 255, 0),
                     GpuVertex::new(x[1], y[1], z[1], shade_of(ground.colour_se), 255, 0),
                     false,
-                    false,
+                    OpaqueGroup::Scenery,
                 );
             }
         }
@@ -6989,7 +7021,7 @@ fn emit_quick_ground(
                         tex + 1,
                     ),
                     false,
-                    false,
+                    OpaqueGroup::Scenery,
                 );
             } else {
                 mesh.push(
@@ -6997,7 +7029,7 @@ fn emit_quick_ground(
                     GpuVertex::new(x[1], y[1], z[1], shade_of(ground.colour_se), 255, 0),
                     GpuVertex::new(x[3], y[3], z[3], shade_of(ground.colour_nw), 255, 0),
                     false,
-                    false,
+                    OpaqueGroup::Scenery,
                 );
             }
         }

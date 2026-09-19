@@ -1426,3 +1426,144 @@ fn same_tile_west_wall_occludes_booth() {
         "same-tile WEST plaster must occlude the booth (poke_through={poke} around_edge={around} wall_px={wall_px})"
     );
 }
+
+fn flat_quad(half_width: i32, top: i32, bottom: i32, z: i32, shade: i32) -> Model {
+    let mut model = Model {
+        num_points: 4,
+        point_x: Some(vec![-half_width, half_width, half_width, -half_width]),
+        point_y: Some(vec![top, top, bottom, bottom]),
+        point_z: Some(vec![z; 4]),
+        num_faces: 2,
+        face_vertex_a: Some(vec![0, 0]),
+        face_vertex_b: Some(vec![1, 2]),
+        face_vertex_c: Some(vec![2, 3]),
+        face_colour_a: Some(vec![shade; 2]),
+        face_colour_b: Some(vec![shade; 2]),
+        face_colour_c: Some(vec![shade; 2]),
+        ..Default::default()
+    };
+    model.calc_bounding_cylinder();
+    model
+}
+
+fn wall_decor_depth_scene(include_wall: bool, foreground: bool) -> Scene {
+    let tile_x = 2;
+    let decor_z = 2;
+    let wall_z = 3;
+    let mut world = flat_world(6);
+    if include_wall {
+        world.set_wall(
+            0,
+            tile_x,
+            wall_z,
+            2000,
+            8,
+            0,
+            scene_typecode(1902),
+            0,
+            2000,
+            2000,
+            2000,
+            2000,
+        );
+    }
+    world.set_decor(
+        0,
+        tile_x,
+        decor_z,
+        2000,
+        0,
+        0,
+        scene_typecode(908),
+        LocShape::WALLDECOR_STRAIGHT_NOOFFSET,
+        0,
+        0xff,
+        2000,
+        2000,
+        2000,
+        2000,
+    );
+    let mut rw = RenderWorld::new();
+    if include_wall {
+        rw.set_wall_model(
+            &world,
+            0,
+            tile_x,
+            wall_z,
+            Some(SceneModel::Model(flat_quad(
+                50, -35, -145, -128, WALL_GREEN,
+            ))),
+            foreground.then(|| SceneModel::Model(flat_quad(50, -35, -145, -140, WALL_GREEN))),
+        );
+    }
+    rw.set_decor_model(
+        &world,
+        0,
+        tile_x,
+        decor_z,
+        SceneModel::Model(flat_quad(50, -35, -145, 0, BOOTH_RED)),
+    );
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    Scene { world, rw }
+}
+
+/// Wall decorations resolve coplanar ties after their supporting wall, but
+/// retain ordinary depth rejection against genuinely foreground geometry.
+#[test]
+fn wall_decor_order_preserves_foreground_depth() {
+    Pix3D::init_colour_table(0.6);
+    let Ok(mut backend) = GpuBackend::try_new() else {
+        eprintln!("no adapter; skip");
+        return;
+    };
+    let eye = (320, 1950, 192, 128, 128);
+    let mut decor_only = wall_decor_depth_scene(false, false);
+    let mut supporting_wall = wall_decor_depth_scene(true, false);
+    let mut foreground_wall = wall_decor_depth_scene(true, true);
+    let decor = render_pixels(
+        &mut backend,
+        &mut decor_only,
+        eye.0,
+        eye.1,
+        eye.2,
+        eye.3,
+        eye.4,
+    );
+    let supported = render_pixels(
+        &mut backend,
+        &mut supporting_wall,
+        eye.0,
+        eye.1,
+        eye.2,
+        eye.3,
+        eye.4,
+    );
+    let foreground = render_pixels(
+        &mut backend,
+        &mut foreground_wall,
+        eye.0,
+        eye.1,
+        eye.2,
+        eye.3,
+        eye.4,
+    );
+    let decor_red = count_rgb(&decor).0;
+    let supported_red = count_rgb(&supported).0;
+    let (foreground_red, foreground_green, _) = count_rgb(&foreground);
+    eprintln!(
+        "wall-decor depth: decor={decor_red} supported={supported_red} foreground_red={foreground_red} foreground_green={foreground_green}"
+    );
+    assert!(decor_red > 100, "fixture decoration must be visible");
+    assert!(
+        supported_red * 10 >= decor_red * 9,
+        "coplanar supporting wall erased decoration: decor={decor_red} supported={supported_red}"
+    );
+    assert_eq!(
+        foreground_red, 0,
+        "foreground geometry must still depth-occlude decoration"
+    );
+    assert!(
+        foreground_green > 100,
+        "foreground occluder must render non-vacuously"
+    );
+}
