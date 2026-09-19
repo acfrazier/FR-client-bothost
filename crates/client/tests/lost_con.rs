@@ -112,6 +112,39 @@ fn lost_con_with_pending_logout_logs_out_without_reconnecting() {
     assert_eq!(c.last_login_reconnect, None);
     assert!(!c.ingame);
     assert!(c.login_user.is_empty());
+    assert_eq!(c.take_session_exit_observation(), None);
+}
+
+#[test]
+fn transport_loss_with_a_written_idle_request_is_not_an_idle_logout() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mut c = Client::new_with_revision(
+        ClientConfig {
+            host: addr.ip().to_string(),
+            port: addr.port(),
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        },
+        ClientRevision::R289,
+    );
+    c.ingame = true;
+    c.stream = Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    let (mut server, _) = listener.accept().unwrap();
+    server
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+
+    c.shell.idle_cycles = 4500;
+    c.game_loop();
+    let mut opcode = [0; 1];
+    server.read_exact(&mut opcode).unwrap();
+    assert_eq!(opcode, [145]);
+
+    c.lost_con();
+    assert!(!c.ingame);
+    assert_eq!(c.take_session_exit_observation(), None);
 }
 
 #[test]

@@ -66,6 +66,11 @@ fn logout_clears_ingame() {
     let mut p = Packet::alloc(0);
     c.handle_packet(ServerProt::LOGOUT, &mut p);
     assert!(!c.ingame);
+    assert_eq!(
+        c.take_session_exit_observation(),
+        None,
+        "revision 274 server logout is not classifiable as idle"
+    );
 }
 
 #[test]

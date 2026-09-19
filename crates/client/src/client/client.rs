@@ -301,6 +301,14 @@ pub struct ClientGens {
     pub invalidations: u64,
 }
 
+/// One-shot, positively correlated session-exit facts for the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionExitObservation {
+    /// Revision 289 wrote a local idle request successfully, then received
+    /// the server's zero-payload logout within that request's response window.
+    ServerLogoutAfterLocalIdleRequest,
+}
+
 /// Successful inventory packet observations for one interface component.
 /// This is a generic client fact: consumers decide what a component means.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1351,6 +1359,12 @@ pub struct Client {
     /// Bridge for unconverted handlers that call logout internally instead of
     /// returning failure. Cleared at R289 dispatch entry, set by lifecycle reset.
     r289_packet_reset: bool,
+    /// A revision-289 idle request whose containing frame was accepted by
+    /// `ClientStream::write` and is still inside `logout_timer`'s window.
+    pending_local_idle_request: bool,
+    /// One-shot host observation; unlike the pending marker, it survives
+    /// `logout()` teardown until the host consumes it.
+    session_exit_observation: Option<SessionExitObservation>,
 }
 
 struct ClientConstruction {
@@ -1590,6 +1604,11 @@ impl Client {
         self.inventory_packet_states.clear();
         self.main_modal_packet_state = MainModalPacketState::default();
         self.packet_observation = 0;
+    }
+
+    /// Take the next positively correlated session-exit fact, if any.
+    pub fn take_session_exit_observation(&mut self) -> Option<SessionExitObservation> {
+        self.session_exit_observation.take()
     }
 
     pub fn session_profile(&self) -> Option<&Arc<ClientSessionProfile>> {
@@ -1880,6 +1899,8 @@ impl Client {
             psize: 0,
 
             r289_packet_reset: false,
+            pending_local_idle_request: false,
+            session_exit_observation: None,
 
             stream: None,
             on_demand: construction.on_demand,
@@ -2880,6 +2901,8 @@ impl Client {
         password: &str,
         reconnect: bool,
     ) -> Result<(), LoginError> {
+        self.pending_local_idle_request = false;
+        self.session_exit_observation = None;
         // Headless has no title UI; persist here so `lostCon` reconnects
         // with the same credentials (TS writes these from the title fields).
         self.login_user = username.to_string();
@@ -5184,7 +5207,7 @@ impl Client {
                 R289Publication::default()
             }
             R289Operation::Logout => {
-                self.logout();
+                self.server_logout_289();
                 self.ptype = -1;
                 return R289Outcome::Reset;
             }
@@ -6372,6 +6395,7 @@ impl Client {
         }
 
         if client_code == CC_LOGOUT {
+            self.pending_local_idle_request = false;
             self.logout_timer = 250;
             return true;
         } else if client_code == CC_ADD_IGNORE {
@@ -9822,6 +9846,16 @@ impl Client {
         }
     }
 
+    /// Record the narrow R289 idle-request correlation before generic teardown
+    /// clears the pending marker. The observation remains for the host to take.
+    fn server_logout_289(&mut self) {
+        if self.pending_local_idle_request {
+            self.session_exit_observation =
+                Some(SessionExitObservation::ServerLogoutAfterLocalIdleRequest);
+        }
+        self.logout();
+    }
+
     /// `logout()` from client-ts: close the stream and return to the login
     /// screen. Java also stops the midi and clears the music state, and
     /// drops back to the welcome screen (`loginscreen = 0`). The title
@@ -9836,6 +9870,7 @@ impl Client {
             t.complete("logout");
         }
         self.r289_packet_reset = true;
+        self.pending_local_idle_request = false;
         if let Some(mut stream) = self.stream.take() {
             stream.close();
         }
@@ -11910,6 +11945,7 @@ impl Client {
     /// idle `NO_TIMEOUT` and flush `out` through `ClientStream::write`.
     /// Write errors are `lostCon` (Java `catch (IOException)`).
     pub fn game_loop(&mut self) {
+        let mut queued_local_idle_request = false;
         if self.ingame {
             if let Some(t) = &mut self.shell.ground_trace {
                 t.tick(
@@ -11941,6 +11977,9 @@ impl Client {
             if !self.tcp_in() {
                 break;
             }
+        }
+        if self.ingame && self.logout_timer == 0 {
+            self.pending_local_idle_request = false;
         }
         if !self.ingame {
             return;
@@ -12149,6 +12188,7 @@ impl Client {
                 self.shell.idle_cycles -= 500;
                 self.logout_timer = 250;
                 self.out.p1_enc(self.client_opcode(ClientProt::IDLE_TIMER));
+                queued_local_idle_request = true;
             }
         }
         // Dead-server watchdog, wall-clock: the 20 ms pass count is not a
@@ -12201,6 +12241,9 @@ impl Client {
         }
         match write_result {
             Some(Ok(())) => {
+                if queued_local_idle_request {
+                    self.pending_local_idle_request = true;
+                }
                 self.out.pos = 0;
                 self.no_timeout_timer = 0;
             }

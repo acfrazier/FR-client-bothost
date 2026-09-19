@@ -1,6 +1,12 @@
 //! H fixtures independently chosen from public primary 289 client.java.
+use client::client::client::SessionExitObservation;
 use client::client::{Client, ClientConfig, ClientRevision};
+use client::config::IfType;
+use client::io::{ClientStream, Packet, ServerProt289};
+use std::io::Read;
+use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 include!("fixtures/revision_289/outbound_lengths.rs");
 
@@ -24,7 +30,27 @@ fn client(revision: ClientRevision) -> Client {
         revision,
     );
     c.ingame = true;
+    c.ptype = -1;
     c
+}
+
+fn attach_sink(c: &mut Client) -> TcpStream {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    c.stream = Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    let (server, _) = listener.accept().unwrap();
+    server
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    server
+}
+
+fn write_idle_request(c: &mut Client, server: &mut TcpStream) {
+    c.shell.idle_cycles = 4500;
+    c.game_loop();
+    let mut opcode = [0; 1];
+    server.read_exact(&mut opcode).unwrap();
+    assert_eq!(opcode, [145]);
 }
 
 #[test]
@@ -758,6 +784,109 @@ fn idle_real_loop_threshold_and_repeat_subtract_500() {
         if tick == 4501 || tick == 5001 {
             assert_eq!(c.logout_timer, 250);
         }
+    }
+}
+
+#[test]
+fn successful_idle_write_then_r289_logout_is_observed_once() {
+    let mut c = client(ClientRevision::R289);
+    let mut server = attach_sink(&mut c);
+    write_idle_request(&mut c, &mut server);
+
+    let mut packet = Packet::new(vec![]);
+    c.psize = 0;
+    c.handle_packet(ServerProt289::LOGOUT, &mut packet);
+
+    assert_eq!(
+        c.take_session_exit_observation(),
+        Some(SessionExitObservation::ServerLogoutAfterLocalIdleRequest)
+    );
+    assert_eq!(c.take_session_exit_observation(), None);
+}
+
+#[test]
+fn idle_request_without_a_stream_does_not_classify_server_logout() {
+    let mut c = client(ClientRevision::R289);
+    c.shell.idle_cycles = 4500;
+    c.game_loop();
+    let mut packet = Packet::new(vec![]);
+    c.psize = 0;
+    c.handle_packet(ServerProt289::LOGOUT, &mut packet);
+    assert_eq!(c.take_session_exit_observation(), None);
+}
+
+#[test]
+fn pending_idle_request_expires_after_its_response_window() {
+    let mut c = client(ClientRevision::R289);
+    let mut server = attach_sink(&mut c);
+    write_idle_request(&mut c, &mut server);
+
+    c.logout_timer = 1;
+    c.game_loop();
+    let mut packet = Packet::new(vec![]);
+    c.psize = 0;
+    c.handle_packet(ServerProt289::LOGOUT, &mut packet);
+    assert_eq!(c.take_session_exit_observation(), None);
+}
+
+#[test]
+fn server_logout_on_the_final_idle_response_frame_is_observed() {
+    use std::io::Write;
+
+    let mut c = client(ClientRevision::R289);
+    let mut server = attach_sink(&mut c);
+    write_idle_request(&mut c, &mut server);
+
+    c.logout_timer = 1;
+    server.write_all(&[ServerProt289::LOGOUT as u8]).unwrap();
+    for _ in 0..100 {
+        if c.stream.as_mut().unwrap().available().unwrap() > 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    c.game_loop();
+    assert_eq!(
+        c.take_session_exit_observation(),
+        Some(SessionExitObservation::ServerLogoutAfterLocalIdleRequest)
+    );
+}
+
+#[test]
+fn manual_logout_replaces_a_pending_idle_request() {
+    let mut c = client(ClientRevision::R289);
+    let mut server = attach_sink(&mut c);
+    write_idle_request(&mut c, &mut server);
+    c.set_iface(
+        1,
+        IfType {
+            client_code: 205,
+            ..IfType::default()
+        },
+    );
+    assert!(c.client_button(1));
+
+    let mut packet = Packet::new(vec![]);
+    c.psize = 0;
+    c.handle_packet(ServerProt289::LOGOUT, &mut packet);
+    assert_eq!(c.take_session_exit_observation(), None);
+}
+
+#[test]
+fn every_login_attempt_clears_an_unconsumed_idle_logout_observation() {
+    for reconnect in [false, true] {
+        let mut c = client(ClientRevision::R289);
+        let mut server = attach_sink(&mut c);
+        write_idle_request(&mut c, &mut server);
+        let mut packet = Packet::new(vec![]);
+        c.psize = 0;
+        c.handle_packet(ServerProt289::LOGOUT, &mut packet);
+
+        let refused = TcpListener::bind("127.0.0.1:0").unwrap();
+        c.config.port = refused.local_addr().unwrap().port();
+        drop(refused);
+        assert!(c.login("fixture", "fixture", reconnect).is_err());
+        assert_eq!(c.take_session_exit_observation(), None);
     }
 }
 
