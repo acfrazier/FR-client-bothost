@@ -169,13 +169,15 @@ impl Appearance {
         player.appearance[..self.parts.len()].copy_from_slice(&self.parts);
         player.transmog = self.transmog.filter(|&id| id < cache.npcs.len());
         player.colour = self.colours;
+        // 289 `method39` 128-155 reads the side-steps in the Java 274
+        // `setAppearance` order: fifth `walkanim_r`, sixth `walkanim_l`.
         [
             player.readyanim,
             player.turnanim,
             player.walkanim,
             player.walkanim_b,
-            player.walkanim_l,
             player.walkanim_r,
+            player.walkanim_l,
             player.runanim,
         ] = self.anims;
         player.name = Some(self.name);
@@ -540,9 +542,8 @@ fn bind_type(npc: &mut ClientNpc, id: usize, cache: &Cache) {
         npc.turnspeed = kind.turnspeed;
         npc.walkanim = kind.walkanim;
         npc.walkanim_b = kind.walkanim_b;
-        // Rust's left/right names are reversed relative to the primary fields.
-        npc.walkanim_l = kind.walkanim_r;
-        npc.walkanim_r = kind.walkanim_l;
+        npc.walkanim_l = kind.walkanim_l;
+        npc.walkanim_r = kind.walkanim_r;
         npc.readyanim = kind.readyanim;
     } else {
         npc.r#type = None;

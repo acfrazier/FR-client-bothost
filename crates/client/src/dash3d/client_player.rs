@@ -188,13 +188,16 @@ impl ClientPlayer {
         if self.walkanim_b == 65535 {
             self.walkanim_b = -1;
         }
-        self.walkanim_l = buf.g2();
-        if self.walkanim_l == 65535 {
-            self.walkanim_l = -1;
-        }
+        // Java 274 `ClientPlayer.setAppearance` 127-134: the fifth sequence
+        // is `walkanim_r`, the sixth `walkanim_l` (the names `routeMove`
+        // selects by yaw delta).
         self.walkanim_r = buf.g2();
         if self.walkanim_r == 65535 {
             self.walkanim_r = -1;
+        }
+        self.walkanim_l = buf.g2();
+        if self.walkanim_l == 65535 {
+            self.walkanim_l = -1;
         }
         self.runanim = buf.g2();
         if self.runanim == 65535 {

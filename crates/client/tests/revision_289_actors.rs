@@ -250,15 +250,17 @@ fn new_actor_offsets_metadata_and_readdition_keep_identity() {
             };
             assert_eq!(pointer, after);
             if npc {
-                assert_eq!(
-                    (
-                        entity.size,
-                        entity.turnspeed,
-                        entity.walkanim_l,
-                        entity.walkanim_r
-                    ),
-                    (3, 17, 14, 13)
-                );
+                assert_eq!((entity.size, entity.turnspeed), (3, 17));
+                // Java routeMove: a yaw delta of +512 plays the type's
+                // `walkanim_l` (op 17's fourth value), -512 `walkanim_r`.
+                let step = |dest_x: i32| {
+                    let mut e = entity.clone();
+                    (e.x, e.z, e.yaw, e.route_length) = (5 * 128 + 192, 5 * 128 + 192, 1024, 1);
+                    (e.route_x[0], e.route_z[0]) = (dest_x, 5);
+                    e.route_move(&c.cache);
+                    e.secondary_anim
+                };
+                assert_eq!((step(6), step(4)), (13, 14));
             }
         }
     }
@@ -750,16 +752,8 @@ fn every_npc_single_mask_and_source_order_combination() {
         if mask & 32 != 0 {
             assert_eq!(n.r#type, Some(0));
             assert_eq!(
-                (
-                    n.size,
-                    n.turnspeed,
-                    n.readyanim,
-                    n.walkanim,
-                    n.walkanim_b,
-                    n.walkanim_l,
-                    n.walkanim_r
-                ),
-                (3, 17, 10, 11, 12, 14, 13)
+                (n.size, n.turnspeed, n.readyanim, n.walkanim, n.walkanim_b),
+                (3, 17, 10, 11, 12)
             );
         }
         if mask & 64 != 0 {

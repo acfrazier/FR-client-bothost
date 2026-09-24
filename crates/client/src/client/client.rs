@@ -9149,9 +9149,10 @@ impl Client {
                 npc.turnspeed = r#type.turnspeed;
                 npc.walkanim = r#type.walkanim;
                 npc.walkanim_b = r#type.walkanim_b;
-                // [sic] TS swaps left/right here
-                npc.walkanim_l = r#type.walkanim_r;
-                npc.walkanim_r = r#type.walkanim_l;
+                // Java `Client.java` 1929-1930: names copy straight across;
+                // `route_move` selects them with the Java yaw ranges.
+                npc.walkanim_r = r#type.walkanim_r;
+                npc.walkanim_l = r#type.walkanim_l;
                 npc.readyanim = r#type.readyanim;
             } else {
                 npc.r#type = None;
@@ -9287,9 +9288,9 @@ impl Client {
                         npc.turnspeed = r#type.turnspeed;
                         npc.walkanim = r#type.walkanim;
                         npc.walkanim_b = r#type.walkanim_b;
-                        // [sic] TS swaps left/right here
-                        npc.walkanim_l = r#type.walkanim_r;
-                        npc.walkanim_r = r#type.walkanim_l;
+                        // Java `Client.java` 7212-7213 (see the add path).
+                        npc.walkanim_r = r#type.walkanim_r;
+                        npc.walkanim_l = r#type.walkanim_l;
                         npc.readyanim = r#type.readyanim;
                     } else {
                         npc.r#type = None;

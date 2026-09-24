@@ -87,3 +87,43 @@ fn move_npcs_steps_tracked_npc() {
     assert!(npc.x > 20 * 128 + 64, "npc walk must advance x");
     assert!(npc.x <= 21 * 128 + 64);
 }
+
+/// Java `ClientPlayer.setAppearance` (274 `ClientPlayer.java` 111-138)
+/// reads the fifth movement sequence into `walkanim_r` and the sixth into
+/// `walkanim_l`; `routeMove` (`Client.java` 10690-10697) then plays
+/// `walkanim_l` for a yaw delta in [256, 768) and `walkanim_r` for
+/// [-768, -256]. A player walking sideways relative to its facing (the
+/// usual case while it faces a combat target) must therefore step with
+/// the sixth sequence one way and the fifth the other, never swapped.
+#[test]
+fn sidestep_walk_uses_java_appearance_slots() {
+    use client::io::Packet;
+    let c = client();
+    let mut a = vec![0u8, 0]; // gender, headicons
+    a.extend([0u8; 12]); // empty body parts
+    a.extend([0u8; 5]); // colours
+    for seq in 801u16..=807 {
+        a.extend(seq.to_be_bytes()); // ready, turn, walk, back, 5th, 6th, run
+    }
+    a.extend(1u64.to_be_bytes());
+    a.push(3);
+    a.extend(0u16.to_be_bytes());
+    let mut player = ClientPlayer::default();
+    player.set_appearance(&mut Packet::new(a), &c.cache);
+
+    let step = |dest_x: i32| {
+        let mut e = player.entity.clone();
+        e.x = 5 * 128 + 64;
+        e.z = 5 * 128 + 64;
+        e.yaw = 1024;
+        e.route_x = vec![dest_x, 5, 0, 0, 0, 0, 0, 0, 0, 0];
+        e.route_z = vec![5, 5, 0, 0, 0, 0, 0, 0, 0, 0];
+        e.route_length = 1;
+        e.route_move(&c.cache);
+        e.secondary_anim
+    };
+    // East: dstYaw 1536, delta +512 -> walkanim_l (sixth value).
+    assert_eq!(step(6), 806);
+    // West: dstYaw 512, delta -512 -> walkanim_r (fifth value).
+    assert_eq!(step(4), 805);
+}
