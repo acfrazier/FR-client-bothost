@@ -1,7 +1,7 @@
-// Task 7 (wgpu backend): the GPU scene mesh must cover the same scene the
-// CPU fill rasterizes — ground quads + placed model faces, transformed to
-// camera space and shaded from the colour table — because it is the exact
-// input the wgpu backend rasterizes. Runs without any GPU (pure CPU math).
+// Task 7 (wgpu backend): the GPU scene mesh is the CPU fill's own pass
+// captured — ground quads + placed model faces, transformed to camera
+// space and shaded from the colour table — because it is the exact input
+// the wgpu backend rasterizes. Runs without any GPU (pure CPU math).
 // This binary owns the mesh-builder test only: it pins the process-wide
 // colour table to one brightness, and `Renderer::new` (which re-inits the
 // table at 0.8) must not run in the same process — so the backend-selection
@@ -12,6 +12,7 @@ use client::core::World;
 use client::dash3d::{SceneModel, TerrainOverlayShape};
 use client::graphics::{Pix3D, Pix3DDraw};
 use client::render::nav_debug::{NavDebugHull, NavDebugPaint};
+use client::render::world::SceneMesh;
 use client::render::RenderWorld;
 
 const SHADE: i32 = 200 * 128 + 100;
@@ -115,18 +116,25 @@ fn scene_mesh_builds_ground_and_wall_triangles() {
     let mut pix = Pix3DDraw::default();
     pix.set_clipping(512, 334);
     // The CPU-path eye: 192, 1950, 192, max_level 3, yaw 0, pitch 128.
-    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
-    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
-    let opaque_len = mesh.opaque_len();
+    let mut mesh = SceneMesh::default();
+    rw.capture_scene(
+        &mut world,
+        &mut pix,
+        &Cache::default(),
+        0,
+        192,
+        1950,
+        192,
+        3,
+        0,
+        128,
+        &mut mesh,
+    );
     let vertices = mesh.vertices();
 
     assert!(
         !vertices.is_empty(),
         "a camera-facing world must mesh geometry"
-    );
-    assert!(
-        opaque_len > 0 && opaque_len <= vertices.len(),
-        "the opaque prefix must cover the (all-opaque) mesh"
     );
 
     let mut found_ground = false;
@@ -202,8 +210,20 @@ fn textured_face_with_out_of_range_tex_id_still_emits() {
 
     let mut pix = Pix3DDraw::default();
     pix.set_clipping(512, 334);
-    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
-    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
+    let mut mesh = SceneMesh::default();
+    rw.capture_scene(
+        &mut world,
+        &mut pix,
+        &Cache::default(),
+        0,
+        192,
+        1950,
+        192,
+        3,
+        0,
+        128,
+        &mut mesh,
+    );
 
     let mut found_clamped_high = false;
     let mut found_clamped_low = false;
@@ -293,8 +313,20 @@ fn lowmem_textured_quick_ground_shades_with_the_texture_average() {
     let mut pix = Pix3DDraw::default();
     pix.set_clipping(512, 334);
     pix.low_mem = true;
-    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
-    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
+    let mut mesh = SceneMesh::default();
+    rw.capture_scene(
+        &mut world,
+        &mut pix,
+        &Cache::default(),
+        0,
+        192,
+        1950,
+        192,
+        3,
+        0,
+        128,
+        &mut mesh,
+    );
 
     let expected_shade = get_table(39248, SHADE);
     assert_ne!(
@@ -367,8 +399,20 @@ fn highmem_textured_quick_ground_samples_the_atlas() {
     let mut pix = Pix3DDraw::default();
     pix.set_clipping(512, 334);
     pix.low_mem = false;
-    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
-    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
+    let mut mesh = SceneMesh::default();
+    rw.capture_scene(
+        &mut world,
+        &mut pix,
+        &Cache::default(),
+        0,
+        192,
+        1950,
+        192,
+        3,
+        0,
+        128,
+        &mut mesh,
+    );
 
     let mut textured = 0usize;
     for v in mesh.vertices() {
@@ -429,8 +473,20 @@ fn lowmem_textured_ground_face_shades_with_the_texture_average() {
     let mut pix = Pix3DDraw::default();
     pix.set_clipping(512, 334);
     pix.low_mem = true;
-    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
-    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
+    let mut mesh = SceneMesh::default();
+    rw.capture_scene(
+        &mut world,
+        &mut pix,
+        &Cache::default(),
+        0,
+        192,
+        1950,
+        192,
+        3,
+        0,
+        128,
+        &mut mesh,
+    );
 
     let expected_average = get_table(39248, SHADE);
     let mut found_average = false;
@@ -657,7 +713,6 @@ fn gpu_loc_pick_is_per_face_not_aabb() {
         None,
     );
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
-    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
 
     pix.picked_count = 0;
     {
@@ -691,7 +746,20 @@ fn gpu_loc_pick_is_per_face_not_aabb() {
     gpu_pix.mouse_check = true;
     gpu_pix.mouse_x = 256;
     gpu_pix.mouse_y = 160;
-    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut gpu_pix);
+    let mut mesh = SceneMesh::default();
+    rw.capture_scene(
+        &mut world,
+        &mut gpu_pix,
+        &Cache::default(),
+        0,
+        192,
+        1950,
+        192,
+        3,
+        0,
+        128,
+        &mut mesh,
+    );
     assert!(
         mesh.vertices()
             .iter()
@@ -741,7 +809,6 @@ fn nav_debug_paint_does_not_enable_aabb_loc_pick() {
         None,
     );
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
-    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
 
     // The hull paint's model resolution (the draw's hull path) must not
     // set the AABB pick flag on the loc.
@@ -796,7 +863,20 @@ fn nav_debug_paint_does_not_enable_aabb_loc_pick() {
     gpu_pix.mouse_check = true;
     gpu_pix.mouse_x = 256;
     gpu_pix.mouse_y = 160;
-    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut gpu_pix);
+    let mut mesh = SceneMesh::default();
+    rw.capture_scene(
+        &mut world,
+        &mut gpu_pix,
+        &Cache::default(),
+        0,
+        192,
+        1950,
+        192,
+        3,
+        0,
+        128,
+        &mut mesh,
+    );
     assert!(
         mesh.vertices()
             .iter()

@@ -344,6 +344,11 @@ pub struct Pix3DDraw {
     /// TS `Model` render statics: the per-frame projection/depth scratch
     /// shared by `Model.worldRender`/`objRender`.
     pub model_scratch: ModelScratch,
+    /// The wgpu scene capture: while `Some` (only inside
+    /// `RenderWorld::capture_scene`), `Model.render3` and the ground passes
+    /// append their triangles here in the painter's draw order instead of
+    /// rasterizing into the bound surface.
+    pub capture: Option<crate::render::world::SceneMesh>,
 }
 
 impl Default for Pix3DDraw {
@@ -373,6 +378,7 @@ impl Default for Pix3DDraw {
             picked_count: 0,
             picked_entity_typecode: vec![0; 1000],
             model_scratch: ModelScratch::default(),
+            capture: None,
         }
     }
 }

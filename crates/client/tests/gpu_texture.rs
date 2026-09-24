@@ -14,7 +14,7 @@ use client::core::World;
 use client::dash3d::{SceneModel, TerrainOverlayShape};
 use client::graphics::{Pix3D, Pix3DDraw, Pix8};
 use client::render::backend::{FrameOutput, GpuBackend};
-use client::render::world::GpuVertex;
+use client::render::world::{GpuVertex, SceneMesh};
 use client::render::{RenderWorld, Renderer};
 
 const SHADE: i32 = 200 * 128 + 100;
@@ -249,8 +249,21 @@ fn probe_mesh(
         rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
     }
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
-    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
-    rw.build_scene_mesh(&mut world, &Cache::default(), 0, pix)
+    let mut mesh = SceneMesh::default();
+    rw.capture_scene(
+        &mut world,
+        pix,
+        &Cache::default(),
+        0,
+        192,
+        1950,
+        192,
+        3,
+        0,
+        128,
+        &mut mesh,
+    );
+    mesh
 }
 
 /// The wall quad with a texture basis whose U runs -0.25..0.75 across the
@@ -307,8 +320,21 @@ fn filter_probe_mesh(
         );
     }
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
-    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
-    rw.build_scene_mesh(&mut world, &Cache::default(), 0, pix)
+    let mut mesh = SceneMesh::default();
+    rw.capture_scene(
+        &mut world,
+        pix,
+        &Cache::default(),
+        0,
+        192,
+        1950,
+        192,
+        3,
+        0,
+        128,
+        &mut mesh,
+    );
+    mesh
 }
 
 /// A realistic high-memory 128×128 animated texture. Eight-row red/green
@@ -399,8 +425,20 @@ fn textured_wall_mesh(
         None,
     );
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
-    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
-    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, pix);
+    let mut mesh = SceneMesh::default();
+    rw.capture_scene(
+        &mut world,
+        pix,
+        &Cache::default(),
+        0,
+        192,
+        1950,
+        192,
+        3,
+        0,
+        128,
+        &mut mesh,
+    );
     (rw, world, mesh)
 }
 
@@ -482,8 +520,20 @@ fn textured_type3_face_carries_tex_id_and_uv() {
     model.face_render_type = Some(vec![3, 3]);
     rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
-    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
-    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
+    let mut mesh = SceneMesh::default();
+    rw.capture_scene(
+        &mut world,
+        &mut pix,
+        &Cache::default(),
+        0,
+        192,
+        1950,
+        192,
+        3,
+        0,
+        128,
+        &mut mesh,
+    );
 
     let mut textured = 0usize;
     for v in mesh.vertices() {
@@ -534,8 +584,20 @@ fn wall_face_crossing_the_near_plane_still_emits() {
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     // Camera 40 units in front of the wall (z=320): the base is in front
     // of the near plane, the top vertices behind it.
-    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 280, 3, 0, 128);
-    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
+    let mut mesh = SceneMesh::default();
+    rw.capture_scene(
+        &mut world,
+        &mut pix,
+        &Cache::default(),
+        0,
+        192,
+        1950,
+        280,
+        3,
+        0,
+        128,
+        &mut mesh,
+    );
 
     let mut wall_verts = 0usize;
     for v in mesh.vertices() {
@@ -587,9 +649,21 @@ fn gpu_gouraud_face_shades_like_the_colour_table() {
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     let mut pix = Pix3DDraw::default();
     pix.set_clipping(512, 334);
-    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
-    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
-    let scene = backend.render_scene_for_test(mesh, &pix);
+    let mut mesh = SceneMesh::default();
+    rw.capture_scene(
+        &mut world,
+        &mut pix,
+        &Cache::default(),
+        0,
+        192,
+        1950,
+        192,
+        3,
+        0,
+        128,
+        &mut mesh,
+    );
+    let scene = backend.render_scene_for_test(&mesh, &pix);
 
     let expected = Pix3D::colour_table()[SHADE as usize];
     let expected = (
@@ -627,7 +701,7 @@ fn gpu_render_samples_multi_texture_model() {
     };
     let mut pix = textured_pix();
     let (_rw, _world, mesh) = textured_wall_mesh(&mut pix);
-    let scene = backend.render_scene_for_test(mesh, &pix);
+    let scene = backend.render_scene_for_test(&mesh, &pix);
 
     // The textured shade (TEX_SHADE = 0) is the full-brightness bucket, so
     // the rendered red/blue are the full palette colours, never white.
@@ -697,9 +771,21 @@ fn gpu_textured_shade_scales_texel_brightness() {
         model.face_colour_c = Some(vec![shade, shade]);
         rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
         rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
-        rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
-        let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
-        let scene = backend.render_scene_for_test(mesh, &pix);
+        let mut mesh = SceneMesh::default();
+        rw.capture_scene(
+            &mut world,
+            &mut pix,
+            &Cache::default(),
+            0,
+            192,
+            1950,
+            192,
+            3,
+            0,
+            128,
+            &mut mesh,
+        );
+        let scene = backend.render_scene_for_test(&mesh, &pix);
 
         // The red-dominant pixels are the textured wall (the ground shades
         // gray); their red channel must be the palette red scaled by the
@@ -739,14 +825,26 @@ fn gpu_render_clamps_out_of_range_tex_id() {
     model.face_colour = Some(vec![60, 60]); // both faces past the 50-texture range
     rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
-    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
-    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
+    let mut mesh = SceneMesh::default();
+    rw.capture_scene(
+        &mut world,
+        &mut pix,
+        &Cache::default(),
+        0,
+        192,
+        1950,
+        192,
+        3,
+        0,
+        128,
+        &mut mesh,
+    );
 
     let Ok(mut backend) = GpuBackend::try_new() else {
         eprintln!("no adapter on this machine; the clamped-tex-id render check skips");
         return;
     };
-    let scene = backend.render_scene_for_test(mesh, &pix);
+    let scene = backend.render_scene_for_test(&mesh, &pix);
 
     let mut found_green = 0usize;
     for &rgb in &scene {
@@ -786,8 +884,20 @@ fn gpu_lowmem_texture_samples_the_full_128px_layer() {
     model.face_colour = Some(vec![TEXTURE_QUAD, TEXTURE_QUAD]);
     rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
-    rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
-    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
+    let mut mesh = SceneMesh::default();
+    rw.capture_scene(
+        &mut world,
+        &mut pix,
+        &Cache::default(),
+        0,
+        192,
+        1950,
+        192,
+        3,
+        0,
+        128,
+        &mut mesh,
+    );
 
     // Mesh-level: the textured vertices' fixed-point UV must span the full
     // 128px layer in both axes even on the low-mem path (a scale-64 bug caps
@@ -816,7 +926,7 @@ fn gpu_lowmem_texture_samples_the_full_128px_layer() {
         eprintln!("no adapter on this machine; the low-mem render check skips");
         return;
     };
-    let scene = backend.render_scene_for_test(mesh, &pix);
+    let scene = backend.render_scene_for_test(&mesh, &pix);
     let mut seen = [false; 4];
     for &rgb in &scene {
         let r = (rgb >> 16) & 0xff;
@@ -870,17 +980,17 @@ fn gpu_model_texture_wraps_v_clamps_u_and_preserves_cutouts() {
         pix.tex_pal[TEXTURE_ADDRESS_SOLID as usize] = Some(vec![0, 0xffffff]);
 
         let background =
-            backend.render_scene_for_test(address_probe_mesh(&mut pix, None, true), &pix);
+            backend.render_scene_for_test(&address_probe_mesh(&mut pix, None, true), &pix);
         let solid = backend.render_scene_for_test(
-            address_probe_mesh(&mut pix, Some(TEXTURE_ADDRESS_SOLID), true),
+            &address_probe_mesh(&mut pix, Some(TEXTURE_ADDRESS_SOLID), true),
             &pix,
         );
         let wrapped = backend.render_scene_for_test(
-            address_probe_mesh(&mut pix, Some(TEXTURE_ADDRESS_V), true),
+            &address_probe_mesh(&mut pix, Some(TEXTURE_ADDRESS_V), true),
             &pix,
         );
         let u_clamped = backend.render_scene_for_test(
-            address_probe_mesh(&mut pix, Some(TEXTURE_ADDRESS_U), false),
+            &address_probe_mesh(&mut pix, Some(TEXTURE_ADDRESS_U), false),
             &pix,
         );
         let wall_mask: Vec<bool> = solid
@@ -977,9 +1087,9 @@ fn gpu_model_texture_coordinates_crossing_zero_keep_their_sign() {
     pix.textures[TEXTURE as usize] = Some(row_split_texture(128));
     pix.tex_pal[TEXTURE as usize] = Some(vec![0, 0xff0000, 0x0000ff]);
 
-    let background = backend.render_scene_for_test(probe_mesh(&mut pix, None), &pix);
+    let background = backend.render_scene_for_test(&probe_mesh(&mut pix, None), &pix);
     let image = backend.render_scene_for_test(
-        probe_mesh(&mut pix, Some(zero_crossing_probe_model(TEXTURE))),
+        &probe_mesh(&mut pix, Some(zero_crossing_probe_model(TEXTURE))),
         &pix,
     );
     let covered: Vec<i32> = image
@@ -1056,11 +1166,11 @@ fn gpu_texture_17_uses_lod0_colour_without_disabling_other_mips() {
         pix.textures[control as usize] = Some(texture);
         pix.tex_pal[control as usize] = Some(vec![0, 0xff0000]);
 
-        let background = backend.render_scene_for_test(filter_probe_mesh(&mut pix, None), &pix);
+        let background = backend.render_scene_for_test(&filter_probe_mesh(&mut pix, None), &pix);
         let water = backend
-            .render_scene_for_test(filter_probe_mesh(&mut pix, Some(TEXTURE_ANIMATED)), &pix);
+            .render_scene_for_test(&filter_probe_mesh(&mut pix, Some(TEXTURE_ANIMATED)), &pix);
         let non_water =
-            backend.render_scene_for_test(filter_probe_mesh(&mut pix, Some(control)), &pix);
+            backend.render_scene_for_test(&filter_probe_mesh(&mut pix, Some(control)), &pix);
         let water_mask: Vec<bool> = water
             .iter()
             .zip(&background)
@@ -1136,13 +1246,13 @@ fn gpu_texture_1_uses_lod0_colour_in_high_and_low_memory() {
         pix.textures[control as usize] = Some(texture);
         pix.tex_pal[control as usize] = Some(vec![0, 0xff0000]);
 
-        let background = backend.render_scene_for_test(filter_probe_mesh(&mut pix, None), &pix);
+        let background = backend.render_scene_for_test(&filter_probe_mesh(&mut pix, None), &pix);
         let underlay = backend.render_scene_for_test(
-            filter_probe_mesh(&mut pix, Some(TEXTURE_RIPPLED_UNDERLAY)),
+            &filter_probe_mesh(&mut pix, Some(TEXTURE_RIPPLED_UNDERLAY)),
             &pix,
         );
         let non_water =
-            backend.render_scene_for_test(filter_probe_mesh(&mut pix, Some(control)), &pix);
+            backend.render_scene_for_test(&filter_probe_mesh(&mut pix, Some(control)), &pix);
         let underlay_mask: Vec<bool> = underlay
             .iter()
             .zip(&background)

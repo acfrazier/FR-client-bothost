@@ -1,5 +1,7 @@
-//! Phase-1 probe: does the GPU depth buffer occlude a bank-booth model
-//! that sits *flush* against a bank-wall model (the live Varrock layout)?
+//! GPU vs CPU overlap probes: a bank booth flush against a bank wall (the
+//! live Varrock layout) and a wall decoration against its wall. The GPU
+//! draws the CPU painter's captured order, so the overlaps must resolve
+//! as the CPU raster resolves them.
 //!
 //! The previous synthetic (real 2212 one full tile in front of real 1270)
 //! showed 0 booth pixels — depth works across a gap. This binary checks
@@ -316,7 +318,7 @@ fn shade_z_range(mesh: &SceneMesh, shade: i32) -> (f32, f32, usize) {
     let mut min_z = f32::MAX;
     let mut max_z = f32::MIN;
     let mut n = 0usize;
-    for v in mesh.clone().vertices() {
+    for v in mesh.vertices() {
         if (v.abhsl & 0xffff) as i32 != shade {
             continue;
         }
@@ -409,8 +411,10 @@ fn gpu_render(
 ) -> (usize, usize, usize) {
     let mut pix = Pix3DDraw::default();
     pix.set_clipping(512, 334);
-    scene.rw.prepare_scene(
+    let mut mesh = SceneMesh::default();
+    scene.rw.capture_scene(
         &mut scene.world,
+        &mut pix,
         &Cache::default(),
         0,
         eye_x,
@@ -419,14 +423,12 @@ fn gpu_render(
         3,
         yaw,
         pitch,
+        &mut mesh,
     );
-    let mesh = scene
-        .rw
-        .build_scene_mesh(&mut scene.world, &Cache::default(), 0, &mut pix);
     let (wmin, wmax, wn) = shade_z_range(&mesh, WALL_GREEN);
     let (bmin, bmax, bn) = shade_z_range(&mesh, BOOTH_RED);
     eprintln!("{label} mesh wall verts={wn} z=[{wmin},{wmax}] booth verts={bn} z=[{bmin},{bmax}]");
-    let pixels = backend.render_scene_for_test(mesh, &pix);
+    let pixels = backend.render_scene_for_test(&mesh, &pix);
     save_ppm(&pixels, &format!("/tmp/gpu_depth_{label}.ppm"));
     let counts = count_rgb(&pixels);
     eprintln!(
@@ -577,8 +579,10 @@ fn render_pixels(
 ) -> Vec<i32> {
     let mut pix = Pix3DDraw::default();
     pix.set_clipping(512, 334);
-    scene.rw.prepare_scene(
+    let mut mesh = SceneMesh::default();
+    scene.rw.capture_scene(
         &mut scene.world,
+        &mut pix,
         &Cache::default(),
         0,
         eye_x,
@@ -587,11 +591,9 @@ fn render_pixels(
         3,
         yaw,
         pitch,
+        &mut mesh,
     );
-    let mesh = scene
-        .rw
-        .build_scene_mesh(&mut scene.world, &Cache::default(), 0, &mut pix);
-    backend.render_scene_for_test(mesh, &pix)
+    backend.render_scene_for_test(&mesh, &pix)
 }
 
 fn is_green(rgb: i32) -> bool {
@@ -792,8 +794,10 @@ fn gpu_render_cache(
     pitch: i32,
     label: &str,
 ) -> Vec<i32> {
-    scene.rw.prepare_scene(
+    let mut mesh = SceneMesh::default();
+    scene.rw.capture_scene(
         &mut scene.world,
+        pix,
         cache,
         0,
         eye_x,
@@ -802,9 +806,9 @@ fn gpu_render_cache(
         3,
         yaw,
         pitch,
+        &mut mesh,
     );
-    let mesh = scene.rw.build_scene_mesh(&mut scene.world, cache, 0, pix);
-    let pixels = backend.render_scene_for_test(mesh, pix);
+    let pixels = backend.render_scene_for_test(&mesh, pix);
     save_ppm(&pixels, &format!("/tmp/gpu_depth_gpu_{label}.ppm"));
     pixels
 }
@@ -851,14 +855,6 @@ fn sharelight_wall_run_cpu_vs_gpu() {
         let mut rw = RenderWorld::new();
         rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
         let mut pix = textured_pix(&pack);
-        rw.prepare_scene(&mut world, &cache, 0, 192, 1950, 320, 3, 1536, 128);
-        for z in z_lo..=z_hi {
-            if let Some(SceneModel::Model(model)) = rw.wall_model1(&world, &cache, 0, 0, 2, z) {
-                dump_hidden(&format!("{tag} wall z={z}"), model);
-            } else {
-                eprintln!("{tag} wall z={z}: no model");
-            }
-        }
         let mut scene = Scene { world, rw };
         let gpu = gpu_render_cache(
             &mut backend,
@@ -872,6 +868,16 @@ fn sharelight_wall_run_cpu_vs_gpu() {
             128,
             tag,
         );
+        // The capture ran the share-light pass; dump the lit walls.
+        for z in z_lo..=z_hi {
+            if let Some(SceneModel::Model(model)) =
+                scene.rw.wall_model1(&scene.world, &cache, 0, 0, 2, z)
+            {
+                dump_hidden(&format!("{tag} wall z={z}"), model);
+            } else {
+                eprintln!("{tag} wall z={z}: no model");
+            }
+        }
 
         // Fresh world for the CPU oracle (GPU emit stamps sprite.cycle).
         let mut world = flat_world(8);
@@ -1251,9 +1257,21 @@ fn sharelight_wall_run_cpu_vs_gpu() {
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     let mut pix = Pix3DDraw::default();
     pix.set_clipping(512, 334);
-    rw.prepare_scene(&mut world, &Cache::default(), 0, 320, 1850, 192, 3, 0, 160);
-    let mesh = rw.build_scene_mesh(&mut world, &Cache::default(), 0, &mut pix);
-    let gpu_red = backend.render_scene_for_test(mesh, &pix);
+    let mut mesh = SceneMesh::default();
+    rw.capture_scene(
+        &mut world,
+        &mut pix,
+        &Cache::default(),
+        0,
+        320,
+        1850,
+        192,
+        3,
+        0,
+        160,
+        &mut mesh,
+    );
+    let gpu_red = backend.render_scene_for_test(&mesh, &pix);
     save_ppm(&gpu_red, "/tmp/gpu_depth_gpu_south_red.ppm");
     let (red, green, other) = count_rgb(&gpu_red);
     eprintln!("south_red GPU pixels: booth_red={red} wall_green={green} other_nonzero={other}");
@@ -1446,124 +1464,111 @@ fn flat_quad(half_width: i32, top: i32, bottom: i32, z: i32, shade: i32) -> Mode
     model
 }
 
-fn wall_decor_depth_scene(include_wall: bool, foreground: bool) -> Scene {
-    let tile_x = 2;
-    let decor_z = 2;
-    let wall_z = 3;
+/// A wall decoration whose supporting wall's camera-facing face sits 12
+/// units *in front of* the decoration (the 289 Lumbridge castle windows:
+/// loc 1938 placed 16 units inside its 32-unit loc 1911 wall). Java draws
+/// the wall's tile first and the decoration's tile after it, so the
+/// decoration is fully visible on the CPU.
+fn embedded_decor_scene() -> Scene {
+    let (tile_x, decor_z, wall_z) = (2, 2, 3);
     let mut world = flat_world(6);
-    if include_wall {
-        world.set_wall(
-            0,
-            tile_x,
-            wall_z,
-            2000,
-            8,
-            0,
-            scene_typecode(1902),
-            0,
-            2000,
-            2000,
-            2000,
-            2000,
-        );
-    }
-    world.set_decor(
+    world.set_wall(
         0,
         tile_x,
-        decor_z,
+        wall_z,
         2000,
+        8,
         0,
+        scene_typecode(1911),
         0,
-        scene_typecode(908),
-        LocShape::WALLDECOR_STRAIGHT_NOOFFSET,
-        0,
-        0xff,
         2000,
         2000,
         2000,
         2000,
     );
-    let mut rw = RenderWorld::new();
-    if include_wall {
-        rw.set_wall_model(
-            &world,
+    {
+        world.set_decor(
             0,
             tile_x,
-            wall_z,
-            Some(SceneModel::Model(flat_quad(
-                50, -35, -145, -128, WALL_GREEN,
-            ))),
-            foreground.then(|| SceneModel::Model(flat_quad(50, -35, -145, -140, WALL_GREEN))),
+            decor_z,
+            2000,
+            0,
+            0,
+            scene_typecode(1938),
+            LocShape::WALLDECOR_STRAIGHT_NOOFFSET,
+            0,
+            0xff,
+            2000,
+            2000,
+            2000,
+            2000,
         );
     }
-    rw.set_decor_model(
+    let mut rw = RenderWorld::new();
+    rw.set_wall_model(
         &world,
         0,
         tile_x,
-        decor_z,
-        SceneModel::Model(flat_quad(50, -35, -145, 0, BOOTH_RED)),
+        wall_z,
+        Some(SceneModel::Model(flat_quad(
+            64, -10, -230, -140, WALL_GREEN,
+        ))),
+        None,
     );
+    {
+        rw.set_decor_model(
+            &world,
+            0,
+            tile_x,
+            decor_z,
+            SceneModel::Model(flat_quad(24, -60, -180, 0, BOOTH_RED)),
+        );
+    }
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     Scene { world, rw }
 }
 
-/// Wall decorations resolve coplanar ties after their supporting wall, but
-/// retain ordinary depth rejection against genuinely foreground geometry.
+/// The GPU composes a wall decoration and the wall around it exactly as
+/// the CPU painter does (the captured draw order, not a depth test,
+/// decides which one shows).
 #[test]
-fn wall_decor_order_preserves_foreground_depth() {
+fn wall_decor_composes_like_the_cpu_painter() {
     Pix3D::init_colour_table(0.6);
     let Ok(mut backend) = GpuBackend::try_new() else {
         eprintln!("no adapter; skip");
         return;
     };
-    let eye = (320, 1950, 192, 128, 128);
-    let mut decor_only = wall_decor_depth_scene(false, false);
-    let mut supporting_wall = wall_decor_depth_scene(true, false);
-    let mut foreground_wall = wall_decor_depth_scene(true, true);
-    let decor = render_pixels(
-        &mut backend,
-        &mut decor_only,
-        eye.0,
-        eye.1,
-        eye.2,
-        eye.3,
-        eye.4,
+    let (eye_x, eye_y, eye_z, yaw, pitch) = (320, 1950, 192, 128, 128);
+    let mut pix = Pix3DDraw::default();
+    let cpu = cpu_render(
+        &mut embedded_decor_scene(),
+        &Cache::default(),
+        &mut pix,
+        eye_x,
+        eye_y,
+        eye_z,
+        yaw,
+        pitch,
+        "embedded_decor",
     );
-    let supported = render_pixels(
+    let gpu = render_pixels(
         &mut backend,
-        &mut supporting_wall,
-        eye.0,
-        eye.1,
-        eye.2,
-        eye.3,
-        eye.4,
+        &mut embedded_decor_scene(),
+        eye_x,
+        eye_y,
+        eye_z,
+        yaw,
+        pitch,
     );
-    let foreground = render_pixels(
-        &mut backend,
-        &mut foreground_wall,
-        eye.0,
-        eye.1,
-        eye.2,
-        eye.3,
-        eye.4,
-    );
-    let decor_red = count_rgb(&decor).0;
-    let supported_red = count_rgb(&supported).0;
-    let (foreground_red, foreground_green, _) = count_rgb(&foreground);
+    let (cpu_red, cpu_green, _) = count_rgb(&cpu);
+    let (gpu_red, gpu_green, _) = count_rgb(&gpu);
     eprintln!(
-        "wall-decor depth: decor={decor_red} supported={supported_red} foreground_red={foreground_red} foreground_green={foreground_green}"
+        "embedded decor: cpu red={cpu_red} green={cpu_green} gpu red={gpu_red} green={gpu_green}"
     );
-    assert!(decor_red > 100, "fixture decoration must be visible");
+    assert!(cpu_green > 1000, "the CPU oracle must draw the wall");
+    let close = |a: usize, b: usize| a.abs_diff(b) * 20 <= a.max(b).max(20);
     assert!(
-        supported_red * 10 >= decor_red * 9,
-        "coplanar supporting wall erased decoration: decor={decor_red} supported={supported_red}"
-    );
-    assert_eq!(
-        foreground_red, 0,
-        "foreground geometry must still depth-occlude decoration"
-    );
-    assert!(
-        foreground_green > 100,
-        "foreground occluder must render non-vacuously"
+        close(cpu_red, gpu_red) && close(cpu_green, gpu_green),
+        "the GPU must compose wall and decoration like the CPU painter: cpu=({cpu_red},{cpu_green}) gpu=({gpu_red},{gpu_green})"
     );
 }
