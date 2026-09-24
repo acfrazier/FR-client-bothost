@@ -357,7 +357,7 @@ fn jag_members_payload(
         if exclude.is_some_and(|set| set.contains(&member.id)) {
             continue;
         }
-        let bytes = member_bytes(jag, member).map_err(|e| ContentIdentityError::new(e))?;
+        let bytes = member_bytes(jag, member).map_err(ContentIdentityError::new)?;
         let len = bytes.len() as u32;
         by_id.insert(member.id, (len, sha256(&bytes)));
     }
@@ -441,7 +441,9 @@ fn version_table_values(jag: &ParsedJag, name: &str) -> Result<Vec<u16>, Content
         )));
     }
     Ok(raw
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_be_bytes([c[0], c[1]]))
         .collect())
 }
@@ -455,7 +457,9 @@ fn crc_table_values(jag: &ParsedJag, name: &str) -> Result<Vec<i32>, ContentIden
         )));
     }
     Ok(raw
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| i32::from_be_bytes([c[0], c[1], c[2], c[3]]))
         .collect())
 }

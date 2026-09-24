@@ -70,6 +70,8 @@ enum WsConn {
 }
 
 impl WsConn {
+    // tungstenite::Error is large (~136B); boxing would allocate on the hot WS path.
+    #[allow(clippy::result_large_err)]
     fn read_message(&mut self) -> Result<Message, tungstenite::Error> {
         match self {
             WsConn::Tls(ws) => ws.read(),
@@ -78,6 +80,7 @@ impl WsConn {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     fn send_message(&mut self, msg: Message) -> Result<(), tungstenite::Error> {
         match self {
             WsConn::Tls(ws) => ws.send(msg),
@@ -86,6 +89,7 @@ impl WsConn {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     fn close(&mut self) -> Result<(), tungstenite::Error> {
         match self {
             WsConn::Tls(ws) => ws.close(None),

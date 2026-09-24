@@ -3071,164 +3071,6 @@ impl Renderer {
     }
 }
 
-#[cfg(test)]
-mod texture_anim_tests {
-    use super::*;
-    use crate::client::config::ClientConfig;
-    use crate::graphics::Pix8;
-
-    const TEXELS: usize = 128 * 128;
-
-    fn patterned_texture(seed: usize) -> Pix8 {
-        let mut texture = Pix8::new(128, 128, vec![0, 0xff0000, 0x00ff00]);
-        for (i, texel) in texture.data.iter_mut().enumerate() {
-            *texel = (((i * 37 + (i / 128) * 11 + seed) % 127) + 1) as i8;
-        }
-        texture
-    }
-
-    fn expected_scroll(data: &[i8], world_update_num: i32) -> Vec<i8> {
-        let shift = 128 * world_update_num as usize * 2;
-        let mask = TEXELS - 1;
-        (0..TEXELS)
-            .map(|i| data[i.wrapping_sub(shift) & mask])
-            .collect()
-    }
-
-    fn client(world_update_num: i32) -> Client {
-        let cache_dir =
-            std::env::temp_dir().join(format!("r274-texture-run-anims-{}", std::process::id()));
-        let mut client = Client::new(ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43594,
-            cache_dir: cache_dir.to_string_lossy().into_owned(),
-            members: true,
-            lowmem: false,
-        });
-        client.world_update_num = world_update_num;
-        client
-    }
-
-    fn active_pool_row(renderer: &mut Renderer, id: usize) {
-        renderer.pix3d.init_pool(1);
-        renderer.pix3d.pool_size = 0;
-        renderer.pix3d.active_texels[id] = Some(vec![0; 65536]);
-    }
-
-    #[test]
-    fn texture_run_anims_scrolls_17_and_returns_active_texels_to_pool() {
-        let mut renderer = Renderer::new(false);
-        let mut client = client(1);
-        let original = patterned_texture(3).data;
-        renderer.pix3d.textures[17] = Some(patterned_texture(3));
-        renderer.pix3d.cycle = 41;
-        renderer.pix3d.tex_cycle[17] = 41;
-        active_pool_row(&mut renderer, 17);
-
-        renderer.texture_run_anims(&mut client, 41);
-
-        assert_eq!(
-            renderer.pix3d.textures[17].as_ref().unwrap().data,
-            expected_scroll(&original, 1)
-        );
-        assert_eq!(
-            renderer.texture_buffer, original,
-            "Java swaps the prior Pix8 data back into the 16384-byte scratch"
-        );
-        assert!(renderer.pix3d.active_texels[17].is_none());
-        assert_eq!(renderer.pix3d.pool_size, 1);
-    }
-
-    #[test]
-    fn texture_run_anims_leaves_unused_17_unchanged() {
-        let mut renderer = Renderer::new(false);
-        let mut client = client(1);
-        let original = patterned_texture(5).data;
-        renderer.pix3d.textures[17] = Some(patterned_texture(5));
-        renderer.pix3d.cycle = 41;
-        renderer.pix3d.tex_cycle[17] = 40;
-        active_pool_row(&mut renderer, 17);
-
-        renderer.texture_run_anims(&mut client, 41);
-
-        assert_eq!(renderer.pix3d.textures[17].as_ref().unwrap().data, original);
-        assert!(renderer.pix3d.active_texels[17].is_some());
-        assert_eq!(renderer.pix3d.pool_size, 0);
-    }
-
-    #[test]
-    fn texture_run_anims_lowmem_is_a_complete_noop() {
-        let mut renderer = Renderer::new(true);
-        let mut client = client(1);
-        let original_17 = patterned_texture(7).data;
-        let original_24 = patterned_texture(13).data;
-        renderer.pix3d.textures[17] = Some(patterned_texture(7));
-        renderer.pix3d.textures[24] = Some(patterned_texture(13));
-        renderer.pix3d.cycle = 41;
-        renderer.pix3d.tex_cycle[17] = 41;
-        renderer.pix3d.tex_cycle[24] = 41;
-        active_pool_row(&mut renderer, 17);
-        renderer.pix3d.active_texels[24] = Some(vec![0; 65536]);
-
-        renderer.texture_run_anims(&mut client, 41);
-
-        assert_eq!(
-            renderer.pix3d.textures[17].as_ref().unwrap().data,
-            original_17
-        );
-        assert_eq!(
-            renderer.pix3d.textures[24].as_ref().unwrap().data,
-            original_24
-        );
-        assert!(renderer.pix3d.active_texels[17].is_some());
-        assert!(renderer.pix3d.active_texels[24].is_some());
-        assert_eq!(renderer.pix3d.pool_size, 0);
-    }
-
-    #[test]
-    fn texture_run_anims_uses_world_update_num_for_17_cadence() {
-        let mut renderer = Renderer::new(false);
-        let mut client = client(2);
-        let original = patterned_texture(17).data;
-        renderer.pix3d.textures[17] = Some(patterned_texture(17));
-        renderer.pix3d.cycle = 41;
-        renderer.pix3d.tex_cycle[17] = 41;
-
-        renderer.texture_run_anims(&mut client, 41);
-
-        let actual = &renderer.pix3d.textures[17].as_ref().unwrap().data;
-        assert_eq!(actual, &expected_scroll(&original, 2));
-        assert_ne!(actual, &expected_scroll(&original, 1));
-    }
-
-    #[test]
-    fn texture_run_anims_scrolls_24_independently_of_unused_17() {
-        let mut renderer = Renderer::new(false);
-        let mut client = client(1);
-        let original_17 = patterned_texture(19).data;
-        let original_24 = patterned_texture(23).data;
-        renderer.pix3d.textures[17] = Some(patterned_texture(19));
-        renderer.pix3d.textures[24] = Some(patterned_texture(23));
-        renderer.pix3d.cycle = 41;
-        renderer.pix3d.tex_cycle[17] = 40;
-        renderer.pix3d.tex_cycle[24] = 41;
-        active_pool_row(&mut renderer, 24);
-
-        renderer.texture_run_anims(&mut client, 41);
-
-        assert_eq!(
-            renderer.pix3d.textures[17].as_ref().unwrap().data,
-            original_17
-        );
-        assert_eq!(
-            renderer.pix3d.textures[24].as_ref().unwrap().data,
-            expected_scroll(&original_24, 1)
-        );
-        assert!(renderer.pix3d.active_texels[24].is_none());
-        assert_eq!(renderer.pix3d.pool_size, 1);
-    }
-}
-
 /// Read the next script operand at `*pc` (TS `script[pc++]`); `None` when
 /// the script runs past its end, which the VM maps to TS `-1`.
 fn next_operand(script: &[i32], pc: &mut usize) -> Option<i32> {
@@ -4590,5 +4432,163 @@ impl Renderer {
         }
 
         updated
+    }
+}
+
+#[cfg(test)]
+mod texture_anim_tests {
+    use super::*;
+    use crate::client::config::ClientConfig;
+    use crate::graphics::Pix8;
+
+    const TEXELS: usize = 128 * 128;
+
+    fn patterned_texture(seed: usize) -> Pix8 {
+        let mut texture = Pix8::new(128, 128, vec![0, 0xff0000, 0x00ff00]);
+        for (i, texel) in texture.data.iter_mut().enumerate() {
+            *texel = (((i * 37 + (i / 128) * 11 + seed) % 127) + 1) as i8;
+        }
+        texture
+    }
+
+    fn expected_scroll(data: &[i8], world_update_num: i32) -> Vec<i8> {
+        let shift = 128 * world_update_num as usize * 2;
+        let mask = TEXELS - 1;
+        (0..TEXELS)
+            .map(|i| data[i.wrapping_sub(shift) & mask])
+            .collect()
+    }
+
+    fn client(world_update_num: i32) -> Client {
+        let cache_dir =
+            std::env::temp_dir().join(format!("r274-texture-run-anims-{}", std::process::id()));
+        let mut client = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: cache_dir.to_string_lossy().into_owned(),
+            members: true,
+            lowmem: false,
+        });
+        client.world_update_num = world_update_num;
+        client
+    }
+
+    fn active_pool_row(renderer: &mut Renderer, id: usize) {
+        renderer.pix3d.init_pool(1);
+        renderer.pix3d.pool_size = 0;
+        renderer.pix3d.active_texels[id] = Some(vec![0; 65536]);
+    }
+
+    #[test]
+    fn texture_run_anims_scrolls_17_and_returns_active_texels_to_pool() {
+        let mut renderer = Renderer::new(false);
+        let mut client = client(1);
+        let original = patterned_texture(3).data;
+        renderer.pix3d.textures[17] = Some(patterned_texture(3));
+        renderer.pix3d.cycle = 41;
+        renderer.pix3d.tex_cycle[17] = 41;
+        active_pool_row(&mut renderer, 17);
+
+        renderer.texture_run_anims(&mut client, 41);
+
+        assert_eq!(
+            renderer.pix3d.textures[17].as_ref().unwrap().data,
+            expected_scroll(&original, 1)
+        );
+        assert_eq!(
+            renderer.texture_buffer, original,
+            "Java swaps the prior Pix8 data back into the 16384-byte scratch"
+        );
+        assert!(renderer.pix3d.active_texels[17].is_none());
+        assert_eq!(renderer.pix3d.pool_size, 1);
+    }
+
+    #[test]
+    fn texture_run_anims_leaves_unused_17_unchanged() {
+        let mut renderer = Renderer::new(false);
+        let mut client = client(1);
+        let original = patterned_texture(5).data;
+        renderer.pix3d.textures[17] = Some(patterned_texture(5));
+        renderer.pix3d.cycle = 41;
+        renderer.pix3d.tex_cycle[17] = 40;
+        active_pool_row(&mut renderer, 17);
+
+        renderer.texture_run_anims(&mut client, 41);
+
+        assert_eq!(renderer.pix3d.textures[17].as_ref().unwrap().data, original);
+        assert!(renderer.pix3d.active_texels[17].is_some());
+        assert_eq!(renderer.pix3d.pool_size, 0);
+    }
+
+    #[test]
+    fn texture_run_anims_lowmem_is_a_complete_noop() {
+        let mut renderer = Renderer::new(true);
+        let mut client = client(1);
+        let original_17 = patterned_texture(7).data;
+        let original_24 = patterned_texture(13).data;
+        renderer.pix3d.textures[17] = Some(patterned_texture(7));
+        renderer.pix3d.textures[24] = Some(patterned_texture(13));
+        renderer.pix3d.cycle = 41;
+        renderer.pix3d.tex_cycle[17] = 41;
+        renderer.pix3d.tex_cycle[24] = 41;
+        active_pool_row(&mut renderer, 17);
+        renderer.pix3d.active_texels[24] = Some(vec![0; 65536]);
+
+        renderer.texture_run_anims(&mut client, 41);
+
+        assert_eq!(
+            renderer.pix3d.textures[17].as_ref().unwrap().data,
+            original_17
+        );
+        assert_eq!(
+            renderer.pix3d.textures[24].as_ref().unwrap().data,
+            original_24
+        );
+        assert!(renderer.pix3d.active_texels[17].is_some());
+        assert!(renderer.pix3d.active_texels[24].is_some());
+        assert_eq!(renderer.pix3d.pool_size, 0);
+    }
+
+    #[test]
+    fn texture_run_anims_uses_world_update_num_for_17_cadence() {
+        let mut renderer = Renderer::new(false);
+        let mut client = client(2);
+        let original = patterned_texture(17).data;
+        renderer.pix3d.textures[17] = Some(patterned_texture(17));
+        renderer.pix3d.cycle = 41;
+        renderer.pix3d.tex_cycle[17] = 41;
+
+        renderer.texture_run_anims(&mut client, 41);
+
+        let actual = &renderer.pix3d.textures[17].as_ref().unwrap().data;
+        assert_eq!(actual, &expected_scroll(&original, 2));
+        assert_ne!(actual, &expected_scroll(&original, 1));
+    }
+
+    #[test]
+    fn texture_run_anims_scrolls_24_independently_of_unused_17() {
+        let mut renderer = Renderer::new(false);
+        let mut client = client(1);
+        let original_17 = patterned_texture(19).data;
+        let original_24 = patterned_texture(23).data;
+        renderer.pix3d.textures[17] = Some(patterned_texture(19));
+        renderer.pix3d.textures[24] = Some(patterned_texture(23));
+        renderer.pix3d.cycle = 41;
+        renderer.pix3d.tex_cycle[17] = 40;
+        renderer.pix3d.tex_cycle[24] = 41;
+        active_pool_row(&mut renderer, 24);
+
+        renderer.texture_run_anims(&mut client, 41);
+
+        assert_eq!(
+            renderer.pix3d.textures[17].as_ref().unwrap().data,
+            original_17
+        );
+        assert_eq!(
+            renderer.pix3d.textures[24].as_ref().unwrap().data,
+            expected_scroll(&original_24, 1)
+        );
+        assert!(renderer.pix3d.active_texels[24].is_none());
+        assert_eq!(renderer.pix3d.pool_size, 1);
     }
 }

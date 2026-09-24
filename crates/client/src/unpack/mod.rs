@@ -1947,7 +1947,7 @@ mod tests {
             other => panic!("unpacking without a file store must be unavailable, got {other:?}"),
         }
         assert!(
-            !out.join(&version_hash(&versionlist)).exists(),
+            !out.join(version_hash(&versionlist)).exists(),
             "a failed preparation must not publish anything"
         );
 

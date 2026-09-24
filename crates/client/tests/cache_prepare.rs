@@ -79,9 +79,8 @@ fn jag(files: &[(String, Vec<u8>)]) -> Vec<u8> {
     out
 }
 
-/// The versionlist jag for `entries`: one required entry per archive (version
-/// 1) with the CRC of its gzipped payload — the tables the client's OnDemand
-/// `validate` checks every download against.
+/// The versionlist jag for `entries`: one required entry per archive (version 1)
+/// with the CRC of its gzipped payload — tables OnDemand `validate` checks.
 fn versionlist_jag(entries: &[(i32, i32, Vec<u8>)]) -> Vec<u8> {
     let names = ["model", "anim", "midi", "map"];
     let mut tables: Vec<(String, Vec<u8>)> = Vec::new();
