@@ -3156,9 +3156,7 @@ impl Client {
             let transfer_error = || LoginError {
                 code: 21,
                 mes1: "You have only just left another world".into(),
-                mes2: format!(
-                    "Your profile will be transferred in: {remaining} seconds"
-                ),
+                mes2: format!("Your profile will be transferred in: {remaining} seconds"),
                 retry_after: Some(retry_after),
             };
             if self.external_reconnect_owner {
@@ -3167,8 +3165,7 @@ impl Client {
             }
             for seconds in (0..=remaining).rev() {
                 self.login_mes1 = "You have only just left another world".into();
-                self.login_mes2 =
-                    format!("Your profile will be transferred in: {seconds} seconds");
+                self.login_mes2 = format!("Your profile will be transferred in: {seconds} seconds");
                 thread::sleep(Duration::from_secs(1));
             }
             drop(stream);
