@@ -525,10 +525,7 @@ fn externally_owned_response_21_carries_server_delay() {
     assert_eq!(error.code, 21);
     assert_eq!(error.retry_after, Some(Duration::from_secs(3)));
     assert_eq!(error.mes1, "You have only just left another world");
-    assert_eq!(
-        error.mes2,
-        "Your profile will be transferred in: 3 seconds"
-    );
+    assert_eq!(error.mes2, "Your profile will be transferred in: 3 seconds");
     server.join().unwrap();
 }
 
