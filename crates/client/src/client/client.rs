@@ -3018,8 +3018,10 @@ impl Client {
     /// `Client.login`: probe, seed, RSA blob, opcode 16/18 wrapper. Standalone
     /// response 1 retries after two seconds; an external reconnect owner gets
     /// the response back so each fresh socket can acquire its own permit.
+    /// Standalone response 21 counts down through zero and retries internally;
+    /// an external owner receives a `LoginError` carrying its `retry_after`.
     /// Response 2 enters the game; response 15 re-enters on a reconnect without
-    /// replacing `localPlayer`; anything else is a `LoginError` with the code
+    /// replacing `localPlayer`; other failures are `LoginError`s with the code
     /// and title-screen messages.
     pub fn login(
         &mut self,
