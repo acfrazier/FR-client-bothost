@@ -1339,6 +1339,9 @@ pub struct Client {
     /// first login). `lostCon` reestablishes with `reconnect = true`
     /// (wrapper opcode 18); the flag is how the reconnect path is observed.
     pub last_login_reconnect: Option<bool>,
+    /// When true, transport loss returns control to the embedding host
+    /// instead of opening an unaccounted reconnect socket inside `lost_con`.
+    external_reconnect_owner: bool,
     /// Socket-adopt flag: when true, the next `login(reconnect = true)`
     /// reuses `stream` (`Client::adopt_from`) instead of opening a new TCP
     /// — the opcode-18 handshake runs in place so a channel-head tune swaps
@@ -2053,6 +2056,7 @@ impl Client {
             idk_design_button1: None,
             idk_design_button2: None,
             last_login_reconnect: None,
+            external_reconnect_owner: false,
             baton: false,
             logout_timer: 0,
             reboot_timer: 0,
@@ -3012,9 +3016,9 @@ impl Client {
 
     /// Login handshake, 1:1 of `Client.ts` `login` (1719-1867) / Java
     /// `Client.login`: probe, seed, RSA blob, opcode 16/18 wrapper. Response 1
-    /// waits 2 s and retries the same attempt; response 2 enters the game;
-    /// response 15 re-enters the game on a reconnect (`lostCon`) without
-    /// replacing `localPlayer` (Java `Client.java` 3737); anything else is
+    /// is returned to the caller so every fresh socket attempt can acquire
+    /// its own permit; response 2 enters the game; response 15 re-enters on a
+    /// reconnect without replacing `localPlayer`; anything else is a
     /// `LoginError` with the code and title-screen messages.
     pub fn login(
         &mut self,
@@ -3134,12 +3138,6 @@ impl Client {
             response = stream
                 .read()
                 .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
-        }
-
-        if response == 1 {
-            thread::sleep(Duration::from_millis(2000));
-            // old stream is dropped (closed); each attempt opens a fresh one
-            return self.login(username, password, reconnect);
         }
 
         if response == 2 {
@@ -10060,14 +10058,16 @@ impl Client {
             .unwrap_or(false)
     }
 
+    /// Select an embedding host as the owner of reconnect attempts. The
+    /// default remains Java-compatible internal reconnect behavior.
+    pub fn set_external_reconnect_owner(&mut self, external: bool) {
+        self.external_reconnect_owner = external;
+    }
+
     /// `lostCon` from Java (`Client.java` 6147): in-game connection loss. A
-    /// pending logout request (`logoutTimer > 0`) logs out immediately;
-    /// otherwise drop to the title state and re-establish with
-    /// `login(loginUser, loginPass, true)` (wrapper opcode 18). A failed
-    /// reestablish logs out, as Java. The old stream is replaced by `login`
-    /// on success or closed by `logout` on failure, matching Java's
-    /// save-and-close of the old `ClientStream`. The "Connection lost"
-    /// viewport text is not drawn (headless).
+    /// pending logout request logs out immediately. Otherwise standalone
+    /// clients reconnect internally as Java did, while an external owner
+    /// receives control with the old socket closed and credentials retained.
     pub fn lost_con(&mut self) {
         if let Some(t) = &mut self.shell.ground_trace {
             t.complete("lost_connection");
@@ -10077,6 +10077,11 @@ impl Client {
             return;
         }
         self.ingame = false;
+        if self.external_reconnect_owner {
+            self.stream = None;
+            self.last_response = None;
+            return;
+        }
         let user = self.login_user.clone();
         let pass = self.login_pass.clone();
         let _ = self.login(&user, &pass, true);
