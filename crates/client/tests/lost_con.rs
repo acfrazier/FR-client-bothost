@@ -102,6 +102,21 @@ fn lost_con_uses_reconnect_login() {
 }
 
 #[test]
+fn external_reconnect_owner_defers_the_socket_attempt() {
+    let mut c = client();
+    c.ingame = true;
+    c.login_user = "bob".into();
+    c.login_pass = "pw".into();
+    c.set_external_reconnect_owner(true);
+    c.lost_con();
+    assert!(!c.ingame);
+    assert_eq!(c.last_login_reconnect, None);
+    assert_eq!(c.login_user, "bob");
+    assert_eq!(c.login_pass, "pw");
+    assert!(c.stream.is_none());
+}
+
+#[test]
 fn lost_con_with_pending_logout_logs_out_without_reconnecting() {
     let mut c = client();
     c.ingame = true;
