@@ -62,12 +62,70 @@ impl Drop for OwnedDirectory {
     }
 }
 
+#[derive(Debug)]
+pub enum RuntimeCacheError {
+    Asset {
+        kind: crate::client::client::AssetFetchError,
+        message: String,
+    },
+    Other(String),
+}
+
+impl RuntimeCacheError {
+    pub fn is_connection(&self) -> bool {
+        matches!(
+            self,
+            Self::Asset {
+                kind: crate::client::client::AssetFetchError::Connection,
+                ..
+            }
+        )
+    }
+}
+
+impl std::fmt::Display for RuntimeCacheError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Asset { message, .. } | Self::Other(message) => f.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for RuntimeCacheError {}
+
+impl From<String> for RuntimeCacheError {
+    fn from(message: String) -> Self {
+        Self::Other(message)
+    }
+}
+
+impl From<&str> for RuntimeCacheError {
+    fn from(message: &str) -> Self {
+        Self::Other(message.into())
+    }
+}
+
+impl From<super::UnpackError> for RuntimeCacheError {
+    fn from(error: super::UnpackError) -> Self {
+        match error.asset_failure {
+            Some(kind) => Self::Asset {
+                kind,
+                message: error.message,
+            },
+            None => Self::Other(error.message),
+        }
+    }
+}
+
 pub fn prepare_runtime_cache(
     request: &RuntimeCacheRequest<'_>,
-) -> Result<Arc<PreparedRuntimeCache>, String> {
+) -> Result<Arc<PreparedRuntimeCache>, RuntimeCacheError> {
     let checksums =
-        Client::get_jag_checksums_for(request.target, request.asset_host, request.asset_port)
-            .map_err(|e| format!("update server /crc: {e}"))?;
+        Client::get_jag_checksums_checked(request.target, request.asset_host, request.asset_port)
+            .map_err(|kind| RuntimeCacheError::Asset {
+            kind,
+            message: format!("update server /crc: {}", kind.message()),
+        })?;
     static NEXT: AtomicU64 = AtomicU64::new(0);
     std::fs::create_dir_all(request.snapshot_root).map_err(|e| e.to_string())?;
     let owned = loop {
@@ -79,7 +137,7 @@ pub fn prepare_runtime_cache(
         match std::fs::create_dir(&path) {
             Ok(()) => break OwnedDirectory(path),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(format!("runtime staging: {e}")),
+            Err(e) => return Err(format!("runtime staging: {e}").into()),
         }
     };
     let jag_dir = owned.0.join("jags");
@@ -92,8 +150,7 @@ pub fn prepare_runtime_cache(
             port: request.asset_port,
         },
         checksums,
-    )
-    .map_err(|e| e.to_string())?;
+    )?;
     let transfer_sha256 = hashes(&jag_dir, &super::JAGS)?;
     let versionlist = std::fs::read(jag_dir.join("versionlist")).map_err(|e| e.to_string())?;
     let version = super::version_hash(&versionlist);
@@ -167,7 +224,8 @@ pub fn prepare_runtime_cache(
                     request.game_port,
                     cache,
                     &transfer_id,
-                )?;
+                )
+                .map_err(RuntimeCacheError::Other)?;
                 let result = fetch_snapshot(cache, root, &mut worker);
                 worker.stop();
                 source = result
@@ -185,7 +243,7 @@ pub fn prepare_runtime_cache(
     for &(name, index) in &super::JAG_INDEX {
         let bytes = std::fs::read(jag_dir.join(name)).map_err(|e| e.to_string())?;
         if Packet::getcrc(&bytes, 0, bytes.len()) != checksums[index] {
-            return Err(format!("{name}: transfer CRC changed during preparation"));
+            return Err(format!("{name}: transfer CRC changed during preparation").into());
         }
     }
     Ok(Arc::new(PreparedRuntimeCache {

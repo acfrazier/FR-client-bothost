@@ -173,7 +173,7 @@ fn prepare(
         game_port: 1,
     });
     thread.join().unwrap();
-    result
+    result.map_err(|error| error.to_string())
 }
 #[test]
 fn equivalent_transfer_refresh_is_owned_and_cleanup_follows_last_arc() {

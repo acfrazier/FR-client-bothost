@@ -142,12 +142,21 @@ pub struct Manifest {
 #[derive(Debug)]
 pub struct UnpackError {
     message: String,
+    asset_failure: Option<crate::client::client::AssetFetchError>,
 }
 
 impl UnpackError {
     fn new(message: impl Into<String>) -> Self {
         UnpackError {
             message: message.into(),
+            asset_failure: None,
+        }
+    }
+
+    fn asset(message: impl Into<String>, error: crate::client::client::AssetFetchError) -> Self {
+        Self {
+            message: message.into(),
+            asset_failure: Some(error),
         }
     }
 
@@ -157,7 +166,10 @@ impl UnpackError {
 
     /// Rebuild an error from a message shared through a once-per-key table.
     fn from_message(message: String) -> Self {
-        UnpackError { message }
+        UnpackError {
+            message,
+            asset_failure: None,
+        }
     }
 }
 
@@ -209,7 +221,9 @@ pub fn unpack_cache(cache_dir: &str, out_dir: &str) -> Result<Manifest, UnpackEr
 }
 
 mod runtime;
-pub use runtime::{prepare_runtime_cache, PreparedRuntimeCache, RuntimeCacheRequest};
+pub use runtime::{
+    prepare_runtime_cache, PreparedRuntimeCache, RuntimeCacheError, RuntimeCacheRequest,
+};
 
 /// Read a selected local store without moving or writing its files. The
 /// negotiated jag directory supplies the authoritative version/CRC tables.
@@ -1234,8 +1248,9 @@ pub fn refresh_jags(
             "jag destination must not be a source directory",
         ));
     }
-    let checksums = Client::get_jag_checksums_for(endpoint.target, endpoint.host, endpoint.port)
-        .map_err(|e| UnpackError::new(format!("update server /crc: {e}")))?;
+    let checksums =
+        Client::get_jag_checksums_checked(endpoint.target, endpoint.host, endpoint.port)
+            .map_err(|e| UnpackError::asset(format!("update server /crc: {}", e.message()), e))?;
     refresh_jags_with_checksums(sources, dest, endpoint, checksums)
 }
 
@@ -1285,7 +1300,7 @@ fn refresh_jags_with_checksums(
         if copied {
             continue;
         }
-        Client::get_jag_file_for(
+        Client::get_jag_file_checked(
             endpoint.target,
             dest_str,
             endpoint.host,
@@ -1294,7 +1309,7 @@ fn refresh_jags_with_checksums(
             index,
             &checksums,
         )
-        .ok_or_else(|| UnpackError::new(format!("{name}: fetch or CRC check failed")))?;
+        .map_err(|e| UnpackError::asset(format!("{name}: fetch or CRC check failed"), e))?;
         if !file_crc_matches(&dest_file, expected) {
             return Err(UnpackError::new(format!(
                 "{name}: CRC-checked download was not persisted"

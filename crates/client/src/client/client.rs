@@ -56,6 +56,21 @@ use crate::sound::{Fade, JagFX, Midi};
 use crate::util::JString;
 use crate::wordfilter::{WordFilter, WordPack};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AssetFetchError {
+    Connection,
+    Checksum,
+}
+
+impl AssetFetchError {
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::Connection => "connection problem",
+            Self::Checksum => "checksum problem",
+        }
+    }
+}
+
 const MAX_PLAYER_COUNT: usize = 2048;
 const MAX_NPC_COUNT: usize = 16384;
 const MENU_CAPACITY: usize = 500;
@@ -2194,7 +2209,7 @@ impl Client {
     /// way). `None` on connect/read failure or a bodyless response.
     fn http_get(host: &str, port: u16, path: &str) -> Option<Vec<u8>> {
         if crate::uses_secure_transport(crate::bot_target()) {
-            Self::https_get(host, 443, path)
+            Self::https_get(host, 443, path, None)
         } else {
             Self::http_get_plain(host, port, path)
         }
@@ -2207,7 +2222,7 @@ impl Client {
         path: &str,
     ) -> Option<Vec<u8>> {
         if crate::uses_secure_transport(target) {
-            Self::https_get(host, port, path)
+            Self::https_get(host, port, path, None)
         } else {
             Self::http_get_plain(host, port, path)
         }
@@ -2223,10 +2238,27 @@ impl Client {
         Self::split_http_body(&buf)
     }
 
-    fn https_get(host: &str, port: u16, path: &str) -> Option<Vec<u8>> {
+    fn https_get(
+        host: &str,
+        port: u16,
+        path: &str,
+        login_key_timeout: Option<Duration>,
+    ) -> Option<Vec<u8>> {
         use std::io::{Read, Write};
-        let tcp = std::net::TcpStream::connect((host, port)).ok()?;
-        tcp.set_read_timeout(Some(Duration::from_secs(8))).ok()?;
+        use std::net::ToSocketAddrs;
+        let tcp = if let Some(timeout) = login_key_timeout {
+            (host, port)
+                .to_socket_addrs()
+                .ok()?
+                .find_map(|addr| std::net::TcpStream::connect_timeout(&addr, timeout).ok())?
+        } else {
+            std::net::TcpStream::connect((host, port)).ok()?
+        };
+        tcp.set_read_timeout(Some(login_key_timeout.unwrap_or(Duration::from_secs(8))))
+            .ok()?;
+        if let Some(timeout) = login_key_timeout {
+            tcp.set_write_timeout(Some(timeout)).ok()?;
+        }
         let connector = native_tls::TlsConnector::new().ok()?;
         let mut stream = connector.connect(host, tcp).ok()?;
         write!(
@@ -2277,7 +2309,16 @@ impl Client {
         host: &str,
         port: u16,
     ) -> Option<String> {
-        let body = Self::http_get_for(target, host, port, "/client/client.js")?;
+        let body = if crate::uses_secure_transport(target) {
+            Self::https_get(
+                host,
+                port,
+                "/client/client.js",
+                Some(Duration::from_secs(2)),
+            )?
+        } else {
+            Self::http_get_plain(host, port, "/client/client.js")?
+        };
         Self::login_modulus_from_client_js(&body)
     }
 
@@ -2296,8 +2337,17 @@ impl Client {
         host: &str,
         port: u16,
     ) -> Result<[i32; 9], &'static str> {
-        let body = Self::http_get_for(target, host, port, "/crc").ok_or("connection problem")?;
-        Self::parse_jag_checksums(body)
+        Self::get_jag_checksums_checked(target, host, port).map_err(AssetFetchError::message)
+    }
+
+    pub fn get_jag_checksums_checked(
+        target: crate::BotTarget,
+        host: &str,
+        port: u16,
+    ) -> Result<[i32; 9], AssetFetchError> {
+        let body =
+            Self::http_get_for(target, host, port, "/crc").ok_or(AssetFetchError::Connection)?;
+        Self::parse_jag_checksums(body).map_err(|_| AssetFetchError::Checksum)
     }
 
     fn parse_jag_checksums(body: Vec<u8>) -> Result<[i32; 9], &'static str> {
@@ -2353,20 +2403,33 @@ impl Client {
         index: usize,
         checksums: &[i32; 9],
     ) -> Option<Vec<u8>> {
-        let &crc = checksums.get(index)?;
+        Self::get_jag_file_checked(target, cache_dir, host, port, filename, index, checksums).ok()
+    }
+
+    pub fn get_jag_file_checked(
+        target: crate::BotTarget,
+        cache_dir: &str,
+        host: &str,
+        port: u16,
+        filename: &str,
+        index: usize,
+        checksums: &[i32; 9],
+    ) -> Result<Vec<u8>, AssetFetchError> {
+        let &crc = checksums.get(index).ok_or(AssetFetchError::Checksum)?;
         let cached = std::fs::read(format!("{cache_dir}/{filename}")).ok();
         if let Some(bytes) = cached {
             if Packet::getcrc(&bytes, 0, bytes.len()) == crc {
-                return Some(bytes);
+                return Ok(bytes);
             }
         }
-        let bytes = Self::http_get_for(target, host, port, &format!("/{filename}{crc}"))?;
+        let bytes = Self::http_get_for(target, host, port, &format!("/{filename}{crc}"))
+            .ok_or(AssetFetchError::Connection)?;
         if Packet::getcrc(&bytes, 0, bytes.len()) != crc {
-            return None;
+            return Err(AssetFetchError::Checksum);
         }
         let _ = std::fs::create_dir_all(cache_dir);
         let _ = std::fs::write(format!("{cache_dir}/{filename}"), &bytes);
-        Some(bytes)
+        Ok(bytes)
     }
 
     /// CRC of each JAG pack file under `cache_dir`, in the 9-slot layout the
@@ -13695,6 +13758,57 @@ mod public_login_key_tests {
         );
         server.join().unwrap();
     }
+    #[test]
+    fn public_key_fetch_times_out_when_tls_peer_never_answers() {
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (release, keep_open) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (_socket, _) = listener.accept().unwrap();
+            keep_open.recv().unwrap();
+        });
+        let started = Instant::now();
+        assert_eq!(
+            Client::fetch_login_modulus_for(BotTarget::Prod, "127.0.0.1", port),
+            None
+        );
+        release.send(()).unwrap();
+        server.join().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+    #[test]
+    fn asset_fetch_distinguishes_unreachable_endpoint_from_invalid_crc() {
+        use super::AssetFetchError;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(socket.try_clone().unwrap())
+                .read_line(&mut request)
+                .unwrap();
+            assert_eq!(request.trim_end(), "GET /crc HTTP/1.0");
+            write!(
+                socket,
+                "HTTP/1.0 200 OK\r\nConnection: close\r\n\r\ninvalid"
+            )
+            .unwrap();
+        });
+        assert_eq!(
+            Client::get_jag_checksums_checked(BotTarget::Local, "127.0.0.1", port),
+            Err(AssetFetchError::Checksum)
+        );
+        server.join().unwrap();
+        assert_eq!(
+            Client::get_jag_checksums_checked(BotTarget::Local, "127.0.0.1", port),
+            Err(AssetFetchError::Connection)
+        );
+    }
+
     #[test]
     fn selected_world_changes_login_endpoint_and_node_id_without_moving_assets() {
         use crate::io::ClientRevision;
