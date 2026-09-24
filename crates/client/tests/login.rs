@@ -439,7 +439,7 @@ fn failed_login_can_be_retried_on_the_same_client() {
 }
 
 #[test]
-fn response_one_returns_after_one_socket_attempt() {
+fn externally_owned_response_one_returns_after_one_socket_attempt() {
     let _r = Renderer::new(false);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
@@ -459,8 +459,40 @@ fn response_one_returns_after_one_socket_attempt() {
         members: true,
         lowmem: false,
     });
+    client.set_external_reconnect_owner(true);
     let error = client.login("bob", "pw", false).unwrap_err();
     assert_eq!(error.code, 1);
+    server.join().unwrap();
+}
+
+#[test]
+fn standalone_response_one_retries_after_two_seconds() {
+    let _r = Renderer::new(false);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        for response in [1, 2] {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut hdr = [0u8; 2];
+            stream.read_exact(&mut hdr).unwrap();
+            for _ in 0..8 {
+                stream.write_all(&[0]).unwrap();
+            }
+            stream.write_all(&[response]).unwrap();
+            if response == 2 {
+                stream.write_all(&[0, 0]).unwrap();
+            }
+        }
+    });
+    let mut client = Client::new(ClientConfig {
+        host: addr.ip().to_string(),
+        port: addr.port(),
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    client.login("bob", "pw", false).unwrap();
+    assert!(client.ingame);
     server.join().unwrap();
 }
 
