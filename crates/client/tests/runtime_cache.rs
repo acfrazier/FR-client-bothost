@@ -242,7 +242,10 @@ fn malformed_required_record_is_not_a_ready_identity() {
     let err = prepare(&source, &root, p, 0).unwrap_err();
     assert!(
         err.contains("maps")
-            && (err.contains("unexpected") || err.contains("required") || err.contains("range") || err.contains("unknown extra")),
+            && (err.contains("unexpected")
+                || err.contains("required")
+                || err.contains("range")
+                || err.contains("unknown extra")),
         "{err}"
     );
     assert!(!std::fs::read_dir(&root).unwrap().any(|e| e

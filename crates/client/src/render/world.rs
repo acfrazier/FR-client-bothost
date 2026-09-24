@@ -777,10 +777,8 @@ impl RenderWorld {
         };
         if let Some(tile) = tile_at(&world.squares, level, tile_x, tile_z) {
             if let Some(wall) = tile.wall.as_deref() {
-                let typecode = crate::render::diagnostics::wall_shade_typecode(
-                    wall.typecode,
-                    wall.typecode2,
-                );
+                let typecode =
+                    crate::render::diagnostics::wall_shade_typecode(wall.typecode, wall.typecode2);
                 if let Some(model) = slot.wall_model1.as_ref() {
                     dump_loc_shades(tile_x, tile_z, typecode, "wall", model);
                 }
@@ -2804,7 +2802,17 @@ impl RenderWorld {
                 .as_mut()
             {
                 emit_scene_model(
-                    model, cache, loop_cycle, pix, mesh, cam, 0, wall_x, wall_y, wall_z, typecode,
+                    model,
+                    cache,
+                    loop_cycle,
+                    pix,
+                    mesh,
+                    cam,
+                    0,
+                    wall_x,
+                    wall_y,
+                    wall_z,
+                    typecode,
                     OpaqueGroup::Wall,
                 );
             }
@@ -2845,7 +2853,17 @@ impl RenderWorld {
             {
                 dump_loc_shades(tile_x, tile_z, typecode, "wall", model);
                 emit_scene_model(
-                    model, cache, loop_cycle, pix, mesh, cam, 0, wall_x, wall_y, wall_z, typecode,
+                    model,
+                    cache,
+                    loop_cycle,
+                    pix,
+                    mesh,
+                    cam,
+                    0,
+                    wall_x,
+                    wall_y,
+                    wall_z,
+                    typecode,
                     OpaqueGroup::Wall,
                 );
             }
@@ -2856,7 +2874,17 @@ impl RenderWorld {
             {
                 dump_loc_shades(tile_x, tile_z, typecode, "wall2", model);
                 emit_scene_model(
-                    model, cache, loop_cycle, pix, mesh, cam, 0, wall_x, wall_y, wall_z, typecode,
+                    model,
+                    cache,
+                    loop_cycle,
+                    pix,
+                    mesh,
+                    cam,
+                    0,
+                    wall_x,
+                    wall_y,
+                    wall_z,
+                    typecode,
                     OpaqueGroup::Wall,
                 );
             }
@@ -2898,8 +2926,18 @@ impl RenderWorld {
                 {
                     dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
                     emit_scene_model(
-                        decor, cache, loop_cycle, pix, mesh, cam, angle, decor_x, decor_y, decor_z,
-                        typecode, OpaqueGroup::WallDecor,
+                        decor,
+                        cache,
+                        loop_cycle,
+                        pix,
+                        mesh,
+                        cam,
+                        angle,
+                        decor_x,
+                        decor_y,
+                        decor_z,
+                        typecode,
+                        OpaqueGroup::WallDecor,
                     );
                 }
             } else if (wshape & 0x300) != 0 {
@@ -2981,7 +3019,17 @@ impl RenderWorld {
                 .as_mut()
             {
                 emit_scene_model(
-                    model, cache, loop_cycle, pix, mesh, cam, 0, gd_x, gd_y, gd_z, typecode,
+                    model,
+                    cache,
+                    loop_cycle,
+                    pix,
+                    mesh,
+                    cam,
+                    0,
+                    gd_x,
+                    gd_y,
+                    gd_z,
+                    typecode,
                     OpaqueGroup::Scenery,
                 );
             }
@@ -3004,19 +3052,49 @@ impl RenderWorld {
                     self.obj_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z);
                 if let Some(model) = bottom.as_mut() {
                     emit_scene_model(
-                        model, cache, loop_cycle, pix, mesh, cam, 0, ox, oy, oz, typecode,
+                        model,
+                        cache,
+                        loop_cycle,
+                        pix,
+                        mesh,
+                        cam,
+                        0,
+                        ox,
+                        oy,
+                        oz,
+                        typecode,
                         OpaqueGroup::Scenery,
                     );
                 }
                 if let Some(model) = middle.as_mut() {
                     emit_scene_model(
-                        model, cache, loop_cycle, pix, mesh, cam, 0, ox, oy, oz, typecode,
+                        model,
+                        cache,
+                        loop_cycle,
+                        pix,
+                        mesh,
+                        cam,
+                        0,
+                        ox,
+                        oy,
+                        oz,
+                        typecode,
                         OpaqueGroup::Scenery,
                     );
                 }
                 if let Some(model) = top.as_mut() {
                     emit_scene_model(
-                        model, cache, loop_cycle, pix, mesh, cam, 0, ox, oy, oz, typecode,
+                        model,
+                        cache,
+                        loop_cycle,
+                        pix,
+                        mesh,
+                        cam,
+                        0,
+                        ox,
+                        oy,
+                        oz,
+                        typecode,
                         OpaqueGroup::Scenery,
                     );
                 }
@@ -3105,14 +3183,7 @@ impl RenderWorld {
                     sprite.cycle = cycle_no;
                 }
                 render_trace!(sprite(
-                    min_tile_x,
-                    min_tile_z,
-                    max_tile_x,
-                    max_tile_z,
-                    typecode,
-                    0,
-                    "occluded",
-                    true,
+                    min_tile_x, min_tile_z, max_tile_x, max_tile_z, typecode, 0, "occluded", true,
                 ));
                 return;
             }
@@ -3161,7 +3232,11 @@ impl RenderWorld {
             max_tile_z,
             typecode,
             0,
-            if sprite_submitted { "submitted" } else { "missing" },
+            if sprite_submitted {
+                "submitted"
+            } else {
+                "missing"
+            },
             false,
         ));
         let _ = sprite_submitted;
@@ -3794,148 +3869,144 @@ impl RenderWorld {
                             false,
                         ));
                     } else if (wshape & front_wall_types) != 0 {
-                            #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
-                            let model = if let Some(decor) = self
+                        #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
+                        let model = if let Some(decor) = self
+                            .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                            .as_mut()
+                        {
+                            dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
+                            decor.world_render(
+                                cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch,
+                                sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode,
+                            );
+                            "resolved"
+                        } else {
+                            "missing"
+                        };
+                        render_trace!(decor(
+                            tile_x,
+                            tile_z,
+                            typecode,
+                            wshape,
+                            angle as i32,
+                            "front",
+                            false,
+                            "front-wall",
+                            model,
+                            model == "resolved",
+                        ));
+                    } else if (wshape & 0x300) != 0 {
+                        let nearest_x = if angle == LocAngle::NORTH || angle == LocAngle::EAST {
+                            -decor_x
+                        } else {
+                            decor_x
+                        };
+
+                        let nearest_z = if angle == LocAngle::EAST || angle == LocAngle::SOUTH {
+                            -decor_z
+                        } else {
+                            decor_z
+                        };
+
+                        #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
+                        let offset_front = (wshape & 0x100) != 0 && nearest_z < nearest_x
+                            || (wshape & 0x200) != 0 && nearest_z > nearest_x;
+                        #[cfg_attr(
+                            not(feature = "render-diagnostics"),
+                            allow(unused_assignments, unused_variables)
+                        )]
+                        let mut offset_submitted = false;
+                        if (wshape & 0x100) != 0 && nearest_z < nearest_x {
+                            let draw_x =
+                                decor_x + DECORXOF.get(angle as usize).copied().unwrap_or(0);
+                            let draw_z =
+                                decor_z + DECORZOF.get(angle as usize).copied().unwrap_or(0);
+                            if let Some(decor) = self
                                 .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
                                 .as_mut()
                             {
                                 dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
                                 decor.world_render(
-                                    cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch,
-                                    sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode,
+                                    cache,
+                                    loop_cycle,
+                                    pix,
+                                    surface,
+                                    angle * 512 + 256,
+                                    sin_pitch,
+                                    cos_pitch,
+                                    sin_yaw,
+                                    cos_yaw,
+                                    draw_x,
+                                    decor_y,
+                                    draw_z,
+                                    typecode,
                                 );
-                                "resolved"
-                            } else {
-                                "missing"
-                            };
-                            render_trace!(decor(
-                                tile_x,
-                                tile_z,
-                                typecode,
-                                wshape,
-                                angle as i32,
-                                "front",
-                                false,
-                                "front-wall",
-                                model,
-                                model == "resolved",
-                            ));
-                        } else if (wshape & 0x300) != 0 {
-                            let nearest_x = if angle == LocAngle::NORTH || angle == LocAngle::EAST {
-                                -decor_x
-                            } else {
-                                decor_x
-                            };
-
-                            let nearest_z = if angle == LocAngle::EAST || angle == LocAngle::SOUTH {
-                                -decor_z
-                            } else {
-                                decor_z
-                            };
-
-                            #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
-                            let offset_front = (wshape & 0x100) != 0 && nearest_z < nearest_x
-                                || (wshape & 0x200) != 0 && nearest_z > nearest_x;
-                            #[cfg_attr(
-                                not(feature = "render-diagnostics"),
-                                allow(unused_assignments, unused_variables)
-                            )]
-                            let mut offset_submitted = false;
-                            if (wshape & 0x100) != 0 && nearest_z < nearest_x {
-                                let draw_x =
-                                    decor_x + DECORXOF.get(angle as usize).copied().unwrap_or(0);
-                                let draw_z =
-                                    decor_z + DECORZOF.get(angle as usize).copied().unwrap_or(0);
-                                if let Some(decor) = self
-                                    .decor_model_mut(
-                                        &*world, cache, loop_cycle, level, tile_x, tile_z,
-                                    )
-                                    .as_mut()
-                                {
-                                    dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
-                                    decor.world_render(
-                                        cache,
-                                        loop_cycle,
-                                        pix,
-                                        surface,
-                                        angle * 512 + 256,
-                                        sin_pitch,
-                                        cos_pitch,
-                                        sin_yaw,
-                                        cos_yaw,
-                                        draw_x,
-                                        decor_y,
-                                        draw_z,
-                                        typecode,
-                                    );
-                                    offset_submitted = true;
-                                }
+                                offset_submitted = true;
                             }
-
-                            if (wshape & 0x200) != 0 && nearest_z > nearest_x {
-                                let draw_x =
-                                    decor_x + DECORXOF2.get(angle as usize).copied().unwrap_or(0);
-                                let draw_z =
-                                    decor_z + DECORZOF2.get(angle as usize).copied().unwrap_or(0);
-                                if let Some(decor) = self
-                                    .decor_model_mut(
-                                        &*world, cache, loop_cycle, level, tile_x, tile_z,
-                                    )
-                                    .as_mut()
-                                {
-                                    dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
-                                    decor.world_render(
-                                        cache,
-                                        loop_cycle,
-                                        pix,
-                                        surface,
-                                        (angle * 512 + 1280) & 0x7ff,
-                                        sin_pitch,
-                                        cos_pitch,
-                                        sin_yaw,
-                                        cos_yaw,
-                                        draw_x,
-                                        decor_y,
-                                        draw_z,
-                                        typecode,
-                                    );
-                                    offset_submitted = true;
-                                }
-                            }
-                            render_trace!(decor(
-                                tile_x,
-                                tile_z,
-                                typecode,
-                                wshape,
-                                angle,
-                                "front",
-                                false,
-                                "offset",
-                                if offset_submitted {
-                                    "resolved"
-                                } else if offset_front {
-                                    "missing"
-                                } else {
-                                    "n/a"
-                                },
-                                offset_submitted,
-                            ));
-                            let _ = offset_submitted;
-                        } else {
-                            render_trace!(decor(
-                                tile_x,
-                                tile_z,
-                                typecode,
-                                wshape,
-                                angle,
-                                "front",
-                                false,
-                                "wshape-miss",
-                                "n/a",
-                                false,
-                            ));
                         }
+
+                        if (wshape & 0x200) != 0 && nearest_z > nearest_x {
+                            let draw_x =
+                                decor_x + DECORXOF2.get(angle as usize).copied().unwrap_or(0);
+                            let draw_z =
+                                decor_z + DECORZOF2.get(angle as usize).copied().unwrap_or(0);
+                            if let Some(decor) = self
+                                .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                                .as_mut()
+                            {
+                                dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
+                                decor.world_render(
+                                    cache,
+                                    loop_cycle,
+                                    pix,
+                                    surface,
+                                    (angle * 512 + 1280) & 0x7ff,
+                                    sin_pitch,
+                                    cos_pitch,
+                                    sin_yaw,
+                                    cos_yaw,
+                                    draw_x,
+                                    decor_y,
+                                    draw_z,
+                                    typecode,
+                                );
+                                offset_submitted = true;
+                            }
+                        }
+                        render_trace!(decor(
+                            tile_x,
+                            tile_z,
+                            typecode,
+                            wshape,
+                            angle,
+                            "front",
+                            false,
+                            "offset",
+                            if offset_submitted {
+                                "resolved"
+                            } else if offset_front {
+                                "missing"
+                            } else {
+                                "n/a"
+                            },
+                            offset_submitted,
+                        ));
+                        let _ = offset_submitted;
+                    } else {
+                        render_trace!(decor(
+                            tile_x,
+                            tile_z,
+                            typecode,
+                            wshape,
+                            angle,
+                            "front",
+                            false,
+                            "wshape-miss",
+                            "n/a",
+                            false,
+                        ));
                     }
+                }
 
                 // Ground decor + ground objects (stack height 0) on a drawn tile.
                 if tile_drawn {
@@ -4528,160 +4599,148 @@ impl RenderWorld {
                         self.sprite_occluded(world, original_level, tile_x, tile_z, min_y);
                     if decor_occluded {
                         render_trace!(decor(
+                            tile_x, tile_z, typecode, wshape, angle, "back", true, "occluded",
+                            "n/a", false,
+                        ));
+                    } else if (wshape & back_wall_types) != 0 {
+                        #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
+                        let model = if let Some(decor) = self
+                            .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                            .as_mut()
+                        {
+                            dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
+                            decor.world_render(
+                                cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch,
+                                sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode,
+                            );
+                            "resolved"
+                        } else {
+                            "missing"
+                        };
+                        render_trace!(decor(
                             tile_x,
                             tile_z,
                             typecode,
                             wshape,
                             angle,
                             "back",
-                            true,
-                            "occluded",
-                            "n/a",
                             false,
+                            "back-wall",
+                            model,
+                            model == "resolved",
                         ));
-                    } else if (wshape & back_wall_types) != 0 {
-                            #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
-                            let model = if let Some(decor) = self
+                    } else if (wshape & 0x300) != 0 {
+                        let nearest_x = if angle == LocAngle::NORTH || angle == LocAngle::EAST {
+                            -decor_x
+                        } else {
+                            decor_x
+                        };
+
+                        let nearest_z = if angle == LocAngle::EAST || angle == LocAngle::SOUTH {
+                            -decor_z
+                        } else {
+                            decor_z
+                        };
+
+                        #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
+                        let offset_back = (wshape & 0x100) != 0 && nearest_z >= nearest_x
+                            || (wshape & 0x200) != 0 && nearest_z <= nearest_x;
+                        #[cfg_attr(
+                            not(feature = "render-diagnostics"),
+                            allow(unused_assignments, unused_variables)
+                        )]
+                        let mut offset_submitted = false;
+                        if (wshape & 0x100) != 0 && nearest_z >= nearest_x {
+                            let draw_x =
+                                decor_x + DECORXOF.get(angle as usize).copied().unwrap_or(0);
+                            let draw_z =
+                                decor_z + DECORZOF.get(angle as usize).copied().unwrap_or(0);
+                            if let Some(decor) = self
                                 .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
                                 .as_mut()
                             {
                                 dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
                                 decor.world_render(
-                                    cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch,
-                                    sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode,
+                                    cache,
+                                    loop_cycle,
+                                    pix,
+                                    surface,
+                                    angle * 512 + 256,
+                                    sin_pitch,
+                                    cos_pitch,
+                                    sin_yaw,
+                                    cos_yaw,
+                                    draw_x,
+                                    decor_y,
+                                    draw_z,
+                                    typecode,
                                 );
-                                "resolved"
-                            } else {
-                                "missing"
-                            };
-                            render_trace!(decor(
-                                tile_x,
-                                tile_z,
-                                typecode,
-                                wshape,
-                                angle,
-                                "back",
-                                false,
-                                "back-wall",
-                                model,
-                                model == "resolved",
-                            ));
-                        } else if (wshape & 0x300) != 0 {
-                            let nearest_x = if angle == LocAngle::NORTH || angle == LocAngle::EAST {
-                                -decor_x
-                            } else {
-                                decor_x
-                            };
-
-                            let nearest_z = if angle == LocAngle::EAST || angle == LocAngle::SOUTH {
-                                -decor_z
-                            } else {
-                                decor_z
-                            };
-
-                            #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
-                            let offset_back = (wshape & 0x100) != 0 && nearest_z >= nearest_x
-                                || (wshape & 0x200) != 0 && nearest_z <= nearest_x;
-                            #[cfg_attr(
-                                not(feature = "render-diagnostics"),
-                                allow(unused_assignments, unused_variables)
-                            )]
-                            let mut offset_submitted = false;
-                            if (wshape & 0x100) != 0 && nearest_z >= nearest_x {
-                                let draw_x =
-                                    decor_x + DECORXOF.get(angle as usize).copied().unwrap_or(0);
-                                let draw_z =
-                                    decor_z + DECORZOF.get(angle as usize).copied().unwrap_or(0);
-                                if let Some(decor) = self
-                                    .decor_model_mut(
-                                        &*world, cache, loop_cycle, level, tile_x, tile_z,
-                                    )
-                                    .as_mut()
-                                {
-                                    dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
-                                    decor.world_render(
-                                        cache,
-                                        loop_cycle,
-                                        pix,
-                                        surface,
-                                        angle * 512 + 256,
-                                        sin_pitch,
-                                        cos_pitch,
-                                        sin_yaw,
-                                        cos_yaw,
-                                        draw_x,
-                                        decor_y,
-                                        draw_z,
-                                        typecode,
-                                    );
-                                    offset_submitted = true;
-                                }
+                                offset_submitted = true;
                             }
-
-                            if (wshape & 0x200) != 0 && nearest_z <= nearest_x {
-                                let draw_x =
-                                    decor_x + DECORXOF2.get(angle as usize).copied().unwrap_or(0);
-                                let draw_z =
-                                    decor_z + DECORZOF2.get(angle as usize).copied().unwrap_or(0);
-                                if let Some(decor) = self
-                                    .decor_model_mut(
-                                        &*world, cache, loop_cycle, level, tile_x, tile_z,
-                                    )
-                                    .as_mut()
-                                {
-                                    dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
-                                    decor.world_render(
-                                        cache,
-                                        loop_cycle,
-                                        pix,
-                                        surface,
-                                        (angle * 512 + 1280) & 0x7ff,
-                                        sin_pitch,
-                                        cos_pitch,
-                                        sin_yaw,
-                                        cos_yaw,
-                                        draw_x,
-                                        decor_y,
-                                        draw_z,
-                                        typecode,
-                                    );
-                                    offset_submitted = true;
-                                }
-                            }
-                            render_trace!(decor(
-                                tile_x,
-                                tile_z,
-                                typecode,
-                                wshape,
-                                angle,
-                                "back",
-                                false,
-                                "offset",
-                                if offset_submitted {
-                                    "resolved"
-                                } else if offset_back {
-                                    "missing"
-                                } else {
-                                    "n/a"
-                                },
-                                offset_submitted,
-                            ));
-                            let _ = offset_submitted;
-                        } else {
-                            render_trace!(decor(
-                                tile_x,
-                                tile_z,
-                                typecode,
-                                wshape,
-                                angle,
-                                "back",
-                                false,
-                                "wshape-miss",
-                                "n/a",
-                                false,
-                            ));
                         }
+
+                        if (wshape & 0x200) != 0 && nearest_z <= nearest_x {
+                            let draw_x =
+                                decor_x + DECORXOF2.get(angle as usize).copied().unwrap_or(0);
+                            let draw_z =
+                                decor_z + DECORZOF2.get(angle as usize).copied().unwrap_or(0);
+                            if let Some(decor) = self
+                                .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                                .as_mut()
+                            {
+                                dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
+                                decor.world_render(
+                                    cache,
+                                    loop_cycle,
+                                    pix,
+                                    surface,
+                                    (angle * 512 + 1280) & 0x7ff,
+                                    sin_pitch,
+                                    cos_pitch,
+                                    sin_yaw,
+                                    cos_yaw,
+                                    draw_x,
+                                    decor_y,
+                                    draw_z,
+                                    typecode,
+                                );
+                                offset_submitted = true;
+                            }
+                        }
+                        render_trace!(decor(
+                            tile_x,
+                            tile_z,
+                            typecode,
+                            wshape,
+                            angle,
+                            "back",
+                            false,
+                            "offset",
+                            if offset_submitted {
+                                "resolved"
+                            } else if offset_back {
+                                "missing"
+                            } else {
+                                "n/a"
+                            },
+                            offset_submitted,
+                        ));
+                        let _ = offset_submitted;
+                    } else {
+                        render_trace!(decor(
+                            tile_x,
+                            tile_z,
+                            typecode,
+                            wshape,
+                            angle,
+                            "back",
+                            false,
+                            "wshape-miss",
+                            "n/a",
+                            false,
+                        ));
                     }
+                }
 
                 let wall_data = tile_at(&world.squares, level, tile_x, tile_z)
                     .and_then(|t| t.wall.as_deref())
@@ -7100,9 +7159,7 @@ mod near_plane_tests {
 
 #[cfg(test)]
 mod fill_java_order_tests {
-    use super::{
-        fill_trace, sprite_farther_than, FillEvent, FillKind, RenderWorld,
-    };
+    use super::{fill_trace, sprite_farther_than, FillEvent, FillKind, RenderWorld};
     use crate::config::Cache;
     use crate::core::World;
     use crate::dash3d::{Model, SceneModel, TerrainOverlayShape};
@@ -7304,10 +7361,9 @@ mod fill_java_order_tests {
             pix.set_render_clipping(&surface);
             pix.trans = 0;
             let cache = Cache::default();
-            rw.prepare_scene(
-                world, &cache, 0, eye_x, 1950, eye_z, 3, 0, 128,
-            );
-            if let Some(tile) = world.squares[0][closer_x as usize][closer_z as usize].as_deref_mut()
+            rw.prepare_scene(world, &cache, 0, eye_x, 1950, eye_z, 3, 0, 128);
+            if let Some(tile) =
+                world.squares[0][closer_x as usize][closer_z as usize].as_deref_mut()
             {
                 tile.draw_front = false;
             }
@@ -7357,16 +7413,8 @@ mod fill_java_order_tests {
         place_scenery(&mut rw, &mut world, 7, 8, ns_box_model(), 200, 1, 2);
         place_scenery(&mut rw, &mut world, 6, 8, ns_box_model(), 300, 2, 1);
         place_wall(&mut rw, &mut world, 7, 8, 100, 16);
-        let leftover = leftover_corner_wall_visit(
-            &mut world,
-            &mut rw,
-            7 * 128,
-            10 * 128,
-            7,
-            9,
-            7,
-            8,
-        );
+        let leftover =
+            leftover_corner_wall_visit(&mut world, &mut rw, 7 * 128, 10 * 128, 7, 9, 7, 8);
         let wall_visit = leftover
             .iter()
             .find(|e| e.kind == FillKind::Visit && e.tile_x == 7 && e.tile_z == 8)
@@ -7388,11 +7436,13 @@ mod fill_java_order_tests {
         place_wall(&mut rw, &mut world, 7, 8, 100, 16);
         let full = render_traced(&mut world, &mut rw, 7 * 128, 10 * 128);
         assert!(
-            full.iter().any(|e| e.kind == FillKind::Wall && e.typecode == 100),
+            full.iter()
+                .any(|e| e.kind == FillKind::Wall && e.typecode == 100),
             "MIDTAB corner wall typecode 100 must still paint; events={full:?}"
         );
         assert!(
-            full.iter().any(|e| e.kind == FillKind::Sprite && e.typecode == 200),
+            full.iter()
+                .any(|e| e.kind == FillKind::Sprite && e.typecode == 200),
             "handshake loc typecode 200 must still paint after the defer; events={full:?}"
         );
     }

@@ -757,8 +757,7 @@ mod tests {
         let labels: &[&[u8]] = &[&[0], &[0], &[1]];
         let primary: &[(u8, i32, i32, i32)] =
             &[(0, 0, 0, 0), (0x7, 10, 20, 30), (0x7, 100, 200, 300)];
-        let secondary: &[(u8, i32, i32, i32)] =
-            &[(0, 0, 0, 0), (0x7, 1, 2, 3), (0x7, 7, 8, 9)];
+        let secondary: &[(u8, i32, i32, i32)] = &[(0, 0, 0, 0), (0x7, 1, 2, 3), (0x7, 7, 8, 9)];
         AnimFrame::unpack(&pack_archive(
             &[(MASK_PRI, 1, primary), (MASK_SEC, 1, secondary)],
             &types,
@@ -829,7 +828,11 @@ mod tests {
             Some(&[2, WALKMERGE_SENTINEL]),
         );
         let (x, y, z) = points(&model);
-        assert_eq!((x[0], y[0], z[0]), (10, 20, 30), "origin source vertex stays");
+        assert_eq!(
+            (x[0], y[0], z[0]),
+            (10, 20, 30),
+            "origin source vertex stays"
+        );
         assert_eq!(
             (x[1], y[1], z[1]),
             (85, 20, 30),
