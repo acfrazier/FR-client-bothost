@@ -55,7 +55,9 @@ fn delay_lookup_preserves_fallbacks_and_publication_without_allocating() {
     AnimFrame::init(16); // a later client's initialization preserves data
     assert_eq!(seq.get_delay(0), 2);
     publish(0);
-    assert_eq!(seq.get_delay(0), 0); // stored zero is not replaced with one
+    // Java `SeqType.getDelay` (274 `SeqType.java` 83-85; 289 `Class27`
+    // 104-106): a frame delay that resolves to 0 is played as 1.
+    assert_eq!(seq.get_delay(0), 1);
     assert_eq!(owned.delay, 2);
     publish(7);
     assert_eq!(seq.get_delay(0), 7); // no stale memoized delay

@@ -135,9 +135,10 @@ impl SeqType {
         }
     }
 
-    /// `getDelay(frame)` from client-ts. The TS memoises the resolved frame
-    /// delay into `this.delay[frame]`; this port recomputes (same result),
-    /// so it takes `&self`.
+    /// `getDelay(frame)`: Java 274 `SeqType.java` 75-87 (289 `Class27`
+    /// `method502` 95-112 is identical). A stored 0 resolves to the frame's
+    /// own delay, and a delay that is still 0 becomes 1. This port reads the
+    /// frame delay each call instead of memoising it, so it takes `&self`.
     pub fn get_delay(&self, frame: i32) -> i32 {
         let Some(delay) = self.delay.as_ref() else {
             return 0;
@@ -146,7 +147,7 @@ impl SeqType {
             return 0;
         };
 
-        let delay_value = if frame >= 0 && (frame as usize) < delay.len() {
+        let mut delay_value = if frame >= 0 && (frame as usize) < delay.len() {
             delay[frame as usize]
         } else {
             1
@@ -155,12 +156,15 @@ impl SeqType {
         if delay_value == 0 {
             if let Some(&transform_id) = frames.get(frame.max(0) as usize) {
                 if let Some(delay) = crate::dash3d::AnimFrame::delay(transform_id) {
-                    return delay;
+                    delay_value = delay;
                 }
             }
-            return 1;
         }
 
-        delay_value
+        if delay_value == 0 {
+            1
+        } else {
+            delay_value
+        }
     }
 }
