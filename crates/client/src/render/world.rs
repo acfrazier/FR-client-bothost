@@ -450,13 +450,12 @@ pub struct RenderWorld {
 }
 
 /// The lazily-resolved per-tile models (Task 3b), held by `RenderWorld`
-/// keyed by the sim tile grid coordinates. `model_stamp` records the tile
-/// `Square.model_stamp` the fields were resolved for (`i32::MIN` = never
-/// resolved), so LOC_ANIM / loc-change / `show_object` mutations on the
-/// sim side invalidate the cache through the tile stamp.
+/// keyed by the sim tile grid coordinates. Loc and ground-item stamps are
+/// independent: item-stack changes must retain the locs' baked shared light.
 #[derive(Default)]
 struct TileModels {
     model_stamp: i32,
+    obj_model_stamp: i32,
     wall_model1: Option<SceneModel>,
     wall_model2: Option<SceneModel>,
     decor_model: Option<SceneModel>,
@@ -1141,24 +1140,23 @@ impl RenderWorld {
     /// Materialise the ground-object stack's `ClientObj` models from the
     /// `(id, count)` descriptors `showObject` stored on the sim tile.
     fn resolve_objs(&mut self, world: &World, level: i32, x: i32, z: i32) {
-        let Some(go) =
-            tile_at(&world.squares, level, x, z).and_then(|t| t.ground_object.as_deref())
-        else {
-            return;
-        };
+        let tile = tile_at(&world.squares, level, x, z);
+        let stamp = tile.map_or(0, |t| t.obj_model_stamp);
+        let go = tile.and_then(|t| t.ground_object.as_deref());
         let bottom = go
-            .bottom
+            .and_then(|go| go.bottom)
             .map(|(id, count)| SceneModel::Obj(ClientObj::new(id, count)));
         let middle = go
-            .middle
+            .and_then(|go| go.middle)
             .map(|(id, count)| SceneModel::Obj(ClientObj::new(id, count)));
         let top = go
-            .top
+            .and_then(|go| go.top)
             .map(|(id, count)| SceneModel::Obj(ClientObj::new(id, count)));
         let slot = self.slot(world, level, x, z);
         slot.obj_bottom = bottom;
         slot.obj_middle = middle;
         slot.obj_top = top;
+        slot.obj_model_stamp = stamp;
     }
 
     fn resolve_sprite(&mut self, world: &World, cache: &Cache, loop_cycle: i32, index: usize) {
@@ -1420,6 +1418,10 @@ impl RenderWorld {
         &mut Option<SceneModel>,
     ) {
         self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
+        let stamp = tile_at(&world.squares, level, x, z).map_or(0, |t| t.obj_model_stamp);
+        if self.slot(world, level, x, z).obj_model_stamp != stamp {
+            self.resolve_objs(world, level, x, z);
+        }
         let slot = self.slot(world, level, x, z);
         (
             &mut slot.obj_bottom,

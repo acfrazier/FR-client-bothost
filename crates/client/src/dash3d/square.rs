@@ -48,11 +48,11 @@ pub struct Square {
     /// unlinks a node already in the list and appends it at the tail; a
     /// matching stamp makes older deque copies stale the same way.
     pub fill_stamp: i32,
-    /// Bumped by every model-bearing mutation (`set_wall`/`set_decor`/
-    /// `set_ground_decor`/`set_obj`/`add_scenery`/the LOC_ANIM arm). The
-    /// render side (`RenderWorld`) re-resolves the tile's models when it
-    /// changes (Task 3b lazy decode).
+    /// Bumped by wall/decor/ground-decor and LOC_ANIM mutations.
+    /// Ground-item stacks have a separate stamp so their updates cannot
+    /// discard loc models whose shared lighting was baked during the build.
     pub model_stamp: i32,
+    pub obj_model_stamp: i32,
 }
 
 impl Square {
@@ -84,6 +84,7 @@ impl Square {
             back_wall_types: 0,
             fill_stamp: 0,
             model_stamp: 0,
+            obj_model_stamp: 0,
         }
     }
 

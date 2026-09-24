@@ -378,7 +378,7 @@ impl World {
                 middle,
                 bottom,
             )));
-            tile.model_stamp = tile.model_stamp.wrapping_add(1);
+            tile.obj_model_stamp = tile.obj_model_stamp.wrapping_add(1);
         }
     }
 
@@ -386,7 +386,7 @@ impl World {
         let tile = &mut self.squares[level as usize][x as usize][z as usize];
         let Some(tile) = tile else { return };
         tile.ground_object = None;
-        tile.model_stamp = tile.model_stamp.wrapping_add(1);
+        tile.obj_model_stamp = tile.obj_model_stamp.wrapping_add(1);
     }
 
     #[allow(clippy::too_many_arguments)]
