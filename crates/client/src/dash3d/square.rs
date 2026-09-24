@@ -40,10 +40,11 @@ pub struct Square {
     pub draw_front: bool,
     pub draw_back: bool,
     pub draw_sprites: bool,
-    pub corner_sides: i32,
-    pub sides_before_corner: i32,
-    pub sides_after_corner: i32,
-    pub back_wall_types: i32,
+    /// Bounded masks from the renderer's corner and POSTTAB tables.
+    pub corner_sides: u8,
+    pub sides_before_corner: u8,
+    pub sides_after_corner: u8,
+    pub back_wall_types: u8,
     /// Stamp of this square's live `fillQueue` entry. Java/TS `LinkList.push`
     /// unlinks a node already in the list and appends it at the tail; a
     /// matching stamp makes older deque copies stale the same way.

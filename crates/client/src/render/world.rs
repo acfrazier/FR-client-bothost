@@ -3577,9 +3577,9 @@ impl RenderWorld {
                         .map(|t| {
                             (
                                 t.draw_back,
-                                t.corner_sides,
-                                t.sides_before_corner,
-                                t.sides_after_corner,
+                                i32::from(t.corner_sides),
+                                i32::from(t.sides_before_corner),
+                                i32::from(t.sides_after_corner),
                             )
                         })
                         .unwrap_or((false, 0, 0, 0));
@@ -3792,7 +3792,8 @@ impl RenderWorld {
                     front_wall_types = PRETAB.get(direction as usize).copied().unwrap_or(0);
                     if let Some(tile) = tile_at_mut(&mut world.squares, level, tile_x, tile_z) {
                         tile.back_wall_types =
-                            POSTTAB.get(direction as usize).copied().unwrap_or(0);
+                            u8::try_from(POSTTAB.get(direction as usize).copied().unwrap_or(0))
+                                .expect("POSTTAB wall mask fits u8");
                     }
                 }
 
@@ -3806,20 +3807,32 @@ impl RenderWorld {
                             tile.corner_sides = 0;
                         } else if angle1 == 16 {
                             tile.corner_sides = 3;
-                            tile.sides_before_corner = MIDDEP_16[direction as usize];
-                            tile.sides_after_corner = 3 - tile.sides_before_corner;
+                            tile.sides_before_corner = u8::try_from(MIDDEP_16[direction as usize])
+                                .expect("MIDDEP_16 mask fits u8");
+                            tile.sides_after_corner =
+                                u8::try_from(3 - i32::from(tile.sides_before_corner))
+                                    .expect("corner mask remainder fits u8");
                         } else if angle1 == 32 {
                             tile.corner_sides = 6;
-                            tile.sides_before_corner = MIDDEP_32[direction as usize];
-                            tile.sides_after_corner = 6 - tile.sides_before_corner;
+                            tile.sides_before_corner = u8::try_from(MIDDEP_32[direction as usize])
+                                .expect("MIDDEP_32 mask fits u8");
+                            tile.sides_after_corner =
+                                u8::try_from(6 - i32::from(tile.sides_before_corner))
+                                    .expect("corner mask remainder fits u8");
                         } else if angle1 == 64 {
                             tile.corner_sides = 12;
-                            tile.sides_before_corner = MIDDEP_64[direction as usize];
-                            tile.sides_after_corner = 12 - tile.sides_before_corner;
+                            tile.sides_before_corner = u8::try_from(MIDDEP_64[direction as usize])
+                                .expect("MIDDEP_64 mask fits u8");
+                            tile.sides_after_corner =
+                                u8::try_from(12 - i32::from(tile.sides_before_corner))
+                                    .expect("corner mask remainder fits u8");
                         } else {
                             tile.corner_sides = 9;
-                            tile.sides_before_corner = MIDDEP_128[direction as usize];
-                            tile.sides_after_corner = 9 - tile.sides_before_corner;
+                            tile.sides_before_corner = u8::try_from(MIDDEP_128[direction as usize])
+                                .expect("MIDDEP_128 mask fits u8");
+                            tile.sides_after_corner =
+                                u8::try_from(9 - i32::from(tile.sides_before_corner))
+                                    .expect("corner mask remainder fits u8");
                         }
                     }
 
@@ -4131,12 +4144,12 @@ impl RenderWorld {
                 tile_at(&world.squares, level, tile_x, tile_z)
                     .map(|t| {
                         (
-                            t.corner_sides,
+                            i32::from(t.corner_sides),
                             (0..t.sprite_count as usize)
                                 .map(|i| (t.sprite(i), t.sprite_span[i]))
                                 .collect::<Vec<_>>(),
-                            t.sides_before_corner,
-                            t.sides_after_corner,
+                            i32::from(t.sides_before_corner),
+                            i32::from(t.sides_after_corner),
                         )
                     })
                     .unwrap_or((0, Vec::new(), 0, 0));
@@ -4259,7 +4272,7 @@ impl RenderWorld {
                                 spans += 2;
                             }
 
-                            if (spans & other.corner_sides) != sides_after {
+                            if (spans & i32::from(other.corner_sides)) != sides_after {
                                 continue;
                             }
                             // Java World.fill (32f30626:1450-1453): matching
@@ -4591,7 +4604,7 @@ impl RenderWorld {
 
             // Back-wall decor + walls, drawn after the tile drops.
             let back_wall_types = tile_at(&world.squares, level, tile_x, tile_z)
-                .map(|t| t.back_wall_types)
+                .map(|t| i32::from(t.back_wall_types))
                 .unwrap_or(0);
             if back_wall_types != 0 {
                 let decor_data = tile_at(&world.squares, level, tile_x, tile_z)
