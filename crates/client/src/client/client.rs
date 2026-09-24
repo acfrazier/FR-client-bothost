@@ -1611,6 +1611,27 @@ impl Client {
         self.session_exit_observation.take()
     }
 
+    /// Rebind a disconnected public slot without rebuilding the shared cache.
+    pub fn set_public_world(
+        &mut self,
+        host: &str,
+        port: u16,
+        node_id: i32,
+        modulus: &str,
+    ) -> Result<(), String> {
+        let profile = self
+            .session_profile
+            .as_ref()
+            .ok_or("world switching requires a bound public session")?;
+        let next = profile.for_public_world(host, port, modulus)?;
+        self.config.host = host.into();
+        self.config.port = port;
+        self.node_id = node_id;
+        self.stream = None;
+        self.session_profile = Some(Arc::new(next));
+        Ok(())
+    }
+
     pub fn session_profile(&self) -> Option<&Arc<ClientSessionProfile>> {
         self.session_profile.as_ref()
     }
@@ -2219,8 +2240,45 @@ impl Client {
     }
 
     fn split_http_body(buf: &[u8]) -> Option<Vec<u8>> {
+        if !buf.starts_with(b"HTTP/1.0 200 ") && !buf.starts_with(b"HTTP/1.1 200 ") {
+            return None;
+        }
         let split = buf.windows(4).position(|w| w == b"\r\n\r\n")?;
         Some(buf[split + 4..].to_vec())
+    }
+
+    /// Extract the first whole decimal run of at least 250 digits in client.js.
+    pub fn login_modulus_from_client_js(body: &[u8]) -> Option<String> {
+        let mut start = 0;
+        while start < body.len() {
+            if !body[start].is_ascii_digit() {
+                start += 1;
+                continue;
+            }
+            let end = start
+                + body[start..]
+                    .iter()
+                    .take_while(|b| b.is_ascii_digit())
+                    .count();
+            if end - start >= 250 {
+                return std::str::from_utf8(&body[start..end])
+                    .ok()
+                    .map(str::to_owned);
+            }
+            start = end;
+        }
+        None
+    }
+
+    /// HTTPS in production; the explicit target also permits a local HTTP
+    /// listener in isolated tests. A missing key keeps the baked fallback.
+    pub fn fetch_login_modulus_for(
+        target: crate::BotTarget,
+        host: &str,
+        port: u16,
+    ) -> Option<String> {
+        let body = Self::http_get_for(target, host, port, "/client/client.js")?;
+        Self::login_modulus_from_client_js(&body)
     }
 
     /// TS `getJagChecksums`: GET `/crc` (9×g4 + hash). Hash check matches
@@ -3139,7 +3197,7 @@ impl Client {
             ),
             6 => (
                 "RuneScape has been updated!".into(),
-                "Wrong RSA key - run tools/redeploy.sh and rebuild.".into(),
+                "Wrong RSA key; check this world's login key.".into(),
             ),
             7 => (
                 "This world is full.".into(),
@@ -13590,5 +13648,98 @@ mod audio_toggle {
         out.push((value >> 16) as u8);
         out.push((value >> 8) as u8);
         out.push(value as u8);
+    }
+}
+
+#[cfg(test)]
+mod public_login_key_tests {
+    use super::Client;
+    use crate::BotTarget;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+
+    #[test]
+    fn extracts_first_long_decimal_run_and_fetches_from_client_js() {
+        let modulus = "1234567890".repeat(26);
+        let body = format!(
+            "const short=12345; const key=\"{modulus}\"; const later=\"{}\";",
+            "9".repeat(260)
+        );
+        assert_eq!(
+            Client::login_modulus_from_client_js(body.as_bytes()),
+            Some(modulus.clone())
+        );
+        assert_eq!(
+            Client::login_modulus_from_client_js(b"const key='123';"),
+            None
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(socket.try_clone().unwrap())
+                .read_line(&mut request)
+                .unwrap();
+            assert_eq!(request.trim_end(), "GET /client/client.js HTTP/1.0");
+            write!(
+                socket,
+                "HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        });
+        assert_eq!(
+            Client::fetch_login_modulus_for(BotTarget::Local, "127.0.0.1", port),
+            Some(modulus)
+        );
+        server.join().unwrap();
+    }
+    #[test]
+    fn selected_world_changes_login_endpoint_and_node_id_without_moving_assets() {
+        use crate::io::ClientRevision;
+        use crate::session::{ClientSessionConfig, ClientSessionProfile};
+        use std::sync::Arc;
+
+        let cache =
+            std::env::temp_dir().join(format!("274bot-public-world-{}", std::process::id()));
+        std::fs::create_dir_all(&cache).unwrap();
+        let profile = Arc::new(
+            ClientSessionProfile::new(ClientSessionConfig {
+                revision: ClientRevision::R289,
+                target: BotTarget::Prod,
+                game_host: "w1.rs2b2t.com".into(),
+                game_port: 443,
+                asset_host: "w1.rs2b2t.com".into(),
+                asset_port: 443,
+                cache_dir: cache.clone(),
+                unpack_dir: cache.clone(),
+                rsa_modulus: crate::PROD_LOGIN_RSAN.into(),
+                rsa_exponent: crate::PROD_LOGIN_RSAE.into(),
+                expected_crc: Some([0; 9]),
+                content_id: "public-fixture".into(),
+            })
+            .unwrap(),
+        );
+        let mut client = Client::from_shared_with_profile(
+            profile.client_config(false, true),
+            Arc::new(crate::config::Cache::default()),
+            Arc::new(Vec::new()),
+            Vec::new(),
+            profile,
+        )
+        .unwrap();
+        let changed_key = "8".repeat(260);
+        client
+            .set_public_world("w2.rs2b2t.com", 443, 11, &changed_key)
+            .unwrap();
+        assert_eq!(client.node_id, 11);
+        assert_eq!(client.config.host, "w2.rs2b2t.com");
+        assert_eq!(client.config.port, 443);
+        let bound = client.session_profile().unwrap();
+        assert_eq!(bound.game_host(), "w2.rs2b2t.com");
+        assert_eq!(bound.asset_host(), "w1.rs2b2t.com");
+        assert_eq!(bound.rsa_modulus(), changed_key);
+        std::fs::remove_dir_all(cache).unwrap();
     }
 }

@@ -1,8 +1,9 @@
 //! Runtime world switch. Cargo's `TARGET` is the rustc triple.
 //!
-//! `BOT_TARGET=prod` (alias `live`) talks to `w1.rs2b2t.com` with the
-//! baked public RSA. Anything else is the **local engine** on loopback.
-//! Prod is HTTPS `/crc`+jags and WSS `ClientStream`; local stays TCP.
+//! An unbound `BOT_TARGET=prod` client defaults to `w1.rs2b2t.com` with
+//! the baked public RSA. The bot host binds its configured world and runtime
+//! login key per slot. Prod uses HTTPS `/crc`+jags and WSS `ClientStream`;
+//! local stays TCP.
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -43,7 +44,7 @@ fn operator_home_from(
 pub enum BotTarget {
     /// Loopback Lost City engine. Keys from `$ENGINE_DIR` / `LOGIN_RSAN`.
     Local,
-    /// `w1.rs2b2t.com` with the baked public RSA.
+    /// Public transport; an unbound client defaults to w1 with baked RSA.
     Prod,
 }
 
