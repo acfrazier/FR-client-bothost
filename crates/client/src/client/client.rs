@@ -3145,6 +3145,36 @@ impl Client {
             return self.login(username, password, reconnect);
         }
 
+        if response == 21 {
+            let remaining = stream
+                .read()
+                .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+            if remaining < 0 {
+                return Err(self.fail_title_login(io_error(), reconnect));
+            }
+            let retry_after = Duration::from_secs(remaining as u64);
+            let transfer_error = || LoginError {
+                code: 21,
+                mes1: "You have only just left another world".into(),
+                mes2: format!(
+                    "Your profile will be transferred in: {remaining} seconds"
+                ),
+                retry_after: Some(retry_after),
+            };
+            if self.external_reconnect_owner {
+                drop(stream);
+                return Err(self.fail_title_login(transfer_error(), reconnect));
+            }
+            for seconds in (0..=remaining).rev() {
+                self.login_mes1 = "You have only just left another world".into();
+                self.login_mes2 =
+                    format!("Your profile will be transferred in: {seconds} seconds");
+                thread::sleep(Duration::from_secs(1));
+            }
+            drop(stream);
+            return self.login(username, password, reconnect);
+        }
+
         if response == 2 {
             self.staffmodlevel = stream
                 .read()
@@ -3315,6 +3345,7 @@ impl Client {
                 code: response,
                 mes1,
                 mes2,
+                retry_after: None,
             },
             reconnect,
         ))
@@ -13259,6 +13290,7 @@ fn io_error() -> LoginError {
         code: -1,
         mes1: String::new(),
         mes2: "Error connecting to server.".into(),
+        retry_after: None,
     }
 }
 

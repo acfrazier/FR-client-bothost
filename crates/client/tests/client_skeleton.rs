@@ -21,6 +21,7 @@ fn login_error_carries_code_and_messages() {
         code: 6,
         mes1: "invalid".into(),
         mes2: "rsa".into(),
+        retry_after: None,
     };
     assert_eq!(e.code, 6);
 }

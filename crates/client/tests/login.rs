@@ -5,6 +5,7 @@ use client::util::JString;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
+use std::time::{Duration, Instant};
 
 #[test]
 fn to_userhash_matches_client_ts() {
@@ -493,6 +494,78 @@ fn standalone_response_one_retries_after_two_seconds() {
     });
     client.login("bob", "pw", false).unwrap();
     assert!(client.ingame);
+    server.join().unwrap();
+}
+
+#[test]
+fn externally_owned_response_21_carries_server_delay() {
+    let _r = Renderer::new(false);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut hdr = [0u8; 2];
+        stream.read_exact(&mut hdr).unwrap();
+        for _ in 0..8 {
+            stream.write_all(&[0]).unwrap();
+        }
+        stream.write_all(&[21, 3]).unwrap();
+    });
+    let mut client = Client::new(ClientConfig {
+        host: addr.ip().to_string(),
+        port: addr.port(),
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    client.set_external_reconnect_owner(true);
+
+    let error = client.login("bob", "pw", false).unwrap_err();
+
+    assert_eq!(error.code, 21);
+    assert_eq!(error.retry_after, Some(Duration::from_secs(3)));
+    assert_eq!(error.mes1, "You have only just left another world");
+    assert_eq!(
+        error.mes2,
+        "Your profile will be transferred in: 3 seconds"
+    );
+    server.join().unwrap();
+}
+
+#[test]
+fn standalone_response_21_counts_down_then_retries() {
+    let _r = Renderer::new(false);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        for response in [21, 2] {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut hdr = [0u8; 2];
+            stream.read_exact(&mut hdr).unwrap();
+            for _ in 0..8 {
+                stream.write_all(&[0]).unwrap();
+            }
+            stream.write_all(&[response]).unwrap();
+            match response {
+                21 => stream.write_all(&[0]).unwrap(),
+                2 => stream.write_all(&[0, 0]).unwrap(),
+                _ => unreachable!(),
+            }
+        }
+    });
+    let mut client = Client::new(ClientConfig {
+        host: addr.ip().to_string(),
+        port: addr.port(),
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    let started = Instant::now();
+
+    client.login("bob", "pw", false).unwrap();
+
+    assert!(client.ingame);
+    assert!(started.elapsed() >= Duration::from_millis(900));
     server.join().unwrap();
 }
 
