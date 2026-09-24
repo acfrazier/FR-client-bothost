@@ -9592,7 +9592,8 @@ impl Client {
                                 wall.h_se = height_se;
                                 wall.h_ne = height_ne;
                                 wall.h_nw = height_nw;
-                                self.world.bump_tile_stamp(self.minusedlevel, x, z);
+                                self.world
+                                    .bump_loc_stamp(self.minusedlevel, x, z, LocLayer::WALL);
                             }
                         }
                         LocLayer::WALL_DECOR => {
@@ -9607,7 +9608,12 @@ impl Client {
                                 decor.h_se = height_ne;
                                 decor.h_ne = height_ne;
                                 decor.h_nw = height_nw;
-                                self.world.bump_tile_stamp(self.minusedlevel, x, z);
+                                self.world.bump_loc_stamp(
+                                    self.minusedlevel,
+                                    x,
+                                    z,
+                                    LocLayer::WALL_DECOR,
+                                );
                             }
                         }
                         LocLayer::GROUND => {
@@ -9633,7 +9639,12 @@ impl Client {
                                 decor.h_se = height_se;
                                 decor.h_ne = height_ne;
                                 decor.h_nw = height_nw;
-                                self.world.bump_tile_stamp(self.minusedlevel, x, z);
+                                self.world.bump_loc_stamp(
+                                    self.minusedlevel,
+                                    x,
+                                    z,
+                                    LocLayer::GROUND_DECOR,
+                                );
                             }
                         }
                         _ => {}

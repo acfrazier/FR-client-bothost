@@ -48,10 +48,12 @@ pub struct Square {
     /// unlinks a node already in the list and appends it at the tail; a
     /// matching stamp makes older deque copies stale the same way.
     pub fill_stamp: i32,
-    /// Bumped by wall/decor/ground-decor and LOC_ANIM mutations.
-    /// Ground-item stacks have a separate stamp so their updates cannot
-    /// discard loc models whose shared lighting was baked during the build.
-    pub model_stamp: i32,
+    /// Independent wall, wall-decoration and ground-decoration generations.
+    /// Changing one layer must retain the other layers' baked shared light.
+    pub wall_model_stamp: i32,
+    pub decor_model_stamp: i32,
+    pub gd_model_stamp: i32,
+    /// Ground-item stack generation; item updates never invalidate locs.
     pub obj_model_stamp: i32,
 }
 
@@ -83,7 +85,9 @@ impl Square {
             sides_after_corner: 0,
             back_wall_types: 0,
             fill_stamp: 0,
-            model_stamp: 0,
+            wall_model_stamp: 0,
+            decor_model_stamp: 0,
+            gd_model_stamp: 0,
             obj_model_stamp: 0,
         }
     }

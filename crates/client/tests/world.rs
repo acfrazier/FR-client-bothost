@@ -243,6 +243,47 @@ fn ground_item_updates_preserve_shared_wall_lighting() {
 }
 
 #[test]
+fn decor_mutations_preserve_shared_wall_lighting() {
+    let mut world = flat_world();
+    let mut rw = RenderWorld::new();
+    place_wall(
+        &mut rw,
+        &mut world,
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        Some(SceneModel::Model(normals_model())),
+        None,
+        0,
+        0,
+    );
+    rw.share_light(&mut world, 64, 768, -50, -10, -50);
+    let cache = Cache::default();
+    let shade = |rw: &mut RenderWorld, world: &World| {
+        let SceneModel::Model(model) = rw
+            .wall_model1(world, &cache, 0, 0, 1, 1)
+            .expect("decor mutation must retain the shared-lit wall")
+        else {
+            panic!("expected lit wall");
+        };
+        model.face_colour_a.as_ref().unwrap()[0]
+    };
+    let lit = shade(&mut rw, &world);
+    assert_ne!(lit, 0);
+    world.set_decor(0, 1, 1, 2000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    assert_eq!(shade(&mut rw, &world), lit);
+    world.del_decor(0, 1, 1);
+    assert_eq!(shade(&mut rw, &world), lit);
+    world.set_ground_decor(0, 1, 1, 2000, 0, 0, 0, 0, 0, 0);
+    assert_eq!(shade(&mut rw, &world), lit);
+    world.del_ground_decor(0, 1, 1);
+    assert_eq!(shade(&mut rw, &world), lit);
+}
+
+#[test]
 fn share_light_lights_scenery_sprites() {
     let mut world = flat_world();
     let mut rw = RenderWorld::new();

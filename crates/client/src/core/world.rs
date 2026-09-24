@@ -25,7 +25,9 @@
 #![allow(clippy::manual_range_contains)]
 #![allow(clippy::too_many_arguments)]
 
-use crate::dash3d::{Decor, GroundDecor, GroundObject, GroundStamp, Occlude, Sprite, Square, Wall};
+use crate::dash3d::{
+    Decor, GroundDecor, GroundObject, GroundStamp, LocLayer, Occlude, Sprite, Square, Wall,
+};
 
 pub const OCCLUDER_LEVELS: usize = 4;
 pub const MAX_OCCLUDERS: usize = 500;
@@ -339,7 +341,7 @@ impl World {
                 h_ne,
                 h_nw,
             )));
-            tile.model_stamp = tile.model_stamp.wrapping_add(1);
+            tile.gd_model_stamp = tile.gd_model_stamp.wrapping_add(1);
         }
     }
 
@@ -347,7 +349,7 @@ impl World {
         let tile = &mut self.squares[level as usize][x as usize][z as usize];
         let Some(tile) = tile else { return };
         tile.ground_decor = None;
-        tile.model_stamp = tile.model_stamp.wrapping_add(1);
+        tile.gd_model_stamp = tile.gd_model_stamp.wrapping_add(1);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -427,7 +429,7 @@ impl World {
                 h_ne,
                 h_nw,
             )));
-            tile.model_stamp = tile.model_stamp.wrapping_add(1);
+            tile.wall_model_stamp = tile.wall_model_stamp.wrapping_add(1);
         }
     }
 
@@ -435,7 +437,7 @@ impl World {
         let tile = &mut self.squares[level as usize][x as usize][z as usize];
         let Some(tile) = tile else { return };
         tile.wall = None;
-        tile.model_stamp = tile.model_stamp.wrapping_add(1);
+        tile.wall_model_stamp = tile.wall_model_stamp.wrapping_add(1);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -478,7 +480,7 @@ impl World {
                 h_ne,
                 h_nw,
             )));
-            tile.model_stamp = tile.model_stamp.wrapping_add(1);
+            tile.decor_model_stamp = tile.decor_model_stamp.wrapping_add(1);
         }
     }
 
@@ -486,7 +488,7 @@ impl World {
         let tile = &mut self.squares[level as usize][x as usize][z as usize];
         let Some(tile) = tile else { return };
         tile.decor = None;
-        tile.model_stamp = tile.model_stamp.wrapping_add(1);
+        tile.decor_model_stamp = tile.decor_model_stamp.wrapping_add(1);
     }
 
     pub fn move_decor(&mut self, level: i32, x: i32, z: i32, offset: i32) {
@@ -857,11 +859,16 @@ impl World {
         self.last_sprite
     }
 
-    /// The model stamp of the tile, for the render side's lazy model cache
-    /// (`None` tiles report `i32::MIN`, which never matches a resolved slot).
-    pub fn tile_model_stamp(&self, level: i32, x: i32, z: i32) -> i32 {
+    /// Generation of a tile loc layer for the renderer's lazy model cache.
+    /// Scene sprites carry their generation on the sprite instead.
+    pub fn loc_model_stamp(&self, level: i32, x: i32, z: i32, layer: i32) -> i32 {
         tile_at(&self.squares, level, x, z)
-            .map(|t| t.model_stamp)
+            .map(|t| match layer {
+                LocLayer::WALL => t.wall_model_stamp,
+                LocLayer::WALL_DECOR => t.decor_model_stamp,
+                LocLayer::GROUND_DECOR => t.gd_model_stamp,
+                _ => unreachable!("scene sprite stamps live on the sprite"),
+            })
             .unwrap_or(i32::MIN)
     }
     #[allow(clippy::too_many_arguments)]
@@ -975,11 +982,16 @@ impl World {
         Some(index)
     }
 
-    /// Bump the tile's model stamp (called by the LOC_ANIM arm after it
-    /// rewrites the tile's wall/decor/ground-decor anim state).
-    pub fn bump_tile_stamp(&mut self, level: i32, x: i32, z: i32) {
+    /// Invalidate only the loc layer whose animation state changed.
+    pub fn bump_loc_stamp(&mut self, level: i32, x: i32, z: i32, layer: i32) {
         if let Some(tile) = tile_at_mut(&mut self.squares, level, x, z) {
-            tile.model_stamp = tile.model_stamp.wrapping_add(1);
+            let stamp = match layer {
+                LocLayer::WALL => &mut tile.wall_model_stamp,
+                LocLayer::WALL_DECOR => &mut tile.decor_model_stamp,
+                LocLayer::GROUND_DECOR => &mut tile.gd_model_stamp,
+                _ => unreachable!("scene sprite stamps live on the sprite"),
+            };
+            *stamp = stamp.wrapping_add(1);
         }
     }
 
@@ -1261,20 +1273,16 @@ mod static_loc_observation_tests {
     }
 
     #[test]
-    fn static_add_and_remove_bump_generation_without_tile_stamps() {
+    fn static_add_and_remove_bump_generation() {
         let mut world = tiny_world();
         assert_eq!(world.static_loc_generation(), 0);
-        assert_eq!(world.tile_model_stamp(0, 2, 3), i32::MIN);
 
         assert!(world.add_scenery(0, 2, 3, 0, scene_typecode(9), 10, 1, 1, 0, 0, 0, 0, 0));
         assert_eq!(world.static_loc_generation(), 1);
-        let stamp = world.tile_model_stamp(0, 2, 3);
-        assert_eq!(stamp, 0, "static scenery must not bump the render stamp");
         assert!(world.get_scene(0, 2, 3).is_some());
 
         world.del_loc(0, 2, 3);
         assert_eq!(world.static_loc_generation(), 2);
-        assert_eq!(world.tile_model_stamp(0, 2, 3), stamp);
         assert!(world.get_scene(0, 2, 3).is_none());
     }
 
@@ -1311,13 +1319,11 @@ mod static_loc_observation_tests {
         let mut world = tiny_world();
         assert!(world.add_scenery(0, 1, 1, 0, scene_typecode(8), 10, 1, 1, 0, 0, 0, 0, 0));
         let gen = world.static_loc_generation();
-        let stamp = world.tile_model_stamp(0, 1, 1);
         let index = world
             .add_dynamic(0, 192, 0, 192, scene_typecode(2), 0, 0, false)
             .expect("dynamic sprite");
         world.release_dynamic_sprite(index);
         assert_eq!(world.static_loc_generation(), gen);
-        assert_eq!(world.tile_model_stamp(0, 1, 1), stamp);
         assert!(world.get_scene(0, 1, 1).is_some());
     }
 

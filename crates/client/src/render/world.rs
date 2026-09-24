@@ -29,8 +29,8 @@ use crate::core::world::{
     ground_h, tile_at, tile_at_mut, World, MAX_ACTIVE_OCCLUDERS, MAX_OCCLUDERS, OCCLUDER_LEVELS,
 };
 use crate::dash3d::{
-    wrapping_cross, ClientLocAnim, ClientObj, Ground, LocAngle, LocShape, Model, QuickGround,
-    SceneModel,
+    wrapping_cross, ClientLocAnim, ClientObj, Ground, LocAngle, LocLayer, LocShape, Model,
+    QuickGround, SceneModel,
 };
 use crate::graphics::{Pix2D, Pix3D, Pix3DDraw};
 
@@ -422,7 +422,7 @@ pub struct RenderWorld {
     /// Task 3b lazy model cache. The sim world keeps only typecodes and
     /// placement; the meshes/sprites are decoded from the config `Cache`
     /// on first draw, keyed by tile (walls/decor/ground-decor/objects) or
-    /// by sprite-arena index, and re-decoded when the tile's `model_stamp`
+    /// by sprite-arena index, and re-decoded when that layer's generation
     /// (or a scene sprite's `model_stamp`) changes. Cleared whenever the
     /// sim world's `build_generation` changes, so a headless client that
     /// never draws never decodes a model.
@@ -453,7 +453,9 @@ pub struct RenderWorld {
 /// independent: item-stack changes must retain the locs' baked shared light.
 #[derive(Default)]
 struct TileModels {
-    model_stamp: i32,
+    wall_model_stamp: i32,
+    decor_model_stamp: i32,
+    gd_model_stamp: i32,
     obj_model_stamp: i32,
     wall_model1: Option<SceneModel>,
     wall_model2: Option<SceneModel>,
@@ -760,14 +762,14 @@ impl RenderWorld {
     // mapping, the animated-loc `ClientLocAnim` construction and the
     // packet-time heights the sim recorded). The draw tests inject models
     // with `set_wall_model`/`set_sprite_model`; those slots carry the
-    // tile's current `model_stamp`, so resolution skips them.
+    // layer's current generation, so resolution skips them.
 
     /// Flat index into `tile_models`/`linked_models` for a tile.
     fn tile_index(&self, world: &World, level: i32, x: i32, z: i32) -> usize {
         ((level * world.max_tile_x + x) * world.max_tile_z + z) as usize
     }
 
-    /// Read already-resolved loc models without `ensure_tile_resolved`.
+    /// Read already-resolved loc models without refreshing any layer.
     #[cfg(feature = "render-diagnostics")]
     fn dump_resolved_loc_shades(&self, world: &World, level: i32, tile_x: i32, tile_z: i32) {
         let index = self.tile_index(world, level, tile_x, tile_z);
@@ -891,16 +893,14 @@ impl RenderWorld {
         x: i32,
         z: i32,
     ) {
-        self.resolve_wall_models(world, cache, loop_cycle, level, x, z);
-        self.resolve_decor_model(world, cache, loop_cycle, level, x, z);
-        self.resolve_gd_model(world, cache, loop_cycle, level, x, z);
-        self.resolve_objs(world, level, x, z);
-        self.slot(world, level, x, z).model_stamp = world.tile_model_stamp(level, x, z);
+        for layer in [LocLayer::WALL, LocLayer::WALL_DECOR, LocLayer::GROUND_DECOR] {
+            self.ensure_loc_resolved(world, cache, loop_cycle, level, x, z, layer);
+        }
+        self.ensure_objs_resolved(world, level, x, z);
     }
 
-    /// Re-resolve the tile's cached models only when its sim-side
-    /// `model_stamp` changed since the slot was filled.
-    fn ensure_tile_resolved(
+    /// Refresh only the requested loc layer, retaining its neighbours' light.
+    fn ensure_loc_resolved(
         &mut self,
         world: &World,
         cache: &Cache,
@@ -908,14 +908,25 @@ impl RenderWorld {
         level: i32,
         x: i32,
         z: i32,
+        layer: i32,
     ) {
-        let stamp = world.tile_model_stamp(level, x, z);
-        let old = self.slot(world, level, x, z).model_stamp;
-        if old != stamp {
-            if crate::render_debug_enabled() {
-                eprintln!("[resolve] tile ({x},{z}) level={level} stamp {old}->{stamp}");
-            }
-            self.resolve_tile(world, cache, loop_cycle, level, x, z);
+        let stamp = world.loc_model_stamp(level, x, z, layer);
+        let slot = self.slot(world, level, x, z);
+        let old = match layer {
+            LocLayer::WALL => &mut slot.wall_model_stamp,
+            LocLayer::WALL_DECOR => &mut slot.decor_model_stamp,
+            LocLayer::GROUND_DECOR => &mut slot.gd_model_stamp,
+            _ => unreachable!("scene sprites resolve separately"),
+        };
+        if *old == stamp {
+            return;
+        }
+        *old = stamp;
+        match layer {
+            LocLayer::WALL => self.resolve_wall_models(world, cache, loop_cycle, level, x, z),
+            LocLayer::WALL_DECOR => self.resolve_decor_model(world, cache, loop_cycle, level, x, z),
+            LocLayer::GROUND_DECOR => self.resolve_gd_model(world, cache, loop_cycle, level, x, z),
+            _ => unreachable!("scene sprites resolve separately"),
         }
     }
 
@@ -930,6 +941,9 @@ impl RenderWorld {
     ) {
         let Some(wall) = tile_at(&world.squares, level, x, z).and_then(|t| t.wall.as_deref())
         else {
+            let slot = self.slot(world, level, x, z);
+            slot.wall_model1 = None;
+            slot.wall_model2 = None;
             return;
         };
         let loc_id = (wall.typecode >> 14) & 0x7fff;
@@ -1041,6 +1055,7 @@ impl RenderWorld {
     ) {
         let Some(decor) = tile_at(&world.squares, level, x, z).and_then(|t| t.decor.as_deref())
         else {
+            self.slot(world, level, x, z).decor_model = None;
             return;
         };
         let loc_id = (decor.typecode >> 14) & 0x7fff;
@@ -1081,6 +1096,7 @@ impl RenderWorld {
     ) {
         let Some(gd) = tile_at(&world.squares, level, x, z).and_then(|t| t.ground_decor.as_deref())
         else {
+            self.slot(world, level, x, z).gd_model = None;
             return;
         };
         let loc_id = (gd.typecode >> 14) & 0x7fff;
@@ -1138,9 +1154,12 @@ impl RenderWorld {
 
     /// Materialise the ground-object stack's `ClientObj` models from the
     /// `(id, count)` descriptors `showObject` stored on the sim tile.
-    fn resolve_objs(&mut self, world: &World, level: i32, x: i32, z: i32) {
+    fn ensure_objs_resolved(&mut self, world: &World, level: i32, x: i32, z: i32) {
         let tile = tile_at(&world.squares, level, x, z);
         let stamp = tile.map_or(0, |t| t.obj_model_stamp);
+        if self.slot(world, level, x, z).obj_model_stamp == stamp {
+            return;
+        }
         let go = tile.and_then(|t| t.ground_object.as_deref());
         let bottom = go
             .and_then(|go| go.bottom)
@@ -1276,13 +1295,13 @@ impl RenderWorld {
         let index = self.tile_index(world, level, x, z);
         self.grow_linked_models(index);
         let slot = self.linked_models[index].get_or_insert_with(Default::default);
-        slot.model_stamp = 0;
+        slot.wall_model_stamp = 0;
         slot.wall_model1 = model1;
         slot.wall_model2 = model2;
     }
 
     /// The resolved wall models of a tile (resolving from the sim typecodes
-    /// on first draw, re-resolving when the tile's model stamp changes).
+    /// on first draw, re-resolving when the wall layer's stamp changes).
     fn wall_models_mut(
         &mut self,
         world: &World,
@@ -1292,7 +1311,7 @@ impl RenderWorld {
         x: i32,
         z: i32,
     ) -> (&mut Option<SceneModel>, &mut Option<SceneModel>) {
-        self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
+        self.ensure_loc_resolved(world, cache, loop_cycle, level, x, z, LocLayer::WALL);
         let slot = self.slot(world, level, x, z);
         (&mut slot.wall_model1, &mut slot.wall_model2)
     }
@@ -1306,7 +1325,7 @@ impl RenderWorld {
         x: i32,
         z: i32,
     ) -> &mut Option<SceneModel> {
-        self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
+        self.ensure_loc_resolved(world, cache, loop_cycle, level, x, z, LocLayer::WALL_DECOR);
         &mut self.slot(world, level, x, z).decor_model
     }
 
@@ -1319,7 +1338,15 @@ impl RenderWorld {
         x: i32,
         z: i32,
     ) -> &mut Option<SceneModel> {
-        self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
+        self.ensure_loc_resolved(
+            world,
+            cache,
+            loop_cycle,
+            level,
+            x,
+            z,
+            LocLayer::GROUND_DECOR,
+        );
         &mut self.slot(world, level, x, z).gd_model
     }
 
@@ -1406,8 +1433,6 @@ impl RenderWorld {
     fn obj_models_mut(
         &mut self,
         world: &World,
-        cache: &Cache,
-        loop_cycle: i32,
         level: i32,
         x: i32,
         z: i32,
@@ -1416,11 +1441,7 @@ impl RenderWorld {
         &mut Option<SceneModel>,
         &mut Option<SceneModel>,
     ) {
-        self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
-        let stamp = tile_at(&world.squares, level, x, z).map_or(0, |t| t.obj_model_stamp);
-        if self.slot(world, level, x, z).obj_model_stamp != stamp {
-            self.resolve_objs(world, level, x, z);
-        }
+        self.ensure_objs_resolved(world, level, x, z);
         let slot = self.slot(world, level, x, z);
         (
             &mut slot.obj_bottom,
@@ -1444,7 +1465,7 @@ impl RenderWorld {
         self.grow_linked_models(index);
         let stale = self.linked_models[index]
             .as_ref()
-            .is_none_or(|s| s.model_stamp == i32::MIN);
+            .is_none_or(|s| s.wall_model_stamp == i32::MIN);
         if stale {
             self.resolve_linked_wall(world, cache, loop_cycle, level, x, z);
         }
@@ -1536,7 +1557,7 @@ impl RenderWorld {
         model2: Option<SceneModel>,
     ) {
         let slot = self.slot(world, level, x, z);
-        slot.model_stamp = world.tile_model_stamp(level, x, z);
+        slot.wall_model_stamp = world.loc_model_stamp(level, x, z, LocLayer::WALL);
         slot.wall_model1 = model1;
         slot.wall_model2 = model2;
     }
@@ -1551,7 +1572,7 @@ impl RenderWorld {
         model: SceneModel,
     ) {
         let slot = self.slot(world, level, x, z);
-        slot.model_stamp = world.tile_model_stamp(level, x, z);
+        slot.decor_model_stamp = world.loc_model_stamp(level, x, z, LocLayer::WALL_DECOR);
         slot.decor_model = Some(model);
     }
 
@@ -1565,7 +1586,7 @@ impl RenderWorld {
         model: Option<SceneModel>,
     ) {
         let slot = self.slot(world, level, x, z);
-        slot.model_stamp = world.tile_model_stamp(level, x, z);
+        slot.gd_model_stamp = world.loc_model_stamp(level, x, z, LocLayer::GROUND_DECOR);
         slot.gd_model = model;
     }
 
@@ -1580,7 +1601,7 @@ impl RenderWorld {
         x: i32,
         z: i32,
     ) -> Option<&SceneModel> {
-        self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
+        self.ensure_loc_resolved(world, cache, loop_cycle, level, x, z, LocLayer::WALL);
         self.slot(world, level, x, z).wall_model1.as_ref()
     }
 
@@ -1593,7 +1614,7 @@ impl RenderWorld {
         x: i32,
         z: i32,
     ) -> Option<&SceneModel> {
-        self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
+        self.ensure_loc_resolved(world, cache, loop_cycle, level, x, z, LocLayer::WALL);
         self.slot(world, level, x, z).wall_model2.as_ref()
     }
 
@@ -1606,7 +1627,15 @@ impl RenderWorld {
         x: i32,
         z: i32,
     ) -> Option<&SceneModel> {
-        self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
+        self.ensure_loc_resolved(
+            world,
+            cache,
+            loop_cycle,
+            level,
+            x,
+            z,
+            LocLayer::GROUND_DECOR,
+        );
         self.slot(world, level, x, z).gd_model.as_ref()
     }
 
@@ -1619,7 +1648,7 @@ impl RenderWorld {
         x: i32,
         z: i32,
     ) -> Option<&SceneModel> {
-        self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
+        self.ensure_loc_resolved(world, cache, loop_cycle, level, x, z, LocLayer::WALL_DECOR);
         self.slot(world, level, x, z).decor_model.as_ref()
     }
 
@@ -1693,7 +1722,7 @@ impl RenderWorld {
             for x in 0..world.max_tile_x {
                 for z in 0..world.max_tile_z {
                     if let Some(t) = tile_at(&world.squares, level, x, z) {
-                        self.ensure_tile_resolved(world, cache, loop_cycle, level, x, z);
+                        self.resolve_tile(world, cache, loop_cycle, level, x, z);
                         for i in 0..t.sprite_count as usize {
                             if let Some(index) = t.sprite(i) {
                                 self.sprite_model_mut(world, cache, loop_cycle, index);
@@ -1712,7 +1741,7 @@ impl RenderWorld {
                     self.grow_linked_models(index);
                     if self.linked_models[index]
                         .as_ref()
-                        .is_none_or(|s| s.model_stamp == i32::MIN)
+                        .is_none_or(|s| s.wall_model_stamp == i32::MIN)
                     {
                         self.resolve_linked_wall(world, cache, loop_cycle, 0, x, z);
                     }
@@ -4035,8 +4064,8 @@ impl RenderWorld {
                             &*world, cache, loop_cycle, level, tile_x, tile_z,
                         );
                         if height == 0 {
-                            let (bottom, middle, top) = self
-                                .obj_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z);
+                            let (bottom, middle, top) =
+                                self.obj_models_mut(&*world, level, tile_x, tile_z);
                             if let Some(model) = bottom.as_mut() {
                                 model.world_render(
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
@@ -4503,8 +4532,7 @@ impl RenderWorld {
                 let height =
                     self.ground_object_height(&*world, cache, loop_cycle, level, tile_x, tile_z);
                 if height != 0 {
-                    let (bottom, middle, top) =
-                        self.obj_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z);
+                    let (bottom, middle, top) = self.obj_models_mut(&*world, level, tile_x, tile_z);
                     if let Some(model) = bottom.as_mut() {
                         model.world_render(
                             cache,
