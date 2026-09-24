@@ -3079,8 +3079,7 @@ impl RenderWorld {
             let height =
                 self.ground_object_height(&*world, cache, loop_cycle, level, tile_x, tile_z);
             if height == 0 {
-                let (bottom, middle, top) =
-                    self.obj_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z);
+                let (bottom, middle, top) = self.obj_models_mut(&*world, level, tile_x, tile_z);
                 if let Some(model) = bottom.as_mut() {
                     emit_scene_model(
                         model,
