@@ -146,6 +146,28 @@ impl ClientSessionProfile {
         &self.content_id
     }
 
+    /// Change only the login endpoint and key; shared assets stay bound to the
+    /// template's original update server and cache identity.
+    pub fn for_public_world(&self, host: &str, port: u16, modulus: &str) -> Result<Self, String> {
+        if self.target != BotTarget::Prod {
+            return Err("world switching requires a public session".into());
+        }
+        Self::new(ClientSessionConfig {
+            revision: self.revision,
+            target: self.target,
+            game_host: host.into(),
+            game_port: port,
+            asset_host: self.asset_host.clone(),
+            asset_port: self.asset_port,
+            cache_dir: self.cache_dir.clone(),
+            unpack_dir: self.unpack_dir.clone(),
+            rsa_modulus: modulus.into(),
+            rsa_exponent: self.rsa_exponent.clone(),
+            expected_crc: self.expected_crc,
+            content_id: self.content_id.clone(),
+        })
+    }
+
     pub fn client_config(&self, members: bool, lowmem: bool) -> ClientConfig {
         ClientConfig {
             host: self.game_host.clone(),
