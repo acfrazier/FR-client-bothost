@@ -417,7 +417,12 @@ fn vs_main(in: VsIn) -> VsOut {
     let bias = (in.abhsl >> 16) & 0xffu;
     let hsl = in.abhsl & 0xffffu;
     let tex_id = in.uv_tex & 0xffffu;
-    let u = (in.uv_tex >> 16) & 0xffffu;
+    // The packed u/v are signed 16-bit (texture units × 256). Sign-extend
+    // so a face whose coordinates cross zero interpolates across the few
+    // texels between its vertices; the sampler then clamps U and wraps V
+    // per fragment like Java's per-pixel `0..16256` clamp / `& 0x3f80` mask.
+    let u = bitcast<i32>(in.uv_tex) >> 16u;
+    let v = bitcast<i32>(in.v << 16u) >> 16u;
 
     // The projection mirrors the CPU `origin + (x << 9) / z` (origin = the
     // 512×334 area_game centre). clip.z is set so the interpolated depth
@@ -431,7 +436,7 @@ fn vs_main(in: VsIn) -> VsOut {
     out.color = hslToRgb(hsl);
     out.hsl = f32(hsl);
     out.u = f32(u);
-    out.v = f32(in.v);
+    out.v = f32(v);
     out.tex_id = tex_id;
     out.alpha = alpha;
     return out;
@@ -441,8 +446,8 @@ fn vs_main(in: VsIn) -> VsOut {
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (in.tex_id > 0u) {
         // The `texture_2d_array` has one 128×128 layer per texture id;
-        // the packed `tex_id` is texture id + 1. The fixed-point 0..255
-        // u/v maps across the whole layer (u/256 × 128 = u/2), sampled
+        // the packed `tex_id` is texture id + 1. u/v are in 1/256 texture
+        // units, so 0..256 maps across the whole layer (u/256 × 128 = u/2), sampled
         // with the layer clamped to the array depth (RuneLite `frag.glsl`
         // samples `textures` by `fTextureId - 1`; ids beyond the array
         // clamp instead of dropping, so textured faces never vanish).

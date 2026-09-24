@@ -230,25 +230,52 @@ fn address_probe_mesh(
     texture: Option<i32>,
     vertical_wrap_probe: bool,
 ) -> client::render::world::SceneMesh {
+    probe_mesh(
+        pix,
+        texture.map(|texture| address_probe_model(texture, vertical_wrap_probe)),
+    )
+}
+
+/// Mesh one wall model (or nothing, for the background) in front of the
+/// fixed probe camera.
+fn probe_mesh(
+    pix: &mut Pix3DDraw,
+    model: Option<client::dash3d::Model>,
+) -> client::render::world::SceneMesh {
     let mut world = flat_world();
     let mut rw = RenderWorld::new();
-    if let Some(texture) = texture {
+    if let Some(model) = model {
         world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
-        rw.set_wall_model(
-            &world,
-            0,
-            1,
-            2,
-            Some(SceneModel::Model(address_probe_model(
-                texture,
-                vertical_wrap_probe,
-            ))),
-            None,
-        );
+        rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
     }
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
     rw.prepare_scene(&mut world, &Cache::default(), 0, 192, 1950, 192, 3, 0, 128);
     rw.build_scene_mesh(&mut world, &Cache::default(), 0, pix)
+}
+
+/// The wall quad with a texture basis whose U runs -0.25..0.75 across the
+/// quad and V runs from about 0.14 at the base, through 0 at 25 units up,
+/// to -0.86 at the top: every face crosses zero in both coordinates, as
+/// many real 289 loc faces do by a few texels.
+fn zero_crossing_probe_model(texture: i32) -> client::dash3d::Model {
+    let mut model = address_probe_model(texture, true);
+    let x = model.point_x.as_mut().unwrap();
+    let y = model.point_y.as_mut().unwrap();
+    (x[4], y[4]) = (-30, -25); // P: (u, v) = (0, 0)
+    (x[5], y[5]) = (90, -25); // M: u = 1
+    (x[6], y[6]) = (-30, 155); // N: v = 1
+    model
+}
+
+/// Rows 0..size/2 red, the rest blue, every column alike.
+fn row_split_texture(size: i32) -> Pix8 {
+    let mut tex = Pix8::new(size, size, vec![0, 0xff0000, 0x0000ff]);
+    for y in 0..size {
+        for x in 0..size {
+            tex.data[(y * size + x) as usize] = if y < size / 2 { 1 } else { 2 };
+        }
+    }
+    tex
 }
 
 /// A deliberately minified wall: its 8×12 model-space extent projects to
@@ -922,6 +949,78 @@ fn gpu_model_texture_wraps_v_clamps_u_and_preserves_cutouts() {
             String::from_utf8_lossy(&output.stderr),
         );
     }
+}
+
+/// A face whose texture coordinates cross zero must sample the few texels
+/// between its vertices, as Java does per pixel (U clamped to column 0, V
+/// wrapped by the row mask). Many 289 loc faces start a few texels below
+/// zero; when the packed coordinate lost its sign, one vertex read ~256
+/// texture repeats away, the face hit the smallest mip and drew one flat
+/// averaged colour (or aliased noise). Here the rows split red/blue and V
+/// runs -0.5..0.5, so the face must show solid red and solid blue bands,
+/// never their purple average.
+#[test]
+fn gpu_model_texture_coordinates_crossing_zero_keep_their_sign() {
+    const TEXTURE: i32 = 48;
+    Pix3D::init_colour_table(0.6);
+    let mut backend =
+        GpuBackend::try_new().expect("ACTUAL GPU REQUIRED for zero-crossing UV regression");
+    let mut pix = Pix3DDraw::default();
+    pix.set_clipping(512, 334);
+    pix.low_mem = false;
+    pix.textures[TEXTURE as usize] = Some(row_split_texture(128));
+    pix.tex_pal[TEXTURE as usize] = Some(vec![0, 0xff0000, 0x0000ff]);
+
+    let background = backend.render_scene_for_test(probe_mesh(&mut pix, None), &pix);
+    let image = backend.render_scene_for_test(
+        probe_mesh(&mut pix, Some(zero_crossing_probe_model(TEXTURE))),
+        &pix,
+    );
+    let covered: Vec<i32> = image
+        .iter()
+        .zip(&background)
+        .filter(|(sample, background)| sample != background)
+        .map(|(&sample, _)| sample)
+        .collect();
+    assert!(
+        covered.len() > 500,
+        "probe must cover meaningful screen area ({})",
+        covered.len()
+    );
+    // Java samples each texel row band once down a column: at most a red,
+    // blue, red sequence. A lost sign repeats the texture hundreds of times.
+    let class = |rgb: i32| {
+        let (r, g, b) = ((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff);
+        match (r > 128 && g < 64 && b < 64, b > 128 && g < 64 && r < 64) {
+            (true, _) => 1,
+            (_, true) => 2,
+            _ => 0,
+        }
+    };
+    let (mut red, mut blue, mut max_changes) = (0, 0, 0);
+    for x in 0..512usize {
+        let mut last = None;
+        let mut changes = 0;
+        for y in 0..334usize {
+            let i = y * 512 + x;
+            if image[i] == background[i] {
+                continue;
+            }
+            let c = class(image[i]);
+            red += (c == 1) as usize;
+            blue += (c == 2) as usize;
+            if last.is_some_and(|l| l != c) {
+                changes += 1;
+            }
+            last = Some(c);
+        }
+        max_changes = max_changes.max(changes);
+    }
+    assert!(
+        red > 100 && blue > 100 && max_changes <= 4,
+        "zero-crossing U/V must sample each row band once (red={red}, blue={blue}, max changes down a column={max_changes}, covered={})",
+        covered.len()
+    );
 }
 
 /// Sparse Java-animated water (texture 17) keeps LOD0 colour so transparent

@@ -5787,8 +5787,8 @@ struct SceneCam {
 
 /// One triangle vertex of the GPU scene mesh: a camera-space position plus
 /// the packed RuneLite-GPU-plugin attributes — `abhsl` (alpha << 24 | bias
-/// << 16 | the raw 16-bit face shade) and, for textured faces, the
-/// fixed-point 0..255 texture `u`/`v` and the `texture id + 1` (`0` means
+/// << 16 | the raw 16-bit face shade) and, for textured faces, the signed
+/// 16-bit texture `u`/`v` (texture units × 256) and the `texture id + 1` (`0` means
 /// flat, i.e. untextured). `bytemuck::Pod` so the wgpu backend uploads the
 /// mesh as raw bytes.
 #[repr(C)]
@@ -5823,9 +5823,10 @@ impl GpuVertex {
         }
     }
 
-    /// A textured-face vertex: fixed-point `u`/`v` (0..255) on the model
-    /// texture, the raw 16-bit `shade` for the texel brightness, and
-    /// `tex_id_plus_1` (texture id + 1; `0` would read as flat).
+    /// A textured-face vertex: signed 16-bit `u`/`v` (texture units × 256,
+    /// two's complement in the low half-word; the shader sign-extends) on
+    /// the model texture, the raw 16-bit `shade` for the texel brightness,
+    /// and `tex_id_plus_1` (texture id + 1; `0` would read as flat).
     fn textured(
         x: i32,
         y: i32,
@@ -5947,7 +5948,8 @@ impl SceneMesh {
 
 /// RuneLite `computeFaceUvs` (model space): project the face's three actual
 /// vertices (`a`/`b`/`c`) onto the texture triangle's plane (`t_a`/`t_b`/`t_c`)
-/// and return each vertex's texture coordinate as fixed-point 0..255.
+/// and return each vertex's texture coordinate as signed fixed-point
+/// (texture units × 256; 0..256 spans the texture once).
 /// `point_x/y/z` are the model's local vertex positions, before any camera
 /// or entity transform.
 #[allow(clippy::too_many_arguments)]
@@ -6005,8 +6007,9 @@ fn compute_face_uvs(
     let v2 = (v8x * v6x + v8y * v6y + v8z * v6z) * f;
 
     // RuneLite `computeFaceUvs` stores `(int)(u * 256)` unclamped; the
-    // sampler ClampToEdge handles out-of-range, matching `vert.glsl`.
-    let pack = |x: f32| (x * 256.0) as i32 as u32;
+    // sampler clamps U and wraps V per fragment. Keep the sign: faces often
+    // start a hair below zero, and the vertex format carries 16 bits.
+    let pack = |x: f32| ((x * 256.0) as i32).clamp(i16::MIN as i32, i16::MAX as i32) as u32;
     (
         [pack(u0), pack(u1), pack(u2)],
         [pack(v0), pack(v1), pack(v2)],
