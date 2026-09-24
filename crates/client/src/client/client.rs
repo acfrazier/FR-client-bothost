@@ -3140,6 +3140,11 @@ impl Client {
                 .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
         }
 
+        if response == 1 && !self.external_reconnect_owner {
+            thread::sleep(Duration::from_secs(2));
+            return self.login(username, password, reconnect);
+        }
+
         if response == 2 {
             self.staffmodlevel = stream
                 .read()
