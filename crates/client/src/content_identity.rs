@@ -629,12 +629,18 @@ mod tests {
     ];
 
     fn tmp(tag: &str) -> PathBuf {
+        // A clock stamp alone collides between parallel tests (macOS has
+        // microsecond resolution); the counter makes each call unique.
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir =
-            std::env::temp_dir().join(format!("274bot-dci-{tag}-{}-{stamp}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-dci-{tag}-{}-{stamp}-{n}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir

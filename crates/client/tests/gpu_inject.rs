@@ -10,6 +10,10 @@ use client::render::backend::gpu::{inject_device, GpuBackend};
 /// A real headless device on this machine's adapter (`None` = no adapter;
 /// the injection tests then skip, mirroring the existing texture tests).
 fn test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+    // `SKIP_GPU=1` makes every `GpuBackend::try_new` fail, injected or not.
+    if std::env::var("SKIP_GPU").as_deref() == Ok("1") {
+        return None;
+    }
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
