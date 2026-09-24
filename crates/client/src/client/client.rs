@@ -3015,11 +3015,12 @@ impl Client {
     }
 
     /// Login handshake, 1:1 of `Client.ts` `login` (1719-1867) / Java
-    /// `Client.login`: probe, seed, RSA blob, opcode 16/18 wrapper. Response 1
-    /// is returned to the caller so every fresh socket attempt can acquire
-    /// its own permit; response 2 enters the game; response 15 re-enters on a
-    /// reconnect without replacing `localPlayer`; anything else is a
-    /// `LoginError` with the code and title-screen messages.
+    /// `Client.login`: probe, seed, RSA blob, opcode 16/18 wrapper. Standalone
+    /// response 1 retries after two seconds; an external reconnect owner gets
+    /// the response back so each fresh socket can acquire its own permit.
+    /// Response 2 enters the game; response 15 re-enters on a reconnect without
+    /// replacing `localPlayer`; anything else is a `LoginError` with the code
+    /// and title-screen messages.
     pub fn login(
         &mut self,
         username: &str,
