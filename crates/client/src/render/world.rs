@@ -3646,10 +3646,13 @@ impl RenderWorld {
 
             // Sprite drawing: buffer this tile's sprites (farthest first),
             // render each once per cycle, and requeue the tiles they cover.
-            let mut draw_sprites = tile_at(&world.squares, level, tile_x, tile_z)
+            let draw_sprites = tile_at(&world.squares, level, tile_x, tile_z)
                 .map(|t| t.draw_sprites)
                 .unwrap_or(false);
             if draw_sprites {
+                // Java clears drawSprites before scanning; only a deferred
+                // sprite prevents the tile's back pass from completing.
+                let mut draw_sprites = false;
                 let sprite_count = tile_at(&world.squares, level, tile_x, tile_z)
                     .map(|t| t.sprite_count)
                     .unwrap_or(0);
@@ -6399,6 +6402,34 @@ mod fill_java_order_tests {
             full.iter()
                 .any(|e| e.kind == FillKind::Sprite && e.typecode == 200),
             "handshake loc typecode 200 must still paint after the defer; events={full:?}"
+        );
+    }
+
+    #[test]
+    fn sprite_tile_finishes_and_paints_its_back_wall() {
+        let mut world = sparse_world(16, &[(7, 8), (8, 8)]);
+        let mut rw = RenderWorld::new();
+        let index = world
+            .add_dynamic(0, 7 * 128 + 120, 2000, 8 * 128 + 64, 200, 0, 60, false)
+            .unwrap();
+        rw.set_sprite_model(&world, index, Some(SceneModel::Model(ns_box_model())));
+        place_wall(&mut rw, &mut world, 7, 8, 100, 8);
+        let events = render_traced(&mut world, &mut rw, 7 * 128, 6 * 128);
+        assert!(
+            !world.square(0, 7, 8).unwrap().draw_back,
+            "a fully drawn sprite must not strand its tile's back pass: {events:?}"
+        );
+        let sprite = events
+            .iter()
+            .position(|e| e.kind == FillKind::Sprite && e.typecode == 200)
+            .expect("spanning entity must paint");
+        let wall = events
+            .iter()
+            .position(|e| e.kind == FillKind::Wall && e.typecode == 100)
+            .expect("back wall must paint");
+        assert!(
+            sprite < wall,
+            "the back wall must cover the entity: {events:?}"
         );
     }
 
