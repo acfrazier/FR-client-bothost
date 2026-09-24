@@ -171,10 +171,9 @@ mod tests {
         );
     }
 
-    /// The `model_stamp` tripwire (mid-branch review): every model-bearing
-    /// setter on the sim tile bumps the tile stamp, and the render-side
-    /// lazy cache re-resolves the geometry when it changes — a stale decode
-    /// must never be served after a mutation. Each loc-backed component
+    /// Each model-bearing setter bumps its layer's generation, and the
+    /// render-side lazy cache re-resolves that layer's geometry when it changes —
+    /// a stale decode must never be served after a mutation. Each loc-backed component
     /// (wall, decor, ground decor, scene sprite) is resolved, mutated to
     /// the other synthetic model, and re-resolved. The loc/model ids are
     /// 100+ so the `LocType` `mc1` transformed-model cache cannot serve a

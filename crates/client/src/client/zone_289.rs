@@ -400,7 +400,7 @@ impl ZoneOperation {
                             w.h_se = se;
                             w.h_ne = ne;
                             w.h_nw = nw;
-                            c.world.bump_tile_stamp(level, x, z);
+                            c.world.bump_loc_stamp(level, x, z, LocLayer::WALL);
                         }
                     }
                     LocLayer::WALL_DECOR => {
@@ -412,7 +412,7 @@ impl ZoneOperation {
                             w.h_se = se;
                             w.h_ne = ne;
                             w.h_nw = nw;
-                            c.world.bump_tile_stamp(level, x, z);
+                            c.world.bump_loc_stamp(level, x, z, LocLayer::WALL_DECOR);
                         }
                     }
                     LocLayer::GROUND => {
@@ -436,7 +436,7 @@ impl ZoneOperation {
                             w.h_se = se;
                             w.h_ne = ne;
                             w.h_nw = nw;
-                            c.world.bump_tile_stamp(level, x, z);
+                            c.world.bump_loc_stamp(level, x, z, LocLayer::GROUND_DECOR);
                         }
                     }
                     _ => unreachable!(),
