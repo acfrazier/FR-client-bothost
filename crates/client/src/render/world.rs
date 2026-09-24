@@ -4445,13 +4445,9 @@ impl RenderWorld {
                 }
             }
 
-            // Drop the tile (unless a wall corner still occludes it).
-            // Java `continue` unlinks the Square; vis-window only retries
-            // `drawFront`. A neighbour that already finished RING
-            // (`drawBack && !drawFront`) will not be visited again, so
-            // push those onto the queue (move-to-tail) and do not push
-            // self — re-pushing self spins fill() and never returns to
-            // the vis-window RING walk.
+            // Complete the back pass only after farther neighbours finish.
+            // Like Java, a blocked visit leaves the queue unchanged; normal
+            // sprite-span and tile-completion traversal schedules revisits.
             let (draw_back, corner_sides) = tile_at(&world.squares, level, tile_x, tile_z)
                 .map(|t| (t.draw_back, t.corner_sides))
                 .unwrap_or((false, 0));
@@ -4459,15 +4455,10 @@ impl RenderWorld {
                 continue 'fill;
             }
 
-            let mut stuck = Vec::new();
-            let mut blocked = false;
             if tile_x <= gx && tile_x > min_x {
                 if let Some(adjacent) = tile_at(&world.squares, level, tile_x - 1, tile_z) {
                     if adjacent.draw_back {
-                        blocked = true;
-                        if !adjacent.draw_front {
-                            stuck.push((level, tile_x - 1, tile_z));
-                        }
+                        continue 'fill;
                     }
                 }
             }
@@ -4475,10 +4466,7 @@ impl RenderWorld {
             if tile_x >= gx && tile_x < max_x - 1 {
                 if let Some(adjacent) = tile_at(&world.squares, level, tile_x + 1, tile_z) {
                     if adjacent.draw_back {
-                        blocked = true;
-                        if !adjacent.draw_front {
-                            stuck.push((level, tile_x + 1, tile_z));
-                        }
+                        continue 'fill;
                     }
                 }
             }
@@ -4486,10 +4474,7 @@ impl RenderWorld {
             if tile_z <= gz && tile_z > min_z {
                 if let Some(adjacent) = tile_at(&world.squares, level, tile_x, tile_z - 1) {
                     if adjacent.draw_back {
-                        blocked = true;
-                        if !adjacent.draw_front {
-                            stuck.push((level, tile_x, tile_z - 1));
-                        }
+                        continue 'fill;
                     }
                 }
             }
@@ -4497,19 +4482,9 @@ impl RenderWorld {
             if tile_z >= gz && tile_z < max_z - 1 {
                 if let Some(adjacent) = tile_at(&world.squares, level, tile_x, tile_z + 1) {
                     if adjacent.draw_back {
-                        blocked = true;
-                        if !adjacent.draw_front {
-                            stuck.push((level, tile_x, tile_z + 1));
-                        }
+                        continue 'fill;
                     }
                 }
-            }
-
-            if blocked {
-                for (bl, bx, bz) in stuck {
-                    self.enqueue_fill(world, bl, bx, bz);
-                }
-                continue 'fill;
             }
 
             if let Some(tile) = tile_at_mut(&mut world.squares, level, tile_x, tile_z) {
