@@ -1464,20 +1464,20 @@ fn flat_quad(half_width: i32, top: i32, bottom: i32, z: i32, shade: i32) -> Mode
     model
 }
 
-/// A wall decoration whose supporting wall's camera-facing face sits 12
-/// units *in front of* the decoration (the 289 Lumbridge castle windows:
-/// loc 1938 placed 16 units inside its 32-unit loc 1911 wall). Java draws
-/// the wall's tile first and the decoration's tile after it, so the
-/// decoration is fully visible on the CPU.
+/// A wall decoration whose camera-facing plane sits 16 units behind its
+/// supporting wall. Java paints the wall first and then the decoration on
+/// the same tile, so the decoration remains visible despite being farther
+/// from the camera throughout their overlapping projection.
 fn embedded_decor_scene() -> Scene {
-    let (tile_x, decor_z, wall_z) = (2, 2, 3);
-    let mut world = flat_world(6);
+    let (tile_x, tile_z) = (2, 2);
+    let mut world = World::new(vec![vec![vec![2000i32; 7]; 7]], 6, 1, 6);
+    world.fill_base_level(0);
     world.set_wall(
         0,
         tile_x,
-        wall_z,
+        tile_z,
         2000,
-        8,
+        1,
         0,
         scene_typecode(1911),
         0,
@@ -1490,14 +1490,14 @@ fn embedded_decor_scene() -> Scene {
         world.set_decor(
             0,
             tile_x,
-            decor_z,
+            tile_z,
             2000,
             0,
             0,
             scene_typecode(1938),
             LocShape::WALLDECOR_STRAIGHT_NOOFFSET,
             0,
-            0xff,
+            1,
             2000,
             2000,
             2000,
@@ -1509,10 +1509,8 @@ fn embedded_decor_scene() -> Scene {
         &world,
         0,
         tile_x,
-        wall_z,
-        Some(SceneModel::Model(flat_quad(
-            64, -10, -230, -140, WALL_GREEN,
-        ))),
+        tile_z,
+        Some(SceneModel::Model(flat_quad(64, -10, -230, 0, WALL_GREEN))),
         None,
     );
     {
@@ -1520,8 +1518,8 @@ fn embedded_decor_scene() -> Scene {
             &world,
             0,
             tile_x,
-            decor_z,
-            SceneModel::Model(flat_quad(24, -60, -180, 0, BOOTH_RED)),
+            tile_z,
+            SceneModel::Model(flat_quad(48, -10, -230, 16, BOOTH_RED)),
         );
     }
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
@@ -1534,11 +1532,33 @@ fn embedded_decor_scene() -> Scene {
 #[test]
 fn wall_decor_composes_like_the_cpu_painter() {
     Pix3D::init_colour_table(0.6);
-    let Ok(mut backend) = GpuBackend::try_new() else {
-        eprintln!("no adapter; skip");
-        return;
-    };
-    let (eye_x, eye_y, eye_z, yaw, pitch) = (320, 1950, 192, 128, 128);
+    let (eye_x, eye_y, eye_z, yaw, pitch) = (320, 1750, 0, 0, 128);
+
+    let mut depth_scene = embedded_decor_scene();
+    let mut depth_pix = Pix3DDraw::default();
+    depth_pix.set_clipping(SCENE_W as i32, SCENE_H as i32);
+    let mut depth_mesh = SceneMesh::default();
+    depth_scene.rw.capture_scene(
+        &mut depth_scene.world,
+        &mut depth_pix,
+        &Cache::default(),
+        0,
+        eye_x,
+        eye_y,
+        eye_z,
+        3,
+        yaw,
+        pitch,
+        &mut depth_mesh,
+    );
+    let (wall_min_z, wall_max_z, wall_vertices) = shade_z_range(&depth_mesh, WALL_GREEN);
+    let (decor_min_z, decor_max_z, decor_vertices) = shade_z_range(&depth_mesh, BOOTH_RED);
+    assert_eq!((wall_vertices, decor_vertices), (6, 6));
+    assert!(
+        decor_min_z > wall_min_z && decor_max_z > wall_max_z,
+        "the decoration plane must be farther than the wall in camera space: wall={wall_min_z}..{wall_max_z}, decor={decor_min_z}..{decor_max_z}"
+    );
+
     let mut pix = Pix3DDraw::default();
     let cpu = cpu_render(
         &mut embedded_decor_scene(),
@@ -1551,6 +1571,20 @@ fn wall_decor_composes_like_the_cpu_painter() {
         pitch,
         "embedded_decor",
     );
+    let (cpu_red, cpu_green, _) = count_rgb(&cpu);
+    assert!(
+        cpu_red > 10_000,
+        "the CPU painter must preserve a substantial decoration-coloured region (got {cpu_red})"
+    );
+    assert!(
+        cpu_green > 5_000,
+        "the decoration and wall must have overlapping projected regions with wall visible around the decoration (got {cpu_green})"
+    );
+
+    let Ok(mut backend) = GpuBackend::try_new() else {
+        eprintln!("no adapter; skip GPU comparison");
+        return;
+    };
     let gpu = render_pixels(
         &mut backend,
         &mut embedded_decor_scene(),
@@ -1560,15 +1594,13 @@ fn wall_decor_composes_like_the_cpu_painter() {
         yaw,
         pitch,
     );
-    let (cpu_red, cpu_green, _) = count_rgb(&cpu);
-    let (gpu_red, gpu_green, _) = count_rgb(&gpu);
-    eprintln!(
-        "embedded decor: cpu red={cpu_red} green={cpu_green} gpu red={gpu_red} green={gpu_green}"
-    );
-    assert!(cpu_green > 1000, "the CPU oracle must draw the wall");
-    let close = |a: usize, b: usize| a.abs_diff(b) * 20 <= a.max(b).max(20);
+    let preserved_red = cpu
+        .iter()
+        .zip(&gpu)
+        .filter(|(cpu, gpu)| is_red(**cpu) && is_red(**gpu))
+        .count();
     assert!(
-        close(cpu_red, gpu_red) && close(cpu_green, gpu_green),
-        "the GPU must compose wall and decoration like the CPU painter: cpu=({cpu_red},{cpu_green}) gpu=({gpu_red},{gpu_green})"
+        preserved_red * 100 >= cpu_red * 99,
+        "the GPU must preserve the CPU painter's decoration pixels: cpu={cpu_red}, preserved={preserved_red}"
     );
 }

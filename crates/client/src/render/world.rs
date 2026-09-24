@@ -3947,14 +3947,16 @@ impl RenderWorld {
                 continue 'fill;
             }
 
-            let mut stuck = Vec::new();
+            let mut stuck = [(0, 0, 0); 4];
+            let mut stuck_len = 0;
             let mut blocked = false;
             if tile_x <= gx && tile_x > min_x {
                 if let Some(adjacent) = tile_at(&world.squares, level, tile_x - 1, tile_z) {
                     if adjacent.draw_back {
                         blocked = true;
                         if !adjacent.draw_front {
-                            stuck.push((level, tile_x - 1, tile_z));
+                            stuck[stuck_len] = (level, tile_x - 1, tile_z);
+                            stuck_len += 1;
                         }
                     }
                 }
@@ -3965,7 +3967,8 @@ impl RenderWorld {
                     if adjacent.draw_back {
                         blocked = true;
                         if !adjacent.draw_front {
-                            stuck.push((level, tile_x + 1, tile_z));
+                            stuck[stuck_len] = (level, tile_x + 1, tile_z);
+                            stuck_len += 1;
                         }
                     }
                 }
@@ -3976,7 +3979,8 @@ impl RenderWorld {
                     if adjacent.draw_back {
                         blocked = true;
                         if !adjacent.draw_front {
-                            stuck.push((level, tile_x, tile_z - 1));
+                            stuck[stuck_len] = (level, tile_x, tile_z - 1);
+                            stuck_len += 1;
                         }
                     }
                 }
@@ -3987,14 +3991,15 @@ impl RenderWorld {
                     if adjacent.draw_back {
                         blocked = true;
                         if !adjacent.draw_front {
-                            stuck.push((level, tile_x, tile_z + 1));
+                            stuck[stuck_len] = (level, tile_x, tile_z + 1);
+                            stuck_len += 1;
                         }
                     }
                 }
             }
 
             if blocked {
-                for (bl, bx, bz) in stuck {
+                for (bl, bx, bz) in stuck[..stuck_len].iter().copied() {
                     self.enqueue_fill(world, bl, bx, bz);
                 }
                 continue 'fill;
@@ -4675,7 +4680,18 @@ impl RenderWorld {
     ) {
         if let Some(mut mesh) = pix.capture.take() {
             let cam = self.scene_cam();
-            emit_ground(world, pix, &mut mesh, &cam, ground, tile_x, tile_z);
+            emit_ground(
+                world,
+                pix,
+                &mut mesh,
+                &cam,
+                ground,
+                tile_x,
+                tile_z,
+                &mut self.ground_draw_texture_vertex_x,
+                &mut self.ground_draw_texture_vertex_y,
+                &mut self.ground_draw_texture_vertex_z,
+            );
             pix.capture = Some(mesh);
             return;
         }
@@ -5355,7 +5371,7 @@ impl GpuVertex {
 /// The GPU scene mesh: every captured triangle in the painter's draw order
 /// (`RenderWorld::capture_scene`). Drawn front to back of the list with no
 /// depth test, so it composes exactly like the CPU raster.
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct SceneMesh {
     vertices: Vec<GpuVertex>,
 }
@@ -5480,40 +5496,44 @@ struct ClipVertex {
 /// order matters — the winding test and the triangle fan consume it — so a
 /// Sutherland–Hodgman traversal with a different order would flip the
 /// winding and intermittently drop the face as the camera pans.
-fn clip_near_plane(verts: [ClipVertex; 3]) -> Vec<ClipVertex> {
+fn clip_near_plane(verts: [ClipVertex; 3], out: &mut [ClipVertex; 4]) -> usize {
     let [a, b, c] = verts;
-    let mut out = Vec::with_capacity(4);
+    let mut len = 0;
+    let mut push = |vertex| {
+        out[len] = vertex;
+        len += 1;
+    };
     if a.z >= 50 {
-        out.push(a);
+        push(a);
     } else {
         if c.z >= 50 {
-            out.push(clip_near_intersection(c, a));
+            push(clip_near_intersection(c, a));
         }
         if b.z >= 50 {
-            out.push(clip_near_intersection(b, a));
+            push(clip_near_intersection(b, a));
         }
     }
     if b.z >= 50 {
-        out.push(b);
+        push(b);
     } else {
         if a.z >= 50 {
-            out.push(clip_near_intersection(a, b));
+            push(clip_near_intersection(a, b));
         }
         if c.z >= 50 {
-            out.push(clip_near_intersection(c, b));
+            push(clip_near_intersection(c, b));
         }
     }
     if c.z >= 50 {
-        out.push(c);
+        push(c);
     } else {
         if b.z >= 50 {
-            out.push(clip_near_intersection(b, c));
+            push(clip_near_intersection(b, c));
         }
         if a.z >= 50 {
-            out.push(clip_near_intersection(a, c));
+            push(clip_near_intersection(a, c));
         }
     }
-    out
+    len
 }
 
 /// The point where the `outside → inside` edge crosses `z = 50`, with all
@@ -5660,12 +5680,15 @@ pub(crate) fn capture_model_face(
     });
 
     let near_clipped = verts.iter().any(|v| v.z < 50);
-    let clipped = if near_clipped {
-        clip_near_plane(verts)
+    let mut clipped = [verts[0]; 4];
+    let clipped_len = if near_clipped {
+        clip_near_plane(verts, &mut clipped)
     } else {
-        verts.to_vec()
+        clipped[..3].copy_from_slice(&verts);
+        3
     };
-    if clipped.len() < 3 || (near_clipped && !face_winding_passes(pix, &clipped)) {
+    let clipped = &clipped[..clipped_len];
+    if clipped.len() < 3 || (near_clipped && !face_winding_passes(pix, clipped)) {
         return;
     }
     let Some(mesh) = pix.capture.as_mut() else {
@@ -5727,11 +5750,11 @@ fn emit_ground(
     ground: Ground,
     tile_x: i32,
     tile_z: i32,
+    cam_x: &mut [i32; 6],
+    cam_y: &mut [i32; 6],
+    cam_z: &mut [i32; 6],
 ) {
     let vertex_count = ground.vertices();
-    let mut cam_x = Vec::with_capacity(vertex_count);
-    let mut cam_y = Vec::with_capacity(vertex_count);
-    let mut cam_z = Vec::with_capacity(vertex_count);
     for i in 0..vertex_count {
         let mut x = ground.vertex_x[i] - cam.eye_x;
         let mut y = ground.vertex_y[i] - cam.eye_y;
@@ -5757,9 +5780,9 @@ fn emit_ground(
         if z < 50 {
             return;
         }
-        cam_x.push(x);
-        cam_y.push(y);
-        cam_z.push(z);
+        cam_x[i] = x;
+        cam_y[i] = y;
+        cam_z[i] = z;
     }
 
     let face_count = ground.faces();
@@ -6034,13 +6057,20 @@ mod near_plane_tests {
         }
     }
 
+    fn clip(verts: [ClipVertex; 3]) -> ([ClipVertex; 4], usize) {
+        let mut clipped = [verts[0]; 4];
+        let len = clip_near_plane(verts, &mut clipped);
+        (clipped, len)
+    }
+
     /// A triangle with one vertex behind the near plane: the clipped output
     /// must match `render3_z_clip`'s A/B/C order — the winding test and the
     /// triangle fan consume it, so the order is load-bearing.
     #[test]
     fn a_behind_clips_in_abc_order() {
         // A behind, B and C in front.
-        let clipped = clip_near_plane([v(0, 0, 10), v(10, 0, 100), v(0, 10, 100)]);
+        let (clipped, len) = clip([v(0, 0, 10), v(10, 0, 100), v(0, 10, 100)]);
+        let clipped = &clipped[..len];
         assert_eq!(clipped.len(), 4, "one-behind clips to a quad");
         // render3_z_clip order: clip(A→C), clip(A→B), B, C.
         assert_eq!(clipped[0].z, 50);
@@ -6061,15 +6091,16 @@ mod near_plane_tests {
 
     #[test]
     fn two_behind_clips_to_a_triangle() {
-        let clipped = clip_near_plane([v(0, 0, 10), v(10, 0, 10), v(0, 10, 100)]);
+        let (clipped, len) = clip([v(0, 0, 10), v(10, 0, 10), v(0, 10, 100)]);
+        let clipped = &clipped[..len];
         assert_eq!(clipped.len(), 3, "two-behind clips to a triangle");
         assert!(clipped.iter().all(|p| p.z >= 50));
     }
 
     #[test]
     fn all_behind_clips_to_nothing() {
-        let clipped = clip_near_plane([v(0, 0, 10), v(10, 0, 10), v(0, 10, 10)]);
-        assert!(clipped.is_empty(), "a fully-behind triangle is invisible");
+        let (_, len) = clip([v(0, 0, 10), v(10, 0, 10), v(0, 10, 10)]);
+        assert_eq!(len, 0, "a fully-behind triangle is invisible");
     }
 
     #[test]

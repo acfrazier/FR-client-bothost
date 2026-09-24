@@ -7,6 +7,16 @@ use client::config::obj_type::ObjType;
 use client::dash3d::Model;
 use client::render::Renderer;
 
+// Model metadata, decoded geometry, and the OnDemand provider are process-wide.
+// Serialize the tests that reset or replace them so those mutations cannot race.
+static MODEL_STORE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock_model_store() -> std::sync::MutexGuard<'static, ()> {
+    MODEL_STORE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[test]
 fn npc_get_head_none_without_head_ids() {
     let _r = Renderer::new(false);
@@ -16,6 +26,7 @@ fn npc_get_head_none_without_head_ids() {
 
 #[test]
 fn obj_get_model_unlit_none_without_model() {
+    let _model_store = lock_model_store();
     Model::reset_for_tests();
     let obj = ObjType::default();
     let cache = client::config::Cache::default();
@@ -58,6 +69,7 @@ fn draw_interface_type_model_missing_does_not_panic() {
 
 #[test]
 fn npc_get_head_queues_every_missing_head_id() {
+    let _model_store = lock_model_store();
     Model::reset_for_tests();
     use client::dash3d::model::ModelProvider;
     use std::sync::{Arc, Mutex};
@@ -107,6 +119,7 @@ fn hud_client() -> client::client::Client {
 /// plus live `if_setobject` on the three spinning TYPE_MODEL children.
 #[test]
 fn gpu_draw_does_not_crash_on_mysterious_cube_modal() {
+    let _model_store = lock_model_store();
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&format!("{cache}/interface")).is_file() {
         eprintln!("no client cache; skip cube GPU repro");

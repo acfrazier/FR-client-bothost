@@ -905,7 +905,6 @@ fn gpu_lowmem_texture_samples_the_full_128px_layer() {
     let mut max_u = 0u32;
     let mut max_v = 0u32;
     for v in mesh
-        .clone()
         .vertices()
         .iter()
         .filter(|v| (v.uv_tex & 0xffff) == (TEXTURE_QUAD as u32 + 1))
