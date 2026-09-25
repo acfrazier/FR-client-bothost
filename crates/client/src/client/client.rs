@@ -1496,8 +1496,8 @@ impl Client {
     }
 
     /// Construct over shared immutable tables with a frozen connection and
-    /// resource profile. Redundant public connection fields are checked before
-    /// the update worker or any other constructor effect.
+    /// resource profile. Connection fields are taken from the profile; callers
+    /// build `ClientConfig` from the same profile.
     pub fn from_shared_with_profile(
         config: ClientConfig,
         cache: Arc<Cache>,
@@ -1509,15 +1509,9 @@ impl Client {
             .cache_dir()
             .to_str()
             .expect("ClientSessionProfile validates UTF-8 cache_dir");
-        if config.host != profile.game_host() {
-            return Err("ClientConfig host does not match session profile".into());
-        }
-        if config.port != profile.game_port() {
-            return Err("ClientConfig port does not match session profile".into());
-        }
-        if config.cache_dir != profile_cache {
-            return Err("ClientConfig cache_dir does not match session profile".into());
-        }
+        debug_assert_eq!(config.host, profile.game_host());
+        debug_assert_eq!(config.port, profile.game_port());
+        debug_assert_eq!(config.cache_dir, profile_cache);
 
         let jag_checksum = profile
             .expected_crc()

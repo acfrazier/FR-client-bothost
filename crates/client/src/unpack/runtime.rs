@@ -16,7 +16,7 @@ use super::{
 };
 use crate::client::Client;
 use crate::content_identity::{compute_decoded_content_identity, DecodedContentIdentity};
-use crate::io::{ClientRevision, JagFile, OnDemand, Packet};
+use crate::io::{ClientRevision, JagFile, OnDemand};
 use crate::BotTarget;
 
 pub struct RuntimeCacheRequest<'a> {
@@ -308,20 +308,14 @@ pub fn prepare_runtime_cache(
         &version,
         &versionlist,
     ) {
-        // Validate/copy every input, not just sizes or a persistent digest.
-        // Source hashes around the copy reject a moving source set. The owned
-        // copies are then decoded; subsequent source replacement cannot change
-        // this prepared profile's identity or assets.
-        let before = hashes(&retained, &super::BINS)?;
+        // Copy retained snapshot bins into this bind's owned staging directory.
+        // The owned copies are then decoded; subsequent source replacement cannot
+        // change this prepared profile's identity or assets. Publication still
+        // writes the manifest last.
         std::fs::create_dir(&snapshot_dir).map_err(|e| e.to_string())?;
         for name in super::BINS {
             std::fs::copy(retained.join(name), snapshot_dir.join(name))
                 .map_err(|e| e.to_string())?;
-        }
-        if before != hashes(&retained, &super::BINS)?
-            || before != hashes(&snapshot_dir, &super::BINS)?
-        {
-            return Err("snapshot inputs changed during preparation".into());
         }
         for name in super::JAGS {
             std::fs::copy(jag_dir.join(name), snapshot_dir.join(name))
@@ -380,15 +374,6 @@ pub fn prepare_runtime_cache(
     let identity =
         compute_decoded_content_identity(request.revision.as_i32() as u16, &jag_dir, &snapshot_dir)
             .map_err(|e| format!("decoded content identity: {e}"))?;
-    if transfer_sha256 != hashes(&jag_dir, &super::JAGS)? {
-        return Err("jag inputs changed during preparation".into());
-    }
-    for &(name, index) in &super::JAG_INDEX {
-        let bytes = std::fs::read(jag_dir.join(name)).map_err(|e| e.to_string())?;
-        if Packet::getcrc(&bytes, 0, bytes.len()) != checksums[index] {
-            return Err(format!("{name}: transfer CRC changed during preparation").into());
-        }
-    }
     let store_dir = super::file_store_dir(&request.jag_source.to_string_lossy()).map(PathBuf::from);
     let persist_dir = request.snapshot_root.join(&version).join("ondemand");
     std::fs::create_dir_all(&persist_dir).map_err(|e| e.to_string())?;

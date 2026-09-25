@@ -189,28 +189,6 @@ fn profile_rejects_bad_explicit_rsa_and_empty_identity_fields() {
 }
 
 #[test]
-fn bound_constructor_rejects_redundant_config_before_starting_ondemand() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let cache = temp_dir("pre-effect");
-    std::fs::write(cache.join("versionlist"), tiny_versionlist_bytes(1)).unwrap();
-    let profile = Arc::new(ClientSessionProfile::new(profile_config(cache, port, 1080)).unwrap());
-    let mut config = profile.client_config(true, false);
-    config.port = port.wrapping_add(1);
-
-    let result = Client::from_shared_with_profile(
-        config,
-        Arc::new(Cache::default()),
-        Arc::new(Vec::new()),
-        Arc::new(Vec::new()),
-        profile,
-    );
-    assert!(result.is_err());
-    assert_eq!(OnDemand::live_workers_for("127.0.0.1", port), 0);
-    drop(listener);
-}
-
-#[test]
 fn bound_login_and_reconnect_ignore_mutable_config_and_use_frozen_revision_rsa() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
