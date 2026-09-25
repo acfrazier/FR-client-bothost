@@ -533,6 +533,65 @@ fn crc_retry_countdown_reports_java_messages() {
     );
 }
 
+#[test]
+fn stop_during_crc_retry_countdown_aborts_before_the_next_retry() {
+    let dir = std::env::temp_dir().join(format!(
+        "274-crc-stop-{}-{:?}",
+        std::process::id(),
+        thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let cleanup = dir.clone();
+    let unused = {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(0);
+    let (stop_tx, stop_rx) = std::sync::mpsc::sync_channel(0);
+    let (done_tx, done_rx) = std::sync::mpsc::sync_channel(1);
+
+    let worker = thread::spawn(move || {
+        let mut client = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: dir.to_str().unwrap().into(),
+            members: true,
+            lowmem: false,
+        });
+        client.http_port = unused;
+        let mut entered = false;
+        client.maininit_with_progress(Some(&mut |client, message, _| {
+            if !entered && message.starts_with("connection problem - Will retry in ") {
+                entered = true;
+                entered_tx.send(()).unwrap();
+                stop_rx
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("stop signal after countdown handshake");
+                client.shell.stop();
+            }
+        }));
+        done_tx
+            .send((client.shell.state, client.error_loading))
+            .unwrap();
+    });
+
+    entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("client never entered the CRC retry countdown");
+    stop_tx.send(()).unwrap();
+    let (state, error_loading) = done_rx
+        .recv_timeout(Duration::from_millis(1_500))
+        .expect("stopped countdown waited for the five-second retry tick");
+    assert_eq!(state, -2, "the callback stop owns the shell shutdown");
+    assert!(
+        !error_loading,
+        "an operator stop is not an asset-loading failure"
+    );
+    worker.join().unwrap();
+    std::fs::remove_dir_all(cleanup).unwrap();
+}
+
 /// The headed-load pump (item 1): the progress callback drives
 /// `Renderer::draw_progress`, which polls and presents the window on every
 /// progress point — including each `/crc` retry countdown tick. A windowed

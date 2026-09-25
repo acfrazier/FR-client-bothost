@@ -2553,8 +2553,10 @@ impl Client {
         let checksums = match self.fetch_jag_checksums(&mut progress) {
             Some(c) => c,
             None => {
-                self.error_loading = true;
-                self.shell.set_framerate(1);
+                if self.shell.state != -2 {
+                    self.error_loading = true;
+                    self.shell.set_framerate(1);
+                }
                 return;
             }
         };
@@ -2579,6 +2581,9 @@ impl Client {
                 .fetch_jag_file(&mut progress, display, pct, filename, index, &checksums)
                 .is_none()
             {
+                if self.shell.state == -2 {
+                    return;
+                }
                 self.error_loading = true;
             }
         }
@@ -2851,12 +2856,19 @@ impl Client {
     /// port draws it once and returns `None` so `maininit` fails with
     /// `errorLoading` instead of hanging. Every countdown tick reports
     /// progress, so a headed driver pumps the window/audio through the wait
-    /// instead of beachballing.
+    /// instead of beachballing. A progress owner may stop the shell; that
+    /// aborts before the next fetch or countdown sleep.
     fn fetch_jag_checksums(&mut self, progress: &mut ProgressCb<'_>) -> Option<[i32; 9]> {
         let mut wait = self.fetch_retry_wait;
         let mut retries = 0;
         loop {
+            if self.shell.state == -2 {
+                return None;
+            }
             self.report_progress(progress, "Connecting to web server", 10);
+            if self.shell.state == -2 {
+                return None;
+            }
             let (target, host, port) = self.session_asset_endpoint();
             let fetched = if self.session_profile.is_some() {
                 Self::get_jag_checksums_for(target, &host, port)
@@ -2886,7 +2898,9 @@ impl Client {
                 self.report_progress(progress, "Game updated - please reload page", 10);
                 return None;
             }
-            self.retry_countdown(progress, wait, error, 10);
+            if !self.retry_countdown(progress, wait, error, 10) {
+                return None;
+            }
             wait = (wait * 2).min(Duration::from_secs(60));
         }
     }
@@ -2896,23 +2910,31 @@ impl Client {
     /// not a single blocking sleep. Each tick reports progress so a headed
     /// driver pumps the window/audio through the wait. Sub-second
     /// `fetch_retry_wait` (the stubbed-HTTP tests) collapses to one tick.
+    /// Returns `false` as soon as the progress owner stops the shell.
     fn retry_countdown(
         &mut self,
         progress: &mut ProgressCb<'_>,
         wait: Duration,
         message: &str,
         pct: i32,
-    ) {
+    ) -> bool {
         let ticks = wait.as_secs().max(1);
         let step = wait / ticks as u32;
         for remaining in (1..=ticks).rev() {
+            if self.shell.state == -2 {
+                return false;
+            }
             self.report_progress(
                 progress,
                 &format!("{message} - Will retry in {remaining} secs."),
                 pct,
             );
+            if self.shell.state == -2 {
+                return false;
+            }
             thread::sleep(step);
         }
+        true
     }
 
     /// Java `getJagFile` (deob 4817-4933) / TS 749-817: GET
@@ -2937,7 +2959,13 @@ impl Client {
         let mut wait = self.fetch_retry_wait;
         let mut retries = 0;
         loop {
+            if self.shell.state == -2 {
+                return None;
+            }
             self.report_progress(progress, &format!("Requesting {display}"), pct);
+            if self.shell.state == -2 {
+                return None;
+            }
             let cache_dir = self.session_cache_dir();
             let (target, host, port) = self.session_asset_endpoint();
             let bytes = if self.session_profile.is_some() {
@@ -2953,7 +2981,9 @@ impl Client {
                 self.report_progress(progress, "Game updated - please reload page", pct);
                 return None;
             }
-            self.retry_countdown(progress, wait, "Error loading", pct);
+            if !self.retry_countdown(progress, wait, "Error loading", pct) {
+                return None;
+            }
             wait = (wait * 2).min(Duration::from_secs(60));
         }
     }
