@@ -27,9 +27,11 @@ use crate::BotTarget;
 /// Reconnect gate in Java `OnDemand.send`: the socket is not reopened within
 /// 4 s of the last open. Spawn starts past the gate (first send is not
 /// gated) and `DropSocket` resets it so a relogin reconnects immediately.
-/// After a dead socket the 4 s gate is skipped only for the first reconnect
-/// following a network completion; repeated recoveries without progress back
-/// off exponentially up to this bound.
+/// After a dead socket (accept-then-close) the 4 s gate is skipped only for
+/// the first reconnect following a network completion; repeated recoveries
+/// without progress back off exponentially up to this bound. A refused
+/// connect still starts the 4 s Java gate so `fail_count` does not race
+/// `maininit`'s `> 3` error.
 const SOCKET_OPEN_GATE: Duration = Duration::from_millis(4000);
 const RECONNECT_BACKOFF_START: Duration = Duration::from_millis(20);
 
@@ -1425,7 +1427,10 @@ impl Worker {
             }
             if self.open_socket().is_err() {
                 self.part_available = 0;
-                self.apply_reconnect_gate();
+                // Java stamps `socketOpenTime` around the attempt, so a
+                // refused connect sits out the 4 s gate (`fail_count` +1 per
+                // open). Fast backoff is only for dead sockets.
+                self.socket_open_time = now;
                 self.set_fail_count(self.fail_count + 1);
                 return;
             }

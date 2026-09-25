@@ -687,6 +687,49 @@ fn no_progress_reconnect_is_rate_limited() {
     );
 }
 
+/// A refused connect must keep Java's 4 s open gate so `fail_count` cannot
+/// cross 3 in a 1 s outage (`maininit` errors at `fail_count > 3`).
+#[test]
+fn refused_connect_keeps_java_open_gate() {
+    let _r = Renderer::new(false);
+    let (payload, crc) = map_payload();
+    let body = payload.clone();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    let cache = tmp("refused");
+    let mut od = OnDemand::new(
+        &map_versionlist(crc),
+        "127.0.0.1",
+        port,
+        cache.to_str().unwrap(),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    od.request(3, 0);
+    let down_until = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < down_until {
+        od.run(true);
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        od.fail_count <= 3,
+        "refused connect used fast backoff: fail_count={} after 1s",
+        od.fail_count
+    );
+
+    let server = thread::spawn(move || {
+        let listener = TcpListener::bind(("127.0.0.1", port)).unwrap();
+        let (mut sock, _) = listener.accept().unwrap();
+        handshake(&mut sock);
+        serve_map(&mut sock, &body);
+    });
+    let got = wait_map(&mut od, Duration::from_secs(6));
+    server.join().unwrap();
+    assert_eq!(got.as_deref(), Some(MAP_RAW));
+}
+
 /// After a file completed over the network, a later idle close still
 /// reconnects immediately rather than sitting out the 4 s gate.
 #[test]
