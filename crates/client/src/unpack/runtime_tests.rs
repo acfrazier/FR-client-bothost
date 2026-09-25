@@ -79,8 +79,9 @@ fn sweep_runtime_staging_removes_dead_foreign_only() {
     let other = touch_dir(root, "not-runtime-staging");
     let bad_name = touch_dir(root, ".runtime-abc-1");
     let pid_zero = touch_dir(root, ".runtime-0-0");
-    // Larger than i32::MAX: rejected by parse on every platform with is_valid_foreign_pid.
-    let out_of_range = touch_dir(root, &format!(".runtime-{}-1", u32::MAX));
+    // Larger than i32::MAX: not a Unix pid_t, so never parsed as staging there.
+    // On Windows (DWORD pids) it is a valid owner and the injected probe decides.
+    let high_pid = touch_dir(root, &format!(".runtime-{}-1", u32::MAX));
 
     sweep_runtime_staging(root, self_pid, |pid| pid == alive_pid);
 
@@ -93,9 +94,15 @@ fn sweep_runtime_staging_removes_dead_foreign_only() {
         pid_zero.exists(),
         "pid 0 name must stay (not parsed as staging)"
     );
+    #[cfg(unix)]
     assert!(
-        out_of_range.exists(),
-        "out-of-range pid name must stay (not parsed as staging)"
+        high_pid.exists(),
+        "a pid beyond pid_t must stay on Unix (not parsed as staging)"
+    );
+    #[cfg(not(unix))]
+    assert!(
+        !high_pid.exists(),
+        "a dead high DWORD pid is foreign staging on Windows"
     );
 }
 

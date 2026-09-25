@@ -139,16 +139,17 @@ fn parse_runtime_staging_name(name: &str) -> Option<(u32, u64)> {
 
 /// Pid values safe to probe and to treat as foreign staging owners.
 fn is_valid_foreign_pid(pid: u32) -> bool {
-    if pid == 0 || pid > i32::MAX as u32 {
+    if pid == 0 {
         return false;
     }
     #[cfg(unix)]
     {
         // Positive pid_t only; never hand 0/negative to kill(2).
-        (pid as libc::pid_t) > 0
+        libc::pid_t::try_from(pid).is_ok_and(|p| p > 0)
     }
     #[cfg(not(unix))]
     {
+        // Windows process ids are DWORD: every nonzero u32 is probeable.
         true
     }
 }
