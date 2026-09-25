@@ -139,14 +139,11 @@ fn parse_runtime_staging_name(name: &str) -> Option<(u32, u64)> {
 
 /// Pid values safe to probe and to treat as foreign staging owners.
 fn is_valid_foreign_pid(pid: u32) -> bool {
-    if pid == 0 {
+    if pid == 0 || pid > i32::MAX as u32 {
         return false;
     }
     #[cfg(unix)]
     {
-        if pid > i32::MAX as u32 {
-            return false;
-        }
         // Positive pid_t only; never hand 0/negative to kill(2).
         (pid as libc::pid_t) > 0
     }
@@ -215,9 +212,25 @@ fn process_is_alive(pid: u32) -> bool {
     }
 }
 
-#[doc(hidden)]
-pub fn runtime_staging_process_is_alive(pid: u32) -> bool {
-    process_is_alive(pid)
+/// Walk `root` and remove `.runtime-<pid>-<n>` left by dead foreign processes.
+/// `is_alive` is injected so tests can supply a deterministic probe.
+fn sweep_runtime_staging(root: &Path, self_pid: u32, is_alive: impl Fn(u32) -> bool) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(name) = file_name.to_str() else {
+            continue;
+        };
+        let Some((pid, _)) = parse_runtime_staging_name(name) else {
+            continue;
+        };
+        if pid == self_pid || is_alive(pid) {
+            continue;
+        }
+        let _ = std::fs::remove_dir_all(entry.path());
+    }
 }
 
 /// Once per process per snapshot root, drop `.runtime-<pid>-<n>` directories left
@@ -236,23 +249,7 @@ fn sweep_leaked_runtime_staging(snapshot_root: &Path) {
         guard.insert(snapshot_root.to_path_buf());
     }
 
-    let Ok(entries) = std::fs::read_dir(snapshot_root) else {
-        return;
-    };
-    let self_pid = std::process::id();
-    for entry in entries.flatten() {
-        let file_name = entry.file_name();
-        let Some(name) = file_name.to_str() else {
-            continue;
-        };
-        let Some((pid, _)) = parse_runtime_staging_name(name) else {
-            continue;
-        };
-        if pid == self_pid || process_is_alive(pid) {
-            continue;
-        }
-        let _ = std::fs::remove_dir_all(entry.path());
-    }
+    sweep_runtime_staging(snapshot_root, std::process::id(), process_is_alive);
 }
 
 pub fn prepare_runtime_cache(
@@ -420,3 +417,7 @@ fn hashes(dir: &Path, names: &[&str]) -> Result<BTreeMap<String, String>, String
     }
     Ok(out)
 }
+
+#[cfg(test)]
+#[path = "runtime_tests.rs"]
+mod tests;
