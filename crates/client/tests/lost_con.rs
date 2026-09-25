@@ -7,7 +7,7 @@ use client::client::{Client, ClientConfig, ClientPlayer, ClientRevision};
 use client::config::Cache;
 use client::io::{ClientStream, ServerProt, ServerProt289};
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -311,4 +311,36 @@ fn short_game_frame_does_not_constrain_later_login_seed() {
             server.join().unwrap();
         }
     }
+}
+
+#[test]
+fn peer_closed_game_socket_triggers_lost_con_on_next_frame() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        serve_login_success(&mut s);
+        s.shutdown(Shutdown::Both).ok();
+        drop(s);
+        let (mut s2, _) = listener.accept().unwrap();
+        serve_login_reject(&mut s2);
+    });
+    let mut c = client();
+    c.config.host = addr.ip().to_string();
+    c.config.port = addr.port();
+    c.login("bob", "pw", false).unwrap();
+    assert!(c.ingame);
+    assert_eq!(c.last_login_reconnect, Some(false));
+    let deadline = Instant::now() + Duration::from_millis(200);
+    while c.last_login_reconnect != Some(true) && Instant::now() < deadline {
+        c.game_loop();
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        c.last_login_reconnect,
+        Some(true),
+        "EOF on available() must call lost_con without waiting the 15s watchdog"
+    );
+    assert!(!c.ingame);
+    server.join().unwrap();
 }

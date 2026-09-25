@@ -1435,7 +1435,7 @@ impl Client {
             Ok((cache, ifaces, ifaces_mut)) => (cache, ifaces, Arc::new(ifaces_mut), false),
             Err(()) => (Cache::default(), Vec::new(), Arc::new(Vec::new()), true),
         };
-        let on_demand = Self::load_on_demand(&config, None).unwrap_or(None);
+        let on_demand = Self::load_on_demand(&config, None, revision).unwrap_or(None);
         let mut client = Self::construct(
             config,
             Arc::new(cache),
@@ -1477,7 +1477,7 @@ impl Client {
         revision: ClientRevision,
     ) -> Self {
         let jag_checksum = Self::read_jag_checksums(&config.cache_dir);
-        let on_demand = Self::load_on_demand(&config, None).unwrap_or(None);
+        let on_demand = Self::load_on_demand(&config, None, revision).unwrap_or(None);
         let mut client = Self::construct(
             config,
             cache,
@@ -1522,8 +1522,8 @@ impl Client {
         let jag_checksum = profile
             .expected_crc()
             .unwrap_or_else(|| Self::read_jag_checksums(profile_cache));
-        let on_demand = Self::load_on_demand(&config, Some(&profile))?;
         let revision = profile.revision();
+        let on_demand = Self::load_on_demand(&config, Some(&profile), revision)?;
         let http_port = profile.asset_port();
         let mut client = Self::construct(
             config,
@@ -2458,6 +2458,7 @@ impl Client {
     fn load_on_demand(
         config: &ClientConfig,
         profile: Option<&ClientSessionProfile>,
+        revision: ClientRevision,
     ) -> Result<Option<OnDemand>, String> {
         let cache_dir = profile
             .map(|profile| profile.cache_dir().to_string_lossy().into_owned())
@@ -2484,12 +2485,13 @@ impl Client {
                         .and_then(|path| path.to_str()),
                 )
                 .map(Some),
-                None => Ok(OnDemand::new(
+                None => Ok(OnDemand::new_with_revision(
                     &versionlist,
                     &config.host,
                     config.port,
                     &config.cache_dir,
                     Arc::new(AtomicBool::new(false)),
+                    revision,
                 )),
             }
         }))
@@ -2637,7 +2639,8 @@ impl Client {
         }
 
         let profile = self.session_profile.clone();
-        self.on_demand = match Self::load_on_demand(&self.config, profile.as_deref()) {
+        self.on_demand = match Self::load_on_demand(&self.config, profile.as_deref(), self.revision)
+        {
             Ok(on_demand) => on_demand,
             Err(error) => {
                 self.error_loading = true;

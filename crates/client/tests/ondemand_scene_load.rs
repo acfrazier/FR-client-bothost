@@ -5,22 +5,26 @@
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use client::client::{Client, ClientConfig};
+use client::config::Cache;
 use client::io::{ClientRevision, JagFile, OnDemand, Packet};
 use client::render::Renderer;
 use client::BotTarget;
 
 const MAP_RAW: &[u8] = b"map-bytes";
+const KEEPALIVE_IDLE: Duration = Duration::from_secs(18);
+static NEXT_TMP: AtomicU64 = AtomicU64::new(1);
 
 fn tmp(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "274bot-od-scene-{name}-{}-{}",
         std::process::id(),
-        Instant::now().elapsed().as_nanos()
+        NEXT_TMP.fetch_add(1, Ordering::Relaxed)
     ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -74,8 +78,8 @@ fn map_payload() -> (Vec<u8>, i32) {
     (payload, crc)
 }
 
-fn map_versionlist(crc: i32) -> JagFile {
-    JagFile::new(jag(&[
+fn versionlist_bytes(crc: i32) -> Vec<u8> {
+    jag(&[
         ("model_version", &[0, 1]),
         ("anim_version", &[0, 1]),
         ("midi_version", &[0, 1]),
@@ -84,7 +88,11 @@ fn map_versionlist(crc: i32) -> JagFile {
         ("anim_crc", &[0, 0, 0, 0]),
         ("midi_crc", &[0, 0, 0, 0]),
         ("map_crc", &crc.to_be_bytes()),
-    ]))
+    ])
+}
+
+fn map_versionlist(crc: i32) -> JagFile {
+    JagFile::new(versionlist_bytes(crc))
 }
 
 /// `main_file_cache` record for OnDemand archive 3 / idx 4, file 0.
@@ -252,6 +260,10 @@ fn bound_file_store_used_when_jag_dir_has_no_store() {
         0,
         "bound file store must not open the ondemand socket"
     );
+    assert!(
+        !persist.join("3").join("0").exists(),
+        "local cache hits must not copy the store into persist"
+    );
 }
 
 /// A map fetched over ondemand is retained under the content-identity overlay
@@ -410,14 +422,43 @@ fn closed_ondemand_socket_reconnects_and_resends_immediately() {
     assert_eq!(accepts.load(Ordering::Relaxed), 2);
 }
 
+fn bound_ondemand(
+    revision: ClientRevision,
+    port: u16,
+    cache: &Path,
+    persist: Option<&Path>,
+    content_id: &str,
+) -> OnDemand {
+    let (_payload, crc) = map_payload();
+    OnDemand::new_bound(
+        &map_versionlist(crc),
+        BotTarget::Local,
+        revision,
+        "127.0.0.1",
+        port,
+        cache.to_str().unwrap(),
+        content_id,
+        None,
+        persist.and_then(|p| p.to_str()),
+    )
+    .unwrap()
+}
+
+fn idle_run(od: &mut OnDemand, until: Instant, stop: Option<&AtomicBool>) {
+    while Instant::now() < until && !stop.is_some_and(|s| s.load(Ordering::Relaxed)) {
+        od.run(true);
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
 /// Engine OnDemand.ts: `archive > 3 || priority > 2` closes the socket.
-/// The legacy Java keepalive is `00 00 00 0a`. A 289 worker must not send
-/// it; a later map request must complete on the still-open connection
-/// without a resend wait.
+/// The legacy Java keepalive is `00 00 00 0a`. A bound 289 worker must not
+/// send it across a long idle; a later map request must complete on the
+/// still-open connection without a resend wait.
 #[test]
-fn revision_289_does_not_send_legacy_keepalive() {
+fn bound_revision_289_does_not_send_legacy_keepalive() {
     let _r = Renderer::new(false);
-    let (payload, crc) = map_payload();
+    let (payload, _crc) = map_payload();
     let body = payload.clone();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -429,7 +470,7 @@ fn revision_289_does_not_send_legacy_keepalive() {
         serve_map(&mut sock, &body);
         sock.set_read_timeout(Some(Duration::from_millis(200)))
             .unwrap();
-        let idle_until = Instant::now() + Duration::from_secs(12);
+        let idle_until = Instant::now() + KEEPALIVE_IDLE;
         while Instant::now() < idle_until {
             let mut extra = [0u8; 4];
             match sock.read_exact(&mut extra) {
@@ -456,10 +497,222 @@ fn revision_289_does_not_send_legacy_keepalive() {
         serve_map(&mut sock, &body);
     });
 
-    let cache = tmp("keepalive");
-    let versionlist = map_versionlist(crc);
+    let cache = tmp("ka-289");
+    let mut od = bound_ondemand(
+        ClientRevision::R289,
+        port,
+        &cache,
+        None,
+        "scene-load-ka-289",
+    );
+    od.request(3, 0);
+    let first = wait_map(&mut od, Duration::from_secs(3));
+    assert_eq!(first.as_deref(), Some(MAP_RAW));
+    idle_run(&mut od, Instant::now() + KEEPALIVE_IDLE, Some(&saw_legacy));
+    assert!(
+        !saw_legacy.load(Ordering::Relaxed),
+        "bound 289 must not send 00 00 00 0a; OnDemand.ts closes on priority 10"
+    );
+    od.request(3, 0);
+    let started = Instant::now();
+    let second = wait_map(&mut od, Duration::from_secs(3));
+    server.join().unwrap();
+    assert_eq!(second.as_deref(), Some(MAP_RAW));
+    assert!(
+        started.elapsed() < Duration::from_millis(800),
+        "second map waited {:?}; keepalive must not have closed the socket",
+        started.elapsed()
+    );
+}
+
+/// Bound 274 still speaks the Java keepalive that 289 engines reject.
+#[test]
+fn bound_revision_274_sends_java_keepalive() {
+    let _r = Renderer::new(false);
+    let (payload, _crc) = map_payload();
+    let body = payload.clone();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let saw_legacy = Arc::new(AtomicBool::new(false));
+    let saw_legacy_s = Arc::clone(&saw_legacy);
+    let server = thread::spawn(move || {
+        let (mut sock, _) = listener.accept().unwrap();
+        handshake(&mut sock);
+        serve_map(&mut sock, &body);
+        sock.set_read_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+        let idle_until = Instant::now() + KEEPALIVE_IDLE;
+        while Instant::now() < idle_until {
+            let mut extra = [0u8; 4];
+            match sock.read_exact(&mut extra) {
+                Ok(()) if extra == [0, 0, 0, 10] => {
+                    saw_legacy_s.store(true, Ordering::Relaxed);
+                    return;
+                }
+                Ok(()) => return,
+                Err(_) => {}
+            }
+        }
+    });
+
+    let cache = tmp("ka-274");
+    let mut od = bound_ondemand(
+        ClientRevision::R274,
+        port,
+        &cache,
+        None,
+        "scene-load-ka-274",
+    );
+    od.request(3, 0);
+    let first = wait_map(&mut od, Duration::from_secs(3));
+    assert_eq!(first.as_deref(), Some(MAP_RAW));
+    idle_run(&mut od, Instant::now() + KEEPALIVE_IDLE, Some(&saw_legacy));
+    drop(od);
+    server.join().unwrap();
+    assert!(
+        saw_legacy.load(Ordering::Relaxed),
+        "bound 274 must still send 00 00 00 0a"
+    );
+}
+
+/// `load_on_demand` without a session profile still passes the Client
+/// revision: unbound 274 keeps the Java keepalive.
+#[test]
+fn unbound_load_on_demand_274_sends_java_keepalive() {
+    let _r = Renderer::new(false);
+    let (payload, crc) = map_payload();
+    let body = payload.clone();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let saw_legacy = Arc::new(AtomicBool::new(false));
+    let saw_legacy_s = Arc::clone(&saw_legacy);
+    let server = thread::spawn(move || {
+        let (mut sock, _) = listener.accept().unwrap();
+        handshake(&mut sock);
+        serve_map(&mut sock, &body);
+        sock.set_read_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+        let idle_until = Instant::now() + KEEPALIVE_IDLE;
+        while Instant::now() < idle_until {
+            let mut extra = [0u8; 4];
+            match sock.read_exact(&mut extra) {
+                Ok(()) if extra == [0, 0, 0, 10] => {
+                    saw_legacy_s.store(true, Ordering::Relaxed);
+                    return;
+                }
+                Ok(()) => return,
+                Err(_) => {}
+            }
+        }
+    });
+
+    let cache = tmp("ka-unbound-274");
+    std::fs::write(cache.join("versionlist"), versionlist_bytes(crc)).unwrap();
+    let mut c = Client::from_shared_with_revision(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port,
+            cache_dir: cache.to_str().unwrap().into(),
+            members: true,
+            lowmem: false,
+        },
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        vec![],
+        ClientRevision::R274,
+    );
+    let od = c.on_demand.as_mut().expect("versionlist starts OnDemand");
+    od.request(3, 0);
+    let first = wait_map(od, Duration::from_secs(3));
+    assert_eq!(first.as_deref(), Some(MAP_RAW));
+    idle_run(od, Instant::now() + KEEPALIVE_IDLE, Some(&saw_legacy));
+    drop(c);
+    server.join().unwrap();
+    assert!(
+        saw_legacy.load(Ordering::Relaxed),
+        "unbound 274 load_on_demand must still send 00 00 00 0a"
+    );
+}
+
+/// A server that accepts then closes without serving must not tight-loop
+/// reconnects. Backoff grows to the 4 s Java gate.
+#[test]
+fn no_progress_reconnect_is_rate_limited() {
+    let _r = Renderer::new(false);
+    let (_payload, crc) = map_payload();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    listener.set_nonblocking(true).unwrap();
+    let accepts = Arc::new(AtomicUsize::new(0));
+    let accepts_s = Arc::clone(&accepts);
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_s = Arc::clone(&stop);
+    let server = thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_millis(1200);
+        while Instant::now() < deadline && !stop_s.load(Ordering::Relaxed) {
+            match listener.accept() {
+                Ok((mut sock, _)) => {
+                    accepts_s.fetch_add(1, Ordering::Relaxed);
+                    let _ = sock.set_nonblocking(false);
+                    handshake(&mut sock);
+                    sock.shutdown(Shutdown::Both).ok();
+                }
+                Err(_) => thread::sleep(Duration::from_millis(2)),
+            }
+        }
+    });
+    let cache = tmp("storm");
     let mut od = OnDemand::new(
-        &versionlist,
+        &map_versionlist(crc),
+        "127.0.0.1",
+        port,
+        cache.to_str().unwrap(),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    od.request(3, 0);
+    let end = Instant::now() + Duration::from_millis(1000);
+    while Instant::now() < end {
+        od.run(true);
+        thread::sleep(Duration::from_millis(10));
+    }
+    stop.store(true, Ordering::Relaxed);
+    drop(od);
+    server.join().unwrap();
+    let n = accepts.load(Ordering::Relaxed);
+    assert!(n >= 1, "must attempt the update socket");
+    assert!(
+        n <= 12,
+        "no-progress reconnect storm: {n} accepts in ~1s (20ms doubling caps well below tick rate)"
+    );
+}
+
+/// After a file completed over the network, a later idle close still
+/// reconnects immediately rather than sitting out the 4 s gate.
+#[test]
+fn idle_close_after_network_complete_reconnects_immediately() {
+    let _r = Renderer::new(false);
+    let (payload, crc) = map_payload();
+    let body = payload.clone();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let accepts = Arc::new(AtomicUsize::new(0));
+    let accepts_s = Arc::clone(&accepts);
+    let server = thread::spawn(move || {
+        let (mut sock, _) = listener.accept().unwrap();
+        accepts_s.fetch_add(1, Ordering::Relaxed);
+        handshake(&mut sock);
+        serve_map(&mut sock, &body);
+        sock.shutdown(Shutdown::Both).ok();
+        drop(sock);
+        let (mut sock, _) = listener.accept().unwrap();
+        accepts_s.fetch_add(1, Ordering::Relaxed);
+        handshake(&mut sock);
+        serve_map(&mut sock, &body);
+    });
+    let cache = tmp("idle-close");
+    let mut od = OnDemand::new(
+        &map_versionlist(crc),
         "127.0.0.1",
         port,
         cache.to_str().unwrap(),
@@ -469,17 +722,15 @@ fn revision_289_does_not_send_legacy_keepalive() {
     od.request(3, 0);
     let first = wait_map(&mut od, Duration::from_secs(3));
     assert_eq!(first.as_deref(), Some(MAP_RAW));
-    let idle_end = Instant::now() + Duration::from_secs(12);
-    while Instant::now() < idle_end {
-        od.run(true);
-        thread::sleep(Duration::from_millis(20));
-    }
-    assert!(
-        !saw_legacy.load(Ordering::Relaxed),
-        "289 must not send 00 00 00 0a; OnDemand.ts closes on priority 10"
-    );
+    let started = Instant::now();
     od.request(3, 0);
-    let second = wait_map(&mut od, Duration::from_secs(3));
+    let second = wait_map(&mut od, Duration::from_millis(800));
     server.join().unwrap();
     assert_eq!(second.as_deref(), Some(MAP_RAW));
+    assert!(
+        started.elapsed() < Duration::from_millis(800),
+        "idle-close after serve waited {:?}; progress must skip the 4s gate",
+        started.elapsed()
+    );
+    assert_eq!(accepts.load(Ordering::Relaxed), 2);
 }

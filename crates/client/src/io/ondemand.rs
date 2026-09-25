@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Read};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -27,7 +27,11 @@ use crate::BotTarget;
 /// Reconnect gate in Java `OnDemand.send`: the socket is not reopened within
 /// 4 s of the last open. Spawn starts past the gate (first send is not
 /// gated) and `DropSocket` resets it so a relogin reconnects immediately.
+/// After a dead socket the 4 s gate is skipped only for the first reconnect
+/// following a network completion; repeated recoveries without progress back
+/// off exponentially up to this bound.
 const SOCKET_OPEN_GATE: Duration = Duration::from_millis(4000);
+const RECONNECT_BACKOFF_START: Duration = Duration::from_millis(20);
 
 /// One requested file, Java `OnDemandRequest` / TS `OnDemandRequest`. Implements
 /// `LinkableTrait` so requests sit on the TS `LinkList2` and completed files on
@@ -271,6 +275,8 @@ struct Worker {
     /// Content-identity overlay for completed ondemand files (gzip + trailer).
     persist_dir: Option<PathBuf>,
     recovering: bool,
+    reconnect_backoff: Duration,
+    saw_network_progress: bool,
     subs: Arc<Mutex<HashMap<u64, mpsc::Sender<WorkerMessage>>>>,
     running: Arc<AtomicBool>,
     ingame: Arc<AtomicBool>,
@@ -336,15 +342,36 @@ impl OnDemand {
     /// Parse the version/crc/index tables from the versionlist jag and spawn
     /// the worker thread (TS `new OnDemand(versionlist, app)` + Java `init`).
     /// Returns `None` when the versionlist lacks one of the four version or
-    /// crc tables (TS throws on those).
+    /// crc tables (TS throws on those). Unbound handles default to revision
+    /// 274 so the Java keepalive still fires.
     pub fn new(
         versionlist: &JagFile,
         host: &str,
         port: u16,
         cache_dir: &str,
-        _ingame: Arc<AtomicBool>,
+        ingame: Arc<AtomicBool>,
     ) -> Option<Self> {
-        Self::new_inner(versionlist, host, port, cache_dir, None)
+        Self::new_with_revision(
+            versionlist,
+            host,
+            port,
+            cache_dir,
+            ingame,
+            ClientRevision::R274,
+        )
+    }
+
+    /// Unbound constructor with an explicit protocol revision. Revision 289
+    /// must not send the Java keepalive (`00 00 00 0a`); 274 still does.
+    pub fn new_with_revision(
+        versionlist: &JagFile,
+        host: &str,
+        port: u16,
+        cache_dir: &str,
+        _ingame: Arc<AtomicBool>,
+        revision: ClientRevision,
+    ) -> Option<Self> {
+        Self::new_inner(versionlist, host, port, cache_dir, None, Some(revision))
             .ok()
             .flatten()
     }
@@ -374,6 +401,7 @@ impl OnDemand {
                 file_store_dir,
                 persist_dir,
             }),
+            None,
         )?
         .ok_or_else(|| "bound OnDemand versionlist is missing required tables".to_string())
     }
@@ -384,6 +412,7 @@ impl OnDemand {
         port: u16,
         cache_dir: &str,
         bound: Option<BoundHubIdentity<'_>>,
+        unbound_revision: Option<ClientRevision>,
     ) -> Result<Option<Self>, String> {
         let Some(versions) = read_table(
             versionlist,
@@ -452,8 +481,12 @@ impl OnDemand {
             .as_ref()
             .and_then(|identity| identity.file_store_dir)
             .unwrap_or(cache_dir);
+        let revision = bound
+            .as_ref()
+            .map(|identity| identity.revision)
+            .or(unbound_revision);
         let (cmd, message_rx, worker_running, hub_ingame, slot_id) =
-            subscribe_hub(host, port, store_hint, &versions, &crcs, identity)?;
+            subscribe_hub(host, port, store_hint, &versions, &crcs, identity, revision)?;
 
         let mut arena = Arena::new();
         let requests = LinkList2::new(&mut arena);
@@ -918,6 +951,7 @@ impl Drop for OnDemand {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn subscribe_hub(
     host: &str,
     port: u16,
@@ -925,6 +959,7 @@ fn subscribe_hub(
     versions: &[Vec<i32>],
     crcs: &[Vec<i32>],
     identity: Option<HubIdentity>,
+    revision: Option<ClientRevision>,
 ) -> Result<WorkerEnds, String> {
     let key = (host.to_string(), port);
     let slot_id = NEXT_SLOT.fetch_add(1, Ordering::Relaxed) as u64;
@@ -982,12 +1017,14 @@ fn subscribe_hub(
         host: host.to_string(),
         port,
         target: identity.as_ref().map(|identity| identity.target),
-        revision: identity.as_ref().map(|identity| identity.revision),
+        revision,
         cache_dir: resolve_file_store(cache_dir),
         persist_dir: identity
             .as_ref()
             .and_then(|identity| identity.persist_dir.as_ref().map(PathBuf::from)),
         recovering: false,
+        reconnect_backoff: Duration::ZERO,
+        saw_network_progress: false,
         subs: Arc::clone(&subs),
         running: Arc::clone(&running),
         ingame: Arc::clone(&ingame),
@@ -1078,6 +1115,8 @@ impl Worker {
                     self.packet_cycle = 0;
                     self.part_available = 0;
                     self.current = None;
+                    self.reconnect_backoff = Duration::ZERO;
+                    self.saw_network_progress = false;
                     self.socket_open_time = Instant::now() - SOCKET_OPEN_GATE;
                 }
                 WorkerCommand::Stop => {
@@ -1368,6 +1407,7 @@ impl Worker {
             if self.part_available + self.part_offset >= data_len as i32 && self.current.is_some() {
                 let ci = self.current.take().expect("current matched above");
                 let req = self.pending.remove(ci);
+                self.note_network_complete(&req);
                 self.complete(req);
             }
             self.part_available = 0;
@@ -1385,6 +1425,7 @@ impl Worker {
             }
             if self.open_socket().is_err() {
                 self.part_available = 0;
+                self.apply_reconnect_gate();
                 self.set_fail_count(self.fail_count + 1);
                 return;
             }
@@ -1428,6 +1469,7 @@ impl Worker {
         for _ in 0..8 {
             stream.read()?;
         }
+        self.saw_network_progress = false;
         self.stream = Some(stream);
         Ok(())
     }
@@ -1440,9 +1482,6 @@ impl Worker {
     /// urgent — that is what warms the process-wide `Model` store for
     /// first-login `get_temp_model` (`on_demand_loop` -> `Model::unpack`).
     fn complete(&mut self, mut req: OnDemandRequest) {
-        if let Some(data) = req.data.as_ref() {
-            self.persist_completed(req.archive, req.file, data);
-        }
         if let Some(i) = self
             .pending
             .iter()
@@ -1481,6 +1520,24 @@ impl Worker {
             self.handle_extra();
             if self.stream.is_some() {
                 self.read();
+            }
+        }
+
+        // Pending files already left `missing`, so `handle_pending` will not
+        // send them again. After a dead socket the reconnect gate may have
+        // deferred `recover_and_resend`; retry here each tick so we do not
+        // wait a 50-cycle resend for the gate to lift.
+        if self.stream.is_none() && !self.pending.is_empty() {
+            let jobs: Vec<(i32, i32, bool)> = self
+                .pending
+                .iter()
+                .map(|req| (req.archive, req.file, req.urgent))
+                .collect();
+            for (archive, file, urgent) in jobs {
+                self.send(archive, file, urgent);
+                if self.stream.is_none() {
+                    break;
+                }
             }
         }
 
@@ -1603,11 +1660,43 @@ impl Worker {
             return;
         }
         let path = dir.join(file.to_string());
-        let tmp = dir.join(format!(".{file}.tmp"));
+        static TMP: AtomicU64 = AtomicU64::new(1);
+        let tmp = dir.join(format!(
+            ".{file}.{}.{}.tmp",
+            std::process::id(),
+            TMP.fetch_add(1, Ordering::Relaxed)
+        ));
         if std::fs::write(&tmp, data).is_err() {
             return;
         }
         let _ = std::fs::rename(tmp, path);
+    }
+
+    fn note_network_complete(&mut self, req: &OnDemandRequest) {
+        if let Some(data) = req.data.as_ref() {
+            self.persist_completed(req.archive, req.file, data);
+        }
+        self.saw_network_progress = true;
+        self.reconnect_backoff = Duration::ZERO;
+    }
+
+    fn apply_reconnect_gate(&mut self) {
+        if self.saw_network_progress {
+            // Consume progress so only this recovery skips the gate.
+            self.saw_network_progress = false;
+            self.socket_open_time = Instant::now() - SOCKET_OPEN_GATE;
+            self.reconnect_backoff = Duration::ZERO;
+            return;
+        }
+        if self.reconnect_backoff.is_zero() {
+            self.reconnect_backoff = RECONNECT_BACKOFF_START;
+        } else {
+            self.reconnect_backoff = self
+                .reconnect_backoff
+                .saturating_mul(2)
+                .min(SOCKET_OPEN_GATE);
+        }
+        self.socket_open_time = Instant::now() + self.reconnect_backoff - SOCKET_OPEN_GATE;
     }
 
     fn note_dead_stream(&mut self) {
@@ -1616,7 +1705,7 @@ impl Worker {
         }
         self.part_available = 0;
         self.current = None;
-        self.socket_open_time = Instant::now() - SOCKET_OPEN_GATE;
+        self.apply_reconnect_gate();
     }
 
     fn recover_and_resend(&mut self) {
