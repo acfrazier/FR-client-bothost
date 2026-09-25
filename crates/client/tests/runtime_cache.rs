@@ -254,3 +254,104 @@ fn malformed_required_record_is_not_a_ready_identity() {
         .to_string_lossy()
         .starts_with(".runtime")));
 }
+
+fn spawn_short_child() -> std::process::Child {
+    #[cfg(unix)]
+    {
+        std::process::Command::new("true")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn true")
+    }
+    #[cfg(windows)]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn cmd exit")
+    }
+}
+
+fn spawn_live_child() -> std::process::Child {
+    #[cfg(unix)]
+    {
+        std::process::Command::new("sleep")
+            .arg("30")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn sleep")
+    }
+    #[cfg(windows)]
+    {
+        std::process::Command::new("timeout")
+            .args(["/T", "30", "/NOBREAK"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn timeout")
+    }
+}
+
+#[test]
+fn prepare_sweeps_leaked_runtime_staging_from_dead_pids_only() {
+    let tmp = Temp::new();
+    let source = tmp.0.join("source");
+    let root = tmp.0.join("snapshots");
+    let p = packs(1);
+    write_packs(&source, &p);
+    snapshot(&root, &p);
+
+    let mut dead = spawn_short_child();
+    let dead_pid = dead.id();
+    dead.wait().expect("wait short child");
+
+    let mut live = spawn_live_child();
+    let live_pid = live.id();
+
+    let dead_dir = root.join(format!(".runtime-{dead_pid}-0"));
+    let self_dir = root.join(format!(".runtime-{}-999", std::process::id()));
+    let live_dir = root.join(format!(".runtime-{live_pid}-0"));
+    let other_dir = root.join("not-runtime-staging");
+    let bad_name = root.join(".runtime-abc-1");
+    for dir in [&dead_dir, &self_dir, &live_dir, &other_dir, &bad_name] {
+        std::fs::create_dir(dir).unwrap();
+        std::fs::write(dir.join("marker"), b"keep").unwrap();
+    }
+
+    let prepared = prepare(&source, &root, p, 0).unwrap();
+
+    assert!(
+        !dead_dir.exists(),
+        "dead pid staging should be swept: {}",
+        dead_dir.display()
+    );
+    assert!(
+        self_dir.exists(),
+        "current pid staging must stay: {}",
+        self_dir.display()
+    );
+    assert!(
+        live_dir.exists(),
+        "live pid staging must stay: {}",
+        live_dir.display()
+    );
+    assert!(
+        other_dir.exists(),
+        "non-matching name must stay: {}",
+        other_dir.display()
+    );
+    assert!(
+        bad_name.exists(),
+        "non-decimal runtime name must stay: {}",
+        bad_name.display()
+    );
+    assert!(prepared.unpack_root().exists());
+
+    let _ = live.kill();
+    let _ = live.wait();
+    drop(prepared);
+}

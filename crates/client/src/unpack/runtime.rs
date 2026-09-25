@@ -2,11 +2,11 @@
 //! packs and snapshot until the last profile releases them. No persisted
 //! identity sidecar is trusted, and clients share this result rather than
 //! scanning or copying a snapshot per bot.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 
 use sha2::{Digest, Sha256};
 
@@ -117,6 +117,108 @@ impl From<super::UnpackError> for RuntimeCacheError {
     }
 }
 
+/// Parse `.runtime-<pid>-<n>` where both sides are exact non-empty decimal runs.
+fn parse_runtime_staging_name(name: &str) -> Option<(u32, u64)> {
+    let rest = name.strip_prefix(".runtime-")?;
+    let (pid_str, n_str) = rest.split_once('-')?;
+    if pid_str.is_empty()
+        || n_str.is_empty()
+        || !pid_str.bytes().all(|b| b.is_ascii_digit())
+        || !n_str.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    Some((pid_str.parse().ok()?, n_str.parse().ok()?))
+}
+
+/// True when `pid` still appears to own a live process. Unknown results count as
+/// alive so a staging directory that might still be in use is never deleted.
+fn process_is_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        // SAFETY: signal 0 performs no delivery; it only probes existence/permissions.
+        let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        if result == 0 {
+            return true;
+        }
+        match std::io::Error::last_os_error().raw_os_error() {
+            Some(libc::EPERM) => true,
+            Some(libc::ESRCH) => false,
+            _ => true,
+        }
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{
+            CloseHandle, GetLastError, BOOL, ERROR_ACCESS_DENIED, HANDLE, STILL_ACTIVE,
+        };
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+
+        // SAFETY: query-only open; handle is closed before return on every path.
+        let handle: HANDLE =
+            unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0 as BOOL, pid) };
+        if handle == 0 || handle == -1isize as HANDLE {
+            // ACCESS_DENIED means the process exists but is protected.
+            // Other open failures usually mean the pid is gone; still prefer keep
+            // on truly unknown codes by treating only the common "gone" path as dead.
+            let err = unsafe { GetLastError() };
+            return err == ERROR_ACCESS_DENIED;
+        }
+        let mut exit_code = 0u32;
+        // SAFETY: `handle` is a process handle from OpenProcess above.
+        let ok = unsafe { GetExitCodeProcess(handle, &mut exit_code) };
+        // SAFETY: closes the handle opened above.
+        unsafe {
+            let _ = CloseHandle(handle);
+        };
+        if ok == 0 {
+            return true;
+        }
+        exit_code == STILL_ACTIVE as u32
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = pid;
+        true
+    }
+}
+
+/// Once per process per snapshot root, drop `.runtime-<pid>-<n>` directories left
+/// by dead foreign processes. Errors and non-matching names are ignored.
+fn sweep_leaked_runtime_staging(snapshot_root: &Path) {
+    static SWEPT_ROOTS: LazyLock<Mutex<HashSet<PathBuf>>> =
+        LazyLock::new(|| Mutex::new(HashSet::new()));
+    {
+        let mut guard = match SWEPT_ROOTS.lock() {
+            Ok(g) => g,
+            Err(e) => e.into_inner(),
+        };
+        if !guard.insert(snapshot_root.to_path_buf()) {
+            return;
+        }
+    }
+
+    let Ok(entries) = std::fs::read_dir(snapshot_root) else {
+        return;
+    };
+    let self_pid = std::process::id();
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(name) = file_name.to_str() else {
+            continue;
+        };
+        let Some((pid, _)) = parse_runtime_staging_name(name) else {
+            continue;
+        };
+        if pid == self_pid || process_is_alive(pid) {
+            continue;
+        }
+        let _ = std::fs::remove_dir_all(entry.path());
+    }
+}
+
 pub fn prepare_runtime_cache(
     request: &RuntimeCacheRequest<'_>,
 ) -> Result<Arc<PreparedRuntimeCache>, RuntimeCacheError> {
@@ -128,6 +230,7 @@ pub fn prepare_runtime_cache(
         })?;
     static NEXT: AtomicU64 = AtomicU64::new(0);
     std::fs::create_dir_all(request.snapshot_root).map_err(|e| e.to_string())?;
+    sweep_leaked_runtime_staging(request.snapshot_root);
     let owned = loop {
         let path = request.snapshot_root.join(format!(
             ".runtime-{}-{}",
