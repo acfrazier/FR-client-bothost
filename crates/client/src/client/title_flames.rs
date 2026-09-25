@@ -1,11 +1,16 @@
 //! Title-screen torch flames, 1:1 of client-ts `TitleFlames.ts`.
-//! The TS 35 ms `setInterval` becomes `render_flames` once per title frame.
+//! The TS 35 ms `setInterval` is accumulated between visible title paints.
+
+use std::time::{Duration, Instant};
 
 use crate::graphics::{Colour, Pix32, Pix8, PixMap};
 
 const FLAME_WIDTH: i32 = 128;
 const FLAME_HEIGHT: i32 = 256;
 const TITLE_FLAME_PIXELS: usize = 33920;
+const FLAME_FRAME_TIME: Duration = Duration::from_millis(35);
+const CLIENT_LOOP_TIME: Duration = Duration::from_millis(20);
+const MAX_FLAME_CATCH_UP: Duration = Duration::from_secs(1);
 
 pub struct TitleFlames {
     runes: Vec<Pix8>,
@@ -26,6 +31,10 @@ pub struct TitleFlames {
     flame_gradient_cycle0: i32,
     flame_gradient_cycle1: i32,
     rng: u32,
+    last_render_at: Option<Instant>,
+    update_accumulator: Duration,
+    phase_accumulator: Duration,
+    phase_loop_cycle: i32,
 }
 
 impl TitleFlames {
@@ -49,6 +58,10 @@ impl TitleFlames {
             flame_gradient_cycle0: 0,
             flame_gradient_cycle1: 0,
             rng: 0xC0FFEE,
+            last_render_at: None,
+            update_accumulator: Duration::ZERO,
+            phase_accumulator: Duration::ZERO,
+            phase_loop_cycle: 0,
         }
     }
 
@@ -120,11 +133,17 @@ impl TitleFlames {
     }
 
     pub fn start(&mut self) {
+        self.last_render_at = None;
+        self.update_accumulator = Duration::ZERO;
+        self.phase_accumulator = Duration::ZERO;
         self.active = true;
     }
 
     pub fn close(&mut self) {
         self.active = false;
+        self.last_render_at = None;
+        self.update_accumulator = Duration::ZERO;
+        self.phase_accumulator = Duration::ZERO;
         self.flame_left = None;
         self.flame_right = None;
         self.flame_gradient.clear();
@@ -143,13 +162,53 @@ impl TitleFlames {
         title_right: &mut PixMap,
         loop_cycle: i32,
     ) {
+        self.render_flames_at(title_left, title_right, loop_cycle, Instant::now());
+    }
+
+    fn render_flames_at(
+        &mut self,
+        title_left: &mut PixMap,
+        title_right: &mut PixMap,
+        loop_cycle: i32,
+        now: Instant,
+    ) {
         if !self.active {
             return;
         }
-        self.cycle += 1;
-        self.update_flames(loop_cycle);
-        self.update_flames(loop_cycle);
-        self.draw_flames(title_left, title_right);
+
+        let Some(last_render_at) = self.last_render_at.replace(now) else {
+            self.phase_loop_cycle = loop_cycle;
+            self.advance_flame_frame();
+            self.draw_flames(title_left, title_right);
+            return;
+        };
+
+        self.update_accumulator = self
+            .update_accumulator
+            .saturating_add(now.saturating_duration_since(last_render_at))
+            .min(MAX_FLAME_CATCH_UP);
+
+        let mut advanced = false;
+        while self.update_accumulator >= FLAME_FRAME_TIME {
+            self.update_accumulator -= FLAME_FRAME_TIME;
+            self.phase_accumulator += FLAME_FRAME_TIME;
+            while self.phase_accumulator >= CLIENT_LOOP_TIME {
+                self.phase_accumulator -= CLIENT_LOOP_TIME;
+                self.phase_loop_cycle = self.phase_loop_cycle.wrapping_add(1);
+            }
+            self.advance_flame_frame();
+            advanced = true;
+        }
+
+        if advanced {
+            self.draw_flames(title_left, title_right);
+        }
+    }
+
+    fn advance_flame_frame(&mut self) {
+        self.cycle = self.cycle.wrapping_add(1);
+        self.update_flames(self.phase_loop_cycle);
+        self.update_flames(self.phase_loop_cycle);
     }
 
     fn rand(&mut self, max: i32) -> i32 {
@@ -442,5 +501,65 @@ impl TitleFlames {
                 & 0xff0000))
             >> 8;
         dst_offset + 1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn started_flames() -> (TitleFlames, PixMap, PixMap) {
+        let mut left = PixMap::new(FLAME_WIDTH, 265);
+        let mut right = PixMap::new(FLAME_WIDTH, 265);
+        left.pixels.fill(0x332211);
+        right.pixels.fill(0x112233);
+        let mut flames = TitleFlames::new(Vec::new());
+        flames.setup_fire(&left, &right);
+        flames.start();
+        (flames, left, right)
+    }
+
+    #[test]
+    fn flame_clock_advances_at_35_ms_independent_of_paint_cadence() {
+        let (mut flames, mut left, mut right) = started_flames();
+        let start = Instant::now();
+
+        flames.render_flames_at(&mut left, &mut right, 0, start);
+        assert_eq!(
+            flames.cycle, 1,
+            "the first visible flame frame renders immediately"
+        );
+
+        flames.render_flames_at(&mut left, &mut right, 1, start + Duration::from_millis(20));
+        assert_eq!(flames.cycle, 1, "20 ms is shorter than one flame frame");
+
+        flames.render_flames_at(&mut left, &mut right, 2, start + Duration::from_millis(35));
+        assert_eq!(flames.cycle, 2);
+
+        flames.render_flames_at(&mut left, &mut right, 3, start + Duration::from_millis(105));
+        assert_eq!(
+            flames.cycle, 4,
+            "a sparse paint catches up two more 35 ms flame frames"
+        );
+    }
+
+    #[test]
+    fn flame_clock_drops_catch_up_older_than_one_second() {
+        let (mut flames, mut left, mut right) = started_flames();
+        let start = Instant::now();
+        flames.render_flames_at(&mut left, &mut right, 0, start);
+
+        flames.render_flames_at(
+            &mut left,
+            &mut right,
+            1,
+            start + Duration::from_secs(5 * 60),
+        );
+
+        assert_eq!(
+            flames.cycle,
+            1 + (MAX_FLAME_CATCH_UP.as_millis() / FLAME_FRAME_TIME.as_millis()) as i32,
+            "missed TS interval callbacks are dropped instead of replaying minutes of work"
+        );
     }
 }

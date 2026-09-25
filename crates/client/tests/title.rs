@@ -2,6 +2,7 @@ use client::client::Client;
 use client::client::ClientConfig;
 use client::graphics::Pix32;
 use client::io::JagFile;
+use client::render::backend::{BackendKind, FrameOutput};
 use client::render::Renderer;
 
 fn cache_dir() -> Option<String> {
@@ -20,6 +21,22 @@ fn client(cache: String) -> Client {
         cache_dir: cache,
         members: true,
         lowmem: false,
+    })
+}
+
+fn frame_pixels(frame: FrameOutput) -> Vec<i32> {
+    match frame {
+        FrameOutput::PixMap(map) => map.pixels,
+        FrameOutput::Texture(texture) => texture.read_back(),
+    }
+}
+
+fn flame_columns_changed(before: &[i32], after: &[i32]) -> bool {
+    let width = 765usize;
+    (0..265usize).any(|y| {
+        (0..128usize)
+            .chain(637..765usize)
+            .any(|x| before[y * width + x] != after[y * width + x])
     })
 }
 
@@ -96,10 +113,8 @@ fn title_flames_tick_mutates_left_strip() {
         .expect("image_title0")
         .pixels
         .clone();
-    for _ in 0..8 {
-        c.loop_cycle += 1;
-        r.title_screen_draw(&mut c);
-    }
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    r.title_screen_draw(&mut c);
     let after = &r.image_title0.as_ref().expect("image_title0").pixels;
     assert_ne!(
         &before, after,
@@ -107,37 +122,83 @@ fn title_flames_tick_mutates_left_strip() {
     );
 }
 
-/// GPU title chrome still ticks the torch columns into `draw_area` (and
-/// the composited frame, when wgpu is up). `SKIP_GPU=1` / no adapter
-/// falls back to CPU — then this is the same as the CPU flame test.
+/// GPU title chrome uploads the changing torch columns into the presented
+/// texture at first boot and after the game tears down the first title.
 #[test]
-fn gpu_title_flames_tick_left_strip() {
+fn gpu_title_flames_animate_first_boot_and_after_logout() {
     if std::env::var("SKIP_GPU").ok().as_deref() == Some("1") {
         return;
     }
     let mut r = Renderer::new_prefer(false, true);
+    if r.backend_kind() != BackendKind::Gpu {
+        eprintln!("no adapter on this machine; GPU title flame test skips");
+        return;
+    }
     let Some(cache) = cache_dir() else {
         return;
     };
     let mut c = client(cache);
+
+    let first_boot = frame_pixels(r.title_screen_draw(&mut c));
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    let animated_boot = frame_pixels(r.title_screen_draw(&mut c));
+    assert!(
+        flame_columns_changed(&first_boot, &animated_boot),
+        "GPU title torch pixels must change at first boot"
+    );
+
+    c.set_draw(true);
+    c.ingame = true;
+    let _ = r.mainredraw(&mut c);
+    assert!(
+        r.title_flames.is_none(),
+        "entering the game must unload GPU title flames"
+    );
+
+    c.logout();
+    let after_logout = frame_pixels(r.mainredraw(&mut c));
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    let animated_logout = frame_pixels(r.mainredraw(&mut c));
+    assert!(
+        flame_columns_changed(&after_logout, &animated_logout),
+        "GPU title torch pixels must change after logout"
+    );
+}
+
+/// A sparse title paint must catch the flame simulation up at the TS 35 ms
+/// cadence after the game tears the first title instance down.
+#[test]
+fn title_flames_keep_ts_rate_after_logout() {
+    let mut r = Renderer::new(false);
+    let Some(cache) = cache_dir() else {
+        return;
+    };
+    let mut c = client(cache);
+
     r.title_screen_draw(&mut c);
-    let any = (0..265)
-        .any(|y| (0..128).any(|x| r.draw_area.pixels[(y * r.draw_area.width + x) as usize] != 0));
-    assert!(any, "GPU title left torch column must not be black");
-    let before = r
-        .image_title0
-        .as_ref()
-        .expect("image_title0")
-        .pixels
-        .clone();
-    for _ in 0..8 {
-        c.loop_cycle += 1;
-        r.title_screen_draw(&mut c);
-    }
-    let after = &r.image_title0.as_ref().expect("image_title0").pixels;
-    assert_ne!(
-        &before, after,
-        "GPU title torch flame pixels should change across frames"
+    c.set_draw(true);
+    c.ingame = true;
+    let _ = r.mainredraw(&mut c);
+    assert!(
+        r.title_flames.is_none(),
+        "entering the game must unload the first title flame instance"
+    );
+
+    c.logout();
+    let _ = r.mainredraw(&mut c);
+    let after_logout = r.title_flames.as_ref().expect("logout title flames").cycle;
+    let logout_pixels = r.draw_area.pixels.clone();
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    let _ = r.mainredraw(&mut c);
+    let after_sparse_paint = r.title_flames.as_ref().expect("logout title flames").cycle;
+
+    assert!(
+        after_sparse_paint - after_logout >= 3,
+        "120 ms between paints must advance at least three 35 ms flame frames"
+    );
+    assert!(
+        flame_columns_changed(&logout_pixels, &r.draw_area.pixels),
+        "CPU title torch pixels must change after logout"
     );
 }
 
