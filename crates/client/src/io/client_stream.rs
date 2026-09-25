@@ -333,7 +333,10 @@ impl ClientStream {
                 t.reader.set_nonblocking(true)?;
                 let mut b = [0u8; AVAILABLE_BUF];
                 let n = match t.reader.peek(&mut b) {
-                    Ok(0) => 0,
+                    Ok(0) => {
+                        t.reader.set_nonblocking(false)?;
+                        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "EOF"));
+                    }
                     Ok(n) => n as i32,
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => 0,
                     Err(e) => {

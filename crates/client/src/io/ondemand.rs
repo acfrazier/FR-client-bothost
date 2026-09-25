@@ -7,6 +7,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Read};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -147,6 +148,8 @@ struct HubIdentity {
     revision: ClientRevision,
     cache_dir: String,
     content_id: String,
+    file_store_dir: Option<String>,
+    persist_dir: Option<String>,
     tables_sha256: [u8; 32],
 }
 
@@ -155,6 +158,8 @@ struct BoundHubIdentity<'a> {
     revision: ClientRevision,
     cache_dir: &'a str,
     content_id: &'a str,
+    file_store_dir: Option<&'a str>,
+    persist_dir: Option<&'a str>,
 }
 
 static NEXT_SLOT: AtomicUsize = AtomicUsize::new(1);
@@ -259,9 +264,13 @@ struct Worker {
     host: String,
     port: u16,
     target: Option<BotTarget>,
+    revision: Option<ClientRevision>,
     /// Some when the `main_file_cache` file store is present (Java
     /// `app.fileStreams[0] != null`).
     cache_dir: Option<String>,
+    /// Content-identity overlay for completed ondemand files (gzip + trailer).
+    persist_dir: Option<PathBuf>,
+    recovering: bool,
     subs: Arc<Mutex<HashMap<u64, mpsc::Sender<WorkerMessage>>>>,
     running: Arc<AtomicBool>,
     ingame: Arc<AtomicBool>,
@@ -340,7 +349,8 @@ impl OnDemand {
             .flatten()
     }
 
-    pub(crate) fn new_bound(
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_bound(
         versionlist: &JagFile,
         target: BotTarget,
         revision: ClientRevision,
@@ -348,6 +358,8 @@ impl OnDemand {
         port: u16,
         cache_dir: &str,
         content_id: &str,
+        file_store_dir: Option<&str>,
+        persist_dir: Option<&str>,
     ) -> Result<Self, String> {
         Self::new_inner(
             versionlist,
@@ -359,6 +371,8 @@ impl OnDemand {
                 revision,
                 cache_dir,
                 content_id,
+                file_store_dir,
+                persist_dir,
             }),
         )?
         .ok_or_else(|| "bound OnDemand versionlist is missing required tables".to_string())
@@ -430,10 +444,16 @@ impl OnDemand {
             revision: identity.revision,
             cache_dir: identity.cache_dir.to_string(),
             content_id: identity.content_id.to_string(),
+            file_store_dir: identity.file_store_dir.map(str::to_string),
+            persist_dir: identity.persist_dir.map(str::to_string),
             tables_sha256: tables_sha256(&versions, &crcs),
         });
+        let store_hint = bound
+            .as_ref()
+            .and_then(|identity| identity.file_store_dir)
+            .unwrap_or(cache_dir);
         let (cmd, message_rx, worker_running, hub_ingame, slot_id) =
-            subscribe_hub(host, port, cache_dir, &versions, &crcs, identity)?;
+            subscribe_hub(host, port, store_hint, &versions, &crcs, identity)?;
 
         let mut arena = Arena::new();
         let requests = LinkList2::new(&mut arena);
@@ -962,7 +982,12 @@ fn subscribe_hub(
         host: host.to_string(),
         port,
         target: identity.as_ref().map(|identity| identity.target),
+        revision: identity.as_ref().map(|identity| identity.revision),
         cache_dir: resolve_file_store(cache_dir),
+        persist_dir: identity
+            .as_ref()
+            .and_then(|identity| identity.persist_dir.as_ref().map(PathBuf::from)),
+        recovering: false,
         subs: Arc::clone(&subs),
         running: Arc::clone(&running),
         ingame: Arc::clone(&ingame),
@@ -1002,16 +1027,22 @@ fn tables_sha256(versions: &[Vec<i32>], crcs: &[Vec<i32>]) -> [u8; 32] {
 
 /// Worker thread body: Java `OnDemand.run` with the command channel drained
 /// each pass (TS message handling). Sleeps 20 ms (50 ms when only prefetches
-/// remain and a local cache exists), then one pump cycle.
+/// remain and a local cache exists), then one pump cycle. Queued demand is
+/// pumped immediately so a matching local map is not delayed by the idle
+/// prefetch interval.
 fn worker_main(mut worker: Worker) {
     while worker.running.load(Ordering::Relaxed) {
         worker.drain_commands();
-        let delay = if worker.top_priority == 0 && worker.cache_dir.is_some() {
+        let delay = if !worker.queue.is_empty() {
+            0
+        } else if worker.top_priority == 0 && worker.cache_dir.is_some() {
             50
         } else {
             20
         };
-        thread::sleep(Duration::from_millis(delay));
+        if delay > 0 {
+            thread::sleep(Duration::from_millis(delay));
+        }
         worker.tick();
     }
 }
@@ -1092,26 +1123,21 @@ impl Worker {
     /// the file is dropped from the prefetch set when the cache copy already
     /// validates against its crc/version.
     fn prefetch_priority(&mut self, archive: i32, file: i32, priority: i32) {
-        let Some(dir) = &self.cache_dir else { return };
+        if self.cache_dir.is_none() && self.persist_dir.is_none() {
+            return;
+        }
         if !self.valid_file(archive, file) {
             return;
         }
-        let data = cache_read(dir, archive + 1, file);
-        if validate(
-            self.crcs[archive as usize][file as usize],
-            self.versions[archive as usize][file as usize],
-            data.as_deref(),
-        ) {
+        if let Some(data) = self.cached_payload(archive, file) {
             // Java skips the extra-files download. This port never writes
             // idx, so Model::unpack only runs on Completed: post archive-0
             // cache hits the same way `complete` posts non-urgent models.
             if archive == 0 {
-                if let Some(bytes) = data {
-                    let mut req = OnDemandRequest::new(archive, file);
-                    req.urgent = false;
-                    req.data = Some(bytes);
-                    self.complete(req);
-                }
+                let mut req = OnDemandRequest::new(archive, file);
+                req.urgent = false;
+                req.data = Some(data);
+                self.complete(req);
             }
             return;
         }
@@ -1126,7 +1152,9 @@ impl Worker {
     /// only when a prefetch pass is active (`topPriority != 0`). Unlike the
     /// Java subscript swap (a 317 bug), the guard indexes by archive/file.
     fn prefetch(&mut self, archive: i32, file: i32) {
-        if self.cache_dir.is_none() || !self.valid_file(archive, file) {
+        if (self.cache_dir.is_none() && self.persist_dir.is_none())
+            || !self.valid_file(archive, file)
+        {
             return;
         }
         if self.priorities[archive as usize][file as usize] == 0 || self.top_priority == 0 {
@@ -1142,22 +1170,11 @@ impl Worker {
     fn handle_queue(&mut self) {
         while let Some(mut req) = self.queue.pop_front() {
             self.active = true;
-            let mut cached = self
-                .cache_dir
-                .as_ref()
-                .and_then(|dir| cache_read(dir, req.archive + 1, req.file));
-            if !validate(
-                self.crcs[req.archive as usize][req.file as usize],
-                self.versions[req.archive as usize][req.file as usize],
-                cached.as_deref(),
-            ) {
-                cached = None;
-            }
-            if cached.is_none() {
-                self.missing.push_back(req);
-            } else {
-                req.data = cached;
+            if let Some(cached) = self.cached_payload(req.archive, req.file) {
+                req.data = Some(cached);
                 self.complete(req);
+            } else {
+                self.missing.push_back(req);
             }
         }
     }
@@ -1247,10 +1264,7 @@ impl Worker {
     /// exactly like the Java `catch (IOException)`.
     fn read(&mut self) {
         if self.try_read().is_err() {
-            if let Some(mut stream) = self.stream.take() {
-                stream.close();
-            }
-            self.part_available = 0;
+            self.recover_and_resend();
         }
     }
 
@@ -1394,11 +1408,11 @@ impl Worker {
         if ok {
             self.no_timeout_cycle = 0;
             self.set_fail_count(-10000);
+        } else if self.recovering {
+            self.note_dead_stream();
+            self.set_fail_count(self.fail_count + 1);
         } else {
-            if let Some(mut stream) = self.stream.take() {
-                stream.close();
-            }
-            self.part_available = 0;
+            self.recover_and_resend();
             self.set_fail_count(self.fail_count + 1);
         }
     }
@@ -1426,6 +1440,9 @@ impl Worker {
     /// urgent — that is what warms the process-wide `Model` store for
     /// first-login `get_temp_model` (`on_demand_loop` -> `Model::unpack`).
     fn complete(&mut self, mut req: OnDemandRequest) {
+        if let Some(data) = req.data.as_ref() {
+            self.persist_completed(req.archive, req.file, data);
+        }
         if let Some(i) = self
             .pending
             .iter()
@@ -1496,10 +1513,7 @@ impl Worker {
         if loading {
             self.packet_cycle += 1;
             if self.packet_cycle > 750 {
-                if let Some(mut stream) = self.stream.take() {
-                    stream.close();
-                }
-                self.part_available = 0;
+                self.recover_and_resend();
             }
         } else {
             self.packet_cycle = 0;
@@ -1509,6 +1523,7 @@ impl Worker {
         if self.ingame.load(Ordering::Relaxed)
             && self.stream.is_some()
             && (self.top_priority > 0 || self.cache_dir.is_none())
+            && self.wants_java_keepalive()
         {
             self.no_timeout_cycle += 1;
             if self.no_timeout_cycle > 500 {
@@ -1522,10 +1537,110 @@ impl Worker {
                     .as_mut()
                     .is_some_and(|s| s.write(&self.buf, 4).is_ok());
                 if !ok {
-                    self.packet_cycle = 5000;
+                    self.recover_and_resend();
                 }
             }
         }
+    }
+
+    fn wants_java_keepalive(&self) -> bool {
+        matches!(self.revision, Some(ClientRevision::R274))
+    }
+
+    fn cached_payload(&self, archive: i32, file: i32) -> Option<Vec<u8>> {
+        if archive < 0 || file < 0 {
+            return None;
+        }
+        let crc = *self.crcs.get(archive as usize)?.get(file as usize)?;
+        let version = *self.versions.get(archive as usize)?.get(file as usize)?;
+        if let Some(data) = self.read_persisted(archive, file) {
+            if validate(crc, version, Some(&data)) {
+                return Some(data);
+            }
+        }
+        let data = self
+            .cache_dir
+            .as_ref()
+            .and_then(|dir| cache_read(dir, archive + 1, file))?;
+        validate(crc, version, Some(&data)).then_some(data)
+    }
+
+    fn read_persisted(&self, archive: i32, file: i32) -> Option<Vec<u8>> {
+        let path = self
+            .persist_dir
+            .as_ref()?
+            .join(archive.to_string())
+            .join(file.to_string());
+        std::fs::read(path).ok()
+    }
+
+    fn persist_completed(&self, archive: i32, file: i32, data: &[u8]) {
+        if !(0..=3).contains(&archive) || file < 0 {
+            return;
+        }
+        let Some(root) = &self.persist_dir else {
+            return;
+        };
+        let Some(crc) = self
+            .crcs
+            .get(archive as usize)
+            .and_then(|t| t.get(file as usize))
+        else {
+            return;
+        };
+        let Some(version) = self
+            .versions
+            .get(archive as usize)
+            .and_then(|t| t.get(file as usize))
+        else {
+            return;
+        };
+        if !validate(*crc, *version, Some(data)) {
+            return;
+        }
+        let dir = root.join(archive.to_string());
+        if std::fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+        let path = dir.join(file.to_string());
+        let tmp = dir.join(format!(".{file}.tmp"));
+        if std::fs::write(&tmp, data).is_err() {
+            return;
+        }
+        let _ = std::fs::rename(tmp, path);
+    }
+
+    fn note_dead_stream(&mut self) {
+        if let Some(mut stream) = self.stream.take() {
+            stream.close();
+        }
+        self.part_available = 0;
+        self.current = None;
+        self.socket_open_time = Instant::now() - SOCKET_OPEN_GATE;
+    }
+
+    fn recover_and_resend(&mut self) {
+        if self.recovering {
+            self.note_dead_stream();
+            return;
+        }
+        self.recovering = true;
+        self.note_dead_stream();
+        let jobs: Vec<(i32, i32, bool)> = self
+            .pending
+            .iter()
+            .map(|req| (req.archive, req.file, req.urgent))
+            .collect();
+        for req in &mut self.pending {
+            req.cycle = 0;
+        }
+        for (archive, file, urgent) in jobs {
+            self.send(archive, file, urgent);
+            if self.stream.is_none() {
+                break;
+            }
+        }
+        self.recovering = false;
     }
 
     fn set_message(&mut self, message: String) {

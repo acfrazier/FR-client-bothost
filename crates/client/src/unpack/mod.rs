@@ -856,7 +856,7 @@ fn write_records(
 
 /// Directory that actually holds `main_file_cache.dat`: `cache_dir` itself,
 /// or (the engine layout) its parent — one level above the jag pack.
-fn file_store_dir(cache_dir: &str) -> Option<String> {
+pub(crate) fn file_store_dir(cache_dir: &str) -> Option<String> {
     let here = Path::new(cache_dir);
     if here.join("main_file_cache.dat").is_file() {
         return Some(cache_dir.to_string());

@@ -38,6 +38,8 @@ fn profile_config(cache_dir: PathBuf, game_port: u16, asset_port: u16) -> Client
         rsa_exponent: "1".into(),
         expected_crc: None,
         content_id: "fixture-289-a".into(),
+        file_store_dir: None,
+        ondemand_persist_dir: None,
     }
 }
 

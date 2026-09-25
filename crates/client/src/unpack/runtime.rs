@@ -46,6 +46,10 @@ pub struct PreparedRuntimeCache {
     pub asset_port: u16,
     pub fetched: Vec<String>,
     pub reused: Vec<String>,
+    /// Read-only original `main_file_cache` when identity-checked maps exist.
+    pub store_dir: Option<PathBuf>,
+    /// Content-identity overlay for completed ondemand payloads.
+    pub persist_dir: PathBuf,
 }
 
 impl PreparedRuntimeCache {
@@ -361,6 +365,8 @@ pub fn prepare_runtime_cache(
                     request.game_port,
                     cache,
                     &transfer_id,
+                    super::file_store_dir(&request.jag_source.to_string_lossy()).as_deref(),
+                    None,
                 )
                 .map_err(RuntimeCacheError::Other)?;
                 let result = fetch_snapshot(cache, root, &mut worker);
@@ -383,6 +389,9 @@ pub fn prepare_runtime_cache(
             return Err(format!("{name}: transfer CRC changed during preparation").into());
         }
     }
+    let store_dir = super::file_store_dir(&request.jag_source.to_string_lossy()).map(PathBuf::from);
+    let persist_dir = request.snapshot_root.join(&version).join("ondemand");
+    std::fs::create_dir_all(&persist_dir).map_err(|e| e.to_string())?;
     Ok(Arc::new(PreparedRuntimeCache {
         owned,
         jag_dir,
@@ -396,6 +405,8 @@ pub fn prepare_runtime_cache(
         asset_port: request.asset_port,
         fetched: refreshed.fetched,
         reused: refreshed.reused,
+        store_dir,
+        persist_dir,
     }))
 }
 

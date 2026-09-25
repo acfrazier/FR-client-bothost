@@ -2478,6 +2478,10 @@ impl Client {
                     profile.game_port(),
                     &cache_dir,
                     profile.content_id(),
+                    profile.file_store_dir().and_then(|path| path.to_str()),
+                    profile
+                        .ondemand_persist_dir()
+                        .and_then(|path| path.to_str()),
                 )
                 .map(Some),
                 None => Ok(OnDemand::new(
@@ -13904,6 +13908,8 @@ mod public_login_key_tests {
                 rsa_exponent: crate::PROD_LOGIN_RSAE.into(),
                 expected_crc: Some([0; 9]),
                 content_id: "public-fixture".into(),
+                file_store_dir: None,
+                ondemand_persist_dir: None,
             })
             .unwrap(),
         );
