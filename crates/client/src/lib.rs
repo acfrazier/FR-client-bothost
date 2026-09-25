@@ -12,6 +12,7 @@ pub mod datastruct;
 pub mod graphics;
 pub mod io;
 pub mod login_rsa;
+pub mod map_cache;
 pub mod render;
 pub mod session;
 pub mod sound;
