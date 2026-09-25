@@ -156,6 +156,35 @@ impl Pix3D {
         let int_b = (pow_b * 256.0) as i32;
         (int_r << 16) + (int_g << 8) + int_b
     }
+
+    /// Native texture average for one depacked texture at the client's
+    /// default 0.8 texture brightness, without constructing a draw context.
+    pub fn texture_average(texture: &Pix8) -> i32 {
+        Self::average_texture_palette(
+            texture
+                .bpal
+                .iter()
+                .map(|&rgb| Self::gamma_correct(rgb, 0.8)),
+            texture.bpal.len(),
+        )
+    }
+
+    fn average_texture_palette(palette: impl Iterator<Item = i32>, length: usize) -> i32 {
+        if length == 0 {
+            return 1;
+        }
+        let mut red = 0;
+        let mut green = 0;
+        let mut blue = 0;
+        for rgb in palette {
+            red += (rgb >> 16) & 0xff;
+            green += (rgb >> 8) & 0xff;
+            blue += rgb & 0xff;
+        }
+        let length = length as i32;
+        let average = ((red / length) << 16) + ((green / length) << 8) + (blue / length);
+        Self::gamma_correct(average, 1.4).max(1)
+    }
 }
 
 fn build_colour_table(table: &mut [i32], brightness: f64) {
@@ -480,25 +509,7 @@ impl Pix3DDraw {
         let Some(palette) = self.tex_pal[id].as_ref() else {
             return 0;
         };
-        if palette.is_empty() {
-            // TS: 0/0 → NaN → `| 0` → 0, then the `rgb === 0` bump → 1.
-            self.tex_average[id] = 1;
-            return 1;
-        }
-        let mut r = 0;
-        let mut g = 0;
-        let mut b = 0;
-        for &rgb in palette {
-            r += (rgb >> 16) & 0xff;
-            g += (rgb >> 8) & 0xff;
-            b += rgb & 0xff;
-        }
-        let length = palette.len() as i32;
-        let mut rgb = ((r / length) << 16) + ((g / length) << 8) + (b / length);
-        rgb = Pix3D::gamma_correct(rgb, 1.4);
-        if rgb == 0 {
-            rgb = 1;
-        }
+        let rgb = Pix3D::average_texture_palette(palette.iter().copied(), palette.len());
         self.tex_average[id] = rgb;
         rgb
     }

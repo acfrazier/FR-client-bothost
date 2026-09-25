@@ -8,6 +8,7 @@ use std::fmt;
 pub const MAP_PLANES: u8 = 4;
 pub const MAP_SQUARE_SIZE: u8 = 64;
 pub const MAP_INDEX_ROW_BYTES: usize = 7;
+const MAX_MAP_INDEX_ROWS: usize = 256 * 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MapIndexEntry {
@@ -77,6 +78,9 @@ pub fn decode_map_index(bytes: &[u8]) -> Result<Vec<MapIndexEntry>, MapCacheErro
     let (rows, remainder) = bytes.as_chunks::<MAP_INDEX_ROW_BYTES>();
     if rows.is_empty() || !remainder.is_empty() {
         return Err(MapCacheError::Invalid("index row width"));
+    }
+    if rows.len() > MAX_MAP_INDEX_ROWS {
+        return Err(MapCacheError::Limit("index rows"));
     }
     let mut entries = Vec::with_capacity(rows.len());
     for row in rows {
@@ -209,32 +213,10 @@ pub fn terrain_height(world_x: i32, world_z: i32) -> i32 {
     -perlin_noise(world_x + 932_731, world_z + 556_238) * 8
 }
 
-/// Native `Pix3D::get_texture_average` without constructing `Pix3D` or its
-/// texture/frame pools. The map baker can depack one `Pix8` at a time.
+/// Native `Pix3D::get_texture_average` without constructing its texture/frame
+/// pools. The map baker can depack one `Pix8` at a time.
 pub fn texture_average(texture: &Pix8) -> u32 {
-    if texture.bpal.is_empty() {
-        return 1;
-    }
-    let mut red = 0u64;
-    let mut green = 0u64;
-    let mut blue = 0u64;
-    for &rgb in &texture.bpal {
-        let corrected = gamma_correct(rgb, 0.8);
-        red += ((corrected >> 16) & 0xff) as u64;
-        green += ((corrected >> 8) & 0xff) as u64;
-        blue += (corrected & 0xff) as u64;
-    }
-    let count = texture.bpal.len() as u64;
-    let average =
-        (((red / count) as i32) << 16) | (((green / count) as i32) << 8) | (blue / count) as i32;
-    gamma_correct(average, 1.4).max(1) as u32
-}
-
-fn gamma_correct(rgb: i32, gamma: f64) -> i32 {
-    let red = ((rgb >> 16) as f64 / 256.0).powf(gamma);
-    let green = (((rgb >> 8) & 0xff) as f64 / 256.0).powf(gamma);
-    let blue = ((rgb & 0xff) as f64 / 256.0).powf(gamma);
-    (((red * 256.0) as i32) << 16) | (((green * 256.0) as i32) << 8) | (blue * 256.0) as i32
+    Pix3D::texture_average(texture) as u32
 }
 
 fn perlin_noise(x: i32, z: i32) -> i32 {
@@ -340,6 +322,11 @@ mod tests {
         assert!(matches!(
             decode_map_index(&duplicate),
             Err(MapCacheError::Duplicate("square"))
+        ));
+        let oversized = vec![0; (MAX_MAP_INDEX_ROWS + 1) * MAP_INDEX_ROW_BYTES];
+        assert!(matches!(
+            decode_map_index(&oversized),
+            Err(MapCacheError::Limit("index rows"))
         ));
     }
 
