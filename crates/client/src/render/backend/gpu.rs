@@ -322,6 +322,18 @@ fn context() -> Option<Arc<GpuContext>> {
     }
 }
 
+fn check_vertex_storage(
+    flags: wgpu::DownlevelFlags,
+    max_storage_buffers_per_shader_stage: u32,
+) -> Result<(), &'static str> {
+    if !flags.contains(wgpu::DownlevelFlags::VERTEX_STORAGE)
+        || max_storage_buffers_per_shader_stage == 0
+    {
+        return Err("adapter does not support vertex-stage storage buffers");
+    }
+    Ok(())
+}
+
 fn init_gpu() -> Result<Arc<GpuContext>, String> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -330,6 +342,12 @@ fn init_gpu() -> Result<Arc<GpuContext>, String> {
         force_fallback_adapter: false,
     }))
     .map_err(|e| format!("no adapter: {e}"))?;
+    // GL's aggregate storage limit can hide a lack of vertex-stage storage.
+    // Reject it before layout creation so context() can select the CPU fallback.
+    check_vertex_storage(
+        adapter.get_downlevel_capabilities().flags,
+        adapter.limits().max_storage_buffers_per_shader_stage,
+    )?;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("r274 client"),
         required_features: wgpu::Features::empty(),
@@ -1895,6 +1913,19 @@ mod tests {
     use crate::graphics::PixMap;
     use crate::render::backend::{FrameKind, RenderBackend};
     use crate::render::Renderer;
+
+    #[test]
+    fn gpu_vertex_storage_requirement_rejects_unsupported_adapters() {
+        use wgpu::DownlevelFlags;
+
+        assert!(super::check_vertex_storage(DownlevelFlags::VERTEX_STORAGE, 1).is_ok());
+        assert!(super::check_vertex_storage(
+            DownlevelFlags::all() - DownlevelFlags::VERTEX_STORAGE,
+            8,
+        )
+        .is_err());
+        assert!(super::check_vertex_storage(DownlevelFlags::VERTEX_STORAGE, 0).is_err());
+    }
 
     #[test]
     fn viewport_overlay_moves_and_clears_without_chrome_redraw() {

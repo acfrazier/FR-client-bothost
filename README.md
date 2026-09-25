@@ -24,13 +24,24 @@ brightness bands, and packed texture-palette arithmetic. The scene vertex
 stays 24 bytes: the vertex shader reads each textured triangle from a
 read-only storage view of the same reused vertex buffer. There is one
 vertex upload per rendered scene frame, with no extra stream or upload.
-GPU fringe pixels use bounded CPU shades, and near-clipped polygon fans
+GPU fringe scanlines and blocks are bounded, and near-clipped polygon fans
 share the CPU's horizontal-clipping decision. Transparent mips that shade
 to zero preserve the background; opaque black still draws. Untextured
 shading, texture filtering/UVs, and the scene-state-1 last-frame freeze are
 unchanged.
 GPU triangle coverage and projective texture sampling still differ from
 the CPU's integer rasterizer; this is not a pixel-identical GPU backend.
+
+The final textured shade is also clamped to its triangle's vertex range,
+including CPU-covered pixels. This intentionally differs from CpuPix3D's
+rare below-minimum tails: integer stride rounding can select the next
+brighter band, or pure black at shade 0 (about 0.09% of CPU-covered pixels
+in the review's gentle-gradient probe). The clamp prevents those rounding
+undershoots from producing pure-black GPU artifacts instead of reproducing
+that CPU quirk; legitimate opaque black texels still draw.
+
+GPU self-initialization requires vertex-stage storage-buffer support;
+adapters without it use the CPU fallback.
 
 **There is no bot action API in this crate.** Host snapshot / interact /
 nav live in 274bot. Do not add one here.
