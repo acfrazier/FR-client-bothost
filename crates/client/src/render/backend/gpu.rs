@@ -316,8 +316,9 @@ fn init_gpu() -> Result<Arc<GpuContext>, String> {
 /// vertex (`abhsl`, `uv_tex`, `v`). Flat faces convert the raw 16-bit
 /// shade to RGB via `hslToRgb` in the vertex shader (so gouraud faces
 /// interpolate RGB, not the packed shade); textured faces sample the
-/// shared `texture_2d_array` by clamped layer (texture id), the shade's
-/// top two bits picking the CPU's brightness level.
+/// shared `texture_2d_array`. Their integer screen vertices retain the
+/// CPU's scanline/eight-pixel lighting bands rather than interpolating a
+/// perspective shade and choosing different brightness buckets.
 const SCENE_SHADER: &str = r#"
 const NEAR: f32 = 50.0;
 const SCALE_X: f32 = 2.0;
@@ -336,16 +337,24 @@ struct VsIn {
     @location(1) abhsl: u32,
     @location(2) uv_tex: u32,
     @location(3) v: u32,
+    @location(4) shade_a: vec3<i32>,
+    @location(5) shade_b: vec3<i32>,
+    @location(6) shade_c: vec3<i32>,
 };
 
 struct VsOut {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec3<f32>,
-    @location(1) hsl: f32,
     @location(2) u: f32,
     @location(3) v: f32,
     @location(4) @interpolate(flat) tex_id: u32,
     @location(5) alpha: f32,
+    @location(6) @interpolate(flat) shade_a: vec3<i32>,
+    @location(7) @interpolate(flat) shade_b: vec3<i32>,
+    @location(8) @interpolate(flat) shade_c: vec3<i32>,
+    @location(9) @interpolate(flat) shade_ab: vec2<i32>,
+    @location(10) @interpolate(flat) shade_bc: vec2<i32>,
+    @location(11) @interpolate(flat) shade_ac: vec2<i32>,
 };
 
 // `build_colour_table`'s HSL→RGB + gamma (the `hsl_to_rgb.glsl` port):
@@ -426,12 +435,73 @@ fn vs_main(in: VsIn) -> VsOut {
     // volume, which it does for every z >= 50 (the CPU near plane).
     out.position = vec4<f32>(in.pos.x * SCALE_X, in.pos.y * SCALE_Y, z - NEAR, z);
     out.color = hslToRgb(hsl);
-    out.hsl = f32(hsl);
     out.u = f32(u);
     out.v = f32(v);
     out.tex_id = tex_id;
     out.alpha = alpha;
+    out.shade_a = in.shade_a;
+    out.shade_b = in.shade_b;
+    out.shade_c = in.shade_c;
+    out.shade_ab = shadeStep(in.shade_a, in.shade_b);
+    out.shade_bc = shadeStep(in.shade_b, in.shade_c);
+    out.shade_ac = shadeStep(in.shade_a, in.shade_c);
     return out;
+}
+
+// Pix3D.texture_triangle advances both X and shade in 16.16 along the
+// integer projected edges. Recover the same scanline, not the fragment
+// centre's perspective-interpolated shade.
+fn shadeStep(a: vec3<i32>, b: vec3<i32>) -> vec2<i32> {
+    // Divide per vertex, not per fragment. Flat varyings carry these exact
+    // integer gradients from the provoking vertex.
+    return ((b.xz - a.xz) << vec2<u32>(16u)) / max(b.y - a.y, 1);
+}
+
+fn shadeEdge(a: vec3<i32>, step: vec2<i32>, y: i32) -> vec2<i32> {
+    return (a.xz << vec2<u32>(16u)) + step * (y - a.y);
+}
+
+fn textureShade(in: VsOut) -> u32 {
+    let a = in.shade_a;
+    let b = in.shade_b;
+    let c = in.shade_c;
+    let y = i32(in.position.y);
+    let long = shadeEdge(a, in.shade_ac, y);
+    var short = shadeEdge(b, in.shade_bc, y);
+    if (y < b.y) { short = shadeEdge(a, in.shade_ab, y); }
+    let left = select(short, long, long.x < short.x);
+    let right = select(long, short, long.x < short.x);
+    var start = left.x >> 16u;
+    let end = right.x >> 16u;
+    var shade = left.y >> 8u;
+    let shade_end = right.y >> 8u;
+    var stride = 0;
+    if (min(a.x, min(b.x, c.x)) < 0 || max(a.x, max(b.x, c.x)) > 511) {
+        // hclip: derive the per-pixel step before clipping the span.
+        let step = (shade_end - shade) / max(end - start, 1);
+        if (start < 0) { shade -= start * step; start = 0; }
+        stride = step << 12u;
+    } else if (end - start > 7) {
+        // The unclipped CPU path uses div_table[span / 8], not / span.
+        stride = ((shade_end - shade) * (32768 / ((end - start) >> 3u))) >> 6u;
+    }
+    let block = max(i32(in.position.x) - start, 0) >> 3u;
+    return bitcast<u32>((shade << 9u) + block * stride);
+}
+
+fn shadeTexel(colour: vec3<f32>, shade: u32) -> vec3<f32> {
+    // get_texels bakes packed RGB blocks. Channel-wise float factors lose
+    // both the F8F8FF quantization and the packed subtraction/shift carries.
+    let channels = vec3<u32>(round(colour * 255.0));
+    var rgb = ((channels.r << 16u) | (channels.g << 8u) | channels.b) & 0xf8f8ffu;
+    switch ((shade >> 21u) & 3u) {
+        case 1u: { rgb -= rgb >> 3u; }
+        case 2u: { rgb -= rgb >> 2u; }
+        case 3u: { rgb = rgb - (rgb >> 2u) - (rgb >> 3u); }
+        default: {}
+    }
+    rgb = (rgb & 0xf8f8ffu) >> ((shade >> 23u) & 31u);
+    return vec3<f32>(f32((rgb >> 16u) & 255u), f32((rgb >> 8u) & 255u), f32(rgb & 255u)) / 255.0;
 }
 
 @fragment
@@ -451,20 +521,12 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let t = textureSample(model_atlas, model_sampler, uv, i32(id));
         let t0 = textureSampleLevel(model_atlas, model_sampler, uv, i32(id), 0.0);
         if (t0.a < 1.0) { discard; }
-        // The CPU's per-texel brightness: the interpolated 7-bit shade
-        // (0..127, `Model.getColour`'s `127 - scalar`) selects one of the
-        // four pre-baked texel blocks with bits 4-5 and then halves it for
-        // shades >= 64 with bit 6 (`Pix3D.textureRaster`'s
-        // `curU += (shadeA >> 3) & 0xc0000` and `shadeShift = shadeA >> 23`).
-        let s = u32(in.hsl) & 0x7fu;
-        let block = (s >> 4u) & 3u;
-        let block_factor = array<f32, 4>(1.0, 0.875, 0.75, 0.625)[block];
-        let factor = block_factor * select(1.0, 0.5, (s >> 6u) == 1u);
+        let shade = textureShade(in);
         // Texture 1's fine ripples and texture 17's sparse animated flecks
         // lose their intended water detail when colour is mip-averaged.
         // Other texture ids retain mip-filtered colour.
         let colour = select(t.rgb, t0.rgb, id == 1u || id == 17u);
-        return vec4<f32>(colour * factor, in.alpha);
+        return vec4<f32>(shadeTexel(colour, shade), in.alpha);
     }
     return vec4<f32>(in.color, in.alpha);
 }
@@ -1098,6 +1160,9 @@ fn make_pipeline(
                 1 => Uint32,
                 2 => Uint32,
                 3 => Uint32,
+                4 => Sint32x3,
+                5 => Sint32x3,
+                6 => Sint32x3,
             ],
         }],
     };

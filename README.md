@@ -19,6 +19,14 @@ A Rust 274 client **library** (`crates/client`) plus a thin applet CLI
 skip-paint / `set_draw`, shared cache, GPU device inject. Packet timing
 and `doAction` stay Java-shaped.
 
+Textured GPU lighting follows CpuPix3D's integer scanlines, eight-pixel
+brightness bands, and packed texture-palette arithmetic. The scene vertex
+is 60 bytes (including per-triangle screen/shade inputs); the mesh and GPU
+buffer remain reused, with one vertex upload per scene. Untextured shading,
+texture filtering/UVs, and the scene-state-1 last-frame freeze are unchanged.
+GPU triangle coverage and projective texture sampling still differ from
+the CPU's integer rasterizer; this is not a pixel-identical GPU backend.
+
 **There is no bot action API in this crate.** Host snapshot / interact /
 nav live in 274bot. Do not add one here.
 
@@ -60,6 +68,20 @@ cargo test -p client
 
 274bot `cargo test` does **not** run these. Live engine tests stay in
 274bot (`LIVE=1 cargo test -p e2e` / `-p host-play`).
+
+`gpu_fountain` includes a self-contained Metal/wgpu readback regression for
+textured lighting. Its additional actual-model differential is opt-in and
+needs a versioned 274 cache snapshot containing `models.bin`, `config`,
+and `textures`, not a running server:
+
+```bash
+FOUNTAIN_SNAPSHOT=/absolute/path/to/snapshot \
+FOUNTAIN_OUTPUT=/absolute/path/to/output \
+cargo test -p client --test gpu_fountain offline_fountain_views -- --ignored --exact --nocapture
+```
+
+It compares CPU/GPU yaw-0 views at pitches 128/256/383, emits 512×334 RGB
+images and metrics, and isolates lighting with an opaque-white basin.
 
 ## Completeness disclaimer
 

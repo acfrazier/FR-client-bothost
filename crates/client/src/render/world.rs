@@ -5324,8 +5324,9 @@ struct SceneCam {
 /// the packed RuneLite-GPU-plugin attributes — `abhsl` (alpha << 24 | the
 /// raw 16-bit face shade) and, for textured faces, the signed
 /// 16-bit texture `u`/`v` (texture units × 256) and the `texture id + 1` (`0` means
-/// flat, i.e. untextured). `bytemuck::Pod` so the wgpu backend uploads the
-/// mesh as raw bytes.
+/// flat, i.e. untextured). Textured triangles also retain integer screen
+/// vertices and shades for Pix3D's scanline lighting. `bytemuck::Pod` lets
+/// the backend upload the reused mesh as one raw byte stream.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuVertex {
@@ -5335,6 +5336,7 @@ pub struct GpuVertex {
     pub abhsl: u32,
     pub uv_tex: u32,
     pub v: u32,
+    pub shade_triangle: [[i32; 3]; 3],
 }
 
 impl GpuVertex {
@@ -5355,6 +5357,7 @@ impl GpuVertex {
             abhsl: Self::pack(alpha, shade),
             uv_tex: 0,
             v: 0,
+            shade_triangle: [[0; 3]; 3],
         }
     }
 
@@ -5380,6 +5383,7 @@ impl GpuVertex {
             abhsl: Self::pack(alpha, shade),
             uv_tex: ((u & 0xffff) << 16) | (tex_id_plus_1 & 0xffff),
             v: v & 0xffff,
+            shade_triangle: [[0; 3]; 3],
         }
     }
 }
@@ -5418,7 +5422,25 @@ impl SceneMesh {
         self.vertices.clear();
     }
 
-    fn push(&mut self, v0: GpuVertex, v1: GpuVertex, v2: GpuVertex) {
+    fn push(&mut self, mut v0: GpuVertex, v1: GpuVertex, v2: GpuVertex) {
+        if v0.uv_tex & 0xffff != 0 {
+            let screen = |v: &GpuVertex| {
+                [
+                    SCENE_VIEW_W / 2 + (v.x as i32).wrapping_shl(9) / v.z as i32,
+                    SCENE_VIEW_H / 2 + (v.y as i32).wrapping_shl(9) / v.z as i32,
+                    (v.abhsl & 0xffff) as i32,
+                ]
+            };
+            let mut triangle = [screen(&v0), screen(&v1), screen(&v2)];
+            // A three-element sorting network needs no temporary allocation.
+            for (a, b) in [(0, 1), (1, 2), (0, 1)] {
+                if triangle[a][1] > triangle[b][1] {
+                    triangle.swap(a, b);
+                }
+            }
+            // Flat shader inputs come from the first (provoking) vertex.
+            v0.shade_triangle = triangle;
+        }
         self.vertices.extend([v0, v1, v2]);
     }
 }
