@@ -126,9 +126,8 @@ struct GpuContext {
     /// the later slices). Static uploads happen once per process; animated
     /// model layers are restaged for each scene submission.
     assets: Arc<Mutex<GpuAssets>>,
-    /// The scene-uniforms bind group layout (the per-backend brightness
-    /// buffer binds against it).
-    scene_brightness_layout: wgpu::BindGroupLayout,
+    /// Per-backend brightness and the vertex buffer's read-only storage view.
+    scene_data_layout: wgpu::BindGroupLayout,
     /// The scene pass pipeline: the captured triangles in painter order,
     /// alpha-blended, no depth attachment. It holds the scene shader
     /// module (created once, here), so no field keeps it.
@@ -152,10 +151,10 @@ impl GpuContext {
             source: wgpu::ShaderSource::Wgsl(SCENE_SHADER.into()),
         });
 
-        let scene_brightness_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("r274 scene uniforms layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
+        let scene_data_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("r274 scene data layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
@@ -164,8 +163,19 @@ impl GpuContext {
                         min_binding_size: wgpu::BufferSize::new(16),
                     },
                     count: None,
-                }],
-            });
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(3 * 24),
+                    },
+                    count: None,
+                },
+            ],
+        });
 
         let assets_lock = assets.lock().unwrap();
         let scene_pipeline_layout =
@@ -173,7 +183,7 @@ impl GpuContext {
                 label: Some("r274 scene layout"),
                 bind_group_layouts: &[
                     Some(&assets_lock.model_bind_group_layout),
-                    Some(&scene_brightness_layout),
+                    Some(&scene_data_layout),
                 ],
                 immediate_size: 0,
             });
@@ -264,10 +274,31 @@ impl GpuContext {
             device,
             queue,
             assets,
-            scene_brightness_layout,
+            scene_data_layout,
             pipeline_scene,
             chrome_layout,
             chrome_pipeline,
+        })
+    }
+
+    fn scene_bind_group(
+        &self,
+        brightness: &wgpu::Buffer,
+        vertices: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
+        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("r274 scene data group"),
+            layout: &self.scene_data_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: brightness.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: vertices.as_entire_binding(),
+                },
+            ],
         })
     }
 }
@@ -332,14 +363,23 @@ struct SceneUniforms {
 };
 @group(1) @binding(0) var<uniform> scene: SceneUniforms;
 
+// Six scalars preserve the CPU's 24-byte stride. vec3<f32> would align the
+// record to 16 bytes and incorrectly advance storage reads by 32 bytes.
+struct SceneVertex {
+    x: f32,
+    y: f32,
+    z: f32,
+    abhsl: u32,
+    uv_tex: u32,
+    v: u32,
+};
+@group(1) @binding(1) var<storage, read> vertices: array<SceneVertex>;
+
 struct VsIn {
     @location(0) pos: vec3<f32>,
     @location(1) abhsl: u32,
     @location(2) uv_tex: u32,
     @location(3) v: u32,
-    @location(4) shade_a: vec3<i32>,
-    @location(5) shade_b: vec3<i32>,
-    @location(6) shade_c: vec3<i32>,
 };
 
 struct VsOut {
@@ -355,6 +395,7 @@ struct VsOut {
     @location(9) @interpolate(flat) shade_ab: vec2<i32>,
     @location(10) @interpolate(flat) shade_bc: vec2<i32>,
     @location(11) @interpolate(flat) shade_ac: vec2<i32>,
+    @location(12) @interpolate(flat) hclip: u32,
 };
 
 // `build_colour_table`'s HSL→RGB + gamma (the `hsl_to_rgb.glsl` port):
@@ -414,8 +455,17 @@ fn hslToRgb(hsl: u32) -> vec3<f32> {
     return vec3<f32>(pow(r0, scene.brightness), pow(g0, scene.brightness), pow(b0, scene.brightness));
 }
 
+fn shadeVertex(index: u32) -> vec3<i32> {
+    let v = vertices[index];
+    return vec3<i32>(
+        256 + (i32(v.x) << 9u) / i32(v.z),
+        167 + (i32(v.y) << 9u) / i32(v.z),
+        i32(v.abhsl & 0xffffu),
+    );
+}
+
 @vertex
-fn vs_main(in: VsIn) -> VsOut {
+fn vs_main(in: VsIn, @builtin(vertex_index) index: u32) -> VsOut {
     var out: VsOut;
     let z = in.pos.z;
     let alpha = f32((in.abhsl >> 24) & 0xffu) / 255.0;
@@ -439,12 +489,23 @@ fn vs_main(in: VsIn) -> VsOut {
     out.v = f32(v);
     out.tex_id = tex_id;
     out.alpha = alpha;
-    out.shade_a = in.shade_a;
-    out.shade_b = in.shade_b;
-    out.shade_c = in.shade_c;
-    out.shade_ab = shadeStep(in.shade_a, in.shade_b);
-    out.shade_bc = shadeStep(in.shade_b, in.shade_c);
-    out.shade_ac = shadeStep(in.shade_a, in.shade_c);
+    // Only the first (provoking) vertex supplies flat triangle metadata.
+    // Read the already-uploaded mesh; no expanded vertices or second upload.
+    if (tex_id > 0u && index % 3u == 0u) {
+        var a = shadeVertex(index);
+        var b = shadeVertex(index + 1u);
+        var c = shadeVertex(index + 2u);
+        if (a.y > b.y) { let t = a; a = b; b = t; }
+        if (b.y > c.y) { let t = b; b = c; c = t; }
+        if (a.y > b.y) { let t = a; a = b; b = t; }
+        out.shade_a = a;
+        out.shade_b = b;
+        out.shade_c = c;
+        out.shade_ab = shadeStep(a, b);
+        out.shade_bc = shadeStep(b, c);
+        out.shade_ac = shadeStep(a, c);
+        out.hclip = (in.abhsl >> 16u) & 1u;
+    }
     return out;
 }
 
@@ -465,7 +526,10 @@ fn textureShade(in: VsOut) -> u32 {
     let a = in.shade_a;
     let b = in.shade_b;
     let c = in.shade_c;
-    let y = i32(in.position.y);
+    // GPU pixel-centre coverage can extend past the integer CPU edges.
+    // Shade those fringe pixels from the nearest CPU scanline/block,
+    // never by extrapolating a negative shade into an unsigned shift.
+    let y = clamp(i32(in.position.y), a.y, max(a.y, c.y - 1));
     let long = shadeEdge(a, in.shade_ac, y);
     var short = shadeEdge(b, in.shade_bc, y);
     if (y < b.y) { short = shadeEdge(a, in.shade_ab, y); }
@@ -476,7 +540,7 @@ fn textureShade(in: VsOut) -> u32 {
     var shade = left.y >> 8u;
     let shade_end = right.y >> 8u;
     var stride = 0;
-    if (min(a.x, min(b.x, c.x)) < 0 || max(a.x, max(b.x, c.x)) > 511) {
+    if (in.hclip != 0u || min(a.x, min(b.x, c.x)) < 0 || max(a.x, max(b.x, c.x)) > 511) {
         // hclip: derive the per-pixel step before clipping the span.
         let step = (shade_end - shade) / max(end - start, 1);
         if (start < 0) { shade -= start * step; start = 0; }
@@ -485,8 +549,10 @@ fn textureShade(in: VsOut) -> u32 {
         // The unclipped CPU path uses div_table[span / 8], not / span.
         stride = ((shade_end - shade) * (32768 / ((end - start) >> 3u))) >> 6u;
     }
-    let block = max(i32(in.position.x) - start, 0) >> 3u;
-    return bitcast<u32>((shade << 9u) + block * stride);
+    let block = clamp(i32(in.position.x) - start, 0, max(end - start - 1, 0)) >> 3u;
+    let lo = min(a.z, min(b.z, c.z)) << 17u;
+    let hi = max(a.z, max(b.z, c.z)) << 17u;
+    return u32(clamp((shade << 9u) + block * stride, lo, hi));
 }
 
 fn shadeTexel(colour: vec3<f32>, shade: u32) -> vec3<f32> {
@@ -526,7 +592,12 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         // lose their intended water detail when colour is mip-averaged.
         // Other texture ids retain mip-filtered colour.
         let colour = select(t.rgb, t0.rgb, id == 1u || id == 17u);
-        return vec4<f32>(shadeTexel(colour, shade), in.alpha);
+        let lit = shadeTexel(colour, shade);
+        // Non-opaque CPU spans skip zero after packed shading. A sparse
+        // transparent mip can quantize to zero too; do not turn that hole
+        // into opaque black. Fully opaque texels may legitimately be black.
+        if (t.a < 1.0 && all(lit == vec3<f32>(0.0))) { discard; }
+        return vec4<f32>(lit, in.alpha);
     }
     return vec4<f32>(in.color, in.alpha);
 }
@@ -614,11 +685,9 @@ pub struct GpuBackend {
     present_slot: usize,
     /// The shared model-texture-array bind group, bound each scene pass.
     model_bind_group: wgpu::BindGroup,
-    /// The scene-shader brightness uniform (group 1): the current
-    /// `Pix3D::colour_table` gamma, so `hslToRgb` matches the CPU table.
-    /// Per-backend because `render_scene` writes the current brightness
-    /// every frame (the layout + pipelines are the shared `GpuContext`).
-    brightness_bind_group: wgpu::BindGroup,
+    /// Per-backend scene data (group 1): the current colour-table gamma
+    /// and a read-only storage view of `vertex_buf`. Rebound only on growth.
+    scene_bind_group: wgpu::BindGroup,
     brightness_buf: wgpu::Buffer,
     /// Streaming vertex buffer (grows on demand; the mesh is re-uploaded
     /// every frame, the RuneLite plugin shape).
@@ -711,20 +780,6 @@ impl GpuBackend {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let brightness_bind_group = context
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("r274 scene uniforms group"),
-                layout: &context.scene_brightness_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &brightness_buf,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                }],
-            });
 
         // The scene shader/layout/pipelines are the shared `GpuContext`
         // (task 6): a second backend reuses them instead of rebuilding.
@@ -734,9 +789,12 @@ impl GpuBackend {
         let vertex_buf = context.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("r274 scene vertices"),
             size: vertex_buf_capacity as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::VERTEX
+                | wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let scene_bind_group = context.scene_bind_group(&brightness_buf, &vertex_buf);
 
         // The chrome composite (the RuneLite canvas-upload pattern): the
         // CPU `draw_area` uploads as one RGBA8 texture each frame and the
@@ -948,7 +1006,7 @@ impl GpuBackend {
             present_view,
             present_slot: 0,
             model_bind_group,
-            brightness_bind_group,
+            scene_bind_group,
             brightness_buf,
             vertex_buf,
             vertex_buf_capacity,
@@ -1067,9 +1125,14 @@ impl GpuBackend {
             self.vertex_buf = self.context.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("r274 scene vertices"),
                 size: bytes as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                usage: wgpu::BufferUsages::VERTEX
+                    | wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
+            self.scene_bind_group = self
+                .context
+                .scene_bind_group(&self.brightness_buf, &self.vertex_buf);
             self.vertex_storage = storage;
         }
         self.context
@@ -1107,7 +1170,7 @@ impl GpuBackend {
             });
             pass.set_vertex_buffer(0, self.vertex_buf.slice(..));
             pass.set_bind_group(0, &self.model_bind_group, &[]);
-            pass.set_bind_group(1, &self.brightness_bind_group, &[]);
+            pass.set_bind_group(1, &self.scene_bind_group, &[]);
             pass.set_pipeline(&self.context.pipeline_scene);
             pass.draw(0..vertices.len() as u32, 0..1);
         }
@@ -1160,9 +1223,6 @@ fn make_pipeline(
                 1 => Uint32,
                 2 => Uint32,
                 3 => Uint32,
-                4 => Sint32x3,
-                5 => Sint32x3,
-                6 => Sint32x3,
             ],
         }],
     };

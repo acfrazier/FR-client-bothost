@@ -21,9 +21,14 @@ and `doAction` stay Java-shaped.
 
 Textured GPU lighting follows CpuPix3D's integer scanlines, eight-pixel
 brightness bands, and packed texture-palette arithmetic. The scene vertex
-is 60 bytes (including per-triangle screen/shade inputs); the mesh and GPU
-buffer remain reused, with one vertex upload per scene. Untextured shading,
-texture filtering/UVs, and the scene-state-1 last-frame freeze are unchanged.
+stays 24 bytes: the vertex shader reads each textured triangle from a
+read-only storage view of the same reused vertex buffer. There is one
+vertex upload per rendered scene frame, with no extra stream or upload.
+GPU fringe pixels use bounded CPU shades, and near-clipped polygon fans
+share the CPU's horizontal-clipping decision. Transparent mips that shade
+to zero preserve the background; opaque black still draws. Untextured
+shading, texture filtering/UVs, and the scene-state-1 last-frame freeze are
+unchanged.
 GPU triangle coverage and projective texture sampling still differ from
 the CPU's integer rasterizer; this is not a pixel-identical GPU backend.
 
@@ -69,9 +74,10 @@ cargo test -p client
 274bot `cargo test` does **not** run these. Live engine tests stay in
 274bot (`LIVE=1 cargo test -p e2e` / `-p host-play`).
 
-`gpu_fountain` includes a self-contained Metal/wgpu readback regression for
-textured lighting. Its additional actual-model differential is opt-in and
-needs a versioned 274 cache snapshot containing `models.bin`, `config`,
+`gpu_fountain` includes self-contained Metal/wgpu readback regressions for
+textured scanline lighting, subpixel edges, and near-clipped polygons.
+Its additional actual-model differential is opt-in and needs a versioned
+274 cache snapshot containing `models.bin`, `config`,
 and `textures`, not a running server:
 
 ```bash

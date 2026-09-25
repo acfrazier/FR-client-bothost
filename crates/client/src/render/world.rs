@@ -5321,12 +5321,11 @@ struct SceneCam {
 }
 
 /// One triangle vertex of the GPU scene mesh: a camera-space position plus
-/// the packed RuneLite-GPU-plugin attributes — `abhsl` (alpha << 24 | the
-/// raw 16-bit face shade) and, for textured faces, the signed
-/// 16-bit texture `u`/`v` (texture units × 256) and the `texture id + 1` (`0` means
-/// flat, i.e. untextured). Textured triangles also retain integer screen
-/// vertices and shades for Pix3D's scanline lighting. `bytemuck::Pod` lets
-/// the backend upload the reused mesh as one raw byte stream.
+/// the packed RuneLite-GPU-plugin attributes — `abhsl` (alpha << 24 |
+/// polygon hclip << 16 | raw 16-bit face shade) and, for textured faces,
+/// the signed 16-bit texture `u`/`v` (texture units × 256) and the
+/// `texture id + 1` (`0` means flat, i.e. untextured). `bytemuck::Pod` lets
+/// the backend upload the reused 24-byte vertices as one raw byte stream.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuVertex {
@@ -5336,10 +5335,12 @@ pub struct GpuVertex {
     pub abhsl: u32,
     pub uv_tex: u32,
     pub v: u32,
-    pub shade_triangle: [[i32; 3]; 3],
 }
 
 impl GpuVertex {
+    /// A near-clipped polygon shares hclip across both emitted triangles.
+    const POLYGON_HCLIP: u32 = 1 << 16;
+
     /// Pack `alpha` (0..255, 255 = opaque) and the raw 16-bit `shade` into
     /// one word (the RuneLite `alphaBias | color` layout with no bias:
     /// draw order, not depth, resolves overlapping faces).
@@ -5357,7 +5358,6 @@ impl GpuVertex {
             abhsl: Self::pack(alpha, shade),
             uv_tex: 0,
             v: 0,
-            shade_triangle: [[0; 3]; 3],
         }
     }
 
@@ -5383,7 +5383,6 @@ impl GpuVertex {
             abhsl: Self::pack(alpha, shade),
             uv_tex: ((u & 0xffff) << 16) | (tex_id_plus_1 & 0xffff),
             v: v & 0xffff,
-            shade_triangle: [[0; 3]; 3],
         }
     }
 }
@@ -5422,25 +5421,7 @@ impl SceneMesh {
         self.vertices.clear();
     }
 
-    fn push(&mut self, mut v0: GpuVertex, v1: GpuVertex, v2: GpuVertex) {
-        if v0.uv_tex & 0xffff != 0 {
-            let screen = |v: &GpuVertex| {
-                [
-                    SCENE_VIEW_W / 2 + (v.x as i32).wrapping_shl(9) / v.z as i32,
-                    SCENE_VIEW_H / 2 + (v.y as i32).wrapping_shl(9) / v.z as i32,
-                    (v.abhsl & 0xffff) as i32,
-                ]
-            };
-            let mut triangle = [screen(&v0), screen(&v1), screen(&v2)];
-            // A three-element sorting network needs no temporary allocation.
-            for (a, b) in [(0, 1), (1, 2), (0, 1)] {
-                if triangle[a][1] > triangle[b][1] {
-                    triangle.swap(a, b);
-                }
-            }
-            // Flat shader inputs come from the first (provoking) vertex.
-            v0.shade_triangle = triangle;
-        }
+    fn push(&mut self, v0: GpuVertex, v1: GpuVertex, v2: GpuVertex) {
         self.vertices.extend([v0, v1, v2]);
     }
 }
@@ -5729,14 +5710,29 @@ pub(crate) fn capture_model_face(
     if clipped.len() < 3 || (near_clipped && !face_winding_passes(pix, clipped)) {
         return;
     }
+    // render3ZClip decides hclip for the entire clipped polygon, not for
+    // each fan triangle. Keep that decision even if only the fourth point
+    // is off screen; otherwise the first triangle uses the wrong stride.
+    let polygon_hclip = textured.is_some()
+        && near_clipped
+        && clipped.iter().any(|v| {
+            let x = pix.origin_x + v.x.wrapping_shl(9) / v.z;
+            !(0..SCENE_VIEW_W).contains(&x)
+        });
     let Some(mesh) = pix.capture.as_mut() else {
         return;
     };
-    let vertex = |v: &ClipVertex| match textured {
-        Some((tex_id_plus_1, _, _)) => {
-            GpuVertex::textured(v.x, v.y, v.z, v.u, v.v, v.shade, alpha, tex_id_plus_1)
+    let vertex = |v: &ClipVertex| {
+        let mut vertex = match textured {
+            Some((tex_id_plus_1, _, _)) => {
+                GpuVertex::textured(v.x, v.y, v.z, v.u, v.v, v.shade, alpha, tex_id_plus_1)
+            }
+            None => GpuVertex::new(v.x, v.y, v.z, v.shade, alpha),
+        };
+        if polygon_hclip {
+            vertex.abhsl |= GpuVertex::POLYGON_HCLIP;
         }
-        None => GpuVertex::new(v.x, v.y, v.z, v.shade, alpha),
+        vertex
     };
     for i in 1..clipped.len() - 1 {
         mesh.push(
