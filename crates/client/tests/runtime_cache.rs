@@ -1,7 +1,9 @@
 //! Controlled retained snapshots and HTTP negotiation; no production endpoint.
 use client::content_identity::compute_decoded_content_identity;
 use client::io::{ClientRevision, JagFile, Packet};
-use client::unpack::{prepare_runtime_cache, version_hash, RuntimeCacheRequest};
+use client::unpack::{
+    prepare_runtime_cache, runtime_staging_process_is_alive, version_hash, RuntimeCacheRequest,
+};
 use client::BotTarget;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -255,26 +257,6 @@ fn malformed_required_record_is_not_a_ready_identity() {
         .starts_with(".runtime")));
 }
 
-fn spawn_short_child() -> std::process::Child {
-    #[cfg(unix)]
-    {
-        std::process::Command::new("true")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn true")
-    }
-    #[cfg(windows)]
-    {
-        std::process::Command::new("cmd")
-            .args(["/C", "exit", "0"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn cmd exit")
-    }
-}
-
 fn spawn_live_child() -> std::process::Child {
     #[cfg(unix)]
     {
@@ -296,6 +278,62 @@ fn spawn_live_child() -> std::process::Child {
     }
 }
 
+/// Kill and reap the child even if the test panics mid-assertion.
+struct LiveChild(std::process::Child);
+
+impl LiveChild {
+    fn spawn() -> Self {
+        Self(spawn_live_child())
+    }
+
+    fn id(&self) -> u32 {
+        self.0.id()
+    }
+}
+
+impl Drop for LiveChild {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// A pid in the valid staging range that is dead right now (not merely "was
+/// our child"). Retries a short-lived child, then probes candidates.
+fn find_dead_pid() -> u32 {
+    let self_pid = std::process::id();
+    for _ in 0..16 {
+        #[cfg(unix)]
+        let mut child = std::process::Command::new("true")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn true");
+        #[cfg(windows)]
+        let mut child = std::process::Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn cmd exit");
+        let pid = child.id();
+        child.wait().expect("wait short child");
+        if pid != 0 && pid != self_pid && !runtime_staging_process_is_alive(pid) {
+            return pid;
+        }
+    }
+    // Fall back to scanning for a verified-dead pid in the positive range.
+    for pid in (1u32..=i32::MAX as u32).rev().step_by(1021) {
+        if pid == self_pid {
+            continue;
+        }
+        if !runtime_staging_process_is_alive(pid) {
+            return pid;
+        }
+    }
+    panic!("could not find a verified-dead pid for staging sweep test");
+}
+
 #[test]
 fn prepare_sweeps_leaked_runtime_staging_from_dead_pids_only() {
     let tmp = Temp::new();
@@ -305,12 +343,13 @@ fn prepare_sweeps_leaked_runtime_staging_from_dead_pids_only() {
     write_packs(&source, &p);
     snapshot(&root, &p);
 
-    let mut dead = spawn_short_child();
-    let dead_pid = dead.id();
-    dead.wait().expect("wait short child");
-
-    let mut live = spawn_live_child();
+    let dead_pid = find_dead_pid();
+    let live = LiveChild::spawn();
     let live_pid = live.id();
+    assert!(
+        runtime_staging_process_is_alive(live_pid),
+        "live child pid {live_pid} should be alive"
+    );
 
     let dead_dir = root.join(format!(".runtime-{dead_pid}-0"));
     let self_dir = root.join(format!(".runtime-{}-999", std::process::id()));
@@ -322,6 +361,10 @@ fn prepare_sweeps_leaked_runtime_staging_from_dead_pids_only() {
         std::fs::write(dir.join("marker"), b"keep").unwrap();
     }
 
+    assert!(
+        !runtime_staging_process_is_alive(dead_pid),
+        "dead pid {dead_pid} must still be dead immediately before prepare"
+    );
     let prepared = prepare(&source, &root, p, 0).unwrap();
 
     assert!(
@@ -351,7 +394,6 @@ fn prepare_sweeps_leaked_runtime_staging_from_dead_pids_only() {
     );
     assert!(prepared.unpack_root().exists());
 
-    let _ = live.kill();
-    let _ = live.wait();
     drop(prepared);
+    // `live` Drop kills + reaps even if assertions above panicked.
 }

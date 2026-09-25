@@ -118,6 +118,7 @@ impl From<super::UnpackError> for RuntimeCacheError {
 }
 
 /// Parse `.runtime-<pid>-<n>` where both sides are exact non-empty decimal runs.
+/// Pid must be a positive value representable as a platform process id (never 0).
 fn parse_runtime_staging_name(name: &str) -> Option<(u32, u64)> {
     let rest = name.strip_prefix(".runtime-")?;
     let (pid_str, n_str) = rest.split_once('-')?;
@@ -128,16 +129,46 @@ fn parse_runtime_staging_name(name: &str) -> Option<(u32, u64)> {
     {
         return None;
     }
-    Some((pid_str.parse().ok()?, n_str.parse().ok()?))
+    let pid: u32 = pid_str.parse().ok()?;
+    let n: u64 = n_str.parse().ok()?;
+    if !is_valid_foreign_pid(pid) {
+        return None;
+    }
+    Some((pid, n))
+}
+
+/// Pid values safe to probe and to treat as foreign staging owners.
+fn is_valid_foreign_pid(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        if pid > i32::MAX as u32 {
+            return false;
+        }
+        // Positive pid_t only; never hand 0/negative to kill(2).
+        (pid as libc::pid_t) > 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 /// True when `pid` still appears to own a live process. Unknown results count as
 /// alive so a staging directory that might still be in use is never deleted.
 fn process_is_alive(pid: u32) -> bool {
+    if !is_valid_foreign_pid(pid) {
+        // Invalid/special pids are treated as live so their dirs are kept.
+        return true;
+    }
     #[cfg(unix)]
     {
+        let pid_t = pid as libc::pid_t;
         // SAFETY: signal 0 performs no delivery; it only probes existence/permissions.
-        let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        // `pid_t` is a positive value checked by `is_valid_foreign_pid`.
+        let result = unsafe { libc::kill(pid_t, 0) };
         if result == 0 {
             return true;
         }
@@ -150,21 +181,20 @@ fn process_is_alive(pid: u32) -> bool {
     #[cfg(windows)]
     {
         use windows_sys::Win32::Foundation::{
-            CloseHandle, GetLastError, BOOL, ERROR_ACCESS_DENIED, HANDLE, STILL_ACTIVE,
+            CloseHandle, GetLastError, ERROR_INVALID_PARAMETER, STILL_ACTIVE,
         };
         use windows_sys::Win32::System::Threading::{
             GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
         };
 
         // SAFETY: query-only open; handle is closed before return on every path.
-        let handle: HANDLE =
-            unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0 as BOOL, pid) };
-        if handle == 0 || handle == -1isize as HANDLE {
-            // ACCESS_DENIED means the process exists but is protected.
-            // Other open failures usually mean the pid is gone; still prefer keep
-            // on truly unknown codes by treating only the common "gone" path as dead.
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle.is_null() {
+            // SAFETY: OpenProcess failed and set the thread last-error we read here.
             let err = unsafe { GetLastError() };
-            return err == ERROR_ACCESS_DENIED;
+            // Only the documented no-such-process failure means dead. ACCESS_DENIED
+            // and every other error are treated as alive (keep the directory).
+            return err != ERROR_INVALID_PARAMETER;
         }
         let mut exit_code = 0u32;
         // SAFETY: `handle` is a process handle from OpenProcess above.
@@ -185,6 +215,11 @@ fn process_is_alive(pid: u32) -> bool {
     }
 }
 
+#[doc(hidden)]
+pub fn runtime_staging_process_is_alive(pid: u32) -> bool {
+    process_is_alive(pid)
+}
+
 /// Once per process per snapshot root, drop `.runtime-<pid>-<n>` directories left
 /// by dead foreign processes. Errors and non-matching names are ignored.
 fn sweep_leaked_runtime_staging(snapshot_root: &Path) {
@@ -195,9 +230,10 @@ fn sweep_leaked_runtime_staging(snapshot_root: &Path) {
             Ok(g) => g,
             Err(e) => e.into_inner(),
         };
-        if !guard.insert(snapshot_root.to_path_buf()) {
+        if guard.contains(snapshot_root) {
             return;
         }
+        guard.insert(snapshot_root.to_path_buf());
     }
 
     let Ok(entries) = std::fs::read_dir(snapshot_root) else {

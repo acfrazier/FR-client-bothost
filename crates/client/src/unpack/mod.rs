@@ -222,7 +222,8 @@ pub fn unpack_cache(cache_dir: &str, out_dir: &str) -> Result<Manifest, UnpackEr
 
 mod runtime;
 pub use runtime::{
-    prepare_runtime_cache, PreparedRuntimeCache, RuntimeCacheError, RuntimeCacheRequest,
+    prepare_runtime_cache, runtime_staging_process_is_alive, PreparedRuntimeCache,
+    RuntimeCacheError, RuntimeCacheRequest,
 };
 
 /// Read a selected local store without moving or writing its files. The
