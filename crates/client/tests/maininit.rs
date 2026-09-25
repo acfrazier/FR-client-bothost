@@ -178,7 +178,11 @@ fn accept_timeout(
     let deadline = Instant::now() + Duration::from_millis(ms);
     loop {
         match listener.accept() {
-            Ok(c) => return Some(c),
+            Ok(c) => {
+                // Accepted sockets inherit O_NONBLOCK from the listener on macOS/BSD.
+                let _ = c.0.set_nonblocking(false);
+                return Some(c);
+            }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 if Instant::now() >= deadline {
                     return None;
