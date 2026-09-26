@@ -13813,11 +13813,8 @@ mod public_login_key_tests {
         let port = listener.local_addr().unwrap().port();
         let server = std::thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
-            let mut request = String::new();
-            BufReader::new(socket.try_clone().unwrap())
-                .read_line(&mut request)
-                .unwrap();
-            assert_eq!(request.trim_end(), "GET /client/client.js HTTP/1.0");
+            let request = read_request_head(&socket);
+            assert_eq!(request, "GET /client/client.js HTTP/1.0");
             write!(
                 socket,
                 "HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
@@ -13860,11 +13857,8 @@ mod public_login_key_tests {
         let port = listener.local_addr().unwrap().port();
         let server = std::thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
-            let mut request = String::new();
-            BufReader::new(socket.try_clone().unwrap())
-                .read_line(&mut request)
-                .unwrap();
-            assert_eq!(request.trim_end(), "GET /crc HTTP/1.0");
+            let request = read_request_head(&socket);
+            assert_eq!(request, "GET /crc HTTP/1.0");
             write!(
                 socket,
                 "HTTP/1.0 200 OK\r\nConnection: close\r\n\r\ninvalid"
@@ -13880,6 +13874,21 @@ mod public_login_key_tests {
             Client::get_jag_checksums_checked(BotTarget::Local, "127.0.0.1", port),
             Err(AssetFetchError::Connection)
         );
+    }
+
+    /// Read the whole request head and return its request line. A mock that
+    /// stops after the first line closes with unread headers, and Linux then
+    /// answers with RST, which can discard the response before the client
+    /// reads it.
+    fn read_request_head(socket: &std::net::TcpStream) -> String {
+        let mut reader = BufReader::new(socket.try_clone().unwrap());
+        let mut request = String::new();
+        reader.read_line(&mut request).unwrap();
+        let mut header = String::new();
+        while reader.read_line(&mut header).unwrap() > 0 && !header.trim_end().is_empty() {
+            header.clear();
+        }
+        request.trim_end().to_string()
     }
 
     #[test]
