@@ -220,32 +220,44 @@ fn lowmem_to_highmem_on_title_requests_scape_main() {
     assert_eq!(c.on_demand.as_ref().unwrap().remaining(), 1);
 }
 
-/// A jingle owns the MIDI channel until `nextMusicDelay` expires; enabling
-/// highmem must not cut it short by requesting the recorded zone song.
+/// Entering lowmem cuts off a jingle and clears its delay; the recorded zone
+/// song must therefore resume immediately when highmem is restored.
 #[test]
-fn lowmem_to_highmem_during_jingle_delay_requests_nothing() {
-    let mut c = lowmem_client_with_ondemand();
+fn lowmem_round_trip_clears_jingle_delay_and_resumes_zone_song() {
+    let mut c = client();
+    c.on_demand = Some(OnDemand::new_unconnected());
     c.ingame = true;
     c.next_midi_song = 42;
     c.next_music_delay = 20;
 
+    c.set_lowmem(true);
+
+    assert!(c.config.lowmem);
+    assert_eq!(c.next_music_delay, 0);
+
     c.set_lowmem(false);
 
-    assert_eq!(c.midi_song, -1);
-    assert_eq!(c.on_demand.as_ref().unwrap().remaining(), 0);
+    assert_eq!(c.midi_song, 42);
+    assert!(c.midi_fading);
+    assert_eq!(c.on_demand.as_ref().unwrap().remaining(), 1);
 }
 
-/// Entering lowmem closes both audio gates, including MIDI already playing.
+/// Entering lowmem closes both audio gates, clears the selected song so an
+/// in-flight download cannot revive it, and drops a real pending fade swap.
 #[test]
-fn highmem_to_lowmem_stops_playing_midi() {
+fn highmem_to_lowmem_clears_playing_and_pending_midi() {
     let mut c = client();
+    c.midi_song = 42;
     c.save_midi(&[1, 2, 3], true);
     assert!(c.midi_playing);
+    c.save_midi(&[4, 5, 6], true);
+    assert!(c.midi_pending.is_some());
 
     c.set_lowmem(true);
 
     assert!(!c.midi_playing);
     assert!(!c.midi_fading);
+    assert_eq!(c.midi_song, -1);
     assert!(c.midi_pending.is_none());
 }
 

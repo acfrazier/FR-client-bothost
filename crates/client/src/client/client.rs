@@ -12922,7 +12922,8 @@ impl Client {
     /// `client.java` 3307-3312): in game, resume the recorded `nextMidiSong`
     /// only while MIDI is active and no jingle delay is pending; on the title
     /// screen, request scape_main only while MIDI is active. Entering lowmem
-    /// stops the player, matching the audio gates on later MIDI/synth events.
+    /// stops playback, invalidates an in-flight selected song, and clears the
+    /// cut-off jingle's delay while retaining the next zone song.
     ///
     /// Idempotent (early return when unchanged) so it can be called every
     /// frame; the full re-raster (`redraw_frame`, like the brightness path)
@@ -12937,6 +12938,8 @@ impl Client {
         self.load_tex_averages();
         if lowmem {
             self.stop_midi();
+            self.midi_song = -1;
+            self.next_music_delay = 0;
         } else {
             self.jagfx = Self::unpack_jagfx(&self.session_cache_dir(), false);
             let song = if !self.midi_active {
