@@ -1,6 +1,7 @@
 //! Title-screen torch flames, ported from Java's `renderFlames`.
-//! Production 289's self-correcting 40 ms cadence (`client.java` 4006-4026;
-//! also 274 `Client.java` 6530-6550) is accumulated between visible paints.
+//! Production 289 measures 11 frames but divides elapsed time by 10, so the
+//! controller's `floor(11 * period / 10) = 40` fixed point is 37 ms
+//! (`client.java` 4006-4026; also 274 `Client.java` 6530-6550).
 
 use std::time::{Duration, Instant};
 
@@ -9,7 +10,7 @@ use crate::graphics::{Colour, Pix32, Pix8, PixMap};
 const FLAME_WIDTH: i32 = 128;
 const FLAME_HEIGHT: i32 = 256;
 const TITLE_FLAME_PIXELS: usize = 33920;
-const FLAME_FRAME_TIME: Duration = Duration::from_millis(40);
+const FLAME_FRAME_TIME: Duration = Duration::from_millis(37);
 const CLIENT_LOOP_TIME: Duration = Duration::from_millis(20);
 const MAX_FLAME_CATCH_UP: Duration = Duration::from_secs(1);
 
@@ -521,7 +522,7 @@ mod tests {
     }
 
     #[test]
-    fn flame_clock_advances_at_java_40_ms_independent_of_paint_cadence() {
+    fn flame_clock_advances_at_java_37_ms_independent_of_paint_cadence() {
         let (mut flames, mut left, mut right) = started_flames();
         let start = Instant::now();
 
@@ -531,22 +532,16 @@ mod tests {
             "the first visible flame frame renders immediately"
         );
 
-        flames.render_flames_at(&mut left, &mut right, 1, start + Duration::from_millis(20));
-        assert_eq!(flames.cycle, 1, "20 ms is shorter than one flame frame");
+        flames.render_flames_at(&mut left, &mut right, 1, start + Duration::from_millis(36));
+        assert_eq!(flames.cycle, 1, "36 ms is shorter than one flame frame");
 
-        flames.render_flames_at(&mut left, &mut right, 2, start + Duration::from_millis(35));
-        assert_eq!(
-            flames.cycle, 1,
-            "the client-ts 35 ms interval is earlier than production 289"
-        );
+        flames.render_flames_at(&mut left, &mut right, 2, start + Duration::from_millis(37));
+        assert_eq!(flames.cycle, 2, "production 289 advances at 37 ms");
 
-        flames.render_flames_at(&mut left, &mut right, 2, start + Duration::from_millis(40));
-        assert_eq!(flames.cycle, 2);
-
-        flames.render_flames_at(&mut left, &mut right, 3, start + Duration::from_millis(120));
+        flames.render_flames_at(&mut left, &mut right, 3, start + Duration::from_millis(111));
         assert_eq!(
             flames.cycle, 4,
-            "a sparse paint catches up two more 40 ms flame frames"
+            "a sparse paint catches up two more 37 ms flame frames"
         );
     }
 
