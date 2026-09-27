@@ -941,6 +941,52 @@ mod tests {
         let _ = server.join();
     }
 
+    /// A non-I/O WebSocket failure is transport loss, not the client's T2
+    /// packet-decoder path: an in-game standalone client reconnects at once.
+    #[test]
+    fn standalone_ws_protocol_error_enters_lost_con_reconnect_path() {
+        let (addr, server) = spawn_ws_server(|mut ws| {
+            // FIN plus reserved opcode 3 is not a legal WebSocket frame.
+            ws.get_mut().write_all(&[0x83, 0x00]).unwrap();
+        });
+        let closed_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let closed_addr = closed_listener.local_addr().unwrap();
+        drop(closed_listener);
+        let mut client = Client::new_with_revision(
+            ClientConfig {
+                host: closed_addr.ip().to_string(),
+                port: closed_addr.port(),
+                cache_dir: std::env::temp_dir()
+                    .join(format!("ws-protocol-{}", std::process::id()))
+                    .to_string_lossy()
+                    .into_owned(),
+                members: true,
+                lowmem: true,
+            },
+            ClientRevision::R289,
+        );
+        client.stream = Some(connect_ws_plain(&addr.ip().to_string(), addr.port()).unwrap());
+        client.ingame = true;
+        client.ptype = -1;
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while client.last_login_reconnect != Some(true) {
+            client.tcp_in();
+            assert!(std::time::Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        assert!(!client.ingame);
+        assert!(matches!(
+            client.take_session_exit_reason(),
+            Some(SessionExitReason::ReadError {
+                kind: io::ErrorKind::Other,
+                ..
+            })
+        ));
+        let _ = server.join();
+    }
+
     #[test]
     fn ws_dummy_write_is_noop_and_available_zero() {
         let (addr, server) = spawn_ws_server(|ws| {
