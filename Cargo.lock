@@ -318,7 +318,6 @@ dependencies = [
  "libc",
  "native-tls",
  "num-bigint",
- "parking_lot",
  "pollster",
  "rustysynth",
  "sha2",

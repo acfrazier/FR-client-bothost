@@ -21,8 +21,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use parking_lot::Mutex as ParkingMutex;
-
 use crate::client::client_build::ClientBuild;
 use crate::client::client_draw::get_av_h;
 use crate::client::config::ClientConfig;
@@ -992,11 +990,14 @@ pub struct Client {
     /// output thread. `saveMidi`/`stopMidi`/`setMidiVolume` arm the fade;
     /// `AudioOut` steps it from the device clock and advances the wave cursor.
     pub fade: Arc<Mutex<Fade>>,
-    pub waves: Arc<ParkingMutex<WavePlayback>>,
+    pub waves: Arc<Mutex<WavePlayback>>,
     /// Last wave accepted by Java's one-wave signlink player. A matching
-    /// id/loop pair resets the retained playback cursor (`wavereplay`).
+    /// id/loop pair resets the retained playback cursor (`wavereplay`) but
+    /// does not move this accepted wave's arbitration deadline.
     pub last_wave_id: i32,
     pub last_wave_loops: i32,
+    last_wave_start: Option<Instant>,
+    last_wave_len: usize,
 
     /// `SYNTH_SOUND` queue (`Client.ts` `waveEnabled`/`waveIds`/...).
     pub wave_enabled: bool,
@@ -1878,9 +1879,11 @@ impl Client {
             midi_pending: None,
             midi_playing: false,
             fade: Arc::new(Mutex::new(Fade::new())),
-            waves: Arc::new(ParkingMutex::new(WavePlayback::new())),
+            waves: Arc::new(Mutex::new(WavePlayback::new())),
             last_wave_id: -1,
             last_wave_loops: -1,
+            last_wave_start: None,
+            last_wave_len: 0,
 
             wave_enabled: true,
             wave_volume: 0,
@@ -12922,8 +12925,9 @@ impl Client {
     /// `client.java` 3307-3312): in game, resume the recorded `nextMidiSong`
     /// only while MIDI is active and no jingle delay is pending; on the title
     /// screen, request scape_main only while MIDI is active. Entering lowmem
-    /// stops playback, invalidates an in-flight selected song, and clears the
-    /// cut-off jingle's delay while retaining the next zone song.
+    /// stops MIDI, invalidates an in-flight selected song, clears the cut-off
+    /// jingle's delay while retaining the next zone song, and stops both
+    /// queued and current SFX (a lowmem Java client never accepts them).
     ///
     /// Idempotent (early return when unchanged) so it can be called every
     /// frame; the full re-raster (`redraw_frame`, like the brightness path)
@@ -12940,6 +12944,8 @@ impl Client {
             self.stop_midi();
             self.midi_song = -1;
             self.next_music_delay = 0;
+            self.wave_count = 0;
+            self.waves.lock().unwrap().stop();
         } else {
             self.jagfx = Self::unpack_jagfx(&self.session_cache_dir(), false);
             let song = if !self.midi_active {
@@ -13204,34 +13210,66 @@ impl Client {
 
     /// Java 289 `method190` (`client.java` 8986-9024): process delayed
     /// SYNTH_SOUND entries against signlink's single current wave. The same
-    /// id/loop pair restarts that wave; a different wave replaces it only
-    /// when its end lies after the current wave's end. `WavePlayback`'s
-    /// device-advanced sample cursor expresses Java's wall-clock end test as
-    /// `new samples > remaining samples`.
+    /// id/loop pair restarts retained PCM without changing the accepted
+    /// wave's end time; a different wave replaces it only when
+    /// `now + new length` lies after that end.
     pub fn sounds_do_queue(&mut self) {
+        self.sounds_do_queue_at(Instant::now());
+    }
+
+    fn wave_duration(samples: usize) -> Duration {
+        Duration::from_nanos((samples as u64).saturating_mul(1_000_000_000) / 22_050)
+    }
+
+    fn wave_ends_later(
+        now: Instant,
+        new_len: usize,
+        last_start: Option<Instant>,
+        last_len: usize,
+    ) -> bool {
+        let Some(last_start) = last_start else {
+            return true;
+        };
+        now.saturating_duration_since(last_start)
+            .saturating_add(Self::wave_duration(new_len))
+            > Self::wave_duration(last_len)
+    }
+
+    fn sounds_do_queue_at(&mut self, now: Instant) {
         let mut wave = 0usize;
         while wave < self.wave_count as usize {
             if self.wave_delay[wave] <= 0 {
                 let id = self.wave_ids[wave];
                 let loops = self.wave_loops[wave];
                 if id == self.last_wave_id && loops == self.last_wave_loops {
-                    self.waves.lock().replay();
-                } else if let Some(wav) = self.jagfx.generate(id, loops) {
-                    let data = wav.data();
-                    let end = wav.pos;
-                    // Convert before taking the callback's lock. JagFX caps
-                    // every generated wave at 20 s; WavePlayback enforces the
-                    // same bound when no output device advances its cursor.
-                    let mut samples = Vec::with_capacity(end - 44);
-                    for &b in &data[44..end] {
-                        // 8-bit WAV PCM (128 = silence) → full-range i16.
-                        samples.push(((b as i16) - 128) << 8);
-                    }
-                    let mut playback = self.waves.lock();
-                    if playback.is_empty() || samples.len() > playback.len() {
-                        playback.replace(samples);
-                        self.last_wave_id = id;
-                        self.last_wave_loops = loops;
+                    self.waves.lock().unwrap().replay();
+                } else {
+                    let last_start = self.last_wave_start;
+                    let last_len = self.last_wave_len;
+                    if let Some(wav) = self.jagfx.generate(id, loops) {
+                        let end = wav.pos;
+                        let sample_len = end.saturating_sub(44);
+                        if Self::wave_ends_later(now, sample_len, last_start, last_len) {
+                            // Decide before allocating. Conversion still stays
+                            // outside the output callback's mutex.
+                            let data = wav.data();
+                            let mut samples = Vec::with_capacity(sample_len);
+                            for &b in &data[44..end] {
+                                // 8-bit WAV PCM (128 = silence) → full-range i16.
+                                samples.push(((b as i16) - 128) << 8);
+                            }
+                            let old_samples = {
+                                let mut playback = self.waves.lock().unwrap();
+                                playback.replace(samples)
+                            };
+                            // A previous wave can be 882 KiB. Free it only
+                            // after the audio callback's mutex is available.
+                            drop(old_samples);
+                            self.last_wave_id = id;
+                            self.last_wave_loops = loops;
+                            self.last_wave_start = Some(now);
+                            self.last_wave_len = sample_len;
+                        }
                     }
                 }
                 // Java's -5 retry exists only when signlink rejects an async
@@ -13838,6 +13876,125 @@ mod dead_server_watchdog {
 }
 
 #[cfg(test)]
+mod wave_arbitration {
+    use super::*;
+
+    const JAGFX_FIXTURE: &[u8] = &[
+        0x03, 0x72, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x17, 0x70, 0x04, 0x00, 0x00,
+        0xee, 0x98, 0x5a, 0x79, 0xb6, 0x46, 0xbf, 0x79, 0xab, 0x03, 0xff, 0xff, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0x05, 0x00, 0x00, 0xef, 0x9e, 0x47, 0x89,
+        0xc1, 0x8a, 0x6a, 0x9b, 0x54, 0xfe, 0xd3, 0xd0, 0x02, 0x0d, 0xff, 0xff, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0x05, 0x00, 0x00, 0x80, 0x00, 0x3f,
+        0xff, 0x80, 0x00, 0x7f, 0xfe, 0x80, 0x00, 0xbf, 0xfd, 0x80, 0x00, 0xff, 0xff, 0x80, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0x05, 0x00, 0x00, 0x80, 0x00, 0x3f,
+        0xff, 0x80, 0x00, 0x7f, 0xfe, 0x80, 0x00, 0xbf, 0xfd, 0x80, 0x00, 0xff, 0xff, 0x80, 0x00,
+        0x00, 0x80, 0x96, 0xc0, 0x78, 0x00, 0x64, 0x40, 0x00, 0x64, 0xc0, 0xf0, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x23, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0xff, 0xff,
+    ];
+
+    fn client() -> Client {
+        let mut client = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        client.jagfx.init(&mut Packet::new(JAGFX_FIXTURE.to_vec()));
+        let mut longer = client.jagfx.synth[882].clone().expect("fixture sound");
+        for tone in longer.tones.iter_mut().flatten() {
+            tone.length = tone.length.saturating_mul(2);
+        }
+        Arc::make_mut(&mut client.jagfx.synth)[883] = Some(longer);
+        client
+    }
+
+    fn generated_samples(client: &mut Client, id: i32) -> usize {
+        client
+            .jagfx
+            .generate(id, 1)
+            .expect("fixture sound")
+            .pos
+            .saturating_sub(44)
+    }
+
+    fn duration(samples: usize) -> Duration {
+        Duration::from_secs_f64(samples as f64 / 22_050.0)
+    }
+
+    fn queue_at(client: &mut Client, id: i32, now: Instant) {
+        let slot = client.wave_count as usize;
+        client.wave_ids[slot] = id;
+        client.wave_loops[slot] = 1;
+        client.wave_delay[slot] = 0;
+        client.wave_count += 1;
+        client.sounds_do_queue_at(now);
+    }
+
+    fn remaining(client: &Client) -> usize {
+        client.waves.lock().unwrap().len()
+    }
+
+    #[test]
+    fn shorter_wave_replaces_when_its_wall_clock_end_is_later() {
+        let mut client = client();
+        let short = generated_samples(&mut client, 882);
+        let long = generated_samples(&mut client, 883);
+        let start = Instant::now();
+
+        queue_at(&mut client, 883, start);
+        queue_at(
+            &mut client,
+            882,
+            start + duration(long - short) + Duration::from_millis(1),
+        );
+
+        assert_eq!(remaining(&client), short);
+    }
+
+    #[test]
+    fn headless_wave_expires_without_an_output_callback() {
+        let mut client = client();
+        let short = generated_samples(&mut client, 882);
+        let long = generated_samples(&mut client, 883);
+        let start = Instant::now();
+
+        queue_at(&mut client, 883, start);
+        queue_at(
+            &mut client,
+            882,
+            start + duration(long) + Duration::from_millis(1),
+        );
+
+        assert_eq!(remaining(&client), short);
+    }
+
+    #[test]
+    fn replay_restarts_pcm_without_extending_the_arbitration_end() {
+        let mut client = client();
+        let short = generated_samples(&mut client, 882);
+        let long = generated_samples(&mut client, 883);
+        let start = Instant::now();
+
+        queue_at(&mut client, 883, start);
+        client.waves.lock().unwrap().stop();
+        assert_eq!(remaining(&client), 0);
+
+        let after_original_end = start + duration(long) + Duration::from_millis(1);
+        queue_at(&mut client, 883, after_original_end);
+        assert_eq!(remaining(&client), long, "replay must restart retained PCM");
+
+        queue_at(&mut client, 882, after_original_end);
+        assert_eq!(
+            remaining(&client),
+            short,
+            "replay must not move Java's accepted-wave end time"
+        );
+    }
+}
+
+#[cfg(test)]
 mod audio_toggle {
     use super::*;
     use std::io::Write;
@@ -13921,11 +14078,18 @@ mod audio_toggle {
         midi_song(&mut c, 8);
         assert_eq!(c.midi_song, 8, "highmem must accept MIDI_SONG");
 
-        // Toggle back off (lowmem): the gates close again.
+        // Toggle back off (lowmem): queued and currently playing SFX are
+        // discarded before the gates close.
+        drop(c.waves.lock().unwrap().replace(vec![1, 2, 3]));
         c.set_lowmem(true);
         assert!(c.config.lowmem);
+        assert_eq!(c.wave_count, 0, "lowmem must clear queued SYNTH_SOUND");
+        assert!(
+            c.waves.lock().unwrap().is_empty(),
+            "lowmem must stop current SFX"
+        );
         synth_sound(&mut c, 0);
-        assert_eq!(c.wave_count, 1, "lowmem must gate SYNTH_SOUND again");
+        assert_eq!(c.wave_count, 0, "lowmem must gate SYNTH_SOUND again");
     }
 
     /// Pack a JAG container with bz2-compressed payloads (the shape the

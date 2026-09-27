@@ -141,7 +141,7 @@ fn synth_sound_queue_pushes_pcm_not_drops() {
     c.wave_count = 1;
     c.sounds_do_queue();
     assert_eq!(c.wave_count, 0);
-    let queue = c.waves.lock();
+    let queue = c.waves.lock().unwrap();
     // generate() leaves pos at 44 (header) + 771 PCM bytes
     assert_eq!(queue.len(), 771);
     assert!(
@@ -230,7 +230,7 @@ fn enqueue_wave(c: &mut client::client::Client, id: i32, loops: i32, delay: i32)
 }
 
 fn queued_wave_samples(c: &client::client::Client) -> usize {
-    c.waves.lock().len()
+    c.waves.lock().unwrap().len()
 }
 
 #[test]
