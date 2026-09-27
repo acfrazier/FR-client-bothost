@@ -163,8 +163,9 @@ fn composed(gpu: bool, menu: bool, oblique: bool, blocked: bool) {
     c.shell.apply_mouse_up();
     tick(&mut c);
     // Primary J10163-10181: opcode234, length5, run0, p2 X then p2 Z.
-    // Assert the movement frame itself: a wall-clock NO_TIMEOUT may follow it
-    // when the render above takes longer than the production idle interval.
+    // Only a wall-clock NO_TIMEOUT (181) may follow the movement frame, when
+    // the render above takes longer than the production idle interval.
+    const NO_TIMEOUT: u8 = 181;
     let destination_z = if blocked { 50 } else { 51 };
     let movement = [234, 5, 0, 0, 50, 0, destination_z];
     let movement_end = before + movement.len();
@@ -174,6 +175,13 @@ fn composed(gpu: bool, menu: bool, oblique: bool, blocked: bool) {
         &c.out.data()[before..c.out.pos]
     );
     assert_eq!(&c.out.data()[before..movement_end], &movement);
+    assert!(
+        c.out.data()[movement_end..c.out.pos]
+            .iter()
+            .all(|&b| b == NO_TIMEOUT),
+        "only NO_TIMEOUT may follow the movement frame: {:?}",
+        &c.out.data()[before..c.out.pos]
+    );
     assert_eq!(c.try_move_nearest, i32::from(blocked));
     eprintln!(
         "gpu={gpu} menu={menu} oblique={oblique} blocked={blocked}: picked (50,51), emitted {:?}",
@@ -185,10 +193,11 @@ fn composed(gpu: bool, menu: bool, oblique: bool, blocked: bool) {
     draw(&mut c, &mut r, gpu);
     tick(&mut c);
     assert!(
-        !c.out.data()[after_movement..c.out.pos]
-            .windows(movement.len())
-            .any(|packet| packet == movement),
-        "no repeat movement without new mouse-down"
+        c.out.data()[after_movement..c.out.pos]
+            .iter()
+            .all(|&b| b == NO_TIMEOUT),
+        "no repeat movement without new mouse-down: {:?}",
+        &c.out.data()[after_movement..c.out.pos]
     );
 }
 
