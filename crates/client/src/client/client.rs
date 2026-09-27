@@ -1441,6 +1441,14 @@ pub struct Client {
     /// When true, transport loss returns control to the embedding host
     /// instead of opening an unaccounted reconnect socket inside `lost_con`.
     external_reconnect_owner: bool,
+    /// Host-only title presentation. `Some` replaces the Java account form
+    /// with one external-login button labelled for this slot. It can be set
+    /// only while [`Self::external_reconnect_owner`] is true.
+    hosted_title_label: Option<String>,
+    /// One-shot request raised by a hosted title button or Enter. The
+    /// embedding host consumes it and owns the actual login credentials,
+    /// queue permit, and handshake.
+    title_login_requested: bool,
     /// Socket-adopt flag: when true, the next `login(reconnect = true)`
     /// reuses `stream` (`Client::adopt_from`) instead of opening a new TCP
     /// — the opcode-18 handshake runs in place so a channel-head tune swaps
@@ -2193,6 +2201,8 @@ impl Client {
             idk_design_button2: None,
             last_login_reconnect: None,
             external_reconnect_owner: false,
+            hosted_title_label: None,
+            title_login_requested: false,
             baton: false,
             logout_timer: 0,
             reboot_timer: 0,
@@ -10349,10 +10359,44 @@ impl Client {
         self.bump_all_gens();
     }
 
-    /// Select an embedding host as the owner of reconnect and inactivity
+    /// Select an embedding host as the owner of reconnect and title-login
     /// policy. The default remains Java-compatible standalone behavior.
+    /// Relinquishing ownership also removes host-only title state.
     pub fn set_external_reconnect_owner(&mut self, external: bool) {
         self.external_reconnect_owner = external;
+        if !external {
+            self.hosted_title_label = None;
+            self.title_login_requested = false;
+        }
+    }
+
+    /// Replace the Java account form with the host's single-login title for
+    /// `label`. Calls made without an external reconnect owner are ignored.
+    /// Updating the label dirties the title chrome without touching the
+    /// client's retained transport credentials.
+    pub fn set_hosted_title_label(&mut self, label: Option<&str>) {
+        let label = if self.external_reconnect_owner {
+            label
+        } else {
+            None
+        };
+        if self.hosted_title_label.as_deref() != label {
+            self.hosted_title_label = label.map(str::to_owned);
+            self.redraw_frame = true;
+        }
+    }
+
+    /// Display name shown by the host-only title, if external ownership is
+    /// active.
+    pub fn hosted_title_label(&self) -> Option<&str> {
+        self.external_reconnect_owner
+            .then_some(self.hosted_title_label.as_deref())
+            .flatten()
+    }
+
+    /// Consume one host-owned title login request.
+    pub fn take_title_login_request(&mut self) -> bool {
+        std::mem::take(&mut self.title_login_requested)
     }
 
     /// `lostCon` from Java (`Client.java` 6147): in-game connection loss. A
@@ -10402,13 +10446,39 @@ impl Client {
     }
 
     /// `titleScreenLoop` from client-ts (1378): the title-screen input pass,
-    /// 1:1 port of the click regions, field selection, and the CHARSET
-    /// filtered key entry. Clicks arrive latched on `shell.mouse_click_*`
-    /// (GameShell.run 186-190); keys via `shell.poll_key`. A Login click
-    /// runs the full handshake (blocking) and returns once `ingame`; on
-    /// failure `login_mes1/2` carry the error to the title draw, as TS.
-    /// Coordinates use the 765×503 applet (`sWid`/`sHei`).
+    /// 1:1 port of the Java click regions, field selection, and the CHARSET
+    /// filtered key entry for standalone clients. Clicks arrive latched on
+    /// `shell.mouse_click_*` (GameShell.run 186-190); keys via
+    /// `shell.poll_key`.
+    ///
+    /// An embedding host with a hosted title gets one centred Log In button;
+    /// its click or Enter records a request for the external owner and never
+    /// calls [`Client::login`] or uses the title credential fields. Without a
+    /// hosted label, a Login click keeps Java behavior except that an external
+    /// reconnect owner still receives the request instead of an in-loop,
+    /// blocking handshake. Coordinates use the 765×503 applet (`sWid`/`sHei`).
     pub fn title_screen_loop(&mut self) {
+        if self.hosted_title_label().is_some() {
+            let clicked = title_button_clicked(
+                self.shell.mouse_click_button,
+                self.shell.mouse_click_x,
+                self.shell.mouse_click_y,
+                APPLET_W / 2,
+                (APPLET_H / 2) + 40,
+            );
+            let mut enter = false;
+            loop {
+                match self.shell.poll_key() {
+                    -1 => break,
+                    10 | 13 => enter = true,
+                    _ => {}
+                }
+            }
+            if clicked || enter {
+                self.title_login_requested = true;
+            }
+            return;
+        }
         if self.loginscreen == 0 {
             let mut x = (APPLET_W / 2) - 80;
             let mut y = (APPLET_H / 2) + 20;
@@ -10470,11 +10540,15 @@ impl Client {
                 x,
                 y,
             ) {
-                let user = self.login_user.clone();
-                let pass = self.login_pass.clone();
-                let _ = self.login(&user, &pass, false);
-                if self.ingame {
-                    return;
+                if self.external_reconnect_owner {
+                    self.title_login_requested = true;
+                } else {
+                    let user = self.login_user.clone();
+                    let pass = self.login_pass.clone();
+                    let _ = self.login(&user, &pass, false);
+                    if self.ingame {
+                        return;
+                    }
                 }
             }
 

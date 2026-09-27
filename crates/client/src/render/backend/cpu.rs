@@ -329,7 +329,42 @@ impl RenderBackend for CpuBackend {
                     titlebox.plot_sprite(&mut surface, 0, 0);
                 }
 
-                if core.loginscreen == 0 {
+                if let Some(label) = core.hosted_title_label() {
+                    let x = w / 2;
+                    let welcome_y = (h / 2) - 30;
+                    let button_y = (h / 2) + 20;
+                    if let Some(b12) = r.media.b12.as_ref() {
+                        b12.centre_string_tag(
+                            &mut surface,
+                            "Welcome to RuneScape",
+                            x,
+                            welcome_y,
+                            Colour::YELLOW,
+                            true,
+                        );
+                    }
+                    if let Some(button) = &r.image_titlebutton {
+                        button.plot_sprite(&mut surface, x - 73, button_y - 20);
+                    }
+                    if let Some(b12) = r.media.b12.as_ref() {
+                        b12.centre_string_tag(
+                            &mut surface,
+                            "Log In",
+                            x,
+                            button_y - 1,
+                            Colour::WHITE,
+                            true,
+                        );
+                        b12.centre_string_tag(
+                            &mut surface,
+                            label,
+                            x,
+                            button_y + 14,
+                            Colour::YELLOW,
+                            true,
+                        );
+                    }
+                } else if core.loginscreen == 0 {
                     let extra_y = (h / 2) + 80;
                     let mut y = (h / 2) - 20;
 
