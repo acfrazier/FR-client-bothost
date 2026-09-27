@@ -12907,27 +12907,42 @@ impl Client {
     /// Flip the client's `lowmem` mode live (the panel's Music/SFX toggle):
     /// set `config.lowmem` — the single source of truth every lowmem gate
     /// already reads (sound synthesis, the 2D audio UI, player/model
-    /// `low_mem`) — and, on the low→high edge, re-run the one-time sound
-    /// load the lowmem spawn skipped (`unpack_jagfx` + the midi on-demand
-    /// request, mirroring `maininit_with_progress` under `!lowmem`).
+    /// `low_mem`) — and re-run the one-time JagFX load on the low→high edge.
+    ///
+    /// The MIDI request follows Java's live music state rather than startup's
+    /// unconditional scape_main request (`Client.java` 8492-8497; production
+    /// `client.java` 3307-3312): in game, resume the recorded `nextMidiSong`
+    /// only while MIDI is active and no jingle delay is pending; on the title
+    /// screen, request scape_main only while MIDI is active. Entering lowmem
+    /// stops the player, matching the audio gates on later MIDI/synth events.
+    ///
     /// Idempotent (early return when unchanged) so it can be called every
-    /// frame; the full re-raster (`redraw_frame`, like the brightness
-    /// path) makes the current scene and the 2D UI reflect the new mode.
-    /// The login handshake is one-time (sent at login) and is not re-sent
-    /// here; a later reconnect handshakes the new mode from
-    /// `config.lowmem`.
+    /// frame; the full re-raster (`redraw_frame`, like the brightness path)
+    /// makes the current scene and the 2D UI reflect the new mode. The login
+    /// handshake is one-time (sent at login) and is not re-sent here; a later
+    /// reconnect handshakes the new mode from `config.lowmem`.
     pub fn set_lowmem(&mut self, lowmem: bool) {
         if self.config.lowmem == lowmem {
             return;
         }
         self.config.lowmem = lowmem;
         self.load_tex_averages();
-        if !lowmem {
+        if lowmem {
+            self.stop_midi();
+        } else {
             self.jagfx = Self::unpack_jagfx(&self.session_cache_dir(), false);
-            if let Some(od) = &mut self.on_demand {
-                self.midi_song = 0;
+            let song = if !self.midi_active {
+                None
+            } else if self.ingame {
+                (self.next_midi_song != -1 && self.next_music_delay == 0)
+                    .then_some(self.next_midi_song)
+            } else {
+                Some(0)
+            };
+            if let (Some(song), Some(od)) = (song, self.on_demand.as_mut()) {
+                self.midi_song = song;
                 self.midi_fading = true;
-                od.request(2, 0);
+                od.request(2, song);
             }
         }
         self.redraw_frame = true;
