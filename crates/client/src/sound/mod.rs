@@ -9,7 +9,7 @@ pub mod tone;
 
 pub use jagfx::JagFX;
 pub use midi::{Midi, NullMidi};
-pub use output::Fade;
+pub use output::{Fade, WavePlayback};
 pub use tone::Tone;
 
 #[cfg(feature = "audio")]

@@ -21,6 +21,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use parking_lot::Mutex as ParkingMutex;
+
 use crate::client::client_build::ClientBuild;
 use crate::client::client_draw::get_av_h;
 use crate::client::config::ClientConfig;
@@ -53,7 +55,7 @@ use crate::login_rsa;
 use crate::render::nav_debug::NavDebugPaint;
 use crate::render::Renderer;
 use crate::session::ClientSessionProfile;
-use crate::sound::{Fade, JagFX, Midi};
+use crate::sound::{Fade, JagFX, Midi, WavePlayback};
 use crate::util::JString;
 use crate::wordfilter::{WordFilter, WordPack};
 
@@ -986,11 +988,15 @@ pub struct Client {
     /// zone-song changes fade the current song out first.
     pub midi_playing: bool,
 
-    /// The period fade and the JagFX wave queue, shared with the audio
+    /// The period fade and current JagFX playback, shared with the audio
     /// output thread. `saveMidi`/`stopMidi`/`setMidiVolume` arm the fade;
-    /// `AudioOut` steps it from the device clock and drains the queue.
+    /// `AudioOut` steps it from the device clock and advances the wave cursor.
     pub fade: Arc<Mutex<Fade>>,
-    pub waves: Arc<Mutex<Vec<i16>>>,
+    pub waves: Arc<ParkingMutex<WavePlayback>>,
+    /// Last wave accepted by Java's one-wave signlink player. A matching
+    /// id/loop pair resets the retained playback cursor (`wavereplay`).
+    pub last_wave_id: i32,
+    pub last_wave_loops: i32,
 
     /// `SYNTH_SOUND` queue (`Client.ts` `waveEnabled`/`waveIds`/...).
     pub wave_enabled: bool,
@@ -1872,7 +1878,9 @@ impl Client {
             midi_pending: None,
             midi_playing: false,
             fade: Arc::new(Mutex::new(Fade::new())),
-            waves: Arc::new(Mutex::new(Vec::new())),
+            waves: Arc::new(ParkingMutex::new(WavePlayback::new())),
+            last_wave_id: -1,
+            last_wave_loops: -1,
 
             wave_enabled: true,
             wave_volume: 0,
@@ -13191,38 +13199,42 @@ impl Client {
         }
     }
 
-    /// `soundsDoQueue()` from client-ts (`Client.ts` 3413): drain the wave
-    /// queue, generating each WAV through `JagFX` and pushing its 8-bit PCM
-    /// as i16 samples onto the mixer's wave queue (the `AudioOut` callback
-    /// drains that). A missing sound id skips silently, as TS does.
+    /// Java 289 `method190` (`client.java` 8986-9024): process delayed
+    /// SYNTH_SOUND entries against signlink's single current wave. The same
+    /// id/loop pair restarts that wave; a different wave replaces it only
+    /// when its end lies after the current wave's end. `WavePlayback`'s
+    /// device-advanced sample cursor expresses Java's wall-clock end test as
+    /// `new samples > remaining samples`.
     pub fn sounds_do_queue(&mut self) {
         let mut wave = 0usize;
         while wave < self.wave_count as usize {
             if self.wave_delay[wave] <= 0 {
                 let id = self.wave_ids[wave];
                 let loops = self.wave_loops[wave];
-                if let Some(wav) = self.jagfx.generate(id, loops) {
+                if id == self.last_wave_id && loops == self.last_wave_loops {
+                    self.waves.lock().replay();
+                } else if let Some(wav) = self.jagfx.generate(id, loops) {
                     let data = wav.data();
                     let end = wav.pos;
-                    // Convert off the lock: a looped generate can be up to
-                    // 20 s of samples, and the audio callback needs the
-                    // queue lock every buffer.
+                    // Convert before taking the callback's lock. JagFX caps
+                    // every generated wave at 20 s; WavePlayback enforces the
+                    // same bound when no output device advances its cursor.
                     let mut samples = Vec::with_capacity(end - 44);
                     for &b in &data[44..end] {
-                        // 8-bit WAV PCM (128 = silence) → full-range i16
+                        // 8-bit WAV PCM (128 = silence) → full-range i16.
                         samples.push(((b as i16) - 128) << 8);
                     }
-                    let mut queue = self.waves.lock().unwrap();
-                    // 20 s at 22050 Hz, the TS `JagFX.waveBytes` scratch:
-                    // any one sound fits, and it bounds the queue when no
-                    // output device is draining it.
-                    const WAVE_QUEUE_SAMPLES: usize = 22050 * 20;
-                    let room = WAVE_QUEUE_SAMPLES.saturating_sub(queue.len());
-                    if samples.len() > room {
-                        samples.truncate(room);
+                    let mut playback = self.waves.lock();
+                    if playback.is_empty() || samples.len() > playback.len() {
+                        playback.replace(samples);
+                        self.last_wave_id = id;
+                        self.last_wave_loops = loops;
                     }
-                    queue.extend(samples);
                 }
+                // Java's -5 retry exists only when signlink rejects an async
+                // file save/replay while its save slot is busy. This in-memory
+                // replace/replay is synchronous and cannot return that
+                // transient failure, so every due entry is consumed once.
                 self.wave_count -= 1;
                 for i in wave..self.wave_count as usize {
                     self.wave_ids[i] = self.wave_ids[i + 1];

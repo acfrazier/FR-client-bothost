@@ -141,7 +141,7 @@ fn synth_sound_queue_pushes_pcm_not_drops() {
     c.wave_count = 1;
     c.sounds_do_queue();
     assert_eq!(c.wave_count, 0);
-    let queue = c.waves.lock().unwrap();
+    let queue = c.waves.lock();
     // generate() leaves pos at 44 (header) + 771 PCM bytes
     assert_eq!(queue.len(), 771);
     assert!(
@@ -200,6 +200,110 @@ const JAGFX_FIXTURE: &[u8] = &[
     0x00, 0x64, 0xc0, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x23, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff,
 ];
+
+fn wave_queue_client() -> client::client::Client {
+    let mut c = client();
+    c.jagfx
+        .init(&mut client::io::Packet::new(JAGFX_FIXTURE.to_vec()));
+    let mut longer = c.jagfx.synth[882].clone().expect("sound 882 in fixture");
+    for tone in longer.tones.iter_mut().flatten() {
+        tone.length = tone.length.saturating_mul(2);
+    }
+    std::sync::Arc::make_mut(&mut c.jagfx.synth)[883] = Some(longer);
+    c
+}
+
+fn generated_wave_samples(c: &mut client::client::Client, id: i32, loops: i32) -> usize {
+    c.jagfx
+        .generate(id, loops)
+        .expect("fixture sound")
+        .pos
+        .saturating_sub(44)
+}
+
+fn enqueue_wave(c: &mut client::client::Client, id: i32, loops: i32, delay: i32) {
+    let slot = c.wave_count as usize;
+    c.wave_ids[slot] = id;
+    c.wave_loops[slot] = loops;
+    c.wave_delay[slot] = delay;
+    c.wave_count += 1;
+}
+
+fn queued_wave_samples(c: &client::client::Client) -> usize {
+    c.waves.lock().len()
+}
+
+#[test]
+fn due_wave_that_ends_later_replaces_current_wave() {
+    let mut c = wave_queue_client();
+    let short_len = generated_wave_samples(&mut c, 882, 1);
+    let long_len = generated_wave_samples(&mut c, 883, 1);
+    assert!(long_len > short_len);
+
+    enqueue_wave(&mut c, 882, 1, 0);
+    c.sounds_do_queue();
+    assert_eq!(queued_wave_samples(&c), short_len);
+
+    enqueue_wave(&mut c, 883, 1, 0);
+    c.sounds_do_queue();
+    assert_eq!(
+        queued_wave_samples(&c),
+        long_len,
+        "the later-ending wave must cut off and replace the current wave"
+    );
+}
+
+#[test]
+fn due_wave_that_ends_earlier_is_dropped() {
+    let mut c = wave_queue_client();
+    let long_len = generated_wave_samples(&mut c, 883, 1);
+
+    enqueue_wave(&mut c, 883, 1, 0);
+    c.sounds_do_queue();
+    enqueue_wave(&mut c, 882, 1, 0);
+    c.sounds_do_queue();
+
+    assert_eq!(
+        queued_wave_samples(&c),
+        long_len,
+        "a wave ending before the current wave must not queue behind it"
+    );
+}
+
+#[test]
+fn same_wave_id_and_loops_replays_instead_of_appending() {
+    let mut c = wave_queue_client();
+    let wave_len = generated_wave_samples(&mut c, 882, 1);
+
+    enqueue_wave(&mut c, 882, 1, 0);
+    c.sounds_do_queue();
+    enqueue_wave(&mut c, 882, 1, 0);
+    c.sounds_do_queue();
+
+    assert_eq!(
+        queued_wave_samples(&c),
+        wave_len,
+        "replay must restart the current wave instead of queueing another copy"
+    );
+}
+
+#[test]
+fn delayed_wave_waits_for_every_delay_tick() {
+    let mut c = wave_queue_client();
+    let wave_len = generated_wave_samples(&mut c, 882, 1);
+    enqueue_wave(&mut c, 882, 1, 2);
+
+    for delay in [1, 0] {
+        c.sounds_do_queue();
+        assert_eq!(c.wave_count, 1);
+        assert_eq!(c.wave_delay[0], delay);
+        assert_eq!(queued_wave_samples(&c), 0);
+    }
+
+    c.sounds_do_queue();
+    assert_eq!(c.wave_count, 0);
+    assert_eq!(queued_wave_samples(&c), wave_len);
+}
 
 /// FNV-1a 64: golden checksum of the generated WAV bytes.
 fn fnv1a64(bytes: &[u8]) -> u64 {
