@@ -2,8 +2,11 @@
 //!
 //! Local reads are blocking on the calling thread with a 30 s soTimeout;
 //! writes go through a 5000-byte ring buffer drained by a dedicated writer
-//! thread, as in Java. Prod wraps the same byte stream in a WebSocket.
-//! After `close` (`dummy`), reads report 0 / EOF and writes are no-ops.
+//! thread, as in Java. Prod wraps the same byte stream in a WebSocket. A peer
+//! Close or TLS/WebSocket protocol failure is an IOException-equivalent
+//! transport loss: an in-game standalone client enters `lostCon` immediately,
+//! while a close during login reports the ordinary connection error. After
+//! local `close` (`dummy`), reads report 0 / EOF and writes are no-ops.
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
@@ -666,6 +669,8 @@ fn socket_readable_now(socket: RawSocket) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::client::SessionExitReason;
+    use crate::client::{Client, ClientConfig, ClientRevision};
     use std::net::TcpListener;
     use std::sync::mpsc;
     use tungstenite::WebSocket as TungsteniteWs;
@@ -886,6 +891,53 @@ mod tests {
         );
         stream.close();
         assert_eq!(stream.read().unwrap(), 0);
+        let _ = server.join();
+    }
+
+    #[test]
+    fn standalone_ws_close_enters_lost_con_reconnect_path() {
+        let (addr, server) = spawn_ws_server(|mut ws| {
+            let _ = ws.close(Some(tungstenite::protocol::CloseFrame {
+                code: tungstenite::protocol::frame::coding::CloseCode::Away,
+                reason: std::borrow::Cow::Borrowed("maintenance"),
+            }));
+            let _ = ws.read();
+        });
+        let closed_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let closed_addr = closed_listener.local_addr().unwrap();
+        drop(closed_listener);
+        let mut client = Client::new_with_revision(
+            ClientConfig {
+                host: closed_addr.ip().to_string(),
+                port: closed_addr.port(),
+                cache_dir: std::env::temp_dir()
+                    .join(format!("ws-close-{}", std::process::id()))
+                    .to_string_lossy()
+                    .into_owned(),
+                members: true,
+                lowmem: true,
+            },
+            ClientRevision::R289,
+        );
+        client.stream = Some(connect_ws_plain(&addr.ip().to_string(), addr.port()).unwrap());
+        client.ingame = true;
+        client.ptype = -1;
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while client.last_login_reconnect != Some(true) {
+            client.tcp_in();
+            assert!(std::time::Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        assert!(!client.ingame);
+        assert_eq!(
+            client.take_session_exit_reason(),
+            Some(SessionExitReason::WebSocketClose {
+                code: Some(1001),
+                reason: "maintenance".into(),
+            })
+        );
         let _ = server.join();
     }
 

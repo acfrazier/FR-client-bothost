@@ -12547,7 +12547,10 @@ impl Client {
             self.lost_con();
         }
 
-        if self.out.pos == 0 && self.last_outbound.elapsed() >= KEEPALIVE_INTERVAL {
+        // Java appends NO_TIMEOUT even when this pass already queued another
+        // packet; the successful combined flush starts the next one-second
+        // wall-clock interval.
+        if self.last_outbound.elapsed() >= KEEPALIVE_INTERVAL {
             self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
         }
 

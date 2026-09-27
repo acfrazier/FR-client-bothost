@@ -317,9 +317,6 @@ fn design_chat_modes_keepalive_and_map_completion() {
     assert_eq!(&c.out.data()[..c.out.pos], &[161, 1, 2, 1]);
     let mut c = client(ClientRevision::R289);
     c.last_outbound = Instant::now() - Duration::from_secs(1);
-    c.game_loop();
-    assert_eq!(&c.out.data()[..c.out.pos], &[181]);
-    let mut c = client(ClientRevision::R289);
 
     c.awaiting_player_info = false;
     c.scene_state = 1;
@@ -330,20 +327,32 @@ fn design_chat_modes_keepalive_and_map_completion() {
     c.map_build_location_data = vec![None];
     c.game_loop();
     assert_eq!(c.scene_state, 2);
-    // Map build's four source keepalives precede completion (J:10505-10536).
-    assert_eq!(&c.out.data()[..c.out.pos], &[181, 181, 181, 181, 214]);
+    // Map build's four source keepalives and completion precede the cadence
+    // keepalive appended to the same flush, matching Java's unconditional send.
+    assert_eq!(&c.out.data()[..c.out.pos], &[181, 181, 181, 181, 214, 181]);
 }
 #[test]
 fn slow_pumped_slot_sends_keepalive_after_wall_clock_second() {
     let mut c = client(ClientRevision::R289);
+    let _server = attach_sink(&mut c);
     c.last_outbound = Instant::now() - Duration::from_secs(1);
 
     c.game_loop();
+    assert_eq!(c.stream.as_ref().unwrap().bytes_out(), 1);
 
+    c.game_loop();
     assert_eq!(
-        &c.out.data()[..c.out.pos],
-        &[181],
-        "one slow pump after a second of outbound silence must send NO_TIMEOUT"
+        c.stream.as_ref().unwrap().bytes_out(),
+        1,
+        "a successful keepalive flush must suppress another for one second"
+    );
+
+    c.last_outbound = Instant::now() - Duration::from_secs(1);
+    c.game_loop();
+    assert_eq!(
+        c.stream.as_ref().unwrap().bytes_out(),
+        2,
+        "the next wall-clock interval emits exactly one more NO_TIMEOUT"
     );
 }
 
