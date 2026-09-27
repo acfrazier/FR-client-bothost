@@ -275,3 +275,106 @@ fn consume_chat_key_types_dialog_without_draining_the_ring() {
     assert!(!c.dialog_input_open);
     assert!(c.chat_input.is_empty());
 }
+
+fn title_client() -> client::client::Client {
+    client::client::Client::new(client::client::ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 1,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    })
+}
+
+#[test]
+fn hosted_title_click_uses_the_single_login_button_hitbox() {
+    use client::client::{APPLET_H, APPLET_W};
+
+    let mut c = title_client();
+    c.set_external_reconnect_owner(true);
+    c.set_hosted_title_label(Some("Alice"));
+    assert_eq!(c.hosted_title_label(), Some("Alice"));
+
+    c.shell
+        .apply_mouse_down(1, APPLET_W / 2 + 76, APPLET_H / 2 + 40);
+    c.shell.latch_click();
+    c.title_screen_loop();
+    assert!(
+        !c.take_title_login_request(),
+        "one pixel outside the Java title-button hitbox stays inert"
+    );
+
+    c.shell.apply_mouse_up();
+    c.shell
+        .apply_mouse_down(1, APPLET_W / 2 + 75, APPLET_H / 2 + 40);
+    c.shell.latch_click();
+    c.title_screen_loop();
+    assert!(
+        c.take_title_login_request(),
+        "the inclusive title-button edge raises one host login request"
+    );
+    assert!(
+        !c.take_title_login_request(),
+        "the host request is consumed exactly once"
+    );
+}
+
+#[test]
+fn hosted_title_enter_requests_login_without_editing_credentials() {
+    let mut c = title_client();
+    c.set_external_reconnect_owner(true);
+    c.set_hosted_title_label(Some("Alice"));
+    c.login_user = "vault-user".into();
+    c.login_pass = "vault-password".into();
+
+    c.shell.apply_key(true, 65, b'a' as i32);
+    c.shell.apply_key(true, 10, 10);
+    c.title_screen_loop();
+
+    assert!(c.take_title_login_request());
+    assert_eq!(c.login_user, "vault-user");
+    assert_eq!(c.login_pass, "vault-password");
+    assert!(c.stream.is_none(), "hosted Enter never opens a socket");
+}
+
+#[test]
+fn external_owner_delegates_the_java_login_button_without_using_typed_credentials() {
+    use client::client::{APPLET_H, APPLET_W};
+
+    let mut c = title_client();
+    c.set_external_reconnect_owner(true);
+    c.loginscreen = 2;
+    c.login_user = "typed-user".into();
+    c.login_pass = "typed-password".into();
+    c.shell
+        .apply_mouse_down(1, APPLET_W / 2 - 80, APPLET_H / 2 + 70);
+    c.shell.latch_click();
+    c.title_screen_loop();
+
+    assert!(c.take_title_login_request());
+    assert!(
+        c.stream.is_none(),
+        "the hosted title never calls Client::login"
+    );
+    assert_eq!(c.last_login_reconnect, None);
+}
+
+#[test]
+fn standalone_title_keeps_the_java_login_form() {
+    use client::client::{APPLET_H, APPLET_W};
+
+    let mut c = title_client();
+    c.set_hosted_title_label(Some("ignored without an external owner"));
+    assert_eq!(c.hosted_title_label(), None);
+
+    c.shell
+        .apply_mouse_down(1, APPLET_W / 2 + 80, APPLET_H / 2 + 40);
+    c.shell.latch_click();
+    c.title_screen_loop();
+    assert_eq!(c.loginscreen, 2, "Existing User still opens the Java form");
+
+    c.shell.apply_key(true, 65, b'a' as i32);
+    c.title_screen_loop();
+    assert_eq!(c.login_user, "a", "standalone text entry is unchanged");
+    assert!(!c.take_title_login_request());
+}
