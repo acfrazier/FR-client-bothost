@@ -1,12 +1,12 @@
 //! H fixtures independently chosen from public primary 289 client.java.
-use client::client::client::SessionExitObservation;
+use client::client::client::SessionExitReason;
 use client::client::{Client, ClientConfig, ClientRevision};
 use client::config::IfType;
 use client::io::{ClientStream, Packet, ServerProt289};
 use std::io::Read;
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 include!("fixtures/revision_289/outbound_lengths.rs");
 
@@ -316,12 +316,11 @@ fn design_chat_modes_keepalive_and_map_completion() {
     c.chat_mode_loop();
     assert_eq!(&c.out.data()[..c.out.pos], &[161, 1, 2, 1]);
     let mut c = client(ClientRevision::R289);
-    c.no_timeout_timer = 49;
-    c.game_loop();
-    assert_eq!(c.out.pos, 0);
+    c.last_outbound = Instant::now() - Duration::from_secs(1);
     c.game_loop();
     assert_eq!(&c.out.data()[..c.out.pos], &[181]);
     let mut c = client(ClientRevision::R289);
+
     c.awaiting_player_info = false;
     c.scene_state = 1;
     c.map_build_index = vec![0];
@@ -333,6 +332,19 @@ fn design_chat_modes_keepalive_and_map_completion() {
     assert_eq!(c.scene_state, 2);
     // Map build's four source keepalives precede completion (J:10505-10536).
     assert_eq!(&c.out.data()[..c.out.pos], &[181, 181, 181, 181, 214]);
+}
+#[test]
+fn slow_pumped_slot_sends_keepalive_after_wall_clock_second() {
+    let mut c = client(ClientRevision::R289);
+    c.last_outbound = Instant::now() - Duration::from_secs(1);
+
+    c.game_loop();
+
+    assert_eq!(
+        &c.out.data()[..c.out.pos],
+        &[181],
+        "one slow pump after a second of outbound silence must send NO_TIMEOUT"
+    );
 }
 
 #[test]
@@ -772,7 +784,7 @@ fn click_is_packed_before_ui_consumes_it() {
 fn idle_real_loop_threshold_and_repeat_subtract_500() {
     let mut c = client(ClientRevision::R289);
     for tick in 1..=5001 {
-        c.no_timeout_timer = 0;
+        c.last_outbound = Instant::now();
         c.out.pos = 0;
         c.game_loop();
         let bytes = &c.out.data()[..c.out.pos];
@@ -798,10 +810,12 @@ fn successful_idle_write_then_r289_logout_is_observed_once() {
     c.handle_packet(ServerProt289::LOGOUT, &mut packet);
 
     assert_eq!(
-        c.take_session_exit_observation(),
-        Some(SessionExitObservation::ServerLogoutAfterLocalIdleRequest)
+        c.take_session_exit_reason(),
+        Some(SessionExitReason::ServerLogout {
+            local_idle_request_pending: true,
+        })
     );
-    assert_eq!(c.take_session_exit_observation(), None);
+    assert_eq!(c.take_session_exit_reason(), None);
 }
 
 #[test]
@@ -812,7 +826,12 @@ fn idle_request_without_a_stream_does_not_classify_server_logout() {
     let mut packet = Packet::new(vec![]);
     c.psize = 0;
     c.handle_packet(ServerProt289::LOGOUT, &mut packet);
-    assert_eq!(c.take_session_exit_observation(), None);
+    assert_eq!(
+        c.take_session_exit_reason(),
+        Some(SessionExitReason::ServerLogout {
+            local_idle_request_pending: false,
+        })
+    );
 }
 
 #[test]
@@ -826,7 +845,12 @@ fn pending_idle_request_expires_after_its_response_window() {
     let mut packet = Packet::new(vec![]);
     c.psize = 0;
     c.handle_packet(ServerProt289::LOGOUT, &mut packet);
-    assert_eq!(c.take_session_exit_observation(), None);
+    assert_eq!(
+        c.take_session_exit_reason(),
+        Some(SessionExitReason::ServerLogout {
+            local_idle_request_pending: false,
+        })
+    );
 }
 
 #[test]
@@ -847,8 +871,10 @@ fn server_logout_on_the_final_idle_response_frame_is_observed() {
     }
     c.game_loop();
     assert_eq!(
-        c.take_session_exit_observation(),
-        Some(SessionExitObservation::ServerLogoutAfterLocalIdleRequest)
+        c.take_session_exit_reason(),
+        Some(SessionExitReason::ServerLogout {
+            local_idle_request_pending: true,
+        })
     );
 }
 
@@ -869,11 +895,16 @@ fn manual_logout_replaces_a_pending_idle_request() {
     let mut packet = Packet::new(vec![]);
     c.psize = 0;
     c.handle_packet(ServerProt289::LOGOUT, &mut packet);
-    assert_eq!(c.take_session_exit_observation(), None);
+    assert_eq!(
+        c.take_session_exit_reason(),
+        Some(SessionExitReason::ServerLogout {
+            local_idle_request_pending: false,
+        })
+    );
 }
 
 #[test]
-fn every_login_attempt_clears_an_unconsumed_idle_logout_observation() {
+fn failed_login_attempt_preserves_an_unconsumed_session_exit_reason() {
     for reconnect in [false, true] {
         let mut c = client(ClientRevision::R289);
         let mut server = attach_sink(&mut c);
@@ -886,7 +917,12 @@ fn every_login_attempt_clears_an_unconsumed_idle_logout_observation() {
         c.config.port = refused.local_addr().unwrap().port();
         drop(refused);
         assert!(c.login("fixture", "fixture", reconnect).is_err());
-        assert_eq!(c.take_session_exit_observation(), None);
+        assert_eq!(
+            c.take_session_exit_reason(),
+            Some(SessionExitReason::ServerLogout {
+                local_idle_request_pending: true,
+            })
+        );
     }
 }
 
@@ -934,11 +970,11 @@ fn cycle7_real_loop_boundary_and_legacy_default() {
     for revision in [ClientRevision::R289, ClientRevision::R274] {
         let mut c = client(revision);
         for _ in 0..62 {
-            c.no_timeout_timer = 0;
+            c.last_outbound = Instant::now();
             c.game_loop();
             assert_eq!(c.out.pos, 0);
         }
-        c.no_timeout_timer = 0;
+        c.last_outbound = Instant::now();
         c.game_loop();
         assert_eq!(
             &c.out.data()[..c.out.pos],

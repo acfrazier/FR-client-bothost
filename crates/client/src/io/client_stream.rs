@@ -30,6 +30,16 @@ const READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// packets read their length via `g2` and never exceed a few KiB).
 const AVAILABLE_BUF: usize = 8192;
 
+/// Transport-level session exit captured before `io::Error` erases protocol
+/// details. The client takes this once when it classifies a disconnected
+/// session for its embedding host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StreamExitReason {
+    WebSocketClose { code: Option<u16>, reason: String },
+    Tls(String),
+    WebSocket(String),
+}
+
 struct WriterState {
     buf: Box<[u8; BUF_SIZE]>,
     tcycl: usize,
@@ -115,6 +125,7 @@ struct WsInner {
     ws: Mutex<WsConn>,
     leftover: Mutex<VecDeque<u8>>,
     dummy: Mutex<bool>,
+    pending_exit: Mutex<Option<StreamExitReason>>,
     /// Underlying TCP handle for zero-time readability probes (WSS).
     #[cfg(unix)]
     fd: RawFd,
@@ -203,6 +214,7 @@ impl ClientStream {
                 ws: Mutex::new(WsConn::Tls(ws)),
                 leftover: Mutex::new(VecDeque::new()),
                 dummy: Mutex::new(false),
+                pending_exit: Mutex::new(None),
                 #[cfg(unix)]
                 fd,
                 #[cfg(windows)]
@@ -222,6 +234,13 @@ impl ClientStream {
     /// `u64`.
     pub fn bytes_out(&self) -> u64 {
         self.bytes_out.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn take_exit_reason(&mut self) -> Option<StreamExitReason> {
+        match &self.inner {
+            Inner::Tcp(_) => None,
+            Inner::Ws(w) => w.pending_exit.lock().unwrap().take(),
+        }
     }
 
     /// The reader socket's raw fd, for `poll(2)` readability waits by the
@@ -382,10 +401,10 @@ impl ClientStream {
                     return Ok(());
                 }
                 let payload = buf[..len].to_vec();
-                w.ws.lock()
-                    .unwrap()
-                    .send_message(Message::Binary(payload))
-                    .map_err(io_other)?;
+                let result = w.ws.lock().unwrap().send_message(Message::Binary(payload));
+                if let Err(error) = result {
+                    return Err(map_ws_err(w, error));
+                }
                 self.bytes_out.fetch_add(len as u64, Ordering::Relaxed);
                 Ok(())
             }
@@ -438,15 +457,15 @@ fn fill_ws_blocking(w: &WsInner) -> io::Result<()> {
                 }
             }
             Ok(Message::Ping(p)) => {
-                ws.send_message(Message::Pong(p)).map_err(io_other)?;
+                ws.send_message(Message::Pong(p))
+                    .map_err(|error| map_ws_err(w, error))?;
             }
             Ok(Message::Pong(_)) | Ok(Message::Frame(_)) | Ok(Message::Text(_)) => {}
-            Ok(Message::Close(_))
-            | Err(tungstenite::Error::ConnectionClosed)
-            | Err(tungstenite::Error::AlreadyClosed) => {
-                return Ok(());
+            Ok(Message::Close(frame)) => return Err(record_ws_close(w, frame)),
+            Err(tungstenite::Error::ConnectionClosed) | Err(tungstenite::Error::AlreadyClosed) => {
+                return Err(record_ws_close(w, None));
             }
-            Err(e) => return Err(map_ws_err(e)),
+            Err(e) => return Err(map_ws_err(w, e)),
         }
     }
 }
@@ -471,18 +490,18 @@ fn fill_ws_nonblocking(w: &WsInner) -> io::Result<()> {
                 }
             }
             Ok(Message::Ping(p)) => {
-                ws.send_message(Message::Pong(p)).map_err(io_other)?;
+                ws.send_message(Message::Pong(p))
+                    .map_err(|error| map_ws_err(w, error))?;
             }
             Ok(Message::Pong(_)) | Ok(Message::Frame(_)) | Ok(Message::Text(_)) => {}
-            Ok(Message::Close(_))
-            | Err(tungstenite::Error::ConnectionClosed)
-            | Err(tungstenite::Error::AlreadyClosed) => {
-                return Ok(());
+            Ok(Message::Close(frame)) => return Err(record_ws_close(w, frame)),
+            Err(tungstenite::Error::ConnectionClosed) | Err(tungstenite::Error::AlreadyClosed) => {
+                return Err(record_ws_close(w, None));
             }
             Err(tungstenite::Error::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
                 return Ok(());
             }
-            Err(e) => return Err(map_ws_err(e)),
+            Err(e) => return Err(map_ws_err(w, e)),
         }
     })();
     // Always restore blocking mode for subsequent blocking reads.
@@ -494,10 +513,39 @@ fn fill_ws_nonblocking(w: &WsInner) -> io::Result<()> {
     }
 }
 
-fn map_ws_err(err: tungstenite::Error) -> io::Error {
+fn record_ws_close(
+    w: &WsInner,
+    frame: Option<tungstenite::protocol::CloseFrame<'static>>,
+) -> io::Error {
+    let (code, reason) = frame.map_or((None, String::new()), |frame| {
+        (Some(frame.code.into()), frame.reason.into_owned())
+    });
+    let mut pending = w.pending_exit.lock().unwrap();
+    if pending.is_none() {
+        *pending = Some(StreamExitReason::WebSocketClose { code, reason });
+    }
+    io::Error::new(io::ErrorKind::UnexpectedEof, "websocket closed")
+}
+
+fn map_ws_err(w: &WsInner, err: tungstenite::Error) -> io::Error {
     match err {
-        tungstenite::Error::Io(e) => e,
-        other => io_other(other),
+        tungstenite::Error::Io(error) => error,
+        tungstenite::Error::Tls(error) => {
+            let message = error.to_string();
+            let mut pending = w.pending_exit.lock().unwrap();
+            if pending.is_none() {
+                *pending = Some(StreamExitReason::Tls(message.clone()));
+            }
+            io::Error::other(message)
+        }
+        other => {
+            let message = other.to_string();
+            let mut pending = w.pending_exit.lock().unwrap();
+            if pending.is_none() {
+                *pending = Some(StreamExitReason::WebSocket(message.clone()));
+            }
+            io::Error::other(message)
+        }
     }
 }
 
@@ -641,6 +689,7 @@ mod tests {
                 ws: Mutex::new(WsConn::Plain(ws)),
                 leftover: Mutex::new(VecDeque::new()),
                 dummy: Mutex::new(false),
+                pending_exit: Mutex::new(None),
                 #[cfg(unix)]
                 fd,
                 #[cfg(windows)]
@@ -803,10 +852,13 @@ mod tests {
     }
 
     #[test]
-    fn ws_close_then_read_is_dummy_zero_not_error() {
+    fn ws_close_preserves_code_and_reason_then_local_close_is_dummy() {
         let (addr, server) = spawn_ws_server(|mut ws| {
             ws.send(Message::Binary(vec![1])).unwrap();
-            let _ = ws.close(None);
+            let _ = ws.close(Some(tungstenite::protocol::CloseFrame {
+                code: tungstenite::protocol::frame::coding::CloseCode::Away,
+                reason: std::borrow::Cow::Borrowed("maintenance"),
+            }));
             let _ = ws.read();
         });
         let mut stream = connect_ws_plain(&addr.ip().to_string(), addr.port()).unwrap();
@@ -816,17 +868,22 @@ mod tests {
             thread::sleep(Duration::from_millis(5));
         }
         assert_eq!(stream.read().unwrap(), 1);
-        // Peer close: further blocking read reports EOF (-1) once drained.
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
-        loop {
-            match stream.read() {
-                Ok(-1) | Ok(0) => break,
-                Ok(_) => {}
-                Err(_) => break,
+        let reason = loop {
+            let _ = stream.available();
+            if let Some(reason) = stream.take_exit_reason() {
+                break reason;
             }
             assert!(std::time::Instant::now() < deadline);
             thread::sleep(Duration::from_millis(5));
-        }
+        };
+        assert_eq!(
+            reason,
+            StreamExitReason::WebSocketClose {
+                code: Some(1001),
+                reason: "maintenance".into(),
+            }
+        );
         stream.close();
         assert_eq!(stream.read().unwrap(), 0);
         let _ = server.join();

@@ -3,6 +3,7 @@
 //! pending logout request (`logoutTimer > 0`) logs out instead; the in-game
 //! silence watchdog (wall-clock: `last_response` older than the 15 s
 //! `SERVER_TIMEOUT` bound, not 750 pass-counted frames) drives it.
+use client::client::client::SessionExitReason;
 use client::client::{Client, ClientConfig, ClientPlayer, ClientRevision};
 use client::config::Cache;
 use client::io::{ClientStream, ServerProt, ServerProt289};
@@ -127,7 +128,10 @@ fn lost_con_with_pending_logout_logs_out_without_reconnecting() {
     assert_eq!(c.last_login_reconnect, None);
     assert!(!c.ingame);
     assert!(c.login_user.is_empty());
-    assert_eq!(c.take_session_exit_observation(), None);
+    assert_eq!(
+        c.take_session_exit_reason(),
+        Some(SessionExitReason::ConnectionLost)
+    );
 }
 
 #[test]
@@ -159,7 +163,10 @@ fn transport_loss_with_a_written_idle_request_is_not_an_idle_logout() {
 
     c.lost_con();
     assert!(!c.ingame);
-    assert_eq!(c.take_session_exit_observation(), None);
+    assert_eq!(
+        c.take_session_exit_reason(),
+        Some(SessionExitReason::ConnectionLost)
+    );
 }
 
 #[test]
@@ -342,5 +349,9 @@ fn peer_closed_game_socket_triggers_lost_con_on_next_frame() {
         "EOF on available() must call lost_con without waiting the 15s watchdog"
     );
     assert!(!c.ingame);
+    assert_eq!(
+        c.take_session_exit_reason(),
+        Some(SessionExitReason::ReadEof)
+    );
     server.join().unwrap();
 }

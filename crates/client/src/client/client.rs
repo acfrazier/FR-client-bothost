@@ -44,6 +44,7 @@ use crate::dash3d::{
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
 use crate::datastruct::LinkList;
 use crate::graphics::Pix3D;
+use crate::io::client_stream::StreamExitReason;
 use crate::io::{
     ClientProt, ClientRevision, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt,
     ServerProt289,
@@ -316,12 +317,68 @@ pub struct ClientGens {
     pub invalidations: u64,
 }
 
-/// One-shot, positively correlated session-exit facts for the host.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionExitObservation {
-    /// Revision 289 wrote a local idle request successfully, then received
-    /// the server's zero-payload logout within that request's response window.
-    ServerLogoutAfterLocalIdleRequest,
+/// First typed cause of a connected session ending. The value survives
+/// teardown and is consumed once by the embedding host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionExitReason {
+    ServerLogout {
+        local_idle_request_pending: bool,
+    },
+    ReadEof,
+    ReadError {
+        kind: io::ErrorKind,
+        message: String,
+    },
+    WriteError {
+        kind: io::ErrorKind,
+        message: String,
+    },
+    WebSocketClose {
+        code: Option<u16>,
+        reason: String,
+    },
+    TlsError {
+        message: String,
+    },
+    DeadServerDeadline {
+        elapsed: Duration,
+    },
+    ProtocolError {
+        class: &'static str,
+        last_opcode: i32,
+    },
+    ConnectionLost,
+}
+
+impl std::fmt::Display for SessionExitReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ServerLogout {
+                local_idle_request_pending,
+            } => write!(
+                f,
+                "server_logout local_idle_request_pending={local_idle_request_pending}"
+            ),
+            Self::ReadEof => f.write_str("read_eof"),
+            Self::ReadError { kind, message } => {
+                write!(f, "read_error kind={kind:?} message={message}")
+            }
+            Self::WriteError { kind, message } => {
+                write!(f, "write_error kind={kind:?} message={message}")
+            }
+            Self::WebSocketClose { code, reason } => {
+                write!(f, "wss_close code={code:?} reason={reason}")
+            }
+            Self::TlsError { message } => write!(f, "tls_error message={message}"),
+            Self::DeadServerDeadline { elapsed } => {
+                write!(f, "dead_server_deadline elapsed_ms={}", elapsed.as_millis())
+            }
+            Self::ProtocolError { class, last_opcode } => {
+                write!(f, "protocol_error class={class} last_opcode={last_opcode}")
+            }
+            Self::ConnectionLost => f.write_str("connection_lost"),
+        }
+    }
 }
 
 /// Successful inventory packet observations for one interface component.
@@ -1360,9 +1417,9 @@ pub struct Client {
     /// still detects a dead server in ~15 s, not ~450 s. `None` until the
     /// first grant/packet (never trips the watchdog).
     pub last_response: Option<Instant>,
-    /// `noTimeoutTimer` from Java: frames since the last outbound flush;
-    /// `gameLoop` writes `NO_TIMEOUT` past 50 (~1 s at 20 ms).
-    pub no_timeout_timer: i32,
+    /// Last successful outbound flush. `game_loop` writes `NO_TIMEOUT` after
+    /// one wall-clock second of silence, independent of host pump cadence.
+    pub last_outbound: Instant,
     /// `errorLoading` from Java/TS: missing required cache jag or a failed
     /// map request. `mainloop` returns immediately; framerate is 1.
     pub error_loading: bool,
@@ -1380,9 +1437,9 @@ pub struct Client {
     /// A revision-289 idle request whose containing frame was accepted by
     /// `ClientStream::write` and is still inside `logout_timer`'s window.
     pending_local_idle_request: bool,
-    /// One-shot host observation; unlike the pending marker, it survives
-    /// `logout()` teardown until the host consumes it.
-    session_exit_observation: Option<SessionExitObservation>,
+    /// First typed session-exit cause. It survives teardown until the host
+    /// consumes it and is cleared by the next successful login.
+    session_exit_reason: Option<SessionExitReason>,
 }
 
 struct ClientConstruction {
@@ -1397,6 +1454,9 @@ struct ClientConstruction {
 /// 20 ms (~15 s), but measured in elapsed time so the bound holds at any
 /// pass cadence (a parked host slot runs `gameLoop` once per ~600 ms).
 const SERVER_TIMEOUT: Duration = Duration::from_secs(15);
+/// Java's intent is one keepalive after roughly one second without an
+/// outbound flush. Elapsed time preserves that bound for slow-pumped slots.
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 
 impl Client {
     /// Default construction: revision 274 public tables and framing.
@@ -1618,9 +1678,9 @@ impl Client {
         self.packet_observation = 0;
     }
 
-    /// Take the next positively correlated session-exit fact, if any.
-    pub fn take_session_exit_observation(&mut self) -> Option<SessionExitObservation> {
-        self.session_exit_observation.take()
+    /// Take the first typed cause of the completed session, if any.
+    pub fn take_session_exit_reason(&mut self) -> Option<SessionExitReason> {
+        self.session_exit_reason.take()
     }
 
     /// Rebind a disconnected public slot without rebuilding the shared cache.
@@ -1933,7 +1993,7 @@ impl Client {
 
             r289_packet_reset: false,
             pending_local_idle_request: false,
-            session_exit_observation: None,
+            session_exit_reason: None,
 
             stream: None,
             on_demand: construction.on_demand,
@@ -2055,7 +2115,7 @@ impl Client {
             logout_timer: 0,
             reboot_timer: 0,
             last_response: None,
-            no_timeout_timer: 0,
+            last_outbound: Instant::now(),
             error_loading: construction.error_loading,
             gens: ClientGens::default(),
             session_start_gens: ClientGens::default(),
@@ -3061,7 +3121,6 @@ impl Client {
         reconnect: bool,
     ) -> Result<(), LoginError> {
         self.pending_local_idle_request = false;
-        self.session_exit_observation = None;
         // Headless has no title UI; persist here so `lostCon` reconnects
         // with the same credentials (TS writes these from the title fields).
         self.login_user = username.to_string();
@@ -3229,7 +3288,8 @@ impl Client {
             self.menu_num_entries = 0;
             self.last_response = Some(Instant::now());
             self.logout_timer = 0;
-            self.no_timeout_timer = 0;
+            self.last_outbound = Instant::now();
+            self.session_exit_reason = None;
             // Java `Client.java` 3630-3699: a cold login restores the tab,
             // modals, minimap, and chat defaults a previous logout left in
             // place (`sideTab = 3`, closed modals, empty chat, no flag).
@@ -3303,6 +3363,8 @@ impl Client {
             self.ptype2 = -1;
             self.psize = 0;
             self.last_response = Some(Instant::now());
+            self.last_outbound = Instant::now();
+            self.session_exit_reason = None;
             self.menu_num_entries = 0;
             self.scene_load_start_time = Instant::now();
             self.reset_packet_observations();
@@ -4783,16 +4845,19 @@ impl Client {
                 true
             }
             Ok(false) => false,
-            Err(e) => {
-                if e.kind() == io::ErrorKind::Other {
-                    // Java `catch (Exception)`: report and log out. The only
-                    // `Other` error `read_packet` produces is the oversized
-                    // psize that the Java client's AIOOBE hits.
+            Err(error) => {
+                let transport = self.record_read_exit(&error);
+                if error.kind() == io::ErrorKind::Other && !transport {
+                    // Java `catch (Exception)`: report and log out. A plain
+                    // `Other` here is the oversized psize/AIOOBE equivalent;
+                    // WSS/TLS errors carry a transport observation instead.
                     eprintln!("T2 - {},{},{}", self.ptype, self.ptype1, self.ptype2);
+                    self.record_session_exit(SessionExitReason::ProtocolError {
+                        class: "T2",
+                        last_opcode: self.ptype,
+                    });
                     self.logout();
                 } else {
-                    // Java `catch (IOException)`: drop to the lostCon
-                    // reestablish path (login opcode 18).
                     self.lost_con();
                 }
                 true
@@ -4888,6 +4953,10 @@ impl Client {
                 Ok(R289Outcome::Reset) => {}
                 Err(_) => {
                     eprintln!("T2 - {ptype},{ptype1},{ptype2}");
+                    self.record_session_exit(SessionExitReason::ProtocolError {
+                        class: "T2",
+                        last_opcode: ptype,
+                    });
                     if !self.r289_packet_reset {
                         self.logout();
                     }
@@ -4900,6 +4969,10 @@ impl Client {
         }));
         if result.is_err() {
             eprintln!("T2 - {ptype},{ptype1},{ptype2}");
+            self.record_session_exit(SessionExitReason::ProtocolError {
+                class: "T2",
+                last_opcode: ptype,
+            });
             // `logout()` bumps every family (spec: REBUILD/logout → all).
             self.logout();
         } else {
@@ -8126,7 +8199,7 @@ impl Client {
             }
 
             ServerProt::LOGOUT => {
-                self.logout();
+                self.server_logout();
                 self.ptype = -1;
             }
 
@@ -8312,7 +8385,7 @@ impl Client {
                     "T1 - {ptype},{} - {},{}",
                     self.psize, self.ptype1, self.ptype2
                 );
-                self.logout();
+                self.protocol_logout("T1");
             }
         }
     }
@@ -8669,7 +8742,7 @@ impl Client {
                     "T1 - {ptype},{} - {},{}",
                     self.psize, self.ptype1, self.ptype2
                 );
-                self.logout();
+                self.protocol_logout("T1");
             }
         }
         if self.r289_packet_reset {
@@ -8707,7 +8780,7 @@ impl Client {
                 "T2 - Error packet size mismatch in getplayer pos:{} psize:{}",
                 buf.pos, size
             );
-            self.logout();
+            self.protocol_logout("T2");
             return;
         }
 
@@ -8718,7 +8791,7 @@ impl Client {
                     "T2 - {} null entry in pl list - pos:{} size:{}",
                     self.login_user, i, self.player_count
                 );
-                self.logout();
+                self.protocol_logout("T2");
                 return;
             }
         }
@@ -8794,7 +8867,7 @@ impl Client {
 
         if count > self.player_count {
             eprintln!("T2 - {} Too many players", self.login_user);
-            self.logout();
+            self.protocol_logout("T2");
             return;
         }
 
@@ -9205,7 +9278,7 @@ impl Client {
                 "T2 - {} size mismatch in getnpcpos - pos:{} psize:{}",
                 self.login_user, buf.pos, size
             );
-            self.logout();
+            self.protocol_logout("T2");
             return;
         }
 
@@ -9216,7 +9289,7 @@ impl Client {
                     "T2 - {} null entry in npc list - pos:{} size:{}",
                     self.login_user, i, self.npc_count
                 );
-                self.logout();
+                self.protocol_logout("T2");
                 return;
             }
         }
@@ -9236,7 +9309,7 @@ impl Client {
 
         if count > self.npc_count {
             eprintln!("T2 - {} Too many npcs", self.login_user);
-            self.logout();
+            self.protocol_logout("T2");
             return;
         }
 
@@ -10044,13 +10117,81 @@ impl Client {
         }
     }
 
-    /// Record the narrow R289 idle-request correlation before generic teardown
-    /// clears the pending marker. The observation remains for the host to take.
-    fn server_logout_289(&mut self) {
-        if self.pending_local_idle_request {
-            self.session_exit_observation =
-                Some(SessionExitObservation::ServerLogoutAfterLocalIdleRequest);
+    fn record_session_exit(&mut self, reason: SessionExitReason) {
+        if self.session_exit_reason.is_none() {
+            self.session_exit_reason = Some(reason);
         }
+    }
+
+    /// Preserve protocol-specific WSS/TLS closure metadata when present;
+    /// otherwise classify the ordinary `io::Error` without losing its kind.
+    /// Returns whether the error came from a typed transport observation.
+    fn record_read_exit(&mut self, error: &io::Error) -> bool {
+        let transport = self
+            .stream
+            .as_mut()
+            .and_then(ClientStream::take_exit_reason);
+        let typed = transport.is_some();
+        if !typed && error.kind() == io::ErrorKind::Other {
+            return false;
+        }
+        let reason = match transport {
+            Some(StreamExitReason::WebSocketClose { code, reason }) => {
+                SessionExitReason::WebSocketClose { code, reason }
+            }
+            Some(StreamExitReason::Tls(message)) => SessionExitReason::TlsError { message },
+            Some(StreamExitReason::WebSocket(message)) => SessionExitReason::ReadError {
+                kind: error.kind(),
+                message,
+            },
+            None if error.kind() == io::ErrorKind::UnexpectedEof => SessionExitReason::ReadEof,
+            None => SessionExitReason::ReadError {
+                kind: error.kind(),
+                message: error.to_string(),
+            },
+        };
+        self.record_session_exit(reason);
+        typed
+    }
+
+    fn record_write_exit(&mut self, error: &io::Error) {
+        let transport = self
+            .stream
+            .as_mut()
+            .and_then(ClientStream::take_exit_reason);
+        let reason = match transport {
+            Some(StreamExitReason::WebSocketClose { code, reason }) => {
+                SessionExitReason::WebSocketClose { code, reason }
+            }
+            Some(StreamExitReason::Tls(message)) => SessionExitReason::TlsError { message },
+            Some(StreamExitReason::WebSocket(message)) => SessionExitReason::WriteError {
+                kind: error.kind(),
+                message,
+            },
+            None => SessionExitReason::WriteError {
+                kind: error.kind(),
+                message: error.to_string(),
+            },
+        };
+        self.record_session_exit(reason);
+    }
+
+    fn server_logout(&mut self) {
+        self.record_session_exit(SessionExitReason::ServerLogout {
+            local_idle_request_pending: self.pending_local_idle_request,
+        });
+        self.logout();
+    }
+
+    fn server_logout_289(&mut self) {
+        self.server_logout();
+    }
+
+    fn protocol_logout(&mut self, class: &'static str) {
+        self.record_session_exit(SessionExitReason::ProtocolError {
+            class,
+            last_opcode: self.ptype,
+        });
         self.logout();
     }
 
@@ -10128,16 +10269,8 @@ impl Client {
         self.bump_all_gens();
     }
 
-    /// Whether the server has gone silent past the wall-clock
-    /// [`SERVER_TIMEOUT`] bound since the last full packet / login grant.
-    fn dead_server(&self) -> bool {
-        self.last_response
-            .map(|t| t.elapsed() > SERVER_TIMEOUT)
-            .unwrap_or(false)
-    }
-
-    /// Select an embedding host as the owner of reconnect attempts. The
-    /// default remains Java-compatible internal reconnect behavior.
+    /// Select an embedding host as the owner of reconnect and inactivity
+    /// policy. The default remains Java-compatible standalone behavior.
     pub fn set_external_reconnect_owner(&mut self, external: bool) {
         self.external_reconnect_owner = external;
     }
@@ -10147,6 +10280,7 @@ impl Client {
     /// clients reconnect internally as Java did, while an external owner
     /// receives control with the old socket closed and credentials retained.
     pub fn lost_con(&mut self) {
+        self.record_session_exit(SessionExitReason::ConnectionLost);
         if let Some(t) = &mut self.shell.ground_trace {
             t.complete("lost_connection");
         }
@@ -12386,8 +12520,12 @@ impl Client {
         for i in 0..5 {
             self.cam_shake_cycle[i] += 1;
         }
-        if self.revision.is_289() {
-            // J:6067-6071, after input consumption and before keepalive.
+        // A host-owned session is unattended by definition: the host, not
+        // the Java inactivity policy, owns its lifetime. Suppress the timer
+        // for both revisions without manufacturing user input or packets.
+        if self.external_reconnect_owner {
+            self.shell.idle_cycles = 0;
+        } else if self.revision.is_289() {
             self.shell.idle_cycles += 1;
             if self.shell.idle_cycles > 4500 {
                 self.shell.idle_cycles -= 500;
@@ -12400,12 +12538,16 @@ impl Client {
         // clock once the host parks the slot (750 passes at one pass per
         // ~600 ms would take ~450 s); elapsed time since the last response
         // holds the ~15 s bound at any cadence. Checked every wake.
-        if self.dead_server() {
+        if let Some(elapsed) = self
+            .last_response
+            .map(|last| last.elapsed())
+            .filter(|elapsed| *elapsed > SERVER_TIMEOUT)
+        {
+            self.record_session_exit(SessionExitReason::DeadServerDeadline { elapsed });
             self.lost_con();
         }
 
-        self.no_timeout_timer += 1;
-        if self.no_timeout_timer > 50 {
+        if self.out.pos == 0 && self.last_outbound.elapsed() >= KEEPALIVE_INTERVAL {
             self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
         }
 
@@ -12450,9 +12592,12 @@ impl Client {
                     self.pending_local_idle_request = true;
                 }
                 self.out.pos = 0;
-                self.no_timeout_timer = 0;
+                self.last_outbound = Instant::now();
             }
-            Some(Err(_)) => self.lost_con(),
+            Some(Err(error)) => {
+                self.record_write_exit(&error);
+                self.lost_con();
+            }
             None => {}
         }
     }

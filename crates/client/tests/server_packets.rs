@@ -2,6 +2,7 @@
 //! `Client.ts` `ptype` switch handlers. Packets are built by hand and passed
 //! straight to `handle_packet`, skipping the socket and Isaac.
 
+use client::client::client::SessionExitReason;
 use client::client::{Client, ClientConfig, ClientPlayer};
 use client::io::{Packet, ServerProt};
 
@@ -67,9 +68,10 @@ fn logout_clears_ingame() {
     c.handle_packet(ServerProt::LOGOUT, &mut p);
     assert!(!c.ingame);
     assert_eq!(
-        c.take_session_exit_observation(),
-        None,
-        "revision 274 server logout is not classifiable as idle"
+        c.take_session_exit_reason(),
+        Some(SessionExitReason::ServerLogout {
+            local_idle_request_pending: false,
+        })
     );
 }
 
