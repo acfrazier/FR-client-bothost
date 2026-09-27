@@ -15,6 +15,105 @@ const FADE_TICK_MS: u64 = 50;
 /// The fade-out floor (-36 dB; tinymidipcm.js `fadeEndStep * fadeStepDb`).
 const FADE_FLOOR_DB: f32 = -36.0;
 
+const WAVE_SAMPLE_RATE: usize = 22_050;
+const MAX_WAVE_SAMPLES: usize = WAVE_SAMPLE_RATE * 20;
+
+/// The one JagFX wave Java's signlink player owns at a time.
+///
+/// Consumed samples remain in the allocation so `wavereplay` can restart the
+/// last successful id/loop pair without regenerating or copying it. The
+/// position is only the output device's cursor; Java's replacement deadline
+/// stays on the client thread.
+pub struct WavePlayback {
+    samples: Vec<i16>,
+    position: usize,
+    gain: f32,
+}
+
+impl WavePlayback {
+    pub fn new() -> Self {
+        Self {
+            samples: Vec::new(),
+            position: 0,
+            gain: 1.0,
+        }
+    }
+
+    /// Samples that have not yet reached the output device.
+    pub fn len(&self) -> usize {
+        self.samples.len().saturating_sub(self.position)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, i16> {
+        self.samples[self.position.min(self.samples.len())..].iter()
+    }
+
+    /// Install new PCM and return the old allocation for the caller to drop
+    /// after releasing the audio callback's mutex.
+    pub(crate) fn replace(&mut self, mut samples: Vec<i16>) -> Vec<i16> {
+        samples.truncate(MAX_WAVE_SAMPLES);
+        self.position = 0;
+        std::mem::replace(&mut self.samples, samples)
+    }
+
+    pub(crate) fn replay(&mut self) {
+        self.position = 0;
+    }
+
+    /// Finish the current playback without discarding retained PCM, so a
+    /// later Java `wavereplay` can still restart it.
+    pub(crate) fn stop(&mut self) {
+        self.position = self.samples.len();
+    }
+
+    /// Java 289 stores `wavevol` in hundredths of a decibel
+    /// (`client.java` 7702-7707, 12382-12398). The web client applies the
+    /// native setting as `10^(dB/20)` (`audio.js` 59-65; `Client.ts`
+    /// 10655-10674).
+    pub(crate) fn set_volume(&mut self, wavevol: i32) {
+        self.gain = db_to_gain(midivol_to_db(wavevol));
+    }
+
+    #[cfg(feature = "audio")]
+    fn gain(&self) -> f32 {
+        self.gain
+    }
+
+    #[cfg(feature = "audio")]
+    fn sample(&self, offset: usize) -> i16 {
+        self.samples
+            .get(self.position.saturating_add(offset))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    #[cfg(feature = "audio")]
+    fn advance(&mut self, samples: usize) {
+        self.position = self
+            .position
+            .saturating_add(samples)
+            .min(self.samples.len());
+    }
+}
+
+impl Default for WavePlayback {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl From<Vec<i16>> for WavePlayback {
+    fn from(samples: Vec<i16>) -> Self {
+        let mut playback = Self::new();
+        drop(playback.replace(samples));
+        playback
+    }
+}
+
 /// 274 `midivol` (1/100 dB) → dB, the fade swap-in target.
 fn midivol_to_db(midivol: i32) -> f32 {
     midivol as f32 / 100.0
@@ -139,7 +238,7 @@ impl Default for Fade {
 }
 
 /// The cpal speaker: one 22050 Hz stereo stream mixing the rustysynth
-/// render (scaled by the shared `Fade`) with the queued JagFX samples.
+/// render (scaled by the shared `Fade`) with the current JagFX wave.
 /// Opening fails with `AudioError` and the caller keeps running headless
 /// (spec: audio device failure is not fatal).
 #[cfg(feature = "audio")]
@@ -153,7 +252,7 @@ mod device {
 
     use crate::sound::Midi;
 
-    use super::Fade;
+    use super::{Fade, WavePlayback};
 
     /// 22050 Hz, the rustysynth/JagFX rate (tinymidipcm.js `sampleRate`).
     const SAMPLE_RATE: u32 = 22050;
@@ -176,10 +275,10 @@ mod device {
     impl AudioOut {
         /// Open the default output at 22050 Hz stereo. `midi`/`waves`/`fade`
         /// are the shared client state: the callback renders the synth,
-        /// steps the fade clock, and drains the wave queue into the buffer.
+        /// steps the fade clock, and advances the current wave's sample cursor.
         pub fn try_open(
             midi: Arc<Mutex<dyn Midi>>,
-            waves: Arc<Mutex<Vec<i16>>>,
+            waves: Arc<Mutex<WavePlayback>>,
             fade: Arc<Mutex<Fade>>,
         ) -> Result<Self, AudioError> {
             let host = cpal::default_host();
@@ -187,6 +286,9 @@ mod device {
             // Prefer the 274 rate (rustysynth/JagFX). Many macOS devices
             // reject 22050; fall back to the device default and resample.
             let (config, src_rate, dst_rate) = Self::pick_config(&device)?;
+            // A headless client can retain completed PCM while no callback
+            // advances it. Never play that stale sound when a speaker opens.
+            waves.lock().unwrap().stop();
             let stream = device
                 .build_output_stream::<i16, _, _>(
                     config,
@@ -272,15 +374,15 @@ mod device {
 
     /// Fill one output buffer from the shared client state, locking each
     /// piece only for the work that needs it: the fade clock (step + gain),
-    /// the synth render (the one potentially slow call), and the wave-queue
-    /// drain/mix. `scratch` is preallocated on the caller so the steady-state
-    /// callback never allocates; it only grows when the device changes its
-    /// buffer size.
+    /// the synth render (the one potentially slow call), and the wave
+    /// playback cursor/mix. `scratch` is preallocated on the caller so the
+    /// steady-state callback never allocates; it only grows when the device
+    /// changes its buffer size.
     fn fill_buffer(
         data: &mut [i16],
         scratch: &mut Vec<f32>,
         midi: &Mutex<dyn Midi>,
-        waves: &Mutex<Vec<i16>>,
+        waves: &Mutex<WavePlayback>,
         fade: &Mutex<Fade>,
         src_rate: u32,
         dst_rate: u32,
@@ -309,28 +411,30 @@ mod device {
         }
         {
             let mut waves = waves.lock().unwrap();
-            let n = waves.len().min(in_frames);
-            let drained: Vec<i16> = waves.drain(..n).collect();
+            let wave_gain = waves.gain();
             if src_rate == dst_rate {
-                let mut wave = drained.into_iter();
                 for (frame, out) in data.as_chunks_mut::<2>().0.iter_mut().enumerate() {
-                    let w = wave.next().unwrap_or(0) as f32;
+                    let w = waves.sample(frame) as f32 * wave_gain;
                     out[0] = (left[frame] * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
                     out[1] = (right[frame] * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
                 }
+                waves.advance(out_frames);
             } else {
                 for (frame, out) in data.as_chunks_mut::<2>().0.iter_mut().enumerate() {
                     let src_pos = frame as f32 * src_rate as f32 / dst_rate as f32;
-                    let i = src_pos as usize;
-                    let frac = src_pos - i as f32;
-                    let i1 = (i + 1).min(in_frames.saturating_sub(1));
-                    let i = i.min(in_frames.saturating_sub(1));
+                    let source_index = src_pos as usize;
+                    let frac = src_pos - source_index as f32;
+                    let i1 = (source_index + 1).min(in_frames.saturating_sub(1));
+                    let i = source_index.min(in_frames.saturating_sub(1));
                     let l = left[i] * (1.0 - frac) + left[i1] * frac;
                     let r = right[i] * (1.0 - frac) + right[i1] * frac;
-                    let w = *drained.get(i).unwrap_or(&0) as f32;
+                    let w = waves.sample(source_index) as f32 * wave_gain;
                     out[0] = (l * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
                     out[1] = (r * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
                 }
+                let source_frames =
+                    (out_frames as u64 * src_rate as u64 / dst_rate.max(1) as u64) as usize;
+                waves.advance(source_frames);
             }
         }
     }
@@ -362,7 +466,7 @@ mod device {
             let fade = Mutex::new(Fade::new());
             fade.lock().unwrap().finish_fade(0); // gain 1.0
             let midi = Mutex::new(Tone { level: 0.5 });
-            let waves = Mutex::new(Vec::new());
+            let waves = Mutex::new(WavePlayback::new());
             let mut data = vec![0i16; 4];
             let mut scratch = Vec::new();
             fill_buffer(
@@ -383,7 +487,7 @@ mod device {
             let fade = Mutex::new(Fade::new());
             fade.lock().unwrap().finish_fade(0);
             let midi = Mutex::new(Tone { level: 1.0 });
-            let waves = Mutex::new(vec![500i16, -32768i16]);
+            let waves = Mutex::new(vec![500i16, -32768i16].into());
             let mut data = vec![0i16; 4];
             let mut scratch = Vec::new();
             fill_buffer(
@@ -397,6 +501,47 @@ mod device {
             );
             // 32767 + 500 clips to 32767; 32767 + (-32768) = -1
             assert_eq!(data, vec![32767, 32767, -1, -1]);
+            assert!(
+                waves.lock().unwrap().is_empty(),
+                "the device callback must advance the playback sample cursor"
+            );
+
+            waves.lock().unwrap().replay();
+            let mut replayed = vec![0i16; 4];
+            fill_buffer(
+                &mut replayed,
+                &mut scratch,
+                &midi,
+                &waves,
+                &fade,
+                SAMPLE_RATE,
+                SAMPLE_RATE,
+            );
+            assert_eq!(replayed, data, "wavereplay must restart retained PCM");
+        }
+
+        #[test]
+        fn mix_scales_waves_by_clientcode_volume() {
+            let fade = Mutex::new(Fade::new());
+            fade.lock().unwrap().finish_fade(0);
+            let midi = Mutex::new(Tone { level: 0.0 });
+            let mut playback: WavePlayback = vec![10_000i16, -10_000i16].into();
+            playback.set_volume(-400);
+            let waves = Mutex::new(playback);
+            let mut data = vec![0i16; 4];
+            let mut scratch = Vec::new();
+
+            fill_buffer(
+                &mut data,
+                &mut scratch,
+                &midi,
+                &waves,
+                &fade,
+                SAMPLE_RATE,
+                SAMPLE_RATE,
+            );
+
+            assert_eq!(data, vec![6309, 6309, -6309, -6309]);
         }
 
         #[test]
@@ -405,7 +550,7 @@ mod device {
             fade.lock().unwrap().finish_fade(0);
             fade.lock().unwrap().stop_hard();
             let midi = Mutex::new(Tone { level: 1.0 });
-            let waves = Mutex::new(vec![1000i16; 2]);
+            let waves = Mutex::new(vec![1000i16; 2].into());
             let mut data = vec![0i16; 4];
             let mut scratch = Vec::new();
             fill_buffer(

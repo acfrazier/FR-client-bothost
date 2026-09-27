@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use client::io::OnDemand;
 use client::sound::{Fade, Midi};
 
 #[test]
@@ -39,6 +40,19 @@ fn client() -> client::client::Client {
     // backend to `NullMidi` so the `audio` feature (a parsing rustysynth)
     // cannot reject the fake byte arrays these tests pass to `save_midi`.
     c.midi = Arc::new(Mutex::new(client::sound::NullMidi));
+    c
+}
+
+fn lowmem_client_with_ondemand() -> client::client::Client {
+    let mut c = client::client::Client::new(client::client::ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: true,
+    });
+    c.midi = Arc::new(Mutex::new(client::sound::NullMidi));
+    c.on_demand = Some(OnDemand::new_unconnected());
     c
 }
 
@@ -161,6 +175,90 @@ fn music_delay_zero_does_not_requeue_when_midi_inactive() {
     c.sounds_do_queue();
     assert_eq!(c.next_music_delay, 0);
     assert_eq!(c.midi_song, -1);
+}
+
+/// A lowmem client still records MIDI_SONG as `nextMidiSong`. Enabling
+/// highmem in game must resume that zone song, not startup's scape_main.
+#[test]
+fn lowmem_to_highmem_in_game_requests_recorded_zone_song() {
+    let mut c = lowmem_client_with_ondemand();
+    c.ingame = true;
+    c.next_midi_song = 42;
+
+    c.set_lowmem(false);
+
+    assert_eq!(c.midi_song, 42);
+    assert!(c.midi_fading);
+    assert_eq!(c.on_demand.as_ref().unwrap().remaining(), 1);
+}
+
+/// Java's music varp disables `midiActive`; a memory-mode flip must not
+/// bypass that setting and queue a song.
+#[test]
+fn lowmem_to_highmem_with_music_off_requests_nothing() {
+    let mut c = lowmem_client_with_ondemand();
+    c.ingame = true;
+    c.next_midi_song = 42;
+    c.midi_active = false;
+
+    c.set_lowmem(false);
+
+    assert_eq!(c.midi_song, -1);
+    assert_eq!(c.on_demand.as_ref().unwrap().remaining(), 0);
+}
+
+/// Outside the game, enabling highmem retains startup's scape_main request.
+#[test]
+fn lowmem_to_highmem_on_title_requests_scape_main() {
+    let mut c = lowmem_client_with_ondemand();
+    c.next_midi_song = 42;
+
+    c.set_lowmem(false);
+
+    assert_eq!(c.midi_song, 0);
+    assert!(c.midi_fading);
+    assert_eq!(c.on_demand.as_ref().unwrap().remaining(), 1);
+}
+
+/// Entering lowmem cuts off a jingle and clears its delay; the recorded zone
+/// song must therefore resume immediately when highmem is restored.
+#[test]
+fn lowmem_round_trip_clears_jingle_delay_and_resumes_zone_song() {
+    let mut c = client();
+    c.on_demand = Some(OnDemand::new_unconnected());
+    c.ingame = true;
+    c.next_midi_song = 42;
+    c.next_music_delay = 20;
+
+    c.set_lowmem(true);
+
+    assert!(c.config.lowmem);
+    assert_eq!(c.next_music_delay, 0);
+
+    c.set_lowmem(false);
+
+    assert_eq!(c.midi_song, 42);
+    assert!(c.midi_fading);
+    assert_eq!(c.on_demand.as_ref().unwrap().remaining(), 1);
+}
+
+/// Entering lowmem closes both audio gates, clears the selected song so an
+/// in-flight download cannot revive it, and drops a real pending fade swap.
+#[test]
+fn highmem_to_lowmem_clears_playing_and_pending_midi() {
+    let mut c = client();
+    c.midi_song = 42;
+    c.save_midi(&[1, 2, 3], true);
+    assert!(c.midi_playing);
+    c.save_midi(&[4, 5, 6], true);
+    assert!(c.midi_pending.is_some());
+
+    c.set_lowmem(true);
+
+    assert!(!c.midi_playing);
+    assert!(!c.midi_fading);
+    assert_eq!(c.midi_song, -1);
+    assert!(c.midi_pending.is_none());
 }
 
 /// A backend that accepts every play except the zone-swap and jingle bytes
