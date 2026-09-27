@@ -1435,7 +1435,7 @@ impl Client {
             Ok((cache, ifaces, ifaces_mut)) => (cache, ifaces, Arc::new(ifaces_mut), false),
             Err(()) => (Cache::default(), Vec::new(), Arc::new(Vec::new()), true),
         };
-        let on_demand = Self::load_on_demand(&config, None).unwrap_or(None);
+        let on_demand = Self::load_on_demand(&config, None, revision).unwrap_or(None);
         let mut client = Self::construct(
             config,
             Arc::new(cache),
@@ -1477,7 +1477,7 @@ impl Client {
         revision: ClientRevision,
     ) -> Self {
         let jag_checksum = Self::read_jag_checksums(&config.cache_dir);
-        let on_demand = Self::load_on_demand(&config, None).unwrap_or(None);
+        let on_demand = Self::load_on_demand(&config, None, revision).unwrap_or(None);
         let mut client = Self::construct(
             config,
             cache,
@@ -1496,8 +1496,8 @@ impl Client {
     }
 
     /// Construct over shared immutable tables with a frozen connection and
-    /// resource profile. Redundant public connection fields are checked before
-    /// the update worker or any other constructor effect.
+    /// resource profile. Connection fields are taken from the profile; callers
+    /// build `ClientConfig` from the same profile.
     pub fn from_shared_with_profile(
         config: ClientConfig,
         cache: Arc<Cache>,
@@ -1509,21 +1509,15 @@ impl Client {
             .cache_dir()
             .to_str()
             .expect("ClientSessionProfile validates UTF-8 cache_dir");
-        if config.host != profile.game_host() {
-            return Err("ClientConfig host does not match session profile".into());
-        }
-        if config.port != profile.game_port() {
-            return Err("ClientConfig port does not match session profile".into());
-        }
-        if config.cache_dir != profile_cache {
-            return Err("ClientConfig cache_dir does not match session profile".into());
-        }
+        debug_assert_eq!(config.host, profile.game_host());
+        debug_assert_eq!(config.port, profile.game_port());
+        debug_assert_eq!(config.cache_dir, profile_cache);
 
         let jag_checksum = profile
             .expected_crc()
             .unwrap_or_else(|| Self::read_jag_checksums(profile_cache));
-        let on_demand = Self::load_on_demand(&config, Some(&profile))?;
         let revision = profile.revision();
+        let on_demand = Self::load_on_demand(&config, Some(&profile), revision)?;
         let http_port = profile.asset_port();
         let mut client = Self::construct(
             config,
@@ -2458,6 +2452,7 @@ impl Client {
     fn load_on_demand(
         config: &ClientConfig,
         profile: Option<&ClientSessionProfile>,
+        revision: ClientRevision,
     ) -> Result<Option<OnDemand>, String> {
         let cache_dir = profile
             .map(|profile| profile.cache_dir().to_string_lossy().into_owned())
@@ -2478,14 +2473,19 @@ impl Client {
                     profile.game_port(),
                     &cache_dir,
                     profile.content_id(),
+                    profile.file_store_dir().and_then(|path| path.to_str()),
+                    profile
+                        .ondemand_persist_dir()
+                        .and_then(|path| path.to_str()),
                 )
                 .map(Some),
-                None => Ok(OnDemand::new(
+                None => Ok(OnDemand::new_with_revision(
                     &versionlist,
                     &config.host,
                     config.port,
                     &config.cache_dir,
                     Arc::new(AtomicBool::new(false)),
+                    revision,
                 )),
             }
         }))
@@ -2553,8 +2553,10 @@ impl Client {
         let checksums = match self.fetch_jag_checksums(&mut progress) {
             Some(c) => c,
             None => {
-                self.error_loading = true;
-                self.shell.set_framerate(1);
+                if self.shell.state != -2 {
+                    self.error_loading = true;
+                    self.shell.set_framerate(1);
+                }
                 return;
             }
         };
@@ -2579,6 +2581,9 @@ impl Client {
                 .fetch_jag_file(&mut progress, display, pct, filename, index, &checksums)
                 .is_none()
             {
+                if self.shell.state == -2 {
+                    return;
+                }
                 self.error_loading = true;
             }
         }
@@ -2628,7 +2633,8 @@ impl Client {
         }
 
         let profile = self.session_profile.clone();
-        self.on_demand = match Self::load_on_demand(&self.config, profile.as_deref()) {
+        self.on_demand = match Self::load_on_demand(&self.config, profile.as_deref(), self.revision)
+        {
             Ok(on_demand) => on_demand,
             Err(error) => {
                 self.error_loading = true;
@@ -2851,12 +2857,19 @@ impl Client {
     /// port draws it once and returns `None` so `maininit` fails with
     /// `errorLoading` instead of hanging. Every countdown tick reports
     /// progress, so a headed driver pumps the window/audio through the wait
-    /// instead of beachballing.
+    /// instead of beachballing. A progress owner may stop the shell; that
+    /// aborts before the next fetch or countdown sleep.
     fn fetch_jag_checksums(&mut self, progress: &mut ProgressCb<'_>) -> Option<[i32; 9]> {
         let mut wait = self.fetch_retry_wait;
         let mut retries = 0;
         loop {
+            if self.shell.state == -2 {
+                return None;
+            }
             self.report_progress(progress, "Connecting to web server", 10);
+            if self.shell.state == -2 {
+                return None;
+            }
             let (target, host, port) = self.session_asset_endpoint();
             let fetched = if self.session_profile.is_some() {
                 Self::get_jag_checksums_for(target, &host, port)
@@ -2886,7 +2899,9 @@ impl Client {
                 self.report_progress(progress, "Game updated - please reload page", 10);
                 return None;
             }
-            self.retry_countdown(progress, wait, error, 10);
+            if !self.retry_countdown(progress, wait, error, 10) {
+                return None;
+            }
             wait = (wait * 2).min(Duration::from_secs(60));
         }
     }
@@ -2896,23 +2911,31 @@ impl Client {
     /// not a single blocking sleep. Each tick reports progress so a headed
     /// driver pumps the window/audio through the wait. Sub-second
     /// `fetch_retry_wait` (the stubbed-HTTP tests) collapses to one tick.
+    /// Returns `false` as soon as the progress owner stops the shell.
     fn retry_countdown(
         &mut self,
         progress: &mut ProgressCb<'_>,
         wait: Duration,
         message: &str,
         pct: i32,
-    ) {
+    ) -> bool {
         let ticks = wait.as_secs().max(1);
         let step = wait / ticks as u32;
         for remaining in (1..=ticks).rev() {
+            if self.shell.state == -2 {
+                return false;
+            }
             self.report_progress(
                 progress,
                 &format!("{message} - Will retry in {remaining} secs."),
                 pct,
             );
+            if self.shell.state == -2 {
+                return false;
+            }
             thread::sleep(step);
         }
+        true
     }
 
     /// Java `getJagFile` (deob 4817-4933) / TS 749-817: GET
@@ -2937,7 +2960,13 @@ impl Client {
         let mut wait = self.fetch_retry_wait;
         let mut retries = 0;
         loop {
+            if self.shell.state == -2 {
+                return None;
+            }
             self.report_progress(progress, &format!("Requesting {display}"), pct);
+            if self.shell.state == -2 {
+                return None;
+            }
             let cache_dir = self.session_cache_dir();
             let (target, host, port) = self.session_asset_endpoint();
             let bytes = if self.session_profile.is_some() {
@@ -2953,7 +2982,9 @@ impl Client {
                 self.report_progress(progress, "Game updated - please reload page", pct);
                 return None;
             }
-            self.retry_countdown(progress, wait, "Error loading", pct);
+            if !self.retry_countdown(progress, wait, "Error loading", pct) {
+                return None;
+            }
             wait = (wait * 2).min(Duration::from_secs(60));
         }
     }
@@ -13782,11 +13813,8 @@ mod public_login_key_tests {
         let port = listener.local_addr().unwrap().port();
         let server = std::thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
-            let mut request = String::new();
-            BufReader::new(socket.try_clone().unwrap())
-                .read_line(&mut request)
-                .unwrap();
-            assert_eq!(request.trim_end(), "GET /client/client.js HTTP/1.0");
+            let request = read_request_head(&socket);
+            assert_eq!(request, "GET /client/client.js HTTP/1.0");
             write!(
                 socket,
                 "HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
@@ -13829,11 +13857,8 @@ mod public_login_key_tests {
         let port = listener.local_addr().unwrap().port();
         let server = std::thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
-            let mut request = String::new();
-            BufReader::new(socket.try_clone().unwrap())
-                .read_line(&mut request)
-                .unwrap();
-            assert_eq!(request.trim_end(), "GET /crc HTTP/1.0");
+            let request = read_request_head(&socket);
+            assert_eq!(request, "GET /crc HTTP/1.0");
             write!(
                 socket,
                 "HTTP/1.0 200 OK\r\nConnection: close\r\n\r\ninvalid"
@@ -13849,6 +13874,21 @@ mod public_login_key_tests {
             Client::get_jag_checksums_checked(BotTarget::Local, "127.0.0.1", port),
             Err(AssetFetchError::Connection)
         );
+    }
+
+    /// Read the whole request head and return its request line. A mock that
+    /// stops after the first line closes with unread headers, and Linux then
+    /// answers with RST, which can discard the response before the client
+    /// reads it.
+    fn read_request_head(socket: &std::net::TcpStream) -> String {
+        let mut reader = BufReader::new(socket.try_clone().unwrap());
+        let mut request = String::new();
+        reader.read_line(&mut request).unwrap();
+        let mut header = String::new();
+        while reader.read_line(&mut header).unwrap() > 0 && !header.trim_end().is_empty() {
+            header.clear();
+        }
+        request.trim_end().to_string()
     }
 
     #[test]
@@ -13874,6 +13914,8 @@ mod public_login_key_tests {
                 rsa_exponent: crate::PROD_LOGIN_RSAE.into(),
                 expected_crc: Some([0; 9]),
                 content_id: "public-fixture".into(),
+                file_store_dir: None,
+                ondemand_persist_dir: None,
             })
             .unwrap(),
         );

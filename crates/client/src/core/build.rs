@@ -16,6 +16,7 @@ use crate::core::World;
 use crate::dash3d::{BuildArea, CollisionMap, LocAngle, LocShape, MapFlag, TerrainOverlayShape};
 use crate::graphics::{Colour, Pix3D};
 use crate::io::{OnDemand, Packet};
+use crate::map_cache::{terrain_height, visit_land, visit_locations, MapCacheError};
 
 /// `ClientBuild.WSHAPE0` from client-ts.
 const WSHAPE0: [i32; 4] = [1, 2, 4, 8];
@@ -125,84 +126,35 @@ impl ClientBuild {
         x_offset: i32,
         z_offset: i32,
     ) {
-        let mut buf = Packet::new(src.to_vec());
-
-        for level in 0..BuildArea::LEVELS {
-            for x in 0..64 {
-                for z in 0..64 {
-                    let stx = x + x_offset;
-                    let stz = z + z_offset;
-
-                    if (0..BuildArea::SIZE).contains(&stx) && (0..BuildArea::SIZE).contains(&stz) {
-                        mapl[level as usize][stx as usize][stz as usize] = 0;
-
-                        loop {
-                            let opcode = buf.g1();
-                            if opcode == 0 {
-                                if level == 0 {
-                                    groundh[0][stx as usize][stz as usize] = -Self::perlin_noise(
-                                        stx + origin_x + 932731,
-                                        stz + 556238 + origin_z,
-                                    ) * 8;
-                                } else {
-                                    groundh[level as usize][stx as usize][stz as usize] =
-                                        groundh[level as usize - 1][stx as usize][stz as usize]
-                                            - 240;
-                                }
-                                break;
-                            }
-
-                            if opcode == 1 {
-                                let mut height = buf.g1();
-                                if height == 1 {
-                                    height = 0;
-                                }
-                                if level == 0 {
-                                    groundh[0][stx as usize][stz as usize] = -height * 8;
-                                } else {
-                                    groundh[level as usize][stx as usize][stz as usize] =
-                                        groundh[level as usize - 1][stx as usize][stz as usize]
-                                            - height * 8;
-                                }
-                                break;
-                            }
-
-                            if opcode <= 49 {
-                                // g1b into a Uint8Array: signed byte, stored raw
-                                self.floort2[level as usize][stx as usize][stz as usize] =
-                                    buf.g1b() as u8;
-                                self.floors[level as usize][stx as usize][stz as usize] =
-                                    (((opcode - 2) / 4) << 24 >> 24) as u8;
-                                self.floorr[level as usize][stx as usize][stz as usize] =
-                                    (((opcode - 2) & 0x3) << 24 >> 24) as u8;
-                            } else if opcode <= 81 {
-                                mapl[level as usize][stx as usize][stz as usize] =
-                                    (((opcode - 49) << 24) >> 24) as u8;
-                            } else {
-                                self.floort1[level as usize][stx as usize][stz as usize] =
-                                    (((opcode - 81) << 24) >> 24) as u8;
-                            }
-                        }
-                    } else {
-                        loop {
-                            let opcode = buf.g1();
-                            if opcode == 0 {
-                                break;
-                            }
-
-                            if opcode == 1 {
-                                buf.g1();
-                                break;
-                            }
-
-                            if opcode <= 49 {
-                                buf.g1();
-                            }
-                        }
-                    }
-                }
+        let decoded = visit_land(src, |cell| {
+            let stx = i32::from(cell.x) + x_offset;
+            let stz = i32::from(cell.z) + z_offset;
+            if !(0..BuildArea::SIZE).contains(&stx) || !(0..BuildArea::SIZE).contains(&stz) {
+                return;
             }
-        }
+            let level = usize::from(cell.plane);
+            let x = stx as usize;
+            let z = stz as usize;
+            mapl[level][x][z] = cell.flags;
+            self.floort1[level][x][z] = cell.underlay;
+            self.floort2[level][x][z] = cell.overlay;
+            self.floors[level][x][z] = cell.overlay_shape;
+            self.floorr[level][x][z] = cell.overlay_rotation;
+            groundh[level][x][z] = match cell.explicit_height {
+                Some(height) if level == 0 => -i32::from(height) * 8,
+                Some(height) => groundh[level - 1][x][z] - i32::from(height) * 8,
+                None if level == 0 => terrain_height(stx + origin_x, stz + origin_z),
+                None => groundh[level - 1][x][z] - 240,
+            };
+        });
+        // The legacy void API decodes one fixed grid and historically ignores
+        // unused backing-buffer capacity. Exact artifact validation still uses
+        // `visit_land` directly and rejects these trailing bytes.
+        debug_assert!(
+            decoded.is_ok()
+                || matches!(decoded, Err(MapCacheError::Invalid("trailing land bytes"))),
+            "prepared land record must be valid"
+        );
     }
 
     /// `finishBuild`'s ground-tile gate (Java `ClientBuild.java:972`):
@@ -336,60 +288,53 @@ impl ClientBuild {
         z_offset: i32,
         loop_cycle: i32,
     ) {
-        let mut buf = Packet::new(src.to_vec());
-        let mut loc_id = -1;
-
-        loop {
-            let delta_id = buf.gsmart();
-            if delta_id == 0 {
+        let decoded = visit_locations(src, |placement| {
+            let x = i32::from(placement.x);
+            let z = i32::from(placement.z);
+            let level = i32::from(placement.plane);
+            let stx = x + x_offset;
+            let stz = z + z_offset;
+            let Ok(loc_id) = i32::try_from(placement.id) else {
                 return;
+            };
+
+            if crate::render_debug_enabled() && loc_id == 1530 {
+                let loc_pos = (level << 12) | (x << 6) | z;
+                eprintln!(
+                    "[client-loc] loc 1530 loc_pos={} x={x} z={z} x_offset={x_offset} z_offset={z_offset} stx={stx} stz={stz}",
+                    loc_pos
+                );
             }
-            loc_id += delta_id;
 
-            let mut loc_pos = 0;
-            loop {
-                let delta_pos = buf.gsmart();
-                if delta_pos == 0 {
-                    break;
-                }
-
-                loc_pos += delta_pos - 1;
-                let z = loc_pos & 0x3f;
-                let x = (loc_pos >> 6) & 0x3f;
-                let level = loc_pos >> 12;
-
-                let info = buf.g1();
-                let shape = info >> 2;
-                let rotation = info & 0x3;
-                let stx = x + x_offset;
-                let stz = z + z_offset;
-
-                if crate::render_debug_enabled() && loc_id == 1530 {
-                    eprintln!(
-                        "[client-loc] loc 1530 loc_pos={} x={x} z={z} x_offset={x_offset} z_offset={z_offset} stx={stx} stz={stz}",
-                        loc_pos
-                    );
-                }
-
-                if stx > 0 && stz > 0 && stx < BuildArea::SIZE - 1 && stz < BuildArea::SIZE - 1 {
-                    let mut current_level = level;
+            if stx > 0 && stz > 0 && stx < BuildArea::SIZE - 1 && stz < BuildArea::SIZE - 1 {
+                let current_level =
                     if mapl[1][stx as usize][stz as usize] as i32 & MapFlag::LINK_BELOW != 0 {
-                        current_level = level - 1;
-                    }
-
-                    let collision = if current_level >= 0 {
-                        Some(&mut collisions[current_level as usize])
+                        level - 1
                     } else {
-                        None
+                        level
                     };
-
-                    self.add_loc(
-                        cache, world, collision, groundh, mapl, level, stx, stz, loc_id, shape,
-                        rotation, loop_cycle,
-                    );
-                }
+                let collision = if current_level >= 0 {
+                    Some(&mut collisions[current_level as usize])
+                } else {
+                    None
+                };
+                self.add_loc(
+                    cache,
+                    world,
+                    collision,
+                    groundh,
+                    mapl,
+                    level,
+                    stx,
+                    stz,
+                    loc_id,
+                    i32::from(placement.shape),
+                    i32::from(placement.rotation),
+                    loop_cycle,
+                );
             }
-        }
+        });
+        debug_assert!(decoded.is_ok(), "prepared location record must be valid");
     }
 
     /// `addLoc(...)` from client-ts (ClientBuild.ts 765-1137): place one loc
@@ -1845,58 +1790,5 @@ impl ClientBuild {
         }
 
         0
-    }
-
-    /// `perlinNoise(x, z)` from client-ts: fallback terrain for map squares
-    /// with no ground data (level 0 opcode-0 tiles).
-    fn perlin_noise(x: i32, z: i32) -> i32 {
-        let value = Self::interpolated_noise(x + 45365, z + 91923, 4)
-            + ((Self::interpolated_noise(x + 10294, z + 37821, 2) - 128) >> 1)
-            + ((Self::interpolated_noise(x, z, 1) - 128) >> 2)
-            - 128;
-        let value = ((value as f64 * 0.3) as i32) + 35;
-        value.clamp(10, 60)
-    }
-
-    fn interpolated_noise(x: i32, z: i32, scale: i32) -> i32 {
-        let int_x = x / scale;
-        let frac_x = x & (scale - 1);
-        let int_z = z / scale;
-        let frac_z = z & (scale - 1);
-        let v1 = Self::smooth_noise(int_x, int_z);
-        let v2 = Self::smooth_noise(int_x + 1, int_z);
-        let v3 = Self::smooth_noise(int_x, int_z + 1);
-        let v4 = Self::smooth_noise(int_x + 1, int_z + 1);
-        let i1 = Self::interpolate(v1, v2, frac_x, scale);
-        let i2 = Self::interpolate(v3, v4, frac_x, scale);
-        Self::interpolate(i1, i2, frac_z, scale)
-    }
-
-    fn interpolate(a: i32, b: i32, x: i32, scale: i32) -> i32 {
-        let f = (65536 - Pix3D::cos_table()[((x * 1024) / scale) as usize]) >> 1;
-        ((a * (65536 - f)) >> 16) + ((b * f) >> 16)
-    }
-
-    fn smooth_noise(x: i32, y: i32) -> i32 {
-        let corners = Self::noise(x - 1, y - 1)
-            + Self::noise(x + 1, y - 1)
-            + Self::noise(x - 1, y + 1)
-            + Self::noise(x + 1, y + 1);
-        let sides = Self::noise(x - 1, y)
-            + Self::noise(x + 1, y)
-            + Self::noise(x, y - 1)
-            + Self::noise(x, y + 1);
-        let center = Self::noise(x, y);
-        // i32 division truncates toward zero, matching the TS `| 0`
-        corners / 16 + sides / 8 + center / 4
-    }
-
-    /// `noise(x, y)` from client-ts. The TS uses BigInt for the cubic term
-    /// (int32 overflows), so this port computes it in i128 before masking.
-    fn noise(x: i32, y: i32) -> i32 {
-        let n = x.wrapping_add(y.wrapping_mul(57));
-        let n1 = ((n << 13) ^ n) as i128;
-        let v = (n1 * (n1 * n1 * 15731 + 789221) + 1376312589) & 0x7fff_ffff;
-        ((v >> 19) & 0xff) as i32
     }
 }

@@ -22,6 +22,8 @@ pub struct ClientSessionConfig {
     pub rsa_exponent: String,
     pub expected_crc: Option<[i32; 9]>,
     pub content_id: String,
+    pub file_store_dir: Option<PathBuf>,
+    pub ondemand_persist_dir: Option<PathBuf>,
 }
 
 /// Immutable connection and resource identity shared by every slot in a session.
@@ -41,6 +43,8 @@ pub struct ClientSessionProfile {
     rsa_exponent_value: BigUint,
     expected_crc: Option<[i32; 9]>,
     content_id: String,
+    file_store_dir: Option<PathBuf>,
+    ondemand_persist_dir: Option<PathBuf>,
 }
 
 impl ClientSessionProfile {
@@ -62,6 +66,20 @@ impl ClientSessionProfile {
         }
         if config.cache_dir.to_str().is_none() {
             return Err("cache_dir must be valid UTF-8 for ClientConfig".into());
+        }
+        if config
+            .file_store_dir
+            .as_ref()
+            .is_some_and(|path| path.to_str().is_none())
+        {
+            return Err("file_store_dir must be valid UTF-8".into());
+        }
+        if config
+            .ondemand_persist_dir
+            .as_ref()
+            .is_some_and(|path| path.to_str().is_none())
+        {
+            return Err("ondemand_persist_dir must be valid UTF-8".into());
         }
         if config.unpack_dir.as_os_str().is_empty() {
             return Err("unpack_dir must not be empty".into());
@@ -95,6 +113,8 @@ impl ClientSessionProfile {
             rsa_exponent_value,
             expected_crc: config.expected_crc,
             content_id: config.content_id,
+            file_store_dir: config.file_store_dir,
+            ondemand_persist_dir: config.ondemand_persist_dir,
         })
     }
 
@@ -146,6 +166,14 @@ impl ClientSessionProfile {
         &self.content_id
     }
 
+    pub fn file_store_dir(&self) -> Option<&Path> {
+        self.file_store_dir.as_deref()
+    }
+
+    pub fn ondemand_persist_dir(&self) -> Option<&Path> {
+        self.ondemand_persist_dir.as_deref()
+    }
+
     /// Change only the login endpoint and key; shared assets stay bound to the
     /// template's original update server and cache identity.
     pub fn for_public_world(&self, host: &str, port: u16, modulus: &str) -> Result<Self, String> {
@@ -165,6 +193,8 @@ impl ClientSessionProfile {
             rsa_exponent: self.rsa_exponent.clone(),
             expected_crc: self.expected_crc,
             content_id: self.content_id.clone(),
+            file_store_dir: self.file_store_dir.clone(),
+            ondemand_persist_dir: self.ondemand_persist_dir.clone(),
         })
     }
 

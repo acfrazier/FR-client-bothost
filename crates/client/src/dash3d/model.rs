@@ -2194,7 +2194,7 @@ impl Model {
                 clipped = true;
             }
 
-            if clipped || self.num_t > 0 {
+            if clipped || self.num_t > 0 || pix.capture.is_some() {
                 if let Some(slot) = pix.model_scratch.vertex_view_space_x.get_mut(v) {
                     *slot = x;
                 }
@@ -2711,6 +2711,10 @@ impl Model {
     /// texture arrays skip the face (the TS `!` asserts would throw and be
     /// swallowed by `render2`'s try/catch).
     fn render3(&self, pix: &mut Pix3DDraw, surface: &mut Pix2D, face: usize) {
+        if pix.capture.is_some() {
+            self.capture_face(pix, face);
+            return;
+        }
         if pix
             .model_scratch
             .face_near_clipped
@@ -2842,6 +2846,34 @@ impl Model {
                 shade_c,
             );
         }
+    }
+
+    /// The wgpu capture of one `render3` face: the face's view-space
+    /// vertices (written by `world_render` whenever a capture is bound)
+    /// go to the scene mesh at this point of the painter order. The
+    /// near-plane clip and its winding test happen in the capture, the
+    /// way `render3ZClip` does them for the rasterizer.
+    fn capture_face(&self, pix: &mut Pix3DDraw, face: usize) {
+        let (Some(face_vertex_a), Some(face_vertex_b), Some(face_vertex_c)) = (
+            &self.face_vertex_a,
+            &self.face_vertex_b,
+            &self.face_vertex_c,
+        ) else {
+            return;
+        };
+        let (Some(&a), Some(&b), Some(&c)) = (
+            face_vertex_a.get(face),
+            face_vertex_b.get(face),
+            face_vertex_c.get(face),
+        ) else {
+            return;
+        };
+        let view = [
+            Self::vertex_view_space(pix, a as usize),
+            Self::vertex_view_space(pix, b as usize),
+            Self::vertex_view_space(pix, c as usize),
+        ];
+        crate::render::world::capture_model_face(self, face, [a, b, c], view, pix);
     }
 
     /// Shared face raster used by `render3` and `render3ZClip`: dispatch on

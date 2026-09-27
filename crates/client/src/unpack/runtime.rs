@@ -2,11 +2,11 @@
 //! packs and snapshot until the last profile releases them. No persisted
 //! identity sidecar is trusted, and clients share this result rather than
 //! scanning or copying a snapshot per bot.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 
 use sha2::{Digest, Sha256};
 
@@ -16,7 +16,7 @@ use super::{
 };
 use crate::client::Client;
 use crate::content_identity::{compute_decoded_content_identity, DecodedContentIdentity};
-use crate::io::{ClientRevision, JagFile, OnDemand, Packet};
+use crate::io::{ClientRevision, JagFile, OnDemand};
 use crate::BotTarget;
 
 pub struct RuntimeCacheRequest<'a> {
@@ -46,6 +46,10 @@ pub struct PreparedRuntimeCache {
     pub asset_port: u16,
     pub fetched: Vec<String>,
     pub reused: Vec<String>,
+    /// Read-only original `main_file_cache` when identity-checked maps exist.
+    pub store_dir: Option<PathBuf>,
+    /// Content-identity overlay for completed ondemand payloads.
+    pub persist_dir: PathBuf,
 }
 
 impl PreparedRuntimeCache {
@@ -117,6 +121,142 @@ impl From<super::UnpackError> for RuntimeCacheError {
     }
 }
 
+/// Parse `.runtime-<pid>-<n>` where both sides are exact non-empty decimal runs.
+/// Pid must be a positive value representable as a platform process id (never 0).
+fn parse_runtime_staging_name(name: &str) -> Option<(u32, u64)> {
+    let rest = name.strip_prefix(".runtime-")?;
+    let (pid_str, n_str) = rest.split_once('-')?;
+    if pid_str.is_empty()
+        || n_str.is_empty()
+        || !pid_str.bytes().all(|b| b.is_ascii_digit())
+        || !n_str.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    let pid: u32 = pid_str.parse().ok()?;
+    let n: u64 = n_str.parse().ok()?;
+    if !is_valid_foreign_pid(pid) {
+        return None;
+    }
+    Some((pid, n))
+}
+
+/// Pid values safe to probe and to treat as foreign staging owners.
+fn is_valid_foreign_pid(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        // Positive pid_t only; never hand 0/negative to kill(2).
+        libc::pid_t::try_from(pid).is_ok_and(|p| p > 0)
+    }
+    #[cfg(not(unix))]
+    {
+        // Windows process ids are DWORD: every nonzero u32 is probeable.
+        true
+    }
+}
+
+/// True when `pid` still appears to own a live process. Unknown results count as
+/// alive so a staging directory that might still be in use is never deleted.
+fn process_is_alive(pid: u32) -> bool {
+    if !is_valid_foreign_pid(pid) {
+        // Invalid/special pids are treated as live so their dirs are kept.
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        let pid_t = pid as libc::pid_t;
+        // SAFETY: signal 0 performs no delivery; it only probes existence/permissions.
+        // `pid_t` is a positive value checked by `is_valid_foreign_pid`.
+        let result = unsafe { libc::kill(pid_t, 0) };
+        if result == 0 {
+            return true;
+        }
+        match std::io::Error::last_os_error().raw_os_error() {
+            Some(libc::EPERM) => true,
+            Some(libc::ESRCH) => false,
+            _ => true,
+        }
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{
+            CloseHandle, GetLastError, ERROR_INVALID_PARAMETER, STILL_ACTIVE,
+        };
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+
+        // SAFETY: query-only open; handle is closed before return on every path.
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle.is_null() {
+            // SAFETY: OpenProcess failed and set the thread last-error we read here.
+            let err = unsafe { GetLastError() };
+            // Only the documented no-such-process failure means dead. ACCESS_DENIED
+            // and every other error are treated as alive (keep the directory).
+            return err != ERROR_INVALID_PARAMETER;
+        }
+        let mut exit_code = 0u32;
+        // SAFETY: `handle` is a process handle from OpenProcess above.
+        let ok = unsafe { GetExitCodeProcess(handle, &mut exit_code) };
+        // SAFETY: closes the handle opened above.
+        unsafe {
+            let _ = CloseHandle(handle);
+        };
+        if ok == 0 {
+            return true;
+        }
+        exit_code == STILL_ACTIVE as u32
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = pid;
+        true
+    }
+}
+
+/// Walk `root` and remove `.runtime-<pid>-<n>` left by dead foreign processes.
+/// `is_alive` is injected so tests can supply a deterministic probe.
+fn sweep_runtime_staging(root: &Path, self_pid: u32, is_alive: impl Fn(u32) -> bool) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(name) = file_name.to_str() else {
+            continue;
+        };
+        let Some((pid, _)) = parse_runtime_staging_name(name) else {
+            continue;
+        };
+        if pid == self_pid || is_alive(pid) {
+            continue;
+        }
+        let _ = std::fs::remove_dir_all(entry.path());
+    }
+}
+
+/// Once per process per snapshot root, drop `.runtime-<pid>-<n>` directories left
+/// by dead foreign processes. Errors and non-matching names are ignored.
+fn sweep_leaked_runtime_staging(snapshot_root: &Path) {
+    static SWEPT_ROOTS: LazyLock<Mutex<HashSet<PathBuf>>> =
+        LazyLock::new(|| Mutex::new(HashSet::new()));
+    {
+        let mut guard = match SWEPT_ROOTS.lock() {
+            Ok(g) => g,
+            Err(e) => e.into_inner(),
+        };
+        if guard.contains(snapshot_root) {
+            return;
+        }
+        guard.insert(snapshot_root.to_path_buf());
+    }
+
+    sweep_runtime_staging(snapshot_root, std::process::id(), process_is_alive);
+}
+
 pub fn prepare_runtime_cache(
     request: &RuntimeCacheRequest<'_>,
 ) -> Result<Arc<PreparedRuntimeCache>, RuntimeCacheError> {
@@ -128,6 +268,7 @@ pub fn prepare_runtime_cache(
         })?;
     static NEXT: AtomicU64 = AtomicU64::new(0);
     std::fs::create_dir_all(request.snapshot_root).map_err(|e| e.to_string())?;
+    sweep_leaked_runtime_staging(request.snapshot_root);
     let owned = loop {
         let path = request.snapshot_root.join(format!(
             ".runtime-{}-{}",
@@ -167,20 +308,14 @@ pub fn prepare_runtime_cache(
         &version,
         &versionlist,
     ) {
-        // Validate/copy every input, not just sizes or a persistent digest.
-        // Source hashes around the copy reject a moving source set. The owned
-        // copies are then decoded; subsequent source replacement cannot change
-        // this prepared profile's identity or assets.
-        let before = hashes(&retained, &super::BINS)?;
+        // Copy retained snapshot bins into this bind's owned staging directory.
+        // The owned copies are then decoded; subsequent source replacement cannot
+        // change this prepared profile's identity or assets. Publication still
+        // writes the manifest last.
         std::fs::create_dir(&snapshot_dir).map_err(|e| e.to_string())?;
         for name in super::BINS {
             std::fs::copy(retained.join(name), snapshot_dir.join(name))
                 .map_err(|e| e.to_string())?;
-        }
-        if before != hashes(&retained, &super::BINS)?
-            || before != hashes(&snapshot_dir, &super::BINS)?
-        {
-            return Err("snapshot inputs changed during preparation".into());
         }
         for name in super::JAGS {
             std::fs::copy(jag_dir.join(name), snapshot_dir.join(name))
@@ -224,6 +359,8 @@ pub fn prepare_runtime_cache(
                     request.game_port,
                     cache,
                     &transfer_id,
+                    super::file_store_dir(&request.jag_source.to_string_lossy()).as_deref(),
+                    None,
                 )
                 .map_err(RuntimeCacheError::Other)?;
                 let result = fetch_snapshot(cache, root, &mut worker);
@@ -237,15 +374,9 @@ pub fn prepare_runtime_cache(
     let identity =
         compute_decoded_content_identity(request.revision.as_i32() as u16, &jag_dir, &snapshot_dir)
             .map_err(|e| format!("decoded content identity: {e}"))?;
-    if transfer_sha256 != hashes(&jag_dir, &super::JAGS)? {
-        return Err("jag inputs changed during preparation".into());
-    }
-    for &(name, index) in &super::JAG_INDEX {
-        let bytes = std::fs::read(jag_dir.join(name)).map_err(|e| e.to_string())?;
-        if Packet::getcrc(&bytes, 0, bytes.len()) != checksums[index] {
-            return Err(format!("{name}: transfer CRC changed during preparation").into());
-        }
-    }
+    let store_dir = super::file_store_dir(&request.jag_source.to_string_lossy()).map(PathBuf::from);
+    let persist_dir = request.snapshot_root.join(&version).join("ondemand");
+    std::fs::create_dir_all(&persist_dir).map_err(|e| e.to_string())?;
     Ok(Arc::new(PreparedRuntimeCache {
         owned,
         jag_dir,
@@ -259,6 +390,8 @@ pub fn prepare_runtime_cache(
         asset_port: request.asset_port,
         fetched: refreshed.fetched,
         reused: refreshed.reused,
+        store_dir,
+        persist_dir,
     }))
 }
 
@@ -281,3 +414,7 @@ fn hashes(dir: &Path, names: &[&str]) -> Result<BTreeMap<String, String>, String
     }
     Ok(out)
 }
+
+#[cfg(test)]
+#[path = "runtime_tests.rs"]
+mod tests;

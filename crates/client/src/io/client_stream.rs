@@ -62,6 +62,10 @@ struct TcpInner {
 
 /// Underlying WS transport. Production is TLS; plain TCP is test-only loopback
 /// so regressions do not need a production TLS trust bypass.
+// The test-only `Plain` variant makes the enum two-variant, and Windows'
+// TLS stream is far larger than the plain one. Boxing `Tls` would add an
+// allocation to the production path for a test-build-only lint.
+#[cfg_attr(test, allow(clippy::large_enum_variant))]
 enum WsConn {
     Tls(WebSocket<TlsStream<TcpStream>>),
     /// Loopback plain WS used by unit tests only (no TLS trust bypass).
@@ -329,7 +333,10 @@ impl ClientStream {
                 t.reader.set_nonblocking(true)?;
                 let mut b = [0u8; AVAILABLE_BUF];
                 let n = match t.reader.peek(&mut b) {
-                    Ok(0) => 0,
+                    Ok(0) => {
+                        t.reader.set_nonblocking(false)?;
+                        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "EOF"));
+                    }
                     Ok(n) => n as i32,
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => 0,
                     Err(e) => {

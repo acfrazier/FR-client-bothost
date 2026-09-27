@@ -70,14 +70,13 @@ not contain a pick, route, packet, or server handler receipt for the failed clic
 4. `core/world.rs:1055` update_mouse_picking arms click and resets answers.
    `Renderer::game_draw` runs begin/scene/composite/chrome/finish
    (`render/renderer.rs:351-368`). CPU scene calls render_all after camera and
-   clipping setup (`render/backend/cpu.rs:133-240`). GPU scene performs the
-   same setup, prepare_scene and build_scene_mesh (`backend/gpu.rs:1197-1328`).
-5. `render/world.rs:2415-2455` builds marked GPU tiles and clears click on a
-   successful pick. Quick-ground projection/depth/winding/inside-triangle
-   checks are at 6148-6239 (second triangle follows); shaped ground's
-   corresponding write is at 6057-6061. CPU quick-ground/shaped-ground writes
-   occur at 4315, 4419, 4589. These are software hit tests during production
-   geometry traversal even on GPU, not GPU framebuffer object-ID readback.
+   clipping setup (`render/backend/cpu.rs`). GPU scene performs the same setup,
+   then captures `render_all`'s painter traversal through
+   `RenderWorld::capture_scene` (`render/backend/gpu.rs`).
+5. `render/world.rs` clears click after a successful pick. Quick-ground and
+   shaped-ground projection/winding/inside-triangle checks remain software hit
+   tests during production geometry traversal on both CPU and GPU, not GPU
+   framebuffer object-ID readback.
 6. `game_loop:11110-11126` consumes ground_x, obtains the local route source,
    calls tryMove with nearest enabled, and sets crosshair mode1 on success.
    `tryMove:3602-3919` BFS reads current-plane collision, restricts to the
