@@ -27,6 +27,7 @@ const MAX_WAVE_SAMPLES: usize = WAVE_SAMPLE_RATE * 20;
 pub struct WavePlayback {
     samples: Vec<i16>,
     position: usize,
+    gain: f32,
 }
 
 impl WavePlayback {
@@ -34,6 +35,7 @@ impl WavePlayback {
         Self {
             samples: Vec::new(),
             position: 0,
+            gain: 1.0,
         }
     }
 
@@ -66,6 +68,19 @@ impl WavePlayback {
     /// later Java `wavereplay` can still restart it.
     pub(crate) fn stop(&mut self) {
         self.position = self.samples.len();
+    }
+
+    /// Java 289 stores `wavevol` in hundredths of a decibel
+    /// (`client.java` 7702-7707, 12382-12398). The web client applies the
+    /// native setting as `10^(dB/20)` (`audio.js` 59-65; `Client.ts`
+    /// 10655-10674).
+    pub(crate) fn set_volume(&mut self, wavevol: i32) {
+        self.gain = db_to_gain(midivol_to_db(wavevol));
+    }
+
+    #[cfg(feature = "audio")]
+    fn gain(&self) -> f32 {
+        self.gain
     }
 
     #[cfg(feature = "audio")]
@@ -396,9 +411,10 @@ mod device {
         }
         {
             let mut waves = waves.lock().unwrap();
+            let wave_gain = waves.gain();
             if src_rate == dst_rate {
                 for (frame, out) in data.as_chunks_mut::<2>().0.iter_mut().enumerate() {
-                    let w = waves.sample(frame) as f32;
+                    let w = waves.sample(frame) as f32 * wave_gain;
                     out[0] = (left[frame] * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
                     out[1] = (right[frame] * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
                 }
@@ -412,7 +428,7 @@ mod device {
                     let i = source_index.min(in_frames.saturating_sub(1));
                     let l = left[i] * (1.0 - frac) + left[i1] * frac;
                     let r = right[i] * (1.0 - frac) + right[i1] * frac;
-                    let w = waves.sample(source_index) as f32;
+                    let w = waves.sample(source_index) as f32 * wave_gain;
                     out[0] = (l * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
                     out[1] = (r * gain * 32767.0 + w).clamp(-32768.0, 32767.0) as i16;
                 }
@@ -502,6 +518,30 @@ mod device {
                 SAMPLE_RATE,
             );
             assert_eq!(replayed, data, "wavereplay must restart retained PCM");
+        }
+
+        #[test]
+        fn mix_scales_waves_by_clientcode_volume() {
+            let fade = Mutex::new(Fade::new());
+            fade.lock().unwrap().finish_fade(0);
+            let midi = Mutex::new(Tone { level: 0.0 });
+            let mut playback: WavePlayback = vec![10_000i16, -10_000i16].into();
+            playback.set_volume(-400);
+            let waves = Mutex::new(playback);
+            let mut data = vec![0i16; 4];
+            let mut scratch = Vec::new();
+
+            fill_buffer(
+                &mut data,
+                &mut scratch,
+                &midi,
+                &waves,
+                &fade,
+                SAMPLE_RATE,
+                SAMPLE_RATE,
+            );
+
+            assert_eq!(data, vec![6309, 6309, -6309, -6309]);
         }
 
         #[test]

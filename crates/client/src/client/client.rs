@@ -13188,6 +13188,9 @@ impl Client {
                 }
                 _ => {}
             }
+            if self.wave_enabled {
+                self.waves.lock().unwrap().set_volume(self.wave_volume);
+            }
             return;
         }
         if clientcode == 5 {
