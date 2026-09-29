@@ -555,6 +555,19 @@ fn raw_cheat_is_cleared_without_a_packet_when_admission_is_remote() {
 }
 
 #[test]
+fn unbound_cheat_is_refused_as_not_authorized() {
+    let _r = Renderer::new(false);
+    let mut c = client();
+    c.ingame = true;
+    assert_eq!(
+        c.send_cheat("ping"),
+        CheatSend::Refused(CheatRefusal::NotAuthorized)
+    );
+    assert_eq!(c.out.pos, 0);
+    assert_eq!(c.cheat_packets_sent(), 0);
+}
+
+#[test]
 fn granted_cheat_requires_ingame() {
     let _r = Renderer::new(false);
     let mut c = client();

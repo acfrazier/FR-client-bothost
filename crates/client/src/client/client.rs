@@ -858,6 +858,7 @@ pub enum CheatAdmission {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheatRefusal {
+    NotAuthorized,
     NotIngame,
     RemoteProfile { transport: crate::Transport },
     Offline,
@@ -1771,7 +1772,7 @@ impl Client {
     /// The sole `CLIENT_CHEAT` encoder, shared by API calls and raw `::` chat.
     pub fn send_cheat(&mut self, command: &str) -> CheatSend {
         match self.cheat_admission {
-            CheatAdmission::Denied => return CheatSend::Refused(CheatRefusal::Offline),
+            CheatAdmission::Denied => return CheatSend::Refused(CheatRefusal::NotAuthorized),
             CheatAdmission::Remote(transport) => {
                 return CheatSend::Refused(CheatRefusal::RemoteProfile { transport });
             }
@@ -3131,15 +3132,18 @@ impl Client {
     /// Adopt another `Client`'s live game socket and ISAAC cursors (bothost
     /// `Lean::from_client` semantics, Client→Client): `other`'s `stream`,
     /// `random_in`, outbound cursor (`out`), inbound buffer, and
-    /// partial-frame state (`ptype`/`psize`) move here. `other` must not
-    /// touch the game stream afterwards (drop it or reuse it for another
-    /// account); no TCP is closed. Arms `baton`, so the next
-    /// `login(..., reconnect = true)` runs the opcode-18 handshake over the
-    /// adopted socket instead of a fresh TCP. Returns `None` when `other`
-    /// has no live stream.
+    /// partial-frame state (`ptype`/`psize`) move here. Bound clients must have
+    /// identical session profiles; unbound clients must have identical
+    /// transport and cheat admission. `other` must not touch the game stream
+    /// afterwards (drop it or reuse it for another account); no TCP is closed.
+    /// Arms `baton`, so the next `login(..., reconnect = true)` runs the
+    /// opcode-18 handshake over the adopted socket instead of a fresh TCP.
+    /// Returns `None` when the identities differ or `other` has no live stream.
     pub fn adopt_from(&mut self, other: &mut Client) -> Option<()> {
         match (&self.session_profile, &other.session_profile) {
-            (None, None) => {}
+            (None, None)
+                if self.transport == other.transport
+                    && self.cheat_admission == other.cheat_admission => {}
             (Some(left), Some(right)) if left == right => {}
             _ => return None,
         }

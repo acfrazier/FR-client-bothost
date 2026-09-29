@@ -13,8 +13,9 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use client::client::{Client, ClientConfig, ClientRevision};
+use client::client::{CheatAdmission, Client, ClientConfig, ClientRevision};
 use client::config::{Cache, IfType, IfTypeMut};
+use client::io::ClientStream;
 
 fn cfg() -> ClientConfig {
     ClientConfig {
@@ -344,4 +345,35 @@ fn adopt_without_live_stream_returns_none() {
     assert!(b.adopt_from(&mut a).is_none());
     assert!(!b.baton);
     assert!(b.stream.is_none());
+}
+
+#[test]
+fn unbound_adoption_requires_matching_transport_and_admission() {
+    fn connected_client() -> (Client, std::net::TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut client = Client::new(cfg());
+        client.stream =
+            Some(ClientStream::connect(&address.ip().to_string(), address.port()).unwrap());
+        let (server, _) = listener.accept().unwrap();
+        (client, server)
+    }
+
+    let (mut source, source_server) = connected_client();
+    let (mut target, target_server) = connected_client();
+    source.set_transport(client::Transport::Wss);
+    assert!(target.adopt_from(&mut source).is_none());
+    assert!(source.stream.is_some());
+    assert!(target.stream.is_some());
+    drop(source_server);
+    drop(target_server);
+
+    let (mut source, source_server) = connected_client();
+    let (mut target, target_server) = connected_client();
+    source.set_cheat_admission(CheatAdmission::Granted);
+    assert!(target.adopt_from(&mut source).is_none());
+    assert!(source.stream.is_some());
+    assert!(target.stream.is_some());
+    drop(source_server);
+    drop(target_server);
 }

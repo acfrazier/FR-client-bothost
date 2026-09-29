@@ -8,17 +8,19 @@ JAG downloads and versioned snapshots. That location is shared with existing
 
 ## Change
 
-`crates/client/src/bot_target.rs` now honors the explicit
+`crates/client/src/transport.rs` honors the explicit
 `CLIENT_UNPACK_DIR` environment variable when it is non-empty. An absent or
-empty override preserves the exact prior fallback:
+empty override preserves the standalone client's prior fallback:
 
 - `$HOME/.274bot/unpack` when `HOME` is non-empty
 - `.274bot/unpack` otherwise
 
-The override is used only for WSS unpack/cache transport. TCP cache selection
-remains `$ENGINE_DIR/data/pack/client`; `HOME` is not repurposed. Existing
-callers reach the behavior through `unpack_dir()` and
-`cache_dir_for(Transport::Wss)`.
+This override supplies the unpack directory only for an unbound standalone
+client. Bound host sessions receive both paths from `ClientSessionProfile`;
+274bot launch profiles default cache and unpack together to
+`~/.274bot/unpack` for revision 274 or `~/.274bot/unpack-289` for revision 289,
+regardless of transport. Standalone callers reach the fallback through
+`unpack_dir()`.
 
 ## Verification
 
