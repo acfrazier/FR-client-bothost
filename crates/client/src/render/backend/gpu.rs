@@ -334,20 +334,51 @@ fn check_vertex_storage(
     Ok(())
 }
 
+/// Backends to try, in order; the same policy as the bot host's panel
+/// window. `WGPU_BACKEND` pins one set. On Windows, Vulkan first:
+/// enumerating D3D12 adapters loads every GPU's D3D12 driver, and a cold
+/// NVIDIA D3D12 driver on a hybrid laptop held that for ~140 s even when
+/// the Intel GPU was then chosen. D3D12 stays the fallback.
+fn backend_attempts() -> Vec<wgpu::Backends> {
+    if let Some(backends) = wgpu::Backends::from_env() {
+        return vec![backends];
+    }
+    if cfg!(windows) {
+        vec![wgpu::Backends::VULKAN, wgpu::Backends::DX12]
+    } else {
+        vec![wgpu::Backends::default()]
+    }
+}
+
 fn init_gpu() -> Result<Arc<GpuContext>, String> {
-    // Same adapter policy as the panel window: low power by default (on a
-    // hybrid laptop the integrated GPU driving the display, skipping the
-    // discrete GPU's cold start); `WGPU_POWER_PREF` and `WGPU_BACKEND`
-    // override.
-    let instance =
-        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference:
-            wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::LowPower),
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
-    .map_err(|e| format!("no adapter: {e}"))?;
+    // Low power by default (on a hybrid laptop the integrated GPU driving
+    // the display, skipping the discrete GPU's cold start);
+    // `WGPU_POWER_PREF` overrides.
+    let power_preference =
+        wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::LowPower);
+    let mut last_error = String::new();
+    let mut found = None;
+    for backends in backend_attempts() {
+        let instance = wgpu::Instance::new(
+            wgpu::InstanceDescriptor {
+                backends,
+                ..wgpu::InstanceDescriptor::new_without_display_handle()
+            }
+            .with_env(),
+        );
+        match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        })) {
+            Ok(adapter) => {
+                found = Some(adapter);
+                break;
+            }
+            Err(e) => last_error = format!("no adapter: {e}"),
+        }
+    }
+    let adapter = found.ok_or(last_error)?;
     // GL's aggregate storage limit can hide a lack of vertex-stage storage.
     // Reject it before layout creation so context() can select the CPU fallback.
     check_vertex_storage(
