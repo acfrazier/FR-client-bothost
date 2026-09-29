@@ -335,9 +335,15 @@ fn check_vertex_storage(
 }
 
 fn init_gpu() -> Result<Arc<GpuContext>, String> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    // Same adapter policy as the panel window: low power by default (on a
+    // hybrid laptop the integrated GPU driving the display, skipping the
+    // discrete GPU's cold start); `WGPU_POWER_PREF` and `WGPU_BACKEND`
+    // override.
+    let instance =
+        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
+        power_preference:
+            wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::LowPower),
         compatible_surface: None,
         force_fallback_adapter: false,
     }))
