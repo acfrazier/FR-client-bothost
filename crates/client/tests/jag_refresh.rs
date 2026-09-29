@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use client::io::Packet;
 use client::unpack::{refresh_jags, FetchEndpoint};
-use client::BotTarget;
+use client::Transport;
 
 const JAG_SLOTS: [&str; 8] = [
     "title",
@@ -191,7 +191,7 @@ fn mismatched_versionlist_is_refreshed_into_dest_without_writing_source() {
         &[&source],
         &dest,
         FetchEndpoint {
-            target: BotTarget::Local,
+            transport: Transport::Tcp,
             host: "127.0.0.1",
             port,
         },
@@ -254,7 +254,7 @@ fn matching_files_are_reused_and_not_fetched() {
         &[&source],
         &dest,
         FetchEndpoint {
-            target: BotTarget::Local,
+            transport: Transport::Tcp,
             host: "127.0.0.1",
             port,
         },
@@ -283,7 +283,7 @@ fn source_directory_cannot_be_the_destination() {
         &[&source],
         &source,
         FetchEndpoint {
-            target: BotTarget::Local,
+            transport: Transport::Tcp,
             host: "127.0.0.1",
             port: 1,
         },
@@ -306,7 +306,7 @@ fn download_must_be_persisted_before_refresh_succeeds() {
         &[],
         &dest,
         FetchEndpoint {
-            target: BotTarget::Local,
+            transport: Transport::Tcp,
             host: "127.0.0.1",
             port,
         },
@@ -327,7 +327,7 @@ fn corrupt_download_fails_closed() {
         &[],
         &dest,
         FetchEndpoint {
-            target: BotTarget::Local,
+            transport: Transport::Tcp,
             host: "127.0.0.1",
             port,
         },

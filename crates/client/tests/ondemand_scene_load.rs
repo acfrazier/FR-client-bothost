@@ -14,7 +14,7 @@ use client::client::{Client, ClientConfig};
 use client::config::Cache;
 use client::io::{ClientRevision, JagFile, OnDemand, Packet};
 use client::render::Renderer;
-use client::BotTarget;
+use client::Transport;
 
 const MAP_RAW: &[u8] = b"map-bytes";
 const KEEPALIVE_IDLE: Duration = Duration::from_secs(18);
@@ -236,7 +236,7 @@ fn bound_file_store_used_when_jag_dir_has_no_store() {
     let persist = tmp("bound-persist");
     let mut od = OnDemand::new_bound(
         &versionlist,
-        BotTarget::Local,
+        Transport::Tcp,
         ClientRevision::R289,
         "127.0.0.1",
         port,
@@ -286,7 +286,7 @@ fn completed_ondemand_maps_are_retained() {
 
     let mut od = OnDemand::new_bound(
         &versionlist,
-        BotTarget::Local,
+        Transport::Tcp,
         ClientRevision::R289,
         "127.0.0.1",
         port,
@@ -319,7 +319,7 @@ fn completed_ondemand_maps_are_retained() {
 
     let mut od = OnDemand::new_bound(
         &versionlist,
-        BotTarget::Local,
+        Transport::Tcp,
         ClientRevision::R289,
         "127.0.0.1",
         port,
@@ -432,7 +432,7 @@ fn bound_ondemand(
     let (_payload, crc) = map_payload();
     OnDemand::new_bound(
         &map_versionlist(crc),
-        BotTarget::Local,
+        Transport::Tcp,
         revision,
         "127.0.0.1",
         port,

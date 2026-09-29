@@ -1,6 +1,5 @@
-//! Login RSA. Prod public half is **baked** (rs2b2t; it does not rotate).
-//! Local engine keys are read at runtime from `$ENGINE_DIR` / `LOGIN_RSAN`
-//! — no compile-time bake, no `BOT_TARGET` rebuild.
+//! Login RSA for unbound standalone clients.
+//! Bound host sessions carry their key in `ClientSessionProfile`.
 
 use std::fs;
 use std::path::Path;
@@ -8,7 +7,7 @@ use std::str::FromStr;
 
 use num_bigint::BigUint;
 
-use crate::bot_target::{bot_target, private_pem, BotTarget};
+use crate::private_pem;
 
 /// Java Client-TS default pair. Unit tests and a cache-less `/tmp` client
 /// use this when no engine pem is present.
@@ -21,22 +20,19 @@ pub const JAVA_LOGIN_RSAE: &str =
 pub const PROD_LOGIN_RSAN: &str = "117420683091599437363781545043460293895633275635653353309906159820872703885723869096825270694383466833728011835587324760936150761784279979493634580041806369762348843902867397790796219798581737432768036489623686153294697841819355248591000037921789209503314465546289565662596345179694574470836552536702466642733";
 pub const PROD_LOGIN_RSAE: &str = "65537";
 
-/// Active modulus for this process (prod baked, or local env/pem/Java).
+/// Active modulus for an unbound standalone local client.
 pub fn login_rsan() -> String {
     active_pair().0
 }
 
-/// Active exponent for this process.
+/// Active exponent for an unbound standalone local client.
 pub fn login_rsae() -> String {
     active_pair().1
 }
 
-/// `(n, e)` used by `Client::login`.
+/// `(n, e)` used only when a client has no bound session profile.
 pub fn active_pair() -> (String, String) {
-    match bot_target() {
-        BotTarget::Prod => (PROD_LOGIN_RSAN.to_string(), PROD_LOGIN_RSAE.to_string()),
-        BotTarget::Local => local_pair(),
-    }
+    local_pair()
 }
 
 /// Bigints for `rsaenc`. Garbage `LOGIN_RSAN`/`LOGIN_RSAE` fall back to

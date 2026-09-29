@@ -15,19 +15,17 @@ empty override preserves the exact prior fallback:
 - `$HOME/.274bot/unpack` when `HOME` is non-empty
 - `.274bot/unpack` otherwise
 
-The override is used only for the production unpack/cache target. Local cache
-selection remains `$ENGINE_DIR/data/pack/client`; `HOME` is not repurposed.
-Existing callers reach the behavior through `unpack_dir()` and
-`cache_dir_for(BotTarget::Prod)`.
+The override is used only for WSS unpack/cache transport. TCP cache selection
+remains `$ENGINE_DIR/data/pack/client`; `HOME` is not repurposed. Existing
+callers reach the behavior through `unpack_dir()` and
+`cache_dir_for(Transport::Wss)`.
 
 ## Verification
 
-Pure helper tests cover an absolute override, absent and empty fallback, and
-local-versus-production target behavior. The targeted client library test run
-passed:
+Client tests cover explicit transport selection and the standalone path helpers
+through cache/session consumers:
 
-    CARGO_TARGET_DIR=/Users/acfrazier/experiments/FR-client-289/target cargo test -p client bot_target::tests::unpack_dir_override --lib
-    2 passed; 0 failed
+    cargo test -p client --all-targets
 
 The parent orchestrator must set `CLIENT_UNPACK_DIR` to its authorized runtime
 location before any standalone live verification. This change does not claim

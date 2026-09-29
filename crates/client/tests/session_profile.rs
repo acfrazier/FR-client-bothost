@@ -7,7 +7,7 @@ use std::thread;
 use client::client::{Client, ClientRevision};
 use client::config::{Cache, IfType, IfTypeMut};
 use client::io::{ClientStream, JagFile, OnDemand, Packet};
-use client::{BotTarget, ClientSessionConfig, ClientSessionProfile};
+use client::{ClientSessionConfig, ClientSessionProfile, Transport};
 
 const EMPTY_JAG: &[u8] = &[0, 0, 6, 0, 0, 6, 0, 0];
 
@@ -25,7 +25,7 @@ fn temp_dir(name: &str) -> PathBuf {
 fn profile_config(cache_dir: PathBuf, game_port: u16, asset_port: u16) -> ClientSessionConfig {
     ClientSessionConfig {
         revision: ClientRevision::R289,
-        target: BotTarget::Local,
+        transport: Transport::Tcp,
         game_host: "127.0.0.1".into(),
         game_port,
         asset_host: "127.0.0.1".into(),
@@ -149,11 +149,10 @@ fn profile_validates_and_exposes_frozen_owned_inputs() {
     let profile = ClientSessionProfile::new(config).unwrap();
 
     assert_eq!(profile.revision(), ClientRevision::R289);
-    assert_eq!(profile.target(), BotTarget::Local);
+    assert_eq!(profile.transport(), Transport::Tcp);
     assert_eq!(profile.game_host(), "127.0.0.1");
     assert_eq!(profile.game_port(), 44594);
     assert_eq!(profile.asset_host(), "127.0.0.1");
-    assert_eq!(profile.asset_port(), 1080);
     assert_eq!(profile.cache_dir(), cache.as_path());
     assert!(profile
         .unpack_dir()
@@ -300,9 +299,9 @@ fn incompatible_bound_adoption_leaves_both_streams_intact() {
     let mut first = shared_client(first_profile).unwrap();
     let mut second = shared_client(second_profile).unwrap();
     first.stream =
-        Some(ClientStream::connect_for(BotTarget::Local, "127.0.0.1", first_port).unwrap());
+        Some(ClientStream::connect_for(Transport::Tcp, "127.0.0.1", first_port).unwrap());
     second.stream =
-        Some(ClientStream::connect_for(BotTarget::Local, "127.0.0.1", second_port).unwrap());
+        Some(ClientStream::connect_for(Transport::Tcp, "127.0.0.1", second_port).unwrap());
     let first_server = first_accept.join().unwrap();
     let second_server = second_accept.join().unwrap();
 

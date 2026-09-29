@@ -2,7 +2,7 @@
 use client::content_identity::compute_decoded_content_identity;
 use client::io::{ClientRevision, JagFile, Packet};
 use client::unpack::{prepare_runtime_cache, version_hash, RuntimeCacheRequest};
-use client::BotTarget;
+use client::Transport;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -164,7 +164,7 @@ fn prepare(
     let (port, thread) = server(packs, downloads);
     let result = prepare_runtime_cache(&RuntimeCacheRequest {
         revision: ClientRevision::R289,
-        target: BotTarget::Local,
+        transport: Transport::Tcp,
         jag_source: source,
         snapshot_root: root,
         asset_host: "127.0.0.1",

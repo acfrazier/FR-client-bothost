@@ -18,7 +18,7 @@ use client::unpack::{
     fetch_snapshot, prepare_snapshot, snapshot_state, version_hash, FetchEndpoint,
     SnapshotPreparation, SnapshotState,
 };
-use client::BotTarget;
+use client::Transport;
 
 const JAGS: [&str; 8] = [
     "config",
@@ -444,7 +444,7 @@ fn empty_cache_is_fetched_then_filled_from_the_update_server() {
     let packs = Arc::new(packs(&versionlist));
     let (port, http) = serve_jags(Arc::clone(&packs));
     let endpoint = FetchEndpoint {
-        target: BotTarget::Local,
+        transport: Transport::Tcp,
         host: "127.0.0.1",
         port,
     };

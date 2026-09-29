@@ -5,13 +5,13 @@ use num_bigint::BigUint;
 
 use crate::client::ClientConfig;
 use crate::io::ClientRevision;
-use crate::BotTarget;
+use crate::Transport;
 
 /// Owned inputs used to freeze one client's connection and resource identity.
 #[derive(Clone, Debug)]
 pub struct ClientSessionConfig {
     pub revision: ClientRevision,
-    pub target: BotTarget,
+    pub transport: Transport,
     pub game_host: String,
     pub game_port: u16,
     pub asset_host: String,
@@ -30,7 +30,7 @@ pub struct ClientSessionConfig {
 #[derive(Debug, PartialEq, Eq)]
 pub struct ClientSessionProfile {
     revision: ClientRevision,
-    target: BotTarget,
+    transport: Transport,
     game_host: String,
     game_port: u16,
     asset_host: String,
@@ -100,7 +100,7 @@ impl ClientSessionProfile {
 
         Ok(Self {
             revision: config.revision,
-            target: config.target,
+            transport: config.transport,
             game_host: config.game_host,
             game_port: config.game_port,
             asset_host: config.asset_host,
@@ -122,8 +122,8 @@ impl ClientSessionProfile {
         self.revision
     }
 
-    pub fn target(&self) -> BotTarget {
-        self.target
+    pub fn transport(&self) -> Transport {
+        self.transport
     }
 
     pub fn game_host(&self) -> &str {
@@ -177,12 +177,12 @@ impl ClientSessionProfile {
     /// Change only the login endpoint and key; shared assets stay bound to the
     /// template's original update server and cache identity.
     pub fn for_public_world(&self, host: &str, port: u16, modulus: &str) -> Result<Self, String> {
-        if self.target != BotTarget::Prod {
-            return Err("world switching requires a public session".into());
+        if self.transport != Transport::Wss {
+            return Err("world switching requires a WSS session".into());
         }
         Self::new(ClientSessionConfig {
             revision: self.revision,
-            target: self.target,
+            transport: self.transport,
             game_host: host.into(),
             game_port: port,
             asset_host: self.asset_host.clone(),

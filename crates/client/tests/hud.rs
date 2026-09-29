@@ -6,7 +6,7 @@
 // 127.0.0.1 is refused instantly).
 use std::sync::Arc;
 
-use client::client::{Client, ClientConfig, ClientPlayer};
+use client::client::{CheatAdmission, CheatRefusal, CheatSend, Client, ClientConfig, ClientPlayer};
 use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::config::{ObjType, SeqType, VarpType};
 use client::graphics::{Colour, Pix2D, Pix8, PixMap};
@@ -516,6 +516,7 @@ fn chat_input_command_sends_client_cheat() {
     let _r = Renderer::new(false);
     let mut c = client();
     c.ingame = true;
+    c.set_cheat_admission(CheatAdmission::Granted);
     for ch in b"::ping" {
         c.shell.apply_key(true, 0, *ch as i32);
     }
@@ -528,6 +529,42 @@ fn chat_input_command_sends_client_cheat() {
     assert_eq!(c.out.data()[0] as i32, ClientProt::CLIENT_CHEAT.id & 0xff);
     assert_eq!(c.out.data()[1], (6 - 2 + 1) as u8);
     assert_eq!(&c.out.data()[2..7], b"ping\n");
+    assert_eq!(c.cheat_packets_sent(), 1);
+}
+
+#[test]
+fn raw_cheat_is_cleared_without_a_packet_when_admission_is_remote() {
+    let _r = Renderer::new(false);
+    let mut c = client();
+    c.ingame = true;
+    c.set_cheat_admission(CheatAdmission::Remote(client::Transport::Wss));
+    for ch in b"::ping" {
+        c.shell.apply_key(true, 0, *ch as i32);
+    }
+    c.shell.apply_key(true, 0, 13);
+    c.handle_chat_input();
+    assert_eq!(c.chat_input, "");
+    assert_eq!(c.out.pos, 0);
+    assert_eq!(c.cheat_packets_sent(), 0);
+    assert_eq!(
+        c.send_cheat("ping"),
+        CheatSend::Refused(CheatRefusal::RemoteProfile {
+            transport: client::Transport::Wss,
+        })
+    );
+}
+
+#[test]
+fn granted_cheat_requires_ingame() {
+    let _r = Renderer::new(false);
+    let mut c = client();
+    c.set_cheat_admission(CheatAdmission::Granted);
+    assert_eq!(
+        c.send_cheat("ping"),
+        CheatSend::Refused(CheatRefusal::NotIngame)
+    );
+    assert_eq!(c.out.pos, 0);
+    assert_eq!(c.cheat_packets_sent(), 0);
 }
 
 #[test]

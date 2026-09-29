@@ -2,7 +2,6 @@
 //! `r274-bh-modular`). wgpu GPU 3D by default; `BOT_CPU=1` is CpuPix3D.
 //! No bot action API — packet timing and `doAction` stay Java-shaped.
 
-pub mod bot_target;
 pub mod client;
 pub mod config;
 pub mod content_identity;
@@ -16,18 +15,19 @@ pub mod map_cache;
 pub mod render;
 pub mod session;
 pub mod sound;
+pub mod transport;
 pub mod unpack;
 pub mod util;
 pub mod wordfilter;
-pub use bot_target::{
-    bot_target, cache_dir, cache_dir_for, content_dir, engine_dir, game_port_for,
-    jag_fetch_port_for, operator_home, set_bot_target, unpack_dir, uses_secure_transport,
-    world_host, world_host_for, BotTarget,
-};
+pub use client::client::{CheatAdmission, CheatRefusal, CheatSend};
 pub use login_rsa::{
     active_pair, JAVA_LOGIN_RSAE, JAVA_LOGIN_RSAN, PROD_LOGIN_RSAE, PROD_LOGIN_RSAN,
 };
 pub use session::{ClientSessionConfig, ClientSessionProfile};
+pub use transport::{
+    cache_dir, config_jag, content_dir, engine_dir, operator_home, private_pem, unpack_dir,
+    Transport,
+};
 
 /// Whether verbose client-side diagnostics are on (`BOT_DEBUG=1`), cached
 /// once per process. Used by the scene-build / on-demand paths to dump the

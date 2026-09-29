@@ -40,7 +40,7 @@ use crate::client::Client;
 use crate::io::jagfile::JagFile;
 use crate::io::ondemand::cache_read;
 use crate::io::packet::Packet;
-use crate::BotTarget;
+use crate::Transport;
 
 /// `main_file_cache` archive index per OnDemand archive (archive + 1):
 /// models=1, anims=2, midi=3, maps=4. idx0 (the title index) is skipped.
@@ -978,7 +978,7 @@ pub fn load_snapshot_once(cache_dir: &str, out_dir: &str) -> Result<(Loaded, boo
 /// is CRC-checked and persisted exactly like `maininit`'s own fetch.
 #[derive(Debug, Clone, Copy)]
 pub struct FetchEndpoint<'a> {
-    pub target: BotTarget,
+    pub transport: Transport,
     pub host: &'a str,
     pub port: u16,
 }
@@ -1207,7 +1207,7 @@ fn fetch_jags(
     endpoint: FetchEndpoint<'_>,
     missing: &[&str],
 ) -> Result<Vec<String>, UnpackError> {
-    let checksums = Client::get_jag_checksums_for(endpoint.target, endpoint.host, endpoint.port)
+    let checksums = Client::get_jag_checksums_for(endpoint.transport, endpoint.host, endpoint.port)
         .map_err(|e| UnpackError::new(format!("update server /crc: {e}")))?;
     let mut fetched = Vec::with_capacity(missing.len());
     for name in missing {
@@ -1217,7 +1217,7 @@ fn fetch_jags(
             .map(|(_, index)| *index)
             .ok_or_else(|| UnpackError::new(format!("{name}: not a jag pack file")))?;
         Client::get_jag_file_for(
-            endpoint.target,
+            endpoint.transport,
             cache_dir,
             endpoint.host,
             endpoint.port,
@@ -1249,7 +1249,7 @@ pub fn refresh_jags(
         ));
     }
     let checksums =
-        Client::get_jag_checksums_checked(endpoint.target, endpoint.host, endpoint.port)
+        Client::get_jag_checksums_checked(endpoint.transport, endpoint.host, endpoint.port)
             .map_err(|e| UnpackError::asset(format!("update server /crc: {}", e.message()), e))?;
     refresh_jags_with_checksums(sources, dest, endpoint, checksums)
 }
@@ -1301,7 +1301,7 @@ fn refresh_jags_with_checksums(
             continue;
         }
         Client::get_jag_file_checked(
-            endpoint.target,
+            endpoint.transport,
             dest_str,
             endpoint.host,
             endpoint.port,

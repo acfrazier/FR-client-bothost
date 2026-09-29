@@ -17,11 +17,11 @@ use super::{
 use crate::client::Client;
 use crate::content_identity::{compute_decoded_content_identity, DecodedContentIdentity};
 use crate::io::{ClientRevision, JagFile, OnDemand};
-use crate::BotTarget;
+use crate::Transport;
 
 pub struct RuntimeCacheRequest<'a> {
     pub revision: ClientRevision,
-    pub target: BotTarget,
+    pub transport: Transport,
     /// Read-only source packs and optional main_file_cache store.
     pub jag_source: &'a Path,
     /// Read-only retained snapshots; also parent of owned staging directories.
@@ -260,12 +260,15 @@ fn sweep_leaked_runtime_staging(snapshot_root: &Path) {
 pub fn prepare_runtime_cache(
     request: &RuntimeCacheRequest<'_>,
 ) -> Result<Arc<PreparedRuntimeCache>, RuntimeCacheError> {
-    let checksums =
-        Client::get_jag_checksums_checked(request.target, request.asset_host, request.asset_port)
-            .map_err(|kind| RuntimeCacheError::Asset {
-            kind,
-            message: format!("update server /crc: {}", kind.message()),
-        })?;
+    let checksums = Client::get_jag_checksums_checked(
+        request.transport,
+        request.asset_host,
+        request.asset_port,
+    )
+    .map_err(|kind| RuntimeCacheError::Asset {
+        kind,
+        message: format!("update server /crc: {}", kind.message()),
+    })?;
     static NEXT: AtomicU64 = AtomicU64::new(0);
     std::fs::create_dir_all(request.snapshot_root).map_err(|e| e.to_string())?;
     sweep_leaked_runtime_staging(request.snapshot_root);
@@ -286,7 +289,7 @@ pub fn prepare_runtime_cache(
         &[request.jag_source],
         &jag_dir,
         FetchEndpoint {
-            target: request.target,
+            transport: request.transport,
             host: request.asset_host,
             port: request.asset_port,
         },
@@ -353,7 +356,7 @@ pub fn prepare_runtime_cache(
                 let transfer_id = format!("{:x}", Sha256::digest(&versionlist));
                 let mut worker = OnDemand::new_bound(
                     &jag,
-                    request.target,
+                    request.transport,
                     request.revision,
                     request.game_host,
                     request.game_port,

@@ -25,7 +25,7 @@ use native_tls::TlsStream;
 use tungstenite::protocol::WebSocket;
 use tungstenite::Message;
 
-use crate::{uses_secure_transport, BotTarget};
+use crate::Transport;
 
 const BUF_SIZE: usize = 5000;
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
@@ -152,19 +152,14 @@ fn io_other(err: impl std::fmt::Display) -> io::Error {
 }
 
 impl ClientStream {
-    /// Connect. Local is TCP `host:port`. Prod is WSS `wss://host/` with
-    /// the `binary` subprotocol (game port 443); `port` is ignored.
+    /// Connect an unbound standalone client over plain TCP.
     pub fn connect(host: &str, port: u16) -> io::Result<ClientStream> {
-        if uses_secure_transport(crate::bot_target()) {
-            return Self::connect_wss(host, 443);
-        }
         Self::connect_tcp(host, port)
     }
 
-    /// Connect using an explicit frozen transport identity. Unlike the legacy
-    /// wrapper, secure sessions honor the supplied port.
-    pub fn connect_for(target: BotTarget, host: &str, port: u16) -> io::Result<ClientStream> {
-        if uses_secure_transport(target) {
+    /// Connect using the explicit frozen session transport.
+    pub fn connect_for(transport: Transport, host: &str, port: u16) -> io::Result<ClientStream> {
+        if transport.uses_tls() {
             return Self::connect_wss(host, port);
         }
         Self::connect_tcp(host, port)

@@ -22,7 +22,7 @@ use crate::io::client_stream::ClientStream;
 use crate::io::jagfile::JagFile;
 use crate::io::packet::Packet;
 use crate::io::ClientRevision;
-use crate::BotTarget;
+use crate::Transport;
 
 /// Reconnect gate in Java `OnDemand.send`: the socket is not reopened within
 /// 4 s of the last open. Spawn starts past the gate (first send is not
@@ -150,7 +150,7 @@ struct OnDemandHub {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct HubIdentity {
-    target: BotTarget,
+    transport: Transport,
     revision: ClientRevision,
     cache_dir: String,
     content_id: String,
@@ -160,7 +160,7 @@ struct HubIdentity {
 }
 
 struct BoundHubIdentity<'a> {
-    target: BotTarget,
+    transport: Transport,
     revision: ClientRevision,
     cache_dir: &'a str,
     content_id: &'a str,
@@ -269,7 +269,7 @@ struct Worker {
     stream: Option<ClientStream>,
     host: String,
     port: u16,
-    target: Option<BotTarget>,
+    transport: Option<Transport>,
     revision: Option<ClientRevision>,
     /// Some when the `main_file_cache` file store is present (Java
     /// `app.fileStreams[0] != null`).
@@ -381,7 +381,7 @@ impl OnDemand {
     #[allow(clippy::too_many_arguments)]
     pub fn new_bound(
         versionlist: &JagFile,
-        target: BotTarget,
+        transport: Transport,
         revision: ClientRevision,
         host: &str,
         port: u16,
@@ -396,7 +396,7 @@ impl OnDemand {
             port,
             cache_dir,
             Some(BoundHubIdentity {
-                target,
+                transport,
                 revision,
                 cache_dir,
                 content_id,
@@ -471,7 +471,7 @@ impl OnDemand {
         let midi_jingle = read_raw_table(versionlist, "midi_index", 1, |buf| buf.g1());
 
         let identity = bound.as_ref().map(|identity| HubIdentity {
-            target: identity.target,
+            transport: identity.transport,
             revision: identity.revision,
             cache_dir: identity.cache_dir.to_string(),
             content_id: identity.content_id.to_string(),
@@ -1018,7 +1018,7 @@ fn subscribe_hub(
         stream: None,
         host: host.to_string(),
         port,
-        target: identity.as_ref().map(|identity| identity.target),
+        transport: identity.as_ref().map(|identity| identity.transport),
         revision,
         cache_dir: resolve_file_store(cache_dir),
         persist_dir: identity
@@ -1466,8 +1466,8 @@ impl Worker {
     /// Java `openSocket(portOff + 43594)`: handshake is byte 15, then the
     /// engine replies with 8 bytes.
     fn open_socket(&mut self) -> io::Result<()> {
-        let mut stream = match self.target {
-            Some(target) => ClientStream::connect_for(target, &self.host, self.port)?,
+        let mut stream = match self.transport {
+            Some(transport) => ClientStream::connect_for(transport, &self.host, self.port)?,
             None => ClientStream::connect(&self.host, self.port)?,
         };
         stream.write(&[15], 1)?;

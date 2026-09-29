@@ -523,6 +523,7 @@ fn operation_counter_boundaries_preserve_primary_no_reset() {
 #[test]
 fn social_keyboard_and_chat_ordered_frames() {
     let mut c = client(ClientRevision::R289);
+    c.set_cheat_admission(client::CheatAdmission::Granted);
     let mut player = client::client::ClientPlayer::at(5, 5);
     player.name = Some("Fixture".into());
     c.local_player = Some(player);

@@ -844,6 +844,37 @@ impl R289Operation {
     }
 }
 
+/// Host-owned admission for the client's only `CLIENT_CHEAT` encoder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CheatAdmission {
+    /// No host profile has authorized this client.
+    #[default]
+    Denied,
+    /// The selected profile is remote; retain its transport for diagnostics.
+    Remote(crate::Transport),
+    /// The selected profile is local. Connection state is checked at send time.
+    Granted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheatRefusal {
+    NotIngame,
+    RemoteProfile { transport: crate::Transport },
+    Offline,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheatSend {
+    Sent,
+    Refused(CheatRefusal),
+}
+
+impl CheatSend {
+    pub fn is_sent(self) -> bool {
+        matches!(self, Self::Sent)
+    }
+}
+
 pub struct Client {
     pub shell: GameShell,
     /// The frame target the driver attaches (task 6 `PresentTarget`). `run`
@@ -865,6 +896,9 @@ pub struct Client {
     main_modal_packet_state: MainModalPacketState,
     packet_observation: u64,
     session_profile: Option<Arc<ClientSessionProfile>>,
+    transport: crate::Transport,
+    cheat_admission: CheatAdmission,
+    cheat_packets_sent: u64,
     /// Config type tables (`obj`, `npc`, `loc`, ...), unpacked from the
     /// `config` jag by `Cache::unpack`; empty until loaded. Shared with
     /// every client via `Arc` (the tables are immutable once unpacked);
@@ -1476,11 +1510,7 @@ impl Client {
     /// midstream revision mutation — the profile is immutable after build
     /// except via successful [`Client::adopt_from`].
     pub fn new_with_revision(config: ClientConfig, revision: ClientRevision) -> Self {
-        Self::new_with_revision_and_http_port(
-            config,
-            revision,
-            crate::jag_fetch_port_for(crate::bot_target()),
-        )
+        Self::new_with_revision_and_http_port(config, revision, 80)
     }
 
     /// Construct with an explicit protocol revision and web-origin port.
@@ -1715,10 +1745,47 @@ impl Client {
         self.session_profile.as_ref()
     }
 
-    pub fn session_target(&self) -> crate::BotTarget {
+    pub fn session_transport(&self) -> crate::Transport {
         self.session_profile
             .as_ref()
-            .map_or_else(crate::bot_target, |profile| profile.target())
+            .map_or(self.transport, |profile| profile.transport())
+    }
+
+    /// Set the explicit transport for an unbound standalone/direct client.
+    pub fn set_transport(&mut self, transport: crate::Transport) {
+        self.transport = transport;
+    }
+
+    pub fn set_cheat_admission(&mut self, admission: CheatAdmission) {
+        self.cheat_admission = admission;
+    }
+
+    pub fn cheat_admission(&self) -> CheatAdmission {
+        self.cheat_admission
+    }
+
+    pub fn cheat_packets_sent(&self) -> u64 {
+        self.cheat_packets_sent
+    }
+
+    /// The sole `CLIENT_CHEAT` encoder, shared by API calls and raw `::` chat.
+    pub fn send_cheat(&mut self, command: &str) -> CheatSend {
+        match self.cheat_admission {
+            CheatAdmission::Denied => return CheatSend::Refused(CheatRefusal::Offline),
+            CheatAdmission::Remote(transport) => {
+                return CheatSend::Refused(CheatRefusal::RemoteProfile { transport });
+            }
+            CheatAdmission::Granted => {}
+        }
+        if !self.ingame {
+            return CheatSend::Refused(CheatRefusal::NotIngame);
+        }
+        let opcode = self.client_opcode(ClientProt::CLIENT_CHEAT);
+        self.out.p1_enc(opcode);
+        self.out.p1((command.len() + 1) as i32);
+        self.out.pjstr(command);
+        self.cheat_packets_sent = self.cheat_packets_sent.saturating_add(1);
+        CheatSend::Sent
     }
 
     fn session_cache_dir(&self) -> String {
@@ -1743,29 +1810,25 @@ impl Client {
             .unwrap_or_else(|| crate::unpack_dir().display().to_string())
     }
 
-    fn session_asset_endpoint(&self) -> (crate::BotTarget, String, u16) {
+    fn session_asset_endpoint(&self) -> (crate::Transport, String, u16) {
         match &self.session_profile {
             Some(profile) => (
-                profile.target(),
+                profile.transport(),
                 profile.asset_host().to_string(),
                 profile.asset_port(),
             ),
-            None => (
-                crate::bot_target(),
-                self.config.host.clone(),
-                self.http_port,
-            ),
+            None => (self.transport, self.config.host.clone(), self.http_port),
         }
     }
 
-    fn session_game_endpoint(&self) -> (Option<crate::BotTarget>, String, u16) {
+    fn session_game_endpoint(&self) -> (crate::Transport, String, u16) {
         match &self.session_profile {
             Some(profile) => (
-                Some(profile.target()),
+                profile.transport(),
                 profile.game_host().to_string(),
                 profile.game_port(),
             ),
-            None => (None, self.config.host.clone(), self.config.port),
+            None => (self.transport, self.config.host.clone(), self.config.port),
         }
     }
 
@@ -1776,6 +1839,10 @@ impl Client {
         ifaces_mut: Arc<Vec<Option<Arc<IfTypeMut>>>>,
         construction: ClientConstruction,
     ) -> Self {
+        let transport = construction
+            .session_profile
+            .as_ref()
+            .map_or(crate::Transport::Tcp, |profile| profile.transport());
         let resource_cache_dir =
             construction
                 .session_profile
@@ -1813,6 +1880,9 @@ impl Client {
             main_modal_packet_state: MainModalPacketState::default(),
             packet_observation: 0,
             session_profile: construction.session_profile,
+            transport,
+            cheat_admission: CheatAdmission::Denied,
+            cheat_packets_sent: 0,
             cache,
             ifaces,
             ifaces_mut,
@@ -2020,7 +2090,7 @@ impl Client {
             loop_cycle: 0,
             last_progress_percent: 0,
             last_progress_message: String::new(),
-            http_port: crate::jag_fetch_port_for(crate::bot_target()),
+            http_port: 80,
             already_started: false,
             fetch_retry_wait: Duration::from_secs(5),
             pick_count: 0,
@@ -2277,20 +2347,16 @@ impl Client {
     /// `\r\n\r\n` (client-ts `getJagChecksums`/`getJagFile` fetch the same
     /// way). `None` on connect/read failure or a bodyless response.
     fn http_get(host: &str, port: u16, path: &str) -> Option<Vec<u8>> {
-        if crate::uses_secure_transport(crate::bot_target()) {
-            Self::https_get(host, 443, path, None)
-        } else {
-            Self::http_get_plain(host, port, path)
-        }
+        Self::http_get_plain(host, port, path)
     }
 
     fn http_get_for(
-        target: crate::BotTarget,
+        transport: crate::Transport,
         host: &str,
         port: u16,
         path: &str,
     ) -> Option<Vec<u8>> {
-        if crate::uses_secure_transport(target) {
+        if transport.uses_tls() {
             Self::https_get(host, port, path, None)
         } else {
             Self::http_get_plain(host, port, path)
@@ -2371,14 +2437,13 @@ impl Client {
         None
     }
 
-    /// HTTPS in production; the explicit target also permits a local HTTP
-    /// listener in isolated tests. A missing key keeps the baked fallback.
+    /// Fetch the served key over the profile's explicit asset transport.
     pub fn fetch_login_modulus_for(
-        target: crate::BotTarget,
+        transport: crate::Transport,
         host: &str,
         port: u16,
     ) -> Option<String> {
-        let body = if crate::uses_secure_transport(target) {
+        let body = if transport.uses_tls() {
             Self::https_get(
                 host,
                 port,
@@ -2402,20 +2467,20 @@ impl Client {
     }
 
     pub fn get_jag_checksums_for(
-        target: crate::BotTarget,
+        transport: crate::Transport,
         host: &str,
         port: u16,
     ) -> Result<[i32; 9], &'static str> {
-        Self::get_jag_checksums_checked(target, host, port).map_err(AssetFetchError::message)
+        Self::get_jag_checksums_checked(transport, host, port).map_err(AssetFetchError::message)
     }
 
     pub fn get_jag_checksums_checked(
-        target: crate::BotTarget,
+        transport: crate::Transport,
         host: &str,
         port: u16,
     ) -> Result<[i32; 9], AssetFetchError> {
         let body =
-            Self::http_get_for(target, host, port, "/crc").ok_or(AssetFetchError::Connection)?;
+            Self::http_get_for(transport, host, port, "/crc").ok_or(AssetFetchError::Connection)?;
         Self::parse_jag_checksums(body).map_err(|_| AssetFetchError::Checksum)
     }
 
@@ -2453,7 +2518,7 @@ impl Client {
         checksums: &[i32; 9],
     ) -> Option<Vec<u8>> {
         Self::get_jag_file_for(
-            crate::bot_target(),
+            crate::Transport::Tcp,
             cache_dir,
             host,
             port,
@@ -2464,7 +2529,7 @@ impl Client {
     }
 
     pub fn get_jag_file_for(
-        target: crate::BotTarget,
+        transport: crate::Transport,
         cache_dir: &str,
         host: &str,
         port: u16,
@@ -2472,11 +2537,12 @@ impl Client {
         index: usize,
         checksums: &[i32; 9],
     ) -> Option<Vec<u8>> {
-        Self::get_jag_file_checked(target, cache_dir, host, port, filename, index, checksums).ok()
+        Self::get_jag_file_checked(transport, cache_dir, host, port, filename, index, checksums)
+            .ok()
     }
 
     pub fn get_jag_file_checked(
-        target: crate::BotTarget,
+        transport: crate::Transport,
         cache_dir: &str,
         host: &str,
         port: u16,
@@ -2491,7 +2557,7 @@ impl Client {
                 return Ok(bytes);
             }
         }
-        let bytes = Self::http_get_for(target, host, port, &format!("/{filename}{crc}"))
+        let bytes = Self::http_get_for(transport, host, port, &format!("/{filename}{crc}"))
             .ok_or(AssetFetchError::Connection)?;
         if Packet::getcrc(&bytes, 0, bytes.len()) != crc {
             return Err(AssetFetchError::Checksum);
@@ -2538,7 +2604,7 @@ impl Client {
             match profile {
                 Some(profile) => OnDemand::new_bound(
                     &versionlist,
-                    profile.target(),
+                    profile.transport(),
                     profile.revision(),
                     profile.game_host(),
                     profile.game_port(),
@@ -2760,12 +2826,12 @@ impl Client {
         // clients share one attempt (including a failed one); `first` gates
         // the status line so slots do not repeat it. Non-fatal: a snapshot
         // that cannot be prepared keeps the OnDemand fallback below.
-        let (asset_target, asset_host, asset_port) = self.session_asset_endpoint();
+        let (asset_transport, asset_host, asset_port) = self.session_asset_endpoint();
         let snapshot_loaded = match crate::unpack::boot_snapshot(
             &self.session_cache_dir(),
             &self.session_unpack_dir(),
             Some(crate::unpack::FetchEndpoint {
-                target: asset_target,
+                transport: asset_transport,
                 host: &asset_host,
                 port: asset_port,
             }),
@@ -2941,9 +3007,9 @@ impl Client {
             if self.shell.state == -2 {
                 return None;
             }
-            let (target, host, port) = self.session_asset_endpoint();
+            let (transport, host, port) = self.session_asset_endpoint();
             let fetched = if self.session_profile.is_some() {
-                Self::get_jag_checksums_for(target, &host, port)
+                Self::get_jag_checksums_for(transport, &host, port)
             } else {
                 Self::get_jag_checksums(&host, port)
             };
@@ -3039,9 +3105,11 @@ impl Client {
                 return None;
             }
             let cache_dir = self.session_cache_dir();
-            let (target, host, port) = self.session_asset_endpoint();
+            let (transport, host, port) = self.session_asset_endpoint();
             let bytes = if self.session_profile.is_some() {
-                Self::get_jag_file_for(target, &cache_dir, &host, port, filename, index, checksums)
+                Self::get_jag_file_for(
+                    transport, &cache_dir, &host, port, filename, index, checksums,
+                )
             } else {
                 Self::get_jag_file(&cache_dir, &host, port, filename, index, checksums)
             };
@@ -3149,11 +3217,8 @@ impl Client {
         // still `connect`s a fresh socket.
         let reuse = self.baton;
         self.baton = false;
-        let (target, host, port) = self.session_game_endpoint();
-        let connect = || match target {
-            Some(target) => ClientStream::connect_for(target, &host, port),
-            None => ClientStream::connect(&host, port),
-        };
+        let (transport, host, port) = self.session_game_endpoint();
+        let connect = || ClientStream::connect_for(transport, &host, port);
         let mut stream = if reuse {
             match self.stream.take() {
                 Some(s) => s,
@@ -10696,10 +10761,8 @@ impl Client {
 
         if (key == 13 || key == 10) && !self.chat_input.is_empty() {
             if self.chat_input.starts_with("::") {
-                self.out
-                    .p1_enc(self.client_opcode(ClientProt::CLIENT_CHEAT));
-                self.out.p1((self.chat_input.len() - 2 + 1) as i32);
-                self.out.pjstr(&self.chat_input[2..]);
+                let input = std::mem::take(&mut self.chat_input);
+                let _ = self.send_cheat(&input[2..]);
             } else {
                 let mut text = self.chat_input.clone();
                 let mut colour = 0;
@@ -14135,7 +14198,7 @@ mod audio_toggle {
 #[cfg(test)]
 mod public_login_key_tests {
     use super::Client;
-    use crate::BotTarget;
+    use crate::Transport;
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
 
@@ -14168,7 +14231,7 @@ mod public_login_key_tests {
             .unwrap();
         });
         assert_eq!(
-            Client::fetch_login_modulus_for(BotTarget::Local, "127.0.0.1", port),
+            Client::fetch_login_modulus_for(Transport::Tcp, "127.0.0.1", port),
             Some(modulus)
         );
         server.join().unwrap();
@@ -14187,7 +14250,7 @@ mod public_login_key_tests {
         });
         let started = Instant::now();
         assert_eq!(
-            Client::fetch_login_modulus_for(BotTarget::Prod, "127.0.0.1", port),
+            Client::fetch_login_modulus_for(Transport::Wss, "127.0.0.1", port),
             None
         );
         release.send(()).unwrap();
@@ -14211,12 +14274,12 @@ mod public_login_key_tests {
             .unwrap();
         });
         assert_eq!(
-            Client::get_jag_checksums_checked(BotTarget::Local, "127.0.0.1", port),
+            Client::get_jag_checksums_checked(Transport::Tcp, "127.0.0.1", port),
             Err(AssetFetchError::Checksum)
         );
         server.join().unwrap();
         assert_eq!(
-            Client::get_jag_checksums_checked(BotTarget::Local, "127.0.0.1", port),
+            Client::get_jag_checksums_checked(Transport::Tcp, "127.0.0.1", port),
             Err(AssetFetchError::Connection)
         );
     }
@@ -14248,7 +14311,7 @@ mod public_login_key_tests {
         let profile = Arc::new(
             ClientSessionProfile::new(ClientSessionConfig {
                 revision: ClientRevision::R289,
-                target: BotTarget::Prod,
+                transport: Transport::Wss,
                 game_host: "w1.rs2b2t.com".into(),
                 game_port: 443,
                 asset_host: "w1.rs2b2t.com".into(),

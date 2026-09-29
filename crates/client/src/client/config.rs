@@ -1,6 +1,5 @@
-//! Connection and launch settings for `Client`. Matches the spec's
-//! `ClientConfig`: connection params and feature flags only. RSA is chosen
-//! at login from [`crate::bot_target::BotTarget`] (baked prod vs local pem).
+//! `ClientConfig`: connection params and feature flags only.
+//! Bound sessions carry transport and RSA in `ClientSessionProfile`.
 
 pub struct ClientConfig {
     pub host: String,
