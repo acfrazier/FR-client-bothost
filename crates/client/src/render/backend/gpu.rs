@@ -350,42 +350,32 @@ fn backend_attempts() -> Vec<wgpu::Backends> {
     }
 }
 
-fn init_gpu() -> Result<Arc<GpuContext>, String> {
-    // Low power by default (on a hybrid laptop the integrated GPU driving
-    // the display, skipping the discrete GPU's cold start);
-    // `WGPU_POWER_PREF` overrides.
-    let power_preference =
-        wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::LowPower);
-    let mut last_error = String::new();
-    let mut found = None;
-    for backends in backend_attempts() {
-        let instance = wgpu::Instance::new(
-            wgpu::InstanceDescriptor {
-                backends,
-                ..wgpu::InstanceDescriptor::new_without_display_handle()
-            }
-            .with_env(),
-        );
-        match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        })) {
-            Ok(adapter) => {
-                found = Some(adapter);
-                break;
-            }
-            Err(e) => last_error = format!("no adapter: {e}"),
+/// A usable device on one backend set: an adapter, vertex-stage storage,
+/// and a device.
+fn device_on(
+    backends: wgpu::Backends,
+    power_preference: wgpu::PowerPreference,
+) -> Result<(wgpu::Device, wgpu::Queue), String> {
+    let instance = wgpu::Instance::new(
+        wgpu::InstanceDescriptor {
+            backends,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
         }
-    }
-    let adapter = found.ok_or(last_error)?;
+        .with_env(),
+    );
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+    }))
+    .map_err(|e| format!("no adapter: {e}"))?;
     // GL's aggregate storage limit can hide a lack of vertex-stage storage.
     // Reject it before layout creation so context() can select the CPU fallback.
     check_vertex_storage(
         adapter.get_downlevel_capabilities().flags,
         adapter.limits().max_storage_buffers_per_shader_stage,
     )?;
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("r274 client"),
         required_features: wgpu::Features::empty(),
         required_limits: wgpu::Limits::default(),
@@ -393,8 +383,24 @@ fn init_gpu() -> Result<Arc<GpuContext>, String> {
         memory_hints: wgpu::MemoryHints::default(),
         trace: wgpu::Trace::default(),
     }))
-    .map_err(|e| format!("device: {e}"))?;
-    Ok(GpuContext::new(device, queue))
+    .map_err(|e| format!("device: {e}"))
+}
+
+fn init_gpu() -> Result<Arc<GpuContext>, String> {
+    // Low power by default (on a hybrid laptop the integrated GPU driving
+    // the display, skipping the discrete GPU's cold start);
+    // `WGPU_POWER_PREF` overrides. A backend that yields no usable device
+    // moves on to the next attempt before the CPU fallback.
+    let power_preference =
+        wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::LowPower);
+    let mut last_error = String::new();
+    for backends in backend_attempts() {
+        match device_on(backends, power_preference) {
+            Ok((device, queue)) => return Ok(GpuContext::new(device, queue)),
+            Err(e) => last_error = e,
+        }
+    }
+    Err(last_error)
 }
 
 /// The scene pipeline: a passthrough projection (camera-space vertices,
