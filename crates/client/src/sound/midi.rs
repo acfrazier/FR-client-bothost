@@ -3,6 +3,17 @@
 //! volumes are the 274 `midivol` ladder 0 / -400 / -800 / -1200 (1/100 dB),
 //! applied by the output `Fade` — the backend plays raw.
 
+use std::any::Any;
+
+/// A song made ready off the shared `midi` lock by a [`SongPreparer`]:
+/// parsed, and (first play) with its synthesizer built. Opaque to the
+/// client; only the backend that issued the preparer can start it.
+pub struct PreparedSong(pub Box<dyn Any + Send>);
+
+/// The slow half of [`Midi::play`], detached from the backend so the caller
+/// can run it without holding the lock the audio callback renders under.
+pub type SongPreparer = Box<dyn FnOnce(&[u8]) -> PreparedSong + Send>;
+
 pub trait Midi: Send {
     /// `saveMidi(fading, data)`: start the on-demand archive-2 bytes. The
     /// 274 `midivol` ladder is applied by the output `Fade`, never here.
@@ -10,6 +21,21 @@ pub trait Midi: Send {
     /// false when the file cannot be played (parse failure), in which case
     /// the caller must not restore the fade gain.
     fn play(&mut self, data: &[u8], volume: i32, fading: bool) -> bool;
+    /// The slow half of `play` (MIDI parse; on first play the SoundFont load
+    /// and synthesizer build) as a closure that needs no backend borrow.
+    /// `Client::save_midi` takes it under a short lock, runs it with the lock
+    /// released so the audio callback keeps rendering, then swaps the result
+    /// in with [`Midi::play_prepared`]. `None` (the default) means the
+    /// backend's `play` is cheap and is simply called under the lock.
+    fn preparer(&self) -> Option<SongPreparer> {
+        None
+    }
+    /// The quick half of `play`: start a song a [`SongPreparer`] from this
+    /// backend produced. Same return contract as `play`. Only backends that
+    /// return a preparer are ever handed a prepared song.
+    fn play_prepared(&mut self, _song: PreparedSong, _volume: i32, _fading: bool) -> bool {
+        false
+    }
     /// `stopMidi()`: silence the current song.
     fn stop(&mut self);
     /// True while the backend is still rendering. Headless backends report
@@ -96,7 +122,7 @@ mod rusty {
         MidiFile, MidiFileLoopType, MidiFileSequencer, SoundFont, Synthesizer, SynthesizerSettings,
     };
 
-    use super::Midi;
+    use super::{Midi, PreparedSong, SongPreparer};
 
     const SAMPLE_RATE: i32 = 22050;
 
@@ -146,16 +172,6 @@ mod rusty {
             }
         }
 
-        fn ensure_sequencer(&mut self) {
-            if self.sequencer.is_some() {
-                return;
-            }
-            let Some(font) = shared_sound_font(&self.cache_dir) else {
-                return;
-            };
-            self.sequencer = sequencer_from_font(&font);
-        }
-
         /// True when an SF2 loaded and rustysynth can render.
         pub fn has_sound_font(&self) -> bool {
             self.sequencer.is_some()
@@ -184,23 +200,82 @@ mod rusty {
         }
     }
 
-    impl Midi for RustyMidi {
-        fn play(&mut self, data: &[u8], _volume: i32, _fading: bool) -> bool {
-            self.ensure_sequencer();
-            let Some(sequencer) = &mut self.sequencer else {
-                // No soundfont: the backend accepts (and stays silent), like
-                // `NullMidi`; there is nothing to leave playing.
-                return true;
+    /// What a [`RustyMidi`] preparer hands back: the parsed song, and the
+    /// sequencer when this was the first play and it had to be built.
+    struct Prepared {
+        /// A freshly built sequencer for a backend that had none.
+        sequencer: Option<MidiFileSequencer>,
+        outcome: Outcome,
+    }
+
+    enum Outcome {
+        /// No SoundFont/synthesizer: the backend accepts and stays silent,
+        /// like `NullMidi`; there is nothing to leave playing.
+        Silent,
+        /// The bytes are not a MIDI file the backend can play.
+        Rejected,
+        Song(Arc<MidiFile>),
+    }
+
+    /// The slow half of a play: SoundFont load + synthesizer build (only when
+    /// the backend has no sequencer yet) and the MIDI parse. Touches no
+    /// backend state, so it runs without the shared lock.
+    fn prepare(cache_dir: &str, needs_sequencer: bool, data: &[u8]) -> Prepared {
+        let sequencer = if needs_sequencer {
+            shared_sound_font(cache_dir).and_then(|font| sequencer_from_font(&font))
+        } else {
+            None
+        };
+        if needs_sequencer && sequencer.is_none() {
+            return Prepared {
+                sequencer,
+                outcome: Outcome::Silent,
             };
-            let Ok(midi_file) =
-                MidiFile::new_with_loop_type(&mut Cursor::new(data), MidiFileLoopType::RpgMaker)
-            else {
-                // A rejected swap-in must not silently keep the old song: the
-                // caller leaves the fade at the floor, so the previous song
-                // cannot come back at full volume.
+        }
+        let outcome = match MidiFile::new_with_loop_type(
+            &mut Cursor::new(data),
+            MidiFileLoopType::RpgMaker,
+        ) {
+            Ok(midi_file) => Outcome::Song(Arc::new(midi_file)),
+            // A rejected swap-in must not silently keep the old song: the
+            // caller leaves the fade at the floor, so the previous song
+            // cannot come back at full volume.
+            Err(_) => Outcome::Rejected,
+        };
+        Prepared { sequencer, outcome }
+    }
+
+    impl Midi for RustyMidi {
+        fn play(&mut self, data: &[u8], volume: i32, fading: bool) -> bool {
+            let prepared = prepare(&self.cache_dir, self.sequencer.is_none(), data);
+            self.play_prepared(PreparedSong(Box::new(prepared)), volume, fading)
+        }
+
+        fn preparer(&self) -> Option<SongPreparer> {
+            let cache_dir = self.cache_dir.clone();
+            let needs_sequencer = self.sequencer.is_none();
+            Some(Box::new(move |data| {
+                PreparedSong(Box::new(prepare(&cache_dir, needs_sequencer, data)))
+            }))
+        }
+
+        fn play_prepared(&mut self, song: PreparedSong, _volume: i32, _fading: bool) -> bool {
+            let Ok(prepared) = song.0.downcast::<Prepared>() else {
+                // Not from this backend's preparer: nothing was started.
                 return false;
             };
-            let midi_file = Arc::new(midi_file);
+            let Prepared { sequencer, outcome } = *prepared;
+            if self.sequencer.is_none() {
+                self.sequencer = sequencer;
+            }
+            let midi_file = match outcome {
+                Outcome::Silent => return true,
+                Outcome::Rejected => return false,
+                Outcome::Song(midi_file) => midi_file,
+            };
+            let Some(sequencer) = &mut self.sequencer else {
+                return true;
+            };
             // One-shot, like the native player behind Java `midisave`: a
             // finished song reports `is_playing()` false, so the next
             // `saveMidi(fading=true)` replaces the file immediately.

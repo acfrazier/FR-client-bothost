@@ -13104,9 +13104,9 @@ impl Client {
     /// current song out, swapping in `music_tick` once the ramp hits the
     /// floor.
     pub fn save_midi(&mut self, data: &[u8], fading: bool) {
-        let mut midi = self.midi.lock().unwrap();
-        if !fading || !self.midi_playing || !midi.is_playing() {
-            if midi.play(data, self.midi_volume, fading) {
+        let play_now = !fading || !self.midi_playing || !self.midi.lock().unwrap().is_playing();
+        if play_now {
+            if self.play_midi(data, self.midi_volume, fading) {
                 self.fade.lock().unwrap().finish_fade(self.midi_volume);
                 self.midi_playing = true;
                 self.midi_pending = None;
@@ -13119,6 +13119,27 @@ impl Client {
         }
     }
 
+    /// Start `data` on the backend without holding the `midi` lock through
+    /// the slow part. The audio callback renders under that lock, so a
+    /// MIDI parse, and on the first song the SoundFont load and synthesizer
+    /// build, would stall it. The backend's preparer is taken under a short
+    /// lock, run with the lock released, and its result swapped in under
+    /// another short lock. Backends without a preparer just `play` under
+    /// the lock.
+    fn play_midi(&self, data: &[u8], volume: i32, fading: bool) -> bool {
+        let preparer = self.midi.lock().unwrap().preparer();
+        match preparer {
+            Some(prepare) => {
+                let song = prepare(data);
+                self.midi
+                    .lock()
+                    .unwrap()
+                    .play_prepared(song, volume, fading)
+            }
+            None => self.midi.lock().unwrap().play(data, volume, fading),
+        }
+    }
+
     /// `musicTick`: once per mainloop pass, swap the pending zone song in
     /// when the fade-out ramp has reached the floor (Java `midisave` starts
     /// the new song at the current `midivol`, no fade-in). The latch is only
@@ -13128,7 +13149,7 @@ impl Client {
             return;
         }
         if let Some((data, volume)) = self.midi_pending.take() {
-            if self.midi.lock().unwrap().play(&data, volume, false) {
+            if self.play_midi(&data, volume, false) {
                 self.fade.lock().unwrap().finish_fade(volume);
             }
             // A rejected swap-in leaves the fade at the floor: the new song

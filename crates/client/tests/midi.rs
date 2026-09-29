@@ -357,6 +357,38 @@ mod rusty {
         m.render(&mut [0f32; 64], &mut [0f32; 64]);
     }
 
+    /// The off-lock path (`preparer` + `play_prepared`, what `save_midi`
+    /// uses) keeps `play`'s contract: a rejected file returns false and
+    /// leaves the running song alone, a good one starts and is the one
+    /// rendered afterwards.
+    #[test]
+    fn prepared_play_rejects_garbage_and_keeps_the_running_song() {
+        let engine = client::engine_dir();
+        let font = engine.join("public/client/SCC1_Florestan.sf2");
+        let Ok(song) = std::fs::read(client::content_dir().join("songs/scape main.mid")) else {
+            return;
+        };
+        let Some(mut m) = RustyMidi::with_sound_font(&font.display().to_string()) else {
+            return;
+        };
+        let prepare = m.preparer().expect("RustyMidi prepares off the lock");
+        assert!(m.play_prepared(prepare(&song), 0, true));
+        assert!(m.is_playing());
+
+        let prepare = m.preparer().expect("RustyMidi prepares off the lock");
+        assert!(
+            !m.play_prepared(prepare(&[0x4d, 0x54, 0x68, 0x64]), 0, true),
+            "a truncated file must be rejected"
+        );
+        assert!(
+            m.is_playing(),
+            "a rejected song must not stop the current one"
+        );
+        let (mut left, mut right) = (vec![0f32; 22050], vec![0f32; 22050]);
+        m.render(&mut left, &mut right);
+        assert!(left.iter().any(|s| s.abs() > 0.01));
+    }
+
     /// Clip guard for the scape_main symptom: render the real title song
     /// through the engine soundfont at full volume (fade gain 1.0) and
     /// assert no sample reaches the i16 rail (`max(|i16|) < 32767`). Skips

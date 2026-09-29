@@ -8,7 +8,7 @@ pub mod output;
 pub mod tone;
 
 pub use jagfx::JagFX;
-pub use midi::{Midi, NullMidi};
+pub use midi::{Midi, NullMidi, PreparedSong, SongPreparer};
 pub use output::{Fade, WavePlayback};
 pub use tone::Tone;
 
