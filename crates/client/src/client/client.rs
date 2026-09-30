@@ -1438,17 +1438,10 @@ pub struct Client {
     /// first login). `lostCon` reestablishes with `reconnect = true`
     /// (wrapper opcode 18); the flag is how the reconnect path is observed.
     pub last_login_reconnect: Option<bool>,
-    /// When true, transport loss returns control to the embedding host
-    /// instead of opening an unaccounted reconnect socket inside `lost_con`.
-    external_reconnect_owner: bool,
-    /// Host-only title presentation. `Some` replaces the Java account form
-    /// with one external-login button labelled for this slot. It can be set
-    /// only while [`Self::external_reconnect_owner`] is true.
-    hosted_title_label: Option<String>,
-    /// One-shot request raised by a hosted title button or Enter. The
-    /// embedding host consumes it and owns the actual login credentials,
-    /// queue permit, and handshake.
-    title_login_requested: bool,
+    /// Host-title state bitset: external reconnect owner, hosted chrome, and a
+    /// pending login request. This replaces the pre-existing owner `bool`, so
+    /// the hosted title does not grow each `Client`.
+    hosted_title_state: u8,
     /// Socket-adopt flag: when true, the next `login(reconnect = true)`
     /// reuses `stream` (`Client::adopt_from`) instead of opening a new TCP
     /// — the opcode-18 handshake runs in place so a channel-head tune swaps
@@ -1507,6 +1500,9 @@ const SERVER_TIMEOUT: Duration = Duration::from_secs(15);
 /// Java's intent is one keepalive after roughly one second without an
 /// outbound flush. Elapsed time preserves that bound for slow-pumped slots.
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
+const HOST_TITLE_EXTERNAL_OWNER: u8 = 1 << 0;
+const HOST_TITLE_CHROME: u8 = 1 << 1;
+const HOST_TITLE_LOGIN_REQUESTED: u8 = 1 << 2;
 
 impl Client {
     /// Default construction: revision 274 public tables and framing.
@@ -2200,9 +2196,7 @@ impl Client {
             idk_design_button1: None,
             idk_design_button2: None,
             last_login_reconnect: None,
-            external_reconnect_owner: false,
-            hosted_title_label: None,
-            title_login_requested: false,
+            hosted_title_state: 0,
             baton: false,
             logout_timer: 0,
             reboot_timer: 0,
@@ -3323,7 +3317,7 @@ impl Client {
                 .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
         }
 
-        if response == 1 && !self.external_reconnect_owner {
+        if response == 1 && !self.external_reconnect_owner() {
             thread::sleep(Duration::from_secs(2));
             return self.login(username, password, reconnect);
         }
@@ -3342,7 +3336,7 @@ impl Client {
                 mes2: format!("Your profile will be transferred in: {remaining} seconds"),
                 retry_after: Some(retry_after),
             };
-            if self.external_reconnect_owner {
+            if self.external_reconnect_owner() {
                 drop(stream);
                 return Err(self.fail_title_login(transfer_error(), reconnect));
             }
@@ -10363,25 +10357,40 @@ impl Client {
     /// policy. The default remains Java-compatible standalone behavior.
     /// Relinquishing ownership also removes host-only title state.
     pub fn set_external_reconnect_owner(&mut self, external: bool) {
-        self.external_reconnect_owner = external;
-        if !external {
-            self.hosted_title_label = None;
-            self.title_login_requested = false;
+        if external {
+            self.hosted_title_state |= HOST_TITLE_EXTERNAL_OWNER;
+        } else {
+            self.hosted_title_state = 0;
         }
+    }
+
+    fn external_reconnect_owner(&self) -> bool {
+        self.hosted_title_state & HOST_TITLE_EXTERNAL_OWNER != 0
     }
 
     /// Replace the Java account form with the host's single-login title for
     /// `label`. Calls made without an external reconnect owner are ignored.
-    /// Updating the label dirties the title chrome without touching the
-    /// client's retained transport credentials.
+    /// The label reuses the existing title username buffer instead of adding
+    /// another per-client allocation.
     pub fn set_hosted_title_label(&mut self, label: Option<&str>) {
-        let label = if self.external_reconnect_owner {
-            label
+        if !self.external_reconnect_owner() {
+            return;
+        }
+        let hosted = label.is_some();
+        let label_changed = label.is_some_and(|label| self.login_user.as_str() != label);
+        let was_hosted = self.hosted_title_state & HOST_TITLE_CHROME != 0;
+        let changed = was_hosted != hosted || label_changed;
+        if hosted {
+            self.hosted_title_state |= HOST_TITLE_CHROME;
         } else {
-            None
-        };
-        if self.hosted_title_label.as_deref() != label {
-            self.hosted_title_label = label.map(str::to_owned);
+            self.hosted_title_state &= !HOST_TITLE_CHROME;
+        }
+        if label_changed {
+            let label = label.expect("changed label is present");
+            self.login_user.clear();
+            self.login_user.push_str(label);
+        }
+        if changed {
             self.redraw_frame = true;
         }
     }
@@ -10389,14 +10398,15 @@ impl Client {
     /// Display name shown by the host-only title, if external ownership is
     /// active.
     pub fn hosted_title_label(&self) -> Option<&str> {
-        self.external_reconnect_owner
-            .then_some(self.hosted_title_label.as_deref())
-            .flatten()
+        (self.external_reconnect_owner() && self.hosted_title_state & HOST_TITLE_CHROME != 0)
+            .then_some(self.login_user.as_str())
     }
 
     /// Consume one host-owned title login request.
     pub fn take_title_login_request(&mut self) -> bool {
-        std::mem::take(&mut self.title_login_requested)
+        let requested = self.hosted_title_state & HOST_TITLE_LOGIN_REQUESTED != 0;
+        self.hosted_title_state &= !HOST_TITLE_LOGIN_REQUESTED;
+        requested
     }
 
     /// `lostCon` from Java (`Client.java` 6147): in-game connection loss. A
@@ -10413,7 +10423,7 @@ impl Client {
             return;
         }
         self.ingame = false;
-        if self.external_reconnect_owner {
+        if self.external_reconnect_owner() {
             self.stream = None;
             self.last_response = None;
             return;
@@ -10475,7 +10485,7 @@ impl Client {
                 }
             }
             if clicked || enter {
-                self.title_login_requested = true;
+                self.hosted_title_state |= HOST_TITLE_LOGIN_REQUESTED;
             }
             return;
         }
@@ -10540,8 +10550,8 @@ impl Client {
                 x,
                 y,
             ) {
-                if self.external_reconnect_owner {
-                    self.title_login_requested = true;
+                if self.external_reconnect_owner() {
+                    self.hosted_title_state |= HOST_TITLE_LOGIN_REQUESTED;
                 } else {
                     let user = self.login_user.clone();
                     let pass = self.login_pass.clone();
@@ -12675,7 +12685,7 @@ impl Client {
         // A host-owned session is unattended by definition: the host, not
         // the Java inactivity policy, owns its lifetime. Suppress the timer
         // for both revisions without manufacturing user input or packets.
-        if self.external_reconnect_owner {
+        if self.external_reconnect_owner() {
             self.shell.idle_cycles = 0;
         } else if self.revision.is_289() {
             self.shell.idle_cycles += 1;
