@@ -936,6 +936,9 @@ pub struct Client {
     /// Whether the attached renderer can consume nav paint directly.
     /// Maintained by the host from the renderer's actual backend kind.
     nav_debug_drawable: bool,
+    /// Host paint lease: suppresses the main modal raster while retaining the
+    /// already-painted side and tab chrome.
+    journal_paint_hidden: bool,
     pub scene_state: i32,
     /// `inMultizone` from client-ts (TS 132): set by `SET_MULTIWAY`.
     pub in_multizone: i32,
@@ -1902,6 +1905,7 @@ impl Client {
             nav_debug_paint: None,
             nav_debug_paint_generation: 0,
             nav_debug_drawable: false,
+            journal_paint_hidden: false,
             scene_state: 0,
             in_multizone: 0,
             build_minusedlevel: 0,
@@ -13087,6 +13091,26 @@ impl Client {
 
     pub fn nav_debug_drawable(&self) -> bool {
         self.nav_debug_drawable
+    }
+
+    /// Hide only the main modal's paint while the host owns its journal
+    /// surface. The simulation state and modal ids remain untouched. Releasing
+    /// the lease invalidates the retained sidebar and tab chrome so the normal
+    /// raster path resumes.
+    pub fn set_journal_paint_hidden(&mut self, hidden: bool) {
+        if self.journal_paint_hidden == hidden {
+            return;
+        }
+        self.journal_paint_hidden = hidden;
+        if !hidden {
+            self.redraw_side = true;
+            self.redraw_icons = true;
+        }
+    }
+
+    /// Whether host-owned journal painting currently hides the main modal.
+    pub fn journal_paint_hidden(&self) -> bool {
+        self.journal_paint_hidden
     }
 
     /// Flip the client's `lowmem` mode live (the panel's Music/SFX toggle):

@@ -610,7 +610,9 @@ impl Renderer {
             }
             if client.main_modal_id != -1 {
                 self.animate_interface(client, client.main_modal_id, client.world_update_num);
-                self.draw_interface(client, client.main_modal_id, 0, 0, 0, &mut surface);
+                if !client.journal_paint_hidden() {
+                    self.draw_interface(client, client.main_modal_id, 0, 0, 0, &mut surface);
+                }
             }
             if client.is_menu_open && client.menu_area == 0 {
                 self.draw_minimenu(client, &mut surface);
@@ -2067,6 +2069,12 @@ impl Renderer {
     /// minimenu (TS 11113), and blit at (553, 205). The trailing
     /// `areaGame.setPixels()` (no global Pix2D target) is not ported.
     pub(crate) fn draw_side(&mut self, client: &mut Client) {
+        // Keep the already-composited side panel while the host owns journal
+        // paint. The caller still runs animate_interface and clears the
+        // redraw latch, so interface state continues to advance.
+        if client.journal_paint_hidden() {
+            return;
+        }
         let mut side = self.area_side.take();
         if let Some(side) = side.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut side.pixels, side.width, side.height);
@@ -3423,6 +3431,11 @@ impl Renderer {
                 .out
                 .p1_enc(client.client_opcode(ClientProt::TUT_CLICKSIDE));
             client.out.p1(client.active_icon);
+        }
+        if client.journal_paint_hidden() {
+            // Packet-producing draw_icons edges above remain live; only the
+            // side/tab raster and blits are retained from the pre-lease frame.
+            return;
         }
         if let Some(area) = self.area_backhmid1.as_mut() {
             if let Some(backhmid1) = &self.media.backhmid1 {
