@@ -23,11 +23,10 @@
 //!
 //! Known divergences from the CPU path: triangles are rasterized with the
 //! GPU's rules and shaded per pixel (textured faces sample the model
-//! texture array, see `gpu_atlas.rs`), and the 2D chrome draws on the CPU
-//! into the persistent `draw_area`, which `finish` uploads as one RGBA8
-//! texture and composites over the scene. Scene-window overlay alpha is
-//! the coverage byte (255 = opaque chrome, 0 = the 3D hole, 1..=254 =
-//! translucent nav paint).
+//! texture array, see `gpu_atlas.rs`). Nav paint is projected into direct
+//! GPU primitives over the scene. Other 2D viewport overlays and chrome
+//! remain CPU-drawn; `finish` uploads their RGBA8 atlas lazily and uses the
+//! coverage byte to expose the 3D/nav scene beneath it.
 
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -39,6 +38,7 @@ use crate::render::backend::{
     BackendKind, CpuBackend, FrameKind, FrameOutput, RenderBackend, TextureHandle,
 };
 use crate::render::draw::get_av_h;
+use crate::render::nav_debug::{NavMesh, NavVertex};
 use crate::render::world::{GpuVertex, SceneMesh};
 use crate::render::Renderer;
 
@@ -136,6 +136,8 @@ struct GpuContext {
     /// over the scene); holds the chrome shader module.
     chrome_layout: wgpu::BindGroupLayout,
     chrome_pipeline: wgpu::RenderPipeline,
+    /// Screen-space nav primitives blended directly over the scene target.
+    nav_pipeline: wgpu::RenderPipeline,
 }
 
 impl GpuContext {
@@ -188,6 +190,16 @@ impl GpuContext {
                 immediate_size: 0,
             });
         let pipeline_scene = make_pipeline(&device, &scene_pipeline_layout, &scene_shader);
+        let nav_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("r274 nav overlay shader"),
+            source: wgpu::ShaderSource::Wgsl(NAV_SHADER.into()),
+        });
+        let nav_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("r274 nav overlay layout"),
+            bind_group_layouts: &[],
+            immediate_size: 0,
+        });
+        let nav_pipeline = make_nav_pipeline(&device, &nav_pipeline_layout, &nav_shader);
         drop(assets_lock);
 
         let chrome_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -276,6 +288,7 @@ impl GpuContext {
             assets,
             scene_data_layout,
             pipeline_scene,
+            nav_pipeline,
             chrome_layout,
             chrome_pipeline,
         })
@@ -664,6 +677,39 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }
 "#;
 
+/// Screen-space nav geometry. Positions use the 512×334 game viewport's
+/// integer projection; packed colour/alpha comes directly from the panel
+/// theme and established overlay opacity.
+const NAV_SHADER: &str = r#"
+struct VsIn {
+    @location(0) pos: vec2<f32>,
+    @location(1) rgba: vec4<f32>,
+};
+
+struct VsOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) rgba: vec4<f32>,
+};
+
+@vertex
+fn vs_main(in: VsIn) -> VsOut {
+    var out: VsOut;
+    out.position = vec4<f32>(
+        in.pos.x * (2.0 / 512.0) - 1.0,
+        1.0 - in.pos.y * (2.0 / 334.0),
+        0.0,
+        1.0,
+    );
+    out.rgba = in.rgba;
+    return out;
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    return in.rgba;
+}
+"#;
+
 /// The 2D chrome composite shader: a full-frame passthrough that samples
 /// the CPU-drawn `draw_area` uploaded as one RGBA8 texture (the RuneLite
 /// pattern — the UI is never recorded as GPU quads). The alpha byte the
@@ -722,11 +768,9 @@ const MINIMAP_W: u32 = 172;
 const MINIMAP_H: u32 = 156;
 
 /// The wgpu scene backend (see the module docs). `begin`/`scene`/`chrome`
-/// delegate to the inner `CpuBackend` (the 2D chrome stays CPU this slice);
-/// `scene` rasterizes the 3D world into `scene_texture` and draws the
-/// overlays into `area_game` as pixels; `composite_scene` blits that into
-/// the persistent `draw_area`; `finish` uploads chrome (lazy) + minimap
-/// and composites them over the scene into a stable present texture.
+/// delegate to the inner `CpuBackend` for UI fidelity; the 3D world and nav
+/// overlay are GPU primitives, while the remaining CPU chrome is uploaded
+/// lazily and composited with the live minimap into the stable frame target.
 pub struct GpuBackend {
     _gpu_storage: crate::profiling::Allocation,
     vertex_storage: crate::profiling::Allocation,
@@ -757,6 +801,10 @@ pub struct GpuBackend {
     /// The captured scene triangles, reused frame to frame so the capture
     /// keeps its allocation.
     scene_mesh: SceneMesh,
+    /// Projected nav triangles and ordering/dedup scratch, reused across
+    /// frames and uploaded through `vertex_buf` in capacity-bounded chunks
+    /// after scene submission. Nav never grows the scene's GPU allocation.
+    nav_mesh: NavMesh,
     /// The 2D chrome/title half: the CPU fidelity path the frame stages
     /// delegate to. The chrome draws into the persistent `draw_area`.
     cpu: CpuBackend,
@@ -1072,6 +1120,7 @@ impl GpuBackend {
             vertex_buf,
             vertex_buf_capacity,
             scene_mesh: SceneMesh::default(),
+            nav_mesh: NavMesh::default(),
             cpu: CpuBackend,
             chrome_texture,
             chrome_bind_group,
@@ -1170,6 +1219,26 @@ impl GpuBackend {
         handle.read_back()
     }
 
+    fn ensure_vertex_buffer(&mut self, bytes: usize) {
+        if bytes <= self.vertex_buf_capacity {
+            return;
+        }
+        let storage = crate::profiling::Allocation::new(bytes as u64, 0);
+        self.vertex_buf_capacity = bytes;
+        self.vertex_buf = self.context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("r274 scene/nav vertices"),
+            size: bytes as u64,
+            usage: wgpu::BufferUsages::VERTEX
+                | wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.scene_bind_group = self
+            .context
+            .scene_bind_group(&self.brightness_buf, &self.vertex_buf);
+        self.vertex_storage = storage;
+    }
+
     /// Upload the mesh and rasterize it into `scene_texture` in capture
     /// (painter) order: one alpha-blended draw, no depth test. No readback:
     /// the composite step copies the texture into the full-frame on the GPU.
@@ -1180,22 +1249,7 @@ impl GpuBackend {
             return;
         }
         let bytes = std::mem::size_of_val(vertices);
-        if bytes > self.vertex_buf_capacity {
-            let storage = crate::profiling::Allocation::new(bytes as u64, 0);
-            self.vertex_buf_capacity = bytes;
-            self.vertex_buf = self.context.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("r274 scene vertices"),
-                size: bytes as u64,
-                usage: wgpu::BufferUsages::VERTEX
-                    | wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            self.scene_bind_group = self
-                .context
-                .scene_bind_group(&self.brightness_buf, &self.vertex_buf);
-            self.vertex_storage = storage;
-        }
+        self.ensure_vertex_buffer(bytes);
         self.context
             .queue
             .write_buffer(&self.vertex_buf, 0, bytemuck::cast_slice(vertices));
@@ -1239,10 +1293,61 @@ impl GpuBackend {
         self.scene_ready = true;
     }
 
-    /// CPU overlay pixels into `area_game` plus coverage marks. Runs on
-    /// the live scene and on a `scene_state==1` freeze so main-modals
-    /// (`ship_journey`, `glidermap`) stay over the last 3D texture.
+    fn render_nav_overlay(&mut self, core: &mut Client, r: &mut Renderer) {
+        if !self.scene_ready || self.last_kind != FrameKind::Game || core.scene_state != 2 {
+            return;
+        }
+        crate::render::nav_debug::build_gpu_mesh(core, r, &mut self.nav_mesh);
+        if self.nav_mesh.vertices.is_empty() {
+            return;
+        }
+        // Keep nav paint memory-neutral: the scene owns this streaming
+        // buffer's capacity. Large collision meshes are split only at
+        // triangle boundaries rather than growing per-bot GPU storage.
+        let vertex_size = std::mem::size_of::<crate::render::nav_debug::NavVertex>();
+        let vertices_per_chunk = (self.vertex_buf_capacity / vertex_size / 3) * 3;
+        debug_assert!(vertices_per_chunk >= 3);
+        for vertices in self.nav_mesh.vertices.chunks(vertices_per_chunk) {
+            let bytes = std::mem::size_of_val(vertices);
+            self.context
+                .queue
+                .write_buffer(&self.vertex_buf, 0, bytemuck::cast_slice(vertices));
+            let mut encoder =
+                self.context
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("r274 nav overlay encoder"),
+                    });
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("r274 nav overlay pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.scene_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(&self.context.nav_pipeline);
+                pass.set_vertex_buffer(0, self.vertex_buf.slice(..bytes as u64));
+                pass.draw(0..vertices.len() as u32, 0..1);
+            }
+            self.context.queue.submit([encoder.finish()]);
+        }
+    }
+
+    /// CPU entity/interface overlays into `area_game` plus coverage marks.
+    /// Nav paint is submitted first as GPU geometry over the live scene;
+    /// freezes retain the last scene/nav target without accumulating alpha.
     fn draw_scene_overlays(&mut self, core: &mut Client, r: &mut Renderer) {
+        self.render_nav_overlay(core, r);
         if should_cls_scene_overlays(self.last_kind, core.scene_state) {
             if let Some(game) = r.area_game.as_mut() {
                 let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
@@ -1251,13 +1356,9 @@ impl GpuBackend {
         }
         self.overlay_coverage.fill(0);
         let _cov_guard = coverage_guard(&mut self.overlay_coverage, SCENE_W, SCENE_H);
-        let mut game = r.area_game.take();
-        if let Some(game) = game.as_mut() {
-            let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
+        if let Some(game) = r.area_game.as_ref() {
             r.pix3d.set_clipping(game.width, game.height);
-            crate::render::nav_debug::draw(&mut *core, r, &mut surface);
         }
-        r.area_game = game;
         r.entity_overlays(core);
         r.coord_arrow(core);
         r.other_overlays(core);
@@ -1329,6 +1430,57 @@ fn make_pipeline(
     })
 }
 
+fn make_nav_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("r274 nav overlay"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            compilation_options: Default::default(),
+            buffers: &[wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<NavVertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Unorm8x4],
+            }],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            unclipped_depth: false,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            conservative: false,
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                blend: Some(wgpu::BlendState {
+                    color: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::SrcAlpha,
+                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                    alpha: wgpu::BlendComponent::OVER,
+                }),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 impl RenderBackend for GpuBackend {
     /// Frame start: delegate to the CPU backend. The 2D chrome draws into
     /// the persistent `draw_area`, so the `redraw_frame` gating (the
@@ -1348,9 +1500,9 @@ impl RenderBackend for GpuBackend {
     /// `gameDrawMain`'s 3D pass on the GPU: the same entity/camera/prep
     /// steps as the CPU backend, then the CPU `render_all` pass with its
     /// triangles captured (`RenderWorld::capture_scene`) and rasterized in
-    /// that order into the wgpu scene texture. The overlays (chat bubbles,
-    /// modal, the minimenu) draw into `area_game` as pixels (the CPU writes
-    /// — no recorder); `composite_scene` blits them over the scene at (4, 4).
+    /// that order into the wgpu scene texture. Nav triangles draw directly
+    /// onto that target; chat bubbles, modals and the minimenu remain CPU
+    /// viewport overlays composited afterward.
     fn scene(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
         if kind != FrameKind::Game || core.scene_state != 2 {
             // Loading (`scene_state == 1`): do not rebuild the mesh and do

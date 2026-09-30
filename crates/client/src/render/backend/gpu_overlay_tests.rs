@@ -243,3 +243,92 @@ fn npc_hint_production_gpu_blink_move_clear_cache_and_freeze() {
     );
     eprintln!("GPU overlay proof executed: blink, x/z movement, clear, cache, late writer, held minimap, last-FBO freeze");
 }
+
+#[test]
+#[ignore = "requires a GPU adapter; invoke explicitly for the production overlay proof"]
+fn nav_overlay_bypasses_cpu_surface_and_coverage() {
+    let mut backend = GpuBackend::try_new().expect("GPU required for nav overlay proof");
+    let mut renderer = Renderer::new(false);
+    renderer.area_game = Some(PixMap::new(SCENE_W as i32, SCENE_H as i32));
+    let mut core = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: std::env::temp_dir()
+            .join(format!("nav-overlay-no-cache-{}", std::process::id()))
+            .display()
+            .to_string(),
+        members: true,
+        lowmem: false,
+    });
+    core.cam_x = 0;
+    core.cam_y = -500;
+    core.cam_z = 0;
+    core.cam_pitch = 96;
+    core.cam_yaw = 0;
+    core.scene_state = 2;
+    core.set_nav_debug_paint(Some(crate::render::nav_debug::NavDebugPaint {
+        path: vec![(3, 10, false)],
+        show_path: true,
+        ..Default::default()
+    }));
+
+    let mut encoder = backend
+        .context
+        .device
+        .create_command_encoder(&Default::default());
+    {
+        let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &backend.scene_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.0,
+                        g: 0.0,
+                        b: 1.0,
+                        a: 1.0,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..Default::default()
+        });
+    }
+    backend.context.queue.submit([encoder.finish()]);
+    backend.scene_ready = true;
+    backend.last_kind = FrameKind::Game;
+
+    backend.draw_scene_overlays(&mut core, &mut renderer);
+    assert!(
+        !backend.nav_mesh.vertices.is_empty(),
+        "retained nav facts must become GPU primitives"
+    );
+    let scene = TextureHandle {
+        device: backend.context.device.clone(),
+        queue: backend.context.queue.clone(),
+        view: backend.scene_view.clone(),
+        width: SCENE_W,
+        height: SCENE_H,
+    }
+    .read_back();
+    assert!(
+        scene.iter().any(|&pixel| pixel != 0x0000ff),
+        "GPU nav primitives must change the scene target"
+    );
+
+    assert!(
+        renderer
+            .area_game
+            .as_ref()
+            .expect("game surface")
+            .pixels
+            .iter()
+            .all(|&pixel| pixel == 0),
+        "nav geometry must not CPU-raster into area_game"
+    );
+    assert!(
+        backend.overlay_coverage.iter().all(|&alpha| alpha == 0),
+        "nav geometry must not enter the CPU chrome coverage upload"
+    );
+}
