@@ -16,8 +16,10 @@ pub fn try_bunzip2(src: &[u8]) -> io::Result<Vec<u8>> {
                 Some(&bzip2::Error::Data)
             ) =>
         {
-            // The removed header cannot tell us that a block exceeds 100k.
-            // Preserve support for those streams; CRC errors still fail.
+            // The removed header cannot tell us that a block exceeds 100k,
+            // and libbz2 reports that overflow as the same Data error as CRC
+            // or table corruption. Retry once with the 900k hint: large-block
+            // streams decode, corrupt streams fail again (at most 2x work).
             decode(src, b"BZh9")
         }
         result => result,
