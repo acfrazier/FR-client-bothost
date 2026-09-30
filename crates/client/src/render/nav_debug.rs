@@ -158,15 +158,29 @@ pub(crate) struct NavVertex {
     pub rgba: [u8; 4],
 }
 
-/// Project the retained host paint into GPU triangles for this camera.
-
+/// Reusable projected nav triangles and ordering/dedup scratch.
 #[derive(Default)]
 pub(crate) struct NavMesh {
     pub vertices: Vec<NavVertex>,
     quads: Vec<Quad>,
     edges: std::collections::HashSet<(i32, i32, i32, i32)>,
 }
-/// `out` is backend-owned scratch and keeps its allocation across frames.
+
+impl NavMesh {
+    /// Drop high-water allocations as soon as this backend stops painting.
+    pub(crate) fn release(&mut self) {
+        *self = Self::default();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retained_capacity(&self) -> usize {
+        self.vertices.capacity() + self.quads.capacity() + self.edges.capacity()
+    }
+}
+
+/// Project the retained host paint into GPU triangles for this camera.
+/// Active paint reuses allocations; the backend calls [`NavMesh::release`]
+/// when the retained paint disappears.
 pub(crate) fn build_gpu_mesh(client: &mut Client, r: &mut Renderer, mesh: &mut NavMesh) {
     mesh.vertices.clear();
     mesh.quads.clear();
@@ -416,8 +430,8 @@ fn append_quad_stroke(out: &mut Vec<NavVertex>, quad: &Quad) {
     }
 }
 
-/// A one-pixel screen-space line expressed as two GPU triangles. Pixel
-/// centres remain aligned with the integer projection used by Pix2D.
+/// A one-pixel screen-space line expressed as two GPU triangles plus square
+/// endpoint caps. Integer coordinates name Pix2D pixel centres.
 fn append_line(out: &mut Vec<NavVertex>, a: (i32, i32), b: (i32, i32), colour: i32, alpha: i32) {
     let dx = (b.0 - a.0) as f32;
     let dy = (b.1 - a.1) as f32;
@@ -434,6 +448,8 @@ fn append_line(out: &mut Vec<NavVertex>, a: (i32, i32), b: (i32, i32), colour: i
     let p3 = (a.0 as f32 - nx, a.1 as f32 - ny);
     append_triangle(out, p0, p1, p2, colour, alpha);
     append_triangle(out, p0, p2, p3, colour, alpha);
+    append_pixel(out, a.0, a.1, colour, alpha);
+    append_pixel(out, b.0, b.1, colour, alpha);
 }
 
 fn append_pixel(out: &mut Vec<NavVertex>, x: i32, y: i32, colour: i32, alpha: i32) {

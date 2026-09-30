@@ -4,6 +4,9 @@ pub mod diagnostics;
 pub mod draw;
 pub mod media;
 pub mod nav_debug;
+#[cfg(test)]
+#[allow(dead_code)]
+pub mod nav_debug_old;
 pub mod renderer;
 pub mod store;
 pub mod world;
