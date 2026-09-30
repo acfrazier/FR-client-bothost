@@ -334,14 +334,45 @@ impl RenderBackend for CpuBackend {
                     let welcome_y = (h / 2) - 30;
                     let button_y = (h / 2) + 20;
                     if let Some(b12) = r.media.b12.as_ref() {
-                        b12.centre_string_tag(
-                            &mut surface,
-                            "Welcome to RuneScape",
-                            x,
-                            welcome_y,
-                            Colour::YELLOW,
-                            true,
-                        );
+                        // The embedding host owns the Java message lines here:
+                        // it writes them while its login waits (queue, retry,
+                        // transfer) and clears them otherwise.
+                        if core.login_mes1.is_empty() && core.login_mes2.is_empty() {
+                            b12.centre_string_tag(
+                                &mut surface,
+                                "Welcome to RuneScape",
+                                x,
+                                welcome_y,
+                                Colour::YELLOW,
+                                true,
+                            );
+                        } else if core.login_mes1.is_empty() {
+                            b12.centre_string_tag(
+                                &mut surface,
+                                &core.login_mes2,
+                                x,
+                                welcome_y,
+                                Colour::YELLOW,
+                                true,
+                            );
+                        } else {
+                            b12.centre_string_tag(
+                                &mut surface,
+                                &core.login_mes1,
+                                x,
+                                welcome_y - 8,
+                                Colour::YELLOW,
+                                true,
+                            );
+                            b12.centre_string_tag(
+                                &mut surface,
+                                &core.login_mes2,
+                                x,
+                                welcome_y + 7,
+                                Colour::YELLOW,
+                                true,
+                            );
+                        }
                     }
                     if let Some(button) = &r.image_titlebutton {
                         button.plot_sprite(&mut surface, x - 73, button_y - 20);

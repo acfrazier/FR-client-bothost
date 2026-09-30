@@ -10308,7 +10308,11 @@ impl Client {
         self.ingame = false;
         self.try_move_path.clear();
         self.loginscreen = 0;
-        self.login_user.clear();
+        // The hosted title shows its host-owned label from this buffer on
+        // the very frame that paints the logout; only the Java form resets.
+        if self.hosted_title_label().is_none() {
+            self.login_user.clear();
+        }
         self.login_pass.clear();
         // TS logout (Client.ts 2001-2013): drop the tutorial chat overlay
         // and flash, or a later login still draws TUT_OPEN from the

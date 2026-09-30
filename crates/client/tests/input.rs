@@ -324,7 +324,6 @@ fn hosted_title_enter_requests_login_without_editing_credentials() {
     let mut c = title_client();
     c.set_external_reconnect_owner(true);
     c.set_hosted_title_label(Some("Alice"));
-    c.login_user = "vault-user".into();
     c.login_pass = "vault-password".into();
 
     c.shell.apply_key(true, 65, b'a' as i32);
@@ -332,9 +331,38 @@ fn hosted_title_enter_requests_login_without_editing_credentials() {
     c.title_screen_loop();
 
     assert!(c.take_title_login_request());
-    assert_eq!(c.login_user, "vault-user");
+    assert_eq!(c.hosted_title_label(), Some("Alice"), "no typed text");
     assert_eq!(c.login_pass, "vault-password");
     assert!(c.stream.is_none(), "hosted Enter never opens a socket");
+}
+
+#[test]
+fn hosted_title_label_survives_the_logout_that_shows_it() {
+    let mut c = title_client();
+    c.set_external_reconnect_owner(true);
+    c.set_hosted_title_label(Some("Alice"));
+    c.login_pass = "vault-password".into();
+
+    c.logout();
+
+    assert_eq!(
+        c.hosted_title_label(),
+        Some("Alice"),
+        "the logout frame paints the bot's name"
+    );
+    assert!(c.login_pass.is_empty(), "logout still drops the password");
+}
+
+#[test]
+fn standalone_logout_still_resets_the_java_form() {
+    let mut c = title_client();
+    c.login_user = "typed-user".into();
+    c.login_pass = "typed-password".into();
+
+    c.logout();
+
+    assert!(c.login_user.is_empty());
+    assert!(c.login_pass.is_empty());
 }
 
 #[test]
