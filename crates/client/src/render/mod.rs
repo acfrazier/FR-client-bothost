@@ -4,6 +4,9 @@ pub mod diagnostics;
 pub mod draw;
 pub mod media;
 pub mod nav_debug;
+// Frozen pre-GPU Pix2D oracle for parity tests. Never update it alongside
+// production nav rendering; intentional behavior changes need independent
+// expected-output review.
 #[cfg(test)]
 #[allow(dead_code)]
 pub mod nav_debug_old;

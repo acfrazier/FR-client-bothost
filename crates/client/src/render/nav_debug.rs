@@ -312,7 +312,7 @@ pub(crate) fn build_gpu_mesh(client: &mut Client, r: &mut Renderer, mesh: &mut N
     if !paint.labels.is_empty() {
         let colour = rgb(paint.colors.nsew);
         for &(lx, lz, ref text) in &paint.labels {
-            append_hop_label(client, r, out, lx, lz, text, colour);
+            append_hop_label(client, r, out, quads, (lx, lz), text, colour);
         }
     }
     client.nav_debug_paint = Some(paint);
@@ -418,6 +418,92 @@ fn append_filled_quad(out: &mut Vec<NavVertex>, quad: &Quad) {
     append_triangle(out, p[0], p[2], p[3], quad.colour, quad.fill_alpha);
 }
 
+/// Re-emit each non-black fill under a caption at the caption opacity. The
+/// Pix2D path raises the coverage of existing non-black caption-box pixels;
+/// clipping the retained fill polygon preserves its RGB while doing the same.
+fn append_caption_fill(
+    out: &mut Vec<NavVertex>,
+    quad: &Quad,
+    left: f32,
+    top: f32,
+    right: f32,
+    bottom: f32,
+) {
+    if quad.colour & 0x00ff_ffff == 0 {
+        return;
+    }
+    let mut polygon = [(0.0, 0.0); 8];
+    for (i, point) in polygon.iter_mut().take(4).enumerate() {
+        *point = (quad.x[i] as f32, quad.y[i] as f32);
+    }
+    let mut scratch = [(0.0, 0.0); 8];
+    let mut len = 4;
+    for (axis, bound, keep_greater) in [
+        (0, left, true),
+        (0, right, false),
+        (1, top, true),
+        (1, bottom, false),
+    ] {
+        len = clip_polygon_edge(&polygon, len, &mut scratch, axis, bound, keep_greater);
+        std::mem::swap(&mut polygon, &mut scratch);
+    }
+    for i in 1..len.saturating_sub(1) {
+        append_triangle(
+            out,
+            polygon[0],
+            polygon[i],
+            polygon[i + 1],
+            quad.colour,
+            STROKE_ALPHA,
+        );
+    }
+}
+
+fn clip_polygon_edge(
+    input: &[(f32, f32); 8],
+    input_len: usize,
+    output: &mut [(f32, f32); 8],
+    axis: usize,
+    bound: f32,
+    keep_greater: bool,
+) -> usize {
+    if input_len == 0 {
+        return 0;
+    }
+    let coordinate = |point: (f32, f32)| if axis == 0 { point.0 } else { point.1 };
+    let inside = |point: (f32, f32)| {
+        let value = coordinate(point);
+        if keep_greater {
+            value >= bound
+        } else {
+            value <= bound
+        }
+    };
+    let mut output_len = 0;
+    let mut previous = input[input_len - 1];
+    let mut previous_inside = inside(previous);
+    for &current in input.iter().take(input_len) {
+        let current_inside = inside(current);
+        if current_inside != previous_inside {
+            let previous_axis = coordinate(previous);
+            let scale = (bound - previous_axis) / (coordinate(current) - previous_axis);
+            let intersection = (
+                previous.0 + (current.0 - previous.0) * scale,
+                previous.1 + (current.1 - previous.1) * scale,
+            );
+            output[output_len] = intersection;
+            output_len += 1;
+        }
+        if current_inside {
+            output[output_len] = current;
+            output_len += 1;
+        }
+        previous = current;
+        previous_inside = current_inside;
+    }
+    output_len
+}
+
 fn append_quad_stroke(out: &mut Vec<NavVertex>, quad: &Quad) {
     for i in 0..4 {
         append_line(
@@ -430,8 +516,8 @@ fn append_quad_stroke(out: &mut Vec<NavVertex>, quad: &Quad) {
     }
 }
 
-/// A one-pixel screen-space line expressed as two GPU triangles plus square
-/// endpoint caps. Integer coordinates name Pix2D pixel centres.
+/// A one-pixel screen-space line expressed as two GPU triangles with square
+/// endpoint extension. Integer coordinates name Pix2D pixel centres.
 fn append_line(out: &mut Vec<NavVertex>, a: (i32, i32), b: (i32, i32), colour: i32, alpha: i32) {
     let dx = (b.0 - a.0) as f32;
     let dy = (b.1 - a.1) as f32;
@@ -440,16 +526,16 @@ fn append_line(out: &mut Vec<NavVertex>, a: (i32, i32), b: (i32, i32), colour: i
         append_pixel(out, a.0, a.1, colour, alpha);
         return;
     }
-    let nx = -dy * 0.5 / len;
-    let ny = dx * 0.5 / len;
-    let p0 = (a.0 as f32 + nx, a.1 as f32 + ny);
-    let p1 = (b.0 as f32 + nx, b.1 as f32 + ny);
-    let p2 = (b.0 as f32 - nx, b.1 as f32 - ny);
-    let p3 = (a.0 as f32 - nx, a.1 as f32 - ny);
+    let tx = dx * 0.5 / len;
+    let ty = dy * 0.5 / len;
+    let nx = -ty;
+    let ny = tx;
+    let p0 = (a.0 as f32 - tx + nx, a.1 as f32 - ty + ny);
+    let p1 = (b.0 as f32 + tx + nx, b.1 as f32 + ty + ny);
+    let p2 = (b.0 as f32 + tx - nx, b.1 as f32 + ty - ny);
+    let p3 = (a.0 as f32 - tx - nx, a.1 as f32 - ty - ny);
     append_triangle(out, p0, p1, p2, colour, alpha);
     append_triangle(out, p0, p2, p3, colour, alpha);
-    append_pixel(out, a.0, a.1, colour, alpha);
-    append_pixel(out, b.0, b.1, colour, alpha);
 }
 
 fn append_pixel(out: &mut Vec<NavVertex>, x: i32, y: i32, colour: i32, alpha: i32) {
@@ -549,19 +635,19 @@ fn corner_strokes(cell: &NavDebugCell) -> [(u8, i32, i32, i32, i32); 4] {
     ]
 }
 
-/// Caption at the projected tile centre using the same b12 glyph masks as
-/// PixFont, emitted as one-pixel GPU quads rather than a CPU text raster.
+/// Caption at the projected tile centre using the same b12 glyph masks,
+/// opaque one-pixel shadow and caption-box coverage as PixFont.
 fn append_hop_label(
     client: &Client,
     r: &Renderer,
     out: &mut Vec<NavVertex>,
-    lx: i32,
-    lz: i32,
+    fills: &[Quad],
+    tile: (i32, i32),
     text: &str,
     colour: i32,
 ) {
-    let x = lx.wrapping_mul(TILE) + TILE / 2;
-    let z = lz.wrapping_mul(TILE) + TILE / 2;
+    let x = tile.0.wrapping_mul(TILE) + TILE / 2;
+    let z = tile.1.wrapping_mul(TILE) + TILE / 2;
     let (px, py) = r.project_overlay(client, x, z, 0);
     if px == -1 {
         return;
@@ -569,7 +655,17 @@ fn append_hop_label(
     let Some(font) = r.media.b12.as_ref() else {
         return;
     };
-    let start_x = px - font.string_wid(Some(text)) / 2;
+    let width = font.string_wid(Some(text));
+    let height = font.height.max(12);
+    let left = (px - width / 2 - 1) as f32 - 0.5;
+    let top = (py - height - 1) as f32 - 0.5;
+    let right = (px + width / 2 + 1) as f32 + 0.5;
+    let bottom = (py + 1) as f32 + 0.5;
+    for fill in fills {
+        append_caption_fill(out, fill, left, top, right, bottom);
+    }
+    let start_x = px - width / 2;
+    append_font_text(out, font, text, start_x + 1, py + 1, 0, 255);
     append_font_text(out, font, text, start_x, py, colour, STROKE_ALPHA);
 }
 

@@ -772,6 +772,7 @@ struct NavProjectionKey {
     base_x: i32,
     base_z: i32,
     level: i32,
+    loc_generation: u64,
     paint_generation: u64,
 }
 
@@ -786,6 +787,7 @@ impl NavProjectionKey {
             base_x: core.map_build_base_x,
             base_z: core.map_build_base_z,
             level: core.minusedlevel,
+            loc_generation: core.world.static_loc_generation(),
             paint_generation: core.nav_debug_paint_generation(),
         }
     }
@@ -1410,6 +1412,7 @@ impl GpuBackend {
             crate::render::nav_debug::build_gpu_mesh(core, r, &mut self.nav_mesh);
             self.nav_projection_key = Some(key);
             if self.nav_mesh.vertices.is_empty() {
+                self.nav_mesh.release();
                 self.nav_target = None;
             } else {
                 let target = self

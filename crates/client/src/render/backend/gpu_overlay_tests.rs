@@ -266,11 +266,12 @@ fn nav_overlay_bypasses_cpu_surface_and_coverage() {
     core.cam_pitch = 96;
     core.cam_yaw = 0;
     core.scene_state = 2;
-    core.set_nav_debug_paint(Some(crate::render::nav_debug::NavDebugPaint {
+    let paint = crate::render::nav_debug::NavDebugPaint {
         path: vec![(3, 10, false)],
         show_path: true,
         ..Default::default()
-    }));
+    };
+    core.set_nav_debug_paint(Some(paint.clone()));
 
     let mut encoder = backend
         .context
@@ -332,6 +333,33 @@ fn nav_overlay_bypasses_cpu_surface_and_coverage() {
         "nav geometry must not enter the CPU chrome coverage upload"
     );
 
+    assert!(
+        core.world
+            .add_scenery(0, 2, 3, 0, (2 << 29) | 1, 10, 1, 1, 0, 0, 0, 0, 0,),
+        "static loc fixture must be added"
+    );
+    backend.nav_mesh.vertices.clear();
+    backend.draw_scene_overlays(&mut core, &mut renderer);
+    assert!(
+        !backend.nav_mesh.vertices.is_empty(),
+        "a static loc change must invalidate projected nav geometry"
+    );
+
+    core.set_nav_debug_paint(Some(Default::default()));
+    backend.draw_scene_overlays(&mut core, &mut renderer);
+    assert_eq!(
+        backend.nav_mesh.retained_capacity(),
+        0,
+        "empty retained paint must release projection scratch"
+    );
+    assert!(
+        backend.nav_target.is_none(),
+        "empty retained paint must release the retained GPU overlay"
+    );
+
+    core.set_nav_debug_paint(Some(paint));
+    backend.draw_scene_overlays(&mut core, &mut renderer);
+    assert!(!backend.nav_mesh.vertices.is_empty());
     core.set_nav_debug_paint(None);
     backend.draw_scene_overlays(&mut core, &mut renderer);
     assert_eq!(
@@ -345,7 +373,7 @@ fn nav_overlay_bypasses_cpu_surface_and_coverage() {
     );
 }
 
-fn review_clear(backend: &GpuBackend, rgb: (f64, f64, f64)) {
+fn parity_clear(backend: &GpuBackend, rgb: (f64, f64, f64)) {
     let mut encoder = backend
         .context
         .device
@@ -372,7 +400,7 @@ fn review_clear(backend: &GpuBackend, rgb: (f64, f64, f64)) {
     backend.context.queue.submit([encoder.finish()]);
 }
 
-fn review_read(backend: &GpuBackend) -> Vec<i32> {
+fn parity_read(backend: &GpuBackend) -> Vec<i32> {
     TextureHandle {
         device: backend.context.device.clone(),
         queue: backend.context.queue.clone(),
@@ -383,15 +411,7 @@ fn review_read(backend: &GpuBackend) -> Vec<i32> {
     .read_back()
 }
 
-fn review_ppm(path: &str, px: &[i32]) {
-    let mut out = format!("P6 {} {} 255\n", SCENE_W, SCENE_H).into_bytes();
-    for &p in px {
-        out.extend([(p >> 16) as u8, (p >> 8) as u8, p as u8]);
-    }
-    std::fs::write(path, out).unwrap();
-}
-
-fn review_close(a: i32, b: i32, tol: i32) -> bool {
+fn parity_close(a: i32, b: i32, tol: i32) -> bool {
     (0..3).all(|s| (((a >> (s * 8)) & 0xff) - ((b >> (s * 8)) & 0xff)).abs() <= tol)
 }
 
@@ -401,16 +421,24 @@ fn nav_overlay_matches_pix2d_reference() {
     use crate::render::nav_debug::{
         NavDebugCell, NavDebugPaint, CORNER_NE, CORNER_SW, FACE_E, FACE_N, FACE_S, FACE_W,
     };
-    let dir = std::env::var("REVIEW_OUT").unwrap_or_else(|_| "/tmp/navpix".into());
-    std::fs::create_dir_all(&dir).unwrap();
     let mut backend = GpuBackend::try_new().expect("GPU");
     let mut r = Renderer::new(false);
     r.area_game = Some(PixMap::new(SCENE_W as i32, SCENE_H as i32));
+    let mut font = crate::graphics::PixFont::new();
+    let code = b'I' as usize;
+    font.char_mask[code] = vec![1, 1, 1, 1, 1];
+    font.char_mask_width[code] = 1;
+    font.char_mask_height[code] = 5;
+    font.char_advance[code] = 3;
+    font.height = 5;
+    let mut media = crate::render::media::Media::empty();
+    media.b12 = Some(font);
+    r.media = std::sync::Arc::new(media);
     let mut core = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
         cache_dir: std::env::temp_dir()
-            .join(format!("nav-review-no-cache-{}", std::process::id()))
+            .join(format!("nav-parity-no-cache-{}", std::process::id()))
             .display()
             .to_string(),
         members: true,
@@ -447,7 +475,7 @@ fn nav_overlay_matches_pix2d_reference() {
         blocked: false,
         reach: false,
     });
-    let mut base_paint = NavDebugPaint {
+    let base_paint = NavDebugPaint {
         collision,
         path: (0..10).map(|i| (5, 3 + i, i == 5)).collect(),
         trail: (0..8).map(|i| (3 + i / 2, 5 + i, i % 2 == 0)).collect(),
@@ -458,176 +486,176 @@ fn nav_overlay_matches_pix2d_reference() {
         show_trail: true,
         ..Default::default()
     };
-    let variant = std::env::var("REVIEW_VARIANT").unwrap_or_else(|_| "all".into());
-    match variant.as_str() {
-        "fills" => {
-            base_paint.show_path = false;
-            base_paint.show_trail = false;
-            base_paint.show_nsew = false;
-            base_paint.click = None;
-            for c in &mut base_paint.collision {
-                c.bits = 0;
-            }
-        }
-        "collision" => {
-            base_paint.show_path = false;
-            base_paint.show_trail = false;
-            base_paint.click = None;
-        }
-        "route" => {
-            // Planned path and client trail over the same walkable tiles.
-            base_paint.collision.clear();
-            base_paint.show_collision = false;
-            base_paint.show_nsew = false;
-            base_paint.path = (0..10).map(|i| (5, 3 + i, false)).collect();
-            base_paint.trail = (0..10).map(|i| (5, 3 + i, false)).collect();
-            base_paint.click = Some((5, 12));
-        }
-        _ => {}
-    }
-    eprintln!("variant={variant}");
-    let bg = (0.25, 0.5, 0.35);
-    let cams = [
-        (832, -600, 0, 128, 0),
-        (832, -450, -300, 256, 100),
-        (1100, -700, 400, 200, 1900),
-    ];
-    for (ci, &(cx, cy, cz, pitch, yaw)) in cams.iter().enumerate() {
-        core.cam_x = cx;
-        core.cam_y = cy;
-        core.cam_z = cz;
-        core.cam_pitch = pitch;
-        core.cam_yaw = yaw;
-        r.pix3d.set_clipping(SCENE_W as i32, SCENE_H as i32);
-        core.set_nav_debug_paint(Some(base_paint.clone()));
-
-        // Old path: Pix2D raster + coverage, composited with the chrome
-        // blend (src*a + dst*(1-a)) over the same background.
-        review_clear(&backend, bg);
-        let bgpx = review_read(&backend);
-        let mut old_rgb = vec![0i32; (SCENE_W * SCENE_H) as usize];
-        let mut cov = vec![0u8; (SCENE_W * SCENE_H) as usize];
-        {
-            let _g = crate::graphics::pix2d::coverage_guard(&mut cov, SCENE_W, SCENE_H);
-            let mut s = Pix2D::with_pixels(&mut old_rgb, SCENE_W as i32, SCENE_H as i32);
-            crate::render::nav_debug_old::draw(&mut core, &mut r, &mut s);
-        }
-        let old: Vec<i32> = (0..old_rgb.len())
-            .map(|i| {
-                let a = cov[i] as i32;
-                let mut o = 0;
-                for s in 0..3 {
-                    let src = (old_rgb[i] >> (s * 8)) & 0xff;
-                    let dst = (bgpx[i] >> (s * 8)) & 0xff;
-                    o |= ((src * a + dst * (255 - a) + 127) / 255) << (s * 8);
+    for variant in ["all", "fills", "collision", "route", "captions"] {
+        let mut paint = base_paint.clone();
+        match variant {
+            "fills" => {
+                paint.show_path = false;
+                paint.show_trail = false;
+                paint.show_nsew = false;
+                paint.click = None;
+                for c in &mut paint.collision {
+                    c.bits = 0;
                 }
-                o
-            })
-            .collect();
+            }
+            "collision" => {
+                paint.show_path = false;
+                paint.show_trail = false;
+                paint.click = None;
+            }
+            "route" => {
+                // Planned path and client trail over the same walkable tiles.
+                paint.collision.clear();
+                paint.show_collision = false;
+                paint.show_nsew = false;
+                paint.path = (0..10).map(|i| (5, 3 + i, false)).collect();
+                paint.trail = (0..10).map(|i| (5, 3 + i, false)).collect();
+                paint.click = Some((5, 12));
+            }
+            "captions" => {
+                paint.collision.clear();
+                paint.path = vec![(5, 6, true), (5, 10, true)];
+                paint.trail.clear();
+                paint.labels = vec![(5, 6, "I".into()), (5, 10, "I".into())];
+                paint.show_collision = false;
+                paint.show_nsew = false;
+                paint.show_path = true;
+                paint.show_trail = false;
+                paint.click = None;
+            }
+            _ => {}
+        }
+        eprintln!("variant={variant}");
+        let bg = (0.25, 0.5, 0.35);
+        let cams = [
+            (832, -600, 0, 128, 0),
+            (832, -450, -300, 256, 100),
+            (1100, -700, 400, 200, 1900),
+        ];
+        for (ci, &(cx, cy, cz, pitch, yaw)) in cams.iter().enumerate() {
+            core.cam_x = cx;
+            core.cam_y = cy;
+            core.cam_z = cz;
+            core.cam_pitch = pitch;
+            core.cam_yaw = yaw;
+            r.pix3d.set_clipping(SCENE_W as i32, SCENE_H as i32);
+            core.set_nav_debug_paint(Some(paint.clone()));
 
-        // New path: the production GPU overlay.
-        review_clear(&backend, bg);
-        backend.scene_ready = true;
-        backend.last_kind = FrameKind::Game;
-        backend.render_nav_overlay(&mut core, &mut r);
-        let new = review_read(&backend);
-        let verts = backend.nav_mesh.vertices.len();
+            // Old path: Pix2D raster + coverage, composited with the chrome
+            // blend (src*a + dst*(1-a)) over the same background.
+            parity_clear(&backend, bg);
+            let bgpx = parity_read(&backend);
+            let mut old_rgb = vec![0i32; (SCENE_W * SCENE_H) as usize];
+            let mut cov = vec![0u8; (SCENE_W * SCENE_H) as usize];
+            {
+                let _g = crate::graphics::pix2d::coverage_guard(&mut cov, SCENE_W, SCENE_H);
+                let mut s = Pix2D::with_pixels(&mut old_rgb, SCENE_W as i32, SCENE_H as i32);
+                crate::render::nav_debug_old::draw(&mut core, &mut r, &mut s);
+            }
+            let old: Vec<i32> = (0..old_rgb.len())
+                .map(|i| {
+                    let a = cov[i] as i32;
+                    let mut o = 0;
+                    for s in 0..3 {
+                        let src = (old_rgb[i] >> (s * 8)) & 0xff;
+                        let dst = (bgpx[i] >> (s * 8)) & 0xff;
+                        o |= ((src * a + dst * (255 - a) + 127) / 255) << (s * 8);
+                    }
+                    o
+                })
+                .collect();
 
-        let old_nav = cov.iter().filter(|&&a| a > 0).count();
-        let new_nav = (0..new.len())
-            .filter(|&i| !review_close(new[i], bgpx[i], 0))
-            .count();
-        let mut best = (usize::MAX, 0, 0);
-        for dy in -1..=1i32 {
-            for dx in -1..=1i32 {
-                let mut n = 0;
-                for y in 1..SCENE_H as i32 - 1 {
-                    for x in 1..SCENE_W as i32 - 1 {
-                        let i = (y * SCENE_W as i32 + x) as usize;
-                        let j = ((y + dy) * SCENE_W as i32 + (x + dx)) as usize;
-                        if !review_close(old[i], new[j], 3) {
-                            n += 1;
+            // New path: the production GPU overlay.
+            parity_clear(&backend, bg);
+            backend.scene_ready = true;
+            backend.last_kind = FrameKind::Game;
+            backend.render_nav_overlay(&mut core, &mut r);
+            let new = parity_read(&backend);
+            let verts = backend.nav_mesh.vertices.len();
+
+            let old_nav = cov.iter().filter(|&&a| a > 0).count();
+            let new_nav = (0..new.len())
+                .filter(|&i| !parity_close(new[i], bgpx[i], 0))
+                .count();
+            let mut best = (usize::MAX, 0, 0);
+            for dy in -1..=1i32 {
+                for dx in -1..=1i32 {
+                    let mut n = 0;
+                    for y in 1..SCENE_H as i32 - 1 {
+                        for x in 1..SCENE_W as i32 - 1 {
+                            let i = (y * SCENE_W as i32 + x) as usize;
+                            let j = ((y + dy) * SCENE_W as i32 + (x + dx)) as usize;
+                            if !parity_close(old[i], new[j], 3) {
+                                n += 1;
+                            }
                         }
                     }
-                }
-                if dx == 0 && dy == 0 {
-                    eprintln!("cam{ci}: shift(0,0) mismatches={n}");
-                }
-                if n < best.0 {
-                    best = (n, dx, dy);
+                    if dx == 0 && dy == 0 {
+                        eprintln!("cam{ci}: shift(0,0) mismatches={n}");
+                    }
+                    if n < best.0 {
+                        best = (n, dx, dy);
+                    }
                 }
             }
-        }
-        // Pixels where both paint but colours disagree (overlap blending).
-        let both_diff = (0..new.len())
-            .filter(|&i| {
-                cov[i] > 0 && !review_close(new[i], bgpx[i], 0) && !review_close(old[i], new[i], 3)
-            })
-            .count();
-        let both_gross = (0..new.len())
-            .filter(|&i| {
-                cov[i] > 0 && !review_close(new[i], bgpx[i], 0) && !review_close(old[i], new[i], 12)
-            })
-            .count();
-        eprintln!("cam{ci}: both_painted_colour_diff_gt12={both_gross}");
-        let old_only = (0..new.len())
-            .filter(|&i| cov[i] > 0 && review_close(new[i], bgpx[i], 0))
-            .count();
-        let new_only = (0..new.len())
-            .filter(|&i| cov[i] == 0 && !review_close(new[i], bgpx[i], 0))
-            .count();
-        eprintln!(
+            // Pixels where both paint but colours disagree (overlap blending).
+            let both_diff = (0..new.len())
+                .filter(|&i| {
+                    cov[i] > 0
+                        && !parity_close(new[i], bgpx[i], 0)
+                        && !parity_close(old[i], new[i], 3)
+                })
+                .count();
+            let both_gross = (0..new.len())
+                .filter(|&i| {
+                    cov[i] > 0
+                        && !parity_close(new[i], bgpx[i], 0)
+                        && !parity_close(old[i], new[i], 12)
+                })
+                .count();
+            eprintln!("cam{ci}: both_painted_colour_diff_gt12={both_gross}");
+            let old_only = (0..new.len())
+                .filter(|&i| cov[i] > 0 && parity_close(new[i], bgpx[i], 0))
+                .count();
+            let new_only = (0..new.len())
+                .filter(|&i| cov[i] == 0 && !parity_close(new[i], bgpx[i], 0))
+                .count();
+            eprintln!(
             "cam{ci}: verts={verts} old_nav_px={old_nav} new_nav_px={new_nav} old_only={old_only} new_only={new_only} both_but_colour_differs={both_diff} best_shift=({},{}) mismatches_at_best={}",
             best.1, best.2, best.0
         );
-        if old_nav != 0 {
-            assert_eq!(
-                (best.1, best.2),
-                (0, 0),
-                "GPU paint must use the Pix2D pixel-centre convention"
-            );
-        }
-        let parity_budget = (old_nav / 100).max(16);
-        assert!(
+            if old_nav != 0 {
+                assert_eq!(
+                    (best.1, best.2),
+                    (0, 0),
+                    "GPU paint must use the Pix2D pixel-centre convention"
+                );
+            }
+            let parity_budget = (old_nav / 100).max(16);
+            assert!(
             old_only + new_only <= parity_budget,
             "GPU paint footprint diverged from Pix2D beyond 1%: old_only={old_only}, new_only={new_only}, budget={parity_budget}"
         );
-        assert!(
+            assert!(
             both_gross <= parity_budget,
             "GPU paint must preserve Pix2D last-writer-wins colour within 1%: {both_gross} gross pixel differences, budget={parity_budget}"
         );
-        let diff: Vec<i32> = (0..new.len())
-            .map(|i| {
-                if review_close(old[i], new[i], 3) {
-                    if cov[i] > 0 {
-                        0x404040
-                    } else {
-                        0
-                    }
-                } else if cov[i] > 0 && review_close(new[i], bgpx[i], 0) {
-                    0xff0000
-                } else if cov[i] == 0 {
-                    0x00ff00
-                } else {
-                    0xffff00
-                }
-            })
-            .collect();
-        review_ppm(&format!("{dir}/cam{ci}-old.ppm"), &old);
-        review_ppm(&format!("{dir}/cam{ci}-new.ppm"), &new);
-        review_ppm(&format!("{dir}/cam{ci}-diff.ppm"), &diff);
 
-        // Chunk equivalence: force tiny chunks through the same buffer.
-        if ci == 0 {
-            let saved = backend.vertex_buf_capacity;
-            backend.vertex_buf_capacity = 12 * 3 * 5;
-            backend.nav_projection_key = None;
-            review_clear(&backend, bg);
-            backend.render_nav_overlay(&mut core, &mut r);
-            let chunked = review_read(&backend);
-            backend.vertex_buf_capacity = saved;
-            let d = (0..new.len()).filter(|&i| chunked[i] != new[i]).count();
-            eprintln!("cam0: chunked(5 tris/chunk) vs single differing px={d}");
+            // Chunk equivalence: force tiny chunks through the same buffer.
+            if ci == 0 {
+                let saved = backend.vertex_buf_capacity;
+                backend.vertex_buf_capacity = 12 * 3 * 5;
+                backend.nav_projection_key = None;
+                parity_clear(&backend, bg);
+                backend.render_nav_overlay(&mut core, &mut r);
+                let chunked = parity_read(&backend);
+                backend.vertex_buf_capacity = saved;
+                let differing = (0..new.len()).filter(|&i| chunked[i] != new[i]).count();
+                assert_eq!(
+                    differing, 0,
+                    "{variant} must render identically across triangle chunks"
+                );
+            }
         }
     }
 }
