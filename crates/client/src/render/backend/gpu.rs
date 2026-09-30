@@ -1876,10 +1876,9 @@ impl RenderBackend for GpuBackend {
                 atlas_dirty = true;
             }
             if (!core.journal_paint_hidden()
-                && (core.selected_area == 2
-                    || core.obj_drag_area == 2
-                    || core.selected_area == 3
-                    || core.obj_drag_area == 3))
+                && (core.selected_area == 2 || core.obj_drag_area == 2))
+                || core.selected_area == 3
+                || core.obj_drag_area == 3
             {
                 atlas_dirty = true;
             }
