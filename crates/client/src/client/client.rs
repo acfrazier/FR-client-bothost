@@ -930,6 +930,9 @@ pub struct Client {
     /// Retained nav-debug facts from the host, projected by the wgpu scene
     /// stage. `None` for a skip-paint slot or CpuPix3D renderer.
     pub nav_debug_paint: Option<NavDebugPaint>,
+    /// Changes whenever the host replaces or clears [`Self::nav_debug_paint`].
+    /// The GPU projection cache keys on this rather than hashing the paint.
+    nav_debug_paint_generation: u64,
     /// Whether the attached renderer can consume nav paint directly.
     /// Maintained by the host from the renderer's actual backend kind.
     nav_debug_drawable: bool,
@@ -1897,6 +1900,7 @@ impl Client {
             ingame: false,
             draw: false,
             nav_debug_paint: None,
+            nav_debug_paint_generation: 0,
             nav_debug_drawable: false,
             scene_state: 0,
             in_multizone: 0,
@@ -13061,14 +13065,20 @@ impl Client {
     }
 
     /// Replace the host's retained nav-debug view. The host demand-gates
-    /// calls to facts/settings changes; the GPU projects it each frame.
+    /// calls to facts/settings changes; the generation lets the GPU retain
+    /// its projection until either this view or the camera changes.
     pub fn set_nav_debug_paint(&mut self, paint: Option<NavDebugPaint>) {
         self.nav_debug_paint = paint;
+        self.nav_debug_paint_generation = self.nav_debug_paint_generation.wrapping_add(1);
     }
 
     /// The currently retained nav-debug view.
     pub fn nav_debug_paint(&self) -> Option<&NavDebugPaint> {
         self.nav_debug_paint.as_ref()
+    }
+
+    pub(crate) fn nav_debug_paint_generation(&self) -> u64 {
+        self.nav_debug_paint_generation
     }
 
     pub fn set_nav_debug_drawable(&mut self, drawable: bool) {

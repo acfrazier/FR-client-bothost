@@ -136,7 +136,8 @@ struct GpuContext {
     /// over the scene); holds the chrome shader module.
     chrome_layout: wgpu::BindGroupLayout,
     chrome_pipeline: wgpu::RenderPipeline,
-    /// Screen-space nav primitives blended directly over the scene target.
+    /// Screen-space nav primitives replace pixels in a transparent retained
+    /// overlay; the chrome pipeline composites that overlay over each scene.
     nav_pipeline: wgpu::RenderPipeline,
 }
 
@@ -677,9 +678,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// Screen-space nav geometry. Positions use the 512×334 game viewport's
-/// integer projection; packed colour/alpha comes directly from the panel
-/// theme and established overlay opacity.
+/// Screen-space nav geometry. Integer projection coordinates name pixel
+/// centres in the 512×334 game viewport; packed colour/alpha comes directly
+/// from the panel theme and established overlay opacity.
 const NAV_SHADER: &str = r#"
 struct VsIn {
     @location(0) pos: vec2<f32>,
@@ -695,8 +696,8 @@ struct VsOut {
 fn vs_main(in: VsIn) -> VsOut {
     var out: VsOut;
     out.position = vec4<f32>(
-        in.pos.x * (2.0 / 512.0) - 1.0,
-        1.0 - in.pos.y * (2.0 / 334.0),
+        (in.pos.x + 0.5) * (2.0 / 512.0) - 1.0,
+        1.0 - (in.pos.y + 0.5) * (2.0 / 334.0),
         0.0,
         1.0,
     );
@@ -761,6 +762,98 @@ struct ChromeVertex {
     v: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NavProjectionKey {
+    cam_x: i32,
+    cam_y: i32,
+    cam_z: i32,
+    cam_pitch: i32,
+    cam_yaw: i32,
+    base_x: i32,
+    base_z: i32,
+    level: i32,
+    paint_generation: u64,
+}
+
+impl NavProjectionKey {
+    fn from_client(core: &Client) -> Self {
+        Self {
+            cam_x: core.cam_x,
+            cam_y: core.cam_y,
+            cam_z: core.cam_z,
+            cam_pitch: core.cam_pitch,
+            cam_yaw: core.cam_yaw,
+            base_x: core.map_build_base_x,
+            base_z: core.map_build_base_z,
+            level: core.minusedlevel,
+            paint_generation: core.nav_debug_paint_generation(),
+        }
+    }
+}
+
+/// Lazily allocated retained overlay. Primitive writes replace RGBA, matching
+/// Pix2D's last-writer-wins coverage; one composite then blends over the scene.
+struct NavOverlayTarget {
+    _storage: crate::profiling::Allocation,
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    bind_group: wgpu::BindGroup,
+}
+
+impl NavOverlayTarget {
+    fn new(context: &GpuContext) -> Self {
+        let texture = context.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("r274 retained nav overlay"),
+            size: wgpu::Extent3d {
+                width: SCENE_W,
+                height: SCENE_H,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let storage =
+            crate::profiling::Allocation::new(0, crate::profiling::texture_bytes(&texture));
+        let view = texture.create_view(&Default::default());
+        let sampler = context.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("r274 retained nav sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+        let bind_group = context
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("r274 retained nav group"),
+                layout: &context.chrome_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&sampler),
+                    },
+                ],
+            });
+        Self {
+            _storage: storage,
+            _texture: texture,
+            view,
+            bind_group,
+        }
+    }
+}
+
 /// Minimap / compass blit rect on the 765×503 applet (`area_map` at (550, 4)).
 const MINIMAP_X: u32 = 550;
 const MINIMAP_Y: u32 = 4;
@@ -801,10 +894,12 @@ pub struct GpuBackend {
     /// The captured scene triangles, reused frame to frame so the capture
     /// keeps its allocation.
     scene_mesh: SceneMesh,
-    /// Projected nav triangles and ordering/dedup scratch, reused across
-    /// frames and uploaded through `vertex_buf` in capacity-bounded chunks
-    /// after scene submission. Nav never grows the scene's GPU allocation.
+    /// Projected nav triangles and ordering/dedup scratch. The retained
+    /// overlay target avoids rebuilding or uploading while camera and paint
+    /// are unchanged; both allocations are released when paint disappears.
     nav_mesh: NavMesh,
+    nav_target: Option<NavOverlayTarget>,
+    nav_projection_key: Option<NavProjectionKey>,
     /// The 2D chrome/title half: the CPU fidelity path the frame stages
     /// delegate to. The chrome draws into the persistent `draw_area`.
     cpu: CpuBackend,
@@ -1121,6 +1216,8 @@ impl GpuBackend {
             vertex_buf_capacity,
             scene_mesh: SceneMesh::default(),
             nav_mesh: NavMesh::default(),
+            nav_target: None,
+            nav_projection_key: None,
             cpu: CpuBackend,
             chrome_texture,
             chrome_bind_group,
@@ -1293,59 +1390,122 @@ impl GpuBackend {
         self.scene_ready = true;
     }
 
+    fn release_nav_overlay(&mut self) {
+        self.nav_mesh.release();
+        self.nav_target = None;
+        self.nav_projection_key = None;
+    }
+
     fn render_nav_overlay(&mut self, core: &mut Client, r: &mut Renderer) {
+        if core.nav_debug_paint().is_none() {
+            self.release_nav_overlay();
+            return;
+        }
         if !self.scene_ready || self.last_kind != FrameKind::Game || core.scene_state != 2 {
             return;
         }
-        crate::render::nav_debug::build_gpu_mesh(core, r, &mut self.nav_mesh);
-        if self.nav_mesh.vertices.is_empty() {
-            return;
-        }
-        // Keep nav paint memory-neutral: the scene owns this streaming
-        // buffer's capacity. Large collision meshes are split only at
-        // triangle boundaries rather than growing per-bot GPU storage.
-        let vertex_size = std::mem::size_of::<crate::render::nav_debug::NavVertex>();
-        let vertices_per_chunk = (self.vertex_buf_capacity / vertex_size / 3) * 3;
-        debug_assert!(vertices_per_chunk >= 3);
-        for vertices in self.nav_mesh.vertices.chunks(vertices_per_chunk) {
-            let bytes = std::mem::size_of_val(vertices);
-            self.context
-                .queue
-                .write_buffer(&self.vertex_buf, 0, bytemuck::cast_slice(vertices));
-            let mut encoder =
-                self.context
-                    .device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("r274 nav overlay encoder"),
-                    });
-            {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("r274 nav overlay pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &self.scene_view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
+
+        let key = NavProjectionKey::from_client(core);
+        if self.nav_projection_key != Some(key) {
+            crate::render::nav_debug::build_gpu_mesh(core, r, &mut self.nav_mesh);
+            self.nav_projection_key = Some(key);
+            if self.nav_mesh.vertices.is_empty() {
+                self.nav_target = None;
+            } else {
+                let target = self
+                    .nav_target
+                    .get_or_insert_with(|| NavOverlayTarget::new(&self.context));
+                // The scene owns the streaming vertex buffer. Rebuilds split
+                // large overlays at triangle boundaries and replace pixels in
+                // painter order in the retained transparent target.
+                let vertex_size = std::mem::size_of::<crate::render::nav_debug::NavVertex>();
+                let vertices_per_chunk = (self.vertex_buf_capacity / vertex_size / 3) * 3;
+                debug_assert!(vertices_per_chunk >= 3);
+                for (chunk, vertices) in self
+                    .nav_mesh
+                    .vertices
+                    .chunks(vertices_per_chunk)
+                    .enumerate()
+                {
+                    let bytes = std::mem::size_of_val(vertices);
+                    self.context.queue.write_buffer(
+                        &self.vertex_buf,
+                        0,
+                        bytemuck::cast_slice(vertices),
+                    );
+                    let mut encoder = self.context.device.create_command_encoder(
+                        &wgpu::CommandEncoderDescriptor {
+                            label: Some("r274 nav overlay encoder"),
                         },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                pass.set_pipeline(&self.context.nav_pipeline);
-                pass.set_vertex_buffer(0, self.vertex_buf.slice(..bytes as u64));
-                pass.draw(0..vertices.len() as u32, 0..1);
+                    );
+                    {
+                        let load = if chunk == 0 {
+                            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+                        } else {
+                            wgpu::LoadOp::Load
+                        };
+                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("r274 nav overlay replace pass"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: &target.view,
+                                depth_slice: None,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load,
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            })],
+                            depth_stencil_attachment: None,
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                            multiview_mask: None,
+                        });
+                        pass.set_pipeline(&self.context.nav_pipeline);
+                        pass.set_vertex_buffer(0, self.vertex_buf.slice(..bytes as u64));
+                        pass.draw(0..vertices.len() as u32, 0..1);
+                    }
+                    self.context.queue.submit([encoder.finish()]);
+                }
             }
-            self.context.queue.submit([encoder.finish()]);
         }
+
+        let Some(target) = self.nav_target.as_ref() else {
+            return;
+        };
+        let mut encoder =
+            self.context
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("r274 nav composite encoder"),
+                });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("r274 nav composite pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.scene_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.context.chrome_pipeline);
+            pass.set_bind_group(0, &target.bind_group, &[]);
+            pass.set_vertex_buffer(0, self.chrome_vertex_buf.slice(..));
+            pass.draw(0..6, 0..1);
+        }
+        self.context.queue.submit([encoder.finish()]);
     }
 
     /// CPU entity/interface overlays into `area_game` plus coverage marks.
-    /// Nav paint is submitted first as GPU geometry over the live scene;
-    /// freezes retain the last scene/nav target without accumulating alpha.
+    /// The retained nav texture composites first; freezes keep the last
+    /// scene/nav target without accumulating alpha.
     fn draw_scene_overlays(&mut self, core: &mut Client, r: &mut Renderer) {
         self.render_nav_overlay(core, r);
         if should_cls_scene_overlays(self.last_kind, core.scene_state) {
@@ -1465,14 +1625,10 @@ fn make_nav_pipeline(
             compilation_options: Default::default(),
             targets: &[Some(wgpu::ColorTargetState {
                 format: wgpu::TextureFormat::Rgba8Unorm,
-                blend: Some(wgpu::BlendState {
-                    color: wgpu::BlendComponent {
-                        src_factor: wgpu::BlendFactor::SrcAlpha,
-                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                        operation: wgpu::BlendOperation::Add,
-                    },
-                    alpha: wgpu::BlendComponent::OVER,
-                }),
+                // Pix2D stored each primitive's RGB and coverage, replacing
+                // earlier writes. The retained texture does the same; its
+                // completed pixels blend over the scene exactly once.
+                blend: None,
                 write_mask: wgpu::ColorWrites::ALL,
             })],
         }),
@@ -1488,6 +1644,9 @@ impl RenderBackend for GpuBackend {
     /// the CPU path.
     fn begin(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
         self.last_kind = kind;
+        if core.nav_debug_paint().is_none() {
+            self.release_nav_overlay();
+        }
         if kind == FrameKind::Title {
             // Left torch column sits inside the scene-window rect. A stale
             // `scene_ready` from the last ingame frame would punch a 3D
@@ -1500,8 +1659,8 @@ impl RenderBackend for GpuBackend {
     /// `gameDrawMain`'s 3D pass on the GPU: the same entity/camera/prep
     /// steps as the CPU backend, then the CPU `render_all` pass with its
     /// triangles captured (`RenderWorld::capture_scene`) and rasterized in
-    /// that order into the wgpu scene texture. Nav triangles draw directly
-    /// onto that target; chat bubbles, modals and the minimenu remain CPU
+    /// that order into the wgpu scene texture. The retained nav texture
+    /// composites over it; chat bubbles, modals and the minimenu remain CPU
     /// viewport overlays composited afterward.
     fn scene(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
         if kind != FrameKind::Game || core.scene_state != 2 {
