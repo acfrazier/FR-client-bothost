@@ -163,6 +163,8 @@ mod window {
     use winit::event_loop::{ActiveEventLoop, EventLoop};
     use winit::keyboard::{Key, NamedKey};
     use winit::platform::pump_events::EventLoopExtPumpEvents;
+    #[cfg(all(windows, feature = "headed-fixture"))]
+    use winit::platform::windows::EventLoopBuilderExtWindows;
     use winit::window::{Window, WindowId};
 
     use crate::client::game_shell::GameShell;
@@ -206,6 +208,12 @@ mod window {
         /// `apply_mouse_*` coordinates share the 1:1 applet pixel space: no
         /// resize-to-fit, no upscale.
         pub(super) fn open(width: u32, height: u32, title: &str) -> Result<Self, PresentError> {
+            // Rust live tests run on a worker. Windows supports an event loop
+            // created, pumped, presented and dropped on that same worker;
+            // only the opt-in headed fixture may relax winit's main-thread guard.
+            #[cfg(all(windows, feature = "headed-fixture"))]
+            let event_loop = EventLoop::builder().with_any_thread(true).build()?;
+            #[cfg(not(all(windows, feature = "headed-fixture")))]
             let event_loop = EventLoop::new()?;
             #[allow(deprecated)] // pump-based driver creates the window outside run_app
             let window = Arc::new(

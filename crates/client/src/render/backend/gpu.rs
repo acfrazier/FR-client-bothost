@@ -1867,19 +1867,22 @@ impl RenderBackend for GpuBackend {
                 atlas_dirty = true;
             }
             // Side/chat modals draw outside the scene comparison and retain
-            // their CPU force path. Main modals/overlays are observed in
+            // their CPU force path. A hidden journal retains the side panel;
+            // chat remains live. Main modals/overlays are observed in
             // `finish` through the final uploaded scene-window RGBA/coverage.
-            if core.side_modal_id != -1 || core.chat_modal_id != -1 {
+            if (!core.journal_paint_hidden() && core.side_modal_id != -1)
+                || core.chat_modal_id != -1
+            {
                 atlas_dirty = true;
             }
-            if core.selected_area == 2
-                || core.obj_drag_area == 2
+            if (!core.journal_paint_hidden()
+                && (core.selected_area == 2 || core.obj_drag_area == 2))
                 || core.selected_area == 3
                 || core.obj_drag_area == 3
             {
                 atlas_dirty = true;
             }
-            if core.tut_flash_icon != -1 {
+            if !core.journal_paint_hidden() && core.tut_flash_icon != -1 {
                 atlas_dirty = true;
             }
             // Chat scrollbar may flip redraw_chat inside cpu.chrome.
@@ -1895,8 +1898,10 @@ impl RenderBackend for GpuBackend {
                     atlas_dirty = true;
                 }
             }
-            atlas_dirty |=
-                core.redraw_side || core.redraw_chat || core.redraw_icons || core.redraw_chat_mode;
+            atlas_dirty |= (!core.journal_paint_hidden() && core.redraw_side)
+                || core.redraw_chat
+                || (!core.journal_paint_hidden() && core.redraw_icons)
+                || core.redraw_chat_mode;
         }
         self.minimap_live = kind == FrameKind::Game && core.scene_state == 2;
         self.chrome_upload_pending = atlas_dirty || !self.chrome_uploaded;

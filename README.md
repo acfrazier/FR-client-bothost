@@ -16,8 +16,16 @@ path-dep (`vendor/fr-client-rust`). Alpha with the host’s `0.1.1` tag.
 A Rust 274 client **library** (`crates/client`) plus a thin applet CLI
 (`crates/client-play`). Headed default is a **wgpu GPU** 3D renderer;
 `BOT_CPU=1` is CpuPix3D. Bot-host hooks in this fork: gen counters,
-skip-paint / `set_draw`, shared cache, GPU device inject. Packet timing
-and `doAction` stay Java-shaped.
+skip-paint / `set_draw`, shared cache, GPU device inject, and the
+`Client::set_journal_paint_hidden` /
+`Client::journal_paint_hidden` paint lease. The lease hides only the main
+modal raster while retaining the pre-read side and tab chrome; simulation,
+modal/tab state, and packet-producing icon edges stay live.
+
+`headed-fixture` is an opt-in window feature for live test fixtures. On Windows
+it lets one fixture worker create, pump, present, and drop its own winit event
+loop. The host's `journal-paint-proof` feature enables it; panel-play and
+tui-play do not. Normal event-loop initialization is unchanged.
 
 Textured GPU lighting follows CpuPix3D's integer scanlines, eight-pixel
 brightness bands, and packed texture-palette arithmetic. The scene vertex
