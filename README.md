@@ -22,6 +22,11 @@ skip-paint / `set_draw`, shared cache, GPU device inject, and the
 modal raster while retaining the pre-read side and tab chrome; simulation,
 modal/tab state, and packet-producing icon edges stay live.
 
+`headed-fixture` is an opt-in window feature for live test fixtures. On Windows
+it lets one fixture worker create, pump, present, and drop its own winit event
+loop. The host's `journal-paint-proof` feature enables it; panel-play and
+tui-play do not. Normal event-loop initialization is unchanged.
+
 Textured GPU lighting follows CpuPix3D's integer scanlines, eight-pixel
 brightness bands, and packed texture-palette arithmetic. The scene vertex
 stays 24 bytes: the vertex shader reads each textured triangle from a
