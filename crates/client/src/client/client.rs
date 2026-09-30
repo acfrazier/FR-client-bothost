@@ -927,11 +927,12 @@ pub struct Client {
     /// render. Independent of the window: `client-play` sets it true after
     /// `WindowTarget::open`; headless bots keep it false.
     pub draw: bool,
-    /// The nav-debug paint the host publishes (`set_nav_debug_paint`);
-    /// drawn by the wgpu scene stage after the 3D world. `None` by
-    /// default — a skip-paint slot or a CPU-only client never paints, but
-    /// the store is always accepted.
+    /// Retained nav-debug facts from the host, projected by the wgpu scene
+    /// stage. `None` for a skip-paint slot or CpuPix3D renderer.
     pub nav_debug_paint: Option<NavDebugPaint>,
+    /// Whether the attached renderer can consume nav paint directly.
+    /// Maintained by the host from the renderer's actual backend kind.
+    nav_debug_drawable: bool,
     pub scene_state: i32,
     /// `inMultizone` from client-ts (TS 132): set by `SET_MULTIWAY`.
     pub in_multizone: i32,
@@ -1892,6 +1893,7 @@ impl Client {
             ingame: false,
             draw: false,
             nav_debug_paint: None,
+            nav_debug_drawable: false,
             scene_state: 0,
             in_multizone: 0,
             build_minusedlevel: 0,
@@ -12970,16 +12972,23 @@ impl Client {
         );
     }
 
-    /// Publish the host's nav-debug paint for this frame. Always stores —
-    /// CpuPix3D and skip-paint slots never paint, the wgpu scene stage
-    /// draws the stored paint after the 3D world.
+    /// Replace the host's retained nav-debug view. The host demand-gates
+    /// calls to facts/settings changes; the GPU projects it each frame.
     pub fn set_nav_debug_paint(&mut self, paint: Option<NavDebugPaint>) {
         self.nav_debug_paint = paint;
     }
 
-    /// The nav-debug paint published for the current frame.
+    /// The currently retained nav-debug view.
     pub fn nav_debug_paint(&self) -> Option<&NavDebugPaint> {
         self.nav_debug_paint.as_ref()
+    }
+
+    pub fn set_nav_debug_drawable(&mut self, drawable: bool) {
+        self.nav_debug_drawable = drawable;
+    }
+
+    pub fn nav_debug_drawable(&self) -> bool {
+        self.nav_debug_drawable
     }
 
     /// Flip the client's `lowmem` mode live (the panel's Music/SFX toggle):

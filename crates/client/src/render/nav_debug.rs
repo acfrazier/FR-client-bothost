@@ -1,18 +1,15 @@
-//! Nav debug tile/hull paint (Task 7): draws the host-supplied
-//! `NavDebugPaint` into the game viewport after the 3D world pass. The
-//! wgpu scene stage calls [`draw`] once the world is in `area_game`. Fill
-//! coverage is the overlay alpha so translucent tiles composite over the
-//! 3D scene (rs2b0t `pathScenePaint`: fill + stroke, not opaque blocks).
-//! CpuPix3D and skip-paint slots never call it — `set_nav_debug_paint`
-//! always stores, painting is wgpu-headed only.
+//! Nav debug tile/hull paint. The host retains scene-relative nav facts;
+//! the wgpu scene stage projects them for the current camera and emits
+//! alpha-blended GPU triangles directly over the 3D target. No Pix2D
+//! viewport raster or chrome-atlas upload participates.
 //!
-//! Paints are scene-relative tiles (the host already scene-clipped the
-//! collision list) projected at terrain height; hulls stroke the live loc
-//! model's eight-corner AABB. Loc picking is untouched: hulls *read* the
-//! model, they never set `use_aabb_mouse_check`.
+//! CpuPix3D and skip-paint slots do not request a retained view. Tiles are
+//! projected at terrain height; hulls stroke the live loc model's
+//! eight-corner AABB. Loc picking is untouched: hulls read the model but
+//! never set `use_aabb_mouse_check`.
 
 use crate::client::client::Client;
-use crate::graphics::{Pix2D, Pix3D};
+use crate::graphics::Pix3D;
 use crate::render::draw::get_av_h;
 use crate::render::Renderer;
 
@@ -96,7 +93,7 @@ impl Default for NavDebugColors {
     }
 }
 
-/// The scene paint the host publishes each frame; drawn by [`draw`].
+/// The retained scene paint the GPU backend projects when nav facts change.
 #[derive(Clone, Debug, Default)]
 pub struct NavDebugPaint {
     /// Blocked collision tiles, scene lx/lz + packed face bits.
@@ -131,7 +128,7 @@ const HOP_STROKE_ALPHA: i32 = 243; // 0.95
 const TILE: i32 = 128;
 
 /// A projected tile quad, drawn far-to-near so nearer tiles overdraw.
-struct Quad {
+pub(crate) struct Quad {
     depth: i32,
     x: [i32; 4],
     y: [i32; 4],
@@ -150,11 +147,34 @@ fn rgb(bytes: [u8; 3]) -> i32 {
     ((bytes[0] as i32) << 16) | ((bytes[1] as i32) << 8) | bytes[2] as i32
 }
 
-/// Draw the stored paint into the bound game viewport. The GPU scene stage
-/// calls this after the 3D world; CpuPix3D and skip-paint slots never call
-/// it (the store stays, the paint is wgpu-headed only).
-pub(crate) fn draw(client: &mut Client, r: &mut Renderer, surface: &mut Pix2D) {
-    let Some(paint) = client.nav_debug_paint().cloned() else {
+/// One screen-space GPU overlay vertex. The backend uploads these directly
+/// into its existing scene vertex buffer after the world submission; no
+/// viewport pixels or coverage map are materialized on the CPU.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct NavVertex {
+    pub x: f32,
+    pub y: f32,
+    pub rgba: [u8; 4],
+}
+
+/// Project the retained host paint into GPU triangles for this camera.
+
+#[derive(Default)]
+pub(crate) struct NavMesh {
+    pub vertices: Vec<NavVertex>,
+    quads: Vec<Quad>,
+    edges: std::collections::HashSet<(i32, i32, i32, i32)>,
+}
+/// `out` is backend-owned scratch and keeps its allocation across frames.
+pub(crate) fn build_gpu_mesh(client: &mut Client, r: &mut Renderer, mesh: &mut NavMesh) {
+    mesh.vertices.clear();
+    mesh.quads.clear();
+    mesh.edges.clear();
+    let out = &mut mesh.vertices;
+    let quads = &mut mesh.quads;
+    let edges = &mut mesh.edges;
+    let Some(paint) = client.nav_debug_paint.take() else {
         return;
     };
     let show_any = paint.show_collision
@@ -165,15 +185,12 @@ pub(crate) fn draw(client: &mut Client, r: &mut Renderer, surface: &mut Pix2D) {
         || !paint.labels.is_empty()
         || paint.click.is_some();
     if !show_any {
+        client.nav_debug_paint = Some(paint);
         return;
     }
 
-    // The projection origin the overlay passes read (`set_clipping` also
-    // binds the scanline the fills borrow; nothing else is touched).
-    r.pix3d.set_clipping(surface.width, surface.height);
-
-    // Tile fills, far-to-near so nearer tiles overdraw.
-    let mut quads: Vec<Quad> = Vec::new();
+    // Fill tiles far-to-near, preserving the established painter order.
+    // Filled tiles retain painter order in reusable backend scratch.
     if paint.show_collision {
         for cell in &paint.collision {
             let Some((colour, fill_alpha)) = cell_fill(cell, &paint.colors) else {
@@ -219,47 +236,36 @@ pub(crate) fn draw(client: &mut Client, r: &mut Renderer, surface: &mut Pix2D) {
         }
     }
     quads.sort_by_key(|quad| std::cmp::Reverse(quad.depth));
-    for quad in &quads {
-        fill_quad(surface, quad);
-        stroke_quad(surface, quad);
+    for quad in quads.iter() {
+        append_filled_quad(out, quad);
+        append_quad_stroke(out, quad);
     }
 
-    // Edges are independent of fills so face-only standable cells remain
-    // visible. Diagonal bits are short corner markers, not full diagonals.
     if paint.show_collision {
-        let mut edges = std::collections::HashSet::new();
+        // Shared tile faces are emitted once, as in the Pix2D path.
         for cell in &paint.collision {
             for (bit, x, z, ex, ez) in cardinal_edges(cell) {
                 if cell.bits & bit == 0 || !edges.insert((x, z, ex, ez)) {
                     continue;
                 }
-                let a = r.project_overlay(client, x, z, 0);
-                let b = r.project_overlay(client, ex, ez, 0);
-                if a.0 != -1 && b.0 != -1 {
-                    stroke_line(
-                        surface,
-                        a.0,
-                        a.1,
-                        b.0,
-                        b.1,
-                        rgb(paint.colors.collision),
-                        STROKE_ALPHA,
-                    );
-                }
+                append_projected_line(
+                    client,
+                    r,
+                    out,
+                    (x, z),
+                    (ex, ez),
+                    rgb(paint.colors.collision),
+                    STROKE_ALPHA,
+                );
             }
             for (bit, ax, az, bx, bz) in corner_strokes(cell) {
-                if cell.bits & bit == 0 {
-                    continue;
-                }
-                let a = r.project_overlay(client, ax, az, 0);
-                let b = r.project_overlay(client, bx, bz, 0);
-                if a.0 != -1 && b.0 != -1 {
-                    stroke_line(
-                        surface,
-                        a.0,
-                        a.1,
-                        b.0,
-                        b.1,
+                if cell.bits & bit != 0 {
+                    append_projected_line(
+                        client,
+                        r,
+                        out,
+                        (ax, az),
+                        (bx, bz),
                         rgb(paint.colors.collision),
                         STROKE_ALPHA,
                     );
@@ -270,34 +276,32 @@ pub(crate) fn draw(client: &mut Client, r: &mut Renderer, surface: &mut Pix2D) {
 
     if paint.show_nsew {
         for cell in &paint.collision {
-            draw_nsew(client, r, surface, cell, rgb(paint.colors.nsew));
+            append_nsew(client, r, out, cell, rgb(paint.colors.nsew));
         }
     }
-
     if let Some((lx, lz)) = paint.click {
-        stroke_tile(
+        append_tile_stroke(
             client,
             r,
-            surface,
+            out,
             lx,
             lz,
             rgb(paint.colors.click),
             STROKE_ALPHA,
         );
     }
-
     if paint.show_hulls {
         for hull in &paint.hulls {
-            draw_hull(client, r, surface, hull, rgb(paint.colors.hull));
+            append_hull(client, r, out, hull, rgb(paint.colors.hull));
         }
     }
-
     if !paint.labels.is_empty() {
         let colour = rgb(paint.colors.nsew);
         for &(lx, lz, ref text) in &paint.labels {
-            draw_hop_label(client, r, surface, lx, lz, text, colour);
+            append_hop_label(client, r, out, lx, lz, text, colour);
         }
     }
+    client.nav_debug_paint = Some(paint);
 }
 
 /// Project a tile's four ground corners; `None` when any corner fails to
@@ -352,77 +356,127 @@ fn scene_depth(client: &Client, x: i32, z: i32, height: i32) -> i32 {
         >> 16
 }
 
-/// Scanline-fill a convex projected quad. RGB is the layer colour; overlay
-/// alpha is the coverage byte so the chrome composite blends over the 3D
-/// scene (rs2b0t `fillQuadPix`).
-fn fill_quad(surface: &mut Pix2D, quad: &Quad) {
-    let [x0, x1, x2, x3] = quad.x;
-    let [y0, y1, y2, y3] = quad.y;
-    let min_y = y0.min(y1).min(y2).min(y3).max(0);
-    let max_y = y0.max(y1).max(y2).max(y3).min(surface.height - 1);
-    let width = surface.width;
-    let edges = [
-        (x0, y0, x1, y1),
-        (x1, y1, x2, y2),
-        (x2, y2, x3, y3),
-        (x3, y3, x0, y0),
+fn rgba(colour: i32, alpha: i32) -> [u8; 4] {
+    [
+        ((colour >> 16) & 0xff) as u8,
+        ((colour >> 8) & 0xff) as u8,
+        (colour & 0xff) as u8,
+        alpha.clamp(0, 255) as u8,
+    ]
+}
+
+fn append_triangle(
+    out: &mut Vec<NavVertex>,
+    a: (f32, f32),
+    b: (f32, f32),
+    c: (f32, f32),
+    colour: i32,
+    alpha: i32,
+) {
+    let rgba = rgba(colour, alpha);
+    out.extend([
+        NavVertex {
+            x: a.0,
+            y: a.1,
+            rgba,
+        },
+        NavVertex {
+            x: b.0,
+            y: b.1,
+            rgba,
+        },
+        NavVertex {
+            x: c.0,
+            y: c.1,
+            rgba,
+        },
+    ]);
+}
+
+fn append_filled_quad(out: &mut Vec<NavVertex>, quad: &Quad) {
+    let p = [
+        (quad.x[0] as f32, quad.y[0] as f32),
+        (quad.x[1] as f32, quad.y[1] as f32),
+        (quad.x[2] as f32, quad.y[2] as f32),
+        (quad.x[3] as f32, quad.y[3] as f32),
     ];
-    let mut hits = [0f32; 2];
-    for y in min_y..=max_y {
-        let mut n = 0usize;
-        for (ax, ay, bx, by) in edges {
-            // Half-open edge rule: a horizontal scanline crosses an edge
-            // once per vertex, so a convex quad yields exactly two hits.
-            if (ay < by && (ay..by).contains(&y)) || (by < ay && (by..ay).contains(&y)) {
-                let t = (y - ay) as f32 / (by - ay) as f32;
-                let x = ax as f32 + t * (bx - ax) as f32;
-                if n < 2 {
-                    hits[n] = x;
-                    n += 1;
-                }
-            }
-        }
-        if n != 2 {
-            continue;
-        }
-        let lo = hits[0].min(hits[1]).ceil() as i32;
-        let hi = hits[0].max(hits[1]).floor() as i32;
-        for x in lo.max(0)..=hi.min(width - 1) {
-            plot_overlay(surface, y * width + x, quad.colour, quad.fill_alpha);
-        }
-    }
+    append_triangle(out, p[0], p[1], p[2], quad.colour, quad.fill_alpha);
+    append_triangle(out, p[0], p[2], p[3], quad.colour, quad.fill_alpha);
 }
 
-/// Stroke the projected quad (rs2b0t `strokeQuadPix`).
-fn stroke_quad(surface: &mut Pix2D, quad: &Quad) {
+fn append_quad_stroke(out: &mut Vec<NavVertex>, quad: &Quad) {
     for i in 0..4 {
-        let a = (quad.x[i], quad.y[i]);
-        let b = (quad.x[(i + 1) % 4], quad.y[(i + 1) % 4]);
-        stroke_line(surface, a.0, a.1, b.0, b.1, quad.colour, quad.stroke_alpha);
+        append_line(
+            out,
+            (quad.x[i], quad.y[i]),
+            (quad.x[(i + 1) % 4], quad.y[(i + 1) % 4]),
+            quad.colour,
+            quad.stroke_alpha,
+        );
     }
 }
 
-/// Write overlay RGB and coverage alpha. The GPU chrome pass blends this
-/// over the 3D scene; do not pre-blend onto the cleared `area_game` black
-/// (that is what made tiles look solid).
-fn plot_overlay(surface: &mut Pix2D, off: i32, rgb: i32, alpha: i32) {
-    surface.pixels[off as usize] = rgb & 0x00ff_ffff;
-    surface.mark_pixel_alpha(off, alpha.clamp(0, 255) as u8);
+/// A one-pixel screen-space line expressed as two GPU triangles. Pixel
+/// centres remain aligned with the integer projection used by Pix2D.
+fn append_line(out: &mut Vec<NavVertex>, a: (i32, i32), b: (i32, i32), colour: i32, alpha: i32) {
+    let dx = (b.0 - a.0) as f32;
+    let dy = (b.1 - a.1) as f32;
+    let len = dx.hypot(dy);
+    if len == 0.0 {
+        append_pixel(out, a.0, a.1, colour, alpha);
+        return;
+    }
+    let nx = -dy * 0.5 / len;
+    let ny = dx * 0.5 / len;
+    let p0 = (a.0 as f32 + nx, a.1 as f32 + ny);
+    let p1 = (b.0 as f32 + nx, b.1 as f32 + ny);
+    let p2 = (b.0 as f32 - nx, b.1 as f32 - ny);
+    let p3 = (a.0 as f32 - nx, a.1 as f32 - ny);
+    append_triangle(out, p0, p1, p2, colour, alpha);
+    append_triangle(out, p0, p2, p3, colour, alpha);
 }
 
-/// The NSEW face letters of a collision cell, one per blocked face at the
-/// face-centre projection (`project_overlay`).
-fn draw_nsew(client: &Client, r: &Renderer, surface: &mut Pix2D, cell: &NavDebugCell, colour: i32) {
+fn append_pixel(out: &mut Vec<NavVertex>, x: i32, y: i32, colour: i32, alpha: i32) {
+    let p0 = (x as f32 - 0.5, y as f32 - 0.5);
+    let p1 = (x as f32 + 0.5, y as f32 - 0.5);
+    let p2 = (x as f32 + 0.5, y as f32 + 0.5);
+    let p3 = (x as f32 - 0.5, y as f32 + 0.5);
+    append_triangle(out, p0, p1, p2, colour, alpha);
+    append_triangle(out, p0, p2, p3, colour, alpha);
+}
+
+fn append_projected_line(
+    client: &Client,
+    r: &Renderer,
+    out: &mut Vec<NavVertex>,
+    a: (i32, i32),
+    b: (i32, i32),
+    colour: i32,
+    alpha: i32,
+) {
+    let a = r.project_overlay(client, a.0, a.1, 0);
+    let b = r.project_overlay(client, b.0, b.1, 0);
+    if a.0 != -1 && b.0 != -1 {
+        append_line(out, a, b, colour, alpha);
+    }
+}
+
+fn append_nsew(
+    client: &Client,
+    r: &Renderer,
+    out: &mut Vec<NavVertex>,
+    cell: &NavDebugCell,
+    colour: i32,
+) {
     let glyphs = [GLYPH_N, GLYPH_S, GLYPH_E, GLYPH_W];
     for ((bit, fx, fz), glyph) in nsew_centres(cell).into_iter().zip(glyphs) {
         if cell.bits & bit == 0 {
             continue;
         }
         let (px, py) = r.project_overlay(client, fx, fz, 0);
-        if px == -1 {
-            continue;
+        if px != -1 {
+            append_glyph(out, px - 2, py - 2, glyph, colour, STROKE_ALPHA);
         }
-        plot_glyph(surface, px - 2, py - 2, glyph, colour, STROKE_ALPHA);
     }
 }
 
@@ -479,12 +533,12 @@ fn corner_strokes(cell: &NavDebugCell) -> [(u8, i32, i32, i32, i32); 4] {
     ]
 }
 
-/// Caption at the projected tile centre (rs2b0t `drawHopLabel`). Uses
-/// `b12` when loaded; otherwise a 5×5 fallback is skipped (no tiny noise).
-fn draw_hop_label(
+/// Caption at the projected tile centre using the same b12 glyph masks as
+/// PixFont, emitted as one-pixel GPU quads rather than a CPU text raster.
+fn append_hop_label(
     client: &Client,
     r: &Renderer,
-    surface: &mut Pix2D,
+    out: &mut Vec<NavVertex>,
     lx: i32,
     lz: i32,
     text: &str,
@@ -499,48 +553,55 @@ fn draw_hop_label(
     let Some(font) = r.media.b12.as_ref() else {
         return;
     };
-    font.centre_string(surface, Some(text), px + 1, py + 1, 0);
-    font.centre_string(surface, Some(text), px, py, colour);
-    let w = font.string_wid(Some(text));
-    let h = font.height.max(12);
-    let x0 = px - w / 2 - 1;
-    let y0 = py - h - 1;
-    for row in y0..=py + 1 {
-        for col in x0..=px + w / 2 + 1 {
-            if col < 0 || row < 0 || col >= surface.width || row >= surface.height {
-                continue;
-            }
-            let off = row * surface.width + col;
-            if surface.pixels[off as usize] & 0x00ff_ffff != 0 {
-                surface.mark_pixel_alpha(off, STROKE_ALPHA.clamp(0, 255) as u8);
+    let start_x = px - font.string_wid(Some(text)) / 2;
+    append_font_text(out, font, text, start_x, py, colour, STROKE_ALPHA);
+}
+
+fn append_font_text(
+    out: &mut Vec<NavVertex>,
+    font: &crate::graphics::PixFont,
+    text: &str,
+    mut x: i32,
+    baseline_y: i32,
+    colour: i32,
+    alpha: i32,
+) {
+    let y = baseline_y - font.height;
+    for c in text.chars() {
+        let code = c as usize;
+        if code != 32 {
+            let mask = font.char_mask.get(code).map(Vec::as_slice).unwrap_or(&[]);
+            let ox = font.char_offset_x.get(code).copied().unwrap_or(0);
+            let oy = font.char_offset_y.get(code).copied().unwrap_or(0);
+            let width = font.char_mask_width.get(code).copied().unwrap_or(0);
+            let height = font.char_mask_height.get(code).copied().unwrap_or(0);
+            for row in 0..height {
+                for col in 0..width {
+                    let index = (col + row * width) as usize;
+                    if mask.get(index).copied().unwrap_or(0) != 0 {
+                        append_pixel(out, x + ox + col, y + oy + row, colour, alpha);
+                    }
+                }
             }
         }
+        x += font.char_advance.get(code).copied().unwrap_or(0);
     }
 }
 
-fn plot_glyph(surface: &mut Pix2D, x: i32, y: i32, glyph: [u8; 5], colour: i32, alpha: i32) {
-    let width = surface.width;
-    let height = surface.height;
+fn append_glyph(out: &mut Vec<NavVertex>, x: i32, y: i32, glyph: [u8; 5], colour: i32, alpha: i32) {
     for (row, bits) in glyph.iter().enumerate() {
         for col in 0..5u32 {
-            if bits & (1 << (4 - col)) == 0 {
-                continue;
+            if bits & (1 << (4 - col)) != 0 {
+                append_pixel(out, x + col as i32, y + row as i32, colour, alpha);
             }
-            let px = x + col as i32;
-            let py = y + row as i32;
-            if px < 0 || py < 0 || px >= width || py >= height {
-                continue;
-            }
-            plot_overlay(surface, py * width + px, colour, alpha);
         }
     }
 }
 
-/// Stroke a tile's projected outline (the click-target square).
-fn stroke_tile(
+fn append_tile_stroke(
     client: &Client,
     r: &Renderer,
-    surface: &mut Pix2D,
+    out: &mut Vec<NavVertex>,
     lx: i32,
     lz: i32,
     colour: i32,
@@ -558,49 +619,16 @@ fn stroke_tile(
         return;
     }
     for i in 0..4 {
-        let a = p[i];
-        let b = p[(i + 1) % 4];
-        stroke_line(surface, a.0, a.1, b.0, b.1, colour, alpha);
-    }
-}
-
-/// Bresenham line, clipped per pixel and coverage-marked.
-fn stroke_line(surface: &mut Pix2D, x0: i32, y0: i32, x1: i32, y1: i32, colour: i32, alpha: i32) {
-    let width = surface.width;
-    let height = surface.height;
-    let mut x = x0;
-    let mut y = y0;
-    let dx = (x1 - x0).abs();
-    let dy = -(y1 - y0).abs();
-    let sx = if x0 < x1 { 1 } else { -1 };
-    let sy = if y0 < y1 { 1 } else { -1 };
-    let mut err = dx + dy;
-    loop {
-        if x >= 0 && y >= 0 && x < width && y < height {
-            plot_overlay(surface, y * width + x, colour, alpha);
-        }
-        if x == x1 && y == y1 {
-            break;
-        }
-        let e2 = 2 * err;
-        if e2 >= dy {
-            err += dy;
-            x += sx;
-        }
-        if e2 <= dx {
-            err += dx;
-            y += sy;
-        }
+        append_line(out, p[i], p[(i + 1) % 4], colour, alpha);
     }
 }
 
 /// Stroke a loc hull's eight-corner AABB from the live model at the hull's
-/// scene tile. Skips when the loc is not in the loaded scene; the loc's
-/// pick path is never touched.
-fn draw_hull(
+/// scene tile. Loc picking remains untouched.
+fn append_hull(
     client: &mut Client,
     r: &mut Renderer,
-    surface: &mut Pix2D,
+    out: &mut Vec<NavVertex>,
     hull: &NavDebugHull,
     colour: i32,
 ) {
@@ -661,7 +689,6 @@ fn draw_hull(
     };
     let mut screen = [(-1, -1); 8];
     for (i, &(mx, my, mz)) in base.iter().enumerate() {
-        // The engine's model-space yaw rotate, then the scene translation.
         let (mut x, y, mut z) = (mx, my, mz);
         if yaw != 0 {
             let temp = (z
@@ -698,16 +725,13 @@ fn draw_hull(
         (3, 7),
     ];
     for (a, b) in EDGES {
-        let (ax, ay) = screen[a];
-        let (bx, by) = screen[b];
-        stroke_line(surface, ax, ay, bx, by, colour, HOP_STROKE_ALPHA);
+        append_line(out, screen[a], screen[b], colour, HOP_STROKE_ALPHA);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graphics::Pix2D;
 
     #[test]
     fn face_only_cell_has_letters_but_no_fill() {
@@ -860,18 +884,5 @@ mod tests {
             marks[3],
             (CORNER_SW, 2 * TILE, 3 * TILE, 2 * TILE + q, 3 * TILE + q)
         );
-    }
-
-    #[test]
-    fn overlay_pixel_writes_source_rgb_and_coverage_alpha() {
-        let mut pix = vec![0i32; 4];
-        let mut cov = vec![0u8; 4];
-        let _g = crate::graphics::pix2d::coverage_guard(&mut cov, 2, 2);
-        {
-            let mut s = Pix2D::with_pixels(&mut pix, 2, 2);
-            plot_overlay(&mut s, 0, 0x00ff0000, WALK_FILL_ALPHA);
-        }
-        assert_eq!(pix[0], 0x00ff0000, "do not pre-blend onto black");
-        assert_eq!(cov[0], WALK_FILL_ALPHA as u8);
     }
 }
