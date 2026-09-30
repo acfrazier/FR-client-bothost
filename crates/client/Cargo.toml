@@ -6,6 +6,8 @@ edition = "2021"
 [features]
 default = []
 window = ["dep:winit", "dep:softbuffer"]
+# Windows test/fixture workers may own a window loop; never enabled by product frontends.
+headed-fixture = ["window"]
 audio = ["dep:rustysynth", "dep:cpal"]
 render-diagnostics = []
 
