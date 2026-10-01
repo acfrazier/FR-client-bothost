@@ -593,6 +593,18 @@ fn move_file_write_through(from: &Path, to: &Path) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH};
 
+    // Rust's Windows canonicalize returns normalized verbatim paths (including
+    // UNC paths). Raw Win32 moves do not get std::fs's long-path conversion.
+    // The destination file need not exist yet, but its parent does.
+    let from = std::fs::canonicalize(from)?;
+    let parent = to
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let name = to
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "move target has no filename"))?;
+    let to = std::fs::canonicalize(parent)?.join(name);
     let existing: Vec<u16> = from.as_os_str().encode_wide().chain(Some(0)).collect();
     let new: Vec<u16> = to.as_os_str().encode_wide().chain(Some(0)).collect();
     // SAFETY: both vectors are NUL-terminated UTF-16 paths alive for the call.

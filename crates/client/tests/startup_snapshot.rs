@@ -257,6 +257,56 @@ fn ordinary_launch_persists_and_fresh_process_reuses_without_entry_fill() {
 }
 
 #[test]
+fn deep_home_publishes_reuses_and_repairs_in_fresh_processes() {
+    let temp = support::TempDir::new("deep-home");
+    let source = temp.path().join("cache");
+    let mut root = temp.path().to_owned();
+    for _ in 0..12 {
+        root = root.join("ordinary-home-path-component");
+    }
+    let fixture = support::PackSet::new(37);
+    fixture.write_to(&source).unwrap();
+    let http = support::HttpServer::start(fixture.clone());
+    let entries = support::EntryServer::start(fixture.entries.clone());
+    let launch = || {
+        WorkerChild::spawn(
+            &source,
+            &root,
+            http.port(),
+            entries.port(),
+            ClientRevision::R289,
+            None,
+        )
+        .finish(Duration::from_secs(20))
+        .success()
+    };
+
+    let first = launch();
+    assert_published(&root, &first.retained, &fixture);
+    assert_eq!(entries.request_count(), fixture.entries.len());
+    std::fs::remove_dir_all(&source).unwrap();
+
+    let second = launch();
+    assert_eq!(second.identity, first.identity);
+    assert_eq!(second.retained, first.retained);
+    assert_eq!(entries.request_count(), fixture.entries.len());
+    for name in support::PACK_NAMES {
+        assert_eq!(http.jag_count(name), 0, "retained JAG {name} reused");
+    }
+
+    support::flip_same_size_bytes(&first.retained.join("maps.bin")).unwrap();
+    let repaired = launch();
+    assert_eq!(repaired.identity, first.identity);
+    assert_eq!(entries.request_count(), fixture.entries.len() * 2);
+    assert_eq!(http.crc_count(), 3);
+    assert_published(&root, &repaired.retained, &fixture);
+    assert!(!first.runtime.exists());
+    assert!(!second.runtime.exists());
+    assert!(!repaired.runtime.exists());
+    assert!(!contains_runtime_directory(&root));
+}
+
+#[test]
 fn retained_corruption_never_authorizes_warm_reuse_or_identity() {
     #[derive(Clone, Copy, Debug)]
     enum Damage {
