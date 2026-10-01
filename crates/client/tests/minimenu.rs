@@ -24,6 +24,71 @@ fn client() -> Client {
 }
 
 #[test]
+fn shared_hit_helpers_preserve_viewport_and_minimenu_geometry() {
+    assert!(!Client::world_viewport_hit(4, 5));
+    assert!(!Client::world_viewport_hit(5, 4));
+    assert!(Client::world_viewport_hit(5, 5));
+    assert!(Client::world_viewport_hit(515, 337));
+    assert!(!Client::world_viewport_hit(516, 337));
+    assert!(!Client::world_viewport_hit(515, 338));
+
+    let mut c = client();
+    c.menu_num_entries = 2;
+    c.menu_x = 10;
+    c.menu_y = 20;
+    c.menu_width = 30;
+
+    // Each panel's applet origin is removed before applying the same
+    // strict row bands: row 1 is 38 < y < 54, row 0 is 53 < y < 69.
+    for (area, origin_x, origin_y) in [(0, 4, 4), (1, 553, 205), (2, 17, 357)] {
+        c.menu_area = area;
+        assert_eq!(c.menu_option_at(origin_x + 11, origin_y + 43), Some(1));
+        assert_eq!(c.menu_option_at(origin_x + 10, origin_y + 43), None);
+        assert_eq!(c.menu_option_at(origin_x + 11, origin_y + 38), None);
+        assert_eq!(c.menu_option_at(origin_x + 11, origin_y + 39), Some(1));
+        assert_eq!(c.menu_option_at(origin_x + 40, origin_y + 43), None);
+        assert_eq!(c.menu_option_at(origin_x + 11, origin_y + 68), Some(0));
+        assert_eq!(c.menu_option_at(origin_x + 11, origin_y + 69), None);
+    }
+    // Adjacent row bands overlap continuously by one pixel; integer applet
+    // coordinates resolve at either edge to the last matching row.
+    c.menu_area = 0;
+    assert_eq!(c.menu_option_at(15, 57), Some(1));
+    assert_eq!(c.menu_option_at(15, 58), Some(0));
+}
+
+#[test]
+fn minimap_hit_keeps_half_open_bounds_and_centered_offsets() {
+    assert_eq!(Client::minimap_hit(575, 8), Some((-73, -75)));
+    assert_eq!(Client::minimap_hit(648, 83), Some((0, 0)));
+    assert_eq!(Client::minimap_hit(720, 158), Some((72, 75)));
+    assert_eq!(Client::minimap_hit(574, 83), None);
+    assert_eq!(Client::minimap_hit(721, 83), None);
+    assert_eq!(Client::minimap_hit(648, 7), None);
+    assert_eq!(Client::minimap_hit(648, 159), None);
+}
+
+#[test]
+fn left_click_off_menu_rows_dismisses_without_selecting_an_action() {
+    let _r = Renderer::new(false);
+    let mut c = client();
+    c.is_menu_open = true;
+    c.menu_area = 0;
+    c.menu_x = 10;
+    c.menu_y = 10;
+    c.menu_width = 40;
+    c.menu_height = 51;
+    c.menu_num_entries = 2;
+    c.shell.apply_mouse_down(1, 100, 100);
+    c.shell.latch_click();
+
+    c.mouse_loop();
+
+    assert!(!c.is_menu_open);
+    assert!(!c.world.click);
+}
+
+#[test]
 fn open_menu_in_viewport_sets_area_0_and_geometry() {
     let _r = Renderer::new(false);
     let mut c = client();

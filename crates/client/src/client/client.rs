@@ -7169,11 +7169,7 @@ impl Client {
         self.last_over_com_id = 0;
 
         // Viewport 4..516 x 4..338: the main modal, else the world picks.
-        if self.shell.mouse_x > 4
-            && self.shell.mouse_y > 4
-            && self.shell.mouse_x < 516
-            && self.shell.mouse_y < 338
-        {
+        if Self::world_viewport_hit(self.shell.mouse_x, self.shell.mouse_y) {
             if self.main_modal_id == -1 {
                 self.add_world_options();
             } else {
@@ -11044,36 +11040,9 @@ impl Client {
 
         if self.is_menu_open {
             if button == 1 {
-                let menu_x = self.menu_x;
-                let menu_y = self.menu_y;
-                let menu_width = self.menu_width;
-
-                let mut click_x = self.shell.mouse_click_x;
-                let mut click_y = self.shell.mouse_click_y;
-                if self.menu_area == 0 {
-                    click_x -= 4;
-                    click_y -= 4;
-                } else if self.menu_area == 1 {
-                    click_x -= 553;
-                    click_y -= 205;
-                } else if self.menu_area == 2 {
-                    click_x -= 17;
-                    click_y -= 357;
-                }
-
-                let mut option = -1;
-                for i in 0..self.menu_num_entries {
-                    let option_y = menu_y + (self.menu_num_entries - 1 - i) * 15 + 31;
-                    if click_x > menu_x
-                        && click_x < menu_x + menu_width
-                        && click_y > option_y - 13
-                        && click_y < option_y + 3
-                    {
-                        option = i;
-                    }
-                }
-
-                if option != -1 {
+                if let Some(option) =
+                    self.menu_option_at(self.shell.mouse_click_x, self.shell.mouse_click_y)
+                {
                     self.doAction(option);
                 }
 
@@ -11203,7 +11172,7 @@ impl Client {
         let (click_x, click_y) = (self.shell.mouse_click_x, self.shell.mouse_click_y);
 
         // the viewport (TS 8463-8482)
-        if click_x > 4 && click_y > 4 && click_x < 516 && click_y < 338 {
+        if Self::world_viewport_hit(click_x, click_y) {
             let mut x = click_x - (width / 2) - 4;
             if x + width > 512 {
                 x = 512 - width;
@@ -11603,6 +11572,45 @@ impl Client {
         self.menu_num_entries += 1;
     }
 
+    /// Returns whether a point lies in the strict world viewport bounds.
+    pub fn world_viewport_hit(x: i32, y: i32) -> bool {
+        x > 4 && y > 4 && x < 516 && y < 338
+    }
+
+    /// Returns the clicked minimenu entry, translating applet coordinates
+    /// into the menu's viewport, side-panel, or chat-local coordinates.
+    /// Iteration deliberately keeps the last matching row, as mouse_loop did.
+    pub fn menu_option_at(&self, x: i32, y: i32) -> Option<i32> {
+        let (x, y) = match self.menu_area {
+            0 => (x - 4, y - 4),
+            1 => (x - 553, y - 205),
+            2 => (x - 17, y - 357),
+            _ => (x, y),
+        };
+        let mut option = None;
+        for i in 0..self.menu_num_entries {
+            let option_y = self.menu_y + (self.menu_num_entries - 1 - i) * 15 + 31;
+            if x > self.menu_x
+                && x < self.menu_x + self.menu_width
+                && y > option_y - 13
+                && y < option_y + 3
+            {
+                option = Some(i);
+            }
+        }
+        option
+    }
+
+    /// Returns minimap-relative offsets for a click inside the 146×151 map.
+    pub fn minimap_hit(x: i32, y: i32) -> Option<(i32, i32)> {
+        let x = x - 575;
+        let y = y - 8;
+        if x < 0 || y < 0 || x >= 146 || y >= 151 {
+            return None;
+        }
+        Some((x - 73, y - 75))
+    }
+
     /// `minimapLoop` from Client.ts (2742): a left click inside the
     /// 146×151 map ring is converted through the orbit yaw and minimap
     /// angle/zoom into a destination tile, then `tryMove(..., 1)` writes
@@ -11616,13 +11624,10 @@ impl Client {
             None => return,
         };
 
-        let x = self.shell.mouse_click_x - 25 - 550;
-        let y = self.shell.mouse_click_y - 4 - 4;
-        if x < 0 || y < 0 || x >= 146 || y >= 151 {
-            return;
-        }
-        let x = x - 73;
-        let y = y - 75;
+        let (x, y) = match Self::minimap_hit(self.shell.mouse_click_x, self.shell.mouse_click_y) {
+            Some(offsets) => offsets,
+            None => return,
+        };
 
         let yaw = (self.orbit_camera_yaw + self.macro_minimap_angle) & 0x7ff;
         let mut sin_yaw = Pix3D::sin_table().get(yaw as usize).copied().unwrap_or(0);
