@@ -69,6 +69,41 @@ fn minimap_loop_type1_in_rect() {
     );
 }
 
+/// mouse_loop dismisses a world menu first, but the same off-row click is
+/// still independently consumed by minimap_loop as MOVE_MINIMAPCLICK.
+#[test]
+fn off_row_minimap_click_dismisses_world_menu_and_moves() {
+    let mut c = client();
+    c.ingame = true;
+    let mut p = ClientPlayer::at(10, 10);
+    p.x = 10 * 128 + 64;
+    p.z = 10 * 128 + 64;
+    c.local_player = Some(p);
+    c.out.random = Some(Isaac::new(&[1, 2, 3, 4]));
+
+    c.is_menu_open = true;
+    c.menu_area = 0;
+    c.menu_x = 20;
+    c.menu_y = 20;
+    c.menu_width = 100;
+    c.menu_height = 51;
+    c.menu_num_entries = 2;
+    c.shell.apply_mouse_down(1, 648, 83);
+    c.shell.latch_click();
+
+    c.mouse_loop();
+    assert!(!c.is_menu_open);
+    assert!(
+        !c.world.click,
+        "off-row click must not select a world action"
+    );
+    c.minimap_loop();
+
+    let opcode = ClientProt::MOVE_MINIMAPCLICK.id.wrapping_add(-621246914) as u8;
+    assert_eq!(c.out.data()[0], opcode);
+    assert_eq!(c.out.pos, 7 + 14);
+}
+
 /// A left click outside the minimap ring is ignored.
 #[test]
 fn minimap_loop_outside_rect_is_ignored() {
