@@ -573,9 +573,14 @@ fn register_retention_owner(
     }
 }
 
-/// Keep the newly verified namespace and any namespace that a live or unknown
-/// process may still read/write. Persistent preparation-lock inodes are separate
-/// and never removed. The old unnamespaced layout is deliberately not visited.
+// Three recent namespaces cover switching servers plus one server update without
+// allowing abandoned snapshots to accumulate indefinitely. Owner leases may
+// temporarily exceed this bound.
+const RETAINED_COPY_LIMIT: usize = 3;
+
+/// Keep the most recently used namespaces and any namespace that a live or
+/// unknown process may still read/write. Persistent preparation-lock inodes are
+/// separate and never removed. The old unnamespaced layout is not visited.
 fn prune_retained_copies(revision_root: &Path, newest: &str) {
     let Ok(_lock) = super::PreparationLock::acquire(&revision_root.join(".retention.lock")) else {
         return;
@@ -594,6 +599,12 @@ fn prune_retained_copies_with_liveness(
     self_pid: u32,
     is_alive: impl Fn(u32) -> bool,
 ) {
+    // Updating a dedicated stamp, rather than the namespace directory's mtime,
+    // records verified reuse as well as publication. A failed stamp must not
+    // cause another server's reusable assets to be evicted.
+    if std::fs::write(revision_root.join(newest).join(".last-used"), []).is_err() {
+        return;
+    }
     let Ok(entries) = std::fs::read_dir(revision_root) else {
         return;
     };
@@ -605,7 +616,19 @@ fn prune_retained_copies_with_liveness(
             continue;
         };
         if is_negotiation_key(name) && entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-            candidates.push((name.to_owned(), entry.path()));
+            let path = entry.path();
+            let last_used = match std::fs::metadata(path.join(".last-used")) {
+                Ok(metadata) => match metadata.modified() {
+                    Ok(time) => time,
+                    Err(_) => return,
+                },
+                // Namespaces retained before recency tracking are oldest.
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    std::time::SystemTime::UNIX_EPOCH
+                }
+                Err(_) => return,
+            };
+            candidates.push((name.to_owned(), path, last_used));
             continue;
         }
         let Some((key, owner)) = name.strip_prefix('.').and_then(|n| n.split_once(".owner-"))
@@ -626,8 +649,12 @@ fn prune_retained_copies_with_liveness(
             }
         }
     }
-    for (key, path) in candidates {
-        if key != newest && !protected.contains(&key) {
+    candidates.sort_unstable_by(|(a, _, a_time), (b, _, b_time)| {
+        // The just-verified key stays first even if the wall clock moved back.
+        (b == newest, b_time, b).cmp(&(a == newest, a_time, a))
+    });
+    for (key, path, _) in candidates.into_iter().skip(RETAINED_COPY_LIMIT) {
+        if !protected.contains(&key) {
             let _ = std::fs::remove_dir_all(path);
         }
     }

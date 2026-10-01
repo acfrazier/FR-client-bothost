@@ -129,8 +129,12 @@ fn retention_pruning_keeps_newest_and_live_or_unknown_owners() {
     let live = "c".repeat(64);
     let own = "d".repeat(64);
     let malformed = "e".repeat(64);
-    for key in [&newest, &dead, &live, &own, &malformed] {
-        touch_dir(&tmp.0, key);
+    for (index, key) in [&newest, &dead, &live, &own, &malformed]
+        .into_iter()
+        .enumerate()
+    {
+        let path = touch_dir(&tmp.0, key);
+        stamp_use(&path, index as u64);
     }
     for (key, owner) in [
         (&dead, "100-0"),
@@ -154,4 +158,39 @@ fn retention_pruning_keeps_newest_and_live_or_unknown_owners() {
         "lock inodes remain stable for waiting processes"
     );
     assert!(legacy.exists(), "unrecognized layouts are not pruned");
+}
+
+fn stamp_use(namespace: &std::path::Path, seconds: u64) {
+    let file = std::fs::File::create(namespace.join(".last-used")).unwrap();
+    file.set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(seconds))
+        .unwrap();
+}
+
+#[test]
+fn retention_pruning_refreshes_reuse_and_evicts_the_least_recent_copy() {
+    let tmp = Temp::new();
+    let keys: Vec<_> = ['a', 'b', 'c', 'd', 'e']
+        .into_iter()
+        .map(|letter| letter.to_string().repeat(64))
+        .collect();
+    for (index, key) in keys[..4].iter().enumerate() {
+        stamp_use(&touch_dir(&tmp.0, key), index as u64);
+    }
+
+    // Reusing the oldest copy makes it recent, not an eviction candidate.
+    prune_retained_copies_with_liveness(&tmp.0, &keys[0], 42, |_| false);
+    assert!(!tmp.0.join(&keys[1]).exists());
+    for key in [&keys[0], &keys[2], &keys[3]] {
+        assert!(tmp.0.join(key).exists());
+    }
+
+    // Refresh a second retained copy, then publish a new key. The remaining
+    // unused copy must go, even though it was originally published later.
+    prune_retained_copies_with_liveness(&tmp.0, &keys[2], 42, |_| false);
+    touch_dir(&tmp.0, &keys[4]);
+    prune_retained_copies_with_liveness(&tmp.0, &keys[4], 42, |_| false);
+    assert!(!tmp.0.join(&keys[3]).exists());
+    for key in [&keys[0], &keys[2], &keys[4]] {
+        assert!(tmp.0.join(key).join("marker").exists());
+    }
 }

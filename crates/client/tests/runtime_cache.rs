@@ -249,6 +249,30 @@ fn assert_valid_records(path: &Path) {
 }
 
 #[test]
+fn alternating_servers_reuse_both_retained_snapshots() {
+    let temp = support::TempDir::new("runtime-alternating-servers");
+    let source = temp.path().join("cache");
+    let root = temp.path().join("snapshots");
+    let fixture = support::PackSet::new(49);
+    let a = support::HttpServer::start(fixture.clone());
+    let b = support::HttpServer::start(fixture.recompressed_config());
+    let entries = support::EntryServer::start(fixture.entries.clone());
+    let mut fills = Vec::new();
+    for port in [a.port(), b.port(), a.port(), b.port()] {
+        let before = entries.request_count();
+        let prepared =
+            support::prepare(&source, &root, port, entries.port(), ClientRevision::R289).unwrap();
+        fills.push((entries.request_count() - before) / fixture.entries.len());
+        // Separate launches release every owner before switching servers.
+        drop(prepared);
+    }
+    assert_eq!(fills, [1, 1, 0, 0]);
+    assert_eq!(entries.request_count(), fixture.entries.len() * 2);
+    assert_eq!(a.jag_count("config"), 1);
+    assert_eq!(b.jag_count("config"), 1);
+}
+
+#[test]
 fn server_update_prunes_old_retention_only_after_its_last_owner_releases() {
     let temp = support::TempDir::new("runtime-pruning");
     let source = temp.path().join("cache");
@@ -290,6 +314,24 @@ fn server_update_prunes_old_retention_only_after_its_last_owner_releases() {
     );
     let held_map = Arc::clone(&old.map_archive);
     drop(old);
+    // Push the old namespace outside the three-copy reuse window while its
+    // prepared map capability still owns it.
+    for packs in [
+        fixture.recompressed_versionlist(),
+        update.recompressed_versionlist(),
+    ] {
+        let http = support::HttpServer::start(packs);
+        drop(
+            support::prepare(
+                &source,
+                &root,
+                http.port(),
+                entries.port(),
+                ClientRevision::R289,
+            )
+            .unwrap(),
+        );
+    }
     let warm = support::prepare(
         &source,
         &root,
@@ -323,7 +365,7 @@ fn server_update_prunes_old_retention_only_after_its_last_owner_releases() {
     );
     assert_eq!(
         entries.request_count(),
-        fixture.entries.len() * 2,
+        fixture.entries.len() * 4,
         "both warm preparations reuse"
     );
 }

@@ -689,18 +689,8 @@ fn different_negotiation_keys_do_not_serialize_entry_fills() {
         "retained paths are namespaced by distinct negotiated keys"
     );
     assert_eq!(entries.request_count(), fixture_a.entries.len() * 2);
-    let one_retained = one.retained.exists();
-    let two_retained = two.retained.exists();
-    assert!(
-        one_retained || two_retained,
-        "pruning keeps at least the newest verified namespace"
-    );
-    if one_retained {
-        assert_published(&root, &one.retained, &fixture_a);
-    }
-    if two_retained {
-        assert_published(&root, &two.retained, &fixture_b);
-    }
+    assert_published(&root, &one.retained, &fixture_a);
+    assert_published(&root, &two.retained, &fixture_b);
 }
 
 #[cfg(feature = "snapshot-test-hooks")]
