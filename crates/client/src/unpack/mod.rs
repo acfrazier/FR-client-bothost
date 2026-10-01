@@ -301,6 +301,8 @@ pub(super) fn retain_completed_snapshot(
     versionlist: &[u8],
 ) -> Result<Manifest, UnpackError> {
     let version = version_hash(versionlist);
+    // Runtime callers keep the preparation lock for this retained root.
+    sweep_retained_staging(out_root, std::process::id(), runtime::process_is_alive);
     if let SnapshotState::Ready(existing) = checked_snapshot_state(out_root, &version, versionlist)
     {
         return Ok(existing);
@@ -687,6 +689,56 @@ fn create_staging_dir(out_dir: &Path, version: &str) -> Result<PathBuf, UnpackEr
                 return Err(UnpackError::io("create snapshot staging dir", error));
             }
         }
+    }
+}
+/// Parse the exact `.<version>.staging-<pid>-<n>` retained-publisher name.
+fn parse_retained_staging_owner(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix('.')?;
+    let (version, owner) = rest.split_once(".staging-")?;
+    if version.len() != 16
+        || !version
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return None;
+    }
+    let (pid, sequence) = owner.split_once('-')?;
+    if pid.is_empty()
+        || sequence.is_empty()
+        || !pid.bytes().all(|byte| byte.is_ascii_digit())
+        || !sequence.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let pid: u32 = pid.parse().ok()?;
+    let _: u64 = sequence.parse().ok()?;
+    runtime::is_valid_foreign_pid(pid).then_some(pid)
+}
+
+/// Remove only dead-owner retained staging directories directly under `root`.
+/// The injected liveness probe keeps the owner boundary deterministic in tests.
+fn sweep_retained_staging(root: &Path, self_pid: u32, is_alive: impl Fn(u32) -> bool) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        let file_name = entry.file_name();
+        let Some(name) = file_name.to_str() else {
+            continue;
+        };
+        let Some(pid) = parse_retained_staging_owner(name) else {
+            continue;
+        };
+        if pid == self_pid || is_alive(pid) {
+            continue;
+        }
+        let _ = std::fs::remove_dir_all(entry.path());
     }
 }
 
@@ -2232,6 +2284,53 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn retained_staging_sweep_removes_only_dead_foreign_staging_directories() {
+        let root = tmp("retained-staging-sweep");
+        let self_pid = std::process::id();
+        let mut foreign_pids = (1..=4).filter(|pid| *pid != self_pid);
+        let dead_pid = foreign_pids.next().unwrap();
+        let live_pid = foreign_pids.next().unwrap();
+        let unknown_pid = foreign_pids.next().unwrap();
+
+        let dead = root.join(format!(".0123456789abcdef.staging-{dead_pid}-0"));
+        let current = root.join(format!(".0123456789abcdef.staging-{self_pid}-1"));
+        let live = root.join(format!(".0123456789abcdef.staging-{live_pid}-2"));
+        let unknown = root.join(format!(".0123456789abcdef.staging-{unknown_pid}-3"));
+        let malformed = [
+            ".not-a-version.staging-1-0",
+            ".0123456789abcdef.staging-0-0",
+            ".0123456789abcdef.staging-1-18446744073709551616",
+            ".0123456789abcdef.staging-1-0-extra",
+            ".0123456789abcdef.not-staging-1-0",
+        ]
+        .map(|name| root.join(name));
+        let non_directory = root.join(format!(".0123456789abcdef.staging-{dead_pid}-1"));
+        for path in [&dead, &current, &live, &unknown]
+            .into_iter()
+            .chain(malformed.iter())
+        {
+            std::fs::create_dir(path).unwrap();
+        }
+        std::fs::write(&non_directory, b"not a directory").unwrap();
+
+        sweep_retained_staging(&root, self_pid, |pid| pid != dead_pid);
+
+        assert!(!dead.exists(), "dead foreign staging is swept");
+        assert!(
+            current.is_dir(),
+            "the current process's staging is retained"
+        );
+        assert!(live.is_dir(), "live-owner staging is retained");
+        assert!(unknown.is_dir(), "unknown-owner staging is retained");
+        assert!(
+            malformed.iter().all(|path| path.is_dir()),
+            "malformed and nonstaging paths are untouched"
+        );
+        assert!(non_directory.is_file(), "matching files are untouched");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// One gzipped `main_file_cache` record per archive plus the versionlist

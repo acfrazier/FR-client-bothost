@@ -120,3 +120,38 @@ fn process_is_alive_reports_live_child() {
         live.id()
     );
 }
+
+#[test]
+fn retention_pruning_keeps_newest_and_live_or_unknown_owners() {
+    let tmp = Temp::new();
+    let newest = "a".repeat(64);
+    let dead = "b".repeat(64);
+    let live = "c".repeat(64);
+    let own = "d".repeat(64);
+    let malformed = "e".repeat(64);
+    for key in [&newest, &dead, &live, &own, &malformed] {
+        touch_dir(&tmp.0, key);
+    }
+    for (key, owner) in [
+        (&dead, "100-0"),
+        (&live, "200-0"),
+        (&own, "42-0"),
+        (&malformed, "0-0"),
+    ] {
+        std::fs::write(tmp.0.join(format!(".{key}.owner-{owner}")), b"").unwrap();
+    }
+    let lock = tmp.0.join(format!(".{dead}.lock"));
+    std::fs::write(&lock, b"").unwrap();
+    let legacy = touch_dir(&tmp.0, "old-layout");
+    prune_retained_copies_with_liveness(&tmp.0, &newest, 42, |pid| pid == 200);
+    assert!(!tmp.0.join(&dead).exists());
+    assert!(!tmp.0.join(format!(".{dead}.owner-100-0")).exists());
+    for key in [&newest, &live, &own, &malformed] {
+        assert!(tmp.0.join(key).join("marker").exists(), "{key}");
+    }
+    assert!(
+        lock.exists(),
+        "lock inodes remain stable for waiting processes"
+    );
+    assert!(legacy.exists(), "unrecognized layouts are not pruned");
+}

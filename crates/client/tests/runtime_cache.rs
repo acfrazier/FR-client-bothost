@@ -247,3 +247,83 @@ fn assert_valid_records(path: &Path) {
         bytes.len() - 8
     );
 }
+
+#[test]
+fn server_update_prunes_old_retention_only_after_its_last_owner_releases() {
+    let temp = support::TempDir::new("runtime-pruning");
+    let source = temp.path().join("cache");
+    let root = temp.path().join("snapshots");
+    let fixture = support::PackSet::new(51);
+    let update = fixture.recompressed_config();
+    fixture.write_to(&source).unwrap();
+    let old_http = support::HttpServer::start(fixture.clone());
+    let new_http = support::HttpServer::start(update.clone());
+    let entries = support::EntryServer::start(fixture.entries.clone());
+    let old = support::prepare(
+        &source,
+        &root,
+        old_http.port(),
+        entries.port(),
+        ClientRevision::R289,
+    )
+    .unwrap();
+    let old_retained = old.persist_dir.parent().unwrap().to_owned();
+    let old_namespace = old_retained.parent().unwrap().parent().unwrap().to_owned();
+    let old_maps = std::fs::read(old.snapshot_dir.join("maps.bin")).unwrap();
+    let updated = support::prepare(
+        &source,
+        &root,
+        new_http.port(),
+        entries.port(),
+        ClientRevision::R289,
+    )
+    .unwrap();
+    let newest = updated.persist_dir.parent().unwrap().to_owned();
+    assert_ne!(old_retained, newest);
+    assert!(
+        old_retained.join("manifest").exists(),
+        "an active owner's overlay must survive"
+    );
+    assert_eq!(
+        std::fs::read(old.snapshot_dir.join("maps.bin")).unwrap(),
+        old_maps
+    );
+    let held_map = Arc::clone(&old.map_archive);
+    drop(old);
+    let warm = support::prepare(
+        &source,
+        &root,
+        new_http.port(),
+        entries.port(),
+        ClientRevision::R289,
+    )
+    .unwrap();
+    assert!(
+        old_retained.exists(),
+        "map capability retains the owner lease"
+    );
+    drop(held_map);
+    let next = support::prepare(
+        &source,
+        &root,
+        new_http.port(),
+        entries.port(),
+        ClientRevision::R289,
+    )
+    .unwrap();
+    assert!(
+        !old_namespace.exists(),
+        "released old namespace is pruned on preparation"
+    );
+    assert!(newest.join("manifest").exists());
+    assert_eq!(next.identity, warm.identity);
+    assert_eq!(
+        std::fs::read(next.snapshot_dir.join("maps.bin")).unwrap(),
+        old_maps
+    );
+    assert_eq!(
+        entries.request_count(),
+        fixture.entries.len() * 2,
+        "both warm preparations reuse"
+    );
+}

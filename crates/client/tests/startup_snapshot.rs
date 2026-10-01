@@ -689,8 +689,18 @@ fn different_negotiation_keys_do_not_serialize_entry_fills() {
         "retained paths are namespaced by distinct negotiated keys"
     );
     assert_eq!(entries.request_count(), fixture_a.entries.len() * 2);
-    assert_published(&root, &one.retained, &fixture_a);
-    assert_published(&root, &two.retained, &fixture_b);
+    let one_retained = one.retained.exists();
+    let two_retained = two.retained.exists();
+    assert!(
+        one_retained || two_retained,
+        "pruning keeps at least the newest verified namespace"
+    );
+    if one_retained {
+        assert_published(&root, &one.retained, &fixture_a);
+    }
+    if two_retained {
+        assert_published(&root, &two.retained, &fixture_b);
+    }
 }
 
 #[cfg(feature = "snapshot-test-hooks")]
@@ -733,6 +743,10 @@ fn interrupted_replacement_at_each_publication_stage_is_repaired_by_fresh_proces
         )
         .finish(Duration::from_secs(20))
         .exit_code(86);
+        assert!(
+            !retained_staging_directories(retained.parent().unwrap(), &active.version).is_empty(),
+            "{failpoint} must leave its crashed staging directory"
+        );
 
         if failpoint == "before-payload-completion" {
             assert_eq!(
@@ -769,6 +783,10 @@ fn interrupted_replacement_at_each_publication_stage_is_repaired_by_fresh_proces
             "{failpoint}"
         );
         assert_published(&root, &repaired.retained, &fixture);
+        assert!(
+            retained_staging_directories(retained.parent().unwrap(), &active.version).is_empty(),
+            "{failpoint} recovery must sweep the dead owner's staging directory"
+        );
         assert_eq!(
             entries.request_count(),
             fixture.entries.len() * 3,
@@ -782,6 +800,21 @@ fn interrupted_replacement_at_each_publication_stage_is_repaired_by_fresh_proces
         drop(active);
         assert!(!contains_runtime_directory(&root));
     }
+}
+#[cfg(feature = "snapshot-test-hooks")]
+fn retained_staging_directories(root: &Path, version: &str) -> Vec<PathBuf> {
+    let prefix = format!(".{version}.staging-");
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let file_type = entry.file_type().ok()?;
+            (file_type.is_dir() && entry.file_name().to_str()?.starts_with(&prefix))
+                .then(|| entry.path())
+        })
+        .collect()
 }
 
 fn assert_published(root: &Path, retained: &Path, fixture: &support::PackSet) {

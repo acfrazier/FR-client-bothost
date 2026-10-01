@@ -57,7 +57,7 @@ pub struct PreparedRuntimeCache {
 
 impl PreparedRuntimeCache {
     pub fn unpack_root(&self) -> &Path {
-        &self.owned.0
+        &self.owned.path
     }
 }
 
@@ -79,7 +79,7 @@ impl PartialEq for PreparedMapArchive {
         self.revision == other.revision
             && self.content_id == other.content_id
             && self.jag_dir == other.jag_dir
-            && self.owned.0 == other.owned.0
+            && self.owned.path == other.owned.path
     }
 }
 
@@ -133,7 +133,7 @@ impl PreparedMapArchive {
     }
 
     pub(crate) fn unpack_root(&self) -> &Path {
-        &self.owned.0
+        &self.owned.path
     }
 
     pub(crate) fn contains(&self, id: i32) -> bool {
@@ -153,10 +153,24 @@ impl PreparedMapArchive {
 }
 
 #[derive(Debug)]
-struct OwnedDirectory(PathBuf);
+struct OwnedDirectory {
+    path: PathBuf,
+    _retention: RetentionLease,
+}
 impl Drop for OwnedDirectory {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+/// Registered outside the retained directory, under the short revision lock.
+/// The map capability also holds this lease, protecting its persistence overlay.
+#[derive(Debug)]
+struct RetentionLease(PathBuf);
+
+impl Drop for RetentionLease {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
     }
 }
 
@@ -236,7 +250,7 @@ fn parse_runtime_staging_name(name: &str) -> Option<(u32, u64)> {
 }
 
 /// Pid values safe to probe and to treat as foreign staging owners.
-fn is_valid_foreign_pid(pid: u32) -> bool {
+pub(super) fn is_valid_foreign_pid(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
@@ -254,7 +268,7 @@ fn is_valid_foreign_pid(pid: u32) -> bool {
 
 /// True when `pid` still appears to own a live process. Unknown results count as
 /// alive so a staging directory that might still be in use is never deleted.
-fn process_is_alive(pid: u32) -> bool {
+pub(super) fn process_is_alive(pid: u32) -> bool {
     if !is_valid_foreign_pid(pid) {
         // Invalid/special pids are treated as live so their dirs are kept.
         return true;
@@ -373,6 +387,7 @@ pub fn prepare_runtime_cache(
     let _preparation_lock =
         super::PreparationLock::acquire(&revision_root.join(format!(".{negotiation_key}.lock")))?;
     let negotiation_root = revision_root.join(&negotiation_key);
+    let lease = register_retention_owner(&revision_root, &negotiation_key)?;
     // Readers hold the same lock as publication. Packed retained inputs are
     // still individually checked against the freshly negotiated server CRCs.
     let retained_sources = retained_jag_sources(&negotiation_root);
@@ -388,12 +403,17 @@ pub fn prepare_runtime_cache(
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         match std::fs::create_dir(&path) {
-            Ok(()) => break Arc::new(OwnedDirectory(path)),
+            Ok(()) => {
+                break Arc::new(OwnedDirectory {
+                    path,
+                    _retention: lease,
+                })
+            }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(format!("runtime staging: {e}").into()),
         }
     };
-    let jag_dir = owned.0.join("jags");
+    let jag_dir = owned.path.join("jags");
     let refreshed = refresh_jags_with_checksums(
         &jag_sources,
         &jag_dir,
@@ -407,13 +427,13 @@ pub fn prepare_runtime_cache(
     let transfer_sha256 = hashes(&jag_dir, &super::JAGS)?;
     let versionlist = std::fs::read(jag_dir.join("versionlist")).map_err(|e| e.to_string())?;
     let version = super::version_hash(&versionlist);
-    let snapshot_dir = owned.0.join(&version);
+    let snapshot_dir = owned.path.join(&version);
     let transfer_key = format!("{:x}", Sha256::digest(&versionlist));
     let retained_root = negotiation_root.join(&transfer_key);
     let retained = retained_root.join(&version);
     let cache = jag_dir.to_str().ok_or("runtime cache path is not UTF-8")?;
     let root = owned
-        .0
+        .path
         .to_str()
         .ok_or("runtime snapshot path is not UTF-8")?;
     let source;
@@ -424,7 +444,7 @@ pub fn prepare_runtime_cache(
         // Recheck after locking, then publish private copies through the same
         // verified staged path. Replacement of retained files cannot mutate an
         // active prepared profile, even after this lock has been released.
-        super::retain_completed_snapshot(&retained, &owned.0, &versionlist)?;
+        super::retain_completed_snapshot(&retained, &owned.path, &versionlist)?;
         source = manifest.source;
         needs_retention = false;
     } else {
@@ -470,12 +490,33 @@ pub fn prepare_runtime_cache(
     // Persist the already checked/decode-complete files, never drive the entry
     // source a second time. Canonical identity above always hashes actual owned
     // bytes; retained metadata is a corruption check, not facts authority.
-    if needs_retention {
-        super::retain_completed_snapshot(&snapshot_dir, &retained_root, &versionlist)?;
-    }
-    let store_dir = super::file_store_dir(&request.jag_source.to_string_lossy()).map(PathBuf::from);
     let persist_dir = retained.join("ondemand");
-    std::fs::create_dir_all(&persist_dir).map_err(|e| e.to_string())?;
+    let retention = (|| -> Result<(), RuntimeCacheError> {
+        if needs_retention {
+            super::retain_completed_snapshot(&snapshot_dir, &retained_root, &versionlist)?;
+        }
+        std::fs::create_dir_all(&persist_dir).map_err(|e| e.to_string())?;
+        Ok(())
+    })();
+    let persist_dir = match retention {
+        Ok(()) => {
+            // Registration and pruning share a short revision lock; independent
+            // negotiation keys still perform their network fills concurrently.
+            prune_retained_copies(&revision_root, &negotiation_key);
+            persist_dir
+        }
+        Err(error) => {
+            eprintln!(
+                "{}bot: warning: could not save game assets for reuse: {error}; \
+                 using verified runtime assets; the next launch will download them again",
+                request.revision.as_i32()
+            );
+            let fallback = snapshot_dir.join("ondemand");
+            std::fs::create_dir_all(&fallback).map_err(|e| e.to_string())?;
+            fallback
+        }
+    };
+    let store_dir = super::file_store_dir(&request.jag_source.to_string_lossy()).map(PathBuf::from);
     // Index headers only after canonical identity has verified the payloads.
     // The capability retains this immutable private copy, never shared retained files.
     let map_archive = Arc::new(PreparedMapArchive::open(
@@ -502,6 +543,94 @@ pub fn prepare_runtime_cache(
         persist_dir,
         map_archive,
     }))
+}
+
+fn is_negotiation_key(name: &str) -> bool {
+    name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn register_retention_owner(
+    revision_root: &Path,
+    key: &str,
+) -> Result<RetentionLease, RuntimeCacheError> {
+    let _lock = super::PreparationLock::acquire(&revision_root.join(".retention.lock"))?;
+    static NEXT_OWNER: AtomicU64 = AtomicU64::new(0);
+    loop {
+        let path = revision_root.join(format!(
+            ".{key}.owner-{}-{}",
+            std::process::id(),
+            NEXT_OWNER.fetch_add(1, Ordering::Relaxed)
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(_) => return Ok(RetentionLease(path)),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("register retained snapshot owner: {error}").into()),
+        }
+    }
+}
+
+/// Keep the newly verified namespace and any namespace that a live or unknown
+/// process may still read/write. Persistent preparation-lock inodes are separate
+/// and never removed. The old unnamespaced layout is deliberately not visited.
+fn prune_retained_copies(revision_root: &Path, newest: &str) {
+    let Ok(_lock) = super::PreparationLock::acquire(&revision_root.join(".retention.lock")) else {
+        return;
+    };
+    prune_retained_copies_with_liveness(
+        revision_root,
+        newest,
+        std::process::id(),
+        process_is_alive,
+    );
+}
+
+fn prune_retained_copies_with_liveness(
+    revision_root: &Path,
+    newest: &str,
+    self_pid: u32,
+    is_alive: impl Fn(u32) -> bool,
+) {
+    let Ok(entries) = std::fs::read_dir(revision_root) else {
+        return;
+    };
+    let mut protected = HashSet::new();
+    let mut candidates = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if is_negotiation_key(name) && entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            candidates.push((name.to_owned(), entry.path()));
+            continue;
+        }
+        let Some((key, owner)) = name.strip_prefix('.').and_then(|n| n.split_once(".owner-"))
+        else {
+            continue;
+        };
+        if !is_negotiation_key(key) {
+            continue;
+        }
+        // Reuse the strict decimal parsing and conservative PID probe of the
+        // dead-runtime sweep. Malformed owner records fail safe.
+        match parse_runtime_staging_name(&format!(".runtime-{owner}")) {
+            Some((pid, _)) if pid != self_pid && !is_alive(pid) => {
+                let _ = std::fs::remove_file(entry.path());
+            }
+            _ => {
+                protected.insert(key.to_owned());
+            }
+        }
+    }
+    for (key, path) in candidates {
+        if key != newest && !protected.contains(&key) {
+            let _ = std::fs::remove_dir_all(path);
+        }
+    }
 }
 
 fn negotiation_key(checksums: &[i32; 9]) -> String {
