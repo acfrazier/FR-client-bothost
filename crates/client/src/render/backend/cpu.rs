@@ -25,14 +25,13 @@ impl RenderBackend for CpuBackend {
     /// `scroll_cycle` tick, the deferred brightness re-gamma, and
     /// `prepare_game` (the chrome areas/sprites), then the `redraw_frame`
     /// compositing of the chrome strips and the frozen frame while the
-    /// scene loads. Title screen: the logout teardown (`unload_title`, a
-    /// nulled `image_title2` so `prepare_title` reallocates the 9 regions,
-    /// and a one-shot `draw_area` cls) and `prepare_title`.
+    /// scene loads. Title screen: the logout teardown (`unload_title` and
+    /// a one-shot `draw_area` cls), then `prepare_title` rebuilding all nine
+    /// title regions from shared media.
     fn begin(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
         if kind == FrameKind::Title {
             if !core.ingame && core.redraw_frame {
                 r.unload_title();
-                r.image_title2 = None;
                 r.draw_area.fill(0);
             }
             r.prepare_title(core);

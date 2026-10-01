@@ -202,6 +202,80 @@ fn title_flames_keep_java_rate_after_logout() {
     );
 }
 
+/// Login releases every per-head title region; the backend's logout teardown
+/// and prepare_title must recreate all nine, including on a second roundtrip.
+#[test]
+fn title_regions_are_released_on_login_and_rebuilt_on_logout() {
+    for prefer_gpu in [false, true] {
+        let mut r = Renderer::new_prefer(false, prefer_gpu);
+        if prefer_gpu && r.backend_kind() != BackendKind::Gpu {
+            eprintln!("no adapter on this machine; GPU title region test skips");
+            continue;
+        }
+        let mut c = client(
+            std::env::temp_dir()
+                .join("client-title-regions-no-cache")
+                .display()
+                .to_string(),
+        );
+        c.set_draw(true);
+        let _ = r.mainredraw(&mut c);
+        assert_title_region_sizes(&r);
+
+        for _ in 0..2 {
+            c.ingame = true;
+            let _ = r.mainredraw(&mut c);
+            for region in title_regions(&r) {
+                assert!(
+                    region.is_none(),
+                    "logged-in renderer retains a title region"
+                );
+            }
+            assert!(r.title_flames.is_none());
+            assert!(r.image_titlebox.is_none());
+            assert!(r.image_titlebutton.is_none());
+            assert!(r.image_runes.is_empty());
+
+            c.logout();
+            let _ = r.mainredraw(&mut c);
+            assert_title_region_sizes(&r);
+            assert!(r.title_flames.as_ref().is_some_and(|flames| flames.active));
+        }
+    }
+}
+
+fn title_regions(r: &Renderer) -> [&Option<client::graphics::PixMap>; 9] {
+    [
+        &r.image_title0,
+        &r.image_title1,
+        &r.image_title2,
+        &r.image_title3,
+        &r.image_title4,
+        &r.image_title5,
+        &r.image_title6,
+        &r.image_title7,
+        &r.image_title8,
+    ]
+}
+
+fn assert_title_region_sizes(r: &Renderer) {
+    for (region, (width, height)) in title_regions(r).into_iter().zip([
+        (128, 265),
+        (128, 265),
+        (509, 171),
+        (360, 132),
+        (360, 200),
+        (202, 238),
+        (203, 238),
+        (74, 94),
+        (75, 94),
+    ]) {
+        let region = region.as_ref().expect("rebuilt title region");
+        assert_eq!((region.width, region.height), (width, height));
+        assert_eq!(region.pixels.len(), (width * height) as usize);
+    }
+}
+
 #[cfg(feature = "audio")]
 #[test]
 fn title_loads_engine_soundfont() {

@@ -335,9 +335,9 @@ impl Renderer {
     /// `prepareTitle` from client-ts (1579): create the 9 title `PixMap`
     /// regions (sizes as TS) on the first frame, load the `title` jag from
     /// the cache, the four fonts, and the titlebox/titlebutton sprites.
-    /// `title_screen_draw`'s logout teardown nulls `image_title2` (the gate
-    /// below), so the next title draw reallocates the regions like Java
-    /// `prepareTitle` after `prepareGame` dropped them.
+    /// `unload_title` drops every per-head region on login or logout
+    /// teardown; the `image_title2` gate then rebuilds all nine from the
+    /// shared media on the next title draw.
     pub(crate) fn prepare_title(&mut self, client: &mut Client) {
         if self.image_title2.is_some() {
             return;
@@ -444,8 +444,9 @@ impl Renderer {
         }
     }
 
-    /// `unloadTitle` from client-ts (1992): drop the title sprites and stop
-    /// the torch flames. TS calls this from `prepareGame`/`mainquit`.
+    /// `unloadTitle` from client-ts (1992): stop the torch flames and drop
+    /// the title sprites. Also release every per-head title region: the
+    /// hosted title can rebuild them from shared `Media` after logout.
     pub fn unload_title(&mut self) {
         if let Some(flames) = self.title_flames.as_mut() {
             flames.close();
@@ -453,7 +454,16 @@ impl Renderer {
         self.title_flames = None;
         self.image_titlebox = None;
         self.image_titlebutton = None;
-        self.image_runes.clear();
+        self.image_runes = Vec::new();
+        self.image_title0 = None;
+        self.image_title1 = None;
+        self.image_title2 = None;
+        self.image_title3 = None;
+        self.image_title4 = None;
+        self.image_title5 = None;
+        self.image_title6 = None;
+        self.image_title7 = None;
+        self.image_title8 = None;
     }
 
     /// `drawPrivateMessages` from Client.ts (4915-4986): the split
@@ -1952,17 +1962,15 @@ impl Renderer {
     /// as TS 2022-2023, and the minimap/compass scanline masks are built
     /// from the shared `mapback.data` as TS 1180-1216. A missing `media`
     /// pack leaves the sprites `None` — `game_draw` still draws the panels
-    /// that are present. The title is unloaded and `image_title2` nulled
-    /// as Java `prepareGame` (`Client.java` 6919); `title_screen_draw`'s
-    /// logout teardown nulls it again so a later `prepare_title`
-    /// reallocates the regions from the shared `title` jag.
+    /// that are present. `unload_title` releases all per-head title buffers;
+    /// the next `prepare_title` reconstructs them from shared `Media` after
+    /// logout, without retaining title imagery for logged-in heads.
     pub(crate) fn prepare_game(&mut self, client: &mut Client) {
         if self.area_chat.is_some() {
             return;
         }
 
         self.unload_title();
-        self.image_title2 = None;
         self.load_fonts(client);
 
         self.area_game = Some(PixMap::new(512, 334));
