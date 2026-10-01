@@ -86,6 +86,7 @@ impl WorkerChild {
         command
             .arg("--exact")
             .arg("process_worker")
+            .arg("--ignored")
             .arg("--nocapture")
             .env(WORKER, "1")
             .env(SOURCE, source)
@@ -159,13 +160,11 @@ impl Drop for WorkerChild {
     }
 }
 
-/// Invoked only by this test executable's child processes. The normal test
-/// harness invocation returns without touching the filesystem or network.
+/// Invoked only by this test executable's child processes.
 #[test]
+#[ignore = "subprocess entrypoint; exercised by the process behavior tests"]
 fn process_worker() {
-    if std::env::var_os(WORKER).is_none() {
-        return;
-    }
+    assert!(std::env::var_os(WORKER).is_some(), "child worker environment");
     let source = PathBuf::from(std::env::var_os(SOURCE).expect("worker source"));
     let root = PathBuf::from(std::env::var_os(ROOT).expect("worker root"));
     let asset_port = std::env::var(ASSET_PORT)
