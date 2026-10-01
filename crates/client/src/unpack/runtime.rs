@@ -24,7 +24,7 @@ pub struct RuntimeCacheRequest<'a> {
     pub transport: Transport,
     /// Read-only source packs and optional main_file_cache store.
     pub jag_source: &'a Path,
-    /// Read-only retained snapshots; also parent of owned staging directories.
+    /// Retained snapshots and parent of process-owned runtime directories.
     pub snapshot_root: &'a Path,
     pub asset_host: &'a str,
     pub asset_port: u16,
@@ -269,6 +269,21 @@ pub fn prepare_runtime_cache(
         kind,
         message: format!("update server /crc: {}", kind.message()),
     })?;
+    // Negotiate before locking: different revision/transfer negotiations do not
+    // serialize. The lock inode is stable and explicitly unlocked on release.
+    let revision_root = request
+        .snapshot_root
+        .join(format!("revision-{}", request.revision.as_i32()));
+    std::fs::create_dir_all(&revision_root).map_err(|e| e.to_string())?;
+    let negotiation_key = negotiation_key(&checksums);
+    let _preparation_lock =
+        super::PreparationLock::acquire(&revision_root.join(format!(".{negotiation_key}.lock")))?;
+    let negotiation_root = revision_root.join(&negotiation_key);
+    // Readers hold the same lock as publication. Packed retained inputs are
+    // still individually checked against the freshly negotiated server CRCs.
+    let retained_sources = retained_jag_sources(&negotiation_root);
+    let mut jag_sources: Vec<&Path> = retained_sources.iter().map(PathBuf::as_path).collect();
+    jag_sources.push(request.jag_source);
     static NEXT: AtomicU64 = AtomicU64::new(0);
     std::fs::create_dir_all(request.snapshot_root).map_err(|e| e.to_string())?;
     sweep_leaked_runtime_staging(request.snapshot_root);
@@ -286,7 +301,7 @@ pub fn prepare_runtime_cache(
     };
     let jag_dir = owned.0.join("jags");
     let refreshed = refresh_jags_with_checksums(
-        &[request.jag_source],
+        &jag_sources,
         &jag_dir,
         FetchEndpoint {
             transport: request.transport,
@@ -299,47 +314,27 @@ pub fn prepare_runtime_cache(
     let versionlist = std::fs::read(jag_dir.join("versionlist")).map_err(|e| e.to_string())?;
     let version = super::version_hash(&versionlist);
     let snapshot_dir = owned.0.join(&version);
-    let retained = request.snapshot_root.join(&version);
+    let transfer_key = format!("{:x}", Sha256::digest(&versionlist));
+    let retained_root = negotiation_root.join(&transfer_key);
+    let retained = retained_root.join(&version);
     let cache = jag_dir.to_str().ok_or("runtime cache path is not UTF-8")?;
     let root = owned
         .0
         .to_str()
         .ok_or("runtime snapshot path is not UTF-8")?;
     let source;
-    if let SnapshotState::Ready(manifest) = super::snapshot_state_for_version(
-        &request.snapshot_root.to_string_lossy(),
-        &version,
-        &versionlist,
-    ) {
-        // Copy retained snapshot bins into this bind's owned staging directory.
-        // The owned copies are then decoded; subsequent source replacement cannot
-        // change this prepared profile's identity or assets. Publication still
-        // writes the manifest last.
-        std::fs::create_dir(&snapshot_dir).map_err(|e| e.to_string())?;
-        for name in super::BINS {
-            std::fs::copy(retained.join(name), snapshot_dir.join(name))
-                .map_err(|e| e.to_string())?;
-        }
-        for name in super::JAGS {
-            std::fs::copy(jag_dir.join(name), snapshot_dir.join(name))
-                .map_err(|e| e.to_string())?;
-        }
-        let mut manifest = manifest;
-        manifest.dir = snapshot_dir.to_string_lossy().into_owned();
-        manifest.jags = super::JAGS
-            .iter()
-            .map(|name| {
-                std::fs::metadata(snapshot_dir.join(name)).map(|m| (name.to_string(), m.len()))
-            })
-            .collect::<Result<_, _>>()
-            .map_err(|e| e.to_string())?;
-        std::fs::write(
-            snapshot_dir.join("manifest"),
-            super::manifest_text(&manifest),
-        )
-        .map_err(|e| e.to_string())?;
+    let needs_retention;
+    if let SnapshotState::Ready(manifest) =
+        super::checked_snapshot_state(&retained_root, &version, &versionlist)
+    {
+        // Recheck after locking, then publish private copies through the same
+        // verified staged path. Replacement of retained files cannot mutate an
+        // active prepared profile, even after this lock has been released.
+        super::retain_completed_snapshot(&retained, &owned.0, &versionlist)?;
         source = manifest.source;
+        needs_retention = false;
     } else {
+        needs_retention = true;
         // Legacy JagFile parsing can panic. Convert that boundary to a useful
         // preparation error rather than crashing the profile worker.
         let jag = std::panic::catch_unwind(|| JagFile::new(versionlist.clone()))
@@ -377,8 +372,14 @@ pub fn prepare_runtime_cache(
     let identity =
         compute_decoded_content_identity(request.revision.as_i32() as u16, &jag_dir, &snapshot_dir)
             .map_err(|e| format!("decoded content identity: {e}"))?;
+    // Persist the already checked/decode-complete files, never drive the entry
+    // source a second time. Canonical identity above always hashes actual owned
+    // bytes; retained metadata is a corruption check, not facts authority.
+    if needs_retention {
+        super::retain_completed_snapshot(&snapshot_dir, &retained_root, &versionlist)?;
+    }
     let store_dir = super::file_store_dir(&request.jag_source.to_string_lossy()).map(PathBuf::from);
-    let persist_dir = request.snapshot_root.join(&version).join("ondemand");
+    let persist_dir = retained.join("ondemand");
     std::fs::create_dir_all(&persist_dir).map_err(|e| e.to_string())?;
     Ok(Arc::new(PreparedRuntimeCache {
         owned,
@@ -396,6 +397,38 @@ pub fn prepare_runtime_cache(
         store_dir,
         persist_dir,
     }))
+}
+
+fn negotiation_key(checksums: &[i32; 9]) -> String {
+    let mut hash = Sha256::new();
+    for crc in checksums {
+        hash.update(crc.to_be_bytes());
+    }
+    format!("{:x}", hash.finalize())
+}
+
+/// Only candidate paths are enumerated here: readiness/digests and server CRCs
+/// are checked by the existing publisher and refresh core under the lock.
+fn retained_jag_sources(root: &Path) -> Vec<PathBuf> {
+    let Ok(transfers) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut sources = Vec::new();
+    for transfer in transfers.flatten() {
+        if !transfer.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        let Ok(versions) = std::fs::read_dir(transfer.path()) else {
+            continue;
+        };
+        for version in versions.flatten() {
+            if version.file_type().is_ok_and(|kind| kind.is_dir()) {
+                sources.push(version.path());
+            }
+        }
+    }
+    sources.sort();
+    sources
 }
 
 fn hashes(dir: &Path, names: &[&str]) -> Result<BTreeMap<String, String>, String> {

@@ -10,6 +10,9 @@ window = ["dep:winit", "dep:softbuffer"]
 headed-fixture = ["window"]
 audio = ["dep:rustysynth", "dep:cpal"]
 render-diagnostics = []
+# Failure injection for independent-process snapshot publication tests only.
+# Product frontends never enable this feature.
+snapshot-test-hooks = []
 
 [dependencies]
 bzip2 = "0.4"
@@ -34,5 +37,6 @@ libc = "0.2"
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Networking_WinSock",
+    "Win32_Storage_FileSystem",
     "Win32_System_Threading",
 ] }
