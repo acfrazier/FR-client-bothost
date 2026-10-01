@@ -12,22 +12,25 @@
 //! 2. validate the snapshot already present for that version ([`SnapshotState`]);
 //! 3. fetch only genuinely missing jag packs through the client's real
 //!    update-server fetch (`/crc` + `getJagFile`), CRC-checked and persisted;
-//! 4. unpack into a staging directory and publish it with the manifest
-//!    renamed last, so a reader never observes a partial snapshot as ready;
+//! 4. unpack into a staging directory; publish payloads and integrity metadata
+//!    first, with the completion manifest renamed last;
 //! 5. inject the verified snapshot into the process-wide model/anim stores.
 //!
 //! A snapshot is [`SnapshotState::Ready`] only when its completion manifest
 //! proves it was published whole *and* matches the selected cache version; a
-//! merely nonempty directory is never valid. Concurrent clients share one
-//! attempt per cache identity, including the outcome of a failed attempt, so
-//! there is no per-client fetch/unpack/injection loop. Successes are recorded
-//! for the whole process; a failed attempt is shared with concurrent waiters
-//! but a later request retries instead of inheriting a stale failure.
+//! metadata-bearing snapshot additionally verifies stream hashes for all
+//! twelve payload files, the exact versionlist bytes, and the manifest itself.
+//! Runtime-retained snapshots are namespaced by negotiated revision and held
+//! under a cross-process preparation lock while JAGs and snapshot state are
+//! refreshed or published. `PreparationLock` uses a persistent lock-file inode:
+//! callers must never remove the lock file after releasing it.
+//! The size-only legacy check remains for non-runtime callers. Runtime retained
+//! snapshot reads require the integrity marker.
 
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -63,6 +66,9 @@ const JAGS: [&str; 8] = [
 
 /// Unpacked archive files written by [`unpack_archive`].
 const BINS: [&str; 4] = ["models.bin", "anims.bin", "midi.bin", "maps.bin"];
+/// Completion metadata containing actual stream digests for persisted snapshots.
+const INTEGRITY_FILE: &str = "integrity";
+const INTEGRITY_SCHEMA: &str = "1";
 
 /// One archive's tables and destinations:
 /// `(version table, crc table, store idx, snapshot file)`. The store idx is
@@ -181,6 +187,42 @@ impl fmt::Display for UnpackError {
 
 impl std::error::Error for UnpackError {}
 
+/// Cross-process serialization for one retained snapshot namespace. The lock
+/// file is intentionally persistent: removing it could let waiters lock a
+/// different inode and enter concurrently.
+#[derive(Debug)]
+pub(super) struct PreparationLock {
+    file: File,
+}
+
+impl PreparationLock {
+    pub(super) fn acquire(path: &Path) -> Result<Self, UnpackError> {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| UnpackError::io("create preparation lock directory", error))?;
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(path)
+            .map_err(|error| UnpackError::io("open preparation lock", error))?;
+        file.lock()
+            .map_err(|error| UnpackError::io("lock snapshot preparation", error))?;
+        Ok(Self { file })
+    }
+}
+
+impl Drop for PreparationLock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
+
 /// Readiness of the snapshot for one selected cache version.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SnapshotState {
@@ -248,9 +290,91 @@ pub fn fetch_snapshot(
     publish_snapshot(cache_dir, out_dir, cache_dir, Some(source))
 }
 
-/// Shared staged publication for both sources: [`unpack_cache`] reads the
-/// local `main_file_cache` store, [`fetch_snapshot`] fills from the update
-/// server. Returns the manifest of a complete, verified snapshot.
+/// Retain an already completed staged snapshot without fetching or decoding it
+/// again. An already-ready destination is returned unchanged; otherwise the
+/// source must carry verified integrity metadata and the copied bytes are
+/// checked against its original digests before metadata is rewritten.
+pub(super) fn retain_completed_snapshot(
+    completed: &Path,
+    out_root: &Path,
+    versionlist: &[u8],
+) -> Result<Manifest, UnpackError> {
+    let version = version_hash(versionlist);
+    if let SnapshotState::Ready(existing) = checked_snapshot_state(out_root, &version, versionlist)
+    {
+        return Ok(existing);
+    }
+
+    let (source_state, integrity) =
+        inspect_snapshot_dir(completed, &version, versionlist, true, false);
+    let mut manifest = match source_state {
+        SnapshotState::Ready(manifest) => manifest,
+        other => {
+            return Err(UnpackError::new(format!(
+                "completed snapshot is not verified: {}",
+                other.describe()
+            )));
+        }
+    };
+    let integrity = integrity.ok_or_else(|| {
+        UnpackError::new("completed snapshot is missing verified integrity metadata")
+    })?;
+
+    std::fs::create_dir_all(out_root)
+        .map_err(|error| UnpackError::io("create retained snapshot root", error))?;
+    let staging = create_staging_dir(out_root, &version)?;
+    let target = out_root.join(&version);
+    let result = (|| {
+        for (index, name) in payload_names().enumerate() {
+            let staged = staging.join(name);
+            let expected = integrity
+                .payload_sha256
+                .get(name)
+                .ok_or_else(|| UnpackError::new(format!("integrity metadata has no {name}")))?;
+            let actual =
+                copy_file_hashed_synced(&completed.join(name), &staged, &format!("retain {name}"))?;
+            if &actual != expected {
+                return Err(UnpackError::new(format!(
+                    "completed snapshot {name} changed while being retained"
+                )));
+            }
+            if index == 0 {
+                crash_retained_publication_at("before-payload-completion");
+            }
+        }
+
+        manifest.dir = target.to_string_lossy().into_owned();
+        let text = manifest_text(&manifest);
+        validate_records(&manifest, &text)?;
+        write_synced(
+            &staging.join("manifest"),
+            text.as_bytes(),
+            "write retained manifest",
+        )?;
+        write_integrity_marker(
+            &staging,
+            versionlist,
+            text.as_bytes(),
+            Some(&integrity.payload_sha256),
+        )?;
+        sync_directory(&staging)
+            .map_err(|error| UnpackError::io("sync retained staging directory", error))?;
+        publish(&staging, &target, true)?;
+        match checked_snapshot_state(out_root, &version, versionlist) {
+            SnapshotState::Ready(manifest) => Ok(manifest),
+            other => Err(UnpackError::new(format!(
+                "retained snapshot failed verification: {}",
+                other.describe()
+            ))),
+        }
+    })();
+    let _ = std::fs::remove_dir_all(&staging);
+    result
+}
+
+/// Shared staged publication for local-store and network sources. Runtime
+/// retained callers serialize this shared publisher with `PreparationLock`;
+/// old completion state is invalidated before any published file is replaced.
 fn publish_snapshot(
     cache_dir: &str,
     out_dir: &str,
@@ -266,54 +390,34 @@ fn publish_snapshot(
     }
 
     let dir_path = Path::new(out_dir).join(&version);
+    std::fs::create_dir_all(out_dir)
+        .map_err(|error| UnpackError::io("create snapshot root", error))?;
+    let staging = create_staging_dir(Path::new(out_dir), &version)?;
     let dir = dir_path.to_string_lossy().into_owned();
-    let staging = staging_dir(out_dir, &version);
-    let _ = std::fs::remove_dir_all(&staging);
-    // The snapshot root is created for the staging directory; when this
-    // attempt fails before anything is published it is removed again, so a
-    // rejected profile leaves no half-made snapshot root behind.
-    let root_created = !Path::new(out_dir).exists();
-    std::fs::create_dir_all(out_dir).map_err(|e| UnpackError::io("create snapshot root", e))?;
-    std::fs::create_dir_all(&staging)
-        .map_err(|e| UnpackError::io("create snapshot staging dir", e))?;
 
-    let staged = stage_snapshot(
-        cache_dir,
-        store_dir,
-        &staging,
-        &dir,
-        &version,
-        &versionlist,
-        &mut source,
-    );
-    if let Err(e) = staged {
-        let _ = std::fs::remove_dir_all(&staging);
-        cleanup_empty_root(out_dir, root_created);
-        return Err(e);
-    }
+    let result = (|| {
+        stage_snapshot(
+            cache_dir,
+            store_dir,
+            &staging,
+            &dir,
+            &version,
+            &versionlist,
+            &mut source,
+        )?;
 
-    // The selected version is the cache's identity: if the cache changed
-    // while it was being read, the staged payload is a mix and must not be
-    // published.
-    let source = match read_versionlist(cache_dir) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            let _ = std::fs::remove_dir_all(&staging);
-            cleanup_empty_root(out_dir, root_created);
-            return Err(e);
+        // The selected version is the cache identity: if the cache changed
+        // while it was being read, the staged payload is a mix and must not
+        // be published.
+        if read_versionlist(cache_dir)? != versionlist {
+            return Err(UnpackError::new(
+                "cache versionlist changed during preparation; retry",
+            ));
         }
-    };
-    if source != versionlist {
-        let _ = std::fs::remove_dir_all(&staging);
-        cleanup_empty_root(out_dir, root_created);
-        return Err(UnpackError::new(
-            "cache versionlist changed during preparation; retry",
-        ));
-    }
-
-    let published = publish(&staging, &dir_path);
+        publish(&staging, &dir_path, false)
+    })();
     let _ = std::fs::remove_dir_all(&staging);
-    published?;
+    result?;
 
     match snapshot_state_for_version(out_dir, &version, &versionlist) {
         SnapshotState::Ready(manifest) => Ok(manifest),
@@ -326,8 +430,7 @@ fn publish_snapshot(
 
 /// Copy the jag packs and unpack every idx archive into `staging`, returning
 /// the manifest that will be published with them. `source` selects where the
-/// record payloads come from; the completeness rules and the manifest are the
-/// same for both sources.
+/// record payloads come from; both publishers share this verified staging path.
 fn stage_snapshot(
     cache_dir: &str,
     store_dir: &str,
@@ -345,11 +448,10 @@ fn stage_snapshot(
     let mut jags = Vec::with_capacity(JAGS.len());
     for name in JAGS {
         let src = Path::new(cache_dir).join(name);
-        let bytes =
-            std::fs::read(&src).map_err(|e| UnpackError::io(&format!("read jag {name}"), e))?;
-        std::fs::write(staging.join(name), &bytes)
-            .map_err(|e| UnpackError::io(&format!("write jag {name}"), e))?;
-        jags.push((name.to_string(), bytes.len() as u64));
+        let dest = staging.join(name);
+        copy_file_synced(&src, &dest, &format!("copy jag {name}"))?;
+        let size = file_size(&dest).map_err(|e| UnpackError::io("stat staged jag", e))?;
+        jags.push((name.to_string(), size));
     }
 
     let jag = JagFile::new(versionlist.to_vec());
@@ -389,63 +491,171 @@ fn stage_snapshot(
     };
     let text = manifest_text(&manifest);
     validate_records(&manifest, &text)?;
-    std::fs::write(staging.join("manifest"), text)
-        .map_err(|e| UnpackError::io("write manifest", e))?;
+    write_synced(&staging.join("manifest"), text.as_bytes(), "write manifest")?;
+    write_integrity_marker(staging, versionlist, text.as_bytes(), None)?;
+    sync_directory(staging).map_err(|e| UnpackError::io("sync staged snapshot directory", e))?;
     Ok(manifest)
 }
 
-/// Publish a staged snapshot into `dir`: every payload file first, the
-/// `manifest` completion marker last. Readers therefore never observe a
-/// manifest for a payload that is not entirely in place.
-fn publish(staging: &Path, dir: &Path) -> Result<(), UnpackError> {
+/// Publish a complete staged snapshot. Runtime-retained callers hold the
+/// revision/key lock across source refresh, readiness checks and this publish.
+/// The old completion manifest is invalidated before target payloads change;
+/// payloads and integrity metadata land before the manifest, which is synced
+/// last. Crash hooks are restricted to retained publication attempts.
+fn publish(staging: &Path, dir: &Path, retained: bool) -> Result<(), UnpackError> {
     std::fs::create_dir_all(dir).map_err(|e| UnpackError::io("create snapshot dir", e))?;
-    for name in payload_names() {
-        publish_file(&staging.join(name), &dir.join(name))?;
-    }
-    // The manifest is the completion marker: it must land after the payload.
-    publish_file(&staging.join("manifest"), &dir.join("manifest"))
-}
+    invalidate_completion_marker(staging, dir)?;
+    sync_directory(dir).map_err(|e| UnpackError::io("sync invalidated snapshot directory", e))?;
 
-/// Move one staged file into the published snapshot. On Unix the rename
-/// replaces an existing file atomically; on Windows a rename onto an existing
-/// file fails, so the destination is removed first (the manifest-last publish
-/// keeps that window from ever being visible as ready).
-fn publish_file(staged: &Path, target: &Path) -> Result<(), UnpackError> {
-    match std::fs::rename(staged, target) {
-        Ok(()) => Ok(()),
-        Err(_) if target.exists() => {
-            std::fs::remove_file(target)
-                .map_err(|e| UnpackError::io(&format!("replace {}", target.display()), e))?;
-            std::fs::rename(staged, target)
-                .map_err(|e| UnpackError::io(&format!("publish {}", target.display()), e))
+    for (index, name) in payload_names().enumerate() {
+        publish_file(staging, &staging.join(name), &dir.join(name))?;
+        if retained && index == 0 {
+            crash_retained_publication_at("during-replacement");
         }
-        Err(e) => Err(UnpackError::io(&format!("publish {}", target.display()), e)),
+    }
+    publish_file(
+        staging,
+        &staging.join(INTEGRITY_FILE),
+        &dir.join(INTEGRITY_FILE),
+    )?;
+    sync_directory(dir).map_err(|e| UnpackError::io("sync snapshot payload directory", e))?;
+
+    if retained {
+        crash_retained_publication_at("before-marker");
+    }
+
+    publish_file(staging, &staging.join("manifest"), &dir.join("manifest"))?;
+    sync_directory(dir).map_err(|e| UnpackError::io("sync completed snapshot directory", e))
+}
+
+fn invalidate_completion_marker(staging: &Path, dir: &Path) -> Result<(), UnpackError> {
+    let target = dir.join("manifest");
+    #[cfg(windows)]
+    {
+        move_existing_to_staging(staging, &target)?;
+    }
+    #[cfg(not(windows))]
+    match std::fs::remove_file(&target) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(UnpackError::io(
+                &format!("remove completion marker {}", target.display()),
+                error,
+            ));
+        }
+    }
+    let _ = staging;
+    Ok(())
+}
+
+fn publish_file(staging: &Path, staged: &Path, target: &Path) -> Result<(), UnpackError> {
+    #[cfg(windows)]
+    {
+        move_existing_to_staging(staging, target)?;
+        move_file_write_through(staged, target)
+            .map_err(|error| UnpackError::io(&format!("publish {}", target.display()), error))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = staging;
+        std::fs::rename(staged, target)
+            .map_err(|error| UnpackError::io(&format!("publish {}", target.display()), error))
     }
 }
 
-/// Every file a complete snapshot must contain, in publish order.
+#[cfg(windows)]
+fn move_existing_to_staging(staging: &Path, target: &Path) -> Result<(), UnpackError> {
+    match std::fs::symlink_metadata(target) {
+        Ok(metadata) if metadata.file_type().is_dir() => Err(UnpackError::new(format!(
+            "refusing to replace snapshot directory {}",
+            target.display()
+        ))),
+        Ok(_) => {
+            let name = target
+                .file_name()
+                .ok_or_else(|| UnpackError::new("snapshot target has no filename"))?;
+            let displaced = staging.join(format!(".superseded-{}", name.to_string_lossy()));
+            move_file_write_through(target, &displaced).map_err(|error| {
+                UnpackError::io(&format!("invalidate {}", target.display()), error)
+            })
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(UnpackError::io(
+            &format!("inspect snapshot target {}", target.display()),
+            error,
+        )),
+    }
+}
+
+#[cfg(windows)]
+fn move_file_write_through(from: &Path, to: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH};
+
+    let existing: Vec<u16> = from.as_os_str().encode_wide().chain(Some(0)).collect();
+    let new: Vec<u16> = to.as_os_str().encode_wide().chain(Some(0)).collect();
+    // SAFETY: both vectors are NUL-terminated UTF-16 paths alive for the call.
+    // MoveFileExW does not retain either pointer; WRITE_THROUGH completes the
+    // namespace move before returning and the destination is never a directory.
+    let moved = unsafe { MoveFileExW(existing.as_ptr(), new.as_ptr(), MOVEFILE_WRITE_THROUGH) };
+    if moved == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &Path) -> io::Result<()> {
+    File::open(path)?.sync_all()
+}
+
+#[cfg(windows)]
+fn sync_directory(_path: &Path) -> io::Result<()> {
+    // Windows has no documented, unprivileged directory-fsync equivalent:
+    // FlushFileBuffers is specified for writable file handles, not directories.
+    // Payload files are individually sync_all()'d before publication and every
+    // namespace move uses MoveFileExW(MOVEFILE_WRITE_THROUGH). That supports
+    // process-crash-safe marker ordering; directory creation itself is not
+    // claimed power-loss durable on Windows.
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn sync_directory(_path: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "snapshot publication requires Unix directory sync or Windows write-through rename",
+    ))
+}
+
+/// Every payload file a complete snapshot must contain, in publish order.
 fn payload_names() -> impl Iterator<Item = &'static str> {
     JAGS.into_iter().chain(BINS)
 }
 
-/// Unique staging directory for this process/version inside the snapshot root.
-fn staging_dir(out_dir: &str, version: &str) -> PathBuf {
+/// Existing `.version.staging-PID-counter` naming, acquired with create_dir so
+/// collisions never remove or clean a directory owned by another attempt.
+fn staging_dir(out_dir: &Path, version: &str) -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    Path::new(out_dir).join(format!(
+    out_dir.join(format!(
         ".{version}.staging-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ))
 }
 
-/// Remove the snapshot root again when this attempt created it and nothing
-/// was published: a preparation that fails (no store, no source, a cache that
-/// changed mid-read) leaves no snapshot root behind. `remove_dir` only
-/// succeeds on an empty directory, so a concurrently published snapshot is
-/// never disturbed.
-fn cleanup_empty_root(out_dir: &str, created: bool) {
-    if created {
-        let _ = std::fs::remove_dir(out_dir);
+fn create_staging_dir(out_dir: &Path, version: &str) -> Result<PathBuf, UnpackError> {
+    loop {
+        let path = staging_dir(out_dir, version);
+        match std::fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(UnpackError::io("create snapshot staging dir", error));
+            }
+        }
     }
 }
 
@@ -458,8 +668,134 @@ pub fn version_hash(versionlist: &[u8]) -> String {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let byte = *byte;
+        encoded.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        encoded.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    encoded
 }
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    hex(&Sha256::digest(bytes))
+}
+
+fn sha256_file(path: &Path) -> io::Result<String> {
+    let mut file = File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hex(&hasher.finalize()))
+}
+
+fn write_synced(path: &Path, bytes: &[u8], context: &str) -> Result<(), UnpackError> {
+    let mut file = File::create(path).map_err(|error| UnpackError::io(context, error))?;
+    file.write_all(bytes)
+        .map_err(|error| UnpackError::io(context, error))?;
+    file.sync_all()
+        .map_err(|error| UnpackError::io(context, error))
+}
+
+fn copy_file_synced(source: &Path, destination: &Path, context: &str) -> Result<(), UnpackError> {
+    let mut source = File::open(source)
+        .map_err(|error| UnpackError::io(&format!("{context}: open source"), error))?;
+    let mut destination = File::create(destination)
+        .map_err(|error| UnpackError::io(&format!("{context}: create destination"), error))?;
+    io::copy(&mut source, &mut destination)
+        .map_err(|error| UnpackError::io(&format!("{context}: copy"), error))?;
+    destination
+        .sync_all()
+        .map_err(|error| UnpackError::io(&format!("{context}: sync destination"), error))
+}
+
+fn copy_file_hashed_synced(
+    source: &Path,
+    destination: &Path,
+    context: &str,
+) -> Result<String, UnpackError> {
+    let mut source = File::open(source)
+        .map_err(|error| UnpackError::io(&format!("{context}: open source"), error))?;
+    let mut destination = File::create(destination)
+        .map_err(|error| UnpackError::io(&format!("{context}: create destination"), error))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = source
+            .read(&mut buffer)
+            .map_err(|error| UnpackError::io(&format!("{context}: read source"), error))?;
+        if read == 0 {
+            break;
+        }
+        destination
+            .write_all(&buffer[..read])
+            .map_err(|error| UnpackError::io(&format!("{context}: write destination"), error))?;
+        hasher.update(&buffer[..read]);
+    }
+    destination
+        .sync_all()
+        .map_err(|error| UnpackError::io(&format!("{context}: sync destination"), error))?;
+    Ok(hex(&hasher.finalize()))
+}
+
+fn write_integrity_marker(
+    staging: &Path,
+    versionlist: &[u8],
+    manifest: &[u8],
+    payload_digests: Option<&HashMap<String, String>>,
+) -> Result<(), UnpackError> {
+    use std::fmt::Write as _;
+
+    let mut text = String::with_capacity(1024);
+    writeln!(&mut text, "schema={INTEGRITY_SCHEMA}").expect("String writes are infallible");
+    writeln!(
+        &mut text,
+        "versionlist.sha256={}",
+        sha256_bytes(versionlist)
+    )
+    .expect("String writes are infallible");
+    for name in payload_names() {
+        let digest = match payload_digests {
+            Some(digests) => digests.get(name).ok_or_else(|| {
+                UnpackError::new(format!("verified source has no digest for {name}"))
+            })?,
+            None => {
+                let digest = sha256_file(&staging.join(name))
+                    .map_err(|error| UnpackError::io(&format!("hash staged {name}"), error))?;
+                // Keep only one reusable formatted value for the generated line.
+                writeln!(&mut text, "payload.{name}.sha256={digest}")
+                    .expect("String writes are infallible");
+                continue;
+            }
+        };
+        writeln!(&mut text, "payload.{name}.sha256={digest}")
+            .expect("String writes are infallible");
+    }
+    writeln!(&mut text, "manifest.sha256={}", sha256_bytes(manifest))
+        .expect("String writes are infallible");
+    write_synced(
+        &staging.join(INTEGRITY_FILE),
+        text.as_bytes(),
+        "write integrity marker",
+    )
+}
+
+#[cfg(feature = "snapshot-test-hooks")]
+fn crash_retained_publication_at(stage: &str) {
+    if std::env::var("CLIENT_TEST_SNAPSHOT_FAILPOINT").is_ok_and(|value| value == stage) {
+        std::process::exit(86);
+    }
+}
+
+#[cfg(not(feature = "snapshot-test-hooks"))]
+fn crash_retained_publication_at(_stage: &str) {}
 
 /// The selected cache's version: the versionlist content hash every snapshot
 /// path, manifest and later validation is bound to.
@@ -483,69 +819,167 @@ pub fn snapshot_state(cache_dir: &str, out_dir: &str) -> Result<SnapshotState, U
 }
 
 /// Readiness of the snapshot for an explicit version. `cache_versionlist` is
-/// the selected cache's versionlist content; the snapshot's own copy must
-/// hash to the same version, which binds the payload to this cache content.
-///
-/// A snapshot is `Ready` only when its completion manifest parses, matches the
-/// version, is marked complete, and every payload file is present with the
-/// recorded size and consistent record counts. Anything else — including a
-/// nonempty directory with no manifest — is `Incomplete` with the failing
-/// check named.
+/// the selected cache's versionlist content; legacy snapshots retain their
+/// size-only compatibility check, while any snapshot with integrity metadata
+/// must verify its stored stream hashes as well.
 pub fn snapshot_state_for_version(
     out_dir: &str,
     version: &str,
     cache_versionlist: &[u8],
 ) -> SnapshotState {
     let dir = Path::new(out_dir).join(version);
+    inspect_snapshot_dir(&dir, version, cache_versionlist, false, true).0
+}
+
+/// Check a retained runtime snapshot. Unlike the legacy public readiness API,
+/// this requires the schema'd integrity marker and validates it against actual
+/// file streams, exact versionlist bytes, and the exact manifest bytes.
+pub(super) fn checked_snapshot_state(
+    out_root: &Path,
+    version: &str,
+    versionlist: &[u8],
+) -> SnapshotState {
+    if version_hash(versionlist) != version {
+        return SnapshotState::Incomplete(
+            "selected version does not match the supplied versionlist".to_string(),
+        );
+    }
+    let dir = out_root.join(version);
+    inspect_snapshot_dir(&dir, version, versionlist, true, true).0
+}
+
+#[derive(Debug, Clone)]
+struct IntegrityMetadata {
+    versionlist_sha256: String,
+    payload_sha256: HashMap<String, String>,
+    manifest_sha256: String,
+}
+fn parse_integrity_metadata(text: &str) -> Option<IntegrityMetadata> {
+    let mut seen = HashSet::with_capacity(15);
+    let mut schema = false;
+    let mut versionlist_sha256 = None;
+    let mut payload_sha256 = HashMap::with_capacity(12);
+    let mut manifest_sha256 = None;
+    for line in text.lines() {
+        let (key, value) = line.split_once('=')?;
+        if !seen.insert(key) {
+            return None;
+        }
+        match key {
+            "schema" if value == INTEGRITY_SCHEMA => schema = true,
+            "versionlist.sha256" if is_sha256(value) => {
+                versionlist_sha256 = Some(value.to_string());
+            }
+            "manifest.sha256" if is_sha256(value) => {
+                manifest_sha256 = Some(value.to_string());
+            }
+            _ => {
+                let name = key.strip_prefix("payload.")?.strip_suffix(".sha256")?;
+                if !payload_names().any(|expected| expected == name) || !is_sha256(value) {
+                    return None;
+                }
+                payload_sha256.insert(name.to_string(), value.to_string());
+            }
+        }
+    }
+    if !schema || payload_sha256.len() != 12 {
+        return None;
+    }
+    Some(IntegrityMetadata {
+        versionlist_sha256: versionlist_sha256?,
+        payload_sha256,
+        manifest_sha256: manifest_sha256?,
+    })
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn inspect_snapshot_dir(
+    dir: &Path,
+    version: &str,
+    cache_versionlist: &[u8],
+    require_integrity: bool,
+    verify_payloads: bool,
+) -> (SnapshotState, Option<IntegrityMetadata>) {
     if !dir.is_dir() {
-        return SnapshotState::Missing;
+        return (SnapshotState::Missing, None);
     }
     let manifest_path = dir.join("manifest");
     let text = match std::fs::read_to_string(&manifest_path) {
         Ok(text) => text,
-        Err(e) => {
-            return SnapshotState::Incomplete(format!("{}: {e}", manifest_path.display()));
+        Err(error) => {
+            return (
+                SnapshotState::Incomplete(format!("{}: {error}", manifest_path.display())),
+                None,
+            );
         }
     };
     let Some(manifest) = manifest_from_text(&text) else {
-        return SnapshotState::Incomplete(format!(
-            "{}: unreadable manifest",
-            manifest_path.display()
-        ));
+        return (
+            SnapshotState::Incomplete(format!("{}: unreadable manifest", manifest_path.display())),
+            None,
+        );
     };
     if manifest.version != version {
-        return SnapshotState::Incomplete(format!(
-            "manifest version {} does not match selected version {version}",
-            manifest.version
-        ));
+        return (
+            SnapshotState::Incomplete(format!(
+                "manifest version {} does not match selected version {version}",
+                manifest.version
+            )),
+            None,
+        );
     }
     if !manifest.complete {
-        return SnapshotState::Incomplete(
-            "completion marker missing (interrupted or pre-marker snapshot)".to_string(),
+        return (
+            SnapshotState::Incomplete(
+                "completion marker missing (interrupted or pre-marker snapshot)".to_string(),
+            ),
+            None,
         );
     }
     match std::fs::read(dir.join("versionlist")) {
         Ok(bytes) if version_hash(&bytes) == version_hash(cache_versionlist) => {}
         Ok(_) => {
-            return SnapshotState::Incomplete(
-                "versionlist copy does not match the selected cache version".to_string(),
+            return (
+                SnapshotState::Incomplete(
+                    "versionlist copy does not match the selected cache version".to_string(),
+                ),
+                None,
             );
         }
-        Err(e) => return SnapshotState::Incomplete(format!("versionlist copy: {e}")),
+        Err(error) => {
+            return (
+                SnapshotState::Incomplete(format!("versionlist copy: {error}")),
+                None,
+            );
+        }
     }
     for (index, name) in JAGS.iter().enumerate() {
         match manifest.jags.get(index) {
             Some((declared, size)) if declared == name => match file_size(&dir.join(name)) {
                 Ok(actual) if actual == *size => {}
                 Ok(actual) => {
-                    return SnapshotState::Incomplete(format!(
-                        "{name}: {actual} bytes on disk, manifest records {size}"
-                    ));
+                    return (
+                        SnapshotState::Incomplete(format!(
+                            "{name}: {actual} bytes on disk, manifest records {size}"
+                        )),
+                        None,
+                    );
                 }
-                Err(e) => return SnapshotState::Incomplete(format!("{name}: {e}")),
+                Err(error) => {
+                    return (SnapshotState::Incomplete(format!("{name}: {error}")), None);
+                }
             },
             _ => {
-                return SnapshotState::Incomplete(format!("manifest has no size for jag {name}"));
+                return (
+                    SnapshotState::Incomplete(format!("manifest has no size for jag {name}")),
+                    None,
+                );
             }
         }
     }
@@ -558,24 +992,106 @@ pub fn snapshot_state_for_version(
         match file_size(&dir.join(name)) {
             Ok(actual) if actual == stats.bytes => {}
             Ok(actual) => {
-                return SnapshotState::Incomplete(format!(
-                    "{name}: {actual} bytes on disk, manifest records {}",
-                    stats.bytes
-                ));
+                return (
+                    SnapshotState::Incomplete(format!(
+                        "{name}: {actual} bytes on disk, manifest records {}",
+                        stats.bytes
+                    )),
+                    None,
+                );
             }
-            Err(e) => return SnapshotState::Incomplete(format!("{name}: {e}")),
+            Err(error) => {
+                return (SnapshotState::Incomplete(format!("{name}: {error}")), None);
+            }
         }
         if stats.total != stats.unpacked + stats.skipped {
-            return SnapshotState::Incomplete(format!(
-                "{name}: {} total != {} unpacked + {} skipped",
-                stats.total, stats.unpacked, stats.skipped
-            ));
+            return (
+                SnapshotState::Incomplete(format!(
+                    "{name}: {} total != {} unpacked + {} skipped",
+                    stats.total, stats.unpacked, stats.skipped
+                )),
+                None,
+            );
         }
         if stats.unpacked == 0 || stats.bytes == 0 {
-            return SnapshotState::Incomplete(format!("{name}: no records in the snapshot"));
+            return (
+                SnapshotState::Incomplete(format!("{name}: no records in the snapshot")),
+                None,
+            );
         }
     }
-    SnapshotState::Ready(manifest)
+
+    let integrity_path = dir.join(INTEGRITY_FILE);
+    let integrity_text = match std::fs::read_to_string(&integrity_path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound && !require_integrity => {
+            return (SnapshotState::Ready(manifest), None);
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return (
+                SnapshotState::Incomplete(format!(
+                    "{}: integrity marker missing",
+                    integrity_path.display()
+                )),
+                None,
+            );
+        }
+        Err(error) => {
+            return (
+                SnapshotState::Incomplete(format!("{}: {error}", integrity_path.display())),
+                None,
+            );
+        }
+    };
+    let Some(integrity) = parse_integrity_metadata(&integrity_text) else {
+        return (
+            SnapshotState::Incomplete(format!(
+                "{}: malformed or unsupported integrity metadata",
+                integrity_path.display()
+            )),
+            None,
+        );
+    };
+    if let Err(reason) = verify_integrity(
+        dir,
+        cache_versionlist,
+        text.as_bytes(),
+        &integrity,
+        verify_payloads,
+    ) {
+        return (SnapshotState::Incomplete(reason), None);
+    }
+    (SnapshotState::Ready(manifest), Some(integrity))
+}
+
+fn verify_integrity(
+    dir: &Path,
+    cache_versionlist: &[u8],
+    manifest: &[u8],
+    integrity: &IntegrityMetadata,
+    verify_payloads: bool,
+) -> Result<(), String> {
+    if integrity.versionlist_sha256 != sha256_bytes(cache_versionlist) {
+        return Err("integrity versionlist SHA-256 does not match selected bytes".to_string());
+    }
+    if integrity.manifest_sha256 != sha256_bytes(manifest) {
+        return Err("integrity manifest SHA-256 does not match manifest bytes".to_string());
+    }
+    if !verify_payloads {
+        return Ok(());
+    }
+    for name in payload_names() {
+        let expected = integrity
+            .payload_sha256
+            .get(name)
+            .ok_or_else(|| format!("integrity metadata has no digest for {name}"))?;
+        let actual = sha256_file(&dir.join(name))
+            .map_err(|error| format!("{name}: cannot compute SHA-256: {error}"))?;
+        if &actual != expected {
+            return Err(format!("{name}: SHA-256 does not match integrity metadata"));
+        }
+    }
+    Ok(())
 }
 
 fn file_size(path: &Path) -> io::Result<u64> {
@@ -832,6 +1348,8 @@ fn unpack_archive(
 
     out.flush()
         .map_err(|e| UnpackError::io("flush archive file", e))?;
+    out.sync_all()
+        .map_err(|e| UnpackError::io("sync archive file", e))?;
     drop(out);
     stats.bytes = file_size(&out_path).map_err(|e| UnpackError::io("stat archive file", e))?;
     Ok(stats)
