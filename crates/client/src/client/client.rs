@@ -10294,10 +10294,10 @@ impl Client {
     /// drops back to the welcome screen (`loginscreen = 0`). The title
     /// rebuild mirrors Java `prepareGame`+`prepareTitle`: `redraw_frame`
     /// forces the full recomposite, and the renderer's `title_screen_draw`
-    /// performs the paint teardown (`unload_title`, a nulled `image_title2`
-    /// so the next `prepare_title` reallocates the 9 regions, and a
-    /// one-shot `draw_area` cls so no game-frame viewport/chat/side pixel
-    /// survives).
+    /// performs the paint teardown (`unload_title`, which frees the 9 title
+    /// regions so the next `prepare_title` reallocates them, as Java
+    /// `prepareGame`/`unloadTitle` do, and a one-shot `draw_area` cls so no
+    /// game-frame viewport/chat/side pixel survives).
     pub fn logout(&mut self) {
         if let Some(t) = &mut self.shell.ground_trace {
             t.complete("logout");

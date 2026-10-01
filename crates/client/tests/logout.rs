@@ -158,9 +158,9 @@ fn side_layer(
 // --- Task 4: `logout()` restores the title frame ---
 // Java `logout` (`Client.java` 6357-6379) drops `ingame`/`loginscreen` and
 // clears the caches; the title rebuild is `prepareGame`+`prepareTitle`
-// parity — `unload_title` + `image_title2 = None` so the next
-// `prepare_title` reallocates the 9 regions, plus `redraw_frame = true` and
-// a one-shot `draw_area` cls so no game-frame pixel can survive.
+// parity — `unload_title` frees the 9 title regions so the next
+// `prepare_title` reallocates them, plus `redraw_frame = true` and a
+// one-shot `draw_area` cls so no game-frame pixel can survive.
 
 #[test]
 fn logout_restores_title_frame() {
@@ -176,7 +176,7 @@ fn logout_restores_title_frame() {
     assert_eq!(c.loginscreen, 0, "logout returns to the welcome screen");
     assert!(c.redraw_frame, "logout must force a full title redraw");
     // Paint teardown now runs in the renderer's first title draw (task 2b:
-    // `logout` is sim-only; `title_screen_draw` drops `image_title2` and
+    // `logout` is sim-only; `title_screen_draw` runs `unload_title` and
     // cls's `draw_area` on the `!ingame && redraw_frame` gate). The draw
     // then plots the title art (a title jag may be present), so the
     // assertion is that no game-frame pixel survives, not an empty canvas.
