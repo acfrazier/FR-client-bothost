@@ -2,8 +2,10 @@
 #[path = "support/startup_snapshot.rs"]
 mod support;
 
-use client::io::ClientRevision;
+use client::io::{ClientRevision, JagFile, OnDemand};
+use client::{ClientSessionConfig, ClientSessionProfile, Transport};
 use std::path::Path;
+use std::sync::Arc;
 
 #[test]
 fn equivalent_transfer_refresh_is_owned_and_cleanup_follows_last_arc() {
@@ -152,6 +154,88 @@ fn malformed_required_record_is_rejected_and_rebuilt_from_validated_entries() {
     assert!(retained.join("manifest").is_file());
     assert!(retained.join("integrity").is_file());
     assert_valid_records(&repaired.snapshot_dir.join("maps.bin"));
+}
+
+#[test]
+fn prepared_maps_reject_a_different_identity_revision_or_resource_path() {
+    let temp = support::TempDir::new("runtime-map-binding");
+    let source = temp.path().join("cache");
+    let root = temp.path().join("snapshots");
+    let fixture = support::PackSet::new(41);
+    fixture.write_to(&source).unwrap();
+    let http = support::HttpServer::start(fixture.clone());
+    let entries = support::EntryServer::start(fixture.entries.clone());
+    let prepared = support::prepare(
+        &source,
+        &root,
+        http.port(),
+        entries.port(),
+        ClientRevision::R289,
+    )
+    .unwrap();
+    let identity = prepared.identity.content_id_hex();
+    let jag = JagFile::new(std::fs::read(prepared.jag_dir.join("versionlist")).unwrap());
+    for (revision, id, cache) in [
+        (
+            ClientRevision::R274,
+            identity.as_str(),
+            prepared.jag_dir.as_path(),
+        ),
+        (
+            ClientRevision::R289,
+            "forged-identity",
+            prepared.jag_dir.as_path(),
+        ),
+        (ClientRevision::R289, identity.as_str(), source.as_path()),
+    ] {
+        assert!(
+            OnDemand::new_bound(
+                &jag,
+                Transport::Tcp,
+                revision,
+                "127.0.0.1",
+                entries.port(),
+                cache.to_str().unwrap(),
+                id,
+                None,
+                None,
+                Some(Arc::clone(&prepared.map_archive)),
+            )
+            .is_err(),
+            "a verified map capability cannot be rebound"
+        );
+    }
+    let valid = ClientSessionConfig {
+        revision: ClientRevision::R289,
+        transport: Transport::Tcp,
+        game_host: "127.0.0.1".into(),
+        game_port: entries.port(),
+        asset_host: "127.0.0.1".into(),
+        asset_port: http.port(),
+        cache_dir: prepared.jag_dir.clone(),
+        unpack_dir: prepared.unpack_root().to_owned(),
+        rsa_modulus: "123456789".into(),
+        rsa_exponent: "65537".into(),
+        expected_crc: Some(prepared.expected_crc),
+        content_id: identity,
+        file_store_dir: None,
+        ondemand_persist_dir: None,
+        map_archive: Some(Arc::clone(&prepared.map_archive)),
+    };
+    for mutation in 0..4 {
+        let mut changed = valid.clone();
+        match mutation {
+            0 => changed.revision = ClientRevision::R274,
+            1 => changed.content_id = "forged-identity".into(),
+            2 => changed.cache_dir = source.clone(),
+            3 => changed.unpack_dir = root.clone(),
+            _ => unreachable!(),
+        }
+        assert!(
+            ClientSessionProfile::new(changed).is_err(),
+            "a profile cannot redirect verified maps to different resource inputs"
+        );
+    }
 }
 
 fn assert_valid_records(path: &Path) {

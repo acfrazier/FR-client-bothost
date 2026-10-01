@@ -244,6 +244,7 @@ fn bound_file_store_used_when_jag_dir_has_no_store() {
         "scene-load-bound",
         Some(store.to_str().unwrap()),
         Some(persist.to_str().unwrap()),
+        None,
     )
     .unwrap();
     od.request(3, 0);
@@ -294,6 +295,7 @@ fn completed_ondemand_maps_are_retained() {
         "scene-load-retain",
         None,
         Some(persist.to_str().unwrap()),
+        None,
     )
     .unwrap();
     od.request(3, 0);
@@ -327,6 +329,7 @@ fn completed_ondemand_maps_are_retained() {
         "scene-load-retain-2",
         None,
         Some(persist.to_str().unwrap()),
+        None,
     )
     .unwrap();
     od.request(3, 0);
@@ -440,6 +443,7 @@ fn bound_ondemand(
         content_id,
         None,
         persist.and_then(|p| p.to_str()),
+        None,
     )
     .unwrap()
 }

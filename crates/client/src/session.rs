@@ -1,10 +1,12 @@
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
 
 use num_bigint::BigUint;
 
 use crate::client::ClientConfig;
 use crate::io::ClientRevision;
+use crate::unpack::PreparedMapArchive;
 use crate::Transport;
 
 /// Owned inputs used to freeze one client's connection and resource identity.
@@ -24,6 +26,8 @@ pub struct ClientSessionConfig {
     pub content_id: String,
     pub file_store_dir: Option<PathBuf>,
     pub ondemand_persist_dir: Option<PathBuf>,
+    /// Optional capability from the matching verified runtime preparation.
+    pub map_archive: Option<Arc<PreparedMapArchive>>,
 }
 
 /// Immutable connection and resource identity shared by every slot in a session.
@@ -45,6 +49,7 @@ pub struct ClientSessionProfile {
     content_id: String,
     file_store_dir: Option<PathBuf>,
     ondemand_persist_dir: Option<PathBuf>,
+    map_archive: Option<Arc<PreparedMapArchive>>,
 }
 
 impl ClientSessionProfile {
@@ -87,6 +92,13 @@ impl ClientSessionProfile {
         if config.content_id.is_empty() {
             return Err("content_id must not be empty".into());
         }
+        if let Some(maps) = &config.map_archive {
+            if !maps.matches_binding(config.revision, &config.content_id, &config.cache_dir)
+                || maps.unpack_root() != config.unpack_dir
+            {
+                return Err("prepared maps do not match the session binding".into());
+            }
+        }
         let rsa_modulus_value = BigUint::from_str(&config.rsa_modulus)
             .map_err(|_| "RSA modulus must be a positive decimal integer".to_string())?;
         if rsa_modulus_value == BigUint::from(0u8) {
@@ -115,6 +127,7 @@ impl ClientSessionProfile {
             content_id: config.content_id,
             file_store_dir: config.file_store_dir,
             ondemand_persist_dir: config.ondemand_persist_dir,
+            map_archive: config.map_archive,
         })
     }
 
@@ -174,6 +187,10 @@ impl ClientSessionProfile {
         self.ondemand_persist_dir.as_deref()
     }
 
+    pub fn map_archive(&self) -> Option<&Arc<PreparedMapArchive>> {
+        self.map_archive.as_ref()
+    }
+
     /// Change only the login endpoint and key; shared assets stay bound to the
     /// template's original update server and cache identity.
     pub fn for_public_world(&self, host: &str, port: u16, modulus: &str) -> Result<Self, String> {
@@ -195,6 +212,7 @@ impl ClientSessionProfile {
             content_id: self.content_id.clone(),
             file_store_dir: self.file_store_dir.clone(),
             ondemand_persist_dir: self.ondemand_persist_dir.clone(),
+            map_archive: self.map_archive.clone(),
         })
     }
 

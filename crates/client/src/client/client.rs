@@ -2629,6 +2629,7 @@ impl Client {
                     profile
                         .ondemand_persist_dir()
                         .and_then(|path| path.to_str()),
+                    profile.map_archive().cloned(),
                 )
                 .map(Some),
                 None => Ok(OnDemand::new_with_revision(
@@ -14480,6 +14481,7 @@ mod public_login_key_tests {
                 content_id: "public-fixture".into(),
                 file_store_dir: None,
                 ondemand_persist_dir: None,
+                map_archive: None,
             })
             .unwrap(),
         );

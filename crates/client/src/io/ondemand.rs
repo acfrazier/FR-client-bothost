@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -22,6 +22,7 @@ use crate::io::client_stream::ClientStream;
 use crate::io::jagfile::JagFile;
 use crate::io::packet::Packet;
 use crate::io::ClientRevision;
+use crate::unpack::PreparedMapArchive;
 use crate::Transport;
 
 /// Reconnect gate in Java `OnDemand.send`: the socket is not reopened within
@@ -45,6 +46,7 @@ pub struct OnDemandRequest {
     pub cycle: i32,
     pub urgent: bool,
     links: Links,
+    decoded: bool,
 }
 
 impl OnDemandRequest {
@@ -56,6 +58,7 @@ impl OnDemandRequest {
             cycle: 0,
             urgent: true,
             links: Links::new(0),
+            decoded: false,
         }
     }
 }
@@ -130,6 +133,7 @@ enum WorkerMessage {
         file: i32,
         urgent: bool,
         data: Option<Arc<Vec<u8>>>,
+        decoded: bool,
     },
     Message(String),
     FailCount(i32),
@@ -157,6 +161,7 @@ struct HubIdentity {
     file_store_dir: Option<String>,
     persist_dir: Option<String>,
     tables_sha256: [u8; 32],
+    map_archive: Option<Arc<PreparedMapArchive>>,
 }
 
 struct BoundHubIdentity<'a> {
@@ -166,6 +171,7 @@ struct BoundHubIdentity<'a> {
     content_id: &'a str,
     file_store_dir: Option<&'a str>,
     persist_dir: Option<&'a str>,
+    map_archive: Option<Arc<PreparedMapArchive>>,
 }
 
 static NEXT_SLOT: AtomicUsize = AtomicUsize::new(1);
@@ -276,6 +282,8 @@ struct Worker {
     cache_dir: Option<String>,
     /// Content-identity overlay for completed ondemand files (gzip + trailer).
     persist_dir: Option<PathBuf>,
+    /// Already verified decoded map records from the owned runtime snapshot.
+    map_archive: Option<Arc<PreparedMapArchive>>,
     recovering: bool,
     reconnect_backoff: Duration,
     saw_network_progress: bool,
@@ -378,6 +386,8 @@ impl OnDemand {
             .flatten()
     }
 
+    /// Bind the worker to one frozen resource identity. `map_archive` must
+    /// originate from the matching actual-byte-verified runtime preparation.
     #[allow(clippy::too_many_arguments)]
     pub fn new_bound(
         versionlist: &JagFile,
@@ -389,7 +399,14 @@ impl OnDemand {
         content_id: &str,
         file_store_dir: Option<&str>,
         persist_dir: Option<&str>,
+        map_archive: Option<Arc<PreparedMapArchive>>,
     ) -> Result<Self, String> {
+        if map_archive
+            .as_ref()
+            .is_some_and(|maps| !maps.matches_binding(revision, content_id, Path::new(cache_dir)))
+        {
+            return Err("prepared maps do not match the OnDemand binding".into());
+        }
         Self::new_inner(
             versionlist,
             host,
@@ -402,6 +419,7 @@ impl OnDemand {
                 content_id,
                 file_store_dir,
                 persist_dir,
+                map_archive,
             }),
             None,
         )?
@@ -478,6 +496,7 @@ impl OnDemand {
             file_store_dir: identity.file_store_dir.map(str::to_string),
             persist_dir: identity.persist_dir.map(str::to_string),
             tables_sha256: tables_sha256(&versions, &crcs),
+            map_archive: identity.map_archive.clone(),
         });
         let store_hint = bound
             .as_ref()
@@ -807,18 +826,21 @@ impl OnDemand {
         self.requests.size(&self.arena)
     }
 
-    /// `loop()`: pop the next completed request, gunzip its payload (the
-    /// engine sends gzip + a 2-byte version trailer; TS strips the trailer
-    /// before gunzipping), and unlink the request from `requests`.
+    /// Pop a completed request. Wire/store payloads lose their two-byte
+    /// version trailer and are gunzipped; verified snapshot maps are already
+    /// decoded and pass through without recompression or trailer stripping.
     pub fn loop_request(&mut self) -> Option<OnDemandRequest> {
         let mut req = self.pop_completed_raw()?;
-        if let Some(data) = req.data.take() {
-            let body = if data.len() >= 2 {
-                &data[..data.len() - 2]
-            } else {
-                &data
-            };
-            req.data = Some(gunzip(body));
+        if !req.decoded {
+            if let Some(data) = req.data.take() {
+                let body = if data.len() >= 2 {
+                    &data[..data.len() - 2]
+                } else {
+                    &data
+                };
+                req.data = Some(gunzip(body));
+            }
+            req.decoded = true;
         }
         Some(req)
     }
@@ -919,6 +941,7 @@ impl OnDemand {
                     file,
                     urgent,
                     data,
+                    decoded,
                 } => {
                     // `want` is the per-handle request/prefetch set. Archive 0/1
                     // Completeds also arrive from `Model::request_download` via
@@ -930,7 +953,8 @@ impl OnDemand {
                     }
                     let mut req = OnDemandRequest::new(archive, file);
                     req.urgent = urgent;
-                    req.data = data.map(|d| (*d).clone());
+                    req.data = data.map(|d| Arc::try_unwrap(d).unwrap_or_else(|d| (*d).clone()));
+                    req.decoded = decoded;
                     self.completed.push(req);
                 }
                 WorkerMessage::Message(m) => self.message = m,
@@ -1024,6 +1048,9 @@ fn subscribe_hub(
         persist_dir: identity
             .as_ref()
             .and_then(|identity| identity.persist_dir.as_ref().map(PathBuf::from)),
+        map_archive: identity
+            .as_ref()
+            .and_then(|identity| identity.map_archive.clone()),
         recovering: false,
         reconnect_backoff: Duration::ZERO,
         saw_network_progress: false,
@@ -1170,6 +1197,14 @@ impl Worker {
         if !self.valid_file(archive, file) {
             return;
         }
+        if archive == 3
+            && self
+                .map_archive
+                .as_ref()
+                .is_some_and(|maps| maps.contains(file))
+        {
+            return;
+        }
         if let Some(data) = self.cached_payload(archive, file) {
             // Java skips the extra-files download. This port never writes
             // idx, so Model::unpack only runs on Completed: post archive-0
@@ -1211,6 +1246,18 @@ impl Worker {
     fn handle_queue(&mut self) {
         while let Some(mut req) = self.queue.pop_front() {
             self.active = true;
+            if req.archive == 3 {
+                if let Some(data) = self
+                    .map_archive
+                    .as_ref()
+                    .and_then(|maps| maps.read(req.file).ok().flatten())
+                {
+                    req.data = Some(data);
+                    req.decoded = true;
+                    self.complete(req);
+                    continue;
+                }
+            }
             if let Some(cached) = self.cached_payload(req.archive, req.file) {
                 req.data = Some(cached);
                 self.complete(req);
@@ -1356,6 +1403,7 @@ impl Worker {
                             file: req.file,
                             urgent: true,
                             data: None,
+                            decoded: false,
                         });
                     }
                 } else {
@@ -1504,6 +1552,7 @@ impl Worker {
                 file: req.file,
                 urgent: req.urgent,
                 data: req.data.map(Arc::new),
+                decoded: req.decoded,
             });
         }
     }

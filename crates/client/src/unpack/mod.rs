@@ -264,7 +264,8 @@ pub fn unpack_cache(cache_dir: &str, out_dir: &str) -> Result<Manifest, UnpackEr
 
 mod runtime;
 pub use runtime::{
-    prepare_runtime_cache, PreparedRuntimeCache, RuntimeCacheError, RuntimeCacheRequest,
+    prepare_runtime_cache, PreparedMapArchive, PreparedRuntimeCache, RuntimeCacheError,
+    RuntimeCacheRequest,
 };
 
 /// Read a selected local store without moving or writing its files. The
@@ -389,6 +390,22 @@ fn publish_snapshot(
         return Ok(existing);
     }
 
+    // Validate the source inputs before creating any output resources. In
+    // particular, an offline bind with absent tables/store must stay read-only.
+    let jag = JagFile::new(versionlist.to_vec());
+    let tables = [
+        ArchiveTables::read(&jag, ARCHIVES[0].0, ARCHIVES[0].1)?,
+        ArchiveTables::read(&jag, ARCHIVES[1].0, ARCHIVES[1].1)?,
+        ArchiveTables::read(&jag, ARCHIVES[2].0, ARCHIVES[2].1)?,
+        ArchiveTables::read(&jag, ARCHIVES[3].0, ARCHIVES[3].1)?,
+    ];
+    let mut stores = [None, None, None, None];
+    if source.is_none() {
+        for (index, (_, _, store_idx, _)) in ARCHIVES.into_iter().enumerate() {
+            stores[index] = Some(StorePayload::open(store_dir, store_idx, &tables[index])?);
+        }
+    }
+
     let dir_path = Path::new(out_dir).join(&version);
     std::fs::create_dir_all(out_dir)
         .map_err(|error| UnpackError::io("create snapshot root", error))?;
@@ -398,11 +415,12 @@ fn publish_snapshot(
     let result = (|| {
         stage_snapshot(
             cache_dir,
-            store_dir,
             &staging,
             &dir,
             &version,
             &versionlist,
+            &tables,
+            &mut stores,
             &mut source,
         )?;
 
@@ -431,13 +449,15 @@ fn publish_snapshot(
 /// Copy the jag packs and unpack every idx archive into `staging`, returning
 /// the manifest that will be published with them. `source` selects where the
 /// record payloads come from; both publishers share this verified staging path.
+#[allow(clippy::too_many_arguments)]
 fn stage_snapshot(
     cache_dir: &str,
-    store_dir: &str,
     staging: &Path,
     dir: &str,
     version: &str,
     versionlist: &[u8],
+    tables: &[ArchiveTables; 4],
+    stores: &mut [Option<StorePayload<'_>>; 4],
     source: &mut Option<&mut dyn EntrySource>,
 ) -> Result<Manifest, UnpackError> {
     let origin = if source.is_some() {
@@ -454,20 +474,19 @@ fn stage_snapshot(
         jags.push((name.to_string(), size));
     }
 
-    let jag = JagFile::new(versionlist.to_vec());
     let mut archives: [ArchiveStats; ARCHIVES.len()] = Default::default();
-    for (index, (version_table, crc_table, store_idx, file_name)) in
-        ARCHIVES.into_iter().enumerate()
-    {
-        let tables = ArchiveTables::read(&jag, version_table, crc_table)?;
+    for (index, (_, _, store_idx, file_name)) in ARCHIVES.into_iter().enumerate() {
+        let tables = &tables[index];
         archives[index] = match source.as_deref_mut() {
             Some(source) => {
                 let mut payload = NetworkPayload { source };
-                unpack_archive(staging, &tables, store_idx, file_name, &mut payload)?
+                unpack_archive(staging, tables, store_idx, file_name, &mut payload)?
             }
             None => {
-                let mut payload = StorePayload::open(store_dir, store_idx, &tables)?;
-                unpack_archive(staging, &tables, store_idx, file_name, &mut payload)?
+                let mut payload = stores[index]
+                    .take()
+                    .expect("local archive source checked before staging");
+                unpack_archive(staging, tables, store_idx, file_name, &mut payload)?
             }
         };
     }
@@ -601,9 +620,9 @@ fn move_file_write_through(from: &Path, to: &Path) -> io::Result<()> {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let name = to
-        .file_name()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "move target has no filename"))?;
+    let name = to.file_name().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "move target has no filename")
+    })?;
     let to = std::fs::canonicalize(parent)?.join(name);
     let existing: Vec<u16> = from.as_os_str().encode_wide().chain(Some(0)).collect();
     let new: Vec<u16> = to.as_os_str().encode_wide().chain(Some(0)).collect();

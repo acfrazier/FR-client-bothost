@@ -4,10 +4,13 @@
 mod support;
 
 use client::content_identity::compute_decoded_content_identity;
-use client::io::ClientRevision;
+use client::io::{ClientRevision, JagFile, OnDemand};
+use client::Transport;
+use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -25,6 +28,7 @@ struct WorkerResult {
     version: String,
     retained: PathBuf,
     runtime: PathBuf,
+    map_digest: String,
 }
 
 struct WorkerChild(Option<Child>);
@@ -56,6 +60,7 @@ impl WorkerExit {
             version: fields.next().expect("version").to_string(),
             retained: PathBuf::from(fields.next().expect("retained path")),
             runtime: PathBuf::from(fields.next().expect("runtime path")),
+            map_digest: fields.next().expect("decoded map digest").to_owned(),
         }
     }
 
@@ -164,7 +169,10 @@ impl Drop for WorkerChild {
 #[test]
 #[ignore = "subprocess entrypoint; exercised by the process behavior tests"]
 fn process_worker() {
-    assert!(std::env::var_os(WORKER).is_some(), "child worker environment");
+    assert!(
+        std::env::var_os(WORKER).is_some(),
+        "child worker environment"
+    );
     let source = PathBuf::from(std::env::var_os(SOURCE).expect("worker source"));
     let root = PathBuf::from(std::env::var_os(ROOT).expect("worker root"));
     let asset_port = std::env::var(ASSET_PORT)
@@ -190,9 +198,44 @@ fn process_worker() {
         .expect("retained snapshot parent")
         .to_owned();
     let runtime = prepared.unpack_root().to_owned();
+    let jag = JagFile::new(std::fs::read(prepared.jag_dir.join("versionlist")).unwrap());
+    let mut maps = OnDemand::new_bound(
+        &jag,
+        Transport::Tcp,
+        revision,
+        "127.0.0.1",
+        game_port,
+        prepared.jag_dir.to_str().unwrap(),
+        &identity,
+        None,
+        None,
+        Some(Arc::clone(&prepared.map_archive)),
+    )
+    .unwrap();
+    maps.request(3, 0);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let data = loop {
+        maps.run(false);
+        if let Some(request) = maps.loop_request() {
+            assert_eq!((request.archive, request.file), (3, 0));
+            break request.data.expect("decoded map payload");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "prepared map completion timed out"
+        );
+        thread::sleep(Duration::from_millis(5));
+    };
+    let map_digest = format!("{:x}", Sha256::digest(data));
     drop(prepared);
+    assert!(runtime.exists(), "map capability owns the private runtime");
+    drop(maps);
+    assert!(
+        !runtime.exists(),
+        "last map capability releases the runtime"
+    );
     println!(
-        "\nSS_RESULT\t{identity}\t{version}\t{}\t{}",
+        "\nSS_RESULT\t{identity}\t{version}\t{}\t{}\t{map_digest}",
         retained.display(),
         runtime.display()
     );
@@ -222,6 +265,11 @@ fn ordinary_launch_persists_and_fresh_process_reuses_without_entry_fill() {
     .success();
 
     assert_eq!(entries.request_count(), fixture.entries.len());
+    let expected_map = format!("{:x}", Sha256::digest(&fixture.entries[3].payload));
+    assert_eq!(
+        first.map_digest, expected_map,
+        "cold scene receives the decoded map bytes"
+    );
     assert_eq!(
         http.crc_count(),
         1,
@@ -247,6 +295,10 @@ fn ordinary_launch_persists_and_fresh_process_reuses_without_entry_fill() {
     assert_eq!(second.identity, first.identity);
     assert_eq!(second.version, first.version);
     assert_eq!(second.retained, first.retained);
+    assert_eq!(
+        second.map_digest, expected_map,
+        "fresh warm scene receives the same decoded map bytes"
+    );
     assert_eq!(
         entries.request_count(),
         fixture.entries.len(),

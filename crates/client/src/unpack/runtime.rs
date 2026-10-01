@@ -2,8 +2,9 @@
 //! packs and snapshot until the last profile releases them. No persisted
 //! identity sidecar is trusted, and clients share this result rather than
 //! scanning or copying a snapshot per bot.
-use std::collections::{BTreeMap, HashSet};
-use std::io::Read;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fs::File;
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -34,7 +35,7 @@ pub struct RuntimeCacheRequest<'a> {
 
 #[derive(Debug)]
 pub struct PreparedRuntimeCache {
-    owned: OwnedDirectory,
+    owned: Arc<OwnedDirectory>,
     pub jag_dir: PathBuf,
     pub snapshot_dir: PathBuf,
     pub version: String,
@@ -50,11 +51,104 @@ pub struct PreparedRuntimeCache {
     pub store_dir: Option<PathBuf>,
     /// Content-identity overlay for completed ondemand payloads.
     pub persist_dir: PathBuf,
+    /// Indexed, read-only maps from the actual-byte-verified runtime copy.
+    pub map_archive: Arc<PreparedMapArchive>,
 }
 
 impl PreparedRuntimeCache {
     pub fn unpack_root(&self) -> &Path {
         &self.owned.0
+    }
+}
+
+/// A capability for the verified decoded maps, not a path or digest sidecar.
+/// One file/index is shared by the session's OnDemand hub. Holding it also
+/// keeps the private runtime directory alive; no decoded world is cloned per bot.
+#[derive(Debug)]
+pub struct PreparedMapArchive {
+    file: Mutex<File>,
+    records: HashMap<i32, (u64, u32)>,
+    revision: ClientRevision,
+    content_id: String,
+    jag_dir: PathBuf,
+    owned: Arc<OwnedDirectory>,
+}
+
+impl PartialEq for PreparedMapArchive {
+    fn eq(&self, other: &Self) -> bool {
+        self.revision == other.revision
+            && self.content_id == other.content_id
+            && self.jag_dir == other.jag_dir
+            && self.owned.0 == other.owned.0
+    }
+}
+
+impl Eq for PreparedMapArchive {}
+
+impl PreparedMapArchive {
+    fn open(
+        snapshot_dir: &Path,
+        revision: ClientRevision,
+        identity: &DecodedContentIdentity,
+        jag_dir: &Path,
+        owned: Arc<OwnedDirectory>,
+    ) -> Result<Self, String> {
+        let mut file = File::open(snapshot_dir.join("maps.bin")).map_err(|e| e.to_string())?;
+        let size = file.metadata().map_err(|e| e.to_string())?.len();
+        let mut records = HashMap::new();
+        let mut position = 0u64;
+        while position < size {
+            let mut header = [0u8; 8];
+            file.read_exact(&mut header).map_err(|e| e.to_string())?;
+            let id = i32::try_from(u32::from_le_bytes(header[..4].try_into().unwrap()))
+                .map_err(|e| e.to_string())?;
+            let len = u32::from_le_bytes(header[4..].try_into().unwrap());
+            let payload = position.checked_add(8).ok_or("map offset overflow")?;
+            position = payload
+                .checked_add(u64::from(len))
+                .ok_or("map length overflow")?;
+            if position > size || records.insert(id, (payload, len)).is_some() {
+                return Err("invalid prepared map record".into());
+            }
+            file.seek(SeekFrom::Start(position))
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(Self {
+            file: Mutex::new(file),
+            records,
+            revision,
+            content_id: identity.content_id_hex(),
+            jag_dir: jag_dir.to_owned(),
+            owned,
+        })
+    }
+
+    pub(crate) fn matches_binding(
+        &self,
+        revision: ClientRevision,
+        content_id: &str,
+        jag_dir: &Path,
+    ) -> bool {
+        self.revision == revision && self.content_id == content_id && self.jag_dir == jag_dir
+    }
+
+    pub(crate) fn unpack_root(&self) -> &Path {
+        &self.owned.0
+    }
+
+    pub(crate) fn contains(&self, id: i32) -> bool {
+        self.records.contains_key(&id)
+    }
+
+    pub(crate) fn read(&self, id: i32) -> io::Result<Option<Vec<u8>>> {
+        let Some(&(offset, len)) = self.records.get(&id) else {
+            return Ok(None);
+        };
+        let mut file = self.file.lock().unwrap_or_else(|p| p.into_inner());
+        file.seek(SeekFrom::Start(offset))?;
+        let mut data = vec![0; len as usize];
+        file.read_exact(&mut data)?;
+        Ok(Some(data))
     }
 }
 
@@ -294,7 +388,7 @@ pub fn prepare_runtime_cache(
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         match std::fs::create_dir(&path) {
-            Ok(()) => break OwnedDirectory(path),
+            Ok(()) => break Arc::new(OwnedDirectory(path)),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(format!("runtime staging: {e}").into()),
         }
@@ -359,6 +453,7 @@ pub fn prepare_runtime_cache(
                     &transfer_id,
                     super::file_store_dir(&request.jag_source.to_string_lossy()).as_deref(),
                     None,
+                    None,
                 )
                 .map_err(RuntimeCacheError::Other)?;
                 let result = fetch_snapshot(cache, root, &mut worker);
@@ -381,6 +476,15 @@ pub fn prepare_runtime_cache(
     let store_dir = super::file_store_dir(&request.jag_source.to_string_lossy()).map(PathBuf::from);
     let persist_dir = retained.join("ondemand");
     std::fs::create_dir_all(&persist_dir).map_err(|e| e.to_string())?;
+    // Index headers only after canonical identity has verified the payloads.
+    // The capability retains this immutable private copy, never shared retained files.
+    let map_archive = Arc::new(PreparedMapArchive::open(
+        &snapshot_dir,
+        request.revision,
+        &identity,
+        &jag_dir,
+        Arc::clone(&owned),
+    )?);
     Ok(Arc::new(PreparedRuntimeCache {
         owned,
         jag_dir,
@@ -396,6 +500,7 @@ pub fn prepare_runtime_cache(
         reused: refreshed.reused,
         store_dir,
         persist_dir,
+        map_archive,
     }))
 }
 
