@@ -13130,17 +13130,25 @@ impl Client {
     /// and jingle delay, and drops queued/current SFX. Leaving lowmem does not
     /// request a title or zone song.
     ///
+    /// Returns `true` if configured or already selected. Returns `false`
+    /// without changing the client if a game session is active or an adopted
+    /// reconnect socket is pending.
+    ///
     /// # Panics
     ///
-    /// Panics during an active game session or while an adopted reconnect
-    /// socket is pending.
-    pub fn configure_login_memory(&mut self, lowmem: bool) {
-        assert!(
-            !self.ingame && !self.baton,
+    /// Debug builds assert if called during an active game session or while an
+    /// adopted reconnect socket is pending.
+    pub fn configure_login_memory(&mut self, lowmem: bool) -> bool {
+        let disconnected = !self.ingame && !self.baton;
+        debug_assert!(
+            disconnected,
             "client memory mode can only be configured while disconnected"
         );
+        if !disconnected {
+            return false;
+        }
         if self.config.lowmem == lowmem {
-            return;
+            return true;
         }
         self.config.lowmem = lowmem;
         self.load_tex_averages();
@@ -13153,6 +13161,7 @@ impl Client {
         } else {
             self.jagfx = Self::unpack_jagfx(&self.session_cache_dir(), false);
         }
+        true
     }
 
     /// Drive the 20 ms GameShell machine on the calling thread (spec §3):
@@ -14275,8 +14284,12 @@ mod audio_toggle {
         assert!(c.config.lowmem);
 
         // Prepare highmem while disconnected; subsequent audio packets pass.
-        c.configure_login_memory(false);
+        assert!(c.configure_login_memory(false));
         assert!(!c.config.lowmem);
+        assert!(
+            c.configure_login_memory(false),
+            "an unchanged valid configuration is accepted"
+        );
         assert!(
             c.jagfx.synth.iter().any(|s| s.is_some()),
             "highmem configuration must load the JagFX table"
@@ -14289,7 +14302,7 @@ mod audio_toggle {
 
         // Preparing lowmem discards existing queued and current SFX.
         drop(c.waves.lock().unwrap().replace(vec![1, 2, 3]));
-        c.configure_login_memory(true);
+        assert!(c.configure_login_memory(true));
         assert!(c.config.lowmem);
         assert_eq!(c.wave_count, 0, "lowmem must clear queued SYNTH_SOUND");
         assert!(
@@ -14309,22 +14322,44 @@ mod audio_toggle {
         c.redraw_frame = false;
         c.ingame = true;
         let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            c.configure_login_memory(false);
+            c.configure_login_memory(false)
         }));
-        assert!(rejected.is_err());
+        if cfg!(debug_assertions) {
+            assert!(
+                rejected.is_err(),
+                "debug builds should trigger the precondition assertion"
+            );
+        } else {
+            assert!(
+                !rejected.unwrap_or_else(|_| panic!("release builds should return false")),
+                "release builds should refuse an active session"
+            );
+        }
         assert!(c.config.lowmem);
         assert_eq!(c.tex_average, averages);
         assert!(c.jagfx.synth.iter().all(|s| s.is_none()));
         assert!(!c.redraw_frame);
 
-        // The same guard must run before the idempotent-mode fast path too.
+        // Even the idempotent-mode fast path must refuse an adopted socket.
         c.ingame = false;
         c.baton = true;
         let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            c.configure_login_memory(true);
+            c.configure_login_memory(true)
         }));
-        assert!(rejected.is_err());
+        if cfg!(debug_assertions) {
+            assert!(
+                rejected.is_err(),
+                "debug builds should trigger the precondition assertion"
+            );
+        } else {
+            assert!(
+                !rejected.unwrap_or_else(|_| panic!("release builds should return false")),
+                "release builds should refuse a pending adopted socket"
+            );
+        }
         assert!(c.config.lowmem);
+        assert_eq!(c.tex_average, averages);
+        assert!(c.jagfx.synth.iter().all(|s| s.is_none()));
         assert!(!c.redraw_frame);
     }
 

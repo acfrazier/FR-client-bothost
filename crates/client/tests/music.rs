@@ -175,7 +175,7 @@ fn configure_login_memory_lowmem_clears_playing_and_pending_midi() {
     assert!(c.midi_pending.is_some());
     c.next_music_delay = 20;
 
-    c.configure_login_memory(true);
+    assert!(c.configure_login_memory(true));
 
     assert!(c.config.lowmem);
     assert_eq!(c.next_music_delay, 0);
