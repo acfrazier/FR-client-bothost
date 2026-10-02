@@ -14298,6 +14298,8 @@ mod audio_toggle {
         );
         synth_sound(&mut c, 0);
         assert_eq!(c.wave_count, 0, "lowmem must gate SYNTH_SOUND again");
+        midi_song(&mut c, 9);
+        assert_eq!(c.midi_song, -1, "lowmem must gate MIDI_SONG again");
     }
 
     #[test]
