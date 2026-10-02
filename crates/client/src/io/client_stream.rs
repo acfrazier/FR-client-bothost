@@ -664,7 +664,7 @@ fn socket_readable_now(socket: RawSocket) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::client::SessionExitReason;
+    use crate::client::client::{SessionExitReason, SERVER_TIMEOUT};
     use crate::client::{Client, ClientConfig, ClientRevision};
     use std::net::TcpListener;
     use std::sync::mpsc;
@@ -889,6 +889,23 @@ mod tests {
         let _ = server.join();
     }
 
+    /// Drive `tcp_in` until the client enters the `lostCon` reconnect path.
+    /// The fatal pass runs `login` synchronously against a dead port, so the
+    /// wait covers loopback delivery *and* the OS connect-refused latency;
+    /// bound it by the product's own dead-server horizon, not a tuned guess
+    /// (2 s flakes on Windows, where refused loopback connects are slower).
+    fn drive_to_reconnect(client: &mut Client) {
+        let deadline = std::time::Instant::now() + SERVER_TIMEOUT;
+        while client.last_login_reconnect != Some(true) {
+            client.tcp_in();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "reconnect path not entered within SERVER_TIMEOUT"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     #[test]
     fn standalone_ws_close_enters_lost_con_reconnect_path() {
         let (addr, server) = spawn_ws_server(|mut ws| {
@@ -918,12 +935,7 @@ mod tests {
         client.ingame = true;
         client.ptype = -1;
 
-        let deadline = std::time::Instant::now() + Duration::from_secs(2);
-        while client.last_login_reconnect != Some(true) {
-            client.tcp_in();
-            assert!(std::time::Instant::now() < deadline);
-            thread::sleep(Duration::from_millis(5));
-        }
+        drive_to_reconnect(&mut client);
 
         assert!(!client.ingame);
         assert_eq!(
@@ -964,12 +976,7 @@ mod tests {
         client.ingame = true;
         client.ptype = -1;
 
-        let deadline = std::time::Instant::now() + Duration::from_secs(2);
-        while client.last_login_reconnect != Some(true) {
-            client.tcp_in();
-            assert!(std::time::Instant::now() < deadline);
-            thread::sleep(Duration::from_millis(5));
-        }
+        drive_to_reconnect(&mut client);
 
         assert!(!client.ingame);
         assert!(matches!(

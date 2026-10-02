@@ -1503,7 +1503,7 @@ struct ClientConstruction {
 /// Dead-server watchdog bound: the Java client's 750 `gameLoop` passes at
 /// 20 ms (~15 s), but measured in elapsed time so the bound holds at any
 /// pass cadence (a parked host slot runs `gameLoop` once per ~600 ms).
-const SERVER_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) const SERVER_TIMEOUT: Duration = Duration::from_secs(15);
 /// Java's intent is one keepalive after roughly one second without an
 /// outbound flush. Elapsed time preserves that bound for slow-pumped slots.
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
