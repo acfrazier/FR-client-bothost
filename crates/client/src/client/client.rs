@@ -13119,26 +13119,26 @@ impl Client {
         self.journal_paint_hidden
     }
 
-    /// Flip the client's `lowmem` mode live (the panel's Music/SFX toggle):
-    /// set `config.lowmem` — the single source of truth every lowmem gate
-    /// already reads (sound synthesis, the 2D audio UI, player/model
-    /// `low_mem`) — and re-run the one-time JagFX load on the low→high edge.
+    /// Configure the client's memory mode for the disconnected next-login
+    /// boundary.
     ///
-    /// The MIDI request follows Java's live music state rather than startup's
-    /// unconditional scape_main request (`Client.java` 8492-8497; production
-    /// `client.java` 3307-3312): in game, resume the recorded `nextMidiSong`
-    /// only while MIDI is active and no jingle delay is pending; on the title
-    /// screen, request scape_main only while MIDI is active. Entering lowmem
-    /// stops MIDI, invalidates an in-flight selected song, clears the cut-off
-    /// jingle's delay while retaining the next zone song, and stops both
-    /// queued and current SFX (a lowmem Java client never accepts them).
+    /// Call immediately before `login`, with no active game session or adopted
+    /// reconnect socket. A rejected login may retain its probe stream; that
+    /// does not represent an active game session. Mode-dependent texture
+    /// averages and sound tables are prepared here; the handshake sends the
+    /// selected mode. Entering lowmem stops MIDI, clears its selected song
+    /// and jingle delay, and drops queued/current SFX. Leaving lowmem does not
+    /// request a title or zone song.
     ///
-    /// Idempotent (early return when unchanged) so it can be called every
-    /// frame; the full re-raster (`redraw_frame`, like the brightness path)
-    /// makes the current scene and the 2D UI reflect the new mode. The login
-    /// handshake is one-time (sent at login) and is not re-sent here; a later
-    /// reconnect handshakes the new mode from `config.lowmem`.
-    pub fn set_lowmem(&mut self, lowmem: bool) {
+    /// # Panics
+    ///
+    /// Panics during an active game session or while an adopted reconnect
+    /// socket is pending.
+    pub fn configure_login_memory(&mut self, lowmem: bool) {
+        assert!(
+            !self.ingame && !self.baton,
+            "client memory mode can only be configured while disconnected"
+        );
         if self.config.lowmem == lowmem {
             return;
         }
@@ -13152,21 +13152,7 @@ impl Client {
             self.waves.lock().unwrap().stop();
         } else {
             self.jagfx = Self::unpack_jagfx(&self.session_cache_dir(), false);
-            let song = if !self.midi_active {
-                None
-            } else if self.ingame {
-                (self.next_midi_song != -1 && self.next_music_delay == 0)
-                    .then_some(self.next_midi_song)
-            } else {
-                Some(0)
-            };
-            if let (Some(song), Some(od)) = (song, self.on_demand.as_mut()) {
-                self.midi_song = song;
-                self.midi_fading = true;
-                od.request(2, song);
-            }
         }
-        self.redraw_frame = true;
     }
 
     /// Drive the 20 ms GameShell machine on the calling thread (spec §3):
@@ -14278,9 +14264,9 @@ mod audio_toggle {
     }
 
     #[test]
-    fn set_lowmem_false_loads_sound_and_opens_gates() {
+    fn configure_login_memory_updates_audio_gates() {
         let mut c = lowmem_client_with_sounds();
-        // Spawned lowmem: table empty, both gates closed.
+        // A lowmem client starts with sounds unloaded and both gates closed.
         assert!(c.jagfx.synth.iter().all(|s| s.is_none()));
         synth_sound(&mut c, 0);
         assert_eq!(c.wave_count, 0, "lowmem must gate SYNTH_SOUND");
@@ -14288,28 +14274,22 @@ mod audio_toggle {
         assert_eq!(c.midi_song, -1, "lowmem must gate MIDI_SONG");
         assert!(c.config.lowmem);
 
-        // Toggle on (highmem) live — no respawn.
-        c.set_lowmem(false);
+        // Prepare highmem while disconnected; subsequent audio packets pass.
+        c.configure_login_memory(false);
         assert!(!c.config.lowmem);
         assert!(
             c.jagfx.synth.iter().any(|s| s.is_some()),
-            "set_lowmem(false) must load the JagFX table the lowmem spawn skipped"
+            "highmem configuration must load the JagFX table"
         );
-        assert!(c.redraw_frame, "the mode flip must re-raster");
-        // Idempotent: a repeated unchanged call stays quiet.
-        c.redraw_frame = false;
-        c.set_lowmem(false);
-        assert!(!c.redraw_frame, "set_lowmem must be idempotent");
 
         synth_sound(&mut c, 0);
         assert_eq!(c.wave_count, 1, "highmem must accept SYNTH_SOUND");
         midi_song(&mut c, 8);
         assert_eq!(c.midi_song, 8, "highmem must accept MIDI_SONG");
 
-        // Toggle back off (lowmem): queued and currently playing SFX are
-        // discarded before the gates close.
+        // Preparing lowmem discards existing queued and current SFX.
         drop(c.waves.lock().unwrap().replace(vec![1, 2, 3]));
-        c.set_lowmem(true);
+        c.configure_login_memory(true);
         assert!(c.config.lowmem);
         assert_eq!(c.wave_count, 0, "lowmem must clear queued SYNTH_SOUND");
         assert!(
@@ -14318,6 +14298,32 @@ mod audio_toggle {
         );
         synth_sound(&mut c, 0);
         assert_eq!(c.wave_count, 0, "lowmem must gate SYNTH_SOUND again");
+    }
+
+    #[test]
+    fn configure_login_memory_rejects_active_sessions_without_mutation() {
+        let mut c = lowmem_client_with_sounds();
+        let averages = c.tex_average;
+        c.redraw_frame = false;
+        c.ingame = true;
+        let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            c.configure_login_memory(false);
+        }));
+        assert!(rejected.is_err());
+        assert!(c.config.lowmem);
+        assert_eq!(c.tex_average, averages);
+        assert!(c.jagfx.synth.iter().all(|s| s.is_none()));
+        assert!(!c.redraw_frame);
+
+        // The same guard must run before the idempotent-mode fast path too.
+        c.ingame = false;
+        c.baton = true;
+        let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            c.configure_login_memory(true);
+        }));
+        assert!(rejected.is_err());
+        assert!(c.config.lowmem);
+        assert!(!c.redraw_frame);
     }
 
     /// Pack a JAG container with bz2-compressed payloads (the shape the

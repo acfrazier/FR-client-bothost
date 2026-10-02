@@ -445,9 +445,9 @@ impl Pix3DDraw {
         self.active_texels.fill(None);
     }
 
-    /// Re-size the texel pool for a live lowmem/highmem flip. `init_pool`
-    /// is one-shot by design, so the live toggle needs a fresh pool: the
-    /// high-mem raster writes four 16384-texel blocks (65536 total) and a
+    /// Re-size the texel pool when the renderer adopts a mode selected for
+    /// login. `init_pool` is one-shot by design, so this needs a fresh pool:
+    /// the high-mem raster writes four 16384-texel blocks (65536 total) and a
     /// low-mem-sized row crashes with `index 16384` on the second block.
     pub fn reset_pool(&mut self, size: i32) {
         self.texel_pool = None;

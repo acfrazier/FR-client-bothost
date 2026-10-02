@@ -4341,13 +4341,11 @@ impl Renderer {
     /// loading splash and the minimap *image* build; `Client::check_minimap`
     /// runs the scene build on the sim loop) and `follow_camera`.
     pub fn mainredraw(&mut self, client: &mut Client) -> FrameOutput {
-        // A live lowmem/highmem flip updates `Client.config.lowmem`; re-init
-        // the renderer's texture state — the raster flag, the unpacked
-        // textures (lowmem halves 128×128, highmem trims) and the texel pool
-        // (whose row length follows the mode) — so both the CPU texel raster
-        // and the GPU ground/water branch see the new mode. The backend and
-        // `draw_area` stay alive; rebuilding the whole renderer hangs the
-        // slot mid-flight.
+        // A login-boundary mode change may leave the renderer's textures and
+        // texel pool in the previous mode. Synchronize them before drawing
+        // the first frame so CPU rasterization and GPU ground/water rendering
+        // use the mode selected for login. Keep the backend and draw area
+        // alive rather than rebuilding the renderer.
         if self.pix3d.low_mem != client.config.lowmem {
             self.pix3d.low_mem = client.config.lowmem;
             if let Ok(bytes) = std::fs::read(format!("{}/textures", client.resource_cache_dir())) {
