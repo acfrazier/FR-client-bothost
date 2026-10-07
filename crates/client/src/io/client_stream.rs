@@ -78,11 +78,11 @@ struct TcpInner {
 // The test-only `Plain` variant makes the enum two-variant, and Windows'
 // TLS stream is far larger than the plain one. Boxing `Tls` would add an
 // allocation to the production path for a test-build-only lint.
-#[cfg_attr(test, allow(clippy::large_enum_variant))]
+#[cfg_attr(any(test, feature = "test-support"), allow(clippy::large_enum_variant))]
 enum WsConn {
     Tls(WebSocket<TlsStream<TcpStream>>),
     /// Loopback plain WS used by unit tests only (no TLS trust bypass).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     Plain(WebSocket<TcpStream>),
 }
 
@@ -92,7 +92,7 @@ impl WsConn {
     fn read_message(&mut self) -> Result<Message, tungstenite::Error> {
         match self {
             WsConn::Tls(ws) => ws.read(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             WsConn::Plain(ws) => ws.read(),
         }
     }
@@ -101,7 +101,7 @@ impl WsConn {
     fn send_message(&mut self, msg: Message) -> Result<(), tungstenite::Error> {
         match self {
             WsConn::Tls(ws) => ws.send(msg),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             WsConn::Plain(ws) => ws.send(msg),
         }
     }
@@ -110,7 +110,7 @@ impl WsConn {
     fn close(&mut self) -> Result<(), tungstenite::Error> {
         match self {
             WsConn::Tls(ws) => ws.close(None),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             WsConn::Plain(ws) => ws.close(None),
         }
     }
@@ -118,7 +118,7 @@ impl WsConn {
     fn set_nonblocking(&mut self, nonblocking: bool) -> io::Result<()> {
         match self {
             WsConn::Tls(ws) => ws.get_ref().get_ref().set_nonblocking(nonblocking),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             WsConn::Plain(ws) => ws.get_ref().set_nonblocking(nonblocking),
         }
     }
@@ -661,6 +661,38 @@ fn socket_readable_now(socket: RawSocket) -> bool {
     rc > 0
 }
 
+/// Plain loopback WebSocket connector for host transport regressions. This
+/// cannot bypass TLS trust in product builds: `test-support` is dev-only.
+#[cfg(any(test, feature = "test-support"))]
+pub fn connect_ws_plain(host: &str, port: u16) -> io::Result<ClientStream> {
+    use tungstenite::client::IntoClientRequest;
+    let tcp = TcpStream::connect((host, port))?;
+    tcp.set_read_timeout(Some(READ_TIMEOUT))?;
+    tcp.set_nodelay(true)?;
+    #[cfg(unix)]
+    let fd = tcp.as_raw_fd();
+    #[cfg(windows)]
+    let socket = tcp.as_raw_socket();
+    let req = format!("ws://{host}:{port}/")
+        .into_client_request()
+        .map_err(io_other)?;
+    let (ws, _) = tungstenite::client::client(req, tcp).map_err(io_other)?;
+    Ok(ClientStream {
+        inner: Inner::Ws(Box::new(WsInner {
+            ws: Mutex::new(WsConn::Plain(ws)),
+            leftover: Mutex::new(VecDeque::new()),
+            dummy: Mutex::new(false),
+            pending_exit: Mutex::new(None),
+            #[cfg(unix)]
+            fd,
+            #[cfg(windows)]
+            socket,
+        })),
+        bytes_in: AtomicU64::new(0),
+        bytes_out: AtomicU64::new(0),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -670,35 +702,6 @@ mod tests {
     use std::sync::mpsc;
     use tungstenite::WebSocket as TungsteniteWs;
 
-    /// Plain WS client over loopback (no TLS). Test-only transport.
-    fn connect_ws_plain(host: &str, port: u16) -> io::Result<ClientStream> {
-        use tungstenite::client::IntoClientRequest;
-        let tcp = TcpStream::connect((host, port))?;
-        tcp.set_read_timeout(Some(READ_TIMEOUT))?;
-        tcp.set_nodelay(true)?;
-        #[cfg(unix)]
-        let fd = tcp.as_raw_fd();
-        #[cfg(windows)]
-        let socket = tcp.as_raw_socket();
-        let req = format!("ws://{host}:{port}/")
-            .into_client_request()
-            .map_err(io_other)?;
-        let (ws, _) = tungstenite::client::client(req, tcp).map_err(io_other)?;
-        Ok(ClientStream {
-            inner: Inner::Ws(Box::new(WsInner {
-                ws: Mutex::new(WsConn::Plain(ws)),
-                leftover: Mutex::new(VecDeque::new()),
-                dummy: Mutex::new(false),
-                pending_exit: Mutex::new(None),
-                #[cfg(unix)]
-                fd,
-                #[cfg(windows)]
-                socket,
-            })),
-            bytes_in: AtomicU64::new(0),
-            bytes_out: AtomicU64::new(0),
-        })
-    }
 
     fn spawn_ws_server(
         on_ready: impl FnOnce(TungsteniteWs<TcpStream>) + Send + 'static,

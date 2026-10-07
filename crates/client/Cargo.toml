@@ -13,6 +13,8 @@ render-diagnostics = []
 # Failure injection for independent-process snapshot publication tests only.
 # Product frontends never enable this feature.
 snapshot-test-hooks = []
+# Host transport regressions only; never enabled by product frontends.
+test-support = []
 
 [dependencies]
 bzip2 = "0.4"
