@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use client::client::{Client, ClientConfig};
+use client::client::{Client, ClientConfig, ClientRevision};
 use client::io::Packet;
 
 /// Uncompressed empty jag (packed_size == unpacked_size, file_count 0).
@@ -459,6 +459,22 @@ fn maininit_retries_jag_get_after_crc_mismatch() {
     assert_eq!(std::fs::read(dir.join("title")).unwrap(), fresh);
 }
 
+/// A local web origin that accepts each connection and closes it without an
+/// answer, so every fetch from it fails at once on every platform. An unused
+/// port is not that: Windows retries a refused localhost connect for about
+/// two seconds before it fails, which made the bounded-time checks below
+/// measure the TCP stack instead of the retry budget.
+fn dead_web_origin() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            drop(stream);
+        }
+    });
+    port
+}
+
 /// Java `getJagChecksums` (deob 11211-11268): `/crc` unreachable retries
 /// with a per-second countdown and, past 10 failed attempts, shows
 /// "Game updated - please reload page" forever. The port gives up at that
@@ -469,13 +485,10 @@ fn crc_unreachable_sets_error_loading_in_bounded_time() {
     let dir = std::env::temp_dir().join("274-crc-unreachable");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    // An unused localhost port: connect() refuses instantly, so each fetch
-    // attempt is fast and the whole 10-attempt retry budget is the
-    // countdown (small `fetch_retry_wait` below).
-    let unused = {
-        let l = TcpListener::bind("127.0.0.1:0").unwrap();
-        l.local_addr().unwrap().port()
-    };
+    // Every fetch attempt fails at once (see `dead_web_origin`), so the
+    // whole 10-attempt retry budget is the countdown (small
+    // `fetch_retry_wait` below).
+    let dead = dead_web_origin();
     let mut c = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
@@ -483,7 +496,7 @@ fn crc_unreachable_sets_error_loading_in_bounded_time() {
         members: true,
         lowmem: false,
     });
-    c.http_port = unused;
+    c.http_port = dead;
     c.fetch_retry_wait = Duration::from_millis(1);
     let start = Instant::now();
     c.maininit();
@@ -509,10 +522,7 @@ fn crc_retry_countdown_reports_java_messages() {
     let dir = std::env::temp_dir().join("274-crc-countdown");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let unused = {
-        let l = TcpListener::bind("127.0.0.1:0").unwrap();
-        l.local_addr().unwrap().port()
-    };
+    let dead = dead_web_origin();
     let mut c = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
@@ -520,7 +530,7 @@ fn crc_retry_countdown_reports_java_messages() {
         members: true,
         lowmem: false,
     });
-    c.http_port = unused;
+    c.http_port = dead;
     c.fetch_retry_wait = Duration::from_millis(1);
     let mut messages = Vec::new();
     c.maininit_with_progress(Some(&mut |_cl, m, _p| messages.push(m.to_string())));
@@ -547,23 +557,25 @@ fn stop_during_crc_retry_countdown_aborts_before_the_next_retry() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let cleanup = dir.clone();
-    let unused = {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.local_addr().unwrap().port()
-    };
+    let dead = dead_web_origin();
     let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(0);
     let (stop_tx, stop_rx) = std::sync::mpsc::sync_channel(0);
     let (done_tx, done_rx) = std::sync::mpsc::sync_channel(1);
 
     let worker = thread::spawn(move || {
-        let mut client = Client::new(ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43594,
-            cache_dir: dir.to_str().unwrap().into(),
-            members: true,
-            lowmem: false,
-        });
-        client.http_port = unused;
+        // The constructor's own `/crc` probe goes to the dead origin too,
+        // so building the client is as fast as the countdown it waits for.
+        let mut client = Client::new_with_revision_and_http_port(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: dir.to_str().unwrap().into(),
+                members: true,
+                lowmem: false,
+            },
+            ClientRevision::R274,
+            dead,
+        );
         let mut entered = false;
         client.maininit_with_progress(Some(&mut |client, message, _| {
             if !entered && message.starts_with("connection problem - Will retry in ") {
@@ -607,10 +619,7 @@ fn crc_retry_pumps_present_target() {
     let dir = std::env::temp_dir().join("274-crc-pump");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let unused = {
-        let l = TcpListener::bind("127.0.0.1:0").unwrap();
-        l.local_addr().unwrap().port()
-    };
+    let dead = dead_web_origin();
     let mut c = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
@@ -618,7 +627,7 @@ fn crc_retry_pumps_present_target() {
         members: true,
         lowmem: false,
     });
-    c.http_port = unused;
+    c.http_port = dead;
     c.fetch_retry_wait = Duration::from_millis(1);
     c.draw = true;
     let polls = Arc::new(AtomicUsize::new(0));

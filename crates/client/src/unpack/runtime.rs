@@ -600,9 +600,17 @@ fn prune_retained_copies_with_liveness(
     is_alive: impl Fn(u32) -> bool,
 ) {
     // Updating a dedicated stamp, rather than the namespace directory's mtime,
-    // records verified reuse as well as publication. A failed stamp must not
-    // cause another server's reusable assets to be evicted.
-    if std::fs::write(revision_root.join(newest).join(".last-used"), []).is_err() {
+    // records verified reuse as well as publication. The time is set outright:
+    // rewriting an empty stamp writes no data, and Windows then leaves its
+    // modification time alone. A failed stamp must not cause another server's
+    // reusable assets to be evicted.
+    let stamped = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(revision_root.join(newest).join(".last-used"))
+        .and_then(|stamp| stamp.set_modified(std::time::SystemTime::now()));
+    if stamped.is_err() {
         return;
     }
     let Ok(entries) = std::fs::read_dir(revision_root) else {
