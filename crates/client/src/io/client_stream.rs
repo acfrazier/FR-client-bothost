@@ -78,7 +78,10 @@ struct TcpInner {
 // The test-only `Plain` variant makes the enum two-variant, and Windows'
 // TLS stream is far larger than the plain one. Boxing `Tls` would add an
 // allocation to the production path for a test-build-only lint.
-#[cfg_attr(any(test, feature = "test-support"), allow(clippy::large_enum_variant))]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    allow(clippy::large_enum_variant)
+)]
 enum WsConn {
     Tls(WebSocket<TlsStream<TcpStream>>),
     /// Loopback plain WS used by unit tests only (no TLS trust bypass).
@@ -701,7 +704,6 @@ mod tests {
     use std::net::TcpListener;
     use std::sync::mpsc;
     use tungstenite::WebSocket as TungsteniteWs;
-
 
     fn spawn_ws_server(
         on_ready: impl FnOnce(TungsteniteWs<TcpStream>) + Send + 'static,
