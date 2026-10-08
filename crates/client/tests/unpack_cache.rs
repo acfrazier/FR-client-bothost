@@ -28,21 +28,18 @@ fn unpacks_versioned_snapshot() {
         return;
     };
 
-    // Versionlist model count and the idx1 size==0 (never-preserved) count.
+    // Versionlist model count and the unpack's own skip rule: a model slot
+    // is skipped when its `model_version` entry is 0 (`unpack_archive` /
+    // `ArchiveTables::required`, matching Java `OnDemand.validFile`). The
+    // idx1 `size == 0` walk undercounts by one on packs whose versionlist
+    // has a trailing unused slot with no idx row (289 id 5027).
     let versionlist = std::fs::read(format!("{cache}/versionlist")).unwrap();
     let jag = JagFile::new(versionlist);
     let model_version = jag.read("model_version").expect("model_version table");
     let model_total = model_version.len() / 2;
-    let idx1 = std::fs::read(
-        Path::new(&cache)
-            .parent()
-            .unwrap()
-            .join("main_file_cache.idx1"),
-    )
-    .unwrap();
-    let size_zero = idx1
-        .chunks(6)
-        .filter(|r| r.len() == 6 && ((r[0] as u32) << 16) + ((r[1] as u32) << 8) + r[2] as u32 == 0)
+    let version_zero = model_version
+        .chunks(2)
+        .filter(|r| r.len() == 2 && u16::from_be_bytes([r[0], r[1]]) == 0)
         .count();
 
     let tmp = std::env::temp_dir().join(format!("274bot-unpack-{}", std::process::id()));
@@ -57,9 +54,12 @@ fn unpacks_versioned_snapshot() {
     assert!(dir.join("manifest").is_file(), "manifest exists");
 
     assert_eq!(manifest.models.total as usize, model_total);
-    assert_eq!(manifest.models.unpacked as usize, model_total - size_zero);
+    assert_eq!(
+        manifest.models.unpacked as usize,
+        model_total - version_zero
+    );
     assert!(manifest.models.unpacked > 0, "models must unpack");
-    assert_eq!(manifest.models.skipped as usize, size_zero);
+    assert_eq!(manifest.models.skipped as usize, version_zero);
 
     // Read one record back: gunzipped bytes are non-empty and no longer
     // start with the gzip magic (proving the strip + gunzip happened).
