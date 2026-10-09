@@ -310,6 +310,75 @@ fn new_player_appearance_cache_and_transformed_local_values() {
 }
 
 #[test]
+fn local_animation_reception_survives_same_id_frames_and_excludes_other_actors() {
+    let mut c = client();
+    cache(&mut c);
+    assert!(c.local_animation_update().is_none());
+    for serial in 1..=3 {
+        dispatch(
+            &mut c,
+            ServerProt289::PLAYER_INFO,
+            player_mask(true, 2, &[0, 0, 0]),
+        );
+        let update = c.local_animation_update().unwrap();
+        assert_eq!((update.serial, update.sequence), (serial, 0));
+        // A rendered frame can advance or expire before the host observes it.
+        c.local_player.as_mut().unwrap().primary_anim_frame = 7;
+        c.local_player.as_mut().unwrap().primary_anim = -1;
+        dispatch(&mut c, ServerProt289::PLAYER_INFO, bits(&[(1, 0), (8, 0)]));
+        assert_eq!(c.local_animation_update(), Some(update));
+        seed_remote(&mut c);
+        dispatch(
+            &mut c,
+            ServerProt289::PLAYER_INFO,
+            player_mask(false, 2, &[0, 0, 0]),
+        );
+        assert_eq!(c.local_animation_update(), Some(update));
+        seed_npc(&mut c);
+        dispatch(&mut c, ServerProt289::NPC_INFO, npc_mask(2, &[0, 0, 0]));
+        assert_eq!(c.local_animation_update(), Some(update));
+    }
+    dispatch(
+        &mut c,
+        ServerProt289::PLAYER_INFO,
+        player_mask(true, 2, &[255, 255, 0]),
+    );
+    let update = c.local_animation_update().unwrap();
+    assert_eq!((update.serial, update.sequence), (4, -1));
+    c.logout();
+    assert!(c.local_animation_update().is_none());
+}
+
+#[test]
+fn truncated_animation_transaction_does_not_publish_a_local_update() {
+    let mut c = client();
+    dispatch(
+        &mut c,
+        ServerProt289::PLAYER_INFO,
+        player_mask(true, 2 | 4, &[0, 0, 0, 1]),
+    );
+    assert!(!c.ingame);
+    assert!(c.local_animation_update().is_none());
+}
+
+#[test]
+fn legacy_player_animation_reception_also_counts_same_id_instructions() {
+    let mut c = Client::new(client().config);
+    c.ingame = true;
+    c.local_player = Some(ClientPlayer::at(10, 10));
+    c.players[2047] = Some(Box::new(ClientPlayer::default()));
+    for serial in 1..=2 {
+        dispatch(
+            &mut c,
+            ServerProt::PLAYER_INFO,
+            player_mask(true, 2, &[0, 0, 0]),
+        );
+        let update = c.local_animation_update().unwrap();
+        assert_eq!((update.serial, update.sequence), (serial, 0));
+    }
+}
+
+#[test]
 fn actor_animation_priority_duplicate_reset_and_spot_sentinel() {
     for npc in [false, true] {
         for (old, new, expected, reset) in [

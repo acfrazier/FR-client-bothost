@@ -586,6 +586,12 @@ fn apply_mask(c: &mut Client, npc: bool, index: usize, mask: Mask) -> bool {
         Mask::Anim(id, delay) => {
             let cache = c.cache.clone();
             animate(actor(c, npc, index), id, delay, &cache);
+            if !npc && index == LOCAL_PLAYER_INDEX as usize {
+                c.local_animation_update = Some(super::LocalAnimationUpdate::next(
+                    c.local_animation_update,
+                    id,
+                ));
+            }
         }
         Mask::Face(id) => actor(c, npc, index).face_entity = id,
         Mask::Say(message) => {

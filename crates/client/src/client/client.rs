@@ -401,6 +401,23 @@ pub struct MainModalPacketState {
     pub closed_observation: u64,
 }
 
+/// The most recent animation instruction received for the local player.
+/// Rendering can advance or finish the sequence without changing this fact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalAnimationUpdate {
+    pub serial: u32,
+    pub sequence: i32,
+}
+
+impl LocalAnimationUpdate {
+    fn next(previous: Option<Self>, sequence: i32) -> Self {
+        Self {
+            serial: previous.map_or(1, |update| update.serial.wrapping_add(1)),
+            sequence,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 struct R289Publication {
     npc: bool,
@@ -895,6 +912,7 @@ pub struct Client {
     /// bank policy and are cleared at every connection/session boundary.
     inventory_packet_states: HashMap<i32, InventoryPacketState>,
     main_modal_packet_state: MainModalPacketState,
+    local_animation_update: Option<LocalAnimationUpdate>,
     packet_observation: u64,
     session_profile: Option<Arc<ClientSessionProfile>>,
     transport: crate::Transport,
@@ -1672,6 +1690,11 @@ impl Client {
         self.main_modal_packet_state
     }
 
+    /// Local PLAYER_INFO animation reception, including repeated sequence IDs.
+    pub fn local_animation_update(&self) -> Option<LocalAnimationUpdate> {
+        self.local_animation_update
+    }
+
     fn next_packet_observation(&mut self) -> u64 {
         self.packet_observation = self.packet_observation.wrapping_add(1);
         self.packet_observation
@@ -1724,6 +1747,7 @@ impl Client {
     fn reset_packet_observations(&mut self) {
         self.inventory_packet_states.clear();
         self.main_modal_packet_state = MainModalPacketState::default();
+        self.local_animation_update = None;
         self.packet_observation = 0;
     }
 
@@ -1890,6 +1914,7 @@ impl Client {
             revision: construction.revision,
             inventory_packet_states: HashMap::new(),
             main_modal_packet_state: MainModalPacketState::default(),
+            local_animation_update: None,
             packet_observation: 0,
             session_profile: construction.session_profile,
             transport,
@@ -9139,6 +9164,12 @@ impl Client {
             let mut seq_id = buf.g2();
             if seq_id == 65535 {
                 seq_id = -1;
+            }
+            if index == LOCAL_PLAYER_INDEX as usize {
+                self.local_animation_update = Some(LocalAnimationUpdate::next(
+                    self.local_animation_update,
+                    seq_id,
+                ));
             }
 
             if let Some(player) = player.as_mut() {
