@@ -50,8 +50,10 @@ nav live in 274bot. Do not add one here.
 - Tags `274bot-<version>` (`274bot-0.1.0` … `274bot-0.2.0`,
   `274bot-0.2.0.1` once released) mark the exact client each 274bot release
   shipped with. `archive/<branch>` tags keep retired task branches.
-- `r274-modular` is the same modular refactor without bot-host hooks;
-  `r274-bothost` is the pre-modular fork, frozen.
+- `r274-modular` is the earlier 274-only modular refactor this branch grew from
+  (it already has the per-client draw switch and shared cache, but none of the
+  later bot-host work or revision 289); `r274-bothost` is the pre-modular fork.
+  Both are frozen.
 - Not the Fairy-Ring upstream: do not push there, and do not present this
   tree as “Lost City Client,” “LC,” or Fairy Ring.
 
