@@ -1,6 +1,6 @@
 # NOTICE
 
-**FR-client-bothost** (`r274-bh-modular`) is the 274bot host’s client
+**FR-client-bothost** (`multirev-bh-modular`) is the 274bot host’s client
 fork. It is an independent derivation of open **Lost City / LostCityRS**
 client work (Client-TS 274, Client-Java 274) via the modularized
 Fairy-Ring 274 client. It is **not** a Fairy Ring release, **not**

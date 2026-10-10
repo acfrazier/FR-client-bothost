@@ -1,5 +1,5 @@
 //! 274 client library for the 274bot host (`FR-client-bothost`
-//! `r274-bh-modular`). wgpu GPU 3D by default; `BOT_CPU=1` is CpuPix3D.
+//! `multirev-bh-modular`). wgpu GPU 3D by default; `BOT_CPU=1` is CpuPix3D.
 //! No bot action API — packet timing and `doAction` stay Java-shaped.
 
 pub mod client;

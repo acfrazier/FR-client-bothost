@@ -1,122 +1,61 @@
-# FR-client-bothost (`r274-bh-modular`)
+# FR-client-bothost (`multirev-bh-modular`)
 
 Bot-host fork of the modularized Fairy-Ring 274 client. This is the
-**client** [274bot](https://github.com/acfrazier/274bot) compiles as a
-path-dep (`vendor/fr-client-rust`). Alpha with the host’s `0.1.1` tag.
+**client library** [274bot](https://github.com/acfrazier/274bot) compiles as a
+path dependency (`vendor/fr-client-rust`).
 
 | | |
 |--|--|
-| **This repo** | [acfrazier/FR-client-bothost](https://github.com/acfrazier/FR-client-bothost) **`r274-bh-modular`** |
+| **This repo** | [acfrazier/FR-client-bothost](https://github.com/acfrazier/FR-client-bothost), default branch `multirev-bh-modular` |
 | **Host** | [acfrazier/274bot](https://github.com/acfrazier/274bot) |
-| **Lineage** | Modularized [Fairy-Ring/FR-client-rust](https://github.com/Fairy-Ring/FR-client-rust) 274 client, itself a derivation of Lost City Client-TS 274 / Client-Java 274 |
+| **Lineage** | Modularized [Fairy-Ring/FR-client-rust](https://github.com/Fairy-Ring/FR-client-rust) client, itself derived from Lost City Client-TS / Client-Java |
 | **License** | MIT ([LICENSE](LICENSE), [NOTICE.md](NOTICE.md)) |
 
-## What it is
+## Revisions
 
-A Rust 274 client **library** (`crates/client`) plus a thin applet CLI
-(`crates/client-play`). Headed default is a **wgpu GPU** 3D renderer;
-`BOT_CPU=1` is CpuPix3D. Bot-host hooks in this fork: gen counters,
-skip-paint / `set_draw`, shared cache, GPU device inject, and the
-`Client::set_journal_paint_hidden` /
-`Client::journal_paint_hidden` paint lease. The lease hides only the main
-modal raster while retaining the pre-read side and tab chrome; simulation,
-modal/tab state, and packet-producing icon edges stay live.
+Two protocol profiles, selected explicitly per session (`ClientRevision`:
+`R274` default, `R289` opt-in): **289** (production) and **274**
+(best-effort). The 289 inbound/outbound tables live in
+[`docs/revision-289/protocol-289.json`](docs/revision-289/protocol-289.json).
 
-`headed-fixture` is an opt-in window feature for live test fixtures. On Windows
-it lets one fixture worker create, pump, present, and drop its own winit event
-loop. The host's `journal-paint-proof` feature enables it; panel-play and
-tui-play do not. Normal event-loop initialization is unchanged.
+## Bot-host hooks
 
-Textured GPU lighting follows CpuPix3D's integer scanlines, eight-pixel
-brightness bands, and packed texture-palette arithmetic. The scene vertex
-stays 24 bytes: the vertex shader reads each textured triangle from a
-read-only storage view of the same reused vertex buffer. There is one
-vertex upload per rendered scene frame, with no extra stream or upload.
-GPU fringe scanlines and blocks are bounded, and near-clipped polygon fans
-share the CPU's horizontal-clipping decision. Transparent mips that shade
-to zero preserve the background; opaque black still draws. Untextured
-shading, texture filtering/UVs, and the scene-state-1 last-frame freeze are
-unchanged.
-GPU triangle coverage and projective texture sampling still differ from
-the CPU's integer rasterizer; this is not a pixel-identical GPU backend.
-
-The final textured shade is also clamped to its triangle's vertex range,
-including CPU-covered pixels. This intentionally differs from CpuPix3D's
-rare below-minimum tails: integer stride rounding can select the next
-brighter band, or pure black at shade 0 (about 0.09% of CPU-covered pixels
-in the review's gentle-gradient probe). The clamp prevents those rounding
-undershoots from producing pure-black GPU artifacts instead of reproducing
-that CPU quirk; legitimate opaque black texels still draw.
-
-GPU self-initialization requires vertex-stage storage-buffer support;
-adapters without it use the CPU fallback.
+- Per-client draw switch / skip-paint slots (`Client::set_draw`)
+- Shared cache and interfaces (`Client::from_shared*`: one `Arc<Cache>` per cache dir)
+- GPU device injection (`render::backend::gpu::inject_device`)
+- Per-packet-family generation counters (`Client::gens`)
+- Journal paint lease (`Client::set_journal_paint_hidden` / `journal_paint_hidden`)
+- Nav debug paint (`Client::set_nav_debug_paint`, projected as a GPU overlay)
+- Local-player animation observations (`Client::local_animation_update`)
 
 **There is no bot action API in this crate.** Host snapshot / interact /
 nav live in 274bot. Do not add one here.
 
-## What it is not
+## Renderers, crates, build, test
 
-- **Not** Jagex, **not** official Lost City / LostCityRS, **not** a Fairy
-  Ring release. Do not present this tree as “Lost City Client,” “LC,” or
-  Fairy Ring.
-- **Not** `r274-modular` (same refactor, no bot-host hooks) and **not**
-  `r274-bothost` (pre-modular fork — do not push there).
-- Do **not** push `Fairy-Ring/FR-client-rust` or `LostCityRS/*`.
+- Headed default is a **wgpu GPU** 3D renderer; `BOT_CPU=1` selects CpuPix3D.
+- `crates/client` is the library 274bot links; `crates/client-play` is a thin
+  applet CLI (`--window` opens the 765×503 highmem applet, headless defaults
+  lowmem; `--revision 274|289` selects the protocol profile).
+- Build and test: `cargo build -p client-play`, `cargo test -p client`.
+  `tools/` holds fixture generators, the 289 contract generator/verifier, and
+  `redeploy.sh` (reads a rotated engine `private.pem`; stock keys need no step).
+- 274bot links this tree as a path dependency at `vendor/fr-client-rust`,
+  pinned to the client tag of each 274bot release.
 
-## Run (applet, local 274 engine)
+## Branches and tags
 
-The operator window for the **host** is 274bot `panel-play`, not this
-CLI. `client-play --window` is the 765×503 `Present` applet for fidelity.
+- Default branch **`multirev-bh-modular`** (renamed from `r274-bh-modular` on
+  2026-10-10) carries 289 and 274, and is fast-forwarded at each 274bot release.
+- Tags `274bot-<version>` (`274bot-0.1.0` … `274bot-0.2.0`,
+  `274bot-0.2.0.1` once released) mark the exact client each 274bot release
+  shipped with. `archive/<branch>` tags keep retired task branches.
+- `r274-modular` is the same modular refactor without bot-host hooks;
+  `r274-bothost` is the pre-modular fork, frozen.
+- Not the Fairy-Ring upstream: do not push there, and do not present this
+  tree as “Lost City Client,” “LC,” or Fairy Ring.
 
-```bash
-./tools/redeploy.sh          # bake RSA from the engine private.pem
-./target/debug/client-play --window
-```
-
-`--window` is the applet (highmem). Omit it for headless (lowmem).
-`--lowmem` / `--highmem` override. `--user` / `--pass` skip the title
-form. Login errors stay on the title so Login can be retried.
-
-Stock Lost City Server uses the Java default login RSA — no bake.
-`$ENGINE_DIR` (default `$HOME/experiments/Server/engine`) is the cache
-and optional rotated `data/config/private.pem`. Jag CRCs come from
-`GET /crc`. Cache: `$ENGINE_DIR/data/pack/client`.
-
-More CLI detail: [`crates/client-play/README.md`](crates/client-play/README.md).
-
-## Tests
-
-```bash
-cargo test -p client
-```
-
-274bot `cargo test` does **not** run these. Live engine tests stay in
-274bot (`LIVE=1 cargo test -p e2e` / `-p host-play`).
-
-`gpu_fountain` includes self-contained Metal/wgpu readback regressions for
-textured scanline lighting, subpixel edges, and near-clipped polygons.
-Its additional actual-model differential is opt-in and needs a versioned
-274 cache snapshot containing `models.bin`, `config`,
-and `textures`, not a running server:
-
-```bash
-FOUNTAIN_SNAPSHOT=/absolute/path/to/snapshot \
-FOUNTAIN_OUTPUT=/absolute/path/to/output \
-cargo test -p client --test gpu_fountain offline_fountain_views -- --ignored --exact --nocapture
-```
-
-It compares CPU/GPU yaw-0 views at pitches 128/256/383, emits 512×334 RGB
-images and metrics, and isolates lighting with an opaque-white basin.
-
-## Completeness disclaimer
-
-We do **not** claim this tree **is** authentic, original, or complete.
-Work is ongoing under an accuracy bar; humans and agents make mistakes.
-
-## License
-
-MIT as upstream. Do **not** relicense Lost City–originated code as
-original work of this project. See [NOTICE.md](NOTICE.md).
+User-facing changes ship in 274bot — see its CHANGELOG, not this repo.
 
 ## Upstream
 
