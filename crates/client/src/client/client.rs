@@ -1472,6 +1472,9 @@ pub struct Client {
     /// — the opcode-18 handshake runs in place so a channel-head tune swaps
     /// net+sim without a TCP drop. Cleared at the start of that login.
     pub baton: bool,
+    /// Deadline for the next `login` call's socket I/O
+    /// ([`Client::set_login_deadline`]); taken by that call.
+    login_deadline: Option<Instant>,
     /// `logoutTimer` from Java: frames remaining until a requested logout.
     pub logout_timer: i32,
     /// `rebootTimer` from client-ts (140): seconds until the server reboot,
@@ -2233,6 +2236,7 @@ impl Client {
             last_login_reconnect: None,
             hosted_title_state: 0,
             baton: false,
+            login_deadline: None,
             logout_timer: 0,
             reboot_timer: 0,
             last_response: None,
@@ -3228,6 +3232,16 @@ impl Client {
         self.out.pjstr(password);
     }
 
+    /// The next [`Client::login`] stops all of its socket I/O at `deadline`:
+    /// the connect, TLS and WebSocket setup for WSS, and every read and
+    /// write of the handshake, however much WebSocket control traffic
+    /// arrives. Past it the login fails with `TimedOut` at the stage it
+    /// reached and closes its socket. An embedding host that admits one
+    /// handshake at a time uses this to bound how long one may take.
+    pub fn set_login_deadline(&mut self, deadline: Instant) {
+        self.login_deadline = Some(deadline);
+    }
+
     /// Login handshake, 1:1 of `Client.ts` `login` (1719-1867) / Java
     /// `Client.login`: probe, seed, RSA blob, opcode 16/18 wrapper. Standalone
     /// response 1 retries after two seconds; an external reconnect owner gets
@@ -3262,25 +3276,20 @@ impl Client {
         let reuse = self.baton;
         self.baton = false;
         let (transport, host, port) = self.session_game_endpoint();
-        let connect = || ClientStream::connect_for(transport, &host, port);
-        let mut stream = if reuse {
-            match self.stream.take() {
-                Some(s) => s,
-                None => match connect() {
-                    Ok(s) => s,
-                    Err(e) => {
-                        return Err(
-                            self.fail_title_login(io_error(LoginStage::Connect, &e), reconnect)
-                        )
-                    }
-                },
-            }
-        } else {
-            match connect() {
-                Ok(s) => s,
-                Err(e) => {
-                    return Err(self.fail_title_login(io_error(LoginStage::Connect, &e), reconnect))
-                }
+        let deadline = self.login_deadline.take();
+        let connect = || match deadline {
+            Some(deadline) => ClientStream::connect_until(transport, &host, port, deadline),
+            None => ClientStream::connect_for(transport, &host, port),
+        };
+        let adopted = if reuse { self.stream.take() } else { None };
+        let opened = match adopted {
+            Some(mut adopted) => adopted.set_deadline(deadline).map(|()| adopted),
+            None => connect(),
+        };
+        let mut stream = match opened {
+            Ok(stream) => stream,
+            Err(e) => {
+                return Err(self.fail_title_login(io_error(LoginStage::Connect, &e), reconnect))
             }
         };
 
@@ -3404,6 +3413,10 @@ impl Client {
             self.mouse_tracked = stream.read().map_err(|e| {
                 self.fail_title_login(io_error(LoginStage::ReadAccept, &e), reconnect)
             })? == 1;
+            // The session reads with the plain 30 s timeout from here on.
+            stream.set_deadline(None).map_err(|e| {
+                self.fail_title_login(io_error(LoginStage::ReadAccept, &e), reconnect)
+            })?;
             if self.revision.is_289() {
                 self.cold_login_input_289();
             }
@@ -3485,6 +3498,9 @@ impl Client {
             // Java `Client.java` 3737: reconnect grant. Same buffer/state
             // reset as response 2 minus the cold-login field init — Java
             // keeps `localPlayer`/`players` and never touches `logoutTimer`.
+            stream.set_deadline(None).map_err(|e| {
+                self.fail_title_login(io_error(LoginStage::ReadResponse, &e), reconnect)
+            })?;
             self.ingame = true;
             self.out.pos = 0;
             self.r#in.pos = 0;
@@ -3563,6 +3579,9 @@ impl Client {
                 "Please try using a different world.".into(),
             ),
         };
+        // A refused socket carries no session; if resetting its timeout
+        // fails, its reads only keep timing out.
+        let _ = stream.set_deadline(None);
         self.stream = Some(stream);
         let mut error = LoginError::response(response, mes1, mes2);
         if response == -1 {

@@ -7,14 +7,19 @@
 //! transport loss: an in-game standalone client enters `lostCon` immediately,
 //! while a close during login reports the ordinary connection error. After
 //! local `close` (`dummy`), reads report 0 / EOF and writes are no-ops.
+//!
+//! A login handshake can carry a deadline ([`ClientStream::connect_until`],
+//! [`ClientStream::set_deadline`]): the connect, the TLS and WebSocket setup
+//! and every socket read and write stop at it with `TimedOut`, however much
+//! WebSocket control traffic keeps arriving.
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
-use std::net::{Shutdown, TcpStream};
+use std::net::{Shutdown, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[cfg(unix)]
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -28,7 +33,9 @@ use tungstenite::Message;
 use crate::Transport;
 
 const BUF_SIZE: usize = 5000;
-const READ_TIMEOUT: Duration = Duration::from_secs(30);
+/// Socket read timeout: the original client's `setSoTimeout(30000)`
+/// (`jagex2/io/ClientStream.java:47`).
+pub const READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// `available()` peek buffer; larger than any 274 `psize` (variable-size
 /// packets read their length via `g2` and never exceed a few KiB).
 const AVAILABLE_BUF: usize = 8192;
@@ -71,6 +78,92 @@ struct TcpInner {
     shared: Arc<Mutex<WriterState>>,
     condvar: Arc<Condvar>,
     writer_thread: Option<JoinHandle<()>>,
+    /// Login handshake deadline for reads (the writer thread only drains
+    /// the few login bytes into the socket buffer).
+    deadline: Option<Instant>,
+}
+
+/// Error for socket I/O attempted at or after a login deadline.
+fn deadline_passed() -> io::Error {
+    io::Error::new(io::ErrorKind::TimedOut, "login handshake deadline passed")
+}
+
+/// Socket timeout for the next call before `deadline`, never above one
+/// read timeout; an error once the deadline has passed.
+fn time_left(deadline: Instant) -> io::Result<Duration> {
+    let left = deadline.saturating_duration_since(Instant::now());
+    if left.is_zero() {
+        return Err(deadline_passed());
+    }
+    Ok(left.min(READ_TIMEOUT))
+}
+
+/// A socket timeout that fired at the deadline reports the deadline
+/// (Linux reports an expired `SO_RCVTIMEO` as `WouldBlock`).
+fn timeout_at_deadline(deadline: Option<Instant>, error: io::Error) -> io::Error {
+    let timed_out = matches!(
+        error.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+    );
+    match deadline {
+        Some(deadline) if timed_out && Instant::now() >= deadline => deadline_passed(),
+        _ => error,
+    }
+}
+
+/// A TLS or WebSocket setup step that failed once the deadline had passed
+/// failed because of it (the libraries flatten the socket error to text).
+fn setup_error(deadline: Option<Instant>, error: io::Error) -> io::Error {
+    match deadline {
+        Some(deadline) if Instant::now() >= deadline => deadline_passed(),
+        _ => error,
+    }
+}
+
+/// The TCP socket under a WebSocket. With a deadline, each read and write
+/// is armed with the time left, so no single call, and no run of
+/// WebSocket control frames, outlasts it.
+#[derive(Debug)]
+struct DeadlineSocket {
+    sock: TcpStream,
+    deadline: Option<Instant>,
+}
+
+impl DeadlineSocket {
+    fn set_deadline(&mut self, deadline: Option<Instant>) -> io::Result<()> {
+        self.deadline = deadline;
+        if deadline.is_none() {
+            self.sock.set_read_timeout(Some(READ_TIMEOUT))?;
+            self.sock.set_write_timeout(None)?;
+        }
+        Ok(())
+    }
+}
+
+impl Read for DeadlineSocket {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if let Some(deadline) = self.deadline {
+            self.sock.set_read_timeout(Some(time_left(deadline)?))?;
+        }
+        self.sock
+            .read(buf)
+            .map_err(|error| timeout_at_deadline(self.deadline, error))
+    }
+}
+
+impl Write for DeadlineSocket {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if let Some(deadline) = self.deadline {
+            self.sock.set_write_timeout(Some(time_left(deadline)?))?;
+        }
+        self.sock
+            .write(buf)
+            .map_err(|error| timeout_at_deadline(self.deadline, error))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.sock.flush()
+    }
 }
 
 /// Underlying WS transport. Production is TLS; plain TCP is test-only loopback
@@ -80,10 +173,10 @@ struct TcpInner {
 // allocation to the production path for a test-build-only lint.
 #[cfg_attr(any(test, feature = "test-support"), allow(clippy::large_enum_variant))]
 enum WsConn {
-    Tls(WebSocket<TlsStream<TcpStream>>),
+    Tls(WebSocket<TlsStream<DeadlineSocket>>),
     /// Loopback plain WS used by unit tests only (no TLS trust bypass).
     #[cfg(any(test, feature = "test-support"))]
-    Plain(WebSocket<TcpStream>),
+    Plain(WebSocket<DeadlineSocket>),
 }
 
 impl WsConn {
@@ -117,9 +210,17 @@ impl WsConn {
 
     fn set_nonblocking(&mut self, nonblocking: bool) -> io::Result<()> {
         match self {
-            WsConn::Tls(ws) => ws.get_ref().get_ref().set_nonblocking(nonblocking),
+            WsConn::Tls(ws) => ws.get_ref().get_ref().sock.set_nonblocking(nonblocking),
             #[cfg(any(test, feature = "test-support"))]
-            WsConn::Plain(ws) => ws.get_ref().set_nonblocking(nonblocking),
+            WsConn::Plain(ws) => ws.get_ref().sock.set_nonblocking(nonblocking),
+        }
+    }
+
+    fn set_deadline(&mut self, deadline: Option<Instant>) -> io::Result<()> {
+        match self {
+            WsConn::Tls(ws) => ws.get_mut().get_mut().set_deadline(deadline),
+            #[cfg(any(test, feature = "test-support"))]
+            WsConn::Plain(ws) => ws.get_mut().set_deadline(deadline),
         }
     }
 }
@@ -165,8 +266,44 @@ impl ClientStream {
         Self::connect_tcp(host, port)
     }
 
+    /// Connect for one login handshake that must stop at `deadline`: the
+    /// TCP connect, and for WSS the TLS and WebSocket setup, are bounded by
+    /// it, and so is every later read and write until [`Self::set_deadline`]
+    /// clears it. Name resolution is the system resolver's and cannot be
+    /// interrupted, but no connect starts after the deadline.
+    pub fn connect_until(
+        transport: Transport,
+        host: &str,
+        port: u16,
+        deadline: Instant,
+    ) -> io::Result<ClientStream> {
+        let socket = connect_socket_until(host, port, deadline)?;
+        if transport.uses_tls() {
+            return Self::wss_over(socket, host, port, Some(deadline));
+        }
+        Self::tcp_over(socket, Some(deadline))
+    }
+
+    /// Set or clear (`None`) the deadline for this stream's reads and
+    /// writes. Clearing restores the plain 30 s read timeout.
+    pub fn set_deadline(&mut self, deadline: Option<Instant>) -> io::Result<()> {
+        match &mut self.inner {
+            Inner::Tcp(t) => {
+                t.deadline = deadline;
+                if deadline.is_none() {
+                    t.reader.set_read_timeout(Some(READ_TIMEOUT))?;
+                }
+                Ok(())
+            }
+            Inner::Ws(w) => w.ws.lock().unwrap().set_deadline(deadline),
+        }
+    }
+
     fn connect_tcp(host: &str, port: u16) -> io::Result<ClientStream> {
-        let socket = TcpStream::connect((host, port))?;
+        Self::tcp_over(TcpStream::connect((host, port))?, None)
+    }
+
+    fn tcp_over(socket: TcpStream, deadline: Option<Instant>) -> io::Result<ClientStream> {
         socket.set_read_timeout(Some(READ_TIMEOUT))?;
         socket.set_nodelay(true)?;
         let writer_sock = socket.try_clone()?;
@@ -177,6 +314,7 @@ impl ClientStream {
                 shared: Arc::new(Mutex::new(WriterState::new())),
                 condvar: Arc::new(Condvar::new()),
                 writer_thread: None,
+                deadline,
             }),
             bytes_in: AtomicU64::new(0),
             bytes_out: AtomicU64::new(0),
@@ -184,16 +322,30 @@ impl ClientStream {
     }
 
     fn connect_wss(host: &str, port: u16) -> io::Result<ClientStream> {
+        Self::wss_over(TcpStream::connect((host, port))?, host, port, None)
+    }
+
+    fn wss_over(
+        tcp: TcpStream,
+        host: &str,
+        port: u16,
+        deadline: Option<Instant>,
+    ) -> io::Result<ClientStream> {
         use tungstenite::client::IntoClientRequest;
-        let tcp = TcpStream::connect((host, port))?;
         tcp.set_read_timeout(Some(READ_TIMEOUT))?;
         tcp.set_nodelay(true)?;
         #[cfg(unix)]
         let fd = tcp.as_raw_fd();
         #[cfg(windows)]
         let socket = tcp.as_raw_socket();
+        let tcp = DeadlineSocket {
+            sock: tcp,
+            deadline,
+        };
         let connector = native_tls::TlsConnector::new().map_err(io_other)?;
-        let tls = connector.connect(host, tcp).map_err(io_other)?;
+        let tls = connector
+            .connect(host, tcp)
+            .map_err(|error| setup_error(deadline, io_other(error)))?;
         let authority = if port == 443 {
             host.to_string()
         } else {
@@ -206,7 +358,8 @@ impl ClientStream {
             "Sec-WebSocket-Protocol",
             tungstenite::http::HeaderValue::from_static("binary"),
         );
-        let (ws, _) = tungstenite::client::client(req, tls).map_err(io_other)?;
+        let (ws, _) = tungstenite::client::client(req, tls)
+            .map_err(|error| setup_error(deadline, io_other(error)))?;
         Ok(ClientStream {
             inner: Inner::Ws(Box::new(WsInner {
                 ws: Mutex::new(WsConn::Tls(ws)),
@@ -280,13 +433,16 @@ impl ClientStream {
                 if t.shared.lock().unwrap().dummy {
                     return Ok(0);
                 }
+                if let Some(deadline) = t.deadline {
+                    t.reader.set_read_timeout(Some(time_left(deadline)?))?;
+                }
                 match t.reader.read(dst) {
                     Ok(0) => Ok(-1),
                     Ok(n) => {
                         self.bytes_in.fetch_add(n as u64, Ordering::Relaxed);
                         Ok(n as i32)
                     }
-                    Err(e) => Err(e),
+                    Err(e) => Err(timeout_at_deadline(t.deadline, e)),
                 }
             }
             Inner::Ws(w) => {
@@ -511,6 +667,24 @@ fn fill_ws_nonblocking(w: &WsInner) -> io::Result<()> {
     }
 }
 
+/// `TcpStream::connect` over every resolved address, each connect bounded
+/// by the time left before `deadline`.
+fn connect_socket_until(host: &str, port: u16, deadline: Instant) -> io::Result<TcpStream> {
+    let mut last = None;
+    for addr in (host, port).to_socket_addrs()? {
+        match TcpStream::connect_timeout(&addr, time_left(deadline)?) {
+            Ok(socket) => return Ok(socket),
+            Err(error) => last = Some(timeout_at_deadline(Some(deadline), error)),
+        }
+    }
+    Err(last.unwrap_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "could not resolve to any addresses",
+        )
+    }))
+}
+
 fn record_ws_close(
     w: &WsInner,
     frame: Option<tungstenite::protocol::CloseFrame<'static>>,
@@ -676,6 +850,10 @@ pub fn connect_ws_plain(host: &str, port: u16) -> io::Result<ClientStream> {
     let req = format!("ws://{host}:{port}/")
         .into_client_request()
         .map_err(io_other)?;
+    let tcp = DeadlineSocket {
+        sock: tcp,
+        deadline: None,
+    };
     let (ws, _) = tungstenite::client::client(req, tcp).map_err(io_other)?;
     Ok(ClientStream {
         inner: Inner::Ws(Box::new(WsInner {
@@ -1045,5 +1223,44 @@ mod tests {
         assert_eq!(&buf, &[11, 12, 13]);
         stream.close();
         let _ = server.join();
+    }
+
+    /// A WebSocket peer that keeps sending control frames but never answers
+    /// the login still ends that login at its deadline: control frames are
+    /// not progress, and no read or Pong reply outlasts the deadline.
+    #[test]
+    fn login_deadline_ends_a_handshake_kept_alive_by_ws_control_frames() {
+        let (addr, server) = spawn_ws_server(|mut ws| {
+            let until = std::time::Instant::now() + Duration::from_secs(10);
+            while std::time::Instant::now() < until && ws.send(Message::Ping(Vec::new())).is_ok() {
+                thread::sleep(Duration::from_millis(20));
+            }
+        });
+        let mut client = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: true,
+        });
+        client.stream = Some(connect_ws_plain(&addr.ip().to_string(), addr.port()).unwrap());
+        client.baton = true;
+        let started = std::time::Instant::now();
+        client.set_login_deadline(started + Duration::from_millis(500));
+        let error = client.login("alice", "secret", true).unwrap_err();
+        let took = started.elapsed();
+        assert!(
+            took >= Duration::from_millis(500) && took < Duration::from_secs(2),
+            "the login ended {took:?} after it started, not at its 500 ms deadline"
+        );
+        let receipt = error.transport.expect("deadline receipt");
+        assert_eq!(
+            receipt.stage,
+            crate::client::login_error::LoginStage::ReadHello
+        );
+        assert_eq!(receipt.kind, io::ErrorKind::TimedOut);
+        assert_eq!(receipt.detail, "login handshake deadline passed");
+        drop(client);
+        server.join().unwrap();
     }
 }

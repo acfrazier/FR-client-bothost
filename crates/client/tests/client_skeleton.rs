@@ -1,5 +1,6 @@
 use std::io::Read;
 use std::net::TcpListener;
+use std::time::{Duration, Instant};
 
 use client::client::{Client, ClientConfig, LoginError, LoginStage};
 use client::render::Renderer;
@@ -78,6 +79,56 @@ fn server_hangup_before_answer_keeps_the_read_stage() {
     assert_eq!(receipt.stage, LoginStage::ReadHello);
     assert_eq!(receipt.kind, std::io::ErrorKind::UnexpectedEof);
     assert_eq!(receipt.errno, None);
+}
+
+/// A server that accepts the login and then says nothing ends the login at
+/// the deadline the host gave it, not at a 30 s read timeout per byte.
+#[test]
+fn silent_server_login_stops_at_its_deadline() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    let server = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut hello = [0u8; 2];
+        socket.read_exact(&mut hello).unwrap();
+        // Keep the socket open and silent until the client gave up.
+        let _ = done_rx.recv_timeout(Duration::from_secs(10));
+    });
+    let mut c = client_for(port);
+    let started = Instant::now();
+    c.set_login_deadline(started + Duration::from_millis(400));
+    let e = c.login("alice", "secret", false).unwrap_err();
+    let took = started.elapsed();
+    done_tx.send(()).unwrap();
+    server.join().unwrap();
+    assert!(
+        took >= Duration::from_millis(400) && took < Duration::from_secs(2),
+        "the login ended {took:?} after it started, not at its 400 ms deadline"
+    );
+    assert_eq!(e.code, -1);
+    let receipt = e.transport.expect("deadline receipt");
+    assert_eq!(receipt.stage, LoginStage::ReadHello);
+    assert_eq!(receipt.kind, std::io::ErrorKind::TimedOut);
+}
+
+/// Once the deadline has passed, the login opens no connection at all.
+#[test]
+fn login_past_its_deadline_does_not_connect() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    listener.set_nonblocking(true).unwrap();
+    let mut c = client_for(port);
+    c.set_login_deadline(Instant::now());
+    let e = c.login("alice", "secret", false).unwrap_err();
+    let receipt = e.transport.expect("deadline receipt");
+    assert_eq!(receipt.stage, LoginStage::Connect);
+    assert_eq!(receipt.kind, std::io::ErrorKind::TimedOut);
+    assert_eq!(
+        listener.accept().map(|_| ()).unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock,
+        "no connection reached the server"
+    );
 }
 
 #[test]
