@@ -355,3 +355,146 @@ fn peer_closed_game_socket_triggers_lost_con_on_next_frame() {
     );
     server.join().unwrap();
 }
+
+fn hosted_r289(addr: SocketAddr) -> Client {
+    let mut c = Client::new_with_revision(
+        ClientConfig {
+            host: addr.ip().to_string(),
+            port: addr.port(),
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        },
+        ClientRevision::R289,
+    );
+    c.set_external_reconnect_owner(true);
+    c
+}
+
+/// DIAG-PROTO-74: the T1 reason carries the frame context the operator
+/// log lacked (size, session, frame sequence, the frames before it).
+#[test]
+fn protocol_error_reason_records_size_session_sequence_and_previous_frames() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (done, wait_done) = mpsc::channel::<()>();
+    let energy = ServerProt289::UPDATE_RUNENERGY as u8;
+    let server = thread::spawn(move || {
+        let (mut game, _) = listener.accept().unwrap();
+        for value in 1..=10u8 {
+            game.write_all(&[energy, value]).unwrap();
+        }
+        game.write_all(&[74]).unwrap();
+        let _ = wait_done.recv_timeout(Duration::from_secs(2));
+    });
+    let mut c = hosted_r289(addr);
+    c.stream = Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    c.ptype = -1;
+    c.ingame = true;
+    c.gens.session = 3;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while c.ingame {
+        assert!(Instant::now() < deadline, "the T1 frame did not arrive");
+        c.tcp_in();
+        thread::sleep(Duration::from_millis(1));
+    }
+    let _ = done.send(());
+    server.join().unwrap();
+
+    let reason = c.take_session_exit_reason().expect("protocol error reason");
+    let SessionExitReason::ProtocolError {
+        class,
+        last_opcode,
+        size,
+        session,
+        sequence,
+        previous,
+    } = &reason
+    else {
+        panic!("expected a protocol error, got {reason:?}");
+    };
+    assert_eq!((*class, *last_opcode, *size), ("T1", 74, 0));
+    assert_eq!((*session, *sequence), (3, 10));
+    assert_eq!(
+        previous.iter().count(),
+        8,
+        "the last eight frames before it"
+    );
+    assert!(previous
+        .iter()
+        .all(|frame| frame.opcode == energy && frame.size == 1));
+    let frames = vec![format!("{energy}/1"); 8].join(" ");
+    assert_eq!(
+        reason.to_string(),
+        format!(
+            "protocol_error class=T1 last_opcode=74 size=0 session=3 sequence=10 previous=[{frames}]"
+        )
+    );
+    assert!(!c.session_resumable(), "T1 logs out and clears the map");
+}
+
+/// Only an in-world connection loss keeps the map for a reconnect; every
+/// path through `logout()` clears it.
+#[test]
+fn only_an_in_world_connection_loss_is_resumable() {
+    let addr: SocketAddr = "127.0.0.1:9".parse().unwrap();
+
+    let mut lost = hosted_r289(addr);
+    lost.ingame = true;
+    lost.lost_con();
+    assert!(lost.session_resumable(), "lost connection");
+
+    let mut silent = hosted_r289(addr);
+    silent.ingame = true;
+    silent.last_response = Some(Instant::now() - Duration::from_secs(16));
+    silent.game_loop();
+    assert!(!silent.ingame);
+    assert!(silent.session_resumable(), "dead-server deadline");
+    assert!(matches!(
+        silent.take_session_exit_reason(),
+        Some(SessionExitReason::DeadServerDeadline { .. })
+    ));
+
+    let mut pending = hosted_r289(addr);
+    pending.ingame = true;
+    pending.logout_timer = 250;
+    pending.last_response = Some(Instant::now() - Duration::from_secs(16));
+    pending.game_loop();
+    assert!(!pending.ingame);
+    assert!(
+        !pending.session_resumable(),
+        "deadline with a pending logout"
+    );
+
+    let mut t1 = hosted_r289(addr);
+    t1.ingame = true;
+    t1.ptype = 74;
+    t1.psize = 0;
+    t1.handle_packet(74, &mut client::io::Packet::new(vec![]));
+    assert!(!t1.ingame);
+    assert!(!t1.session_resumable(), "T1");
+
+    // A resumable session that is then logged out is no longer resumable.
+    lost.logout();
+    assert!(!lost.session_resumable(), "logout after a lost connection");
+}
+
+/// A reconnect grant starts a new session: nothing is left to resume.
+#[test]
+fn reconnect_grant_ends_the_resumable_state() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        serve_login_reconnect15(&mut s);
+        thread::sleep(Duration::from_millis(200));
+    });
+    let mut c = hosted_r289(addr);
+    c.ingame = true;
+    c.lost_con();
+    assert!(c.session_resumable());
+    c.login("bob", "pw", true).unwrap();
+    assert!(c.ingame);
+    assert!(!c.session_resumable());
+    server.join().unwrap();
+}

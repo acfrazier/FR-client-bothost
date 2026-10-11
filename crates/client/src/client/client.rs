@@ -343,9 +343,20 @@ pub enum SessionExitReason {
     DeadServerDeadline {
         elapsed: Duration,
     },
+    /// T1 (unknown opcode) or T2 (decode exception). Java and TS log out
+    /// here; the frame context lets the next occurrence be diagnosed.
     ProtocolError {
         class: &'static str,
         last_opcode: i32,
+        /// Payload size of the failing frame (declared, for a frame too
+        /// large to read).
+        size: i32,
+        /// `gens.session` of the session that failed.
+        session: u64,
+        /// Frames this session dispatched before the failing one.
+        sequence: u64,
+        /// The frames just before it, oldest first.
+        previous: RecentFrames,
     },
     ConnectionLost,
 }
@@ -373,11 +384,69 @@ impl std::fmt::Display for SessionExitReason {
             Self::DeadServerDeadline { elapsed } => {
                 write!(f, "dead_server_deadline elapsed_ms={}", elapsed.as_millis())
             }
-            Self::ProtocolError { class, last_opcode } => {
-                write!(f, "protocol_error class={class} last_opcode={last_opcode}")
-            }
+            Self::ProtocolError {
+                class,
+                last_opcode,
+                size,
+                session,
+                sequence,
+                previous,
+            } => write!(
+                f,
+                "protocol_error class={class} last_opcode={last_opcode} size={size} \
+                 session={session} sequence={sequence} previous={previous}"
+            ),
             Self::ConnectionLost => f.write_str("connection_lost"),
         }
+    }
+}
+
+/// One dispatched inbound frame: decoded opcode and payload size.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct InboundFrame {
+    pub opcode: u8,
+    pub size: u16,
+}
+
+/// The last [`RecentFrames::CAPACITY`] frames a session dispatched, in
+/// fixed storage: recording one never allocates.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RecentFrames {
+    frames: [InboundFrame; RecentFrames::CAPACITY],
+    len: u8,
+    next: u8,
+}
+
+impl RecentFrames {
+    pub const CAPACITY: usize = 8;
+
+    fn push(&mut self, opcode: i32, size: i32) {
+        self.frames[self.next as usize] = InboundFrame {
+            opcode: (opcode & 0xff) as u8,
+            size: size.clamp(0, u16::MAX as i32) as u16,
+        };
+        self.next = ((self.next as usize + 1) % Self::CAPACITY) as u8;
+        self.len = (self.len + 1).min(Self::CAPACITY as u8);
+    }
+
+    /// Oldest first.
+    pub fn iter(&self) -> impl Iterator<Item = InboundFrame> + '_ {
+        let start = (self.next as usize + Self::CAPACITY - self.len as usize) % Self::CAPACITY;
+        (0..self.len as usize).map(move |i| self.frames[(start + i) % Self::CAPACITY])
+    }
+}
+
+/// `[opcode/size ...]`, oldest first.
+impl std::fmt::Display for RecentFrames {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[")?;
+        for (i, frame) in self.iter().enumerate() {
+            if i > 0 {
+                f.write_str(" ")?;
+            }
+            write!(f, "{}/{}", frame.opcode, frame.size)?;
+        }
+        f.write_str("]")
     }
 }
 
@@ -1514,6 +1583,13 @@ pub struct Client {
     /// First typed session-exit cause. It survives teardown until the host
     /// consumes it and is cleared by the next successful login.
     session_exit_reason: Option<SessionExitReason>,
+    /// The last session ended in the in-world connection-loss branch, which
+    /// keeps the map for a reconnect (see [`Client::session_resumable`]).
+    session_resumable: bool,
+    /// Frames this session dispatched, and the last few of them, for the
+    /// protocol-error reason.
+    session_frames: u64,
+    recent_frames: RecentFrames,
 }
 
 struct ClientConstruction {
@@ -1760,6 +1836,38 @@ impl Client {
     /// Take the first typed cause of the completed session, if any.
     pub fn take_session_exit_reason(&mut self) -> Option<SessionExitReason> {
         self.session_exit_reason.take()
+    }
+
+    /// Whether the session that just ended may be resumed with a reconnect
+    /// (opcode 18). True only after an in-world connection loss under an
+    /// external owner (Java `lostCon`, `Client.ts:2679-2706`): the map is
+    /// kept, so the server's same-zone rebuild after the grant is rightly
+    /// skipped. False after [`Client::logout`] — a server logout, a T1/T2
+    /// protocol error (`Client.ts:7380-7394`) or a connection lost while a
+    /// logout is pending — which clears the map and returns to the title,
+    /// whose next login is a fresh one (opcode 16).
+    pub fn session_resumable(&self) -> bool {
+        self.session_resumable
+    }
+
+    /// T1/T2 session-exit reason for the frame being dispatched (or read).
+    fn protocol_error(&self, class: &'static str, opcode: i32) -> SessionExitReason {
+        SessionExitReason::ProtocolError {
+            class,
+            last_opcode: opcode,
+            size: self.psize,
+            session: self.gens.session,
+            sequence: self.session_frames,
+            previous: self.recent_frames,
+        }
+    }
+
+    /// A login or reconnect grant starts a session: nothing to resume yet,
+    /// and no frames dispatched.
+    fn begin_session_frames(&mut self) {
+        self.session_resumable = false;
+        self.session_frames = 0;
+        self.recent_frames = RecentFrames::default();
     }
 
     /// Rebind a disconnected public slot without rebuilding the shared cache.
@@ -2121,6 +2229,9 @@ impl Client {
             r289_packet_reset: false,
             pending_local_idle_request: false,
             session_exit_reason: None,
+            session_resumable: false,
+            session_frames: 0,
+            recent_frames: RecentFrames::default(),
 
             stream: None,
             on_demand: construction.on_demand,
@@ -3215,6 +3326,8 @@ impl Client {
         self.ptype1 = std::mem::replace(&mut other.ptype1, 0);
         self.ptype2 = std::mem::replace(&mut other.ptype2, 0);
         self.psize = std::mem::replace(&mut other.psize, 0);
+        self.session_frames = std::mem::take(&mut other.session_frames);
+        self.recent_frames = std::mem::take(&mut other.recent_frames);
         self.baton = true;
         Some(())
     }
@@ -3461,6 +3574,7 @@ impl Client {
             self.logout_timer = 0;
             self.last_outbound = Instant::now();
             self.session_exit_reason = None;
+            self.begin_session_frames();
             // Java `Client.java` 3630-3699: a cold login restores the tab,
             // modals, minimap, and chat defaults a previous logout left in
             // place (`sideTab = 3`, closed modals, empty chat, no flag).
@@ -3539,6 +3653,7 @@ impl Client {
             self.last_response = Some(Instant::now());
             self.last_outbound = Instant::now();
             self.session_exit_reason = None;
+            self.begin_session_frames();
             self.menu_num_entries = 0;
             self.scene_load_start_time = Instant::now();
             self.reset_packet_observations();
@@ -5014,9 +5129,14 @@ impl Client {
                 // callable with an external packet in tests), so swap the
                 // `in` buffer out for the dispatch and put it back.
                 let ptype = self.ptype;
+                let psize = self.psize;
                 let mut packet = std::mem::replace(&mut self.r#in, Packet::alloc(1));
                 self.handle_packet(ptype, &mut packet);
                 self.r#in = packet;
+                // Recorded after dispatch: a protocol error inside it
+                // reports the frames before the failing one.
+                self.recent_frames.push(ptype, psize);
+                self.session_frames += 1;
                 true
             }
             Ok(false) => false,
@@ -5027,10 +5147,7 @@ impl Client {
                     // `Other` here is the oversized psize/AIOOBE equivalent;
                     // WSS/TLS errors carry a transport observation instead.
                     eprintln!("T2 - {},{},{}", self.ptype, self.ptype1, self.ptype2);
-                    self.record_session_exit(SessionExitReason::ProtocolError {
-                        class: "T2",
-                        last_opcode: self.ptype,
-                    });
+                    self.record_session_exit(self.protocol_error("T2", self.ptype));
                     self.logout();
                 } else {
                     self.lost_con();
@@ -5128,10 +5245,7 @@ impl Client {
                 Ok(R289Outcome::Reset) => {}
                 Err(_) => {
                     eprintln!("T2 - {ptype},{ptype1},{ptype2}");
-                    self.record_session_exit(SessionExitReason::ProtocolError {
-                        class: "T2",
-                        last_opcode: ptype,
-                    });
+                    self.record_session_exit(self.protocol_error("T2", ptype));
                     if !self.r289_packet_reset {
                         self.logout();
                     }
@@ -5144,10 +5258,7 @@ impl Client {
         }));
         if result.is_err() {
             eprintln!("T2 - {ptype},{ptype1},{ptype2}");
-            self.record_session_exit(SessionExitReason::ProtocolError {
-                class: "T2",
-                last_opcode: ptype,
-            });
+            self.record_session_exit(self.protocol_error("T2", ptype));
             // `logout()` bumps every family (spec: REBUILD/logout → all).
             self.logout();
         } else {
@@ -10365,10 +10476,7 @@ impl Client {
     }
 
     fn protocol_logout(&mut self, class: &'static str) {
-        self.record_session_exit(SessionExitReason::ProtocolError {
-            class,
-            last_opcode: self.ptype,
-        });
+        self.record_session_exit(self.protocol_error(class, self.ptype));
         self.logout();
     }
 
@@ -10386,6 +10494,8 @@ impl Client {
             t.complete("logout");
         }
         self.r289_packet_reset = true;
+        // The map is cleared below: a reconnect could not restore it.
+        self.session_resumable = false;
         self.pending_local_idle_request = false;
         if let Some(mut stream) = self.stream.take() {
             stream.close();
@@ -10509,7 +10619,8 @@ impl Client {
     /// `lostCon` from Java (`Client.java` 6147): in-game connection loss. A
     /// pending logout request logs out immediately. Otherwise standalone
     /// clients reconnect internally as Java did, while an external owner
-    /// receives control with the old socket closed and credentials retained.
+    /// receives control with the old socket closed and the credentials and
+    /// map retained, ready for its reconnect ([`Client::session_resumable`]).
     pub fn lost_con(&mut self) {
         self.record_session_exit(SessionExitReason::ConnectionLost);
         if let Some(t) = &mut self.shell.ground_trace {
@@ -10523,6 +10634,7 @@ impl Client {
         if self.external_reconnect_owner() {
             self.stream = None;
             self.last_response = None;
+            self.session_resumable = true;
             return;
         }
         let user = self.login_user.clone();
@@ -14101,6 +14213,37 @@ mod try_move_path {
             vec![(2, 5), (3, 5)],
             "scene rebuild must keep world-stable trail tiles"
         );
+    }
+}
+
+#[cfg(test)]
+mod recent_frames {
+    use super::*;
+
+    #[test]
+    fn keeps_the_last_eight_frames_oldest_first() {
+        let mut frames = RecentFrames::default();
+        assert_eq!(frames.to_string(), "[]");
+        frames.push(81, 112);
+        frames.push(254, 0);
+        assert_eq!(frames.to_string(), "[81/112 254/0]");
+        for i in 0..RecentFrames::CAPACITY as i32 {
+            frames.push(i, i * 10);
+        }
+        assert_eq!(
+            frames.to_string(),
+            "[0/0 1/10 2/20 3/30 4/40 5/50 6/60 7/70]"
+        );
+        frames.push(300, 70_000);
+        assert_eq!(
+            frames.iter().last(),
+            Some(InboundFrame {
+                opcode: 44,
+                size: u16::MAX
+            })
+        );
+        assert_eq!(frames.iter().count(), RecentFrames::CAPACITY);
+        assert_eq!(frames.iter().next().map(|f| f.opcode), Some(1));
     }
 }
 
