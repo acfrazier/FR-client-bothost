@@ -966,15 +966,12 @@ mod tests {
         let (observed_tx, observed_rx) = mpsc::channel();
         let (addr, server) = spawn_ws_server(move |mut ws| {
             ws.send(Message::Ping(vec![9, 8, 7])).unwrap();
-            let mut observed = Vec::new();
             loop {
                 match ws.read() {
-                    Ok(Message::Close(_)) => break,
-                    Ok(message) => observed.push(message),
-                    Err(error) => panic!("server failed while awaiting client close: {error}"),
+                    Ok(Message::Close(_)) | Err(_) => break,
+                    Ok(message) => observed_tx.send(message).unwrap(),
                 }
             }
-            observed_tx.send(observed).unwrap();
         });
         let (mut stream, block_next_write, blocked_writes) =
             connect_ws_plain_with_write_backpressure(&addr.ip().to_string(), addr.port());
@@ -999,23 +996,30 @@ mod tests {
         assert_eq!(
             stream
                 .available()
-                .expect("retrying the queued Pong must not fail readiness"),
+                .expect("the second availability probe must retry the queued Pong"),
             0
         );
-        stream.write(&[0x12, 0x34], 2).unwrap();
-        stream.close();
-
-        let observed = observed_rx
-            .recv_timeout(Duration::from_secs(2))
-            .expect("server did not observe the queued Pong and following game frame");
-        server.join().unwrap();
         assert_eq!(
-            observed,
-            vec![
-                Message::Pong(vec![9, 8, 7]),
-                Message::Binary(vec![0x12, 0x34]),
-            ],
-            "the Pong must be retried once, before later outbound game data"
+            observed_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("server did not observe the Pong after the second availability probe"),
+            Message::Pong(vec![9, 8, 7]),
+            "the Pong must reach the server before any client write"
+        );
+
+        stream.write(&[0x12, 0x34], 2).unwrap();
+        assert_eq!(
+            observed_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("server did not observe the following game frame"),
+            Message::Binary(vec![0x12, 0x34]),
+            "the game frame must follow the Pong"
+        );
+        stream.close();
+        server.join().unwrap();
+        assert!(
+            observed_rx.try_recv().is_err(),
+            "server observed an unexpected extra client message"
         );
     }
 
