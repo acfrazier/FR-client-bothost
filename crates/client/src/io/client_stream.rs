@@ -23,7 +23,7 @@ use std::net::{Shutdown, TcpStream, ToSocketAddrs};
 #[cfg(test)]
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -103,6 +103,40 @@ fn time_left(deadline: Instant) -> io::Result<Duration> {
         return Err(deadline_passed());
     }
     Ok(left.min(READ_TIMEOUT))
+}
+
+/// How the embedding host runs a socket call that can block its thread;
+/// see [`set_transport_wait_hook`].
+static TRANSPORT_WAIT: OnceLock<fn(&mut dyn FnMut())> = OnceLock::new();
+
+/// Run every socket call that can block the calling thread for a long time
+/// (a send waiting for the peer to take the bytes, a read waiting for them
+/// to arrive, a close) through `hook`, which calls its argument once. A
+/// host uses it to tell time its thread waited on the network from time
+/// the OS kept it off the CPU. Set once per process; later calls do
+/// nothing.
+pub fn set_transport_wait_hook(hook: fn(&mut dyn FnMut())) {
+    let _ = TRANSPORT_WAIT.set(hook);
+}
+
+/// `wait`, run through the [`set_transport_wait_hook`] hook if there is one.
+fn transport_wait<R>(wait: impl FnOnce() -> R) -> R {
+    let Some(hook) = TRANSPORT_WAIT.get() else {
+        return wait();
+    };
+    let mut wait = Some(wait);
+    let mut out = None;
+    hook(&mut || {
+        if let Some(wait) = wait.take() {
+            out = Some(wait());
+        }
+    });
+    match (out, wait) {
+        (Some(out), _) => out,
+        // The hook didn't call it: the call still has to happen.
+        (None, Some(wait)) => wait(),
+        (None, None) => unreachable!("the wait ran, so it returned"),
+    }
 }
 
 /// A socket timeout that fired at the deadline reports the deadline
@@ -649,7 +683,7 @@ impl ClientStream {
                 if let Some(deadline) = t.deadline {
                     t.reader.set_read_timeout(Some(time_left(deadline)?))?;
                 }
-                match t.reader.read(dst) {
+                match transport_wait(|| t.reader.read(dst)) {
                     Ok(0) => Ok(-1),
                     Ok(n) => {
                         self.bytes_in.fetch_add(n as u64, Ordering::Relaxed);
@@ -666,7 +700,7 @@ impl ClientStream {
                 if let Some(deadline) = w.ws.lock().unwrap().deadline() {
                     time_left(deadline)?;
                 }
-                fill_ws_blocking(w)?;
+                transport_wait(|| fill_ws_blocking(w))?;
                 let mut leftover = w.leftover.lock().unwrap();
                 if leftover.is_empty() {
                     return Ok(-1);
@@ -775,7 +809,9 @@ impl ClientStream {
         match &mut self.inner {
             Inner::Tcp(t) => match t.deadline {
                 Some(deadline) => {
-                    let written = tcp_write_until(t, &buf[..len], deadline, &self.bytes_out);
+                    let written = transport_wait(|| {
+                        tcp_write_until(t, &buf[..len], deadline, &self.bytes_out)
+                    });
                     match (&self.cancel, written) {
                         (Some(cancel), Err(_)) if cancel.is_cancelled() => Err(login_cancelled()),
                         (_, written) => written,
@@ -788,10 +824,12 @@ impl ClientStream {
                     return Ok(());
                 }
                 let payload = buf[..len].to_vec();
-                let result = w.ws.lock().unwrap().send_message(Message::Binary(payload));
-                if let Err(error) = result {
-                    return Err(map_ws_err(w, error));
-                }
+                transport_wait(|| {
+                    w.ws.lock()
+                        .unwrap()
+                        .send_message(Message::Binary(payload))
+                        .map_err(|error| map_ws_err(w, error))
+                })?;
                 self.bytes_out.fetch_add(len as u64, Ordering::Relaxed);
                 Ok(())
             }
@@ -817,12 +855,14 @@ impl ClientStream {
                 let _ = t.reader.shutdown(Shutdown::Both);
                 let _ = t.writer_sock.shutdown(Shutdown::Both);
                 if let Some(handle) = t.writer_thread.take() {
-                    let _ = handle.join();
+                    let _ = transport_wait(|| handle.join());
                 }
             }
             Inner::Ws(w) => {
                 *w.dummy.lock().unwrap() = true;
-                let _ = w.ws.lock().unwrap().close();
+                transport_wait(|| {
+                    let _ = w.ws.lock().unwrap().close();
+                });
             }
         }
     }
@@ -1706,6 +1746,89 @@ mod tests {
             stream.bytes_out() > 0,
             "the handshake wrote before it blocked"
         );
+    }
+
+    thread_local! {
+        /// When this thread's last call through the transport wait hook
+        /// went in and came out.
+        static HOOKED: std::cell::Cell<Option<(Instant, Instant)>> =
+            const { std::cell::Cell::new(None) };
+    }
+
+    fn record_transport_wait(wait: &mut dyn FnMut()) {
+        let entered = Instant::now();
+        wait();
+        HOOKED.with(|span| span.set(Some((entered, Instant::now()))));
+    }
+
+    /// A host sees each socket call that blocks its thread through the
+    /// hook: the call is still waiting for the peer inside the hook. A game
+    /// send to a peer that stopped reading, a login handshake write, and a
+    /// read waiting for the peer's next byte.
+    #[test]
+    fn blocking_socket_calls_run_through_the_transport_wait_hook() {
+        set_transport_wait_hook(record_transport_wait);
+        let stall = Duration::from_millis(500);
+        let blocked_inside = |peer_moved: Instant, what: &str| {
+            let (entered, left) = HOOKED
+                .with(std::cell::Cell::take)
+                .unwrap_or_else(|| panic!("{what} never went through the hook"));
+            assert!(
+                entered <= peer_moved && peer_moved <= left,
+                "{what} was not waiting for the peer inside the hook: in {:?} before, out {:?} after",
+                peer_moved.saturating_duration_since(entered),
+                left.saturating_duration_since(peer_moved),
+            );
+        };
+
+        // A send larger than both socket buffers to a peer that has
+        // stopped reading.
+        let (stop_tx, stop_rx) = mpsc::channel::<()>();
+        let (resumed_tx, resumed_rx) = mpsc::channel();
+        let (addr, server) = spawn_ws_server(move |mut ws| {
+            stop_rx.recv().unwrap();
+            thread::sleep(stall);
+            resumed_tx.send(Instant::now()).unwrap();
+            let _ = io::copy(ws.get_mut(), &mut io::sink());
+        });
+        let mut stream = connect_ws_plain(&addr.ip().to_string(), addr.port()).unwrap();
+        let payload = vec![0u8; 16 << 20];
+        stop_tx.send(()).unwrap();
+        stream.write(&payload, payload.len()).unwrap();
+        blocked_inside(resumed_rx.recv().unwrap(), "the WebSocket send");
+        drop(stream);
+        server.join().unwrap();
+
+        // A login handshake write to a peer that never reads, which blocks
+        // until its deadline.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let deadline = Instant::now() + stall;
+        let mut stream = ClientStream::connect_until(
+            Transport::Tcp,
+            &addr.ip().to_string(),
+            addr.port(),
+            deadline,
+            None,
+        )
+        .unwrap();
+        let (_held, _) = listener.accept().unwrap();
+        let chunk = vec![0u8; 64 * 1024];
+        while stream.write(&chunk, chunk.len()).is_ok() {}
+        blocked_inside(deadline, "the handshake write");
+
+        // A read waiting for the peer's next byte.
+        let mut stream = ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+        let (mut peer, _) = listener.accept().unwrap();
+        let peer = thread::spawn(move || {
+            thread::sleep(stall);
+            let sent = Instant::now();
+            peer.write_all(&[7]).unwrap();
+            (peer, sent)
+        });
+        assert_eq!(stream.read().unwrap(), 7);
+        let (_peer, sent) = peer.join().unwrap();
+        blocked_inside(sent, "the read");
     }
 
     /// A cancel shuts the handshake's socket from another thread: the server
