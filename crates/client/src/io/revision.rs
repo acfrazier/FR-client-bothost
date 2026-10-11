@@ -233,6 +233,29 @@ mod tests {
     }
 
     #[test]
+    fn sizes_289_match_protocol_json_all_rows() {
+        let protocol: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../docs/revision-289/protocol-289.json"
+        ))
+        .unwrap();
+        let inbound = protocol["inbound"].as_array().unwrap();
+        assert_eq!(inbound.len(), SERVER_PROT_SIZES_289.len());
+
+        let mut expected = [None; 256];
+        for row in inbound {
+            let id = usize::try_from(row["id"].as_u64().unwrap()).unwrap();
+            assert!(id < expected.len(), "opcode id {id} is out of range");
+            let length = i32::try_from(row["length"].as_i64().unwrap()).unwrap();
+            assert!(
+                expected[id].replace(length).is_none(),
+                "duplicate protocol row for opcode {id}"
+            );
+        }
+        let expected = expected.map(|length| length.expect("missing protocol row"));
+        assert_eq!(SERVER_PROT_SIZES_289, expected);
+    }
+
+    #[test]
     fn default_revision_is_274_and_keeps_public_table() {
         assert_eq!(ClientRevision::default(), ClientRevision::R274);
         assert_eq!(
