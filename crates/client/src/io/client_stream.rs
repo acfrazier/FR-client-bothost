@@ -11,6 +11,8 @@
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
@@ -73,6 +75,35 @@ struct TcpInner {
     writer_thread: Option<JoinHandle<()>>,
 }
 
+#[cfg(test)]
+struct WriteOnceWouldBlock {
+    socket: TcpStream,
+    block_next_write: Arc<AtomicBool>,
+    blocked_writes: Arc<AtomicU64>,
+}
+
+#[cfg(test)]
+impl Read for WriteOnceWouldBlock {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.socket.read(buf)
+    }
+}
+
+#[cfg(test)]
+impl Write for WriteOnceWouldBlock {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.block_next_write.swap(false, Ordering::Relaxed) {
+            self.blocked_writes.fetch_add(1, Ordering::Relaxed);
+            return Err(io::ErrorKind::WouldBlock.into());
+        }
+        self.socket.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.socket.flush()
+    }
+}
+
 /// Underlying WS transport. Production is TLS; plain TCP is test-only loopback
 /// so regressions do not need a production TLS trust bypass.
 // The test-only `Plain` variant makes the enum two-variant, and Windows'
@@ -81,6 +112,8 @@ struct TcpInner {
 #[cfg_attr(any(test, feature = "test-support"), allow(clippy::large_enum_variant))]
 enum WsConn {
     Tls(WebSocket<TlsStream<TcpStream>>),
+    #[cfg(test)]
+    BlockedWriter(WebSocket<WriteOnceWouldBlock>),
     /// Loopback plain WS used by unit tests only (no TLS trust bypass).
     #[cfg(any(test, feature = "test-support"))]
     Plain(WebSocket<TcpStream>),
@@ -94,6 +127,8 @@ impl WsConn {
             WsConn::Tls(ws) => ws.read(),
             #[cfg(any(test, feature = "test-support"))]
             WsConn::Plain(ws) => ws.read(),
+            #[cfg(test)]
+            WsConn::BlockedWriter(ws) => ws.read(),
         }
     }
 
@@ -103,6 +138,19 @@ impl WsConn {
             WsConn::Tls(ws) => ws.send(msg),
             #[cfg(any(test, feature = "test-support"))]
             WsConn::Plain(ws) => ws.send(msg),
+            #[cfg(test)]
+            WsConn::BlockedWriter(ws) => ws.send(msg),
+        }
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn flush(&mut self) -> Result<(), tungstenite::Error> {
+        match self {
+            WsConn::Tls(ws) => ws.flush(),
+            #[cfg(any(test, feature = "test-support"))]
+            WsConn::Plain(ws) => ws.flush(),
+            #[cfg(test)]
+            WsConn::BlockedWriter(ws) => ws.flush(),
         }
     }
 
@@ -112,6 +160,8 @@ impl WsConn {
             WsConn::Tls(ws) => ws.close(None),
             #[cfg(any(test, feature = "test-support"))]
             WsConn::Plain(ws) => ws.close(None),
+            #[cfg(test)]
+            WsConn::BlockedWriter(ws) => ws.close(None),
         }
     }
 
@@ -120,6 +170,8 @@ impl WsConn {
             WsConn::Tls(ws) => ws.get_ref().get_ref().set_nonblocking(nonblocking),
             #[cfg(any(test, feature = "test-support"))]
             WsConn::Plain(ws) => ws.get_ref().set_nonblocking(nonblocking),
+            #[cfg(test)]
+            WsConn::BlockedWriter(ws) => ws.get_ref().socket.set_nonblocking(nonblocking),
         }
     }
 }
@@ -474,32 +526,47 @@ fn fill_ws_blocking(w: &WsInner) -> io::Result<()> {
 fn fill_ws_nonblocking(w: &WsInner) -> io::Result<()> {
     let mut ws = w.ws.lock().unwrap();
     ws.set_nonblocking(true)?;
-    let result = (|| loop {
-        {
-            let n = w.leftover.lock().unwrap().len();
-            if n >= AVAILABLE_BUF {
-                return Ok(());
-            }
-        }
-        match ws.read_message() {
-            Ok(Message::Binary(b)) => {
-                if !b.is_empty() {
-                    w.leftover.lock().unwrap().extend(b);
-                }
-            }
-            Ok(Message::Ping(p)) => {
-                ws.send_message(Message::Pong(p))
-                    .map_err(|error| map_ws_err(w, error))?;
-            }
-            Ok(Message::Pong(_)) | Ok(Message::Frame(_)) | Ok(Message::Text(_)) => {}
-            Ok(Message::Close(frame)) => return Err(record_ws_close(w, frame)),
-            Err(tungstenite::Error::ConnectionClosed) | Err(tungstenite::Error::AlreadyClosed) => {
-                return Err(record_ws_close(w, None));
-            }
+    let result = (|| {
+        // Tungstenite retains a queued control frame when a write returns
+        // WouldBlock. Retry it before reading more frames on the next probe.
+        match ws.flush() {
+            Ok(()) => {}
             Err(tungstenite::Error::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
                 return Ok(());
             }
             Err(e) => return Err(map_ws_err(w, e)),
+        }
+        loop {
+            {
+                let n = w.leftover.lock().unwrap().len();
+                if n >= AVAILABLE_BUF {
+                    return Ok(());
+                }
+            }
+            match ws.read_message() {
+                Ok(Message::Binary(b)) => {
+                    if !b.is_empty() {
+                        w.leftover.lock().unwrap().extend(b);
+                    }
+                }
+                Ok(Message::Ping(p)) => match ws.send_message(Message::Pong(p)) {
+                    Ok(()) => {}
+                    Err(tungstenite::Error::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
+                        return Ok(());
+                    }
+                    Err(e) => return Err(map_ws_err(w, e)),
+                },
+                Ok(Message::Pong(_)) | Ok(Message::Frame(_)) | Ok(Message::Text(_)) => {}
+                Ok(Message::Close(frame)) => return Err(record_ws_close(w, frame)),
+                Err(tungstenite::Error::ConnectionClosed)
+                | Err(tungstenite::Error::AlreadyClosed) => {
+                    return Err(record_ws_close(w, None));
+                }
+                Err(tungstenite::Error::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
+                    return Ok(());
+                }
+                Err(e) => return Err(map_ws_err(w, e)),
+            }
         }
     })();
     // Always restore blocking mode for subsequent blocking reads.
@@ -715,6 +782,47 @@ mod tests {
         (addr, handle)
     }
 
+    fn connect_ws_plain_with_write_backpressure(
+        host: &str,
+        port: u16,
+    ) -> (ClientStream, Arc<AtomicBool>, Arc<AtomicU64>) {
+        use tungstenite::client::IntoClientRequest;
+
+        let tcp = TcpStream::connect((host, port)).unwrap();
+        tcp.set_read_timeout(Some(READ_TIMEOUT)).unwrap();
+        tcp.set_nodelay(true).unwrap();
+        #[cfg(unix)]
+        let fd = tcp.as_raw_fd();
+        #[cfg(windows)]
+        let socket = tcp.as_raw_socket();
+        let block_next_write = Arc::new(AtomicBool::new(false));
+        let blocked_writes = Arc::new(AtomicU64::new(0));
+        let writer = WriteOnceWouldBlock {
+            socket: tcp,
+            block_next_write: Arc::clone(&block_next_write),
+            blocked_writes: Arc::clone(&blocked_writes),
+        };
+        let req = format!("ws://{host}:{port}/")
+            .into_client_request()
+            .unwrap();
+        let (ws, _) = tungstenite::client::client(req, writer).unwrap();
+        let stream = ClientStream {
+            inner: Inner::Ws(Box::new(WsInner {
+                ws: Mutex::new(WsConn::BlockedWriter(ws)),
+                leftover: Mutex::new(VecDeque::new()),
+                dummy: Mutex::new(false),
+                pending_exit: Mutex::new(None),
+                #[cfg(unix)]
+                fd,
+                #[cfg(windows)]
+                socket,
+            })),
+            bytes_in: AtomicU64::new(0),
+            bytes_out: AtomicU64::new(0),
+        };
+        (stream, block_next_write, blocked_writes)
+    }
+
     #[test]
     fn reader_handle_tracks_the_socket_and_wakes_on_data() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -851,6 +959,64 @@ mod tests {
         assert_eq!(stream.read().unwrap(), 8);
         stream.close();
         let _ = server.join();
+    }
+
+    #[test]
+    fn ws_available_retries_pong_after_would_block_in_order() {
+        let (observed_tx, observed_rx) = mpsc::channel();
+        let (addr, server) = spawn_ws_server(move |mut ws| {
+            ws.send(Message::Ping(vec![9, 8, 7])).unwrap();
+            let mut observed = Vec::new();
+            loop {
+                match ws.read() {
+                    Ok(Message::Close(_)) => break,
+                    Ok(message) => observed.push(message),
+                    Err(error) => panic!("server failed while awaiting client close: {error}"),
+                }
+            }
+            observed_tx.send(observed).unwrap();
+        });
+        let (mut stream, block_next_write, blocked_writes) =
+            connect_ws_plain_with_write_backpressure(&addr.ip().to_string(), addr.port());
+        block_next_write.store(true, Ordering::Relaxed);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while blocked_writes.load(Ordering::Relaxed) == 0 {
+            assert_eq!(
+                stream
+                    .available()
+                    .expect("a backpressured Pong is temporary, not a read error"),
+                0,
+                "the control Pong is not inbound game data"
+            );
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the client did not attempt to send the Ping response"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(blocked_writes.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            stream
+                .available()
+                .expect("retrying the queued Pong must not fail readiness"),
+            0
+        );
+        stream.write(&[0x12, 0x34], 2).unwrap();
+        stream.close();
+
+        let observed = observed_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("server did not observe the queued Pong and following game frame");
+        server.join().unwrap();
+        assert_eq!(
+            observed,
+            vec![
+                Message::Pong(vec![9, 8, 7]),
+                Message::Binary(vec![0x12, 0x34]),
+            ],
+            "the Pong must be retried once, before later outbound game data"
+        );
     }
 
     #[test]
