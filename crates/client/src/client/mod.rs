@@ -19,7 +19,7 @@ pub mod key_codes;
 pub use key_codes::lookup;
 pub use key_codes::JavaKeyCode;
 pub mod login_error;
-pub use login_error::LoginError;
+pub use login_error::{LoginError, LoginStage, LoginTransportError};
 pub mod mini_menu_action;
 pub use mini_menu_action::MiniMenuAction;
 pub mod present;

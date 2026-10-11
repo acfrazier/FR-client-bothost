@@ -25,7 +25,7 @@ use crate::client::client_build::ClientBuild;
 use crate::client::client_draw::get_av_h;
 use crate::client::config::ClientConfig;
 use crate::client::game_shell::GameShell;
-use crate::client::login_error::LoginError;
+use crate::client::login_error::{LoginError, LoginStage, LoginTransportError};
 use crate::client::mini_menu_action::MiniMenuAction;
 use crate::client::skill::Skill;
 use crate::config::if_type::{
@@ -3268,13 +3268,19 @@ impl Client {
                 Some(s) => s,
                 None => match connect() {
                     Ok(s) => s,
-                    Err(_) => return Err(self.fail_title_login(io_error(), reconnect)),
+                    Err(e) => {
+                        return Err(
+                            self.fail_title_login(io_error(LoginStage::Connect, &e), reconnect)
+                        )
+                    }
                 },
             }
         } else {
             match connect() {
                 Ok(s) => s,
-                Err(_) => return Err(self.fail_title_login(io_error(), reconnect)),
+                Err(e) => {
+                    return Err(self.fail_title_login(io_error(LoginStage::Connect, &e), reconnect))
+                }
             }
         };
 
@@ -3286,25 +3292,26 @@ impl Client {
         self.out.p1(login_server);
         stream
             .write(self.out.data(), 2)
-            .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+            .map_err(|e| self.fail_title_login(io_error(LoginStage::SendHello, &e), reconnect))?;
 
         for _ in 0..8 {
-            stream
-                .read()
-                .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+            stream.read().map_err(|e| {
+                self.fail_title_login(io_error(LoginStage::ReadHello, &e), reconnect)
+            })?;
         }
+        let mut stage = LoginStage::ReadHello;
         let mut response = stream
             .read()
-            .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+            .map_err(|e| self.fail_title_login(io_error(stage, &e), reconnect))?;
 
         if response == 0 {
             // The reusable input buffer now holds a login seed, not the last
             // game packet. Its old frame limit may be shorter than eight bytes
             // after logout, reconnect, or socket adoption.
             self.r#in.clear_frame_end();
-            stream
-                .read_bytes(self.r#in.data_mut(), 0, 8)
-                .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+            stream.read_bytes(self.r#in.data_mut(), 0, 8).map_err(|e| {
+                self.fail_title_login(io_error(LoginStage::ReadSeed, &e), reconnect)
+            })?;
             self.r#in.pos = 0;
             let login_seed = self.r#in.g8();
             let mut seed = [
@@ -3345,12 +3352,13 @@ impl Client {
             }
             self.random_in = Some(Isaac::new(&seed));
 
-            stream
-                .write(loginout.data(), loginout.pos)
-                .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+            stream.write(loginout.data(), loginout.pos).map_err(|e| {
+                self.fail_title_login(io_error(LoginStage::SendLogin, &e), reconnect)
+            })?;
+            stage = LoginStage::ReadResponse;
             response = stream
                 .read()
-                .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+                .map_err(|e| self.fail_title_login(io_error(stage, &e), reconnect))?;
         }
 
         if response == 1 && !self.external_reconnect_owner() {
@@ -3359,11 +3367,14 @@ impl Client {
         }
 
         if response == 21 {
-            let remaining = stream
-                .read()
-                .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+            let remaining = stream.read().map_err(|e| {
+                self.fail_title_login(io_error(LoginStage::ReadTransferDelay, &e), reconnect)
+            })?;
             if remaining < 0 {
-                return Err(self.fail_title_login(io_error(), reconnect));
+                return Err(self.fail_title_login(
+                    transport_error(LoginTransportError::closed(LoginStage::ReadTransferDelay)),
+                    reconnect,
+                ));
             }
             let retry_after = Duration::from_secs(remaining as u64);
             let transfer_error = || LoginError {
@@ -3371,6 +3382,7 @@ impl Client {
                 mes1: "You have only just left another world".into(),
                 mes2: format!("Your profile will be transferred in: {remaining} seconds"),
                 retry_after: Some(retry_after),
+                transport: None,
             };
             if self.external_reconnect_owner() {
                 drop(stream);
@@ -3386,13 +3398,12 @@ impl Client {
         }
 
         if response == 2 {
-            self.staffmodlevel = stream
-                .read()
-                .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
-            self.mouse_tracked = stream
-                .read()
-                .map_err(|_| self.fail_title_login(io_error(), reconnect))?
-                == 1;
+            self.staffmodlevel = stream.read().map_err(|e| {
+                self.fail_title_login(io_error(LoginStage::ReadAccept, &e), reconnect)
+            })?;
+            self.mouse_tracked = stream.read().map_err(|e| {
+                self.fail_title_login(io_error(LoginStage::ReadAccept, &e), reconnect)
+            })? == 1;
             if self.revision.is_289() {
                 self.cold_login_input_289();
             }
@@ -3553,15 +3564,13 @@ impl Client {
             ),
         };
         self.stream = Some(stream);
-        Err(self.fail_title_login(
-            LoginError {
-                code: response,
-                mes1,
-                mes2,
-                retry_after: None,
-            },
-            reconnect,
-        ))
+        let mut error = LoginError::response(response, mes1, mes2);
+        if response == -1 {
+            // `read` reports end of stream as -1: the server hung up instead
+            // of answering.
+            error.transport = Some(LoginTransportError::closed(stage));
+        }
+        Err(self.fail_title_login(error, reconnect))
     }
 
     /// Cold-login failures land on the title form (`loginscreen` 2) with
@@ -13797,12 +13806,16 @@ impl Client {
     }
 }
 
-fn io_error() -> LoginError {
+/// A login socket failure. The title keeps the original client's
+/// "Error connecting to server." line; the receipt keeps the cause.
+fn io_error(stage: LoginStage, error: &std::io::Error) -> LoginError {
+    transport_error(LoginTransportError::from_io(stage, error))
+}
+
+fn transport_error(transport: LoginTransportError) -> LoginError {
     LoginError {
-        code: -1,
-        mes1: String::new(),
-        mes2: "Error connecting to server.".into(),
-        retry_after: None,
+        transport: Some(transport),
+        ..LoginError::response(-1, "", "Error connecting to server.")
     }
 }
 
