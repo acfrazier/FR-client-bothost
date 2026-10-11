@@ -44,7 +44,7 @@ use crate::dash3d::{
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
 use crate::datastruct::LinkList;
 use crate::graphics::Pix3D;
-use crate::io::client_stream::StreamExitReason;
+use crate::io::client_stream::{LoginCancel, StreamExitReason};
 use crate::io::{
     ClientProt, ClientRevision, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt,
     ServerProt289,
@@ -1475,6 +1475,9 @@ pub struct Client {
     /// Deadline for the next `login` call's socket I/O
     /// ([`Client::set_login_deadline`]); taken by that call.
     login_deadline: Option<Instant>,
+    /// Cancel handle for the next `login` call's socket
+    /// ([`Client::set_login_cancel`]); taken by that call.
+    login_cancel: Option<LoginCancel>,
     /// `logoutTimer` from Java: frames remaining until a requested logout.
     pub logout_timer: i32,
     /// `rebootTimer` from client-ts (140): seconds until the server reboot,
@@ -2237,6 +2240,7 @@ impl Client {
             hosted_title_state: 0,
             baton: false,
             login_deadline: None,
+            login_cancel: None,
             logout_timer: 0,
             reboot_timer: 0,
             last_response: None,
@@ -3242,6 +3246,15 @@ impl Client {
         self.login_deadline = Some(deadline);
     }
 
+    /// Another thread can shut the next [`Client::login`]'s socket with
+    /// `cancel` while its handshake runs: the server reads end of stream at
+    /// once, and the login fails with "login cancelled by its host" at the
+    /// stage it reached. A host that admits one handshake at a time cancels
+    /// an attempt whose turn ran out before it lets the next one start.
+    pub fn set_login_cancel(&mut self, cancel: LoginCancel) {
+        self.login_cancel = Some(cancel);
+    }
+
     /// Login handshake, 1:1 of `Client.ts` `login` (1719-1867) / Java
     /// `Client.login`: probe, seed, RSA blob, opcode 16/18 wrapper. Standalone
     /// response 1 retries after two seconds; an external reconnect owner gets
@@ -3277,13 +3290,27 @@ impl Client {
         self.baton = false;
         let (transport, host, port) = self.session_game_endpoint();
         let deadline = self.login_deadline.take();
+        let cancel = self.login_cancel.take();
         let connect = || match deadline {
-            Some(deadline) => ClientStream::connect_until(transport, &host, port, deadline),
-            None => ClientStream::connect_for(transport, &host, port),
+            Some(deadline) => {
+                ClientStream::connect_until(transport, &host, port, deadline, cancel.as_ref())
+            }
+            None => ClientStream::connect_for(transport, &host, port).and_then(|mut stream| {
+                match &cancel {
+                    Some(cancel) => stream.attach_cancel(cancel).map(|()| stream),
+                    None => Ok(stream),
+                }
+            }),
         };
         let adopted = if reuse { self.stream.take() } else { None };
         let opened = match adopted {
-            Some(mut adopted) => adopted.set_deadline(deadline).map(|()| adopted),
+            Some(mut adopted) => adopted
+                .set_deadline(deadline)
+                .and_then(|()| match &cancel {
+                    Some(cancel) => adopted.attach_cancel(cancel),
+                    None => Ok(()),
+                })
+                .map(|()| adopted),
             None => connect(),
         };
         let mut stream = match opened {
