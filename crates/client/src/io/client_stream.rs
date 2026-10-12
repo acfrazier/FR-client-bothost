@@ -7,14 +7,25 @@
 //! transport loss: an in-game standalone client enters `lostCon` immediately,
 //! while a close during login reports the ordinary connection error. After
 //! local `close` (`dummy`), reads report 0 / EOF and writes are no-ops.
+//!
+//! A login handshake can carry a deadline ([`ClientStream::connect_until`],
+//! [`ClientStream::set_deadline`]): the connect, the TLS and WebSocket setup
+//! and every read and write stop at it with `TimedOut`, however much
+//! WebSocket control traffic keeps arriving and whatever data is already
+//! buffered. While the deadline is set, TCP writes go straight to the socket
+//! on the caller's thread, each armed with the time left, not through the
+//! writer thread. A [`LoginCancel`] lets another thread shut the handshake's
+//! socket, so a peer sees it close at once.
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
-use std::net::{Shutdown, TcpStream};
+use std::net::{Shutdown, TcpStream, ToSocketAddrs};
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[cfg(unix)]
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -28,7 +39,9 @@ use tungstenite::Message;
 use crate::Transport;
 
 const BUF_SIZE: usize = 5000;
-const READ_TIMEOUT: Duration = Duration::from_secs(30);
+/// Socket read timeout: the original client's `setSoTimeout(30000)`
+/// (`jagex2/io/ClientStream.java:47`).
+pub const READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// `available()` peek buffer; larger than any 274 `psize` (variable-size
 /// packets read their length via `g2` and never exceed a few KiB).
 const AVAILABLE_BUF: usize = 8192;
@@ -71,6 +84,224 @@ struct TcpInner {
     shared: Arc<Mutex<WriterState>>,
     condvar: Arc<Condvar>,
     writer_thread: Option<JoinHandle<()>>,
+    /// Login handshake deadline. While it is set, reads and writes run on
+    /// the caller's thread, each socket call armed with the time left
+    /// ([`tcp_write_until`]).
+    deadline: Option<Instant>,
+}
+
+/// Error for socket I/O attempted at or after a login deadline.
+fn deadline_passed() -> io::Error {
+    io::Error::new(io::ErrorKind::TimedOut, "login handshake deadline passed")
+}
+
+/// Socket timeout for the next call before `deadline`, never above one
+/// read timeout; an error once the deadline has passed.
+fn time_left(deadline: Instant) -> io::Result<Duration> {
+    let left = deadline.saturating_duration_since(Instant::now());
+    if left.is_zero() {
+        return Err(deadline_passed());
+    }
+    Ok(left.min(READ_TIMEOUT))
+}
+
+/// How the embedding host runs a socket call that can block its thread;
+/// see [`set_transport_wait_hook`].
+static TRANSPORT_WAIT: OnceLock<fn(&mut dyn FnMut())> = OnceLock::new();
+
+/// Run every socket call that can block the calling thread for a long time
+/// (a send waiting for the peer to take the bytes, a read waiting for them
+/// to arrive, a close) through `hook`, which calls its argument once. A
+/// host uses it to tell time its thread waited on the network from time
+/// the OS kept it off the CPU. Set once per process; later calls do
+/// nothing.
+pub fn set_transport_wait_hook(hook: fn(&mut dyn FnMut())) {
+    let _ = TRANSPORT_WAIT.set(hook);
+}
+
+/// `wait`, run through the [`set_transport_wait_hook`] hook if there is one.
+fn transport_wait<R>(wait: impl FnOnce() -> R) -> R {
+    let Some(hook) = TRANSPORT_WAIT.get() else {
+        return wait();
+    };
+    let mut wait = Some(wait);
+    let mut out = None;
+    hook(&mut || {
+        if let Some(wait) = wait.take() {
+            out = Some(wait());
+        }
+    });
+    match (out, wait) {
+        (Some(out), _) => out,
+        // The hook didn't call it: the call still has to happen.
+        (None, Some(wait)) => wait(),
+        (None, None) => unreachable!("the wait ran, so it returned"),
+    }
+}
+
+/// A socket timeout that fired at the deadline reports the deadline
+/// (Linux reports an expired `SO_RCVTIMEO` as `WouldBlock`).
+fn timeout_at_deadline(deadline: Option<Instant>, error: io::Error) -> io::Error {
+    let timed_out = matches!(
+        error.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+    );
+    match deadline {
+        Some(deadline) if timed_out && Instant::now() >= deadline => deadline_passed(),
+        _ => error,
+    }
+}
+
+/// A TLS or WebSocket setup step that failed once the deadline had passed
+/// failed because of it (the libraries flatten the socket error to text).
+fn setup_error(deadline: Option<Instant>, error: io::Error) -> io::Error {
+    match deadline {
+        Some(deadline) if Instant::now() >= deadline => deadline_passed(),
+        _ => error,
+    }
+}
+
+/// Error for handshake I/O after its [`LoginCancel`] fired.
+fn login_cancelled() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::ConnectionAborted,
+        "login cancelled by its host",
+    )
+}
+
+/// Stops one login handshake's transport from another thread. An embedding
+/// host that admits one handshake at a time cancels an attempt whose turn
+/// ran out, so a hung attempt cannot keep a connection to the server open
+/// once the next login starts. The stream holds the handle only during its
+/// handshake: a session that completed its login is never touched.
+#[derive(Debug, Clone, Default)]
+pub struct LoginCancel(Arc<Mutex<CancelState>>);
+
+#[derive(Debug, Default)]
+struct CancelState {
+    cancelled: bool,
+    /// A second handle on the handshake's socket, while the handshake runs.
+    socket: Option<TcpStream>,
+}
+
+impl LoginCancel {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Shut the handshake's socket in both directions now: the server reads
+    /// end of stream, and a read or write blocked on the socket returns. A
+    /// socket the handshake connects later is shut as it connects. The
+    /// handshake's I/O then fails with "login cancelled by its host".
+    pub fn cancel(&self) {
+        let mut state = self.state();
+        state.cancelled = true;
+        if let Some(socket) = state.socket.take() {
+            let _ = socket.shutdown(Shutdown::Both);
+        }
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.state().cancelled
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, CancelState> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Hold a handle on `socket` until [`Self::detach`]; an already
+    /// cancelled handshake shuts it and fails.
+    fn attach(&self, socket: &TcpStream) -> io::Result<()> {
+        let mut state = self.state();
+        if state.cancelled {
+            let _ = socket.shutdown(Shutdown::Both);
+            return Err(login_cancelled());
+        }
+        state.socket = Some(socket.try_clone()?);
+        Ok(())
+    }
+
+    /// The handshake is over: a later cancel must not touch its socket.
+    fn detach(&self) {
+        self.state().socket = None;
+    }
+}
+
+/// The TCP socket under a WebSocket. With a deadline, each read and write
+/// is armed with the time left, so no single call, and no run of
+/// WebSocket control frames, outlasts it.
+#[derive(Debug)]
+struct DeadlineSocket {
+    sock: TcpStream,
+    deadline: Option<Instant>,
+}
+
+impl DeadlineSocket {
+    fn set_deadline(&mut self, deadline: Option<Instant>) -> io::Result<()> {
+        self.deadline = deadline;
+        if deadline.is_none() {
+            self.sock.set_read_timeout(Some(READ_TIMEOUT))?;
+            self.sock.set_write_timeout(None)?;
+        }
+        Ok(())
+    }
+}
+
+impl Read for DeadlineSocket {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if let Some(deadline) = self.deadline {
+            self.sock.set_read_timeout(Some(time_left(deadline)?))?;
+        }
+        self.sock
+            .read(buf)
+            .map_err(|error| timeout_at_deadline(self.deadline, error))
+    }
+}
+
+impl Write for DeadlineSocket {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if let Some(deadline) = self.deadline {
+            self.sock.set_write_timeout(Some(time_left(deadline)?))?;
+        }
+        self.sock
+            .write(buf)
+            .map_err(|error| timeout_at_deadline(self.deadline, error))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.sock.flush()
+    }
+}
+
+#[cfg(test)]
+struct WriteOnceWouldBlock {
+    socket: TcpStream,
+    block_next_write: Arc<AtomicBool>,
+    blocked_writes: Arc<AtomicU64>,
+}
+
+#[cfg(test)]
+impl Read for WriteOnceWouldBlock {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.socket.read(buf)
+    }
+}
+
+#[cfg(test)]
+impl Write for WriteOnceWouldBlock {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.block_next_write.swap(false, Ordering::Relaxed) {
+            self.blocked_writes.fetch_add(1, Ordering::Relaxed);
+            return Err(io::ErrorKind::WouldBlock.into());
+        }
+        self.socket.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.socket.flush()
+    }
 }
 
 /// Underlying WS transport. Production is TLS; plain TCP is test-only loopback
@@ -80,10 +311,12 @@ struct TcpInner {
 // allocation to the production path for a test-build-only lint.
 #[cfg_attr(any(test, feature = "test-support"), allow(clippy::large_enum_variant))]
 enum WsConn {
-    Tls(WebSocket<TlsStream<TcpStream>>),
+    Tls(WebSocket<TlsStream<DeadlineSocket>>),
+    #[cfg(test)]
+    BlockedWriter(WebSocket<WriteOnceWouldBlock>),
     /// Loopback plain WS used by unit tests only (no TLS trust bypass).
     #[cfg(any(test, feature = "test-support"))]
-    Plain(WebSocket<TcpStream>),
+    Plain(WebSocket<DeadlineSocket>),
 }
 
 impl WsConn {
@@ -94,6 +327,8 @@ impl WsConn {
             WsConn::Tls(ws) => ws.read(),
             #[cfg(any(test, feature = "test-support"))]
             WsConn::Plain(ws) => ws.read(),
+            #[cfg(test)]
+            WsConn::BlockedWriter(ws) => ws.read(),
         }
     }
 
@@ -103,6 +338,19 @@ impl WsConn {
             WsConn::Tls(ws) => ws.send(msg),
             #[cfg(any(test, feature = "test-support"))]
             WsConn::Plain(ws) => ws.send(msg),
+            #[cfg(test)]
+            WsConn::BlockedWriter(ws) => ws.send(msg),
+        }
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn flush(&mut self) -> Result<(), tungstenite::Error> {
+        match self {
+            WsConn::Tls(ws) => ws.flush(),
+            #[cfg(any(test, feature = "test-support"))]
+            WsConn::Plain(ws) => ws.flush(),
+            #[cfg(test)]
+            WsConn::BlockedWriter(ws) => ws.flush(),
         }
     }
 
@@ -112,14 +360,49 @@ impl WsConn {
             WsConn::Tls(ws) => ws.close(None),
             #[cfg(any(test, feature = "test-support"))]
             WsConn::Plain(ws) => ws.close(None),
+            #[cfg(test)]
+            WsConn::BlockedWriter(ws) => ws.close(None),
         }
     }
 
     fn set_nonblocking(&mut self, nonblocking: bool) -> io::Result<()> {
         match self {
-            WsConn::Tls(ws) => ws.get_ref().get_ref().set_nonblocking(nonblocking),
+            WsConn::Tls(ws) => ws.get_ref().get_ref().sock.set_nonblocking(nonblocking),
             #[cfg(any(test, feature = "test-support"))]
-            WsConn::Plain(ws) => ws.get_ref().set_nonblocking(nonblocking),
+            WsConn::Plain(ws) => ws.get_ref().sock.set_nonblocking(nonblocking),
+            #[cfg(test)]
+            WsConn::BlockedWriter(ws) => ws.get_ref().socket.set_nonblocking(nonblocking),
+        }
+    }
+
+    fn deadline(&self) -> Option<Instant> {
+        match self {
+            WsConn::Tls(ws) => ws.get_ref().get_ref().deadline,
+            #[cfg(any(test, feature = "test-support"))]
+            WsConn::Plain(ws) => ws.get_ref().deadline,
+            #[cfg(test)]
+            WsConn::BlockedWriter(_) => None,
+        }
+    }
+
+    /// The TCP socket under the WebSocket.
+    fn socket(&self) -> &TcpStream {
+        match self {
+            WsConn::Tls(ws) => &ws.get_ref().get_ref().sock,
+            #[cfg(any(test, feature = "test-support"))]
+            WsConn::Plain(ws) => &ws.get_ref().sock,
+            #[cfg(test)]
+            WsConn::BlockedWriter(ws) => &ws.get_ref().socket,
+        }
+    }
+
+    fn set_deadline(&mut self, deadline: Option<Instant>) -> io::Result<()> {
+        match self {
+            WsConn::Tls(ws) => ws.get_mut().get_mut().set_deadline(deadline),
+            #[cfg(any(test, feature = "test-support"))]
+            WsConn::Plain(ws) => ws.get_mut().set_deadline(deadline),
+            #[cfg(test)]
+            WsConn::BlockedWriter(_) => Ok(()),
         }
     }
 }
@@ -145,6 +428,8 @@ pub struct ClientStream {
     inner: Inner,
     bytes_in: AtomicU64,
     bytes_out: AtomicU64,
+    /// The handshake's [`LoginCancel`], until the handshake ends.
+    cancel: Option<LoginCancel>,
 }
 
 fn io_other(err: impl std::fmt::Display) -> io::Error {
@@ -165,8 +450,85 @@ impl ClientStream {
         Self::connect_tcp(host, port)
     }
 
+    /// Connect for one login handshake that must stop at `deadline`: the
+    /// TCP connect, and for WSS the TLS and WebSocket setup, are bounded by
+    /// it, and so is every later read and write until [`Self::set_deadline`]
+    /// clears it. Name resolution is the system resolver's and cannot be
+    /// interrupted, but no connect starts after the deadline. `cancel`
+    /// shuts the socket from another thread from the moment it connects
+    /// until the deadline is cleared.
+    pub fn connect_until(
+        transport: Transport,
+        host: &str,
+        port: u16,
+        deadline: Instant,
+        cancel: Option<&LoginCancel>,
+    ) -> io::Result<ClientStream> {
+        let socket = connect_socket_until(host, port, deadline)?;
+        if let Some(cancel) = cancel {
+            cancel.attach(&socket)?;
+        }
+        let opened = if transport.uses_tls() {
+            Self::wss_over(socket, host, port, Some(deadline))
+        } else {
+            Self::tcp_over(socket, Some(deadline))
+        };
+        match (opened, cancel) {
+            (Ok(mut stream), Some(cancel)) => {
+                stream.cancel = Some(cancel.clone());
+                Ok(stream)
+            }
+            (Ok(stream), None) => Ok(stream),
+            (Err(error), Some(cancel)) => {
+                cancel.detach();
+                Err(if cancel.is_cancelled() {
+                    login_cancelled()
+                } else {
+                    error
+                })
+            }
+            (Err(error), None) => Err(error),
+        }
+    }
+
+    /// Let `cancel` shut this stream's socket from another thread until the
+    /// deadline is cleared (a login over an adopted stream).
+    pub fn attach_cancel(&mut self, cancel: &LoginCancel) -> io::Result<()> {
+        match &self.inner {
+            Inner::Tcp(t) => cancel.attach(&t.reader)?,
+            Inner::Ws(w) => cancel.attach(w.ws.lock().unwrap().socket())?,
+        }
+        self.cancel = Some(cancel.clone());
+        Ok(())
+    }
+
+    /// Set or clear (`None`) the deadline for this stream's reads and
+    /// writes. Clearing ends the handshake: it restores the plain 30 s read
+    /// timeout and unblocked writes, and lets go of the [`LoginCancel`].
+    pub fn set_deadline(&mut self, deadline: Option<Instant>) -> io::Result<()> {
+        if deadline.is_none() {
+            if let Some(cancel) = self.cancel.take() {
+                cancel.detach();
+            }
+        }
+        match &mut self.inner {
+            Inner::Tcp(t) => {
+                t.deadline = deadline;
+                if deadline.is_none() {
+                    t.reader.set_read_timeout(Some(READ_TIMEOUT))?;
+                    t.reader.set_write_timeout(None)?;
+                }
+                Ok(())
+            }
+            Inner::Ws(w) => w.ws.lock().unwrap().set_deadline(deadline),
+        }
+    }
+
     fn connect_tcp(host: &str, port: u16) -> io::Result<ClientStream> {
-        let socket = TcpStream::connect((host, port))?;
+        Self::tcp_over(TcpStream::connect((host, port))?, None)
+    }
+
+    fn tcp_over(socket: TcpStream, deadline: Option<Instant>) -> io::Result<ClientStream> {
         socket.set_read_timeout(Some(READ_TIMEOUT))?;
         socket.set_nodelay(true)?;
         let writer_sock = socket.try_clone()?;
@@ -177,23 +539,39 @@ impl ClientStream {
                 shared: Arc::new(Mutex::new(WriterState::new())),
                 condvar: Arc::new(Condvar::new()),
                 writer_thread: None,
+                deadline,
             }),
             bytes_in: AtomicU64::new(0),
             bytes_out: AtomicU64::new(0),
+            cancel: None,
         })
     }
 
     fn connect_wss(host: &str, port: u16) -> io::Result<ClientStream> {
+        Self::wss_over(TcpStream::connect((host, port))?, host, port, None)
+    }
+
+    fn wss_over(
+        tcp: TcpStream,
+        host: &str,
+        port: u16,
+        deadline: Option<Instant>,
+    ) -> io::Result<ClientStream> {
         use tungstenite::client::IntoClientRequest;
-        let tcp = TcpStream::connect((host, port))?;
         tcp.set_read_timeout(Some(READ_TIMEOUT))?;
         tcp.set_nodelay(true)?;
         #[cfg(unix)]
         let fd = tcp.as_raw_fd();
         #[cfg(windows)]
         let socket = tcp.as_raw_socket();
+        let tcp = DeadlineSocket {
+            sock: tcp,
+            deadline,
+        };
         let connector = native_tls::TlsConnector::new().map_err(io_other)?;
-        let tls = connector.connect(host, tcp).map_err(io_other)?;
+        let tls = connector
+            .connect(host, tcp)
+            .map_err(|error| setup_error(deadline, io_other(error)))?;
         let authority = if port == 443 {
             host.to_string()
         } else {
@@ -206,7 +584,8 @@ impl ClientStream {
             "Sec-WebSocket-Protocol",
             tungstenite::http::HeaderValue::from_static("binary"),
         );
-        let (ws, _) = tungstenite::client::client(req, tls).map_err(io_other)?;
+        let (ws, _) = tungstenite::client::client(req, tls)
+            .map_err(|error| setup_error(deadline, io_other(error)))?;
         Ok(ClientStream {
             inner: Inner::Ws(Box::new(WsInner {
                 ws: Mutex::new(WsConn::Tls(ws)),
@@ -220,6 +599,7 @@ impl ClientStream {
             })),
             bytes_in: AtomicU64::new(0),
             bytes_out: AtomicU64::new(0),
+            cancel: None,
         })
     }
 
@@ -274,26 +654,53 @@ impl ClientStream {
         }
     }
 
+    /// Read into `dst`. A handshake whose [`LoginCancel`] fired reports
+    /// that instead of the end of stream or error its shut socket gives.
     fn read_bytes_inner(&mut self, dst: &mut [u8]) -> io::Result<i32> {
+        let cancelled = |stream: &Self| {
+            stream
+                .cancel
+                .as_ref()
+                .is_some_and(LoginCancel::is_cancelled)
+        };
+        if cancelled(self) {
+            return Err(login_cancelled());
+        }
+        let result = self.read_socket(dst);
+        match result {
+            Ok(n) if n > 0 => Ok(n),
+            _ if cancelled(self) => Err(login_cancelled()),
+            other => other,
+        }
+    }
+
+    fn read_socket(&mut self, dst: &mut [u8]) -> io::Result<i32> {
         match &mut self.inner {
             Inner::Tcp(t) => {
                 if t.shared.lock().unwrap().dummy {
                     return Ok(0);
                 }
-                match t.reader.read(dst) {
+                if let Some(deadline) = t.deadline {
+                    t.reader.set_read_timeout(Some(time_left(deadline)?))?;
+                }
+                match transport_wait(|| t.reader.read(dst)) {
                     Ok(0) => Ok(-1),
                     Ok(n) => {
                         self.bytes_in.fetch_add(n as u64, Ordering::Relaxed);
                         Ok(n as i32)
                     }
-                    Err(e) => Err(e),
+                    Err(e) => Err(timeout_at_deadline(t.deadline, e)),
                 }
             }
             Inner::Ws(w) => {
                 if *w.dummy.lock().unwrap() {
                     return Ok(0);
                 }
-                fill_ws_blocking(w)?;
+                // Buffered payload is no excuse to go on past the deadline.
+                if let Some(deadline) = w.ws.lock().unwrap().deadline() {
+                    time_left(deadline)?;
+                }
+                transport_wait(|| fill_ws_blocking(w))?;
                 let mut leftover = w.leftover.lock().unwrap();
                 if leftover.is_empty() {
                     return Ok(-1);
@@ -390,19 +797,39 @@ impl ClientStream {
     }
 
     /// Queue `len` bytes for the writer thread (Java `write(count, data, off)`).
+    /// During a TCP login handshake (a deadline is set) the bytes are written
+    /// before this returns, bounded by the deadline.
     pub fn write(&mut self, buf: &[u8], len: usize) -> io::Result<()> {
         let len = len.min(buf.len());
+        if let Some(cancel) = &self.cancel {
+            if cancel.is_cancelled() {
+                return Err(login_cancelled());
+            }
+        }
         match &mut self.inner {
-            Inner::Tcp(t) => tcp_write(t, buf, len, &self.bytes_out),
+            Inner::Tcp(t) => match t.deadline {
+                Some(deadline) => {
+                    let written = transport_wait(|| {
+                        tcp_write_until(t, &buf[..len], deadline, &self.bytes_out)
+                    });
+                    match (&self.cancel, written) {
+                        (Some(cancel), Err(_)) if cancel.is_cancelled() => Err(login_cancelled()),
+                        (_, written) => written,
+                    }
+                }
+                None => tcp_write(t, buf, len, &self.bytes_out),
+            },
             Inner::Ws(w) => {
                 if *w.dummy.lock().unwrap() {
                     return Ok(());
                 }
                 let payload = buf[..len].to_vec();
-                let result = w.ws.lock().unwrap().send_message(Message::Binary(payload));
-                if let Err(error) = result {
-                    return Err(map_ws_err(w, error));
-                }
+                transport_wait(|| {
+                    w.ws.lock()
+                        .unwrap()
+                        .send_message(Message::Binary(payload))
+                        .map_err(|error| map_ws_err(w, error))
+                })?;
                 self.bytes_out.fetch_add(len as u64, Ordering::Relaxed);
                 Ok(())
             }
@@ -411,6 +838,9 @@ impl ClientStream {
 
     /// Java `close`: mark dummy, shut the socket, stop the writer thread.
     pub fn close(&mut self) {
+        if let Some(cancel) = self.cancel.take() {
+            cancel.detach();
+        }
         match &mut self.inner {
             Inner::Tcp(t) => {
                 {
@@ -425,12 +855,14 @@ impl ClientStream {
                 let _ = t.reader.shutdown(Shutdown::Both);
                 let _ = t.writer_sock.shutdown(Shutdown::Both);
                 if let Some(handle) = t.writer_thread.take() {
-                    let _ = handle.join();
+                    let _ = transport_wait(|| handle.join());
                 }
             }
             Inner::Ws(w) => {
                 *w.dummy.lock().unwrap() = true;
-                let _ = w.ws.lock().unwrap().close();
+                transport_wait(|| {
+                    let _ = w.ws.lock().unwrap().close();
+                });
             }
         }
     }
@@ -474,32 +906,47 @@ fn fill_ws_blocking(w: &WsInner) -> io::Result<()> {
 fn fill_ws_nonblocking(w: &WsInner) -> io::Result<()> {
     let mut ws = w.ws.lock().unwrap();
     ws.set_nonblocking(true)?;
-    let result = (|| loop {
-        {
-            let n = w.leftover.lock().unwrap().len();
-            if n >= AVAILABLE_BUF {
-                return Ok(());
-            }
-        }
-        match ws.read_message() {
-            Ok(Message::Binary(b)) => {
-                if !b.is_empty() {
-                    w.leftover.lock().unwrap().extend(b);
-                }
-            }
-            Ok(Message::Ping(p)) => {
-                ws.send_message(Message::Pong(p))
-                    .map_err(|error| map_ws_err(w, error))?;
-            }
-            Ok(Message::Pong(_)) | Ok(Message::Frame(_)) | Ok(Message::Text(_)) => {}
-            Ok(Message::Close(frame)) => return Err(record_ws_close(w, frame)),
-            Err(tungstenite::Error::ConnectionClosed) | Err(tungstenite::Error::AlreadyClosed) => {
-                return Err(record_ws_close(w, None));
-            }
+    let result = (|| {
+        // Tungstenite retains a queued control frame when a write returns
+        // WouldBlock. Retry it before reading more frames on the next probe.
+        match ws.flush() {
+            Ok(()) => {}
             Err(tungstenite::Error::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
                 return Ok(());
             }
             Err(e) => return Err(map_ws_err(w, e)),
+        }
+        loop {
+            {
+                let n = w.leftover.lock().unwrap().len();
+                if n >= AVAILABLE_BUF {
+                    return Ok(());
+                }
+            }
+            match ws.read_message() {
+                Ok(Message::Binary(b)) => {
+                    if !b.is_empty() {
+                        w.leftover.lock().unwrap().extend(b);
+                    }
+                }
+                Ok(Message::Ping(p)) => match ws.send_message(Message::Pong(p)) {
+                    Ok(()) => {}
+                    Err(tungstenite::Error::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
+                        return Ok(());
+                    }
+                    Err(e) => return Err(map_ws_err(w, e)),
+                },
+                Ok(Message::Pong(_)) | Ok(Message::Frame(_)) | Ok(Message::Text(_)) => {}
+                Ok(Message::Close(frame)) => return Err(record_ws_close(w, frame)),
+                Err(tungstenite::Error::ConnectionClosed)
+                | Err(tungstenite::Error::AlreadyClosed) => {
+                    return Err(record_ws_close(w, None));
+                }
+                Err(tungstenite::Error::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
+                    return Ok(());
+                }
+                Err(e) => return Err(map_ws_err(w, e)),
+            }
         }
     })();
     // Always restore blocking mode for subsequent blocking reads.
@@ -509,6 +956,24 @@ fn fill_ws_nonblocking(w: &WsInner) -> io::Result<()> {
         (Err(e), _) => Err(e),
         (Ok(()), Err(e)) => Err(e),
     }
+}
+
+/// `TcpStream::connect` over every resolved address, each connect bounded
+/// by the time left before `deadline`.
+fn connect_socket_until(host: &str, port: u16, deadline: Instant) -> io::Result<TcpStream> {
+    let mut last = None;
+    for addr in (host, port).to_socket_addrs()? {
+        match TcpStream::connect_timeout(&addr, time_left(deadline)?) {
+            Ok(socket) => return Ok(socket),
+            Err(error) => last = Some(timeout_at_deadline(Some(deadline), error)),
+        }
+    }
+    Err(last.unwrap_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "could not resolve to any addresses",
+        )
+    }))
 }
 
 fn record_ws_close(
@@ -576,6 +1041,53 @@ fn tcp_write(t: &mut TcpInner, buf: &[u8], len: usize, bytes_out: &AtomicU64) ->
         t.writer_thread = Some(thread::spawn(move || writer_loop(shared, condvar, sock)));
     }
     t.condvar.notify_one();
+    Ok(())
+}
+
+/// A login handshake write: the bytes go to the socket before this returns,
+/// on the caller's thread, with each socket write armed with the time left
+/// before `deadline`. A peer that stops reading therefore cannot hold the
+/// handshake past it. Game bytes the writer thread still holds (an adopted
+/// stream) are sent first, so the order on the wire is kept.
+fn tcp_write_until(
+    t: &mut TcpInner,
+    buf: &[u8],
+    deadline: Instant,
+    bytes_out: &AtomicU64,
+) -> io::Result<()> {
+    loop {
+        {
+            let mut st = t.shared.lock().unwrap();
+            if st.dummy {
+                return Ok(());
+            }
+            if st.ioerror {
+                st.ioerror = false;
+                return Err(io::Error::other("Error in writer thread"));
+            }
+            if st.tnum == st.tcycl {
+                break;
+            }
+        }
+        time_left(deadline)?;
+        thread::sleep(Duration::from_millis(1));
+    }
+    let mut rest = buf;
+    while !rest.is_empty() {
+        t.reader.set_write_timeout(Some(time_left(deadline)?))?;
+        match (&t.reader).write(rest) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(n) => {
+                rest = &rest[n..];
+                bytes_out.fetch_add(n as u64, Ordering::Relaxed);
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            // A send timeout that fired a little early: go on with the time left.
+            Err(error)
+                if error.kind() == io::ErrorKind::WouldBlock && Instant::now() < deadline => {}
+            Err(error) => return Err(timeout_at_deadline(Some(deadline), error)),
+        }
+    }
     Ok(())
 }
 
@@ -676,6 +1188,10 @@ pub fn connect_ws_plain(host: &str, port: u16) -> io::Result<ClientStream> {
     let req = format!("ws://{host}:{port}/")
         .into_client_request()
         .map_err(io_other)?;
+    let tcp = DeadlineSocket {
+        sock: tcp,
+        deadline: None,
+    };
     let (ws, _) = tungstenite::client::client(req, tcp).map_err(io_other)?;
     Ok(ClientStream {
         inner: Inner::Ws(Box::new(WsInner {
@@ -690,6 +1206,7 @@ pub fn connect_ws_plain(host: &str, port: u16) -> io::Result<ClientStream> {
         })),
         bytes_in: AtomicU64::new(0),
         bytes_out: AtomicU64::new(0),
+        cancel: None,
     })
 }
 
@@ -713,6 +1230,48 @@ mod tests {
             on_ready(ws);
         });
         (addr, handle)
+    }
+
+    fn connect_ws_plain_with_write_backpressure(
+        host: &str,
+        port: u16,
+    ) -> (ClientStream, Arc<AtomicBool>, Arc<AtomicU64>) {
+        use tungstenite::client::IntoClientRequest;
+
+        let tcp = TcpStream::connect((host, port)).unwrap();
+        tcp.set_read_timeout(Some(READ_TIMEOUT)).unwrap();
+        tcp.set_nodelay(true).unwrap();
+        #[cfg(unix)]
+        let fd = tcp.as_raw_fd();
+        #[cfg(windows)]
+        let socket = tcp.as_raw_socket();
+        let block_next_write = Arc::new(AtomicBool::new(false));
+        let blocked_writes = Arc::new(AtomicU64::new(0));
+        let writer = WriteOnceWouldBlock {
+            socket: tcp,
+            block_next_write: Arc::clone(&block_next_write),
+            blocked_writes: Arc::clone(&blocked_writes),
+        };
+        let req = format!("ws://{host}:{port}/")
+            .into_client_request()
+            .unwrap();
+        let (ws, _) = tungstenite::client::client(req, writer).unwrap();
+        let stream = ClientStream {
+            inner: Inner::Ws(Box::new(WsInner {
+                ws: Mutex::new(WsConn::BlockedWriter(ws)),
+                leftover: Mutex::new(VecDeque::new()),
+                dummy: Mutex::new(false),
+                pending_exit: Mutex::new(None),
+                #[cfg(unix)]
+                fd,
+                #[cfg(windows)]
+                socket,
+            })),
+            bytes_in: AtomicU64::new(0),
+            bytes_out: AtomicU64::new(0),
+            cancel: None,
+        };
+        (stream, block_next_write, blocked_writes)
     }
 
     #[test]
@@ -851,6 +1410,68 @@ mod tests {
         assert_eq!(stream.read().unwrap(), 8);
         stream.close();
         let _ = server.join();
+    }
+
+    #[test]
+    fn ws_available_retries_pong_after_would_block_in_order() {
+        let (observed_tx, observed_rx) = mpsc::channel();
+        let (addr, server) = spawn_ws_server(move |mut ws| {
+            ws.send(Message::Ping(vec![9, 8, 7])).unwrap();
+            loop {
+                match ws.read() {
+                    Ok(Message::Close(_)) | Err(_) => break,
+                    Ok(message) => observed_tx.send(message).unwrap(),
+                }
+            }
+        });
+        let (mut stream, block_next_write, blocked_writes) =
+            connect_ws_plain_with_write_backpressure(&addr.ip().to_string(), addr.port());
+        block_next_write.store(true, Ordering::Relaxed);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while blocked_writes.load(Ordering::Relaxed) == 0 {
+            assert_eq!(
+                stream
+                    .available()
+                    .expect("a backpressured Pong is temporary, not a read error"),
+                0,
+                "the control Pong is not inbound game data"
+            );
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the client did not attempt to send the Ping response"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(blocked_writes.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            stream
+                .available()
+                .expect("the second availability probe must retry the queued Pong"),
+            0
+        );
+        assert_eq!(
+            observed_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("server did not observe the Pong after the second availability probe"),
+            Message::Pong(vec![9, 8, 7]),
+            "the Pong must reach the server before any client write"
+        );
+
+        stream.write(&[0x12, 0x34], 2).unwrap();
+        assert_eq!(
+            observed_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("server did not observe the following game frame"),
+            Message::Binary(vec![0x12, 0x34]),
+            "the game frame must follow the Pong"
+        );
+        stream.close();
+        server.join().unwrap();
+        assert!(
+            observed_rx.try_recv().is_err(),
+            "server observed an unexpected extra client message"
+        );
     }
 
     #[test]
@@ -1045,5 +1666,264 @@ mod tests {
         assert_eq!(&buf, &[11, 12, 13]);
         stream.close();
         let _ = server.join();
+    }
+
+    /// A WebSocket peer that keeps sending control frames but never answers
+    /// the login still ends that login at its deadline: control frames are
+    /// not progress, and no read or Pong reply outlasts the deadline.
+    #[test]
+    fn login_deadline_ends_a_handshake_kept_alive_by_ws_control_frames() {
+        let (addr, server) = spawn_ws_server(|mut ws| {
+            let until = std::time::Instant::now() + Duration::from_secs(10);
+            while std::time::Instant::now() < until && ws.send(Message::Ping(Vec::new())).is_ok() {
+                thread::sleep(Duration::from_millis(20));
+            }
+        });
+        let mut client = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: true,
+        });
+        client.stream = Some(connect_ws_plain(&addr.ip().to_string(), addr.port()).unwrap());
+        client.baton = true;
+        let started = std::time::Instant::now();
+        client.set_login_deadline(started + Duration::from_millis(500));
+        let error = client.login("alice", "secret", true).unwrap_err();
+        let took = started.elapsed();
+        assert!(
+            took >= Duration::from_millis(500) && took < Duration::from_millis(1000),
+            "the login ended {took:?} after it started, not at its 500 ms deadline"
+        );
+        let receipt = error.transport.expect("deadline receipt");
+        assert_eq!(
+            receipt.stage,
+            crate::client::login_error::LoginStage::ReadHello
+        );
+        assert_eq!(receipt.kind, io::ErrorKind::TimedOut);
+        assert_eq!(receipt.detail, "login handshake deadline passed");
+        drop(client);
+        server.join().unwrap();
+    }
+
+    /// A server that accepts the connection and never reads: the handshake's
+    /// writes fill both socket buffers and then block, and the write that
+    /// blocks still returns at the deadline.
+    #[test]
+    fn login_deadline_ends_a_handshake_write_to_a_peer_that_never_reads() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let started = Instant::now();
+        let deadline = started + Duration::from_millis(500);
+        let mut stream = ClientStream::connect_until(
+            Transport::Tcp,
+            &addr.ip().to_string(),
+            addr.port(),
+            deadline,
+            None,
+        )
+        .unwrap();
+        let (_held, _) = listener.accept().unwrap();
+        let chunk = vec![0u8; 64 * 1024];
+        let error = loop {
+            if let Err(error) = stream.write(&chunk, chunk.len()) {
+                break error;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "the writes never blocked"
+            );
+        };
+        let took = started.elapsed();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(error.to_string(), "login handshake deadline passed");
+        assert!(
+            took >= Duration::from_millis(500) && took < Duration::from_millis(1000),
+            "the blocked write returned {took:?} after the start, not at its 500 ms deadline"
+        );
+        assert!(
+            stream.bytes_out() > 0,
+            "the handshake wrote before it blocked"
+        );
+    }
+
+    thread_local! {
+        /// When this thread's last call through the transport wait hook
+        /// went in and came out.
+        static HOOKED: std::cell::Cell<Option<(Instant, Instant)>> =
+            const { std::cell::Cell::new(None) };
+    }
+
+    fn record_transport_wait(wait: &mut dyn FnMut()) {
+        let entered = Instant::now();
+        wait();
+        HOOKED.with(|span| span.set(Some((entered, Instant::now()))));
+    }
+
+    /// A host sees each socket call that blocks its thread through the
+    /// hook: the call is still waiting for the peer inside the hook. A game
+    /// send to a peer that stopped reading, a login handshake write, and a
+    /// read waiting for the peer's next byte.
+    #[test]
+    fn blocking_socket_calls_run_through_the_transport_wait_hook() {
+        set_transport_wait_hook(record_transport_wait);
+        let stall = Duration::from_millis(500);
+        let blocked_inside = |peer_moved: Instant, what: &str| {
+            let (entered, left) = HOOKED
+                .with(std::cell::Cell::take)
+                .unwrap_or_else(|| panic!("{what} never went through the hook"));
+            assert!(
+                entered <= peer_moved && peer_moved <= left,
+                "{what} was not waiting for the peer inside the hook: in {:?} before, out {:?} after",
+                peer_moved.saturating_duration_since(entered),
+                left.saturating_duration_since(peer_moved),
+            );
+        };
+
+        // A send larger than both socket buffers to a peer that has
+        // stopped reading.
+        let (stop_tx, stop_rx) = mpsc::channel::<()>();
+        let (resumed_tx, resumed_rx) = mpsc::channel();
+        let (addr, server) = spawn_ws_server(move |mut ws| {
+            stop_rx.recv().unwrap();
+            thread::sleep(stall);
+            resumed_tx.send(Instant::now()).unwrap();
+            let _ = io::copy(ws.get_mut(), &mut io::sink());
+        });
+        let mut stream = connect_ws_plain(&addr.ip().to_string(), addr.port()).unwrap();
+        let payload = vec![0u8; 16 << 20];
+        stop_tx.send(()).unwrap();
+        stream.write(&payload, payload.len()).unwrap();
+        blocked_inside(resumed_rx.recv().unwrap(), "the WebSocket send");
+        drop(stream);
+        server.join().unwrap();
+
+        // A login handshake write to a peer that never reads, which blocks
+        // until its deadline.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let deadline = Instant::now() + stall;
+        let mut stream = ClientStream::connect_until(
+            Transport::Tcp,
+            &addr.ip().to_string(),
+            addr.port(),
+            deadline,
+            None,
+        )
+        .unwrap();
+        let (_held, _) = listener.accept().unwrap();
+        let chunk = vec![0u8; 64 * 1024];
+        while stream.write(&chunk, chunk.len()).is_ok() {}
+        blocked_inside(deadline, "the handshake write");
+
+        // A read waiting for the peer's next byte.
+        let mut stream = ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+        let (mut peer, _) = listener.accept().unwrap();
+        let peer = thread::spawn(move || {
+            thread::sleep(stall);
+            let sent = Instant::now();
+            peer.write_all(&[7]).unwrap();
+            (peer, sent)
+        });
+        assert_eq!(stream.read().unwrap(), 7);
+        let (_peer, sent) = peer.join().unwrap();
+        blocked_inside(sent, "the read");
+    }
+
+    /// A cancel shuts the handshake's socket from another thread: the server
+    /// reads end of stream at once, and the read blocked on that socket
+    /// returns with the cancel. A handshake cancelled before it connects
+    /// fails its connect; a cancel after the handshake leaves the session.
+    #[test]
+    fn login_cancel_shuts_only_the_handshake_socket() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let host = addr.ip().to_string();
+        let far = || Instant::now() + Duration::from_secs(30);
+
+        let cancel = LoginCancel::new();
+        let mut stream =
+            ClientStream::connect_until(Transport::Tcp, &host, addr.port(), far(), Some(&cancel))
+                .unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        stream.write(&[14, 0], 2).unwrap();
+        let mut hello = [0u8; 2];
+        server.read_exact(&mut hello).unwrap();
+        // The server says nothing more, so this read blocks until the cancel.
+        let reader = thread::spawn(move || {
+            let result = stream.read();
+            (result, Instant::now())
+        });
+        thread::sleep(Duration::from_millis(100));
+        let cancelled_at = Instant::now();
+        cancel.cancel();
+        server
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let mut byte = [0u8; 1];
+        assert_eq!(
+            server.read(&mut byte).unwrap(),
+            0,
+            "the server reads end of stream"
+        );
+        assert!(cancelled_at.elapsed() < Duration::from_secs(1));
+        let (result, returned) = reader.join().unwrap();
+        let error = result.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::ConnectionAborted);
+        assert_eq!(error.to_string(), "login cancelled by its host");
+        assert!(returned.duration_since(cancelled_at) < Duration::from_secs(1));
+
+        let error =
+            ClientStream::connect_until(Transport::Tcp, &host, addr.port(), far(), Some(&cancel))
+                .err()
+                .expect("a cancelled handshake does not connect");
+        assert_eq!(error.to_string(), "login cancelled by its host");
+        let (mut refused, _) = listener.accept().unwrap();
+        refused
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        assert_eq!(refused.read(&mut byte).unwrap(), 0);
+
+        let cancel = LoginCancel::new();
+        let mut stream =
+            ClientStream::connect_until(Transport::Tcp, &host, addr.port(), far(), Some(&cancel))
+                .unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        stream.set_deadline(None).unwrap();
+        cancel.cancel();
+        stream.write(&[7], 1).unwrap();
+        server.read_exact(&mut byte).unwrap();
+        assert_eq!(
+            byte,
+            [7],
+            "the session outlives a cancel after its handshake"
+        );
+        stream.close();
+    }
+
+    /// Payload already buffered from an earlier frame is not read past the
+    /// deadline either; clearing the deadline hands it to the session.
+    #[test]
+    fn ws_buffered_payload_is_not_read_past_the_deadline() {
+        let (addr, server) = spawn_ws_server(|mut ws| {
+            ws.send(Message::Binary(vec![1, 2])).unwrap();
+            // Until the client's close.
+            let _ = ws.read();
+        });
+        let mut stream = connect_ws_plain(&addr.ip().to_string(), addr.port()).unwrap();
+        let deadline = Instant::now() + Duration::from_millis(300);
+        stream.set_deadline(Some(deadline)).unwrap();
+        assert_eq!(stream.read().unwrap(), 1);
+        thread::sleep(
+            deadline.saturating_duration_since(Instant::now()) + Duration::from_millis(20),
+        );
+        let error = stream.read().unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(error.to_string(), "login handshake deadline passed");
+        stream.set_deadline(None).unwrap();
+        assert_eq!(stream.read().unwrap(), 2);
+        stream.close();
+        server.join().unwrap();
     }
 }

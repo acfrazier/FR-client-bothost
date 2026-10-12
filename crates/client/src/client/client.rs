@@ -25,7 +25,7 @@ use crate::client::client_build::ClientBuild;
 use crate::client::client_draw::get_av_h;
 use crate::client::config::ClientConfig;
 use crate::client::game_shell::GameShell;
-use crate::client::login_error::LoginError;
+use crate::client::login_error::{LoginError, LoginStage, LoginTransportError};
 use crate::client::mini_menu_action::MiniMenuAction;
 use crate::client::skill::Skill;
 use crate::config::if_type::{
@@ -44,7 +44,7 @@ use crate::dash3d::{
 pub use crate::dash3d::{ClientNpc, ClientPlayer};
 use crate::datastruct::LinkList;
 use crate::graphics::Pix3D;
-use crate::io::client_stream::StreamExitReason;
+use crate::io::client_stream::{LoginCancel, StreamExitReason};
 use crate::io::{
     ClientProt, ClientRevision, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt,
     ServerProt289,
@@ -343,9 +343,20 @@ pub enum SessionExitReason {
     DeadServerDeadline {
         elapsed: Duration,
     },
+    /// T1 (unknown opcode) or T2 (decode exception). Java and TS log out
+    /// here; the frame context lets the next occurrence be diagnosed.
     ProtocolError {
         class: &'static str,
         last_opcode: i32,
+        /// Payload size of the failing frame (declared, for a frame too
+        /// large to read).
+        size: i32,
+        /// `gens.session` of the session that failed.
+        session: u64,
+        /// Frames this session dispatched before the failing one.
+        sequence: u64,
+        /// The frames just before it, oldest first.
+        previous: RecentFrames,
     },
     ConnectionLost,
 }
@@ -373,11 +384,69 @@ impl std::fmt::Display for SessionExitReason {
             Self::DeadServerDeadline { elapsed } => {
                 write!(f, "dead_server_deadline elapsed_ms={}", elapsed.as_millis())
             }
-            Self::ProtocolError { class, last_opcode } => {
-                write!(f, "protocol_error class={class} last_opcode={last_opcode}")
-            }
+            Self::ProtocolError {
+                class,
+                last_opcode,
+                size,
+                session,
+                sequence,
+                previous,
+            } => write!(
+                f,
+                "protocol_error class={class} last_opcode={last_opcode} size={size} \
+                 session={session} sequence={sequence} previous={previous}"
+            ),
             Self::ConnectionLost => f.write_str("connection_lost"),
         }
+    }
+}
+
+/// One dispatched inbound frame: decoded opcode and payload size.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct InboundFrame {
+    pub opcode: u8,
+    pub size: u16,
+}
+
+/// The last [`RecentFrames::CAPACITY`] frames a session dispatched, in
+/// fixed storage: recording one never allocates.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RecentFrames {
+    frames: [InboundFrame; RecentFrames::CAPACITY],
+    len: u8,
+    next: u8,
+}
+
+impl RecentFrames {
+    pub const CAPACITY: usize = 8;
+
+    fn push(&mut self, opcode: i32, size: i32) {
+        self.frames[self.next as usize] = InboundFrame {
+            opcode: (opcode & 0xff) as u8,
+            size: size.clamp(0, u16::MAX as i32) as u16,
+        };
+        self.next = ((self.next as usize + 1) % Self::CAPACITY) as u8;
+        self.len = (self.len + 1).min(Self::CAPACITY as u8);
+    }
+
+    /// Oldest first.
+    pub fn iter(&self) -> impl Iterator<Item = InboundFrame> + '_ {
+        let start = (self.next as usize + Self::CAPACITY - self.len as usize) % Self::CAPACITY;
+        (0..self.len as usize).map(move |i| self.frames[(start + i) % Self::CAPACITY])
+    }
+}
+
+/// `[opcode/size ...]`, oldest first.
+impl std::fmt::Display for RecentFrames {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[")?;
+        for (i, frame) in self.iter().enumerate() {
+            if i > 0 {
+                f.write_str(" ")?;
+            }
+            write!(f, "{}/{}", frame.opcode, frame.size)?;
+        }
+        f.write_str("]")
     }
 }
 
@@ -1472,6 +1541,12 @@ pub struct Client {
     /// — the opcode-18 handshake runs in place so a channel-head tune swaps
     /// net+sim without a TCP drop. Cleared at the start of that login.
     pub baton: bool,
+    /// Deadline for the next `login` call's socket I/O
+    /// ([`Client::set_login_deadline`]); taken by that call.
+    login_deadline: Option<Instant>,
+    /// Cancel handle for the next `login` call's socket
+    /// ([`Client::set_login_cancel`]); taken by that call.
+    login_cancel: Option<LoginCancel>,
     /// `logoutTimer` from Java: frames remaining until a requested logout.
     pub logout_timer: i32,
     /// `rebootTimer` from client-ts (140): seconds until the server reboot,
@@ -1508,6 +1583,13 @@ pub struct Client {
     /// First typed session-exit cause. It survives teardown until the host
     /// consumes it and is cleared by the next successful login.
     session_exit_reason: Option<SessionExitReason>,
+    /// The last session ended in the in-world connection-loss branch, which
+    /// keeps the map for a reconnect (see [`Client::session_resumable`]).
+    session_resumable: bool,
+    /// Frames this session dispatched, and the last few of them, for the
+    /// protocol-error reason.
+    session_frames: u64,
+    recent_frames: RecentFrames,
 }
 
 struct ClientConstruction {
@@ -1754,6 +1836,38 @@ impl Client {
     /// Take the first typed cause of the completed session, if any.
     pub fn take_session_exit_reason(&mut self) -> Option<SessionExitReason> {
         self.session_exit_reason.take()
+    }
+
+    /// Whether the session that just ended may be resumed with a reconnect
+    /// (opcode 18). True only after an in-world connection loss under an
+    /// external owner (Java `lostCon`, `Client.ts:2679-2706`): the map is
+    /// kept, so the server's same-zone rebuild after the grant is rightly
+    /// skipped. False after [`Client::logout`] — a server logout, a T1/T2
+    /// protocol error (`Client.ts:7380-7394`) or a connection lost while a
+    /// logout is pending — which clears the map and returns to the title,
+    /// whose next login is a fresh one (opcode 16).
+    pub fn session_resumable(&self) -> bool {
+        self.session_resumable
+    }
+
+    /// T1/T2 session-exit reason for the frame being dispatched (or read).
+    fn protocol_error(&self, class: &'static str, opcode: i32) -> SessionExitReason {
+        SessionExitReason::ProtocolError {
+            class,
+            last_opcode: opcode,
+            size: self.psize,
+            session: self.gens.session,
+            sequence: self.session_frames,
+            previous: self.recent_frames,
+        }
+    }
+
+    /// A login or reconnect grant starts a session: nothing to resume yet,
+    /// and no frames dispatched.
+    fn begin_session_frames(&mut self) {
+        self.session_resumable = false;
+        self.session_frames = 0;
+        self.recent_frames = RecentFrames::default();
     }
 
     /// Rebind a disconnected public slot without rebuilding the shared cache.
@@ -2115,6 +2229,9 @@ impl Client {
             r289_packet_reset: false,
             pending_local_idle_request: false,
             session_exit_reason: None,
+            session_resumable: false,
+            session_frames: 0,
+            recent_frames: RecentFrames::default(),
 
             stream: None,
             on_demand: construction.on_demand,
@@ -2233,6 +2350,8 @@ impl Client {
             last_login_reconnect: None,
             hosted_title_state: 0,
             baton: false,
+            login_deadline: None,
+            login_cancel: None,
             logout_timer: 0,
             reboot_timer: 0,
             last_response: None,
@@ -3207,6 +3326,8 @@ impl Client {
         self.ptype1 = std::mem::replace(&mut other.ptype1, 0);
         self.ptype2 = std::mem::replace(&mut other.ptype2, 0);
         self.psize = std::mem::replace(&mut other.psize, 0);
+        self.session_frames = std::mem::take(&mut other.session_frames);
+        self.recent_frames = std::mem::take(&mut other.recent_frames);
         self.baton = true;
         Some(())
     }
@@ -3226,6 +3347,25 @@ impl Client {
         self.out.p4(self.login_uid);
         self.out.pjstr(username);
         self.out.pjstr(password);
+    }
+
+    /// The next [`Client::login`] stops all of its socket I/O at `deadline`:
+    /// the connect, TLS and WebSocket setup for WSS, and every read and
+    /// write of the handshake, however much WebSocket control traffic
+    /// arrives. Past it the login fails with `TimedOut` at the stage it
+    /// reached and closes its socket. An embedding host that admits one
+    /// handshake at a time uses this to bound how long one may take.
+    pub fn set_login_deadline(&mut self, deadline: Instant) {
+        self.login_deadline = Some(deadline);
+    }
+
+    /// Another thread can shut the next [`Client::login`]'s socket with
+    /// `cancel` while its handshake runs: the server reads end of stream at
+    /// once, and the login fails with "login cancelled by its host" at the
+    /// stage it reached. A host that admits one handshake at a time cancels
+    /// an attempt whose turn ran out before it lets the next one start.
+    pub fn set_login_cancel(&mut self, cancel: LoginCancel) {
+        self.login_cancel = Some(cancel);
     }
 
     /// Login handshake, 1:1 of `Client.ts` `login` (1719-1867) / Java
@@ -3262,19 +3402,34 @@ impl Client {
         let reuse = self.baton;
         self.baton = false;
         let (transport, host, port) = self.session_game_endpoint();
-        let connect = || ClientStream::connect_for(transport, &host, port);
-        let mut stream = if reuse {
-            match self.stream.take() {
-                Some(s) => s,
-                None => match connect() {
-                    Ok(s) => s,
-                    Err(_) => return Err(self.fail_title_login(io_error(), reconnect)),
-                },
+        let deadline = self.login_deadline.take();
+        let cancel = self.login_cancel.take();
+        let connect = || match deadline {
+            Some(deadline) => {
+                ClientStream::connect_until(transport, &host, port, deadline, cancel.as_ref())
             }
-        } else {
-            match connect() {
-                Ok(s) => s,
-                Err(_) => return Err(self.fail_title_login(io_error(), reconnect)),
+            None => ClientStream::connect_for(transport, &host, port).and_then(|mut stream| {
+                match &cancel {
+                    Some(cancel) => stream.attach_cancel(cancel).map(|()| stream),
+                    None => Ok(stream),
+                }
+            }),
+        };
+        let adopted = if reuse { self.stream.take() } else { None };
+        let opened = match adopted {
+            Some(mut adopted) => adopted
+                .set_deadline(deadline)
+                .and_then(|()| match &cancel {
+                    Some(cancel) => adopted.attach_cancel(cancel),
+                    None => Ok(()),
+                })
+                .map(|()| adopted),
+            None => connect(),
+        };
+        let mut stream = match opened {
+            Ok(stream) => stream,
+            Err(e) => {
+                return Err(self.fail_title_login(io_error(LoginStage::Connect, &e), reconnect))
             }
         };
 
@@ -3286,25 +3441,26 @@ impl Client {
         self.out.p1(login_server);
         stream
             .write(self.out.data(), 2)
-            .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+            .map_err(|e| self.fail_title_login(io_error(LoginStage::SendHello, &e), reconnect))?;
 
         for _ in 0..8 {
-            stream
-                .read()
-                .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+            stream.read().map_err(|e| {
+                self.fail_title_login(io_error(LoginStage::ReadHello, &e), reconnect)
+            })?;
         }
+        let mut stage = LoginStage::ReadHello;
         let mut response = stream
             .read()
-            .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+            .map_err(|e| self.fail_title_login(io_error(stage, &e), reconnect))?;
 
         if response == 0 {
             // The reusable input buffer now holds a login seed, not the last
             // game packet. Its old frame limit may be shorter than eight bytes
             // after logout, reconnect, or socket adoption.
             self.r#in.clear_frame_end();
-            stream
-                .read_bytes(self.r#in.data_mut(), 0, 8)
-                .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+            stream.read_bytes(self.r#in.data_mut(), 0, 8).map_err(|e| {
+                self.fail_title_login(io_error(LoginStage::ReadSeed, &e), reconnect)
+            })?;
             self.r#in.pos = 0;
             let login_seed = self.r#in.g8();
             let mut seed = [
@@ -3345,12 +3501,13 @@ impl Client {
             }
             self.random_in = Some(Isaac::new(&seed));
 
-            stream
-                .write(loginout.data(), loginout.pos)
-                .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+            stream.write(loginout.data(), loginout.pos).map_err(|e| {
+                self.fail_title_login(io_error(LoginStage::SendLogin, &e), reconnect)
+            })?;
+            stage = LoginStage::ReadResponse;
             response = stream
                 .read()
-                .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+                .map_err(|e| self.fail_title_login(io_error(stage, &e), reconnect))?;
         }
 
         if response == 1 && !self.external_reconnect_owner() {
@@ -3359,11 +3516,14 @@ impl Client {
         }
 
         if response == 21 {
-            let remaining = stream
-                .read()
-                .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
+            let remaining = stream.read().map_err(|e| {
+                self.fail_title_login(io_error(LoginStage::ReadTransferDelay, &e), reconnect)
+            })?;
             if remaining < 0 {
-                return Err(self.fail_title_login(io_error(), reconnect));
+                return Err(self.fail_title_login(
+                    transport_error(LoginTransportError::closed(LoginStage::ReadTransferDelay)),
+                    reconnect,
+                ));
             }
             let retry_after = Duration::from_secs(remaining as u64);
             let transfer_error = || LoginError {
@@ -3371,6 +3531,7 @@ impl Client {
                 mes1: "You have only just left another world".into(),
                 mes2: format!("Your profile will be transferred in: {remaining} seconds"),
                 retry_after: Some(retry_after),
+                transport: None,
             };
             if self.external_reconnect_owner() {
                 drop(stream);
@@ -3386,13 +3547,16 @@ impl Client {
         }
 
         if response == 2 {
-            self.staffmodlevel = stream
-                .read()
-                .map_err(|_| self.fail_title_login(io_error(), reconnect))?;
-            self.mouse_tracked = stream
-                .read()
-                .map_err(|_| self.fail_title_login(io_error(), reconnect))?
-                == 1;
+            self.staffmodlevel = stream.read().map_err(|e| {
+                self.fail_title_login(io_error(LoginStage::ReadAccept, &e), reconnect)
+            })?;
+            self.mouse_tracked = stream.read().map_err(|e| {
+                self.fail_title_login(io_error(LoginStage::ReadAccept, &e), reconnect)
+            })? == 1;
+            // The session reads with the plain 30 s timeout from here on.
+            stream.set_deadline(None).map_err(|e| {
+                self.fail_title_login(io_error(LoginStage::ReadAccept, &e), reconnect)
+            })?;
             if self.revision.is_289() {
                 self.cold_login_input_289();
             }
@@ -3410,6 +3574,7 @@ impl Client {
             self.logout_timer = 0;
             self.last_outbound = Instant::now();
             self.session_exit_reason = None;
+            self.begin_session_frames();
             // Java `Client.java` 3630-3699: a cold login restores the tab,
             // modals, minimap, and chat defaults a previous logout left in
             // place (`sideTab = 3`, closed modals, empty chat, no flag).
@@ -3474,6 +3639,9 @@ impl Client {
             // Java `Client.java` 3737: reconnect grant. Same buffer/state
             // reset as response 2 minus the cold-login field init — Java
             // keeps `localPlayer`/`players` and never touches `logoutTimer`.
+            stream.set_deadline(None).map_err(|e| {
+                self.fail_title_login(io_error(LoginStage::ReadResponse, &e), reconnect)
+            })?;
             self.ingame = true;
             self.out.pos = 0;
             self.r#in.pos = 0;
@@ -3485,6 +3653,7 @@ impl Client {
             self.last_response = Some(Instant::now());
             self.last_outbound = Instant::now();
             self.session_exit_reason = None;
+            self.begin_session_frames();
             self.menu_num_entries = 0;
             self.scene_load_start_time = Instant::now();
             self.reset_packet_observations();
@@ -3552,16 +3721,17 @@ impl Client {
                 "Please try using a different world.".into(),
             ),
         };
+        // A refused socket carries no session; if resetting its timeout
+        // fails, its reads only keep timing out.
+        let _ = stream.set_deadline(None);
         self.stream = Some(stream);
-        Err(self.fail_title_login(
-            LoginError {
-                code: response,
-                mes1,
-                mes2,
-                retry_after: None,
-            },
-            reconnect,
-        ))
+        let mut error = LoginError::response(response, mes1, mes2);
+        if response == -1 {
+            // `read` reports end of stream as -1: the server hung up instead
+            // of answering.
+            error.transport = Some(LoginTransportError::closed(stage));
+        }
+        Err(self.fail_title_login(error, reconnect))
     }
 
     /// Cold-login failures land on the title form (`loginscreen` 2) with
@@ -4959,9 +5129,14 @@ impl Client {
                 // callable with an external packet in tests), so swap the
                 // `in` buffer out for the dispatch and put it back.
                 let ptype = self.ptype;
+                let psize = self.psize;
                 let mut packet = std::mem::replace(&mut self.r#in, Packet::alloc(1));
                 self.handle_packet(ptype, &mut packet);
                 self.r#in = packet;
+                // Recorded after dispatch: a protocol error inside it
+                // reports the frames before the failing one.
+                self.recent_frames.push(ptype, psize);
+                self.session_frames += 1;
                 true
             }
             Ok(false) => false,
@@ -4972,10 +5147,7 @@ impl Client {
                     // `Other` here is the oversized psize/AIOOBE equivalent;
                     // WSS/TLS errors carry a transport observation instead.
                     eprintln!("T2 - {},{},{}", self.ptype, self.ptype1, self.ptype2);
-                    self.record_session_exit(SessionExitReason::ProtocolError {
-                        class: "T2",
-                        last_opcode: self.ptype,
-                    });
+                    self.record_session_exit(self.protocol_error("T2", self.ptype));
                     self.logout();
                 } else {
                     self.lost_con();
@@ -5073,10 +5245,7 @@ impl Client {
                 Ok(R289Outcome::Reset) => {}
                 Err(_) => {
                     eprintln!("T2 - {ptype},{ptype1},{ptype2}");
-                    self.record_session_exit(SessionExitReason::ProtocolError {
-                        class: "T2",
-                        last_opcode: ptype,
-                    });
+                    self.record_session_exit(self.protocol_error("T2", ptype));
                     if !self.r289_packet_reset {
                         self.logout();
                     }
@@ -5089,10 +5258,7 @@ impl Client {
         }));
         if result.is_err() {
             eprintln!("T2 - {ptype},{ptype1},{ptype2}");
-            self.record_session_exit(SessionExitReason::ProtocolError {
-                class: "T2",
-                last_opcode: ptype,
-            });
+            self.record_session_exit(self.protocol_error("T2", ptype));
             // `logout()` bumps every family (spec: REBUILD/logout → all).
             self.logout();
         } else {
@@ -10310,10 +10476,7 @@ impl Client {
     }
 
     fn protocol_logout(&mut self, class: &'static str) {
-        self.record_session_exit(SessionExitReason::ProtocolError {
-            class,
-            last_opcode: self.ptype,
-        });
+        self.record_session_exit(self.protocol_error(class, self.ptype));
         self.logout();
     }
 
@@ -10331,6 +10494,8 @@ impl Client {
             t.complete("logout");
         }
         self.r289_packet_reset = true;
+        // The map is cleared below: a reconnect could not restore it.
+        self.session_resumable = false;
         self.pending_local_idle_request = false;
         if let Some(mut stream) = self.stream.take() {
             stream.close();
@@ -10454,7 +10619,8 @@ impl Client {
     /// `lostCon` from Java (`Client.java` 6147): in-game connection loss. A
     /// pending logout request logs out immediately. Otherwise standalone
     /// clients reconnect internally as Java did, while an external owner
-    /// receives control with the old socket closed and credentials retained.
+    /// receives control with the old socket closed and the credentials and
+    /// map retained, ready for its reconnect ([`Client::session_resumable`]).
     pub fn lost_con(&mut self) {
         self.record_session_exit(SessionExitReason::ConnectionLost);
         if let Some(t) = &mut self.shell.ground_trace {
@@ -10468,6 +10634,7 @@ impl Client {
         if self.external_reconnect_owner() {
             self.stream = None;
             self.last_response = None;
+            self.session_resumable = true;
             return;
         }
         let user = self.login_user.clone();
@@ -13797,12 +13964,16 @@ impl Client {
     }
 }
 
-fn io_error() -> LoginError {
+/// A login socket failure. The title keeps the original client's
+/// "Error connecting to server." line; the receipt keeps the cause.
+fn io_error(stage: LoginStage, error: &std::io::Error) -> LoginError {
+    transport_error(LoginTransportError::from_io(stage, error))
+}
+
+fn transport_error(transport: LoginTransportError) -> LoginError {
     LoginError {
-        code: -1,
-        mes1: String::new(),
-        mes2: "Error connecting to server.".into(),
-        retry_after: None,
+        transport: Some(transport),
+        ..LoginError::response(-1, "", "Error connecting to server.")
     }
 }
 
@@ -14042,6 +14213,37 @@ mod try_move_path {
             vec![(2, 5), (3, 5)],
             "scene rebuild must keep world-stable trail tiles"
         );
+    }
+}
+
+#[cfg(test)]
+mod recent_frames {
+    use super::*;
+
+    #[test]
+    fn keeps_the_last_eight_frames_oldest_first() {
+        let mut frames = RecentFrames::default();
+        assert_eq!(frames.to_string(), "[]");
+        frames.push(81, 112);
+        frames.push(254, 0);
+        assert_eq!(frames.to_string(), "[81/112 254/0]");
+        for i in 0..RecentFrames::CAPACITY as i32 {
+            frames.push(i, i * 10);
+        }
+        assert_eq!(
+            frames.to_string(),
+            "[0/0 1/10 2/20 3/30 4/40 5/50 6/60 7/70]"
+        );
+        frames.push(300, 70_000);
+        assert_eq!(
+            frames.iter().last(),
+            Some(InboundFrame {
+                opcode: 44,
+                size: u16::MAX
+            })
+        );
+        assert_eq!(frames.iter().count(), RecentFrames::CAPACITY);
+        assert_eq!(frames.iter().next().map(|f| f.opcode), Some(1));
     }
 }
 

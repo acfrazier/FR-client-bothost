@@ -1224,7 +1224,7 @@ mod tests {
     #[test]
     fn model_atlas_texture_reports_eight_mips() {
         let Some((device, queue)) = test_device() else {
-            eprintln!("no adapter; skipping");
+            eprintln!("GPU unavailable (no adapter or SKIP_GPU=1); skipping");
             return;
         };
         let assets = GpuAssets::new(&device, &queue);
@@ -1236,6 +1236,10 @@ mod tests {
     }
 
     fn test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        // Headless CI sets this; match `GpuBackend::try_new` without probing an adapter.
+        if std::env::var("SKIP_GPU").ok().as_deref() == Some("1") {
+            return None;
+        }
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter =
             pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
@@ -1249,7 +1253,7 @@ mod tests {
     #[test]
     fn atlas_growth_stops_at_the_cap() {
         let Some((device, queue)) = test_device() else {
-            eprintln!("no adapter; skipping");
+            eprintln!("GPU unavailable (no adapter or SKIP_GPU=1); skipping");
             return;
         };
         let mut atlas = GpuAtlas::new(&device, "test", (8, 8), 16, 0);
@@ -1271,7 +1275,7 @@ mod tests {
     #[test]
     fn layer_atlas_spills_without_overflow() {
         let Some((device, queue)) = test_device() else {
-            eprintln!("no adapter; skipping");
+            eprintln!("GPU unavailable (no adapter or SKIP_GPU=1); skipping");
             return;
         };
         let mut atlas = LayerAtlas::new(&device, "test", (8, 8), 16);
@@ -1290,7 +1294,7 @@ mod tests {
     #[test]
     fn evicted_regions_are_reused_from_the_next_epoch() {
         let Some((device, queue)) = test_device() else {
-            eprintln!("no adapter; skipping");
+            eprintln!("GPU unavailable (no adapter or SKIP_GPU=1); skipping");
             return;
         };
         let mut atlas = LayerAtlas::new(&device, "test", (8, 8), 16);
@@ -1352,7 +1356,7 @@ mod tests {
     #[test]
     fn stale_sprite_sources_stop_growing_the_atlas() {
         let Some((device, queue)) = test_device() else {
-            eprintln!("no adapter; skipping");
+            eprintln!("GPU unavailable (no adapter or SKIP_GPU=1); skipping");
             return;
         };
         let mut assets = GpuAssets::new(&device, &queue);
