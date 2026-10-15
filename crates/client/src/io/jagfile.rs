@@ -93,12 +93,12 @@ impl JagFile {
             }
         }
         let offset = self.file_offset[index] as usize;
-        let length = self.file_packed_size[index] as usize;
-        let src = &self.data[offset..offset + length];
+        let packed_size = self.file_packed_size[index] as usize;
+        let unpacked_size = self.file_unpacked_size[index] as usize;
         let data = if self.unpacked {
-            src.to_vec()
+            self.data[offset..offset + packed_size].to_vec()
         } else {
-            bunzip2_sized(src, self.file_unpacked_size[index] as usize)
+            bunzip2_sized(&self.data[offset..], unpacked_size)
         };
         self.file_unpacked.borrow_mut()[index] = Some(data.clone());
         Some(data)
@@ -196,5 +196,27 @@ mod tests {
         expected.resize(declared_size, 0);
 
         assert_eq!(JagFile::new(archive).read("test.dat"), Some(expected));
+    }
+
+    #[test]
+    fn member_stream_can_extend_past_declared_packed_size() {
+        let file_data: Vec<u8> = (0..100_000)
+            .map(|i| ((i * 37 + i / 257) & 255) as u8)
+            .collect();
+        let compressed = headerless(&file_data);
+        let declared_packed_size = 64;
+        assert!(compressed.len() > declared_packed_size);
+
+        // Java passes packed size but indexes the whole data array without a
+        // bound check (JagFile.java:79-80; BZip2.java:463-475).
+        let mut member_container = Vec::new();
+        member_container.extend_from_slice(&1_u16.to_be_bytes());
+        member_container.extend_from_slice(&JagFile::gen_hash("test.dat").to_be_bytes());
+        append_g3(&mut member_container, file_data.len());
+        append_g3(&mut member_container, declared_packed_size);
+        member_container.extend_from_slice(&compressed);
+        let archive = archive(&member_container, false);
+
+        assert_eq!(JagFile::new(archive).read("test.dat"), Some(file_data));
     }
 }

@@ -48,6 +48,11 @@ pub(crate) fn bunzip2_sized(src: &[u8], unpacked_size: usize) -> Vec<u8> {
 
 fn decode_sized(src: &[u8], header: &[u8; 4], out: &mut [u8]) -> io::Result<()> {
     let mut dec = bzip2::bufread::BzDecoder::new(header.as_slice().chain(src));
+
+    // Java enters the decoder and reads the stream marker even when the
+    // declared output bound is zero (BZip2.java:162-168).
+    let mut probe = [0; 1];
+    let out = if out.is_empty() { &mut probe[..] } else { out };
     let mut written = 0;
     while written < out.len() {
         match dec.read(&mut out[written..]) {
@@ -133,5 +138,29 @@ mod tests {
         let data = payload();
         let compressed = headerless(&data, Compression::fast());
         bunzip2_sized(&compressed[..compressed.len() - 1], data.len() + 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "bunzip2:")]
+    fn zero_sized_output_still_rejects_garbage() {
+        // Java reads the block marker before the output bound can stop it
+        // (BZip2.java:162-168,463-475).
+        bunzip2_sized(b"not-a-bzip-stream!!", 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "bunzip2:")]
+    fn zero_sized_output_still_rejects_empty_input() {
+        // Java's first marker read indexes the input even for a zero output
+        // array (BZip2.java:162-168,463-475).
+        bunzip2_sized(&[], 0);
+    }
+
+    #[test]
+    fn zero_sized_output_accepts_a_valid_stream() {
+        let compressed = headerless(&payload(), Compression::fast());
+        // Java returns the allocated zero-length array when the valid stream
+        // reaches its end marker (JagFile.java:72-80; BZip2.java:162-165).
+        assert_eq!(bunzip2_sized(&compressed, 0), Vec::<u8>::new());
     }
 }
