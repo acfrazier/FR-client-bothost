@@ -187,47 +187,135 @@ enum Readiness {
     Write,
 }
 
-/// Wait until `socket` is ready for `readiness`, in steps of at most
-/// [`LOGIN_CANCEL_POLL`], and check `cancel` before and after each step.
-/// The wait stops with the deadline error at `deadline`, and with
-/// [`read_timed_out`] after `limit`.
+/// The shortest socket read timeout that a cancellable read arms. A
+/// budget with less time left fails as timed out, and the read does not run.
+const MIN_READ_TIMEOUT: Duration = Duration::from_millis(1);
+
+/// The end of the time that one cancellable read or write can use, and the
+/// error at that end.
+#[derive(Debug, Clone, Copy)]
+struct WaitEnd {
+    at: Instant,
+    error: fn() -> io::Error,
+}
+
+impl WaitEnd {
+    /// The budget of one read, for its readiness wait and the read together:
+    /// [`READ_TIMEOUT`] from now (Java's `SO_TIMEOUT`, "Read timed out"), or
+    /// the deadline if it comes first.
+    fn read(deadline: Option<Instant>) -> Self {
+        let timeout = Instant::now() + READ_TIMEOUT;
+        match deadline {
+            Some(deadline) if deadline <= timeout => WaitEnd {
+                at: deadline,
+                error: deadline_passed,
+            },
+            _ => WaitEnd {
+                at: timeout,
+                error: read_timed_out,
+            },
+        }
+    }
+
+    /// A write has only the deadline: Java sets no write timeout.
+    fn write(deadline: Option<Instant>) -> Option<Self> {
+        deadline.map(|at| WaitEnd {
+            at,
+            error: deadline_passed,
+        })
+    }
+
+    fn left(self) -> Duration {
+        self.at.saturating_duration_since(Instant::now())
+    }
+}
+
+/// Wait until `poll` reports `socket` ready for `readiness`, in steps of at
+/// most [`LOGIN_CANCEL_POLL`], and check `cancel` before and after each
+/// step. The wait stops with the error of `end` at its time.
 ///
-/// After a read wait, the read does not block. After a write wait, the
-/// socket can take at least some bytes, and the write blocks only while
-/// the rest does not fit. The call that follows keeps the socket's normal
-/// timeouts: the time left to the deadline, or else the plain 30 s read
-/// timeout and no write timeout. So no short socket timeout fires, and
-/// the handshake does not use a socket again after a timed-out blocking
-/// call. On Windows, such a socket is in an indeterminate state.
+/// Readiness is not a promise that the next call does not block: a read
+/// can block after a spurious readiness report. A cancellable read
+/// therefore arms the time left in its budget ([`read_within`]). After a
+/// write wait, the socket can take at least some bytes, but the write
+/// blocks while the rest does not fit in the send buffer. That write has
+/// the time left to the deadline, or no timeout without a deadline. While
+/// it blocks, only the `shutdown` of [`LoginCancel::cancel`] can end it.
+/// Linux wakes a blocked send on `shutdown`. No test shows that Windows
+/// does, so a cancel has no time bound for a write that already blocks.
+/// Handshake writes are small (login packets and TLS records), so this
+/// case is not expected.
 fn wait_ready(
     socket: &TcpStream,
     readiness: Readiness,
-    deadline: Option<Instant>,
-    limit: Option<Duration>,
+    end: Option<WaitEnd>,
     cancel: &LoginCancel,
+    mut poll: impl FnMut(&TcpStream, Readiness, Duration) -> io::Result<bool>,
 ) -> io::Result<()> {
-    let limit = limit.map(|limit| Instant::now() + limit);
     loop {
         if cancel.is_cancelled() {
             return Err(login_cancelled());
         }
         let mut step = LOGIN_CANCEL_POLL;
-        if let Some(deadline) = deadline {
-            step = step.min(time_left(deadline)?);
-        }
-        if let Some(limit) = limit {
-            let left = limit.saturating_duration_since(Instant::now());
+        if let Some(end) = end {
+            let left = end.left();
             if left.is_zero() {
-                return Err(read_timed_out());
+                return Err((end.error)());
             }
             step = step.min(left);
         }
-        if poll_ready(socket, readiness, step)? {
+        if poll(socket, readiness, step)? {
             if cancel.is_cancelled() {
                 return Err(login_cancelled());
             }
             return Ok(());
         }
+    }
+}
+
+/// One cancellable read of `socket`, within one budget ([`WaitEnd::read`]).
+fn cancellable_read(
+    socket: &TcpStream,
+    buf: &mut [u8],
+    deadline: Option<Instant>,
+    cancel: &LoginCancel,
+) -> io::Result<usize> {
+    read_within(socket, buf, WaitEnd::read(deadline), cancel, poll_ready)
+}
+
+/// Wait for normal data ([`wait_ready`]), then read, and stop both at
+/// `end`. The read arms the socket read timeout with the time left to
+/// `end`, never a short poll timeout. After a false readiness report, the
+/// read blocks at most until `end`, and its timeout gives the error of
+/// `end`. The connection then ends, as after Java's `SO_TIMEOUT`. A
+/// budget with less than [`MIN_READ_TIMEOUT`] left fails without a read.
+/// The socket keeps that read timeout until the next read arms its own,
+/// or until [`ClientStream::set_deadline`] (`None`) restores 30 s and
+/// releases the cancel.
+fn read_within(
+    socket: &TcpStream,
+    buf: &mut [u8],
+    end: WaitEnd,
+    cancel: &LoginCancel,
+    poll: impl FnMut(&TcpStream, Readiness, Duration) -> io::Result<bool>,
+) -> io::Result<usize> {
+    wait_ready(socket, Readiness::Read, Some(end), cancel, poll)?;
+    let left = end.left();
+    if left < MIN_READ_TIMEOUT {
+        return Err((end.error)());
+    }
+    socket.set_read_timeout(Some(left))?;
+    let mut socket = socket;
+    match socket.read(buf) {
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+            ) =>
+        {
+            Err((end.error)())
+        }
+        read => read,
     }
 }
 
@@ -238,8 +326,10 @@ fn poll_millis(wait: Duration) -> i32 {
 }
 
 /// Wait at most `wait` for `socket` to become ready for `readiness`.
-/// `true`: the socket is ready, or it has an error or a hang-up that the
-/// next read or write reports. `false`: the wait ended first.
+/// `true`: the socket has normal data to read, or it can take bytes, or it
+/// has an error or a hang-up that the next read or write reports. `false`:
+/// the wait ended first. A read asks for normal data only (`POLLIN`, which
+/// POSIX defines without priority data).
 #[cfg(unix)]
 fn poll_ready(socket: &TcpStream, readiness: Readiness, wait: Duration) -> io::Result<bool> {
     let events = match readiness {
@@ -271,20 +361,25 @@ fn poll_ready(socket: &TcpStream, readiness: Readiness, wait: Duration) -> io::R
         }
         return Err(error);
     }
-    Ok(rc > 0)
+    let accepted = events | libc::POLLHUP | libc::POLLERR | libc::POLLNVAL;
+    Ok(rc > 0 && fds[0].revents & accepted != 0)
 }
 
 /// Wait at most `wait` for `socket` to become ready for `readiness`.
-/// `true`: the socket is ready, or it has an error or a hang-up that the
-/// next read or write reports. `false`: the wait ended first.
+/// `true`: the socket has normal data to read, or it can take bytes, or it
+/// has an error or a hang-up that the next read or write reports. `false`:
+/// the wait ended first. A read asks for `POLLRDNORM` only. Winsock's
+/// `POLLIN` also includes `POLLRDBAND` (out-of-band data), which an
+/// ordinary `recv` does not read.
 #[cfg(windows)]
 fn poll_ready(socket: &TcpStream, readiness: Readiness, wait: Duration) -> io::Result<bool> {
     use windows_sys::Win32::Networking::WinSock::{
-        WSAPoll, POLLIN, POLLOUT, SOCKET, SOCKET_ERROR, WSAPOLLFD,
+        WSAPoll, POLLERR, POLLHUP, POLLNVAL, POLLRDNORM, POLLWRNORM, SOCKET, SOCKET_ERROR,
+        WSAPOLLFD,
     };
     let events = match readiness {
-        Readiness::Read => POLLIN,
-        Readiness::Write => POLLOUT,
+        Readiness::Read => POLLRDNORM,
+        Readiness::Write => POLLWRNORM,
     };
     let mut fds = [WSAPOLLFD {
         fd: socket.as_raw_socket() as SOCKET,
@@ -302,7 +397,8 @@ fn poll_ready(socket: &TcpStream, readiness: Readiness, wait: Duration) -> io::R
         // Winsock keeps its last error in the thread's last-error value.
         return Err(io::Error::last_os_error());
     }
-    Ok(rc > 0)
+    let accepted = events | POLLHUP | POLLERR | POLLNVAL;
+    Ok(rc > 0 && fds[0].revents & accepted != 0)
 }
 
 /// Stops one login handshake's transport from another thread. An embedding
@@ -326,11 +422,15 @@ impl LoginCancel {
     }
 
     /// Shut the handshake's socket in both directions now: the server reads
-    /// end of stream, and a read or write blocked on the socket returns. A
-    /// socket the handshake connects later is shut as it connects. The
-    /// handshake's I/O then fails with "login cancelled by its host".
-    /// A cancellable read or write waits for its socket in steps of at most
-    /// 100 ms and checks the cancellation flag between the steps.
+    /// end of stream. A socket the handshake connects later is shut as it
+    /// connects. The handshake's I/O then fails with "login cancelled by
+    /// its host". A cancellable read or write waits for its socket in steps
+    /// of at most 100 ms and checks the cancellation flag between the
+    /// steps. A read or write that already blocks after its wait returns
+    /// when the shutdown wakes it (Linux), or else when its socket timeout
+    /// ends: the read budget, or the deadline. A write without a deadline
+    /// has no timeout. No test shows that Windows wakes a blocked call on
+    /// `shutdown` (see [`wait_ready`]).
     pub fn cancel(&self) {
         let mut state = self.state();
         state.cancelled = true;
@@ -370,7 +470,8 @@ impl LoginCancel {
 /// The TCP socket under a WebSocket. With a deadline, each read and write
 /// is armed with the time left, so no single call, and no run of
 /// WebSocket control frames, outlasts it. With a [`LoginCancel`], each
-/// read and write first waits for the socket ([`wait_ready`]).
+/// read is a [`cancellable_read`], and each write first waits for the
+/// socket ([`wait_ready`]).
 #[derive(Debug)]
 struct DeadlineSocket {
     sock: TcpStream,
@@ -411,29 +512,28 @@ impl DeadlineSocket {
         Ok(())
     }
 
-    /// With a [`LoginCancel`], wait until the socket is ready for the next
-    /// call; see [`wait_ready`]. A read waits at most [`READ_TIMEOUT`].
-    fn wait_for(&self, readiness: Readiness) -> io::Result<()> {
+    /// The [`LoginCancel`] that the next blocking call waits on. In
+    /// non-blocking mode, a call does not wait: it fails only if the cancel
+    /// fired.
+    fn waiting_cancel(&self) -> io::Result<Option<&LoginCancel>> {
         let Some(cancel) = &self.cancel else {
-            return Ok(());
+            return Ok(None);
         };
-        if self.nonblocking {
-            if cancel.is_cancelled() {
-                return Err(login_cancelled());
-            }
-            return Ok(());
+        if !self.nonblocking {
+            return Ok(Some(cancel));
         }
-        let limit = match readiness {
-            Readiness::Read => Some(READ_TIMEOUT),
-            Readiness::Write => None,
-        };
-        wait_ready(&self.sock, readiness, self.deadline, limit, cancel)
+        if cancel.is_cancelled() {
+            return Err(login_cancelled());
+        }
+        Ok(None)
     }
 }
 
 impl Read for DeadlineSocket {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.wait_for(Readiness::Read)?;
+        if let Some(cancel) = self.waiting_cancel()? {
+            return cancellable_read(&self.sock, buf, self.deadline, cancel);
+        }
         if let Some(deadline) = self.deadline {
             self.sock.set_read_timeout(Some(time_left(deadline)?))?;
         }
@@ -445,7 +545,10 @@ impl Read for DeadlineSocket {
 
 impl Write for DeadlineSocket {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.wait_for(Readiness::Write)?;
+        if let Some(cancel) = self.waiting_cancel()? {
+            let end = WaitEnd::write(self.deadline);
+            wait_ready(&self.sock, Readiness::Write, end, cancel, poll_ready)?;
+        }
         if let Some(deadline) = self.deadline {
             self.sock.set_write_timeout(Some(time_left(deadline)?))?;
         }
@@ -897,13 +1000,7 @@ impl ClientStream {
                 let reader = &t.reader;
                 let read = transport_wait(|| {
                     if let Some(cancel) = cancel {
-                        wait_ready(
-                            reader,
-                            Readiness::Read,
-                            deadline,
-                            Some(READ_TIMEOUT),
-                            cancel,
-                        )?;
+                        return cancellable_read(reader, dst, deadline, cancel);
                     }
                     if let Some(deadline) = deadline {
                         reader.set_read_timeout(Some(time_left(deadline)?))?;
@@ -1310,7 +1407,8 @@ fn tcp_write_until(
     let mut rest = buf;
     while !rest.is_empty() {
         if let Some(cancel) = cancel {
-            wait_ready(&t.reader, Readiness::Write, Some(deadline), None, cancel)?;
+            let end = WaitEnd::write(Some(deadline));
+            wait_ready(&t.reader, Readiness::Write, end, cancel, poll_ready)?;
         }
         t.reader.set_write_timeout(Some(time_left(deadline)?))?;
         match (&t.reader).write(rest) {
@@ -2249,6 +2347,147 @@ mod tests {
         assert_eq!((&client).read(&mut got).unwrap(), 0);
     }
 
+    /// `peer` sends one byte of priority (out-of-band) data.
+    fn send_priority_byte(peer: &TcpStream) {
+        let byte = [0x55u8];
+        // SAFETY: `byte` is live for the whole call, and the call gives its
+        // exact length. The descriptor belongs to `peer`, which this
+        // function borrows for the whole call.
+        #[cfg(unix)]
+        let sent = unsafe {
+            libc::send(
+                peer.as_raw_fd(),
+                byte.as_ptr().cast(),
+                byte.len(),
+                libc::MSG_OOB,
+            )
+        } as i64;
+        // SAFETY: as for Unix, with the socket handle of `peer`.
+        #[cfg(windows)]
+        let sent = unsafe {
+            use windows_sys::Win32::Networking::WinSock::{send, MSG_OOB, SOCKET};
+            send(
+                peer.as_raw_socket() as SOCKET,
+                byte.as_ptr(),
+                byte.len() as i32,
+                MSG_OOB,
+            )
+        } as i64;
+        assert_eq!(sent, 1, "send MSG_OOB: {}", io::Error::last_os_error());
+    }
+
+    /// Priority (out-of-band) data alone does not make a read ready: an
+    /// ordinary read does not return it. Winsock's `POLLIN` includes
+    /// priority data, so the Windows read wait asks for `POLLRDNORM`.
+    #[test]
+    fn priority_data_alone_does_not_make_a_read_ready() {
+        let (client, mut peer) = socket_pair();
+        send_priority_byte(&peer);
+        // The byte arrives during this wait.
+        assert!(
+            !poll_ready(&client, Readiness::Read, Duration::from_millis(500)).unwrap(),
+            "priority data alone made the socket ready for an ordinary read"
+        );
+        peer.write_all(&[7]).unwrap();
+        assert!(poll_ready(&client, Readiness::Read, Duration::from_secs(5)).unwrap());
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut got = [0u8; 4];
+        assert_eq!((&client).read(&mut got).unwrap(), 1);
+        assert_eq!(got[0], 7, "the ordinary read gets the normal byte only");
+    }
+
+    /// One read budget: [`READ_TIMEOUT`] from the start of the wait, or the
+    /// deadline if it comes first, each with its own error.
+    #[test]
+    fn a_read_budget_ends_at_the_read_timeout_or_an_earlier_deadline() {
+        let before = Instant::now();
+        let end = WaitEnd::read(None);
+        assert!(end.at >= before + READ_TIMEOUT && end.at <= Instant::now() + READ_TIMEOUT);
+        assert_eq!((end.error)().to_string(), "Read timed out");
+
+        let far = before + READ_TIMEOUT * 2;
+        let end = WaitEnd::read(Some(far));
+        assert!(end.at < far);
+        assert_eq!((end.error)().to_string(), "Read timed out");
+
+        let near = before + Duration::from_secs(1);
+        let end = WaitEnd::read(Some(near));
+        assert_eq!(end.at, near);
+        assert_eq!((end.error)().to_string(), "login handshake deadline passed");
+    }
+
+    /// A false readiness report does not let a read outlast its budget. The
+    /// fake readiness keeps the socket quiet for half the budget. Then it
+    /// reports ready at every call, and no data comes. The read is armed
+    /// with the time left, so it ends at the budget with the budget's error,
+    /// not after the socket's own 30 s read timeout.
+    #[test]
+    fn a_false_readiness_report_keeps_the_read_within_its_budget() {
+        let budget = Duration::from_millis(1_200);
+        let (client, peer) = socket_pair();
+        client.set_read_timeout(Some(READ_TIMEOUT)).unwrap();
+        let (done_tx, done_rx) = mpsc::channel();
+        let started = Instant::now();
+        thread::spawn(move || {
+            let end = WaitEnd {
+                at: started + budget,
+                error: read_timed_out,
+            };
+            let quiet_until = started + budget / 2;
+            let false_readiness = |_: &TcpStream, _: Readiness, wait: Duration| {
+                if Instant::now() < quiet_until {
+                    thread::sleep(wait);
+                    return Ok(false);
+                }
+                Ok(true)
+            };
+            let mut buf = [0u8; 8];
+            let result = read_within(&client, &mut buf, end, &LoginCancel::new(), false_readiness);
+            let _ = done_tx.send((result, started.elapsed()));
+        });
+        let (result, took) = done_rx
+            .recv_timeout(budget + Duration::from_secs(5))
+            .expect("the read did not end within 5 s after its budget");
+        let error = result.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(error.to_string(), "Read timed out");
+        assert!(
+            took >= budget - Duration::from_millis(50)
+                && took < budget + Duration::from_millis(500),
+            "the read ended after {took:?}, not at its {budget:?} budget"
+        );
+        drop(peer);
+    }
+
+    /// A budget with less than 1 ms left after the wait fails as timed out,
+    /// and the read does not run: the byte on the socket stays there.
+    #[test]
+    fn a_read_with_under_1_ms_of_budget_left_does_not_read() {
+        let (client, mut peer) = socket_pair();
+        peer.write_all(&[9]).unwrap();
+        let end = WaitEnd {
+            at: Instant::now() + Duration::from_millis(50),
+            error: read_timed_out,
+        };
+        let late_readiness = |_: &TcpStream, _: Readiness, _: Duration| {
+            let left = end.at.saturating_duration_since(Instant::now());
+            thread::sleep(left.saturating_sub(Duration::from_micros(500)));
+            Ok(true)
+        };
+        let mut got = [0u8; 1];
+        let error = read_within(&client, &mut got, end, &LoginCancel::new(), late_readiness)
+            .expect_err("a read with under 1 ms left ran");
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(error.to_string(), "Read timed out");
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        assert_eq!((&client).read(&mut got).unwrap(), 1);
+        assert_eq!(got, [9], "the byte stayed on the socket");
+    }
+
     /// A cancellable handshake read or write waits for its socket. It never
     /// arms a 100 ms socket timeout, so no blocking call times out and then
     /// runs again on the same socket. The peer answers after three poll
@@ -2293,8 +2532,9 @@ mod tests {
         assert!(normal(write), "TCP write timeout {write:?}");
         stream.close();
 
-        // WebSocket, without a deadline: the plain 30 s read timeout and
-        // no write timeout.
+        // WebSocket, without a deadline: the read is armed with the time
+        // left in its 30 s budget, and there is no write timeout. The end
+        // of the handshake restores the plain 30 s read timeout.
         let (addr, server) = spawn_ws_server(|mut ws| {
             let Message::Binary(hello) = ws.read().unwrap() else {
                 panic!("a binary hello")
@@ -2309,18 +2549,28 @@ mod tests {
         stream.attach_cancel(&cancel).unwrap();
         stream.write(&[41], 1).unwrap();
         assert_eq!(stream.read().unwrap(), 42);
-        let Inner::Ws(w) = &stream.inner else {
-            unreachable!("a WebSocket stream")
-        };
-        let (read, write) = {
+        let timeouts = |stream: &ClientStream| {
+            let Inner::Ws(w) = &stream.inner else {
+                unreachable!("a WebSocket stream")
+            };
             let ws = w.ws.lock().unwrap();
             (
                 ws.socket().read_timeout().unwrap(),
                 ws.socket().write_timeout().unwrap(),
             )
         };
-        assert_eq!(read, Some(READ_TIMEOUT), "WebSocket read timeout");
+        let (read, write) = timeouts(&stream);
+        assert!(
+            normal(read) && read <= Some(READ_TIMEOUT),
+            "WebSocket read timeout {read:?}"
+        );
         assert_eq!(write, None, "WebSocket write timeout");
+        stream.set_deadline(None).unwrap();
+        assert_eq!(
+            timeouts(&stream),
+            (Some(READ_TIMEOUT), None),
+            "the timeouts after the handshake"
+        );
         stream.close();
         server.join().unwrap();
     }
@@ -2455,8 +2705,10 @@ mod tests {
     }
 
     /// A real TLS and WebSocket handshake against a local TLS server, with
-    /// no cancel and with a cancel that does not fire. The client trusts
-    /// only the test CA in `tests/fixtures/tls`.
+    /// no cancel and with a cancel that does not fire. The client adds the
+    /// test CA in `tests/fixtures/tls` to its trusted roots. Each server
+    /// socket call has a 10 s timeout, and the test waits at most 20 s for
+    /// the server to finish, so a hung fixture fails the test.
     #[test]
     fn a_tls_handshake_reaches_a_local_tls_server() {
         let ca =
@@ -2493,17 +2745,24 @@ mod tests {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             let addr = listener.local_addr().unwrap();
             let acceptor = acceptor.clone();
+            let (done_tx, done_rx) = mpsc::channel();
             let server = thread::spawn(move || {
                 let (socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(10)))
+                    .unwrap();
+                socket
+                    .set_write_timeout(Some(Duration::from_secs(10)))
+                    .unwrap();
                 let tls = acceptor.accept(socket).unwrap();
                 let mut ws = tungstenite::accept_hdr(tls, answer_binary_subprotocol).unwrap();
                 let hello = ws.read().unwrap();
                 ws.send(Message::Binary(vec![4, 5, 6])).unwrap();
-                // Until the client's close.
-                let _ = ws.read();
-                hello
+                // The client's close, or else the 10 s read timeout.
+                let closed = matches!(ws.read(), Ok(Message::Close(_)));
+                let _ = done_tx.send((hello, closed));
             });
-            let tcp = TcpStream::connect(addr).unwrap();
+            let tcp = TcpStream::connect_timeout(&addr, Duration::from_secs(5)).unwrap();
             let deadline = Instant::now() + Duration::from_secs(30);
             let mut stream = ClientStream::wss_over(
                 &connector,
@@ -2521,7 +2780,12 @@ mod tests {
             assert_eq!(reply, [4, 5, 6]);
             stream.set_deadline(None).unwrap();
             stream.close();
-            assert_eq!(server.join().unwrap(), Message::Binary(vec![1, 2, 3]));
+            let (hello, closed) = done_rx
+                .recv_timeout(Duration::from_secs(20))
+                .expect("the TLS server did not finish within 20 s");
+            assert_eq!(hello, Message::Binary(vec![1, 2, 3]));
+            assert!(closed, "the server got the client's WebSocket close");
+            server.join().unwrap();
         }
     }
 }
