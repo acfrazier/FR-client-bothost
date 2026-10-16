@@ -291,6 +291,10 @@ struct Worker {
     /// Cold-fill hub only: end the between-cycle wait once a response is
     /// readable ([`Worker::idle`]). False for every in-game hub.
     wake_on_response: bool,
+    /// This loop's Java cycle (20 or 50 ms) and when a cold-fill worker last
+    /// counted one for the resend and reconnect timeouts.
+    java_cycle: Duration,
+    counted_at: Instant,
     recovering: bool,
     reconnect_backoff: Duration,
     saw_network_progress: bool,
@@ -437,7 +441,9 @@ impl OnDemand {
     /// Bot-host cold cache fill only (never an in-game handle): a private
     /// bound hub whose worker, while a request is in flight, wakes as soon as
     /// a response is readable instead of sleeping Java's whole 20/50 ms cycle.
-    /// Requests, the 10-urgent in-flight cap and the wire protocol are Java's.
+    /// Requests, the 10-urgent in-flight cap and the wire protocol are Java's,
+    /// and the resend and reconnect timeouts still count Java's 20/50 ms
+    /// cycles, not wake-ups.
     /// The identity differs from every [`Self::new_bound`] hub, so in-game
     /// handles never share this worker or its pacing.
     #[allow(clippy::too_many_arguments)]
@@ -1113,6 +1119,8 @@ fn subscribe_hub(
             .as_ref()
             .and_then(|identity| identity.map_archive.clone()),
         wake_on_response: identity.as_ref().is_some_and(|identity| identity.cold_fill),
+        java_cycle: Duration::from_millis(20),
+        counted_at: Instant::now(),
         recovering: false,
         reconnect_backoff: Duration::ZERO,
         saw_network_progress: false,
@@ -1169,8 +1177,9 @@ fn worker_main(mut worker: Worker) {
         } else {
             20
         };
+        worker.java_cycle = Duration::from_millis(delay.max(20));
         if delay > 0 {
-            worker.idle(Duration::from_millis(delay));
+            worker.idle(worker.java_cycle);
         }
         worker.tick();
     }
@@ -1674,6 +1683,17 @@ impl Worker {
                     break;
                 }
             }
+        }
+
+        // Java counts the resend (50) and reconnect (750) timeouts in whole
+        // cycles. A cold-fill worker ticks on every response, so it counts
+        // one cycle only once a Java cycle has passed since the last one.
+        if self.wake_on_response {
+            let now = Instant::now();
+            if now.duration_since(self.counted_at) < self.java_cycle {
+                return;
+            }
+            self.counted_at = now;
         }
 
         let mut loading = false;

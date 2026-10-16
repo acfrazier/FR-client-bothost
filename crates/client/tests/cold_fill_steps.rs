@@ -334,10 +334,11 @@ fn cancelled_fill_releases_everything_and_the_next_fill_succeeds() {
     );
 }
 
-/// The fill keeps the worker's ten-request window full from the first
-/// request to the last: the server never holds more than ten requests, holds
-/// ten at some point, and never goes idle in the middle of the fill. A batch
-/// barrier let the connection go idle after every batch.
+/// The fill keeps the worker's ten-request window full to the last request:
+/// the server never holds more than ten requests, holds ten at some point,
+/// and never goes idle after the first ten requests. (The worker's first
+/// cycle can catch only part of the opening burst.) A batch barrier let the
+/// connection go idle after every batch.
 #[test]
 fn fill_keeps_ten_requests_in_flight_and_never_idles() {
     let fixture = fixture("window");
@@ -355,10 +356,14 @@ fn fill_keeps_ten_requests_in_flight_and_never_idles() {
     ))
     .unwrap();
     let stats = entries.stats();
+    eprintln!("window: {stats:?}");
     assert_eq!(stats.requests, fixture.packs.entries.len());
     const { assert!(FILL_WINDOW > 10) };
     assert_eq!(stats.max_outstanding, 10, "{stats:?}");
-    assert_eq!(stats.idle_restarts, 0, "{stats:?}");
+    assert!(
+        stats.last_idle_restart.is_none_or(|request| request < 10),
+        "{stats:?}"
+    );
 }
 
 fn versionlist(packs: &PackSet) -> JagFile {
@@ -389,9 +394,9 @@ fn drain_all(mut od: OnDemand, packs: &PackSet) -> Duration {
 }
 
 /// An in-game OnDemand keeps Java's cycle: a response that arrives 2 ms
-/// after its request still waits for the worker's next 20 ms cycle, so 120
-/// entries at ten per cycle take at least eleven cycles. Only the cold-fill
-/// worker wakes on the response.
+/// after its request still waits for the worker's next 20 ms cycle, so the
+/// 111 entries at ten per cycle take at least ten cycles. Only the
+/// cold-fill worker wakes on the response.
 #[test]
 fn in_game_requests_keep_the_java_twenty_ms_cycle() {
     let packs = PackSet::with_entries(41, [120, 0, 0, 0]);
@@ -443,7 +448,7 @@ fn in_game_requests_keep_the_java_twenty_ms_cycle() {
         assert!(server.stats().max_outstanding <= 10);
         elapsed
     };
-    eprintln!("120-entry drain: in-game {in_game:?}, cold fill {cold_fill:?}");
+    eprintln!("111-entry drain: in-game {in_game:?}, cold fill {cold_fill:?}");
     assert!(
         in_game >= Duration::from_millis(10 * 20),
         "in-game {in_game:?} (cold fill {cold_fill:?})"
@@ -452,4 +457,61 @@ fn in_game_requests_keep_the_java_twenty_ms_cycle() {
         cold_fill * 2 < in_game,
         "cold fill {cold_fill:?}, in-game {in_game:?}"
     );
+}
+
+/// The cold-fill worker wakes on every response, but it still counts Java's
+/// 50-cycle resend in 20 ms cycles: an entry the server never answers is
+/// sent once while the 184 other entries arrive, and again only about one
+/// second later, as an in-game worker would.
+#[test]
+fn cold_fill_worker_resends_a_stuck_request_at_the_java_pace() {
+    let packs = PackSet::with_entries(43, [200, 0, 0, 0]);
+    let jag = versionlist(&packs);
+    let cache = TempDir::new("resend-cache");
+    let server = PacedEntryServer::start_holding(
+        packs.entries.clone(),
+        Duration::ZERO,
+        Duration::from_millis(1),
+        &[(0, 0)],
+    );
+    let mut od = OnDemand::new_cold_fill(
+        &jag,
+        Transport::Tcp,
+        ClientRevision::R289,
+        "127.0.0.1",
+        server.port(),
+        cache.path().to_str().unwrap(),
+        "resend-cold-fill",
+        None,
+    )
+    .unwrap();
+    let started = Instant::now();
+    for entry in &packs.entries {
+        od.request(i32::from(entry.archive), i32::from(entry.file));
+    }
+    let mut left = packs.entries.len() - 1;
+    while left > 0 {
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{left} missing"
+        );
+        od.run(false);
+        while od.loop_request().is_some() {
+            left -= 1;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let others = started.elapsed();
+    std::thread::sleep(Duration::from_millis(700).saturating_sub(started.elapsed()));
+    let early = server.requests_for(0, 0);
+    std::thread::sleep(Duration::from_millis(1600).saturating_sub(started.elapsed()));
+    let late = server.requests_for(0, 0);
+    od.stop();
+    eprintln!("stuck entry: others done {others:?}, sent {early} by 0.7 s, {late} by 1.6 s");
+    assert!(
+        others < Duration::from_millis(700),
+        "others took {others:?}"
+    );
+    assert_eq!(early, 1, "resent before Java's 50 cycles of 20 ms");
+    assert!(late >= 2, "the Java resend still happens");
 }

@@ -688,17 +688,22 @@ fn serve_entry_connection(mut socket: TcpStream, state: Arc<EntryState>) {
 /// What a [`PacedEntryServer`] saw: `max_outstanding` is the most requests
 /// it held unanswered at once; `idle_restarts` counts requests that arrived
 /// after every earlier request had been answered (the client let the
-/// connection go idle in the middle of the fill).
+/// connection go idle in the middle of the fill), and
+/// `last_idle_restart` is the 0-based index of the latest such request.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PacedStats {
     pub requests: usize,
     pub max_outstanding: usize,
     pub idle_restarts: usize,
+    pub last_idle_restart: Option<usize>,
     outstanding: usize,
 }
 
 struct PacedState {
     entries: HashMap<(u8, u16), Vec<u8>>,
+    /// Requests the server reads but never answers.
+    hold: Vec<(u8, u16)>,
+    seen: Mutex<HashMap<(u8, u16), usize>>,
     delay: Duration,
     service: Duration,
     stats: Mutex<PacedStats>,
@@ -719,6 +724,16 @@ pub struct PacedEntryServer {
 
 impl PacedEntryServer {
     pub fn start(entries: Vec<Entry>, delay: Duration, service: Duration) -> Self {
+        Self::start_holding(entries, delay, service, &[])
+    }
+
+    /// [`Self::start`] that never answers the `hold` entries.
+    pub fn start_holding(
+        entries: Vec<Entry>,
+        delay: Duration,
+        service: Duration,
+        hold: &[(u8, u16)],
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let entries = entries
@@ -731,6 +746,8 @@ impl PacedEntryServer {
             .collect();
         let state = Arc::new(PacedState {
             entries,
+            hold: hold.to_vec(),
+            seen: Mutex::new(HashMap::new()),
             delay,
             service,
             stats: Mutex::new(PacedStats::default()),
@@ -777,6 +794,17 @@ impl PacedEntryServer {
     pub fn stats(&self) -> PacedStats {
         *self.state.stats.lock().unwrap()
     }
+
+    /// How many times the server read a request for this entry.
+    pub fn requests_for(&self, archive: u8, file: u16) -> usize {
+        self.state
+            .seen
+            .lock()
+            .unwrap()
+            .get(&(archive, file))
+            .copied()
+            .unwrap_or(0)
+    }
 }
 
 impl Drop for PacedEntryServer {
@@ -809,6 +837,9 @@ fn serve_paced_connection(mut socket: TcpStream, state: Arc<PacedState>) {
     let writer_thread = thread::spawn(move || {
         let mut last = Instant::now() - writer_state.service;
         while let Ok((arrived, archive, file)) = due_rx.recv() {
+            if writer_state.hold.contains(&(archive, file)) {
+                continue;
+            }
             let due = (arrived + writer_state.delay).max(last + writer_state.service);
             thread::sleep(due.saturating_duration_since(Instant::now()));
             let Some(body) = writer_state.entries.get(&(archive, file)) else {
@@ -836,10 +867,17 @@ fn serve_paced_connection(mut socket: TcpStream, state: Arc<PacedState>) {
             break;
         }
         let (archive, file) = (request[0], u16::from_be_bytes([request[1], request[2]]));
+        *state
+            .seen
+            .lock()
+            .unwrap()
+            .entry((archive, file))
+            .or_default() += 1;
         {
             let mut stats = state.stats.lock().unwrap();
             if stats.requests > 0 && stats.outstanding == 0 {
                 stats.idle_restarts += 1;
+                stats.last_idle_restart = Some(stats.requests);
             }
             stats.requests += 1;
             stats.outstanding += 1;
