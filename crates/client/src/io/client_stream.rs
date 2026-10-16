@@ -264,6 +264,7 @@ impl LoginCancel {
 /// The TCP socket under a WebSocket. With a deadline, each read and write
 /// is armed with the time left, so no single call, and no run of
 /// WebSocket control frames, outlasts it.
+#[derive(Debug)]
 struct DeadlineSocket {
     sock: TcpStream,
     deadline: Option<Instant>,
@@ -1321,7 +1322,6 @@ mod tests {
         (addr, handle)
     }
 
-
     fn connect_ws_plain_with_write_backpressure(
         host: &str,
         port: u16,
@@ -1878,9 +1878,7 @@ mod tests {
         let (addr, server) = spawn_ws_server(move |mut ws| loop {
             send_start_rx.recv().unwrap();
             if send_done_rx.recv_timeout(stall).is_ok()
-                || send_done_rx
-                    .recv_timeout(Duration::from_millis(50))
-                    .is_ok()
+                || send_done_rx.recv_timeout(Duration::from_millis(50)).is_ok()
             {
                 continue;
             }
