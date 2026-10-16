@@ -2163,7 +2163,7 @@ mod tests {
         // addLoc: loc id in bits 14.., kind loc via 0x40000000; typecode2 is
         // the signed ((angle << 6) + shape) info byte (cave wall angle 3).
         let typecode = (1417i32 << 14).wrapping_add(0x4000_0000);
-        let typecode2 = ((3i32 << 6) + 0).wrapping_shl(24) >> 24;
+        let typecode2 = (3i32 << 6).wrapping_shl(24) >> 24;
         assert_eq!(loc_id(typecode), 1417);
         assert_eq!(loc_kind(typecode), 2);
         assert_ne!(loc_id(typecode2), 1417);
