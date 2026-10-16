@@ -8,13 +8,12 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
+use std::time::Instant;
 
 use sha2::{Digest, Sha256};
 
-use super::{
-    fetch_snapshot, refresh_jags_with_checksums, unpack_cache_from_store, FetchEndpoint,
-    SnapshotState,
-};
+use super::fill::{FillProgress, NetworkSnapshot, SnapshotStart};
+use super::{unpack_cache_from_store, FetchEndpoint, JagRefresh, SnapshotState};
 use crate::client::Client;
 use crate::content_identity::{compute_decoded_content_identity, DecodedContentIdentity};
 use crate::io::{ClientRevision, JagFile, OnDemand};
@@ -365,184 +364,552 @@ fn sweep_leaked_runtime_staging(snapshot_root: &Path) {
     sweep_runtime_staging(snapshot_root, std::process::id(), process_is_alive);
 }
 
+/// Prepare a runtime cache in one call: [`RuntimeCacheFill`] stepped with no
+/// deadline until it is ready.
 pub fn prepare_runtime_cache(
     request: &RuntimeCacheRequest<'_>,
 ) -> Result<Arc<PreparedRuntimeCache>, RuntimeCacheError> {
-    let checksums = Client::get_jag_checksums_checked(
-        request.transport,
-        request.asset_host,
-        request.asset_port,
-    )
-    .map_err(|kind| RuntimeCacheError::Asset {
-        kind,
-        message: format!("update server /crc: {}", kind.message()),
-    })?;
-    // Negotiate before locking: different revision/transfer negotiations do not
-    // serialize. The lock inode is stable and explicitly unlocked on release.
-    let revision_root = request
-        .snapshot_root
-        .join(format!("revision-{}", request.revision.as_i32()));
-    std::fs::create_dir_all(&revision_root).map_err(|e| e.to_string())?;
-    let negotiation_key = negotiation_key(&checksums);
-    let _preparation_lock =
-        super::PreparationLock::acquire(&revision_root.join(format!(".{negotiation_key}.lock")))?;
-    let negotiation_root = revision_root.join(&negotiation_key);
-    let lease = register_retention_owner(&revision_root, &negotiation_key)?;
-    // Readers hold the same lock as publication. Packed retained inputs are
-    // still individually checked against the freshly negotiated server CRCs.
-    let retained_sources = retained_jag_sources(&negotiation_root);
-    let mut jag_sources: Vec<&Path> = retained_sources.iter().map(PathBuf::as_path).collect();
-    jag_sources.push(request.jag_source);
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    std::fs::create_dir_all(request.snapshot_root).map_err(|e| e.to_string())?;
-    sweep_leaked_runtime_staging(request.snapshot_root);
-    let owned = loop {
-        let path = request.snapshot_root.join(format!(
-            ".runtime-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        match std::fs::create_dir(&path) {
-            Ok(()) => {
-                break Arc::new(OwnedDirectory {
-                    path,
-                    _retention: lease,
-                })
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(format!("runtime staging: {e}").into()),
+    let mut fill = RuntimeCacheFill::begin(request);
+    loop {
+        if let RuntimeCacheStep::Ready(prepared) = fill.step(None)? {
+            return Ok(prepared);
         }
-    };
-    let jag_dir = owned.path.join("jags");
-    let refreshed = refresh_jags_with_checksums(
-        &jag_sources,
-        &jag_dir,
+    }
+}
+
+/// Outcome of one [`RuntimeCacheFill::step`].
+#[derive(Debug)]
+pub enum RuntimeCacheStep {
+    /// More steps follow. During an update-server fill `total` is the number
+    /// of required entries and `written` the records written so far.
+    Continue {
+        written: u32,
+        total: Option<u32>,
+    },
+    Ready(Arc<PreparedRuntimeCache>),
+}
+
+/// [`prepare_runtime_cache`] in bounded steps for a cooperative scheduler.
+/// One step does one of: the `/crc` request; the preparation lock (waits only
+/// until the step deadline); one JAG pack; the retained or local-store
+/// snapshot; the update-server fill until the step deadline; the publication;
+/// the decoded identity; retention and the map index. The calls and their
+/// order are those of the one-call preparation.
+///
+/// Between steps the fill holds the preparation lock, the retention lease,
+/// the runtime and staging directories and the fill's OnDemand worker.
+/// Dropping it before it is ready, or after an error, stops the worker and
+/// removes the staging and runtime directories, the lease and the lock, in
+/// that order. Nothing is published, so a later fill starts again cleanly.
+pub struct RuntimeCacheFill {
+    request: OwnedRuntimeCacheRequest,
+    stage: Stage,
+}
+
+struct OwnedRuntimeCacheRequest {
+    revision: ClientRevision,
+    transport: Transport,
+    jag_source: PathBuf,
+    snapshot_root: PathBuf,
+    asset_host: String,
+    asset_port: u16,
+    game_host: String,
+    game_port: u16,
+}
+
+impl OwnedRuntimeCacheRequest {
+    fn endpoint(&self) -> FetchEndpoint<'_> {
         FetchEndpoint {
-            transport: request.transport,
-            host: request.asset_host,
-            port: request.asset_port,
-        },
-        checksums,
-    )?;
-    let transfer_sha256 = hashes(&jag_dir, &super::JAGS)?;
-    let versionlist = std::fs::read(jag_dir.join("versionlist")).map_err(|e| e.to_string())?;
-    let version = super::version_hash(&versionlist);
-    let snapshot_dir = owned.path.join(&version);
-    let transfer_key = format!("{:x}", Sha256::digest(&versionlist));
-    let retained_root = negotiation_root.join(&transfer_key);
-    let retained = retained_root.join(&version);
-    let cache = jag_dir.to_str().ok_or("runtime cache path is not UTF-8")?;
-    let root = owned
-        .path
-        .to_str()
-        .ok_or("runtime snapshot path is not UTF-8")?;
-    let source;
-    let needs_retention;
-    if let SnapshotState::Ready(manifest) =
-        super::checked_snapshot_state(&retained_root, &version, &versionlist)
-    {
-        // Recheck after locking, then publish private copies through the same
-        // verified staged path. Replacement of retained files cannot mutate an
-        // active prepared profile, even after this lock has been released.
-        super::retain_completed_snapshot(&retained, &owned.path, &versionlist)?;
-        source = manifest.source;
-        needs_retention = false;
-    } else {
-        needs_retention = true;
-        // Legacy JagFile parsing can panic. Convert that boundary to a useful
-        // preparation error rather than crashing the profile worker.
-        let jag = std::panic::catch_unwind(|| JagFile::new(versionlist.clone()))
-            .map_err(|_| "invalid runtime versionlist".to_string())?;
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            unpack_cache_from_store(cache, root, &request.jag_source.to_string_lossy())
-        })) {
-            Ok(Ok(manifest)) => source = manifest.source,
-            local => {
-                let local_error = match local {
-                    Ok(Err(e)) => e.to_string(),
-                    _ => "malformed local snapshot input".into(),
+            transport: self.transport,
+            host: &self.asset_host,
+            port: self.asset_port,
+        }
+    }
+}
+
+enum Stage {
+    Negotiate,
+    Lock(Negotiation),
+    Jag(Box<Held>, usize),
+    Snapshot(Box<Held>),
+    LocalStore(Box<Held>),
+    Network(Box<Held>),
+    Publish(Box<Held>),
+    Identity(Box<Held>),
+    Finish(Box<Held>, DecodedContentIdentity),
+    /// Ready, failed or dropped: nothing is held.
+    Done,
+}
+
+struct Negotiation {
+    checksums: [i32; 9],
+    revision_root: PathBuf,
+    negotiation_key: String,
+}
+
+/// State that lives across steps. Fields drop in declaration order: the
+/// worker stops before the staging directory goes, and the lock is last.
+struct Held {
+    worker: Option<OnDemand>,
+    snapshot: Option<NetworkSnapshot>,
+    owned: Arc<OwnedDirectory>,
+    _lock: super::PreparationLock,
+    checksums: [i32; 9],
+    revision_root: PathBuf,
+    negotiation_key: String,
+    negotiation_root: PathBuf,
+    jag_sources: Vec<PathBuf>,
+    jag_dir: PathBuf,
+    refresh: JagRefresh,
+    files: Option<SnapshotFiles>,
+    local_error: String,
+    entries: Option<u32>,
+}
+
+/// Paths and digests fixed once the JAG packs are in place.
+struct SnapshotFiles {
+    transfer_sha256: BTreeMap<String, String>,
+    versionlist: Vec<u8>,
+    version: String,
+    snapshot_dir: PathBuf,
+    retained_root: PathBuf,
+    retained: PathBuf,
+    source: String,
+    needs_retention: bool,
+}
+
+impl Held {
+    fn files(&self) -> &SnapshotFiles {
+        self.files
+            .as_ref()
+            .expect("snapshot files follow the JAG stage")
+    }
+
+    fn files_mut(&mut self) -> &mut SnapshotFiles {
+        self.files
+            .as_mut()
+            .expect("snapshot files follow the JAG stage")
+    }
+
+    fn cache(&self) -> Result<&str, RuntimeCacheError> {
+        Ok(self
+            .jag_dir
+            .to_str()
+            .ok_or("runtime cache path is not UTF-8")?)
+    }
+
+    fn root(&self) -> Result<&str, RuntimeCacheError> {
+        Ok(self
+            .owned
+            .path
+            .to_str()
+            .ok_or("runtime snapshot path is not UTF-8")?)
+    }
+
+    fn progress(&self) -> RuntimeCacheStep {
+        RuntimeCacheStep::Continue {
+            written: self.entries.unwrap_or(0),
+            total: self.entries,
+        }
+    }
+}
+
+impl RuntimeCacheFill {
+    /// Capture the request. No I/O happens until the first [`Self::step`].
+    pub fn begin(request: &RuntimeCacheRequest<'_>) -> Self {
+        Self {
+            request: OwnedRuntimeCacheRequest {
+                revision: request.revision,
+                transport: request.transport,
+                jag_source: request.jag_source.to_path_buf(),
+                snapshot_root: request.snapshot_root.to_path_buf(),
+                asset_host: request.asset_host.to_string(),
+                asset_port: request.asset_port,
+                game_host: request.game_host.to_string(),
+                game_port: request.game_port,
+            },
+            stage: Stage::Negotiate,
+        }
+    }
+
+    /// Do the next bounded unit of preparation. Waits for the lock or for
+    /// update-server entries end at `until`; `None` waits as the one-call
+    /// preparation does. After an error the fill holds nothing and every
+    /// later step fails.
+    pub fn step(&mut self, until: Option<Instant>) -> Result<RuntimeCacheStep, RuntimeCacheError> {
+        let stage = std::mem::replace(&mut self.stage, Stage::Done);
+        let (next, outcome) = self.advance(stage, until)?;
+        self.stage = next;
+        Ok(outcome)
+    }
+
+    fn advance(
+        &self,
+        stage: Stage,
+        until: Option<Instant>,
+    ) -> Result<(Stage, RuntimeCacheStep), RuntimeCacheError> {
+        let request = &self.request;
+        let waiting = RuntimeCacheStep::Continue {
+            written: 0,
+            total: None,
+        };
+        match stage {
+            Stage::Negotiate => {
+                let checksums = Client::get_jag_checksums_checked(
+                    request.transport,
+                    &request.asset_host,
+                    request.asset_port,
+                )
+                .map_err(|kind| RuntimeCacheError::Asset {
+                    kind,
+                    message: format!("update server /crc: {}", kind.message()),
+                })?;
+                // Negotiate before locking: different revision/transfer
+                // negotiations do not serialize. The lock inode is stable and
+                // explicitly unlocked on release.
+                let revision_root = request
+                    .snapshot_root
+                    .join(format!("revision-{}", request.revision.as_i32()));
+                std::fs::create_dir_all(&revision_root).map_err(|e| e.to_string())?;
+                let negotiation_key = negotiation_key(&checksums);
+                Ok((
+                    Stage::Lock(Negotiation {
+                        checksums,
+                        revision_root,
+                        negotiation_key,
+                    }),
+                    waiting,
+                ))
+            }
+            Stage::Lock(negotiation) => {
+                let lock_path = negotiation
+                    .revision_root
+                    .join(format!(".{}.lock", negotiation.negotiation_key));
+                let lock = match until {
+                    None => super::PreparationLock::acquire(&lock_path)?,
+                    Some(until) => {
+                        match super::PreparationLock::acquire_until(&lock_path, until)? {
+                            Some(lock) => lock,
+                            // Another process is preparing the same namespace.
+                            None => return Ok((Stage::Lock(negotiation), waiting)),
+                        }
+                    }
                 };
-                let transfer_id = format!("{:x}", Sha256::digest(&versionlist));
-                let mut worker = OnDemand::new_bound(
+                let held = self.lock_acquired(negotiation, lock)?;
+                Ok((Stage::Jag(held, 0), waiting))
+            }
+            Stage::Jag(mut held, slot) => {
+                let sources: Vec<&Path> = held.jag_sources.iter().map(PathBuf::as_path).collect();
+                super::refresh_jag(
+                    &sources,
+                    &held.jag_dir,
+                    request.endpoint(),
+                    slot,
+                    &mut held.refresh,
+                )?;
+                if slot + 1 < super::JAGS.len() {
+                    return Ok((Stage::Jag(held, slot + 1), waiting));
+                }
+                super::PREPARE_FETCHED
+                    .fetch_add(held.refresh.fetched.len() as u64, Ordering::Relaxed);
+                Ok((Stage::Snapshot(held), waiting))
+            }
+            Stage::Snapshot(mut held) => {
+                let transfer_sha256 = hashes(&held.jag_dir, &super::JAGS)?;
+                let versionlist =
+                    std::fs::read(held.jag_dir.join("versionlist")).map_err(|e| e.to_string())?;
+                let version = super::version_hash(&versionlist);
+                let snapshot_dir = held.owned.path.join(&version);
+                let transfer_key = format!("{:x}", Sha256::digest(&versionlist));
+                let retained_root = held.negotiation_root.join(&transfer_key);
+                let retained = retained_root.join(&version);
+                held.cache()?;
+                held.root()?;
+                let ready = super::checked_snapshot_state(&retained_root, &version, &versionlist);
+                held.files = Some(SnapshotFiles {
+                    transfer_sha256,
+                    versionlist,
+                    version,
+                    snapshot_dir,
+                    retained_root,
+                    retained,
+                    source: String::new(),
+                    needs_retention: true,
+                });
+                let SnapshotState::Ready(manifest) = ready else {
+                    return Ok((Stage::LocalStore(held), waiting));
+                };
+                // Recheck after locking, then publish private copies through
+                // the same verified staged path. Replacement of retained files
+                // cannot mutate an active prepared profile, even after this
+                // lock has been released.
+                let files = held.files();
+                super::retain_completed_snapshot(
+                    &files.retained,
+                    &held.owned.path,
+                    &files.versionlist,
+                )?;
+                let files = held.files_mut();
+                files.source = manifest.source;
+                files.needs_retention = false;
+                Ok((Stage::Identity(held), waiting))
+            }
+            Stage::LocalStore(mut held) => {
+                // Legacy JagFile parsing can panic. Convert that boundary to a
+                // useful preparation error rather than crashing the worker.
+                let versionlist = held.files().versionlist.clone();
+                let jag = std::panic::catch_unwind(|| JagFile::new(versionlist))
+                    .map_err(|_| "invalid runtime versionlist".to_string())?;
+                let (cache, root) = (held.cache()?.to_string(), held.root()?.to_string());
+                let store = request.jag_source.to_string_lossy().into_owned();
+                let local = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    unpack_cache_from_store(&cache, &root, &store)
+                }));
+                let local_error = match local {
+                    Ok(Ok(manifest)) => {
+                        held.files_mut().source = manifest.source;
+                        return Ok((Stage::Identity(held), waiting));
+                    }
+                    Ok(Err(e)) => e.to_string(),
+                    Err(_) => "malformed local snapshot input".into(),
+                };
+                held.local_error = local_error;
+                let transfer_id = format!("{:x}", Sha256::digest(&held.files().versionlist));
+                let worker = OnDemand::new_cold_fill(
                     &jag,
                     request.transport,
                     request.revision,
-                    request.game_host,
+                    &request.game_host,
                     request.game_port,
-                    cache,
+                    &cache,
                     &transfer_id,
-                    super::file_store_dir(&request.jag_source.to_string_lossy()).as_deref(),
-                    None,
-                    None,
+                    super::file_store_dir(&store).as_deref(),
                 )
                 .map_err(RuntimeCacheError::Other)?;
-                let result = fetch_snapshot(cache, root, &mut worker);
-                worker.stop();
-                source = result
-                    .map_err(|e| format!("local store: {local_error}; update-server fill: {e}"))?
-                    .source;
+                held.worker = Some(worker);
+                match NetworkSnapshot::begin(&cache, &root).map_err(|e| held.fill_error(e))? {
+                    SnapshotStart::Ready(manifest) => {
+                        held.stop_worker();
+                        held.files_mut().source = manifest.source;
+                        Ok((Stage::Identity(held), waiting))
+                    }
+                    SnapshotStart::Fill(snapshot) => {
+                        let total = snapshot.total();
+                        held.snapshot = Some(*snapshot);
+                        Ok((
+                            Stage::Network(held),
+                            RuntimeCacheStep::Continue {
+                                written: 0,
+                                total: Some(total),
+                            },
+                        ))
+                    }
+                }
             }
+            Stage::Network(mut held) => {
+                let Held {
+                    worker, snapshot, ..
+                } = &mut *held;
+                let (Some(worker), Some(snapshot)) = (worker.as_mut(), snapshot.as_mut()) else {
+                    unreachable!("the network stage owns its worker and snapshot");
+                };
+                let total = snapshot.total();
+                let progress = snapshot.step(worker, until);
+                match progress.map_err(|e| held.fill_error(e))? {
+                    FillProgress::Continue { written, total } => Ok((
+                        Stage::Network(held),
+                        RuntimeCacheStep::Continue {
+                            written,
+                            total: Some(total),
+                        },
+                    )),
+                    FillProgress::Staged => {
+                        held.entries = Some(total);
+                        let outcome = held.progress();
+                        Ok((Stage::Publish(held), outcome))
+                    }
+                }
+            }
+            Stage::Publish(mut held) => {
+                let snapshot = held
+                    .snapshot
+                    .take()
+                    .expect("the publish stage owns its staged snapshot");
+                let published = snapshot.publish();
+                held.stop_worker();
+                let manifest = published.map_err(|e| held.fill_error(e))?;
+                held.files_mut().source = manifest.source;
+                let outcome = held.progress();
+                Ok((Stage::Identity(held), outcome))
+            }
+            Stage::Identity(held) => {
+                let identity = compute_decoded_content_identity(
+                    request.revision.as_i32() as u16,
+                    &held.jag_dir,
+                    &held.files().snapshot_dir,
+                )
+                .map_err(|e| format!("decoded content identity: {e}"))?;
+                let outcome = held.progress();
+                Ok((Stage::Finish(held, identity), outcome))
+            }
+            Stage::Finish(held, identity) => {
+                let prepared = self.finish(*held, identity)?;
+                Ok((Stage::Done, RuntimeCacheStep::Ready(prepared)))
+            }
+            Stage::Done => Err("runtime cache preparation already finished".into()),
         }
     }
-    let identity =
-        compute_decoded_content_identity(request.revision.as_i32() as u16, &jag_dir, &snapshot_dir)
-            .map_err(|e| format!("decoded content identity: {e}"))?;
-    // Persist the already checked/decode-complete files, never drive the entry
-    // source a second time. Canonical identity above always hashes actual owned
-    // bytes; retained metadata is a corruption check, not facts authority.
-    let persist_dir = retained.join("ondemand");
-    let retention = (|| -> Result<(), RuntimeCacheError> {
-        if needs_retention {
-            super::retain_completed_snapshot(&snapshot_dir, &retained_root, &versionlist)?;
+
+    /// Register the retention lease and create the private runtime directory.
+    fn lock_acquired(
+        &self,
+        negotiation: Negotiation,
+        lock: super::PreparationLock,
+    ) -> Result<Box<Held>, RuntimeCacheError> {
+        let request = &self.request;
+        let Negotiation {
+            checksums,
+            revision_root,
+            negotiation_key,
+        } = negotiation;
+        let negotiation_root = revision_root.join(&negotiation_key);
+        let lease = register_retention_owner(&revision_root, &negotiation_key)?;
+        // Readers hold the same lock as publication. Packed retained inputs
+        // are still individually checked against the freshly negotiated CRCs.
+        let mut jag_sources = retained_jag_sources(&negotiation_root);
+        jag_sources.push(request.jag_source.clone());
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        std::fs::create_dir_all(&request.snapshot_root).map_err(|e| e.to_string())?;
+        sweep_leaked_runtime_staging(&request.snapshot_root);
+        let owned = loop {
+            let path = request.snapshot_root.join(format!(
+                ".runtime-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            match std::fs::create_dir(&path) {
+                Ok(()) => {
+                    break Arc::new(OwnedDirectory {
+                        path,
+                        _retention: lease,
+                    })
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(format!("runtime staging: {e}").into()),
+            }
+        };
+        let jag_dir = owned.path.join("jags");
+        let sources: Vec<&Path> = jag_sources.iter().map(PathBuf::as_path).collect();
+        super::prepare_jag_dest(&sources, &jag_dir)?;
+        Ok(Box::new(Held {
+            worker: None,
+            snapshot: None,
+            owned,
+            _lock: lock,
+            checksums,
+            revision_root,
+            negotiation_key,
+            negotiation_root,
+            jag_sources,
+            jag_dir,
+            refresh: JagRefresh {
+                checksums,
+                fetched: Vec::new(),
+                reused: Vec::new(),
+            },
+            files: None,
+            local_error: String::new(),
+            entries: None,
+        }))
+    }
+
+    fn finish(
+        &self,
+        held: Held,
+        identity: DecodedContentIdentity,
+    ) -> Result<Arc<PreparedRuntimeCache>, RuntimeCacheError> {
+        let request = &self.request;
+        let files = held.files();
+        // Persist the already checked/decode-complete files, never drive the
+        // entry source a second time. Canonical identity always hashes actual
+        // owned bytes; retained metadata is a corruption check, not facts
+        // authority.
+        let persist_dir = files.retained.join("ondemand");
+        let retention = (|| -> Result<(), RuntimeCacheError> {
+            if files.needs_retention {
+                super::retain_completed_snapshot(
+                    &files.snapshot_dir,
+                    &files.retained_root,
+                    &files.versionlist,
+                )?;
+            }
+            std::fs::create_dir_all(&persist_dir).map_err(|e| e.to_string())?;
+            Ok(())
+        })();
+        let persist_dir = match retention {
+            Ok(()) => {
+                // Registration and pruning share a short revision lock;
+                // independent negotiation keys still fill concurrently.
+                prune_retained_copies(&held.revision_root, &held.negotiation_key);
+                persist_dir
+            }
+            Err(error) => {
+                eprintln!(
+                    "{}bot: warning: could not save game assets for reuse: {error}; \
+                     using verified runtime assets; the next launch will download them again",
+                    request.revision.as_i32()
+                );
+                let fallback = files.snapshot_dir.join("ondemand");
+                std::fs::create_dir_all(&fallback).map_err(|e| e.to_string())?;
+                fallback
+            }
+        };
+        let store_dir =
+            super::file_store_dir(&request.jag_source.to_string_lossy()).map(PathBuf::from);
+        // Index headers only after canonical identity has verified the
+        // payloads. The capability retains this immutable private copy, never
+        // shared retained files.
+        let map_archive = Arc::new(PreparedMapArchive::open(
+            &files.snapshot_dir,
+            request.revision,
+            &identity,
+            &held.jag_dir,
+            Arc::clone(&held.owned),
+        )?);
+        Ok(Arc::new(PreparedRuntimeCache {
+            owned: Arc::clone(&held.owned),
+            jag_dir: held.jag_dir.clone(),
+            snapshot_dir: files.snapshot_dir.clone(),
+            version: files.version.clone(),
+            expected_crc: held.checksums,
+            identity,
+            transfer_sha256: files.transfer_sha256.clone(),
+            source: files.source.clone(),
+            asset_host: request.asset_host.clone(),
+            asset_port: request.asset_port,
+            fetched: held.refresh.fetched.clone(),
+            reused: held.refresh.reused.clone(),
+            store_dir,
+            persist_dir,
+            map_archive,
+        }))
+    }
+}
+
+impl Held {
+    fn stop_worker(&mut self) {
+        if let Some(mut worker) = self.worker.take() {
+            worker.stop();
         }
-        std::fs::create_dir_all(&persist_dir).map_err(|e| e.to_string())?;
-        Ok(())
-    })();
-    let persist_dir = match retention {
-        Ok(()) => {
-            // Registration and pruning share a short revision lock; independent
-            // negotiation keys still perform their network fills concurrently.
-            prune_retained_copies(&revision_root, &negotiation_key);
-            persist_dir
-        }
-        Err(error) => {
-            eprintln!(
-                "{}bot: warning: could not save game assets for reuse: {error}; \
-                 using verified runtime assets; the next launch will download them again",
-                request.revision.as_i32()
-            );
-            let fallback = snapshot_dir.join("ondemand");
-            std::fs::create_dir_all(&fallback).map_err(|e| e.to_string())?;
-            fallback
-        }
-    };
-    let store_dir = super::file_store_dir(&request.jag_source.to_string_lossy()).map(PathBuf::from);
-    // Index headers only after canonical identity has verified the payloads.
-    // The capability retains this immutable private copy, never shared retained files.
-    let map_archive = Arc::new(PreparedMapArchive::open(
-        &snapshot_dir,
-        request.revision,
-        &identity,
-        &jag_dir,
-        Arc::clone(&owned),
-    )?);
-    Ok(Arc::new(PreparedRuntimeCache {
-        owned,
-        jag_dir,
-        snapshot_dir,
-        version,
-        expected_crc: checksums,
-        identity,
-        transfer_sha256,
-        source,
-        asset_host: request.asset_host.into(),
-        asset_port: request.asset_port,
-        fetched: refreshed.fetched,
-        reused: refreshed.reused,
-        store_dir,
-        persist_dir,
-        map_archive,
-    }))
+    }
+
+    /// The one-call preparation's combined local-store and fill message.
+    fn fill_error(&self, error: super::UnpackError) -> RuntimeCacheError {
+        RuntimeCacheError::Other(format!(
+            "local store: {}; update-server fill: {error}",
+            self.local_error
+        ))
+    }
 }
 
 fn is_negotiation_key(name: &str) -> bool {

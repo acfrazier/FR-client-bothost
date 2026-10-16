@@ -796,6 +796,48 @@ impl ClientStream {
         }
     }
 
+    /// Wait until [`Self::available`] reports at least `need` bytes, a read
+    /// error is pending, or `limit` passes. A quiet socket parks in `poll`
+    /// (`WSAPoll` on Windows), so the caller wakes as soon as the first byte
+    /// arrives. Bytes that are already buffered but short of `need` are
+    /// re-checked every millisecond: a readable socket would not park.
+    pub(crate) fn wait_available(&mut self, need: i32, limit: Duration) {
+        let deadline = Instant::now() + limit;
+        loop {
+            let available = match self.available() {
+                Ok(available) => available,
+                Err(_) => return,
+            };
+            if available >= need || self.is_dummy() {
+                return;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return;
+            }
+            if available > 0 {
+                thread::sleep(remaining.min(Duration::from_millis(1)));
+            } else {
+                self.park_readable(remaining);
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn park_readable(&self, limit: Duration) {
+        poll_readable(self.fd(), limit);
+    }
+
+    #[cfg(windows)]
+    fn park_readable(&self, limit: Duration) {
+        poll_readable(self.raw_socket(), limit);
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    fn park_readable(&self, limit: Duration) {
+        thread::sleep(limit.min(Duration::from_millis(1)));
+    }
+
     /// Queue `len` bytes for the writer thread (Java `write(count, data, off)`).
     /// During a TCP login handshake (a deadline is set) the bytes are written
     /// before this returns, bounded by the deadline.
@@ -1152,24 +1194,42 @@ fn wss_wait_handle(w: &WsInner) -> RawSocket {
 
 #[cfg(all(test, unix))]
 fn socket_readable_now(fd: RawFd) -> bool {
+    poll_readable(fd, Duration::ZERO)
+}
+
+#[cfg(all(test, windows))]
+fn socket_readable_now(socket: RawSocket) -> bool {
+    poll_readable(socket, Duration::ZERO)
+}
+
+/// Park until `fd` is readable (or reports an error or hang-up) or `limit`
+/// passes, rounded up to whole milliseconds. True when it became readable.
+#[cfg(unix)]
+fn poll_readable(fd: RawFd, limit: Duration) -> bool {
     let mut fds = [libc::pollfd {
         fd,
         events: libc::POLLIN,
         revents: 0,
     }];
-    let rc = unsafe { libc::poll(fds.as_mut_ptr(), 1, 0) };
+    let timeout = limit.as_micros().div_ceil(1000).min(i32::MAX as u128) as i32;
+    // SAFETY: `fds` is a live one-element array for the whole call and its
+    // length is passed as 1; poll only writes `revents` inside it.
+    let rc = unsafe { libc::poll(fds.as_mut_ptr(), 1, timeout) };
     rc > 0
 }
 
-#[cfg(all(test, windows))]
-fn socket_readable_now(socket: RawSocket) -> bool {
+#[cfg(windows)]
+fn poll_readable(socket: RawSocket, limit: Duration) -> bool {
     use windows_sys::Win32::Networking::WinSock::{WSAPoll, POLLIN, SOCKET, WSAPOLLFD};
     let mut fds = [WSAPOLLFD {
         fd: socket as SOCKET,
         events: POLLIN,
         revents: 0,
     }];
-    let rc = unsafe { WSAPoll(fds.as_mut_ptr(), 1, 0) };
+    let timeout = limit.as_micros().div_ceil(1000).min(i32::MAX as u128) as i32;
+    // SAFETY: `fds` is a live one-element array for the whole call and its
+    // length is passed as 1; WSAPoll only writes `revents` inside it.
+    let rc = unsafe { WSAPoll(fds.as_mut_ptr(), 1, timeout) };
     rc > 0
 }
 
@@ -1666,6 +1726,69 @@ mod tests {
         assert_eq!(&buf, &[11, 12, 13]);
         stream.close();
         let _ = server.join();
+    }
+
+    /// The cold-fill wait parks on a quiet WebSocket, wakes when a frame
+    /// arrives (long before its limit), and keeps waiting while only part of
+    /// the needed bytes is buffered.
+    #[test]
+    fn ws_wait_available_wakes_on_arrival_and_waits_for_the_whole_need() {
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let (addr, server) = spawn_ws_server(move |mut ws| {
+            release_rx.recv().unwrap();
+            ws.send(Message::Binary(vec![1, 2, 3])).unwrap();
+            release_rx.recv().unwrap();
+            ws.send(Message::Binary(vec![4, 5, 6])).unwrap();
+            let _ = ws.read();
+        });
+        let mut stream = connect_ws_plain(&addr.ip().to_string(), addr.port()).unwrap();
+
+        let started = std::time::Instant::now();
+        stream.wait_available(6, Duration::from_millis(80));
+        let quiet = started.elapsed();
+        assert!(quiet >= Duration::from_millis(80), "{quiet:?}");
+        assert_eq!(stream.available().unwrap(), 0);
+
+        let release = release_tx.clone();
+        let sender = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(40));
+            release.send(()).unwrap();
+            thread::sleep(Duration::from_millis(40));
+            release.send(()).unwrap();
+        });
+        let started = std::time::Instant::now();
+        stream.wait_available(3, Duration::from_secs(5));
+        let first = started.elapsed();
+        assert!(first < Duration::from_secs(1), "woke after {first:?}");
+        assert_eq!(stream.available().unwrap(), 3);
+        stream.wait_available(6, Duration::from_secs(5));
+        let whole = started.elapsed();
+        assert!(whole < Duration::from_secs(2), "woke after {whole:?}");
+        assert_eq!(stream.available().unwrap(), 6);
+        sender.join().unwrap();
+        stream.close();
+        let _ = server.join();
+    }
+
+    /// The same wait over plain TCP.
+    #[test]
+    fn tcp_wait_available_wakes_on_arrival() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            thread::sleep(Duration::from_millis(50));
+            socket.write_all(&[7; 6]).unwrap();
+            thread::sleep(Duration::from_millis(200));
+        });
+        let mut stream = ClientStream::connect("127.0.0.1", port).unwrap();
+        let started = std::time::Instant::now();
+        stream.wait_available(6, Duration::from_secs(5));
+        let woke = started.elapsed();
+        assert!(woke < Duration::from_secs(1), "woke after {woke:?}");
+        assert_eq!(stream.available().unwrap(), 6);
+        stream.close();
+        server.join().unwrap();
     }
 
     /// A WebSocket peer that keeps sending control frames but never answers

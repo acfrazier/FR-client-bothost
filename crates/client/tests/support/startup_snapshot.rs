@@ -97,6 +97,70 @@ impl PackSet {
         }
     }
 
+    /// `counts[archive]` entries per archive with varied deterministic
+    /// payloads; every 13th index is intentionally absent (version 0). Every
+    /// compressed body fits one 500-byte OnDemand part.
+    pub fn with_entries(seed: u8, counts: [u16; 4]) -> Self {
+        let mut entries = Vec::new();
+        let mut versionlist_members = Vec::new();
+        for (archive, name) in ["model", "anim", "midi", "map"].iter().enumerate() {
+            let mut versions = Vec::new();
+            let mut crcs = Vec::new();
+            for file in 0..counts[archive] {
+                if file % 13 == 12 {
+                    versions.extend_from_slice(&[0, 0]);
+                    crcs.extend_from_slice(&[0; 4]);
+                    continue;
+                }
+                let mut state = u32::from(seed) << 24 | (archive as u32) << 16 | u32::from(file);
+                let payload: Vec<u8> = (0..16 + usize::from(file) * 37 % 150)
+                    .map(|_| {
+                        state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                        (state >> 16) as u8
+                    })
+                    .collect();
+                let compressed = gzip(&payload);
+                assert!(compressed.len() + 2 <= 500, "fixture entries fit one part");
+                let crc = Packet::getcrc(&compressed, 0, compressed.len());
+                versions.extend_from_slice(&[0, 1]);
+                crcs.extend_from_slice(&crc.to_be_bytes());
+                entries.push(Entry {
+                    archive: archive as u8,
+                    file,
+                    payload,
+                    compressed,
+                });
+            }
+            versionlist_members.push((format!("{name}_version"), versions));
+            versionlist_members.push((format!("{name}_crc"), crcs));
+            versionlist_members.push((format!("{name}_index"), vec![0]));
+        }
+        versionlist_members.push(("fixture_padding".to_string(), padding()));
+        let versionlist = jag(&versionlist_members, 9);
+        let packs = PACK_NAMES
+            .iter()
+            .map(|name| {
+                if *name == "versionlist" {
+                    versionlist.clone()
+                } else {
+                    jag(
+                        &[(
+                            "data".to_string(),
+                            format!("fixture-{seed}-{name}").into_bytes(),
+                        )],
+                        9,
+                    )
+                }
+            })
+            .collect();
+        Self {
+            seed,
+            packs,
+            entries,
+            versionlist_members,
+        }
+    }
+
     /// Same decoded JAG members and entry tables, but a different packed
     /// versionlist stream. The large deterministic member makes the codec
     /// change observable even for this synthetic fixture.
@@ -197,8 +261,23 @@ pub struct TempDir(PathBuf);
 
 impl TempDir {
     pub fn new(label: &str) -> Self {
+        Self::under(&std::env::temp_dir(), label)
+    }
+
+    /// On tmpfs where the host has one, so step timings measure the steps,
+    /// not the disk's fsync latency.
+    pub fn in_memory(label: &str) -> Self {
+        let shm = Path::new("/dev/shm");
+        if shm.is_dir() {
+            Self::under(shm, label)
+        } else {
+            Self::new(label)
+        }
+    }
+
+    fn under(base: &Path, label: &str) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let path = std::env::temp_dir().join(format!(
+        let path = base.join(format!(
             "startup-snapshot-{label}-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
@@ -604,6 +683,174 @@ fn serve_entry_connection(mut socket: TcpStream, state: Arc<EntryState>) {
             return;
         }
     }
+}
+
+/// What a [`PacedEntryServer`] saw: `max_outstanding` is the most requests
+/// it held unanswered at once; `idle_restarts` counts requests that arrived
+/// after every earlier request had been answered (the client let the
+/// connection go idle in the middle of the fill).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PacedStats {
+    pub requests: usize,
+    pub max_outstanding: usize,
+    pub idle_restarts: usize,
+    outstanding: usize,
+}
+
+struct PacedState {
+    entries: HashMap<(u8, u16), Vec<u8>>,
+    delay: Duration,
+    service: Duration,
+    stats: Mutex<PacedStats>,
+    stop: AtomicBool,
+    active: Mutex<Vec<TcpStream>>,
+}
+
+/// OnDemand entry server that answers each request `delay` after it arrives
+/// and at most one response per `service` interval, in arrival order, from a
+/// writer separate from the request reader. The reader keeps counting
+/// requests while responses are held, so the stats show the client's
+/// requests in flight.
+pub struct PacedEntryServer {
+    port: u16,
+    state: Arc<PacedState>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl PacedEntryServer {
+    pub fn start(entries: Vec<Entry>, delay: Duration, service: Duration) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let entries = entries
+            .into_iter()
+            .map(|entry| {
+                let mut body = entry.compressed.clone();
+                body.extend_from_slice(&[0, 1]);
+                ((entry.archive, entry.file), body)
+            })
+            .collect();
+        let state = Arc::new(PacedState {
+            entries,
+            delay,
+            service,
+            stats: Mutex::new(PacedStats::default()),
+            stop: AtomicBool::new(false),
+            active: Mutex::new(Vec::new()),
+        });
+        let server_state = Arc::clone(&state);
+        let thread = thread::spawn(move || {
+            let mut handlers = Vec::new();
+            loop {
+                let (socket, _) = match listener.accept() {
+                    Ok(connection) => connection,
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(error) => panic!("paced entry accept failed: {error}"),
+                };
+                if server_state.stop.load(Ordering::Acquire) {
+                    break;
+                }
+                server_state
+                    .active
+                    .lock()
+                    .unwrap()
+                    .push(socket.try_clone().unwrap());
+                let client_state = Arc::clone(&server_state);
+                handlers.push(thread::spawn(move || {
+                    serve_paced_connection(socket, client_state)
+                }));
+            }
+            for handler in handlers {
+                let _ = handler.join();
+            }
+        });
+        Self {
+            port,
+            state,
+            thread: Some(thread),
+        }
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    pub fn stats(&self) -> PacedStats {
+        *self.state.stats.lock().unwrap()
+    }
+}
+
+impl Drop for PacedEntryServer {
+    fn drop(&mut self) {
+        self.state.stop.store(true, Ordering::Release);
+        for socket in self.state.active.lock().unwrap().iter() {
+            let _ = socket.shutdown(Shutdown::Both);
+        }
+        let _ = TcpStream::connect(("127.0.0.1", self.port));
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn serve_paced_connection(mut socket: TcpStream, state: Arc<PacedState>) {
+    // One write per response and no Nagle delay: a split header and body
+    // would otherwise wait for the client's delayed ACK.
+    socket.set_nodelay(true).unwrap();
+    let mut handshake = [0u8; 1];
+    if socket.read_exact(&mut handshake).is_err() || handshake[0] != 15 {
+        return;
+    }
+    if socket.write_all(&[0; 8]).is_err() {
+        return;
+    }
+    let (due_tx, due_rx) = std::sync::mpsc::channel::<(Instant, u8, u16)>();
+    let mut writer = socket.try_clone().unwrap();
+    let writer_state = Arc::clone(&state);
+    let writer_thread = thread::spawn(move || {
+        let mut last = Instant::now() - writer_state.service;
+        while let Ok((arrived, archive, file)) = due_rx.recv() {
+            let due = (arrived + writer_state.delay).max(last + writer_state.service);
+            thread::sleep(due.saturating_duration_since(Instant::now()));
+            let Some(body) = writer_state.entries.get(&(archive, file)) else {
+                return;
+            };
+            let mut response = Vec::with_capacity(6 + body.len());
+            response.push(archive);
+            response.extend_from_slice(&file.to_be_bytes());
+            response.extend_from_slice(&(body.len() as u16).to_be_bytes());
+            response.push(0);
+            response.extend_from_slice(body);
+            if writer.write_all(&response).is_err() {
+                return;
+            }
+            last = Instant::now();
+            writer_state.stats.lock().unwrap().outstanding -= 1;
+        }
+    });
+    loop {
+        if state.stop.load(Ordering::Acquire) {
+            break;
+        }
+        let mut request = [0u8; 4];
+        if socket.read_exact(&mut request).is_err() {
+            break;
+        }
+        let (archive, file) = (request[0], u16::from_be_bytes([request[1], request[2]]));
+        {
+            let mut stats = state.stats.lock().unwrap();
+            if stats.requests > 0 && stats.outstanding == 0 {
+                stats.idle_restarts += 1;
+            }
+            stats.requests += 1;
+            stats.outstanding += 1;
+            stats.max_outstanding = stats.max_outstanding.max(stats.outstanding);
+        }
+        if due_tx.send((Instant::now(), archive, file)).is_err() {
+            break;
+        }
+    }
+    drop(due_tx);
+    let _ = writer_thread.join();
 }
 
 pub fn prepare(

@@ -162,6 +162,9 @@ struct HubIdentity {
     persist_dir: Option<String>,
     tables_sha256: [u8; 32],
     map_archive: Option<Arc<PreparedMapArchive>>,
+    /// Bot-host cold cache fill hub ([`OnDemand::new_cold_fill`]). Part of the
+    /// identity so an in-game handle never joins a fill hub, or the reverse.
+    cold_fill: bool,
 }
 
 struct BoundHubIdentity<'a> {
@@ -172,6 +175,7 @@ struct BoundHubIdentity<'a> {
     file_store_dir: Option<&'a str>,
     persist_dir: Option<&'a str>,
     map_archive: Option<Arc<PreparedMapArchive>>,
+    cold_fill: bool,
 }
 
 static NEXT_SLOT: AtomicUsize = AtomicUsize::new(1);
@@ -284,6 +288,9 @@ struct Worker {
     persist_dir: Option<PathBuf>,
     /// Already verified decoded map records from the owned runtime snapshot.
     map_archive: Option<Arc<PreparedMapArchive>>,
+    /// Cold-fill hub only: end the between-cycle wait once a response is
+    /// readable ([`Worker::idle`]). False for every in-game hub.
+    wake_on_response: bool,
     recovering: bool,
     reconnect_backoff: Duration,
     saw_network_progress: bool,
@@ -420,10 +427,48 @@ impl OnDemand {
                 file_store_dir,
                 persist_dir,
                 map_archive,
+                cold_fill: false,
             }),
             None,
         )?
         .ok_or_else(|| "bound OnDemand versionlist is missing required tables".to_string())
+    }
+
+    /// Bot-host cold cache fill only (never an in-game handle): a private
+    /// bound hub whose worker, while a request is in flight, wakes as soon as
+    /// a response is readable instead of sleeping Java's whole 20/50 ms cycle.
+    /// Requests, the 10-urgent in-flight cap and the wire protocol are Java's.
+    /// The identity differs from every [`Self::new_bound`] hub, so in-game
+    /// handles never share this worker or its pacing.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_cold_fill(
+        versionlist: &JagFile,
+        transport: Transport,
+        revision: ClientRevision,
+        host: &str,
+        port: u16,
+        cache_dir: &str,
+        content_id: &str,
+        file_store_dir: Option<&str>,
+    ) -> Result<Self, String> {
+        Self::new_inner(
+            versionlist,
+            host,
+            port,
+            cache_dir,
+            Some(BoundHubIdentity {
+                transport,
+                revision,
+                cache_dir,
+                content_id,
+                file_store_dir,
+                persist_dir: None,
+                map_archive: None,
+                cold_fill: true,
+            }),
+            None,
+        )?
+        .ok_or_else(|| "cold-fill OnDemand versionlist is missing required tables".to_string())
     }
 
     fn new_inner(
@@ -497,6 +542,7 @@ impl OnDemand {
             persist_dir: identity.persist_dir.map(str::to_string),
             tables_sha256: tables_sha256(&versions, &crcs),
             map_archive: identity.map_archive.clone(),
+            cold_fill: identity.cold_fill,
         });
         let store_hint = bound
             .as_ref()
@@ -935,31 +981,46 @@ impl OnDemand {
 
     fn drain_worker(&mut self) {
         while let Ok(msg) = self.rx.try_recv() {
-            match msg {
-                WorkerMessage::Completed {
-                    archive,
-                    file,
-                    urgent,
-                    data,
-                    decoded,
-                } => {
-                    // `want` is the per-handle request/prefetch set. Archive 0/1
-                    // Completeds also arrive from `Model::request_download` via
-                    // the process provider, which never touches `want` — drop
-                    // those and `check_scene` stays on scene 1 (-3, loc models).
-                    let keep = archive == 0 || archive == 1 || self.want.remove(&(archive, file));
-                    if !keep {
-                        continue;
-                    }
-                    let mut req = OnDemandRequest::new(archive, file);
-                    req.urgent = urgent;
-                    req.data = data.map(|d| Arc::try_unwrap(d).unwrap_or_else(|d| (*d).clone()));
-                    req.decoded = decoded;
-                    self.completed.push(req);
+            self.accept_worker_message(msg);
+        }
+    }
+
+    /// Block until the worker posts its next message or `until` passes, then
+    /// drain the rest. Cold-fill consumers wake on each completion instead of
+    /// polling `run`.
+    fn wait_worker(&mut self, until: Instant) {
+        let timeout = until.saturating_duration_since(Instant::now());
+        if let Ok(msg) = self.rx.recv_timeout(timeout) {
+            self.accept_worker_message(msg);
+            self.drain_worker();
+        }
+    }
+
+    fn accept_worker_message(&mut self, msg: WorkerMessage) {
+        match msg {
+            WorkerMessage::Completed {
+                archive,
+                file,
+                urgent,
+                data,
+                decoded,
+            } => {
+                // `want` is the per-handle request/prefetch set. Archive 0/1
+                // Completeds also arrive from `Model::request_download` via
+                // the process provider, which never touches `want` — drop
+                // those and `check_scene` stays on scene 1 (-3, loc models).
+                let keep = archive == 0 || archive == 1 || self.want.remove(&(archive, file));
+                if !keep {
+                    return;
                 }
-                WorkerMessage::Message(m) => self.message = m,
-                WorkerMessage::FailCount(n) => self.fail_count = n,
+                let mut req = OnDemandRequest::new(archive, file);
+                req.urgent = urgent;
+                req.data = data.map(|d| Arc::try_unwrap(d).unwrap_or_else(|d| (*d).clone()));
+                req.decoded = decoded;
+                self.completed.push(req);
             }
+            WorkerMessage::Message(m) => self.message = m,
+            WorkerMessage::FailCount(n) => self.fail_count = n,
         }
     }
 }
@@ -1051,6 +1112,7 @@ fn subscribe_hub(
         map_archive: identity
             .as_ref()
             .and_then(|identity| identity.map_archive.clone()),
+        wake_on_response: identity.as_ref().is_some_and(|identity| identity.cold_fill),
         recovering: false,
         reconnect_backoff: Duration::ZERO,
         saw_network_progress: false,
@@ -1095,7 +1157,8 @@ fn tables_sha256(versions: &[Vec<i32>], crcs: &[Vec<i32>]) -> [u8; 32] {
 /// each pass (TS message handling). Sleeps 20 ms (50 ms when only prefetches
 /// remain and a local cache exists), then one pump cycle. Queued demand is
 /// pumped immediately so a matching local map is not delayed by the idle
-/// prefetch interval.
+/// prefetch interval. A cold-fill worker ([`OnDemand::new_cold_fill`]) ends
+/// the same wait early when a response is readable.
 fn worker_main(mut worker: Worker) {
     while worker.running.load(Ordering::Relaxed) {
         worker.drain_commands();
@@ -1107,13 +1170,31 @@ fn worker_main(mut worker: Worker) {
             20
         };
         if delay > 0 {
-            thread::sleep(Duration::from_millis(delay));
+            worker.idle(Duration::from_millis(delay));
         }
         worker.tick();
     }
 }
 
 impl Worker {
+    /// The wait between Java cycles. Only a cold-fill worker with a request
+    /// in flight stops early, once the next chunk header or part is readable;
+    /// every other worker sleeps the whole cycle as Java does.
+    fn idle(&mut self, cycle: Duration) {
+        if self.wake_on_response && !self.pending.is_empty() {
+            if let Some(stream) = self.stream.as_mut() {
+                let need = if self.part_available == 0 {
+                    6
+                } else {
+                    self.part_available
+                };
+                stream.wait_available(need, cycle);
+                return;
+            }
+        }
+        thread::sleep(cycle);
+    }
+
     fn drain_commands(&mut self) {
         while let Ok(cmd) = self.commands.try_recv() {
             match cmd {
@@ -1877,88 +1958,74 @@ fn cache_read_in(cache_dir: &str, archive: i32, file: i32) -> Option<Vec<u8>> {
 /// Implementations must return only payloads that validate against the
 /// versionlist crc/version tables (Java `OnDemand.validate`).
 impl crate::unpack::EntrySource for OnDemand {
-    fn fetch_entries(
+    fn request_entry(&mut self, archive: i32, file: i32) -> Result<(), String> {
+        if self.has_tables && !self.valid_file(archive, file) {
+            return Err(format!(
+                "archive {archive} file {file}: not a required versionlist entry"
+            ));
+        }
+        self.request(archive, file);
+        Ok(())
+    }
+
+    fn take_entries(
         &mut self,
-        archive: i32,
-        files: &[i32],
-    ) -> Result<Vec<(i32, Vec<u8>)>, String> {
-        files.iter().try_for_each(|file| {
-            if self.has_tables && !self.valid_file(archive, *file) {
+        until: Instant,
+        out: &mut Vec<crate::unpack::FetchedEntry>,
+    ) -> Result<(), String> {
+        self.run(false);
+        if self.completed.head().is_none() {
+            self.wait_worker(until);
+        }
+        while let Some(mut req) = self.pop_completed_raw() {
+            let archive = req.archive;
+            // Archive 93 is the worker's remap of a map prefetch, never a
+            // requested cold-fill entry.
+            if !(0..4).contains(&archive) {
+                continue;
+            }
+            let Some((version, crc)) = self.version_crc(archive, req.file) else {
                 return Err(format!(
-                    "archive {archive} file {file}: not a required versionlist entry"
+                    "archive {archive} file {}: no versionlist entry",
+                    req.file
+                ));
+            };
+            let Some(data) = req.data.take() else {
+                return Err(format!(
+                    "archive {archive} file {}: the engine reports the entry absent",
+                    req.file
+                ));
+            };
+            if !validate(crc, version, Some(&data)) {
+                return Err(format!(
+                    "archive {archive} file {}: downloaded payload failed the versionlist \
+                     version/CRC check",
+                    req.file
                 ));
             }
-            Ok(())
-        })?;
-        for file in files {
-            self.request(archive, *file);
+            let body = if data.len() >= 2 {
+                &data[..data.len() - 2]
+            } else {
+                &data
+            };
+            let mut payload = Vec::new();
+            GzDecoder::new(body)
+                .read_to_end(&mut payload)
+                .map_err(|_| {
+                    format!(
+                        "archive {archive} file {}: downloaded payload is not a gzip stream",
+                        req.file
+                    )
+                })?;
+            out.push(crate::unpack::FetchedEntry {
+                archive,
+                file: req.file,
+                payload,
+            });
         }
-        let mut out = Vec::with_capacity(files.len());
-        let mut last_progress = Instant::now();
-        while out.len() < files.len() {
-            self.run(false);
-            while let Some(mut req) = self.pop_completed_raw() {
-                if req.archive != archive || !files.contains(&req.file) {
-                    continue;
-                }
-                let Some((version, crc)) = self.version_crc(req.archive, req.file) else {
-                    return Err(format!(
-                        "archive {archive} file {}: no versionlist entry",
-                        req.file
-                    ));
-                };
-                let Some(data) = req.data.take() else {
-                    return Err(format!(
-                        "archive {archive} file {}: the engine reports the entry absent",
-                        req.file
-                    ));
-                };
-                if !validate(crc, version, Some(&data)) {
-                    return Err(format!(
-                        "archive {archive} file {}: downloaded payload failed the versionlist \
-                         version/CRC check",
-                        req.file
-                    ));
-                }
-                let body = if data.len() >= 2 {
-                    &data[..data.len() - 2]
-                } else {
-                    &data
-                };
-                let raw = {
-                    let mut raw = Vec::new();
-                    GzDecoder::new(body).read_to_end(&mut raw).map_err(|_| {
-                        format!(
-                            "archive {archive} file {}: downloaded payload is not a gzip stream",
-                            req.file
-                        )
-                    })?;
-                    raw
-                };
-                out.push((req.file, raw));
-                last_progress = Instant::now();
-            }
-            if out.len() < files.len() {
-                if last_progress.elapsed() > FETCH_IDLE_TIMEOUT {
-                    return Err(format!(
-                        "archive {archive}: update server completed {}/{} files; no progress for \
-                         {FETCH_IDLE_TIMEOUT:?}",
-                        out.len(),
-                        files.len()
-                    ));
-                }
-                thread::sleep(FETCH_POLL);
-            }
-        }
-        Ok(out)
+        Ok(())
     }
 }
-
-/// Idle bound for one cold-cache fetch batch: no completed file for this long
-/// fails the batch (the caller reports the degraded fallback honestly).
-const FETCH_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
-/// Poll interval while draining a cold-cache fetch batch.
-const FETCH_POLL: Duration = Duration::from_millis(5);
 
 /// Java `OnDemand.validate`: the 2-byte version trailer must match and the
 /// CRC32 of the payload must match the versionlist table.
