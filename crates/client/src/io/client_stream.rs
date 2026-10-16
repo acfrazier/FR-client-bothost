@@ -197,7 +197,7 @@ fn retry_cancel_poll(
             io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
         )
         && !cancel.is_some_and(LoginCancel::is_cancelled)
-        && deadline.map_or(true, |deadline| Instant::now() < deadline)
+        && deadline.is_none_or(|deadline| Instant::now() < deadline)
 }
 
 /// Stops one login handshake's transport from another thread. An embedding
