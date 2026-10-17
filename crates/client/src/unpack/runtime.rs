@@ -456,7 +456,8 @@ pub struct SlowLookup<'a> {
 /// ([`looked_up`]), kept until the fill ends.
 #[derive(Default)]
 struct Lookups {
-    /// The asset host's, for the stepped `/crc` and JAG requests.
+    /// The asset host's, for the `/crc` request and the stepped JAG
+    /// requests.
     asset: Option<Vec<SocketAddr>>,
     /// The game host's, for the OnDemand worker, which never looks up a
     /// name itself.
@@ -683,12 +684,27 @@ impl RuntimeCacheFill {
                     message: crc_error(AssetFetchError::Connection).to_string(),
                 };
                 let checksums = match until {
-                    None => Client::get_jag_checksums_checked(
-                        request.transport,
-                        &request.asset_host,
-                        request.asset_port,
-                    )
-                    .map_err(crc_error)?,
+                    None => {
+                        // The one-call fill also looks the asset host up in
+                        // its own step, once, so that a failed name reaches
+                        // the caller (`RuntimeCacheError::failed_lookup`)
+                        // and the caller's world fallback skips each world
+                        // with that name.
+                        let Some(addrs) = looked_up(
+                            &mut self.lookups.asset,
+                            None,
+                            "asset host",
+                            &request.asset_host,
+                            request.asset_port,
+                            None,
+                        )
+                        .map_err(lookup_error)?
+                        else {
+                            return Ok((Stage::Negotiate(None), waiting));
+                        };
+                        Client::get_jag_checksums_at(request.transport, &request.asset_host, addrs)
+                            .map_err(crc_error)?
+                    }
                     Some(until) => {
                         let mut fetch = match fetch {
                             Some(fetch) => fetch,
@@ -792,8 +808,7 @@ impl RuntimeCacheFill {
                             let mut fetch = match fetch {
                                 Some(fetch) => fetch,
                                 None => {
-                                    // Looked up in the `/crc` step, unless that
-                                    // step had no deadline.
+                                    // Looked up in the `/crc` step.
                                     let addrs = looked_up(
                                         &mut self.lookups.asset,
                                         self.slow_lookups,

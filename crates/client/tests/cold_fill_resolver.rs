@@ -1,24 +1,28 @@
-//! The stepped cold cache fill against a slow or failing system resolver.
+//! The cold cache fill, stepped and one-call, against a slow or failing
+//! system resolver.
 //!
 //! This test executable defines its own `getaddrinfo`, which the standard
 //! library's name lookup calls in place of libc's. A name that ends in
 //! [`SLOW_SUFFIX`] resolves to 127.0.0.1 after [`LOOKUP_DELAY`].
-//! [`FAILED_HOST`] fails at once. Every other name goes to libc's
-//! `getaddrinfo` unchanged. No system resolver setting changes, and no
-//! external server is contacted.
+//! [`FAILED_HOST`] and [`FAILED_ASSET_HOST`] fail at once. Every other
+//! name goes to libc's `getaddrinfo` unchanged. No system resolver setting
+//! changes, and no external server is contacted.
 //!
 //! The standard library has no non-blocking or cancellable lookup, so a
 //! lookup step can run past its deadline by the resolver's time. These
 //! tests show that this costs at most one step per host in a fill, that
 //! the fill reports each such step to its observer once, and that a cancel
-//! never waits for a lookup. A failed lookup fails the fill at once.
+//! never waits for a lookup. A failed lookup fails the fill at once, and
+//! the error names the host in both fills.
 #![cfg(target_os = "linux")]
 
 #[path = "support/startup_snapshot.rs"]
 mod support;
 
 use client::io::{ClientRevision, OnDemand};
-use client::unpack::{RuntimeCacheFill, RuntimeCacheRequest, RuntimeCacheStep, SlowLookup};
+use client::unpack::{
+    prepare_runtime_cache, RuntimeCacheFill, RuntimeCacheRequest, RuntimeCacheStep, SlowLookup,
+};
 use client::Transport;
 use std::ffi::{c_char, c_int, CStr};
 use std::net::TcpListener;
@@ -31,6 +35,8 @@ use support::{HttpServer, PacedEntryServer, PackSet, TempDir, PACK_NAMES};
 const SLOW_SUFFIX: &str = ".cold-fill-test.invalid";
 /// The lookup of this name fails at once.
 const FAILED_HOST: &str = "no-game.cold-fill-failed.invalid";
+/// The lookup of this name fails at once.
+const FAILED_ASSET_HOST: &str = "no-asset.cold-fill-failed.invalid";
 /// How long one slow lookup takes.
 const LOOKUP_DELAY: Duration = Duration::from_millis(350);
 /// The host's step deadline (`host-play` `TEMPLATE_STEP_WAIT`).
@@ -112,7 +118,7 @@ pub unsafe extern "C" fn getaddrinfo(
             SLOW_LOOKUPS.lock().unwrap().push(name.into_owned());
             std::thread::sleep(LOOKUP_DELAY);
             node = c"127.0.0.1".as_ptr();
-        } else if name == FAILED_HOST {
+        } else if name == FAILED_HOST || name == FAILED_ASSET_HOST {
             SLOW_LOOKUPS.lock().unwrap().push(name.into_owned());
             // SAFETY: `res` is the caller's result slot (`getaddrinfo`
             // contract).
@@ -179,6 +185,71 @@ fn a_failed_game_host_lookup_fails_the_fill_at_once() {
     assert_eq!(lookups_of(FAILED_HOST), 1);
     assert_eq!(OnDemand::live_workers_for(FAILED_HOST, 1), 0);
     assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
+}
+
+/// An asset host that the resolver cannot look up fails the one-call fill
+/// at once, after one lookup. The error is a connection failure that names
+/// the host, as in the stepped fill, so the caller's world fallback can
+/// pass over that name. The error text is that of a failed `/crc` request.
+#[test]
+fn a_failed_asset_host_lookup_names_the_host_in_the_one_call_fill() {
+    let source = TempDir::in_memory("resolver-one-call-failed-source");
+    let root = TempDir::in_memory("resolver-one-call-failed-root");
+    let started = Instant::now();
+    let error = prepare_runtime_cache(&request(
+        source.path(),
+        root.path(),
+        FAILED_ASSET_HOST,
+        1,
+        "127.0.0.1",
+        1,
+    ))
+    .expect_err("the asset host lookup fails");
+    let elapsed = started.elapsed();
+    eprintln!("one-call failed asset-host lookup: {elapsed:?}: {error}");
+    assert!(error.is_connection());
+    assert_eq!(error.failed_lookup(), Some(FAILED_ASSET_HOST));
+    assert_eq!(error.to_string(), "update server /crc: connection problem");
+    assert_eq!(lookups_of(FAILED_ASSET_HOST), 1);
+    assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
+}
+
+/// The one-call fill gets `/crc` from the addresses of its one asset-host
+/// lookup and completes. The source holds the packs, so no JAG download
+/// looks the name up again.
+#[test]
+fn the_one_call_fill_looks_up_the_asset_host_once_for_crc() {
+    let asset_host = "one-call-asset.cold-fill-test.invalid";
+    let packs = PackSet::with_entries(37, [20, 5, 2, 5]);
+    let http = HttpServer::start(packs.clone());
+    let entries = PacedEntryServer::start(packs.entries.clone(), Duration::ZERO, Duration::ZERO);
+    let source = TempDir::in_memory("resolver-one-call-source");
+    packs.write_to(source.path()).unwrap();
+    let root = TempDir::in_memory("resolver-one-call-root");
+    let started = Instant::now();
+    let prepared = prepare_runtime_cache(&request(
+        source.path(),
+        root.path(),
+        asset_host,
+        http.port(),
+        "127.0.0.1",
+        entries.port(),
+    ))
+    .unwrap();
+    eprintln!(
+        "one-call named asset host: {:?}; source {}; /crc requests {}; lookups {}",
+        started.elapsed(),
+        prepared.source,
+        http.crc_count(),
+        lookups_of(asset_host)
+    );
+    assert_eq!(prepared.source, "update-server");
+    assert_eq!(http.crc_count(), 1);
+    assert_eq!(
+        lookups_of(asset_host),
+        1,
+        "the asset host is looked up once"
+    );
 }
 
 /// A game host that is slow to look up does not delay a cancel: dropping

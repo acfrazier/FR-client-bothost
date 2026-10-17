@@ -2515,16 +2515,35 @@ impl Client {
         port: u16,
         path: &str,
     ) -> Option<Vec<u8>> {
+        Self::http_get_to(transport, host, (host, port), path)
+    }
+
+    /// [`Self::http_get_for`] that connects to `target`; `host` names the
+    /// server in the request and for TLS.
+    fn http_get_to(
+        transport: crate::Transport,
+        host: &str,
+        target: impl std::net::ToSocketAddrs,
+        path: &str,
+    ) -> Option<Vec<u8>> {
         if transport.uses_tls() {
-            Self::https_get(host, port, path, None)
+            Self::https_get_to(host, target, path, None)
         } else {
-            Self::http_get_plain(host, port, path)
+            Self::http_get_plain_to(host, target, path)
         }
     }
 
     fn http_get_plain(host: &str, port: u16, path: &str) -> Option<Vec<u8>> {
+        Self::http_get_plain_to(host, (host, port), path)
+    }
+
+    fn http_get_plain_to(
+        host: &str,
+        target: impl std::net::ToSocketAddrs,
+        path: &str,
+    ) -> Option<Vec<u8>> {
         use std::io::{Read, Write};
-        let mut stream = std::net::TcpStream::connect((host, port)).ok()?;
+        let mut stream = std::net::TcpStream::connect(target).ok()?;
         stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
         write!(stream, "GET {path} HTTP/1.0\r\nHost: {host}\r\n\r\n").ok()?;
         let mut buf = Vec::new();
@@ -2538,15 +2557,23 @@ impl Client {
         path: &str,
         login_key_timeout: Option<Duration>,
     ) -> Option<Vec<u8>> {
+        Self::https_get_to(host, (host, port), path, login_key_timeout)
+    }
+
+    fn https_get_to(
+        host: &str,
+        target: impl std::net::ToSocketAddrs,
+        path: &str,
+        login_key_timeout: Option<Duration>,
+    ) -> Option<Vec<u8>> {
         use std::io::{Read, Write};
-        use std::net::ToSocketAddrs;
         let tcp = if let Some(timeout) = login_key_timeout {
-            (host, port)
+            target
                 .to_socket_addrs()
                 .ok()?
                 .find_map(|addr| std::net::TcpStream::connect_timeout(&addr, timeout).ok())?
         } else {
-            std::net::TcpStream::connect((host, port)).ok()?
+            std::net::TcpStream::connect(target).ok()?
         };
         tcp.set_read_timeout(Some(login_key_timeout.unwrap_or(Duration::from_secs(8))))
             .ok()?;
@@ -2638,8 +2665,19 @@ impl Client {
         host: &str,
         port: u16,
     ) -> Result<[i32; 9], AssetFetchError> {
-        let body =
-            Self::http_get_for(transport, host, port, "/crc").ok_or(AssetFetchError::Connection)?;
+        Self::get_jag_checksums_at(transport, host, (host, port))
+    }
+
+    /// [`Self::get_jag_checksums_checked`] from the addresses in `target`,
+    /// which the caller looked up; `host` names the server in the request
+    /// and for TLS.
+    pub(crate) fn get_jag_checksums_at(
+        transport: crate::Transport,
+        host: &str,
+        target: impl std::net::ToSocketAddrs,
+    ) -> Result<[i32; 9], AssetFetchError> {
+        let body = Self::http_get_to(transport, host, target, "/crc")
+            .ok_or(AssetFetchError::Connection)?;
         Self::parse_jag_checksums(body).map_err(|_| AssetFetchError::Checksum)
     }
 
