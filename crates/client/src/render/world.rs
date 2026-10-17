@@ -3392,16 +3392,8 @@ impl RenderWorld {
                         self.sprite_occluded(world, original_level, tile_x, tile_z, min_y);
                     if decor_occluded {
                         render_trace!(decor(
-                            tile_x,
-                            tile_z,
-                            typecode,
-                            wshape,
-                            angle as i32,
-                            "front",
-                            true,
-                            "occluded",
-                            "n/a",
-                            false,
+                            tile_x, tile_z, typecode, wshape, angle, "front", true, "occluded",
+                            "n/a", false,
                         ));
                     } else if (wshape & front_wall_types) != 0 {
                         #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
@@ -3423,7 +3415,7 @@ impl RenderWorld {
                             tile_z,
                             typecode,
                             wshape,
-                            angle as i32,
+                            angle,
                             "front",
                             false,
                             "front-wall",

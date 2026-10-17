@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use crate::client::client::AssetFetchError;
 use crate::client::Client;
-use crate::io::client_stream::{wait_ready, PendingConnect, Ready};
+use crate::io::client_stream::{park_until_ready, PendingConnect, Readiness};
 use crate::Transport;
 
 /// Read timeout of `Client::http_get_plain`.
@@ -75,7 +75,7 @@ impl Conn {
 enum Advance {
     Done(Vec<u8>),
     /// The socket must become ready for this before the fetch can go on.
-    Blocked(Ready),
+    Blocked(Readiness),
 }
 
 const FAILED: AssetFetchError = AssetFetchError::Connection;
@@ -150,7 +150,7 @@ impl HttpFetch {
             }
             let wake = quiet_at.map_or(until, |quiet_at| quiet_at.min(until));
             if let Some(socket) = self.socket() {
-                if wait_ready(socket, ready, wake.saturating_duration_since(now)) {
+                if park_until_ready(socket, ready, wake.saturating_duration_since(now)) {
                     self.progress_at = Some(Instant::now());
                 }
             }
@@ -208,7 +208,7 @@ impl HttpFetch {
                 State::Handshaking(mid) => {
                     self.handshake(mid.handshake())?;
                     if matches!(self.state, State::Handshaking(_)) {
-                        return Ok(Advance::Blocked(Ready::Read));
+                        return Ok(Advance::Blocked(Readiness::Read));
                     }
                 }
                 State::Sending { mut conn, mut sent } => match conn.write(&self.request[sent..]) {
@@ -229,7 +229,7 @@ impl HttpFetch {
                     }
                     Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                         self.state = State::Sending { conn, sent };
-                        return Ok(Advance::Blocked(Ready::Write));
+                        return Ok(Advance::Blocked(Readiness::Write));
                     }
                     Err(_) => return Err(FAILED),
                 },
@@ -254,7 +254,7 @@ impl HttpFetch {
                         }
                         Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                             self.state = State::Receiving { conn, response };
-                            return Ok(Advance::Blocked(Ready::Read));
+                            return Ok(Advance::Blocked(Readiness::Read));
                         }
                         Err(_) => return Err(FAILED),
                     }
