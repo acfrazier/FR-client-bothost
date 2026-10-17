@@ -470,21 +470,24 @@ impl ClientStream {
         Self::open_handshake(transport, socket, host, port, Some(deadline), cancel)
     }
 
-    /// Connect for a handshake that `cancel` can stop from another thread at
-    /// every point until [`Self::set_deadline`]`(None)` ends it. The TCP
+    /// Connect to `addrs`, the addresses of `host` that the caller looked
+    /// up, for a handshake that `cancel` can stop from another thread at
+    /// every point until [`Self::set_deadline`]`(None)` ends it. This call
+    /// never calls the resolver, which cannot be interrupted. The TCP
     /// connect waits in slices of at most 10 ms and stops between them once
     /// `cancel` fired. After the connect, `cancel` shuts the socket, which
     /// ends a blocked TLS or WebSocket setup or handshake read. There is no
-    /// deadline: otherwise every wait is that of [`Self::connect_for`]. Name
-    /// resolution is the system resolver's and cannot be interrupted.
+    /// deadline: otherwise every wait is that of [`Self::connect_for`].
+    /// `host` and `port` name the server for the TLS and WebSocket setup.
     pub fn connect_cancellable(
         transport: Transport,
         host: &str,
         port: u16,
+        addrs: &[SocketAddr],
         cancel: &LoginCancel,
     ) -> io::Result<ClientStream> {
         const SLICE: Duration = Duration::from_millis(10);
-        let mut connect = PendingConnect::start((host, port).to_socket_addrs()?.collect());
+        let mut connect = PendingConnect::start(addrs.to_vec());
         let socket = loop {
             if cancel.is_cancelled() {
                 return Err(login_cancelled());
@@ -2225,9 +2228,11 @@ mod tests {
                 Instant::now()
             })
         };
-        let error = ClientStream::connect_cancellable(Transport::Wss, "127.0.0.1", port, &cancel)
-            .err()
-            .expect("a cancelled setup fails");
+        let addrs = [SocketAddr::from(([127, 0, 0, 1], port))];
+        let error =
+            ClientStream::connect_cancellable(Transport::Wss, "127.0.0.1", port, &addrs, &cancel)
+                .err()
+                .expect("a cancelled setup fails");
         let ended = Instant::now();
         let cancelled_at = canceller.join().unwrap();
         let server_open = server.join().unwrap();
@@ -2259,8 +2264,10 @@ mod tests {
             socket.write_all(&[byte[0] + 1]).unwrap();
         });
         let cancel = LoginCancel::new();
+        let addrs = [SocketAddr::from(([127, 0, 0, 1], port))];
         let mut stream =
-            ClientStream::connect_cancellable(Transport::Tcp, "127.0.0.1", port, &cancel).unwrap();
+            ClientStream::connect_cancellable(Transport::Tcp, "127.0.0.1", port, &addrs, &cancel)
+                .unwrap();
         stream.write(&[15], 1).unwrap();
         assert_eq!(stream.read().unwrap(), 16);
         stream.set_deadline(None).unwrap();

@@ -6,11 +6,11 @@
 //! TCP, and also `Connection: close` over TLS; the body after the first blank
 //! line of a 200 response. A connection that stays quiet fails after the same
 //! read timeout, 2 s over TCP and 8 s over TLS, counted from the last bytes
-//! received. Name resolution happens when the fetch starts and cannot be
-//! interrupted.
+//! received. The caller looks up the host's addresses: the fetch never
+//! calls the resolver, which cannot be interrupted.
 
 use std::io::{self, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 
 use crate::client::client::AssetFetchError;
@@ -81,11 +81,13 @@ enum Advance {
 const FAILED: AssetFetchError = AssetFetchError::Connection;
 
 impl HttpFetch {
-    /// Resolve `host` and start the connect. No other wait happens here.
+    /// Start the connect to `addrs`, the addresses of `host` that the
+    /// caller looked up. No other wait happens here. `host` names the
+    /// server in the request and for TLS.
     pub(super) fn start(
         transport: Transport,
         host: &str,
-        port: u16,
+        addrs: &[SocketAddr],
         path: &str,
     ) -> Result<Self, AssetFetchError> {
         let tls = if transport.uses_tls() {
@@ -93,22 +95,21 @@ impl HttpFetch {
         } else {
             None
         };
-        Self::start_with(tls, host, port, path)
+        Ok(Self::start_with(tls, host, addrs, path))
     }
 
     fn start_with(
         tls: Option<native_tls::TlsConnector>,
         host: &str,
-        port: u16,
+        addrs: &[SocketAddr],
         path: &str,
-    ) -> Result<Self, AssetFetchError> {
+    ) -> Self {
         let request = if tls.is_some() {
             format!("GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n")
         } else {
             format!("GET {path} HTTP/1.0\r\nHost: {host}\r\n\r\n")
         };
-        let addrs = (host, port).to_socket_addrs().map_err(|_| FAILED)?;
-        Ok(Self {
+        Self {
             host: host.to_string(),
             request: request.into_bytes(),
             quiet_limit: if tls.is_some() {
@@ -118,8 +119,8 @@ impl HttpFetch {
             },
             tls,
             progress_at: None,
-            state: State::Connecting(PendingConnect::start(addrs.collect())),
-        })
+            state: State::Connecting(PendingConnect::start(addrs.to_vec())),
+        }
     }
 
     /// Go on with the fetch until `until`. `Ok(Some)` is the response body;
@@ -312,6 +313,10 @@ mod tests {
         response
     }
 
+    fn loopback(port: u16) -> [SocketAddr; 1] {
+        [SocketAddr::from(([127, 0, 0, 1], port))]
+    }
+
     /// A plain update server that answers 200 ms late: the fetch waits
     /// in short polls, sends the blocking fetch's exact request and
     /// returns the body.
@@ -326,7 +331,8 @@ mod tests {
             thread::sleep(Duration::from_millis(200));
             socket.write_all(&response(b"crc-body")).unwrap();
         });
-        let mut fetch = HttpFetch::start(Transport::Tcp, "127.0.0.1", port, "/crc").unwrap();
+        let mut fetch =
+            HttpFetch::start(Transport::Tcp, "127.0.0.1", &loopback(port), "/crc").unwrap();
         let (body, polls, longest) = poll_steps(&mut fetch);
         server.join().unwrap();
         assert_eq!(body.unwrap(), b"crc-body");
@@ -351,7 +357,8 @@ mod tests {
             let _ = done_rx.recv_timeout(Duration::from_secs(10));
         });
         let started = Instant::now();
-        let mut fetch = HttpFetch::start(Transport::Tcp, "127.0.0.1", port, "/crc").unwrap();
+        let mut fetch =
+            HttpFetch::start(Transport::Tcp, "127.0.0.1", &loopback(port), "/crc").unwrap();
         let (body, _, longest) = poll_steps(&mut fetch);
         let failed = started.elapsed();
         done_tx.send(()).unwrap();
@@ -394,7 +401,7 @@ mod tests {
             .build()
             .unwrap();
         let mut fetch =
-            HttpFetch::start_with(Some(connector), "localhost", port, "/config1234").unwrap();
+            HttpFetch::start_with(Some(connector), "localhost", &loopback(port), "/config1234");
         let (fetched, polls, longest) = poll_steps(&mut fetch);
         server.join().unwrap();
         assert_eq!(fetched.unwrap(), body);

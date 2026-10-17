@@ -5,6 +5,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -392,24 +393,79 @@ pub enum RuntimeCacheStep {
 }
 
 /// [`prepare_runtime_cache`] in bounded steps for a cooperative scheduler.
-/// One step does one of: the `/crc` request; the preparation and retention
-/// locks; one JAG pack; the retained or local-store snapshot; the
-/// update-server fill; the publication; the decoded identity; retention,
-/// pruning and the map index. With a deadline, a step waits for the update
-/// server and for the locks only until the deadline: an unfinished HTTP
-/// request or a lock that another holder keeps continues in the next step.
-/// The calls and their order are those of the one-call preparation.
+/// One step does one of: the asset host's name lookup; the `/crc` request;
+/// the preparation and retention locks; one JAG pack; the retained or
+/// local-store snapshot; the game host's name lookup; the start of the
+/// update-server fill; the update-server fill; the publication; the decoded
+/// identity; retention, pruning and the map index. With a deadline, a step
+/// waits for the update server and for the locks only until the deadline:
+/// an unfinished HTTP request or a lock that another holder keeps continues
+/// in the next step. A name lookup step is the one exception: it can run
+/// past its deadline by as long as the system resolver takes, once per
+/// host per fill, with one log line (`looked_up`). The calls and their
+/// order are those of the one-call preparation.
 ///
 /// Between steps the fill holds the preparation lock, the retention lease,
 /// the runtime and staging directories, an HTTP request in flight and the
 /// fill's OnDemand worker. Dropping it before it is ready, or after an
 /// error, stops the worker (it does not wait for the update server's
-/// handshake) and removes the staging and runtime directories, the lease
-/// and the lock, in that order. Nothing is published, so a later fill
-/// starts again cleanly.
+/// handshake or for a name lookup) and removes the staging and runtime
+/// directories, the lease and the lock, in that order. Nothing is
+/// published, so a later fill starts again cleanly.
 pub struct RuntimeCacheFill {
     request: OwnedRuntimeCacheRequest,
+    lookups: Lookups,
     stage: Stage,
+}
+
+/// The server addresses that this fill looked up, each at most once
+/// ([`looked_up`]), kept until the fill ends.
+#[derive(Default)]
+struct Lookups {
+    /// The asset host's, for the stepped `/crc` and JAG requests.
+    asset: Option<Vec<SocketAddr>>,
+    /// The game host's, for the OnDemand worker, which never looks up a
+    /// name itself.
+    game: Option<Vec<SocketAddr>>,
+}
+
+/// The addresses of `host` at `port` in `slot`; if the fill has not looked
+/// them up yet, look them up now, keep them in `slot` and return `Ok(None)`:
+/// the lookup ends the step.
+///
+/// Exception to the step deadline: the standard library and the system
+/// resolver have no non-blocking or cancellable name lookup, and the fill
+/// adds no thread, so this step can run past `until` by as long as the
+/// resolver takes. To keep that cost small, the step does the lookup and
+/// nothing else, the fill looks up each host at most once and keeps the
+/// addresses until it ends, and a step that runs past its deadline logs
+/// one line. The OnDemand worker gets only addresses, so a cancel never
+/// waits for a lookup.
+fn looked_up<'a>(
+    slot: &'a mut Option<Vec<SocketAddr>>,
+    revision: ClientRevision,
+    role: &str,
+    host: &str,
+    port: u16,
+    until: Option<Instant>,
+) -> io::Result<Option<&'a [SocketAddr]>> {
+    if slot.is_some() {
+        return Ok(slot.as_deref());
+    }
+    let started = Instant::now();
+    let addrs = (host, port).to_socket_addrs();
+    let ended = Instant::now();
+    if let Some(until) = until.filter(|until| ended > *until) {
+        eprintln!(
+            "{}bot: name lookup of the {role} {host} took {:?}, {:?} past the step deadline \
+             (the system resolver cannot be interrupted)",
+            revision.as_i32(),
+            ended - started,
+            ended - until,
+        );
+    }
+    *slot = Some(addrs?.collect());
+    Ok(None)
 }
 
 struct OwnedRuntimeCacheRequest {
@@ -442,6 +498,9 @@ enum Stage {
     Jag(Box<Held>, usize, Option<Box<HttpFetch>>),
     Snapshot(Box<Held>),
     LocalStore(Box<Held>),
+    /// The local store failed: start the update-server fill, after the game
+    /// host's name lookup if the fill has not done it yet.
+    Worker(Box<Held>, Box<JagFile>),
     Network(Box<Held>),
     Publish(Box<Held>),
     Identity(Box<Held>),
@@ -546,6 +605,7 @@ impl RuntimeCacheFill {
                 game_host: request.game_host.to_string(),
                 game_port: request.game_port,
             },
+            lookups: Lookups::default(),
             stage: Stage::Negotiate(None),
         }
     }
@@ -562,7 +622,7 @@ impl RuntimeCacheFill {
     }
 
     fn advance(
-        &self,
+        &mut self,
         stage: Stage,
         until: Option<Instant>,
     ) -> Result<(Stage, RuntimeCacheStep), RuntimeCacheError> {
@@ -587,15 +647,29 @@ impl RuntimeCacheFill {
                     Some(until) => {
                         let mut fetch = match fetch {
                             Some(fetch) => fetch,
-                            None => Box::new(
-                                HttpFetch::start(
-                                    request.transport,
+                            None => {
+                                let addrs = looked_up(
+                                    &mut self.lookups.asset,
+                                    request.revision,
+                                    "asset host",
                                     &request.asset_host,
                                     request.asset_port,
-                                    "/crc",
+                                    Some(until),
                                 )
-                                .map_err(crc_error)?,
-                            ),
+                                .map_err(|_| crc_error(AssetFetchError::Connection))?;
+                                let Some(addrs) = addrs else {
+                                    return Ok((Stage::Negotiate(None), waiting));
+                                };
+                                Box::new(
+                                    HttpFetch::start(
+                                        request.transport,
+                                        &request.asset_host,
+                                        addrs,
+                                        "/crc",
+                                    )
+                                    .map_err(crc_error)?,
+                                )
+                            }
                         };
                         let Some(body) = fetch.poll(until).map_err(crc_error)? else {
                             return Ok((Stage::Negotiate(Some(fetch)), waiting));
@@ -672,11 +746,30 @@ impl RuntimeCacheFill {
                         Some(until) => {
                             let mut fetch = match fetch {
                                 Some(fetch) => fetch,
-                                None => Box::new(super::start_jag_download(
-                                    request.endpoint(),
-                                    slot,
-                                    &held.refresh,
-                                )?),
+                                None => {
+                                    // Looked up in the `/crc` step, unless that
+                                    // step had no deadline.
+                                    let addrs = looked_up(
+                                        &mut self.lookups.asset,
+                                        request.revision,
+                                        "asset host",
+                                        &request.asset_host,
+                                        request.asset_port,
+                                        Some(until),
+                                    )
+                                    .map_err(|_| {
+                                        super::jag_fetch_error(slot, AssetFetchError::Connection)
+                                    })?;
+                                    let Some(addrs) = addrs else {
+                                        return Ok((Stage::Jag(held, slot, None), waiting));
+                                    };
+                                    Box::new(super::start_jag_download(
+                                        request.endpoint(),
+                                        addrs,
+                                        slot,
+                                        &held.refresh,
+                                    )?)
+                                }
                             };
                             let body = fetch
                                 .poll(until)
@@ -760,6 +853,43 @@ impl RuntimeCacheFill {
                     Err(_) => "malformed local snapshot input".into(),
                 };
                 held.local_error = local_error;
+                Ok((Stage::Worker(held, Box::new(jag)), waiting))
+            }
+            Stage::Worker(mut held, jag) => {
+                if self.lookups.game.is_none() && request.game_host == request.asset_host {
+                    // The same host: its asset lookup serves the game port.
+                    self.lookups.game = self.lookups.asset.as_ref().map(|addrs| {
+                        addrs
+                            .iter()
+                            .map(|addr| {
+                                let mut addr = *addr;
+                                addr.set_port(request.game_port);
+                                addr
+                            })
+                            .collect()
+                    });
+                }
+                let addrs = looked_up(
+                    &mut self.lookups.game,
+                    request.revision,
+                    "game host",
+                    &request.game_host,
+                    request.game_port,
+                    until,
+                )
+                .map_err(|error| RuntimeCacheError::Asset {
+                    kind: AssetFetchError::Connection,
+                    message: format!(
+                        "local store: {}; update-server fill: update server {}: \
+                         name lookup failed: {error}",
+                        held.local_error, request.game_host
+                    ),
+                })?;
+                let Some(addrs) = addrs else {
+                    return Ok((Stage::Worker(held, jag), waiting));
+                };
+                let (cache, root) = (held.cache()?.to_string(), held.root()?.to_string());
+                let store = request.jag_source.to_string_lossy().into_owned();
                 let transfer_id = format!("{:x}", Sha256::digest(&held.files().versionlist));
                 let worker = OnDemand::new_cold_fill(
                     &jag,
@@ -767,6 +897,7 @@ impl RuntimeCacheFill {
                     request.revision,
                     &request.game_host,
                     request.game_port,
+                    addrs,
                     &cache,
                     &transfer_id,
                     super::file_store_dir(&store).as_deref(),

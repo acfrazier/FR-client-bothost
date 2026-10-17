@@ -1972,10 +1972,12 @@ fn download_jag(
     confirm_jag_download(dest, slot, refresh)
 }
 
-/// Start the download part of [`refresh_jag`] as a stepped fetch; finish
-/// it with [`accept_jag_download`].
+/// Start the download part of [`refresh_jag`] as a stepped fetch to
+/// `addrs`, the endpoint host's looked-up addresses; finish it with
+/// [`accept_jag_download`].
 fn start_jag_download(
     endpoint: FetchEndpoint<'_>,
+    addrs: &[std::net::SocketAddr],
     slot: usize,
     refresh: &JagRefresh,
 ) -> Result<http::HttpFetch, UnpackError> {
@@ -1984,7 +1986,7 @@ fn start_jag_download(
     http::HttpFetch::start(
         endpoint.transport,
         endpoint.host,
-        endpoint.port,
+        addrs,
         &format!("/{name}{crc}"),
     )
     .map_err(|e| jag_fetch_error(slot, e))

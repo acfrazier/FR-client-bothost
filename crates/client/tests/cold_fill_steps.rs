@@ -14,7 +14,7 @@ use client::Transport;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::Read;
-use std::net::TcpListener;
+use std::net::{SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
@@ -40,6 +40,11 @@ fn request<'a>(
         game_host: "127.0.0.1",
         game_port,
     }
+}
+
+/// The looked-up address of a loopback update server.
+fn loopback(port: u16) -> [SocketAddr; 1] {
+    [SocketAddr::from(([127, 0, 0, 1], port))]
 }
 
 struct Fixture {
@@ -445,6 +450,7 @@ fn in_game_requests_keep_the_java_twenty_ms_cycle() {
             ClientRevision::R289,
             "127.0.0.1",
             server.port(),
+            &loopback(server.port()),
             cache.path().to_str().unwrap(),
             "cycle-cold-fill",
             None,
@@ -486,6 +492,7 @@ fn cold_fill_worker_resends_a_stuck_request_at_the_java_pace() {
         ClientRevision::R289,
         "127.0.0.1",
         server.port(),
+        &loopback(server.port()),
         cache.path().to_str().unwrap(),
         "resend-cold-fill",
         None,
@@ -752,6 +759,7 @@ fn paced_responses_keep_the_java_resend_interval() {
         ClientRevision::R289,
         "127.0.0.1",
         server.port(),
+        &loopback(server.port()),
         cache.path().to_str().unwrap(),
         "resend-cadence",
         None,

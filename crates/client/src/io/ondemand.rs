@@ -7,6 +7,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Read};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -179,7 +180,20 @@ struct BoundHubIdentity<'a> {
     file_store_dir: Option<&'a str>,
     persist_dir: Option<&'a str>,
     map_archive: Option<Arc<PreparedMapArchive>>,
-    cold_fill: bool,
+    /// The update server's addresses for a cold-fill hub, looked up by the
+    /// fill; `None` for every other hub.
+    cold_fill_addrs: Option<&'a [SocketAddr]>,
+}
+
+/// Cold-fill worker only: how it connects to the update server.
+struct ColdConnect {
+    /// The update server's addresses, looked up by the fill before the
+    /// worker starts. The worker never calls the resolver, so nothing that
+    /// joins it waits for a name lookup.
+    addrs: Vec<SocketAddr>,
+    /// Lets the hub's last detach stop the connect and handshake from
+    /// another thread.
+    cancel: LoginCancel,
 }
 
 static NEXT_SLOT: AtomicUsize = AtomicUsize::new(1);
@@ -299,9 +313,9 @@ struct Worker {
     /// counted one for the resend and reconnect timeouts.
     java_cycle: Duration,
     counted_at: Instant,
-    /// Cold-fill hub only: lets the hub's last detach stop the update
-    /// server connect and handshake from another thread.
-    handshake_cancel: Option<LoginCancel>,
+    /// Cold-fill hub only: the update server's looked-up addresses and the
+    /// cancel for its connect and handshake ([`Worker::open_socket`]).
+    cold_connect: Option<ColdConnect>,
     recovering: bool,
     reconnect_backoff: Duration,
     saw_network_progress: bool,
@@ -438,7 +452,7 @@ impl OnDemand {
                 file_store_dir,
                 persist_dir,
                 map_archive,
-                cold_fill: false,
+                cold_fill_addrs: None,
             }),
             None,
         )?
@@ -453,6 +467,10 @@ impl OnDemand {
     /// cycles, not wake-ups.
     /// The identity differs from every [`Self::new_bound`] hub, so in-game
     /// handles never share this worker or its pacing.
+    /// `addrs` are the addresses of `host` at `port`, looked up by the
+    /// caller: the worker connects to them and never calls the resolver,
+    /// so a cancel never waits for a name lookup. `host` keys the hub and
+    /// names the server for the TLS and WebSocket setup.
     #[allow(clippy::too_many_arguments)]
     pub fn new_cold_fill(
         versionlist: &JagFile,
@@ -460,6 +478,7 @@ impl OnDemand {
         revision: ClientRevision,
         host: &str,
         port: u16,
+        addrs: &[SocketAddr],
         cache_dir: &str,
         content_id: &str,
         file_store_dir: Option<&str>,
@@ -477,7 +496,7 @@ impl OnDemand {
                 file_store_dir,
                 persist_dir: None,
                 map_archive: None,
-                cold_fill: true,
+                cold_fill_addrs: Some(addrs),
             }),
             None,
         )?
@@ -555,7 +574,7 @@ impl OnDemand {
             persist_dir: identity.persist_dir.map(str::to_string),
             tables_sha256: tables_sha256(&versions, &crcs),
             map_archive: identity.map_archive.clone(),
-            cold_fill: identity.cold_fill,
+            cold_fill: identity.cold_fill_addrs.is_some(),
         });
         let store_hint = bound
             .as_ref()
@@ -565,8 +584,20 @@ impl OnDemand {
             .as_ref()
             .map(|identity| identity.revision)
             .or(unbound_revision);
-        let (cmd, message_rx, worker_running, hub_ingame, slot_id) =
-            subscribe_hub(host, port, store_hint, &versions, &crcs, identity, revision)?;
+        let cold_fill_addrs = bound
+            .as_ref()
+            .and_then(|identity| identity.cold_fill_addrs)
+            .map(<[SocketAddr]>::to_vec);
+        let (cmd, message_rx, worker_running, hub_ingame, slot_id) = subscribe_hub(
+            host,
+            port,
+            store_hint,
+            &versions,
+            &crcs,
+            identity,
+            revision,
+            cold_fill_addrs,
+        )?;
 
         let mut arena = Arena::new();
         let requests = LinkList2::new(&mut arena);
@@ -1063,6 +1094,7 @@ fn subscribe_hub(
     crcs: &[Vec<i32>],
     identity: Option<HubIdentity>,
     revision: Option<ClientRevision>,
+    cold_fill_addrs: Option<Vec<SocketAddr>>,
 ) -> Result<WorkerEnds, String> {
     let key = (host.to_string(), port);
     let slot_id = NEXT_SLOT.fetch_add(1, Ordering::Relaxed) as u64;
@@ -1087,8 +1119,12 @@ fn subscribe_hub(
         ));
     }
     let (cmd_tx, cmd_rx) = mpsc::channel();
-    let cold_fill = identity.as_ref().is_some_and(|identity| identity.cold_fill);
-    let handshake_cancel = cold_fill.then(LoginCancel::new);
+    let cold_connect = cold_fill_addrs.map(|addrs| ColdConnect {
+        addrs,
+        cancel: LoginCancel::new(),
+    });
+    let cold_fill = cold_connect.is_some();
+    let handshake_cancel = cold_connect.as_ref().map(|cold| cold.cancel.clone());
     let mut first = HashMap::new();
     first.insert(slot_id, msg_tx);
     let subs = Arc::new(Mutex::new(first));
@@ -1133,7 +1169,7 @@ fn subscribe_hub(
         wake_on_response: cold_fill,
         java_cycle: Duration::from_millis(20),
         counted_at: Instant::now(),
-        handshake_cancel: handshake_cancel.clone(),
+        cold_connect,
         recovering: false,
         reconnect_backoff: Duration::ZERO,
         saw_network_progress: false,
@@ -1616,15 +1652,20 @@ impl Worker {
     }
 
     /// Java `openSocket(portOff + 43594)`: handshake is byte 15, then the
-    /// engine replies with 8 bytes. A cold-fill worker connects through
+    /// engine replies with 8 bytes. A cold-fill worker connects to the
+    /// addresses its fill looked up, through
     /// [`ClientStream::connect_cancellable`], so its hub's last detach can
     /// end a connect or handshake that the server never answers; every
-    /// other worker waits as Java does.
+    /// other worker resolves its host and waits as Java does.
     fn open_socket(&mut self) -> io::Result<()> {
-        let mut stream = match (self.transport, &self.handshake_cancel) {
-            (Some(transport), Some(cancel)) => {
-                ClientStream::connect_cancellable(transport, &self.host, self.port, cancel)?
-            }
+        let mut stream = match (self.transport, &self.cold_connect) {
+            (Some(transport), Some(cold)) => ClientStream::connect_cancellable(
+                transport,
+                &self.host,
+                self.port,
+                &cold.addrs,
+                &cold.cancel,
+            )?,
             (Some(transport), None) => ClientStream::connect_for(transport, &self.host, self.port)?,
             (None, _) => ClientStream::connect(&self.host, self.port)?,
         };
@@ -1632,7 +1673,7 @@ impl Worker {
         for _ in 0..8 {
             stream.read()?;
         }
-        if self.handshake_cancel.is_some() {
+        if self.cold_connect.is_some() {
             // The handshake is over: a later cancel leaves this stream alone.
             stream.set_deadline(None)?;
         }
