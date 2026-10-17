@@ -798,6 +798,12 @@ impl RuntimeCacheFill {
                 };
                 if !in_place {
                     match until {
+                        // Limit: this blocking download looks up the asset
+                        // host again and does not keep the `/crc` addresses.
+                        // If that lookup fails, the error does not name the
+                        // host (`failed_lookup()` is `None`). A world fallback
+                        // can then look up the name again for the next world
+                        // that shares it: one more resolver wait per world.
                         None => super::download_jag(
                             &held.jag_dir,
                             request.endpoint(),
