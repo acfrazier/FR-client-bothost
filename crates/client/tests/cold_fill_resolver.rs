@@ -1,22 +1,24 @@
-//! The stepped cold cache fill against a slow system resolver.
+//! The stepped cold cache fill against a slow or failing system resolver.
 //!
 //! This test executable defines its own `getaddrinfo`, which the standard
 //! library's name lookup calls in place of libc's. A name that ends in
-//! [`SLOW_SUFFIX`] resolves to 127.0.0.1 after [`LOOKUP_DELAY`]; every other
-//! name goes to libc's `getaddrinfo` unchanged. No system resolver setting
-//! changes, and no external server is contacted.
+//! [`SLOW_SUFFIX`] resolves to 127.0.0.1 after [`LOOKUP_DELAY`].
+//! [`FAILED_HOST`] fails at once. Every other name goes to libc's
+//! `getaddrinfo` unchanged. No system resolver setting changes, and no
+//! external server is contacted.
 //!
 //! The standard library has no non-blocking or cancellable lookup, so a
 //! lookup step can run past its deadline by the resolver's time. These
-//! tests show that this costs at most one step per host in a fill, and that
-//! a cancel never waits for a lookup.
+//! tests show that this costs at most one step per host in a fill, that
+//! the fill reports each such step to its observer once, and that a cancel
+//! never waits for a lookup. A failed lookup fails the fill at once.
 #![cfg(target_os = "linux")]
 
 #[path = "support/startup_snapshot.rs"]
 mod support;
 
 use client::io::{ClientRevision, OnDemand};
-use client::unpack::{RuntimeCacheFill, RuntimeCacheRequest, RuntimeCacheStep};
+use client::unpack::{RuntimeCacheFill, RuntimeCacheRequest, RuntimeCacheStep, SlowLookup};
 use client::Transport;
 use std::ffi::{c_char, c_int, CStr};
 use std::net::TcpListener;
@@ -27,6 +29,8 @@ use support::{HttpServer, PacedEntryServer, PackSet, TempDir, PACK_NAMES};
 
 /// Names with this suffix resolve slowly to 127.0.0.1.
 const SLOW_SUFFIX: &str = ".cold-fill-test.invalid";
+/// The lookup of this name fails at once.
+const FAILED_HOST: &str = "no-game.cold-fill-failed.invalid";
 /// How long one slow lookup takes.
 const LOOKUP_DELAY: Duration = Duration::from_millis(350);
 /// The host's step deadline (`host-play` `TEMPLATE_STEP_WAIT`).
@@ -34,7 +38,7 @@ const HOST_STEP: Duration = Duration::from_millis(8);
 /// The stated per-step bound of the stepped fill.
 const STEP_BOUND: Duration = Duration::from_millis(250);
 
-/// Every slow name looked up so far, once per lookup.
+/// Every slow or failed name looked up so far, once per lookup.
 static SLOW_LOOKUPS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 fn lookups_of(name: &str) -> usize {
@@ -44,6 +48,36 @@ fn lookups_of(name: &str) -> usize {
         .iter()
         .filter(|looked_up| *looked_up == name)
         .count()
+}
+
+/// Every slow lookup step that a fill reported: role, host and lookup time.
+static NOTICES: Mutex<Vec<(&'static str, String, Duration)>> = Mutex::new(Vec::new());
+
+fn record_notice(lookup: &SlowLookup<'_>) {
+    assert!(lookup.past_deadline > Duration::ZERO);
+    NOTICES
+        .lock()
+        .unwrap()
+        .push((lookup.role, lookup.host.to_string(), lookup.took));
+}
+
+/// The reported slow lookup steps of `host`: role and lookup time.
+fn notices_of(host: &str) -> Vec<(&'static str, Duration)> {
+    NOTICES
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, name, _)| name == host)
+        .map(|(role, _, took)| (*role, *took))
+        .collect()
+}
+
+/// One report of `host` in `role`, with the resolver's delay.
+fn assert_one_notice(host: &str, role: &str) {
+    let notices = notices_of(host);
+    assert_eq!(notices.len(), 1, "{host}: {notices:?}");
+    assert_eq!(notices[0].0, role);
+    assert!(notices[0].1 >= LOOKUP_DELAY, "{host}: {notices:?}");
 }
 
 /// The resolver of this test executable (see the module documentation).
@@ -78,6 +112,12 @@ pub unsafe extern "C" fn getaddrinfo(
             SLOW_LOOKUPS.lock().unwrap().push(name.into_owned());
             std::thread::sleep(LOOKUP_DELAY);
             node = c"127.0.0.1".as_ptr();
+        } else if name == FAILED_HOST {
+            SLOW_LOOKUPS.lock().unwrap().push(name.into_owned());
+            // SAFETY: `res` is the caller's result slot (`getaddrinfo`
+            // contract).
+            unsafe { *res = std::ptr::null_mut() };
+            return libc::EAI_NONAME;
         }
     }
     // SAFETY: the caller's arguments, with `node` a C string.
@@ -104,6 +144,43 @@ fn request<'a>(
     }
 }
 
+/// A game host that the resolver cannot look up fails the fill at once,
+/// after one lookup and without a worker. The error is a connection
+/// failure that names the host, so the caller can pass over that name.
+#[test]
+fn a_failed_game_host_lookup_fails_the_fill_at_once() {
+    let packs = PackSet::with_entries(37, [3, 0, 0, 0]);
+    let http = HttpServer::start(packs.clone());
+    let source = TempDir::in_memory("resolver-failed-source");
+    packs.write_to(source.path()).unwrap();
+    let root = TempDir::in_memory("resolver-failed-root");
+    let mut fill = RuntimeCacheFill::begin(&request(
+        source.path(),
+        root.path(),
+        "127.0.0.1",
+        http.port(),
+        FAILED_HOST,
+        1,
+    ));
+    let started = Instant::now();
+    let error = loop {
+        assert!(started.elapsed() < Duration::from_secs(5), "no failure");
+        match fill.step(Some(Instant::now() + HOST_STEP)) {
+            Ok(RuntimeCacheStep::Ready(_)) => panic!("ready without the game host"),
+            Ok(RuntimeCacheStep::Continue { .. }) => {}
+            Err(error) => break error,
+        }
+    };
+    let elapsed = started.elapsed();
+    eprintln!("failed game-host lookup: {elapsed:?}: {error}");
+    assert!(error.is_connection());
+    assert_eq!(error.failed_lookup(), Some(FAILED_HOST));
+    assert!(error.to_string().contains("name lookup failed"), "{error}");
+    assert_eq!(lookups_of(FAILED_HOST), 1);
+    assert_eq!(OnDemand::live_workers_for(FAILED_HOST, 1), 0);
+    assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
+}
+
 /// A game host that is slow to look up does not delay a cancel: dropping
 /// the fill 50 ms after the lookup started (a worker that looked up the
 /// name itself would still be in it) returns at once, and no worker is
@@ -127,6 +204,7 @@ fn cancelling_a_fill_does_not_wait_for_a_slow_name_lookup() {
         game_host,
         game_port,
     ));
+    fill.observe_slow_lookups(record_notice);
     // Up to the step that starts the worker.
     while !matches!(
         fill.step(Some(Instant::now() + HOST_STEP)).unwrap(),
@@ -151,6 +229,7 @@ fn cancelling_a_fill_does_not_wait_for_a_slow_name_lookup() {
         "cancel waited for the name lookup: {cancel:?}"
     );
     assert_eq!(lookups, 1, "the game host is looked up once");
+    assert_one_notice(game_host, "game host");
     assert_eq!(OnDemand::live_workers_for(game_host, game_port), 0);
 }
 
@@ -197,6 +276,7 @@ fn fill_with_hosts(label: &str, asset_host: &str, game_host: &str) -> (Vec<Durat
         game_host,
         entries.port(),
     ));
+    fill.observe_slow_lookups(record_notice);
     let started = Instant::now();
     let (prepared, slow, steps) = step_to_ready(&mut fill);
     let total = started.elapsed();
@@ -217,7 +297,7 @@ fn fill_with_hosts(label: &str, asset_host: &str, game_host: &str) -> (Vec<Durat
 
 /// A slow asset host and a slow game host each delay at most one step: the
 /// fill looks up each name once, keeps the addresses for `/crc`, all JAG
-/// packs and the worker, and completes.
+/// packs and the worker, reports each slow step once, and completes.
 #[test]
 fn a_slow_name_lookup_delays_at_most_one_step_per_host() {
     let asset_host = "asset.cold-fill-test.invalid";
@@ -230,14 +310,18 @@ fn a_slow_name_lookup_delays_at_most_one_step_per_host() {
     );
     assert_eq!(lookups_of(game_host), 1, "the game host is looked up once");
     assert!(slow.len() <= 2, "steps at or above the bound: {slow:?}");
+    assert_one_notice(asset_host, "asset host");
+    assert_one_notice(game_host, "game host");
 }
 
 /// When the asset and game hosts are the same name, the fill looks it up
-/// once, and at most one step runs past the bound.
+/// once, at most one step runs past the bound, and that step is reported
+/// once.
 #[test]
 fn a_shared_host_is_looked_up_once_per_fill() {
     let host = "shared.cold-fill-test.invalid";
     let (slow, _) = fill_with_hosts("shared-host", host, host);
     assert_eq!(lookups_of(host), 1, "the shared host is looked up once");
     assert!(slow.len() <= 1, "steps at or above the bound: {slow:?}");
+    assert_one_notice(host, "asset host");
 }

@@ -306,7 +306,7 @@ mod runtime;
 pub use fill::FILL_WINDOW;
 pub use runtime::{
     prepare_runtime_cache, PreparedMapArchive, PreparedRuntimeCache, RuntimeCacheError,
-    RuntimeCacheFill, RuntimeCacheRequest, RuntimeCacheStep,
+    RuntimeCacheFill, RuntimeCacheRequest, RuntimeCacheStep, SlowLookup,
 };
 
 /// Read a selected local store without moving or writing its files. The

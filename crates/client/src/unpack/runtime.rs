@@ -9,7 +9,7 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 
@@ -182,6 +182,12 @@ pub enum RuntimeCacheError {
         kind: crate::client::client::AssetFetchError,
         message: String,
     },
+    /// The system resolver could not look up an update server's name
+    /// (`host`). This is a connection failure.
+    Lookup {
+        host: String,
+        message: String,
+    },
     Other(String),
 }
 
@@ -192,15 +198,25 @@ impl RuntimeCacheError {
             Self::Asset {
                 kind: crate::client::client::AssetFetchError::Connection,
                 ..
-            }
+            } | Self::Lookup { .. }
         )
+    }
+
+    /// The update server name that the system resolver could not look up.
+    pub fn failed_lookup(&self) -> Option<&str> {
+        match self {
+            Self::Lookup { host, .. } => Some(host),
+            _ => None,
+        }
     }
 }
 
 impl std::fmt::Display for RuntimeCacheError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Asset { message, .. } | Self::Other(message) => f.write_str(message),
+            Self::Asset { message, .. } | Self::Lookup { message, .. } | Self::Other(message) => {
+                f.write_str(message)
+            }
         }
     }
 }
@@ -402,8 +418,9 @@ pub enum RuntimeCacheStep {
 /// an unfinished HTTP request or a lock that another holder keeps continues
 /// in the next step. A name lookup step is the one exception: it can run
 /// past its deadline by as long as the system resolver takes, once per
-/// host per fill, with one log line (`looked_up`). The calls and their
-/// order are those of the one-call preparation.
+/// host per fill (`looked_up`). The fill reports each such step to the
+/// observer that [`Self::observe_slow_lookups`] sets, and writes nothing
+/// itself. The calls and their order are those of the one-call preparation.
 ///
 /// Between steps the fill holds the preparation lock, the retention lease,
 /// the runtime and staging directories, an HTTP request in flight and the
@@ -415,7 +432,24 @@ pub enum RuntimeCacheStep {
 pub struct RuntimeCacheFill {
     request: OwnedRuntimeCacheRequest,
     lookups: Lookups,
+    slow_lookups: Option<fn(&SlowLookup<'_>)>,
     stage: Stage,
+}
+
+/// A name lookup step of a [`RuntimeCacheFill`] that ended after its
+/// deadline. This is the one exception to the step deadline (see
+/// [`RuntimeCacheFill`]). The fill gives it to the observer that
+/// [`RuntimeCacheFill::observe_slow_lookups`] sets, for the caller's log.
+#[derive(Debug, Clone, Copy)]
+pub struct SlowLookup<'a> {
+    /// `"asset host"` or `"game host"`.
+    pub role: &'static str,
+    /// The name that the fill looked up.
+    pub host: &'a str,
+    /// The time that the system resolver took.
+    pub took: Duration,
+    /// The time from the step deadline to the end of the lookup.
+    pub past_deadline: Duration,
 }
 
 /// The server addresses that this fill looked up, each at most once
@@ -438,13 +472,13 @@ struct Lookups {
 /// adds no thread, so this step can run past `until` by as long as the
 /// resolver takes. To keep that cost small, the step does the lookup and
 /// nothing else, the fill looks up each host at most once and keeps the
-/// addresses until it ends, and a step that runs past its deadline logs
-/// one line. The OnDemand worker gets only addresses, so a cancel never
-/// waits for a lookup.
+/// addresses until it ends, and a step that runs past its deadline goes to
+/// `observer` (a failed lookup too). The OnDemand worker gets only
+/// addresses, so a cancel never waits for a lookup.
 fn looked_up<'a>(
     slot: &'a mut Option<Vec<SocketAddr>>,
-    revision: ClientRevision,
-    role: &str,
+    observer: Option<fn(&SlowLookup<'_>)>,
+    role: &'static str,
     host: &str,
     port: u16,
     until: Option<Instant>,
@@ -455,14 +489,13 @@ fn looked_up<'a>(
     let started = Instant::now();
     let addrs = (host, port).to_socket_addrs();
     let ended = Instant::now();
-    if let Some(until) = until.filter(|until| ended > *until) {
-        eprintln!(
-            "{}bot: name lookup of the {role} {host} took {:?}, {:?} past the step deadline \
-             (the system resolver cannot be interrupted)",
-            revision.as_i32(),
-            ended - started,
-            ended - until,
-        );
+    if let (Some(observer), Some(until)) = (observer, until.filter(|until| ended > *until)) {
+        observer(&SlowLookup {
+            role,
+            host,
+            took: ended - started,
+            past_deadline: ended - until,
+        });
     }
     *slot = Some(addrs?.collect());
     Ok(None)
@@ -606,8 +639,16 @@ impl RuntimeCacheFill {
                 game_port: request.game_port,
             },
             lookups: Lookups::default(),
+            slow_lookups: None,
             stage: Stage::Negotiate(None),
         }
+    }
+
+    /// Give each name lookup step that ends after its deadline to
+    /// `observer` ([`SlowLookup`]). Without an observer the fill reports
+    /// nothing.
+    pub fn observe_slow_lookups(&mut self, observer: fn(&SlowLookup<'_>)) {
+        self.slow_lookups = Some(observer);
     }
 
     /// Do the next bounded unit of preparation. Waits for the update server,
@@ -637,6 +678,10 @@ impl RuntimeCacheFill {
                     kind,
                     message: format!("update server /crc: {}", kind.message()),
                 };
+                let lookup_error = |_: io::Error| RuntimeCacheError::Lookup {
+                    host: request.asset_host.clone(),
+                    message: crc_error(AssetFetchError::Connection).to_string(),
+                };
                 let checksums = match until {
                     None => Client::get_jag_checksums_checked(
                         request.transport,
@@ -650,13 +695,13 @@ impl RuntimeCacheFill {
                             None => {
                                 let addrs = looked_up(
                                     &mut self.lookups.asset,
-                                    request.revision,
+                                    self.slow_lookups,
                                     "asset host",
                                     &request.asset_host,
                                     request.asset_port,
                                     Some(until),
                                 )
-                                .map_err(|_| crc_error(AssetFetchError::Connection))?;
+                                .map_err(lookup_error)?;
                                 let Some(addrs) = addrs else {
                                     return Ok((Stage::Negotiate(None), waiting));
                                 };
@@ -751,7 +796,7 @@ impl RuntimeCacheFill {
                                     // step had no deadline.
                                     let addrs = looked_up(
                                         &mut self.lookups.asset,
-                                        request.revision,
+                                        self.slow_lookups,
                                         "asset host",
                                         &request.asset_host,
                                         request.asset_port,
@@ -871,14 +916,14 @@ impl RuntimeCacheFill {
                 }
                 let addrs = looked_up(
                     &mut self.lookups.game,
-                    request.revision,
+                    self.slow_lookups,
                     "game host",
                     &request.game_host,
                     request.game_port,
                     until,
                 )
-                .map_err(|error| RuntimeCacheError::Asset {
-                    kind: AssetFetchError::Connection,
+                .map_err(|error| RuntimeCacheError::Lookup {
+                    host: request.game_host.clone(),
                     message: format!(
                         "local store: {}; update-server fill: update server {}: \
                          name lookup failed: {error}",
