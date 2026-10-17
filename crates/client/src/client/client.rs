@@ -2565,7 +2565,7 @@ impl Client {
         Self::split_http_body(&buf)
     }
 
-    fn split_http_body(buf: &[u8]) -> Option<Vec<u8>> {
+    pub(crate) fn split_http_body(buf: &[u8]) -> Option<Vec<u8>> {
         if !buf.starts_with(b"HTTP/1.0 200 ") && !buf.starts_with(b"HTTP/1.1 200 ") {
             return None;
         }
@@ -2643,7 +2643,7 @@ impl Client {
         Self::parse_jag_checksums(body).map_err(|_| AssetFetchError::Checksum)
     }
 
-    fn parse_jag_checksums(body: Vec<u8>) -> Result<[i32; 9], &'static str> {
+    pub(crate) fn parse_jag_checksums(body: Vec<u8>) -> Result<[i32; 9], &'static str> {
         if body.len() < 40 {
             return Err("checksum problem");
         }
@@ -2718,6 +2718,17 @@ impl Client {
         }
         let bytes = Self::http_get_for(transport, host, port, &format!("/{filename}{crc}"))
             .ok_or(AssetFetchError::Connection)?;
+        Self::accept_jag_download(cache_dir, filename, crc, bytes)
+    }
+
+    /// The checked tail of [`Self::get_jag_file_checked`] for a downloaded
+    /// body: verify the CRC, persist to `cache_dir`, return the bytes.
+    pub(crate) fn accept_jag_download(
+        cache_dir: &str,
+        filename: &str,
+        crc: i32,
+        bytes: Vec<u8>,
+    ) -> Result<Vec<u8>, AssetFetchError> {
         if Packet::getcrc(&bytes, 0, bytes.len()) != crc {
             return Err(AssetFetchError::Checksum);
         }

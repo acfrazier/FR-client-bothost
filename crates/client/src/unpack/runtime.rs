@@ -13,7 +13,9 @@ use std::time::Instant;
 use sha2::{Digest, Sha256};
 
 use super::fill::{FillProgress, NetworkSnapshot, SnapshotStart};
+use super::http::HttpFetch;
 use super::{unpack_cache_from_store, FetchEndpoint, JagRefresh, SnapshotState};
+use crate::client::client::AssetFetchError;
 use crate::client::Client;
 use crate::content_identity::{compute_decoded_content_identity, DecodedContentIdentity};
 use crate::io::{ClientRevision, JagFile, OnDemand};
@@ -390,17 +392,21 @@ pub enum RuntimeCacheStep {
 }
 
 /// [`prepare_runtime_cache`] in bounded steps for a cooperative scheduler.
-/// One step does one of: the `/crc` request; the preparation lock (waits only
-/// until the step deadline); one JAG pack; the retained or local-store
-/// snapshot; the update-server fill until the step deadline; the publication;
-/// the decoded identity; retention and the map index. The calls and their
-/// order are those of the one-call preparation.
+/// One step does one of: the `/crc` request; the preparation and retention
+/// locks; one JAG pack; the retained or local-store snapshot; the
+/// update-server fill; the publication; the decoded identity; retention,
+/// pruning and the map index. With a deadline, a step waits for the update
+/// server and for the locks only until the deadline: an unfinished HTTP
+/// request or a lock that another holder keeps continues in the next step.
+/// The calls and their order are those of the one-call preparation.
 ///
 /// Between steps the fill holds the preparation lock, the retention lease,
-/// the runtime and staging directories and the fill's OnDemand worker.
-/// Dropping it before it is ready, or after an error, stops the worker and
-/// removes the staging and runtime directories, the lease and the lock, in
-/// that order. Nothing is published, so a later fill starts again cleanly.
+/// the runtime and staging directories, an HTTP request in flight and the
+/// fill's OnDemand worker. Dropping it before it is ready, or after an
+/// error, stops the worker (it does not wait for the update server's
+/// handshake) and removes the staging and runtime directories, the lease
+/// and the lock, in that order. Nothing is published, so a later fill
+/// starts again cleanly.
 pub struct RuntimeCacheFill {
     request: OwnedRuntimeCacheRequest,
     stage: Stage,
@@ -428,17 +434,29 @@ impl OwnedRuntimeCacheRequest {
 }
 
 enum Stage {
-    Negotiate,
-    Lock(Negotiation),
-    Jag(Box<Held>, usize),
+    /// The `/crc` request, once a stepped one has started.
+    Negotiate(Option<Box<HttpFetch>>),
+    /// The namespace lock, once taken, waits here for the retention lock.
+    Lock(Negotiation, Option<super::PreparationLock>),
+    /// The pack slot, and its download once a stepped one has started.
+    Jag(Box<Held>, usize, Option<Box<HttpFetch>>),
     Snapshot(Box<Held>),
     LocalStore(Box<Held>),
     Network(Box<Held>),
     Publish(Box<Held>),
     Identity(Box<Held>),
     Finish(Box<Held>, DecodedContentIdentity),
+    /// Retention is done; pruning waits for the retention lock.
+    Prune(Box<Held>, DecodedContentIdentity, Retained),
     /// Ready, failed or dropped: nothing is held.
     Done,
+}
+
+/// Where the finish step left the retained copy.
+struct Retained {
+    persist_dir: PathBuf,
+    /// Retention succeeded, so the revision's older copies are pruned.
+    prune: bool,
 }
 
 struct Negotiation {
@@ -528,14 +546,14 @@ impl RuntimeCacheFill {
                 game_host: request.game_host.to_string(),
                 game_port: request.game_port,
             },
-            stage: Stage::Negotiate,
+            stage: Stage::Negotiate(None),
         }
     }
 
-    /// Do the next bounded unit of preparation. Waits for the lock or for
-    /// update-server entries end at `until`; `None` waits as the one-call
-    /// preparation does. After an error the fill holds nothing and every
-    /// later step fails.
+    /// Do the next bounded unit of preparation. Waits for the update server,
+    /// the locks or update-server entries end at `until`; `None` waits as
+    /// the one-call preparation does. After an error the fill holds nothing
+    /// and every later step fails.
     pub fn step(&mut self, until: Option<Instant>) -> Result<RuntimeCacheStep, RuntimeCacheError> {
         let stage = std::mem::replace(&mut self.stage, Stage::Done);
         let (next, outcome) = self.advance(stage, until)?;
@@ -554,16 +572,38 @@ impl RuntimeCacheFill {
             total: None,
         };
         match stage {
-            Stage::Negotiate => {
-                let checksums = Client::get_jag_checksums_checked(
-                    request.transport,
-                    &request.asset_host,
-                    request.asset_port,
-                )
-                .map_err(|kind| RuntimeCacheError::Asset {
+            Stage::Negotiate(fetch) => {
+                let crc_error = |kind: AssetFetchError| RuntimeCacheError::Asset {
                     kind,
                     message: format!("update server /crc: {}", kind.message()),
-                })?;
+                };
+                let checksums = match until {
+                    None => Client::get_jag_checksums_checked(
+                        request.transport,
+                        &request.asset_host,
+                        request.asset_port,
+                    )
+                    .map_err(crc_error)?,
+                    Some(until) => {
+                        let mut fetch = match fetch {
+                            Some(fetch) => fetch,
+                            None => Box::new(
+                                HttpFetch::start(
+                                    request.transport,
+                                    &request.asset_host,
+                                    request.asset_port,
+                                    "/crc",
+                                )
+                                .map_err(crc_error)?,
+                            ),
+                        };
+                        let Some(body) = fetch.poll(until).map_err(crc_error)? else {
+                            return Ok((Stage::Negotiate(Some(fetch)), waiting));
+                        };
+                        Client::parse_jag_checksums(body)
+                            .map_err(|_| crc_error(AssetFetchError::Checksum))?
+                    }
+                };
                 // Negotiate before locking: different revision/transfer
                 // negotiations do not serialize. The lock inode is stable and
                 // explicitly unlocked on release.
@@ -573,42 +613,88 @@ impl RuntimeCacheFill {
                 std::fs::create_dir_all(&revision_root).map_err(|e| e.to_string())?;
                 let negotiation_key = negotiation_key(&checksums);
                 Ok((
-                    Stage::Lock(Negotiation {
-                        checksums,
-                        revision_root,
-                        negotiation_key,
-                    }),
+                    Stage::Lock(
+                        Negotiation {
+                            checksums,
+                            revision_root,
+                            negotiation_key,
+                        },
+                        None,
+                    ),
                     waiting,
                 ))
             }
-            Stage::Lock(negotiation) => {
-                let lock_path = negotiation
-                    .revision_root
-                    .join(format!(".{}.lock", negotiation.negotiation_key));
-                let lock = match until {
-                    None => super::PreparationLock::acquire(&lock_path)?,
-                    Some(until) => {
-                        match super::PreparationLock::acquire_until(&lock_path, until)? {
-                            Some(lock) => lock,
-                            // Another process is preparing the same namespace.
-                            None => return Ok((Stage::Lock(negotiation), waiting)),
+            Stage::Lock(negotiation, lock) => {
+                let lock = match lock {
+                    Some(lock) => lock,
+                    None => {
+                        let lock_path = negotiation
+                            .revision_root
+                            .join(format!(".{}.lock", negotiation.negotiation_key));
+                        match until {
+                            None => super::PreparationLock::acquire(&lock_path)?,
+                            Some(until) => {
+                                match super::PreparationLock::acquire_until(&lock_path, until)? {
+                                    Some(lock) => lock,
+                                    // Another process is preparing the same namespace.
+                                    None => return Ok((Stage::Lock(negotiation, None), waiting)),
+                                }
+                            }
                         }
                     }
                 };
-                let held = self.lock_acquired(negotiation, lock)?;
-                Ok((Stage::Jag(held, 0), waiting))
+                let Some(lease) = register_retention_owner(
+                    &negotiation.revision_root,
+                    &negotiation.negotiation_key,
+                    until,
+                )?
+                else {
+                    // Another preparation is registering or pruning.
+                    return Ok((Stage::Lock(negotiation, Some(lock)), waiting));
+                };
+                let held = self.lock_acquired(negotiation, lock, lease)?;
+                Ok((Stage::Jag(held, 0, None), waiting))
             }
-            Stage::Jag(mut held, slot) => {
-                let sources: Vec<&Path> = held.jag_sources.iter().map(PathBuf::as_path).collect();
-                super::refresh_jag(
-                    &sources,
-                    &held.jag_dir,
-                    request.endpoint(),
-                    slot,
-                    &mut held.refresh,
-                )?;
+            Stage::Jag(mut held, slot, fetch) => {
+                let in_place = fetch.is_none() && {
+                    let sources: Vec<&Path> =
+                        held.jag_sources.iter().map(PathBuf::as_path).collect();
+                    super::reuse_jag(&sources, &held.jag_dir, slot, &mut held.refresh)?
+                };
+                if !in_place {
+                    match until {
+                        None => super::download_jag(
+                            &held.jag_dir,
+                            request.endpoint(),
+                            slot,
+                            &mut held.refresh,
+                        )?,
+                        Some(until) => {
+                            let mut fetch = match fetch {
+                                Some(fetch) => fetch,
+                                None => Box::new(super::start_jag_download(
+                                    request.endpoint(),
+                                    slot,
+                                    &held.refresh,
+                                )?),
+                            };
+                            let body = fetch
+                                .poll(until)
+                                .map_err(|kind| super::jag_fetch_error(slot, kind))?;
+                            let Some(body) = body else {
+                                return Ok((Stage::Jag(held, slot, Some(fetch)), waiting));
+                            };
+                            super::accept_jag_download(
+                                &held.jag_dir,
+                                slot,
+                                &mut held.refresh,
+                                body,
+                            )?;
+                        }
+                    }
+                }
                 if slot + 1 < super::JAGS.len() {
-                    return Ok((Stage::Jag(held, slot + 1), waiting));
+                    return Ok((Stage::Jag(held, slot + 1, None), waiting));
                 }
                 super::PREPARE_FETCHED
                     .fetch_add(held.refresh.fetched.len() as u64, Ordering::Relaxed);
@@ -753,18 +839,22 @@ impl RuntimeCacheFill {
                 Ok((Stage::Finish(held, identity), outcome))
             }
             Stage::Finish(held, identity) => {
-                let prepared = self.finish(*held, identity)?;
-                Ok((Stage::Done, RuntimeCacheStep::Ready(prepared)))
+                let retained = self.retain(&held)?;
+                self.prune_and_index(held, identity, retained, until)
+            }
+            Stage::Prune(held, identity, retained) => {
+                self.prune_and_index(held, identity, retained, until)
             }
             Stage::Done => Err("runtime cache preparation already finished".into()),
         }
     }
 
-    /// Register the retention lease and create the private runtime directory.
+    /// Create the private runtime directory for a registered lease.
     fn lock_acquired(
         &self,
         negotiation: Negotiation,
         lock: super::PreparationLock,
+        lease: RetentionLease,
     ) -> Result<Box<Held>, RuntimeCacheError> {
         let request = &self.request;
         let Negotiation {
@@ -773,7 +863,6 @@ impl RuntimeCacheFill {
             negotiation_key,
         } = negotiation;
         let negotiation_root = revision_root.join(&negotiation_key);
-        let lease = register_retention_owner(&revision_root, &negotiation_key)?;
         // Readers hold the same lock as publication. Packed retained inputs
         // are still individually checked against the freshly negotiated CRCs.
         let mut jag_sources = retained_jag_sources(&negotiation_root);
@@ -823,11 +912,9 @@ impl RuntimeCacheFill {
         }))
     }
 
-    fn finish(
-        &self,
-        held: Held,
-        identity: DecodedContentIdentity,
-    ) -> Result<Arc<PreparedRuntimeCache>, RuntimeCacheError> {
+    /// Save the checked runtime files for reuse. A failure only costs the
+    /// next launch a download, so it falls back to the runtime copy.
+    fn retain(&self, held: &Held) -> Result<Retained, RuntimeCacheError> {
         let request = &self.request;
         let files = held.files();
         // Persist the already checked/decode-complete files, never drive the
@@ -846,13 +933,11 @@ impl RuntimeCacheFill {
             std::fs::create_dir_all(&persist_dir).map_err(|e| e.to_string())?;
             Ok(())
         })();
-        let persist_dir = match retention {
-            Ok(()) => {
-                // Registration and pruning share a short revision lock;
-                // independent negotiation keys still fill concurrently.
-                prune_retained_copies(&held.revision_root, &held.negotiation_key);
-                persist_dir
-            }
+        match retention {
+            Ok(()) => Ok(Retained {
+                persist_dir,
+                prune: true,
+            }),
             Err(error) => {
                 eprintln!(
                     "{}bot: warning: could not save game assets for reuse: {error}; \
@@ -861,9 +946,34 @@ impl RuntimeCacheFill {
                 );
                 let fallback = files.snapshot_dir.join("ondemand");
                 std::fs::create_dir_all(&fallback).map_err(|e| e.to_string())?;
-                fallback
+                Ok(Retained {
+                    persist_dir: fallback,
+                    prune: false,
+                })
             }
-        };
+        }
+    }
+
+    /// Prune older retained copies, then index the map headers. With a
+    /// deadline, a retention lock that another holder keeps past it leaves
+    /// the pruning to the next step.
+    fn prune_and_index(
+        &self,
+        held: Box<Held>,
+        identity: DecodedContentIdentity,
+        retained: Retained,
+        until: Option<Instant>,
+    ) -> Result<(Stage, RuntimeCacheStep), RuntimeCacheError> {
+        // Registration and pruning share a short revision lock; independent
+        // negotiation keys still fill concurrently.
+        if retained.prune
+            && !prune_retained_copies(&held.revision_root, &held.negotiation_key, until)
+        {
+            let outcome = held.progress();
+            return Ok((Stage::Prune(held, identity, retained), outcome));
+        }
+        let request = &self.request;
+        let files = held.files();
         let store_dir =
             super::file_store_dir(&request.jag_source.to_string_lossy()).map(PathBuf::from);
         // Index headers only after canonical identity has verified the
@@ -876,7 +986,7 @@ impl RuntimeCacheFill {
             &held.jag_dir,
             Arc::clone(&held.owned),
         )?);
-        Ok(Arc::new(PreparedRuntimeCache {
+        let prepared = Arc::new(PreparedRuntimeCache {
             owned: Arc::clone(&held.owned),
             jag_dir: held.jag_dir.clone(),
             snapshot_dir: files.snapshot_dir.clone(),
@@ -890,9 +1000,10 @@ impl RuntimeCacheFill {
             fetched: held.refresh.fetched.clone(),
             reused: held.refresh.reused.clone(),
             store_dir,
-            persist_dir,
+            persist_dir: retained.persist_dir,
             map_archive,
-        }))
+        });
+        Ok((Stage::Done, RuntimeCacheStep::Ready(prepared)))
     }
 }
 
@@ -916,11 +1027,17 @@ fn is_negotiation_key(name: &str) -> bool {
     name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// Register this preparation as an owner of the namespace `key`. With a
+/// deadline, `None` means another preparation kept the retention lock
+/// past it.
 fn register_retention_owner(
     revision_root: &Path,
     key: &str,
-) -> Result<RetentionLease, RuntimeCacheError> {
-    let _lock = super::PreparationLock::acquire(&revision_root.join(".retention.lock"))?;
+    until: Option<Instant>,
+) -> Result<Option<RetentionLease>, RuntimeCacheError> {
+    let Some(_lock) = retention_lock(revision_root, until)? else {
+        return Ok(None);
+    };
     static NEXT_OWNER: AtomicU64 = AtomicU64::new(0);
     loop {
         let path = revision_root.join(format!(
@@ -933,7 +1050,7 @@ fn register_retention_owner(
             .create_new(true)
             .open(&path)
         {
-            Ok(_) => return Ok(RetentionLease(path)),
+            Ok(_) => return Ok(Some(RetentionLease(path))),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(format!("register retained snapshot owner: {error}").into()),
         }
@@ -945,12 +1062,29 @@ fn register_retention_owner(
 // temporarily exceed this bound.
 const RETAINED_COPY_LIMIT: usize = 3;
 
+/// The revision's `.retention.lock`, waited for until `until` (`None`:
+/// as long as it takes). `Ok(None)`: another holder kept it past `until`.
+fn retention_lock(
+    revision_root: &Path,
+    until: Option<Instant>,
+) -> Result<Option<super::PreparationLock>, super::UnpackError> {
+    let path = revision_root.join(".retention.lock");
+    match until {
+        None => super::PreparationLock::acquire(&path).map(Some),
+        Some(until) => super::PreparationLock::acquire_until(&path, until),
+    }
+}
+
 /// Keep the most recently used namespaces and any namespace that a live or
 /// unknown process may still read/write. Persistent preparation-lock inodes are
 /// separate and never removed. The old unnamespaced layout is not visited.
-fn prune_retained_copies(revision_root: &Path, newest: &str) {
-    let Ok(_lock) = super::PreparationLock::acquire(&revision_root.join(".retention.lock")) else {
-        return;
+/// False when another holder kept the retention lock past `until`; an
+/// unusable lock skips pruning.
+fn prune_retained_copies(revision_root: &Path, newest: &str, until: Option<Instant>) -> bool {
+    let lock = match retention_lock(revision_root, until) {
+        Ok(Some(lock)) => lock,
+        Ok(None) => return false,
+        Err(_) => return true,
     };
     prune_retained_copies_with_liveness(
         revision_root,
@@ -958,6 +1092,8 @@ fn prune_retained_copies(revision_root: &Path, newest: &str) {
         std::process::id(),
         process_is_alive,
     );
+    drop(lock);
+    true
 }
 
 fn prune_retained_copies_with_liveness(

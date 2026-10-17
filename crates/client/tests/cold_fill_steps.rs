@@ -1,6 +1,8 @@
 //! Stepped cold cache fill against synthetic local servers: byte identity
-//! with the one-call fill, the per-step bound, cancellation, the request
-//! window, and the in-game worker's unchanged Java cycle.
+//! with the one-call fill, the per-step bound (also against a slow update
+//! server and a held retention lock), cancellation (also during the update
+//! server handshake), the request window, the in-game worker's unchanged
+//! Java cycle and the cold-fill worker's Java resend pace.
 #[path = "support/startup_snapshot.rs"]
 mod support;
 
@@ -11,9 +13,13 @@ use client::unpack::{
 use client::Transport;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::io::Read;
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant};
-use support::{HttpServer, PacedEntryServer, PackSet, TempDir};
+use support::{HttpServer, PacedEntryServer, PackSet, TempDir, PACK_NAMES};
 
 /// Entries per archive for the multi-entry fixture: 418 required in total.
 const COUNTS: [u16; 4] = [260, 90, 13, 90];
@@ -514,4 +520,263 @@ fn cold_fill_worker_resends_a_stuck_request_at_the_java_pace() {
     );
     assert_eq!(early, 1, "resent before Java's 50 cycles of 20 ms");
     assert!(late >= 2, "the Java resend still happens");
+}
+
+/// Step a fill to completion with an 8 ms deadline per step, as the host
+/// does; the prepared cache, the longest step and the step count.
+fn step_to_prepared(
+    fill: &mut RuntimeCacheFill,
+) -> (
+    std::sync::Arc<client::unpack::PreparedRuntimeCache>,
+    Duration,
+    usize,
+) {
+    let mut longest = Duration::ZERO;
+    let mut steps = 0;
+    loop {
+        let started = Instant::now();
+        let step = fill.step(Some(started + HOST_STEP)).unwrap();
+        longest = longest.max(started.elapsed());
+        steps += 1;
+        if let RuntimeCacheStep::Ready(prepared) = step {
+            return (prepared, longest, steps);
+        }
+    }
+}
+
+/// The host's step deadline (`host-play` `TEMPLATE_STEP_WAIT`).
+const HOST_STEP: Duration = Duration::from_millis(8);
+/// The stated per-step bound of the stepped fill.
+const STEP_BOUND: Duration = Duration::from_millis(250);
+
+/// An update server that answers each HTTP request 350 ms late holds no
+/// step past the bound: the `/crc` request and every JAG download continue
+/// across steps, and the fill still completes with every pack downloaded.
+#[test]
+fn a_slow_update_server_never_holds_a_step_past_the_bound() {
+    let packs = PackSet::with_entries(37, COUNTS);
+    let delay = Duration::from_millis(350);
+    let http = HttpServer::start_slow(packs.clone(), delay);
+    let entries = PacedEntryServer::start(packs.entries.clone(), Duration::ZERO, Duration::ZERO);
+    // An empty source: every pack is downloaded.
+    let source = TempDir::in_memory("slow-http-source");
+    let root = TempDir::in_memory("slow-http-root");
+    let mut fill = RuntimeCacheFill::begin(&request(
+        source.path(),
+        root.path(),
+        http.port(),
+        entries.port(),
+    ));
+    let started = Instant::now();
+    let (prepared, longest, steps) = step_to_prepared(&mut fill);
+    let total = started.elapsed();
+    eprintln!("slow update server: {steps} steps, longest {longest:?}, total {total:?}");
+    assert_eq!(http.crc_count(), 1);
+    for name in PACK_NAMES {
+        assert_eq!(http.jag_count(name), 1, "{name} downloaded once");
+    }
+    assert_eq!(prepared.fetched.len(), PACK_NAMES.len());
+    assert!(
+        total >= delay * (PACK_NAMES.len() as u32 + 1),
+        "every request waited for the server: {total:?}"
+    );
+    assert!(
+        longest < STEP_BOUND,
+        "longest step {longest:?} of {steps} (fill {total:?})"
+    );
+}
+
+/// Hold `file`'s lock now and let it go after `hold` on another thread,
+/// which hands the file back.
+fn hold_lock(file: std::fs::File, hold: Duration) -> thread::JoinHandle<std::fs::File> {
+    file.lock().unwrap();
+    thread::spawn(move || {
+        thread::sleep(hold);
+        file.unlock().unwrap();
+        file
+    })
+}
+
+/// Another preparation that holds the revision's retention lock, first
+/// while this fill registers its lease and again while it prunes, holds no
+/// step past the bound. The fill waits in steps and completes once the
+/// lock is free.
+#[test]
+fn a_held_retention_lock_never_holds_a_step_past_the_bound() {
+    let packs = PackSet::with_entries(37, COUNTS);
+    let http = HttpServer::start(packs.clone());
+    let entries = PacedEntryServer::start(packs.entries.clone(), Duration::ZERO, Duration::ZERO);
+    let source = TempDir::in_memory("retention-lock-source");
+    packs.write_to(source.path()).unwrap();
+    let root = TempDir::in_memory("retention-lock-root");
+    let revision = root.path().join("revision-289");
+    std::fs::create_dir_all(&revision).unwrap();
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(revision.join(".retention.lock"))
+        .unwrap();
+    let hold = Duration::from_millis(350);
+    let mut fill = RuntimeCacheFill::begin(&request(
+        source.path(),
+        root.path(),
+        http.port(),
+        entries.port(),
+    ));
+
+    // Registration: the lock is held from before the first step.
+    let started = Instant::now();
+    let release = hold_lock(lock, hold);
+    let mut register_longest = Duration::ZERO;
+    let mut register_steps = 0;
+    loop {
+        let step_started = Instant::now();
+        let step = fill.step(Some(step_started + HOST_STEP)).unwrap();
+        register_longest = register_longest.max(step_started.elapsed());
+        register_steps += 1;
+        match step {
+            // Staged: the next steps publish, hash and retain.
+            RuntimeCacheStep::Continue {
+                written,
+                total: Some(total),
+            } if written == total => break,
+            RuntimeCacheStep::Continue { .. } => {}
+            RuntimeCacheStep::Ready(_) => panic!("ready before the pruning hold"),
+        }
+    }
+    let registered = started.elapsed();
+    let lock = release.join().unwrap();
+
+    // Pruning: the lock is held again before the publication step.
+    let started = Instant::now();
+    let release = hold_lock(lock, hold);
+    let (prepared, prune_longest, prune_steps) = step_to_prepared(&mut fill);
+    let pruned = started.elapsed();
+    release.join().unwrap();
+    eprintln!(
+        "held retention lock: registration {register_steps} steps, longest \
+         {register_longest:?}, staged at {registered:?}; pruning {prune_steps} steps, \
+         longest {prune_longest:?}, ready at {pruned:?}"
+    );
+    assert_eq!(prepared.source, "update-server");
+    assert!(registered >= hold, "registration waited for the lock");
+    assert!(pruned >= hold, "pruning waited for the lock");
+    assert!(
+        register_longest < STEP_BOUND && prune_longest < STEP_BOUND,
+        "longest step {register_longest:?} (registration), {prune_longest:?} (pruning)"
+    );
+    assert!(
+        register_steps > 10 && prune_steps > 10,
+        "the waits ran in steps: {register_steps}, {prune_steps}"
+    );
+}
+
+/// An update server that takes the cold-fill worker's handshake byte but
+/// never answers does not delay a cancel: dropping the fill returns at once
+/// and closes the connection, and no worker is left.
+#[test]
+fn cancelling_a_fill_does_not_wait_for_the_update_server_handshake() {
+    let packs = PackSet::with_entries(37, [3, 0, 0, 0]);
+    let http = HttpServer::start(packs.clone());
+    let source = TempDir::in_memory("handshake-source");
+    packs.write_to(source.path()).unwrap();
+    let root = TempDir::in_memory("handshake-root");
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let game_port = listener.local_addr().unwrap().port();
+    let (handshake_tx, handshake_rx) = mpsc::channel();
+    let (closed_tx, closed_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let mut byte = [0u8; 1];
+        socket.read_exact(&mut byte).unwrap();
+        handshake_tx.send(byte[0]).unwrap();
+        // Never answer; report when the client closes (or the 3 s timeout).
+        let closed = matches!(socket.read(&mut byte), Ok(0));
+        closed_tx.send((closed, Instant::now())).unwrap();
+    });
+    let mut fill =
+        RuntimeCacheFill::begin(&request(source.path(), root.path(), http.port(), game_port));
+    // Up to the step that starts the worker, then one fill step.
+    while !matches!(
+        fill.step(Some(Instant::now() + HOST_STEP)).unwrap(),
+        RuntimeCacheStep::Continue { total: Some(_), .. }
+    ) {}
+    fill.step(Some(Instant::now() + HOST_STEP)).unwrap();
+    let handshake = handshake_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(handshake, 15, "the worker sent Java's handshake byte");
+    assert_eq!(OnDemand::live_workers_for("127.0.0.1", game_port), 1);
+
+    let started = Instant::now();
+    drop(fill);
+    let cancel = started.elapsed();
+    let (closed, closed_at) = closed_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    server.join().unwrap();
+    let closed_after = closed_at.saturating_duration_since(started);
+    eprintln!(
+        "cancel during the handshake: drop {cancel:?}, peer closed={closed} after {closed_after:?}"
+    );
+    assert!(
+        cancel < STEP_BOUND,
+        "cancel waited for the server: {cancel:?}"
+    );
+    assert!(
+        closed && closed_after < Duration::from_secs(1),
+        "the connection closed with the cancel (closed={closed}, after {closed_after:?})"
+    );
+    assert_eq!(OnDemand::live_workers_for("127.0.0.1", game_port), 0);
+}
+
+/// Responses that arrive every 19 ms, just inside Java's 20 ms cycle, do
+/// not stretch the cold-fill worker's resend: an entry that the server
+/// never answers is sent again after Java's 51 cycles of 20 ms (1.02 s),
+/// not after about twice that.
+#[test]
+fn paced_responses_keep_the_java_resend_interval() {
+    let packs = PackSet::with_entries(43, [200, 0, 0, 0]);
+    let jag = versionlist(&packs);
+    let cache = TempDir::in_memory("resend-cadence-cache");
+    let server = PacedEntryServer::start_holding(
+        packs.entries.clone(),
+        Duration::ZERO,
+        Duration::from_millis(19),
+        &[(0, 0)],
+    );
+    let mut od = OnDemand::new_cold_fill(
+        &jag,
+        Transport::Tcp,
+        ClientRevision::R289,
+        "127.0.0.1",
+        server.port(),
+        cache.path().to_str().unwrap(),
+        "resend-cadence",
+        None,
+    )
+    .unwrap();
+    let started = Instant::now();
+    for entry in &packs.entries {
+        od.request(i32::from(entry.archive), i32::from(entry.file));
+    }
+    let mut resent = None;
+    while started.elapsed() < Duration::from_millis(2500) {
+        od.run(false);
+        while od.loop_request().is_some() {}
+        if server.requests_for(0, 0) >= 2 {
+            resent = Some(started.elapsed());
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    let answered = server.stats().requests;
+    od.stop();
+    eprintln!("19 ms responses: first resend at {resent:?}, {answered} requests read");
+    let resent = resent.expect("the held entry is sent again");
+    assert!(
+        resent >= Duration::from_millis(950) && resent < Duration::from_millis(1300),
+        "first resend at {resent:?}, Java's 51 cycles of 20 ms are 1.02 s"
+    );
 }

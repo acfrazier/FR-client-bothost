@@ -301,6 +301,7 @@ pub fn unpack_cache(cache_dir: &str, out_dir: &str) -> Result<Manifest, UnpackEr
 }
 
 mod fill;
+mod http;
 mod runtime;
 pub use fill::FILL_WINDOW;
 pub use runtime::{
@@ -1910,12 +1911,26 @@ fn refresh_jag(
     slot: usize,
     refresh: &mut JagRefresh,
 ) -> Result<(), UnpackError> {
+    if reuse_jag(sources, dest, slot, refresh)? {
+        return Ok(());
+    }
+    download_jag(dest, endpoint, slot, refresh)
+}
+
+/// The local part of [`refresh_jag`]: keep a matching dest file or copy a
+/// matching source. False when the pack must be downloaded.
+fn reuse_jag(
+    sources: &[&Path],
+    dest: &Path,
+    slot: usize,
+    refresh: &mut JagRefresh,
+) -> Result<bool, UnpackError> {
     let (name, index) = JAG_INDEX[slot];
     let expected = refresh.checksums[index];
     let dest_file = dest.join(name);
     if file_crc_matches(&dest_file, expected) {
         refresh.reused.push(name.to_string());
-        return Ok(());
+        return Ok(true);
     }
     for source in sources {
         let candidate = source.join(name);
@@ -1930,23 +1945,83 @@ fn refresh_jag(
             std::fs::write(&dest_file, &bytes)
                 .map_err(|e| UnpackError::io(&format!("reuse {name}"), e))?;
             refresh.reused.push(name.to_string());
-            return Ok(());
+            return Ok(true);
         }
     }
-    let dest_str = dest.to_str().ok_or_else(|| {
-        UnpackError::new(format!("cache dest {} must be valid UTF-8", dest.display()))
-    })?;
+    Ok(false)
+}
+
+/// The download part of [`refresh_jag`], waiting for the whole response.
+fn download_jag(
+    dest: &Path,
+    endpoint: FetchEndpoint<'_>,
+    slot: usize,
+    refresh: &mut JagRefresh,
+) -> Result<(), UnpackError> {
+    let (name, index) = JAG_INDEX[slot];
     Client::get_jag_file_checked(
         endpoint.transport,
-        dest_str,
+        jag_dest_str(dest)?,
         endpoint.host,
         endpoint.port,
         name,
         index,
         &refresh.checksums,
     )
-    .map_err(|e| UnpackError::asset(format!("{name}: fetch or CRC check failed"), e))?;
-    if !file_crc_matches(&dest_file, expected) {
+    .map_err(|e| jag_fetch_error(slot, e))?;
+    confirm_jag_download(dest, slot, refresh)
+}
+
+/// Start the download part of [`refresh_jag`] as a stepped fetch; finish
+/// it with [`accept_jag_download`].
+fn start_jag_download(
+    endpoint: FetchEndpoint<'_>,
+    slot: usize,
+    refresh: &JagRefresh,
+) -> Result<http::HttpFetch, UnpackError> {
+    let (name, index) = JAG_INDEX[slot];
+    let crc = refresh.checksums[index];
+    http::HttpFetch::start(
+        endpoint.transport,
+        endpoint.host,
+        endpoint.port,
+        &format!("/{name}{crc}"),
+    )
+    .map_err(|e| jag_fetch_error(slot, e))
+}
+
+/// Check and persist the body of a [`start_jag_download`] fetch as
+/// [`download_jag`] does.
+fn accept_jag_download(
+    dest: &Path,
+    slot: usize,
+    refresh: &mut JagRefresh,
+    bytes: Vec<u8>,
+) -> Result<(), UnpackError> {
+    let (name, index) = JAG_INDEX[slot];
+    Client::accept_jag_download(jag_dest_str(dest)?, name, refresh.checksums[index], bytes)
+        .map_err(|e| jag_fetch_error(slot, e))?;
+    confirm_jag_download(dest, slot, refresh)
+}
+
+fn jag_fetch_error(slot: usize, error: crate::client::client::AssetFetchError) -> UnpackError {
+    let (name, _) = JAG_INDEX[slot];
+    UnpackError::asset(format!("{name}: fetch or CRC check failed"), error)
+}
+
+fn jag_dest_str(dest: &Path) -> Result<&str, UnpackError> {
+    dest.to_str().ok_or_else(|| {
+        UnpackError::new(format!("cache dest {} must be valid UTF-8", dest.display()))
+    })
+}
+
+fn confirm_jag_download(
+    dest: &Path,
+    slot: usize,
+    refresh: &mut JagRefresh,
+) -> Result<(), UnpackError> {
+    let (name, index) = JAG_INDEX[slot];
+    if !file_crc_matches(&dest.join(name), refresh.checksums[index]) {
         return Err(UnpackError::new(format!(
             "{name}: CRC-checked download was not persisted"
         )));

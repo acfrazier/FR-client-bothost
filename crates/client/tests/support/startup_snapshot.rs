@@ -319,6 +319,12 @@ pub struct HttpServer {
 
 impl HttpServer {
     pub fn start(packs: PackSet) -> Self {
+        Self::start_slow(packs, Duration::ZERO)
+    }
+
+    /// [`Self::start`] that holds every response for `delay` after it has
+    /// read the request, as a slow update server does.
+    pub fn start_slow(packs: PackSet, delay: Duration) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let crc_body = checksum_body(&packs);
@@ -363,6 +369,7 @@ impl HttpServer {
             } else {
                 panic!("unexpected synthetic update-server request {path}");
             };
+            thread::sleep(delay);
             respond_http(&mut socket, body).unwrap();
         });
         Self {

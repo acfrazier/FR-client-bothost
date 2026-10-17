@@ -18,7 +18,7 @@ use sha2::{Digest, Sha256};
 
 use crate::dash3d::model::ModelProvider;
 use crate::datastruct::{Arena, LinkList, LinkList2, LinkableTrait, Links};
-use crate::io::client_stream::ClientStream;
+use crate::io::client_stream::{ClientStream, LoginCancel};
 use crate::io::jagfile::JagFile;
 use crate::io::packet::Packet;
 use crate::io::ClientRevision;
@@ -150,6 +150,10 @@ struct OnDemandHub {
     ingame: Arc<AtomicBool>,
     handle: Mutex<Option<JoinHandle<()>>>,
     identity: Option<HubIdentity>,
+    /// Cold-fill hub only: the last detach fires it before the join, so a
+    /// worker that waits for the update server's connect or handshake
+    /// returns at once ([`Worker::open_socket`]).
+    handshake_cancel: Option<LoginCancel>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -295,6 +299,9 @@ struct Worker {
     /// counted one for the resend and reconnect timeouts.
     java_cycle: Duration,
     counted_at: Instant,
+    /// Cold-fill hub only: lets the hub's last detach stop the update
+    /// server connect and handshake from another thread.
+    handshake_cancel: Option<LoginCancel>,
     recovering: bool,
     reconnect_backoff: Duration,
     saw_network_progress: bool,
@@ -639,6 +646,9 @@ impl OnDemand {
             if prev == 1 {
                 hub.running.store(false, Ordering::Relaxed);
                 let _ = hub.cmd.send(WorkerCommand::Stop);
+                if let Some(cancel) = &hub.handshake_cancel {
+                    cancel.cancel();
+                }
                 join_handle = hub.handle.lock().unwrap_or_else(|p| p.into_inner()).take();
                 map.remove(&key);
             } else {
@@ -1077,6 +1087,8 @@ fn subscribe_hub(
         ));
     }
     let (cmd_tx, cmd_rx) = mpsc::channel();
+    let cold_fill = identity.as_ref().is_some_and(|identity| identity.cold_fill);
+    let handshake_cancel = cold_fill.then(LoginCancel::new);
     let mut first = HashMap::new();
     first.insert(slot_id, msg_tx);
     let subs = Arc::new(Mutex::new(first));
@@ -1118,9 +1130,10 @@ fn subscribe_hub(
         map_archive: identity
             .as_ref()
             .and_then(|identity| identity.map_archive.clone()),
-        wake_on_response: identity.as_ref().is_some_and(|identity| identity.cold_fill),
+        wake_on_response: cold_fill,
         java_cycle: Duration::from_millis(20),
         counted_at: Instant::now(),
+        handshake_cancel: handshake_cancel.clone(),
         recovering: false,
         reconnect_backoff: Duration::ZERO,
         saw_network_progress: false,
@@ -1142,6 +1155,7 @@ fn subscribe_hub(
         ingame: Arc::clone(&ingame),
         handle: Mutex::new(Some(handle)),
         identity,
+        handshake_cancel,
     });
     map.insert(key, hub);
     Ok((cmd_tx, msg_rx, running, ingame, slot_id))
@@ -1602,15 +1616,25 @@ impl Worker {
     }
 
     /// Java `openSocket(portOff + 43594)`: handshake is byte 15, then the
-    /// engine replies with 8 bytes.
+    /// engine replies with 8 bytes. A cold-fill worker connects through
+    /// [`ClientStream::connect_cancellable`], so its hub's last detach can
+    /// end a connect or handshake that the server never answers; every
+    /// other worker waits as Java does.
     fn open_socket(&mut self) -> io::Result<()> {
-        let mut stream = match self.transport {
-            Some(transport) => ClientStream::connect_for(transport, &self.host, self.port)?,
-            None => ClientStream::connect(&self.host, self.port)?,
+        let mut stream = match (self.transport, &self.handshake_cancel) {
+            (Some(transport), Some(cancel)) => {
+                ClientStream::connect_cancellable(transport, &self.host, self.port, cancel)?
+            }
+            (Some(transport), None) => ClientStream::connect_for(transport, &self.host, self.port)?,
+            (None, _) => ClientStream::connect(&self.host, self.port)?,
         };
         stream.write(&[15], 1)?;
         for _ in 0..8 {
             stream.read()?;
+        }
+        if self.handshake_cancel.is_some() {
+            // The handshake is over: a later cancel leaves this stream alone.
+            stream.set_deadline(None)?;
         }
         self.saw_network_progress = false;
         self.stream = Some(stream);
@@ -1687,13 +1711,21 @@ impl Worker {
 
         // Java counts the resend (50) and reconnect (750) timeouts in whole
         // cycles. A cold-fill worker ticks on every response, so it counts
-        // one cycle only once a Java cycle has passed since the last one.
+        // one cycle only once a Java cycle has passed since the last count,
+        // and keeps the part of the next cycle that has already passed:
+        // responses every 19 ms still count one cycle per 20 ms. A tick more
+        // than one cycle late counts once, as Java's one slow cycle does.
         if self.wake_on_response {
             let now = Instant::now();
-            if now.duration_since(self.counted_at) < self.java_cycle {
+            let elapsed = now.saturating_duration_since(self.counted_at);
+            if elapsed < self.java_cycle {
                 return;
             }
-            self.counted_at = now;
+            let cycle = self.java_cycle.as_nanos();
+            let into_next = (elapsed.as_nanos() - cycle) % cycle;
+            self.counted_at = now
+                .checked_sub(Duration::from_nanos(into_next as u64))
+                .unwrap_or(now);
         }
 
         let mut loading = false;

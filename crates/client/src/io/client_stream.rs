@@ -19,7 +19,7 @@
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
-use std::net::{Shutdown, TcpStream, ToSocketAddrs};
+use std::net::{Shutdown, SocketAddr, TcpStream, ToSocketAddrs};
 #[cfg(test)]
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -173,7 +173,9 @@ fn login_cancelled() -> io::Error {
 /// host that admits one handshake at a time cancels an attempt whose turn
 /// ran out, so a hung attempt cannot keep a connection to the server open
 /// once the next login starts. The stream holds the handle only during its
-/// handshake: a session that completed its login is never touched.
+/// handshake: a session that completed its login is never touched. The
+/// bot-host cold-fill OnDemand worker uses it the same way for its update
+/// server handshake ([`ClientStream::connect_cancellable`]).
 #[derive(Debug, Clone, Default)]
 pub struct LoginCancel(Arc<Mutex<CancelState>>);
 
@@ -465,13 +467,52 @@ impl ClientStream {
         cancel: Option<&LoginCancel>,
     ) -> io::Result<ClientStream> {
         let socket = connect_socket_until(host, port, deadline)?;
+        Self::open_handshake(transport, socket, host, port, Some(deadline), cancel)
+    }
+
+    /// Connect for a handshake that `cancel` can stop from another thread at
+    /// every point until [`Self::set_deadline`]`(None)` ends it. The TCP
+    /// connect waits in slices of at most 10 ms and stops between them once
+    /// `cancel` fired. After the connect, `cancel` shuts the socket, which
+    /// ends a blocked TLS or WebSocket setup or handshake read. There is no
+    /// deadline: otherwise every wait is that of [`Self::connect_for`]. Name
+    /// resolution is the system resolver's and cannot be interrupted.
+    pub fn connect_cancellable(
+        transport: Transport,
+        host: &str,
+        port: u16,
+        cancel: &LoginCancel,
+    ) -> io::Result<ClientStream> {
+        const SLICE: Duration = Duration::from_millis(10);
+        let mut connect = PendingConnect::start((host, port).to_socket_addrs()?.collect());
+        let socket = loop {
+            if cancel.is_cancelled() {
+                return Err(login_cancelled());
+            }
+            if let Some(socket) = connect.poll(Instant::now() + SLICE)? {
+                break socket;
+            }
+        };
+        Self::open_handshake(transport, socket, host, port, None, Some(cancel))
+    }
+
+    /// Set up the stream over a connected `socket`, with `cancel` attached
+    /// from before the TLS or WebSocket setup until the handshake ends.
+    fn open_handshake(
+        transport: Transport,
+        socket: TcpStream,
+        host: &str,
+        port: u16,
+        deadline: Option<Instant>,
+        cancel: Option<&LoginCancel>,
+    ) -> io::Result<ClientStream> {
         if let Some(cancel) = cancel {
             cancel.attach(&socket)?;
         }
         let opened = if transport.uses_tls() {
-            Self::wss_over(socket, host, port, Some(deadline))
+            Self::wss_over(socket, host, port, deadline)
         } else {
-            Self::tcp_over(socket, Some(deadline))
+            Self::tcp_over(socket, deadline)
         };
         match (opened, cancel) {
             (Ok(mut stream), Some(cancel)) => {
@@ -825,12 +866,12 @@ impl ClientStream {
 
     #[cfg(unix)]
     fn park_readable(&self, limit: Duration) {
-        poll_readable(self.fd(), limit);
+        poll_socket(self.fd(), Ready::Read, limit);
     }
 
     #[cfg(windows)]
     fn park_readable(&self, limit: Duration) {
-        poll_readable(self.raw_socket(), limit);
+        poll_socket(self.raw_socket(), Ready::Read, limit);
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -1010,12 +1051,91 @@ fn connect_socket_until(host: &str, port: u16, deadline: Instant) -> io::Result<
             Err(error) => last = Some(timeout_at_deadline(Some(deadline), error)),
         }
     }
-    Err(last.unwrap_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "could not resolve to any addresses",
-        )
-    }))
+    Err(last.unwrap_or_else(no_addresses))
+}
+
+fn no_addresses() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "could not resolve to any addresses",
+    )
+}
+
+/// A TCP connect in flight on a non-blocking socket, tried over each
+/// address in turn as `TcpStream::connect` does. Its caller waits for it in
+/// slices ([`Self::poll`]), so a peer that never answers the connect cannot
+/// hold the caller past its own deadline or cancel check. Without a
+/// deadline of its own the connect ends as a blocking one does: connected,
+/// or with the system's error for every address.
+pub(crate) struct PendingConnect {
+    socket: Option<socket2::Socket>,
+    addrs: std::vec::IntoIter<SocketAddr>,
+    last: Option<io::Error>,
+}
+
+impl PendingConnect {
+    pub(crate) fn start(addrs: Vec<SocketAddr>) -> Self {
+        Self {
+            socket: None,
+            addrs: addrs.into_iter(),
+            last: None,
+        }
+    }
+
+    /// Wait for the connect until `until`. `Ok(Some)` is the connected
+    /// stream, in blocking mode; `Ok(None)` means the connect is still in
+    /// flight at `until`; `Err` is the last address's error once every
+    /// address failed.
+    pub(crate) fn poll(&mut self, until: Instant) -> io::Result<Option<TcpStream>> {
+        loop {
+            let Some(socket) = &self.socket else {
+                let addr = self
+                    .addrs
+                    .next()
+                    .ok_or_else(|| self.last.take().unwrap_or_else(no_addresses))?;
+                match begin_connect(addr) {
+                    Ok(socket) => self.socket = Some(socket),
+                    Err(error) => self.last = Some(error),
+                }
+                continue;
+            };
+            let left = until.saturating_duration_since(Instant::now());
+            if !wait_ready(socket, Ready::Write, left) {
+                return Ok(None);
+            }
+            let socket = self.socket.take().expect("checked above");
+            match socket.take_error() {
+                Ok(None) => {}
+                Ok(Some(error)) | Err(error) => {
+                    self.last = Some(error);
+                    continue;
+                }
+            }
+            socket.set_nonblocking(false)?;
+            return Ok(Some(socket.into()));
+        }
+    }
+}
+
+fn begin_connect(addr: SocketAddr) -> io::Result<socket2::Socket> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let socket = Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
+    socket.set_nonblocking(true)?;
+    match socket.connect(&addr.into()) {
+        Ok(()) => Ok(socket),
+        Err(error) if connect_in_progress(&error) => Ok(socket),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(unix)]
+fn connect_in_progress(error: &io::Error) -> bool {
+    error.raw_os_error() == Some(libc::EINPROGRESS)
+}
+
+#[cfg(not(unix))]
+fn connect_in_progress(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::WouldBlock
 }
 
 fn record_ws_close(
@@ -1194,21 +1314,44 @@ fn wss_wait_handle(w: &WsInner) -> RawSocket {
 
 #[cfg(all(test, unix))]
 fn socket_readable_now(fd: RawFd) -> bool {
-    poll_readable(fd, Duration::ZERO)
+    poll_socket(fd, Ready::Read, Duration::ZERO)
 }
 
 #[cfg(all(test, windows))]
 fn socket_readable_now(socket: RawSocket) -> bool {
-    poll_readable(socket, Duration::ZERO)
+    poll_socket(socket, Ready::Read, Duration::ZERO)
 }
 
-/// Park until `fd` is readable (or reports an error or hang-up) or `limit`
-/// passes, rounded up to whole milliseconds. True when it became readable.
+/// What [`wait_ready`] waits for on a socket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Ready {
+    Read,
+    Write,
+}
+
+/// Park until `socket` is ready for `ready` (or reports an error or
+/// hang-up) or `limit` passes, rounded up to whole milliseconds. True when
+/// it became ready.
 #[cfg(unix)]
-fn poll_readable(fd: RawFd, limit: Duration) -> bool {
+pub(crate) fn wait_ready(socket: &impl AsRawFd, ready: Ready, limit: Duration) -> bool {
+    poll_socket(socket.as_raw_fd(), ready, limit)
+}
+
+#[cfg(windows)]
+pub(crate) fn wait_ready(socket: &impl AsRawSocket, ready: Ready, limit: Duration) -> bool {
+    poll_socket(socket.as_raw_socket(), ready, limit)
+}
+
+/// [`wait_ready`] on a raw fd.
+#[cfg(unix)]
+fn poll_socket(fd: RawFd, ready: Ready, limit: Duration) -> bool {
+    let events = match ready {
+        Ready::Read => libc::POLLIN,
+        Ready::Write => libc::POLLOUT,
+    };
     let mut fds = [libc::pollfd {
         fd,
-        events: libc::POLLIN,
+        events,
         revents: 0,
     }];
     let timeout = limit.as_micros().div_ceil(1000).min(i32::MAX as u128) as i32;
@@ -1218,12 +1361,17 @@ fn poll_readable(fd: RawFd, limit: Duration) -> bool {
     rc > 0
 }
 
+/// [`wait_ready`] on a raw `SOCKET`.
 #[cfg(windows)]
-fn poll_readable(socket: RawSocket, limit: Duration) -> bool {
-    use windows_sys::Win32::Networking::WinSock::{WSAPoll, POLLIN, SOCKET, WSAPOLLFD};
+fn poll_socket(socket: RawSocket, ready: Ready, limit: Duration) -> bool {
+    use windows_sys::Win32::Networking::WinSock::{WSAPoll, POLLIN, POLLOUT, SOCKET, WSAPOLLFD};
+    let events = match ready {
+        Ready::Read => POLLIN,
+        Ready::Write => POLLOUT,
+    };
     let mut fds = [WSAPOLLFD {
         fd: socket as SOCKET,
-        events: POLLIN,
+        events,
         revents: 0,
     }];
     let timeout = limit.as_micros().div_ceil(1000).min(i32::MAX as u128) as i32;
@@ -2046,6 +2194,79 @@ mod tests {
         assert_eq!(error.to_string(), "login handshake deadline passed");
         stream.set_deadline(None).unwrap();
         assert_eq!(stream.read().unwrap(), 2);
+        stream.close();
+        server.join().unwrap();
+    }
+
+    /// A cancellable connect to a server that takes the TCP connection but
+    /// never starts TLS ends at the cancel, not at the 30 s read timeout,
+    /// and the server sees the connection close.
+    #[test]
+    fn cancel_ends_a_stalled_tls_setup_of_a_cancellable_connect() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            // Read the ClientHello, never answer it, and wait for the close.
+            let mut buf = [0u8; 4096];
+            let started = Instant::now();
+            while socket.read(&mut buf).is_ok_and(|n| n > 0) {}
+            started.elapsed()
+        });
+        let cancel = LoginCancel::new();
+        let canceller = {
+            let cancel = cancel.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(200));
+                cancel.cancel();
+                Instant::now()
+            })
+        };
+        let error = ClientStream::connect_cancellable(Transport::Wss, "127.0.0.1", port, &cancel)
+            .err()
+            .expect("a cancelled setup fails");
+        let ended = Instant::now();
+        let cancelled_at = canceller.join().unwrap();
+        let server_open = server.join().unwrap();
+        assert_eq!(error.to_string(), "login cancelled by its host");
+        let late = ended.saturating_duration_since(cancelled_at);
+        assert!(
+            late < Duration::from_millis(100),
+            "returned {late:?} after the cancel"
+        );
+        assert!(
+            server_open < Duration::from_secs(1),
+            "server saw the close after {server_open:?}"
+        );
+    }
+
+    /// A cancellable connect that completes is an ordinary stream: the
+    /// cancel shuts it during the handshake and leaves it alone once
+    /// `set_deadline(None)` has ended the handshake.
+    #[test]
+    fn a_cancellable_connect_is_released_when_its_handshake_ends() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut byte = [0u8; 1];
+            socket.read_exact(&mut byte).unwrap();
+            socket.write_all(&[byte[0] + 1]).unwrap();
+            socket.read_exact(&mut byte).unwrap();
+            socket.write_all(&[byte[0] + 1]).unwrap();
+        });
+        let cancel = LoginCancel::new();
+        let mut stream =
+            ClientStream::connect_cancellable(Transport::Tcp, "127.0.0.1", port, &cancel).unwrap();
+        stream.write(&[15], 1).unwrap();
+        assert_eq!(stream.read().unwrap(), 16);
+        stream.set_deadline(None).unwrap();
+        cancel.cancel();
+        stream.write(&[20], 1).unwrap();
+        assert_eq!(stream.read().unwrap(), 21);
         stream.close();
         server.join().unwrap();
     }
