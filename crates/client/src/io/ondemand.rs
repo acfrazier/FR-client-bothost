@@ -7,6 +7,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Read};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -18,7 +19,7 @@ use sha2::{Digest, Sha256};
 
 use crate::dash3d::model::ModelProvider;
 use crate::datastruct::{Arena, LinkList, LinkList2, LinkableTrait, Links};
-use crate::io::client_stream::ClientStream;
+use crate::io::client_stream::{ClientStream, LoginCancel};
 use crate::io::jagfile::JagFile;
 use crate::io::packet::Packet;
 use crate::io::ClientRevision;
@@ -150,6 +151,10 @@ struct OnDemandHub {
     ingame: Arc<AtomicBool>,
     handle: Mutex<Option<JoinHandle<()>>>,
     identity: Option<HubIdentity>,
+    /// Cold-fill hub only: the last detach fires it before the join, so a
+    /// worker that waits for the update server's connect or handshake
+    /// returns at once ([`Worker::open_socket`]).
+    handshake_cancel: Option<LoginCancel>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -162,6 +167,9 @@ struct HubIdentity {
     persist_dir: Option<String>,
     tables_sha256: [u8; 32],
     map_archive: Option<Arc<PreparedMapArchive>>,
+    /// Bot-host cold cache fill hub ([`OnDemand::new_cold_fill`]). Part of the
+    /// identity so an in-game handle never joins a fill hub, or the reverse.
+    cold_fill: bool,
 }
 
 struct BoundHubIdentity<'a> {
@@ -172,6 +180,20 @@ struct BoundHubIdentity<'a> {
     file_store_dir: Option<&'a str>,
     persist_dir: Option<&'a str>,
     map_archive: Option<Arc<PreparedMapArchive>>,
+    /// The update server's addresses for a cold-fill hub, looked up by the
+    /// fill; `None` for every other hub.
+    cold_fill_addrs: Option<&'a [SocketAddr]>,
+}
+
+/// Cold-fill worker only: how it connects to the update server.
+struct ColdConnect {
+    /// The update server's addresses, looked up by the fill before the
+    /// worker starts. The worker never calls the resolver, so nothing that
+    /// joins it waits for a name lookup.
+    addrs: Vec<SocketAddr>,
+    /// Lets the hub's last detach stop the connect and handshake from
+    /// another thread.
+    cancel: LoginCancel,
 }
 
 static NEXT_SLOT: AtomicUsize = AtomicUsize::new(1);
@@ -284,6 +306,16 @@ struct Worker {
     persist_dir: Option<PathBuf>,
     /// Already verified decoded map records from the owned runtime snapshot.
     map_archive: Option<Arc<PreparedMapArchive>>,
+    /// Cold-fill hub only: end the between-cycle wait once a response is
+    /// readable ([`Worker::idle`]). False for every in-game hub.
+    wake_on_response: bool,
+    /// This loop's Java cycle (20 or 50 ms) and when a cold-fill worker last
+    /// counted one for the resend and reconnect timeouts.
+    java_cycle: Duration,
+    counted_at: Instant,
+    /// Cold-fill hub only: the update server's looked-up addresses and the
+    /// cancel for its connect and handshake ([`Worker::open_socket`]).
+    cold_connect: Option<ColdConnect>,
     recovering: bool,
     reconnect_backoff: Duration,
     saw_network_progress: bool,
@@ -420,10 +452,55 @@ impl OnDemand {
                 file_store_dir,
                 persist_dir,
                 map_archive,
+                cold_fill_addrs: None,
             }),
             None,
         )?
         .ok_or_else(|| "bound OnDemand versionlist is missing required tables".to_string())
+    }
+
+    /// Bot-host cold cache fill only (never an in-game handle): a private
+    /// bound hub whose worker, while a request is in flight, wakes as soon as
+    /// a response is readable instead of sleeping Java's whole 20/50 ms cycle.
+    /// Requests, the 10-urgent in-flight cap and the wire protocol are Java's,
+    /// and the resend and reconnect timeouts still count Java's 20/50 ms
+    /// cycles, not wake-ups.
+    /// The identity differs from every [`Self::new_bound`] hub, so in-game
+    /// handles never share this worker or its pacing.
+    /// `addrs` are the addresses of `host` at `port`, looked up by the
+    /// caller: the worker connects to them and never calls the resolver,
+    /// so a cancel never waits for a name lookup. `host` keys the hub and
+    /// names the server for the TLS and WebSocket setup.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_cold_fill(
+        versionlist: &JagFile,
+        transport: Transport,
+        revision: ClientRevision,
+        host: &str,
+        port: u16,
+        addrs: &[SocketAddr],
+        cache_dir: &str,
+        content_id: &str,
+        file_store_dir: Option<&str>,
+    ) -> Result<Self, String> {
+        Self::new_inner(
+            versionlist,
+            host,
+            port,
+            cache_dir,
+            Some(BoundHubIdentity {
+                transport,
+                revision,
+                cache_dir,
+                content_id,
+                file_store_dir,
+                persist_dir: None,
+                map_archive: None,
+                cold_fill_addrs: Some(addrs),
+            }),
+            None,
+        )?
+        .ok_or_else(|| "cold-fill OnDemand versionlist is missing required tables".to_string())
     }
 
     fn new_inner(
@@ -497,6 +574,7 @@ impl OnDemand {
             persist_dir: identity.persist_dir.map(str::to_string),
             tables_sha256: tables_sha256(&versions, &crcs),
             map_archive: identity.map_archive.clone(),
+            cold_fill: identity.cold_fill_addrs.is_some(),
         });
         let store_hint = bound
             .as_ref()
@@ -506,8 +584,20 @@ impl OnDemand {
             .as_ref()
             .map(|identity| identity.revision)
             .or(unbound_revision);
-        let (cmd, message_rx, worker_running, hub_ingame, slot_id) =
-            subscribe_hub(host, port, store_hint, &versions, &crcs, identity, revision)?;
+        let cold_fill_addrs = bound
+            .as_ref()
+            .and_then(|identity| identity.cold_fill_addrs)
+            .map(<[SocketAddr]>::to_vec);
+        let (cmd, message_rx, worker_running, hub_ingame, slot_id) = subscribe_hub(
+            host,
+            port,
+            store_hint,
+            &versions,
+            &crcs,
+            identity,
+            revision,
+            cold_fill_addrs,
+        )?;
 
         let mut arena = Arena::new();
         let requests = LinkList2::new(&mut arena);
@@ -587,6 +677,9 @@ impl OnDemand {
             if prev == 1 {
                 hub.running.store(false, Ordering::Relaxed);
                 let _ = hub.cmd.send(WorkerCommand::Stop);
+                if let Some(cancel) = &hub.handshake_cancel {
+                    cancel.cancel();
+                }
                 join_handle = hub.handle.lock().unwrap_or_else(|p| p.into_inner()).take();
                 map.remove(&key);
             } else {
@@ -935,31 +1028,46 @@ impl OnDemand {
 
     fn drain_worker(&mut self) {
         while let Ok(msg) = self.rx.try_recv() {
-            match msg {
-                WorkerMessage::Completed {
-                    archive,
-                    file,
-                    urgent,
-                    data,
-                    decoded,
-                } => {
-                    // `want` is the per-handle request/prefetch set. Archive 0/1
-                    // Completeds also arrive from `Model::request_download` via
-                    // the process provider, which never touches `want` — drop
-                    // those and `check_scene` stays on scene 1 (-3, loc models).
-                    let keep = archive == 0 || archive == 1 || self.want.remove(&(archive, file));
-                    if !keep {
-                        continue;
-                    }
-                    let mut req = OnDemandRequest::new(archive, file);
-                    req.urgent = urgent;
-                    req.data = data.map(|d| Arc::try_unwrap(d).unwrap_or_else(|d| (*d).clone()));
-                    req.decoded = decoded;
-                    self.completed.push(req);
+            self.accept_worker_message(msg);
+        }
+    }
+
+    /// Block until the worker posts its next message or `until` passes, then
+    /// drain the rest. Cold-fill consumers wake on each completion instead of
+    /// polling `run`.
+    fn wait_worker(&mut self, until: Instant) {
+        let timeout = until.saturating_duration_since(Instant::now());
+        if let Ok(msg) = self.rx.recv_timeout(timeout) {
+            self.accept_worker_message(msg);
+            self.drain_worker();
+        }
+    }
+
+    fn accept_worker_message(&mut self, msg: WorkerMessage) {
+        match msg {
+            WorkerMessage::Completed {
+                archive,
+                file,
+                urgent,
+                data,
+                decoded,
+            } => {
+                // `want` is the per-handle request/prefetch set. Archive 0/1
+                // Completeds also arrive from `Model::request_download` via
+                // the process provider, which never touches `want` — drop
+                // those and `check_scene` stays on scene 1 (-3, loc models).
+                let keep = archive == 0 || archive == 1 || self.want.remove(&(archive, file));
+                if !keep {
+                    return;
                 }
-                WorkerMessage::Message(m) => self.message = m,
-                WorkerMessage::FailCount(n) => self.fail_count = n,
+                let mut req = OnDemandRequest::new(archive, file);
+                req.urgent = urgent;
+                req.data = data.map(|d| Arc::try_unwrap(d).unwrap_or_else(|d| (*d).clone()));
+                req.decoded = decoded;
+                self.completed.push(req);
             }
+            WorkerMessage::Message(m) => self.message = m,
+            WorkerMessage::FailCount(n) => self.fail_count = n,
         }
     }
 }
@@ -986,6 +1094,7 @@ fn subscribe_hub(
     crcs: &[Vec<i32>],
     identity: Option<HubIdentity>,
     revision: Option<ClientRevision>,
+    cold_fill_addrs: Option<Vec<SocketAddr>>,
 ) -> Result<WorkerEnds, String> {
     let key = (host.to_string(), port);
     let slot_id = NEXT_SLOT.fetch_add(1, Ordering::Relaxed) as u64;
@@ -1010,6 +1119,12 @@ fn subscribe_hub(
         ));
     }
     let (cmd_tx, cmd_rx) = mpsc::channel();
+    let cold_connect = cold_fill_addrs.map(|addrs| ColdConnect {
+        addrs,
+        cancel: LoginCancel::new(),
+    });
+    let cold_fill = cold_connect.is_some();
+    let handshake_cancel = cold_connect.as_ref().map(|cold| cold.cancel.clone());
     let mut first = HashMap::new();
     first.insert(slot_id, msg_tx);
     let subs = Arc::new(Mutex::new(first));
@@ -1051,6 +1166,10 @@ fn subscribe_hub(
         map_archive: identity
             .as_ref()
             .and_then(|identity| identity.map_archive.clone()),
+        wake_on_response: cold_fill,
+        java_cycle: Duration::from_millis(20),
+        counted_at: Instant::now(),
+        cold_connect,
         recovering: false,
         reconnect_backoff: Duration::ZERO,
         saw_network_progress: false,
@@ -1072,6 +1191,7 @@ fn subscribe_hub(
         ingame: Arc::clone(&ingame),
         handle: Mutex::new(Some(handle)),
         identity,
+        handshake_cancel,
     });
     map.insert(key, hub);
     Ok((cmd_tx, msg_rx, running, ingame, slot_id))
@@ -1095,7 +1215,8 @@ fn tables_sha256(versions: &[Vec<i32>], crcs: &[Vec<i32>]) -> [u8; 32] {
 /// each pass (TS message handling). Sleeps 20 ms (50 ms when only prefetches
 /// remain and a local cache exists), then one pump cycle. Queued demand is
 /// pumped immediately so a matching local map is not delayed by the idle
-/// prefetch interval.
+/// prefetch interval. A cold-fill worker ([`OnDemand::new_cold_fill`]) ends
+/// the same wait early when a response is readable.
 fn worker_main(mut worker: Worker) {
     while worker.running.load(Ordering::Relaxed) {
         worker.drain_commands();
@@ -1106,14 +1227,33 @@ fn worker_main(mut worker: Worker) {
         } else {
             20
         };
+        worker.java_cycle = Duration::from_millis(delay.max(20));
         if delay > 0 {
-            thread::sleep(Duration::from_millis(delay));
+            worker.idle(worker.java_cycle);
         }
         worker.tick();
     }
 }
 
 impl Worker {
+    /// The wait between Java cycles. Only a cold-fill worker with a request
+    /// in flight stops early, once the next chunk header or part is readable;
+    /// every other worker sleeps the whole cycle as Java does.
+    fn idle(&mut self, cycle: Duration) {
+        if self.wake_on_response && !self.pending.is_empty() {
+            if let Some(stream) = self.stream.as_mut() {
+                let need = if self.part_available == 0 {
+                    6
+                } else {
+                    self.part_available
+                };
+                stream.wait_available(need, cycle);
+                return;
+            }
+        }
+        thread::sleep(cycle);
+    }
+
     fn drain_commands(&mut self) {
         while let Ok(cmd) = self.commands.try_recv() {
             match cmd {
@@ -1512,15 +1652,30 @@ impl Worker {
     }
 
     /// Java `openSocket(portOff + 43594)`: handshake is byte 15, then the
-    /// engine replies with 8 bytes.
+    /// engine replies with 8 bytes. A cold-fill worker connects to the
+    /// addresses its fill looked up, through
+    /// [`ClientStream::connect_cancellable`], so its hub's last detach can
+    /// end a connect or handshake that the server never answers; every
+    /// other worker resolves its host and waits as Java does.
     fn open_socket(&mut self) -> io::Result<()> {
-        let mut stream = match self.transport {
-            Some(transport) => ClientStream::connect_for(transport, &self.host, self.port)?,
-            None => ClientStream::connect(&self.host, self.port)?,
+        let mut stream = match (self.transport, &self.cold_connect) {
+            (Some(transport), Some(cold)) => ClientStream::connect_cancellable(
+                transport,
+                &self.host,
+                self.port,
+                &cold.addrs,
+                &cold.cancel,
+            )?,
+            (Some(transport), None) => ClientStream::connect_for(transport, &self.host, self.port)?,
+            (None, _) => ClientStream::connect(&self.host, self.port)?,
         };
         stream.write(&[15], 1)?;
         for _ in 0..8 {
             stream.read()?;
+        }
+        if self.cold_connect.is_some() {
+            // The handshake is over: a later cancel leaves this stream alone.
+            stream.set_deadline(None)?;
         }
         self.saw_network_progress = false;
         self.stream = Some(stream);
@@ -1593,6 +1748,25 @@ impl Worker {
                     break;
                 }
             }
+        }
+
+        // Java counts the resend (50) and reconnect (750) timeouts in whole
+        // cycles. A cold-fill worker ticks on every response, so it counts
+        // one cycle only once a Java cycle has passed since the last count,
+        // and keeps the part of the next cycle that has already passed:
+        // responses every 19 ms still count one cycle per 20 ms. A tick more
+        // than one cycle late counts once, as Java's one slow cycle does.
+        if self.wake_on_response {
+            let now = Instant::now();
+            let elapsed = now.saturating_duration_since(self.counted_at);
+            if elapsed < self.java_cycle {
+                return;
+            }
+            let cycle = self.java_cycle.as_nanos();
+            let into_next = (elapsed.as_nanos() - cycle) % cycle;
+            self.counted_at = now
+                .checked_sub(Duration::from_nanos(into_next as u64))
+                .unwrap_or(now);
         }
 
         let mut loading = false;
@@ -1877,88 +2051,74 @@ fn cache_read_in(cache_dir: &str, archive: i32, file: i32) -> Option<Vec<u8>> {
 /// Implementations must return only payloads that validate against the
 /// versionlist crc/version tables (Java `OnDemand.validate`).
 impl crate::unpack::EntrySource for OnDemand {
-    fn fetch_entries(
+    fn request_entry(&mut self, archive: i32, file: i32) -> Result<(), String> {
+        if self.has_tables && !self.valid_file(archive, file) {
+            return Err(format!(
+                "archive {archive} file {file}: not a required versionlist entry"
+            ));
+        }
+        self.request(archive, file);
+        Ok(())
+    }
+
+    fn take_entries(
         &mut self,
-        archive: i32,
-        files: &[i32],
-    ) -> Result<Vec<(i32, Vec<u8>)>, String> {
-        files.iter().try_for_each(|file| {
-            if self.has_tables && !self.valid_file(archive, *file) {
+        until: Instant,
+        out: &mut Vec<crate::unpack::FetchedEntry>,
+    ) -> Result<(), String> {
+        self.run(false);
+        if self.completed.head().is_none() {
+            self.wait_worker(until);
+        }
+        while let Some(mut req) = self.pop_completed_raw() {
+            let archive = req.archive;
+            // Archive 93 is the worker's remap of a map prefetch, never a
+            // requested cold-fill entry.
+            if !(0..4).contains(&archive) {
+                continue;
+            }
+            let Some((version, crc)) = self.version_crc(archive, req.file) else {
                 return Err(format!(
-                    "archive {archive} file {file}: not a required versionlist entry"
+                    "archive {archive} file {}: no versionlist entry",
+                    req.file
+                ));
+            };
+            let Some(data) = req.data.take() else {
+                return Err(format!(
+                    "archive {archive} file {}: the engine reports the entry absent",
+                    req.file
+                ));
+            };
+            if !validate(crc, version, Some(&data)) {
+                return Err(format!(
+                    "archive {archive} file {}: downloaded payload failed the versionlist \
+                     version/CRC check",
+                    req.file
                 ));
             }
-            Ok(())
-        })?;
-        for file in files {
-            self.request(archive, *file);
+            let body = if data.len() >= 2 {
+                &data[..data.len() - 2]
+            } else {
+                &data
+            };
+            let mut payload = Vec::new();
+            GzDecoder::new(body)
+                .read_to_end(&mut payload)
+                .map_err(|_| {
+                    format!(
+                        "archive {archive} file {}: downloaded payload is not a gzip stream",
+                        req.file
+                    )
+                })?;
+            out.push(crate::unpack::FetchedEntry {
+                archive,
+                file: req.file,
+                payload,
+            });
         }
-        let mut out = Vec::with_capacity(files.len());
-        let mut last_progress = Instant::now();
-        while out.len() < files.len() {
-            self.run(false);
-            while let Some(mut req) = self.pop_completed_raw() {
-                if req.archive != archive || !files.contains(&req.file) {
-                    continue;
-                }
-                let Some((version, crc)) = self.version_crc(req.archive, req.file) else {
-                    return Err(format!(
-                        "archive {archive} file {}: no versionlist entry",
-                        req.file
-                    ));
-                };
-                let Some(data) = req.data.take() else {
-                    return Err(format!(
-                        "archive {archive} file {}: the engine reports the entry absent",
-                        req.file
-                    ));
-                };
-                if !validate(crc, version, Some(&data)) {
-                    return Err(format!(
-                        "archive {archive} file {}: downloaded payload failed the versionlist \
-                         version/CRC check",
-                        req.file
-                    ));
-                }
-                let body = if data.len() >= 2 {
-                    &data[..data.len() - 2]
-                } else {
-                    &data
-                };
-                let raw = {
-                    let mut raw = Vec::new();
-                    GzDecoder::new(body).read_to_end(&mut raw).map_err(|_| {
-                        format!(
-                            "archive {archive} file {}: downloaded payload is not a gzip stream",
-                            req.file
-                        )
-                    })?;
-                    raw
-                };
-                out.push((req.file, raw));
-                last_progress = Instant::now();
-            }
-            if out.len() < files.len() {
-                if last_progress.elapsed() > FETCH_IDLE_TIMEOUT {
-                    return Err(format!(
-                        "archive {archive}: update server completed {}/{} files; no progress for \
-                         {FETCH_IDLE_TIMEOUT:?}",
-                        out.len(),
-                        files.len()
-                    ));
-                }
-                thread::sleep(FETCH_POLL);
-            }
-        }
-        Ok(out)
+        Ok(())
     }
 }
-
-/// Idle bound for one cold-cache fetch batch: no completed file for this long
-/// fails the batch (the caller reports the degraded fallback honestly).
-const FETCH_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
-/// Poll interval while draining a cold-cache fetch batch.
-const FETCH_POLL: Duration = Duration::from_millis(5);
 
 /// Java `OnDemand.validate`: the 2-byte version trailer must match and the
 /// CRC32 of the payload must match the versionlist table.

@@ -638,6 +638,10 @@ fn accept_tile(local_x: i32, local_z: i32) -> Option<(i32, i32)> {
 }
 
 /// Tile entered the fill queue / RING walk.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "records the tile visit fields without changing the render call"
+)]
 pub fn visit(
     local_x: i32,
     local_z: i32,
@@ -685,6 +689,10 @@ pub fn wall(
 }
 
 /// Wall-decoration front/back / offset-corner decision.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "records the decoration decision fields at the render call"
+)]
 pub fn decor(
     local_x: i32,
     local_z: i32,
@@ -711,6 +719,10 @@ pub fn decor(
 }
 
 /// Sprite buffer / occlusion / paint (locs, NPCs, players).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "records the sprite bounds and render decision together"
+)]
 pub fn sprite(
     min_x: i32,
     min_z: i32,
@@ -936,6 +948,10 @@ pub fn loc_shades(local_x: i32, local_z: i32, typecode: i32, layer: &'static str
 }
 
 /// Ground overlay / quick / stamp shades, once per tile for this armed run.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "records the ground source and all shade inputs together"
+)]
 pub fn ground_shades(
     local_x: i32,
     local_z: i32,
@@ -1385,6 +1401,10 @@ fn roi_samples_rgba(
 /// Map the inclusive applet slot through the Game Image rect into PNG
 /// framebuffer pixels. `size` is the ImGui Image size; `fb_*` is the
 /// window framebuffer scale (HiDPI).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "maps the image, framebuffer and applet coordinate pairs"
+)]
 pub fn cave_slot_png_roi(
     min_x: f32,
     min_y: f32,
@@ -1413,6 +1433,10 @@ pub fn cave_slot_png_roi(
     (x0, y0, x1, y1)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "emits the existing histogram record without changing its schema"
+)]
 fn emit_hist_line(
     stage: &str,
     cam: PixelRoiCam,
@@ -1559,11 +1583,9 @@ pub fn dump_png_slot(
     match pixel_roi_proof(screenshot_requested, bind) {
         PixelRoiProof::RejectUnavailable { reason } => {
             eprintln!("{PREFIX} pixel-roi rejected=unavailable reason={reason} label={label} dim={width}x{height}");
-            return;
         }
         PixelRoiProof::RejectMismatch { reason } => {
             eprintln!("{PREFIX} pixel-roi rejected=mismatch reason={reason} label={label}");
-            return;
         }
         PixelRoiProof::Accept { frame_id } => {
             let Some(bind) = bind else { return };
@@ -2141,7 +2163,7 @@ mod tests {
         // addLoc: loc id in bits 14.., kind loc via 0x40000000; typecode2 is
         // the signed ((angle << 6) + shape) info byte (cave wall angle 3).
         let typecode = (1417i32 << 14).wrapping_add(0x4000_0000);
-        let typecode2 = ((3i32 << 6) + 0).wrapping_shl(24) >> 24;
+        let typecode2 = (3i32 << 6).wrapping_shl(24) >> 24;
         assert_eq!(loc_id(typecode), 1417);
         assert_eq!(loc_kind(typecode), 2);
         assert_ne!(loc_id(typecode2), 1417);

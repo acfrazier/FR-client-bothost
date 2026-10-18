@@ -35,6 +35,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::time::Instant;
 
 use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
@@ -86,12 +87,24 @@ const ARCHIVES: [(&str, &str, i32, &str); 4] = [
 /// preparation drives this trait, so the snapshot writer never owns a socket
 /// and the worker never owns the snapshot format. Implementations must return
 /// only payloads that validate against the versionlist crc/version tables
-/// (Java `OnDemand.validate`), gunzipped, in `(file, payload)` pairs.
+/// (Java `OnDemand.validate`), gunzipped.
 pub trait EntrySource {
-    /// `archive` is the OnDemand archive index (0..3); a required entry the
-    /// engine or the version/CRC check cannot produce is an `Err`.
-    fn fetch_entries(&mut self, archive: i32, files: &[i32])
-        -> Result<Vec<(i32, Vec<u8>)>, String>;
+    /// Queue one required entry without waiting for it. `archive` is the
+    /// OnDemand archive index (0..3).
+    fn request_entry(&mut self, archive: i32, file: i32) -> Result<(), String>;
+    /// Append every entry that has arrived to `out`. When none has, wait
+    /// for the first one until `until`. A required entry the engine or the
+    /// version/CRC check cannot produce is an `Err`.
+    fn take_entries(&mut self, until: Instant, out: &mut Vec<FetchedEntry>) -> Result<(), String>;
+}
+
+/// One validated, gunzipped entry from an [`EntrySource`].
+#[derive(Debug)]
+pub struct FetchedEntry {
+    /// OnDemand archive index (0..3).
+    pub archive: i32,
+    pub file: i32,
+    pub payload: Vec<u8>,
 }
 
 /// Update-server checksum slot for each jag pack (`JAG_FILES` order in the
@@ -197,6 +210,34 @@ pub(super) struct PreparationLock {
 
 impl PreparationLock {
     pub(super) fn acquire(path: &Path) -> Result<Self, UnpackError> {
+        let file = Self::open(path)?;
+        file.lock()
+            .map_err(|error| UnpackError::io("lock snapshot preparation", error))?;
+        Ok(Self { file })
+    }
+
+    /// [`Self::acquire`] that gives up at `until` while another holder keeps
+    /// the lock, so a stepped preparation never blocks past its step.
+    pub(super) fn acquire_until(path: &Path, until: Instant) -> Result<Option<Self>, UnpackError> {
+        const RETRY: std::time::Duration = std::time::Duration::from_millis(2);
+        let file = Self::open(path)?;
+        loop {
+            match file.try_lock() {
+                Ok(()) => return Ok(Some(Self { file })),
+                Err(std::fs::TryLockError::WouldBlock) => {}
+                Err(std::fs::TryLockError::Error(error)) => {
+                    return Err(UnpackError::io("lock snapshot preparation", error));
+                }
+            }
+            let remaining = until.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Ok(None);
+            }
+            std::thread::sleep(remaining.min(RETRY));
+        }
+    }
+
+    fn open(path: &Path) -> Result<File, UnpackError> {
         if let Some(parent) = path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
@@ -204,16 +245,13 @@ impl PreparationLock {
             std::fs::create_dir_all(parent)
                 .map_err(|error| UnpackError::io("create preparation lock directory", error))?;
         }
-        let file = OpenOptions::new()
+        OpenOptions::new()
             .create(true)
             .truncate(false)
             .read(true)
             .write(true)
             .open(path)
-            .map_err(|error| UnpackError::io("open preparation lock", error))?;
-        file.lock()
-            .map_err(|error| UnpackError::io("lock snapshot preparation", error))?;
-        Ok(Self { file })
+            .map_err(|error| UnpackError::io("open preparation lock", error))
     }
 }
 
@@ -259,13 +297,16 @@ impl SnapshotState {
 /// for this version is returned untouched (warm reuse, no rewrite); an
 /// incomplete or legacy one is republished.
 pub fn unpack_cache(cache_dir: &str, out_dir: &str) -> Result<Manifest, UnpackError> {
-    publish_snapshot(cache_dir, out_dir, cache_dir, None)
+    publish_snapshot(cache_dir, out_dir, cache_dir)
 }
 
+mod fill;
+mod http;
 mod runtime;
+pub use fill::FILL_WINDOW;
 pub use runtime::{
     prepare_runtime_cache, PreparedMapArchive, PreparedRuntimeCache, RuntimeCacheError,
-    RuntimeCacheRequest,
+    RuntimeCacheFill, RuntimeCacheRequest, RuntimeCacheStep, SlowLookup,
 };
 
 /// Read a selected local store without moving or writing its files. The
@@ -275,7 +316,7 @@ pub fn unpack_cache_from_store(
     out_dir: &str,
     store_dir: &str,
 ) -> Result<Manifest, UnpackError> {
-    publish_snapshot(cache_dir, out_dir, store_dir, None)
+    publish_snapshot(cache_dir, out_dir, store_dir)
 }
 
 /// Cold start without a usable local file store: fetch every required entry
@@ -288,7 +329,12 @@ pub fn fetch_snapshot(
     out_dir: &str,
     source: &mut dyn EntrySource,
 ) -> Result<Manifest, UnpackError> {
-    publish_snapshot(cache_dir, out_dir, cache_dir, Some(source))
+    let mut snapshot = match fill::NetworkSnapshot::begin(cache_dir, out_dir)? {
+        fill::SnapshotStart::Ready(manifest) => return Ok(manifest),
+        fill::SnapshotStart::Fill(snapshot) => *snapshot,
+    };
+    while snapshot.step(source, None)? != fill::FillProgress::Staged {}
+    snapshot.publish()
 }
 
 /// Retain an already completed staged snapshot without fetching or decoding it
@@ -375,14 +421,14 @@ pub(super) fn retain_completed_snapshot(
     result
 }
 
-/// Shared staged publication for local-store and network sources. Runtime
-/// retained callers serialize this shared publisher with `PreparationLock`;
+/// Staged publication from the local store. The network fill
+/// ([`fill::NetworkSnapshot`]) shares the staging, manifest and publish steps.
+/// Runtime retained callers serialize both publishers with `PreparationLock`;
 /// old completion state is invalidated before any published file is replaced.
 fn publish_snapshot(
     cache_dir: &str,
     out_dir: &str,
     store_dir: &str,
-    mut source: Option<&mut dyn EntrySource>,
 ) -> Result<Manifest, UnpackError> {
     let versionlist = read_versionlist(cache_dir)?;
     let version = version_hash(&versionlist);
@@ -395,18 +441,13 @@ fn publish_snapshot(
     // Validate the source inputs before creating any output resources. In
     // particular, an offline bind with absent tables/store must stay read-only.
     let jag = JagFile::new(versionlist.to_vec());
-    let tables = [
-        ArchiveTables::read(&jag, ARCHIVES[0].0, ARCHIVES[0].1)?,
-        ArchiveTables::read(&jag, ARCHIVES[1].0, ARCHIVES[1].1)?,
-        ArchiveTables::read(&jag, ARCHIVES[2].0, ARCHIVES[2].1)?,
-        ArchiveTables::read(&jag, ARCHIVES[3].0, ARCHIVES[3].1)?,
+    let tables = read_archive_tables(&jag)?;
+    let mut stores = [
+        StorePayload::open(store_dir, ARCHIVES[0].2, &tables[0])?,
+        StorePayload::open(store_dir, ARCHIVES[1].2, &tables[1])?,
+        StorePayload::open(store_dir, ARCHIVES[2].2, &tables[2])?,
+        StorePayload::open(store_dir, ARCHIVES[3].2, &tables[3])?,
     ];
-    let mut stores = [None, None, None, None];
-    if source.is_none() {
-        for (index, (_, _, store_idx, _)) in ARCHIVES.into_iter().enumerate() {
-            stores[index] = Some(StorePayload::open(store_dir, store_idx, &tables[index])?);
-        }
-    }
 
     let dir_path = Path::new(out_dir).join(&version);
     std::fs::create_dir_all(out_dir)
@@ -415,58 +456,45 @@ fn publish_snapshot(
     let dir = dir_path.to_string_lossy().into_owned();
 
     let result = (|| {
-        stage_snapshot(
-            cache_dir,
+        let jags = stage_jags(cache_dir, &staging)?;
+        let mut archives: [ArchiveStats; ARCHIVES.len()] = Default::default();
+        for (index, (_, _, store_idx, file_name)) in ARCHIVES.into_iter().enumerate() {
+            archives[index] = unpack_archive(
+                &staging,
+                &tables[index],
+                store_idx,
+                file_name,
+                &mut stores[index],
+            )?;
+        }
+        stage_manifest(
             &staging,
             &dir,
             &version,
             &versionlist,
-            &tables,
-            &mut stores,
-            &mut source,
+            jags,
+            archives,
+            "local-store",
         )?;
-
-        // The selected version is the cache identity: if the cache changed
-        // while it was being read, the staged payload is a mix and must not
-        // be published.
-        if read_versionlist(cache_dir)? != versionlist {
-            return Err(UnpackError::new(
-                "cache versionlist changed during preparation; retry",
-            ));
-        }
-        publish(&staging, &dir_path, false)
+        publish_staged(cache_dir, &versionlist, &staging, &dir_path)
     })();
     let _ = std::fs::remove_dir_all(&staging);
     result?;
-
-    match snapshot_state_for_version(out_dir, &version, &versionlist) {
-        SnapshotState::Ready(manifest) => Ok(manifest),
-        other => Err(UnpackError::new(format!(
-            "published snapshot failed verification: {}",
-            other.describe()
-        ))),
-    }
+    verify_published(out_dir, &version, &versionlist)
 }
 
-/// Copy the jag packs and unpack every idx archive into `staging`, returning
-/// the manifest that will be published with them. `source` selects where the
-/// record payloads come from; both publishers share this verified staging path.
-#[allow(clippy::too_many_arguments)]
-fn stage_snapshot(
-    cache_dir: &str,
-    staging: &Path,
-    dir: &str,
-    version: &str,
-    versionlist: &[u8],
-    tables: &[ArchiveTables; 4],
-    stores: &mut [Option<StorePayload<'_>>; 4],
-    source: &mut Option<&mut dyn EntrySource>,
-) -> Result<Manifest, UnpackError> {
-    let origin = if source.is_some() {
-        "update-server"
-    } else {
-        "local-store"
-    };
+/// The four archives' version and CRC tables from the selected versionlist.
+fn read_archive_tables(jag: &JagFile) -> Result<[ArchiveTables; ARCHIVES.len()], UnpackError> {
+    Ok([
+        ArchiveTables::read(jag, ARCHIVES[0].0, ARCHIVES[0].1)?,
+        ArchiveTables::read(jag, ARCHIVES[1].0, ARCHIVES[1].1)?,
+        ArchiveTables::read(jag, ARCHIVES[2].0, ARCHIVES[2].1)?,
+        ArchiveTables::read(jag, ARCHIVES[3].0, ARCHIVES[3].1)?,
+    ])
+}
+
+/// Copy the jag packs into `staging` and return their staged sizes.
+fn stage_jags(cache_dir: &str, staging: &Path) -> Result<Vec<(String, u64)>, UnpackError> {
     let mut jags = Vec::with_capacity(JAGS.len());
     for name in JAGS {
         let src = Path::new(cache_dir).join(name);
@@ -475,30 +503,21 @@ fn stage_snapshot(
         let size = file_size(&dest).map_err(|e| UnpackError::io("stat staged jag", e))?;
         jags.push((name.to_string(), size));
     }
+    Ok(jags)
+}
 
-    let mut archives: [ArchiveStats; ARCHIVES.len()] = Default::default();
-    for (index, (_, _, store_idx, file_name)) in ARCHIVES.into_iter().enumerate() {
-        let tables = &tables[index];
-        archives[index] = match source.as_deref_mut() {
-            Some(source) => {
-                let mut payload = NetworkPayload { source };
-                unpack_archive(staging, tables, store_idx, file_name, &mut payload)?
-            }
-            None => {
-                let mut payload = stores[index]
-                    .take()
-                    .expect("local archive source checked before staging");
-                unpack_archive(staging, tables, store_idx, file_name, &mut payload)?
-            }
-        };
-    }
-    let (models, anims, midi, maps) = (
-        archives[0].clone(),
-        archives[1].clone(),
-        archives[2].clone(),
-        archives[3].clone(),
-    );
-
+/// Write the manifest and integrity metadata for staged payloads. `origin`
+/// names where the record payloads came from.
+fn stage_manifest(
+    staging: &Path,
+    dir: &str,
+    version: &str,
+    versionlist: &[u8],
+    jags: Vec<(String, u64)>,
+    archives: [ArchiveStats; ARCHIVES.len()],
+    origin: &str,
+) -> Result<Manifest, UnpackError> {
+    let [models, anims, midi, maps] = archives;
     let manifest = Manifest {
         version: version.to_string(),
         dir: dir.to_string(),
@@ -516,6 +535,37 @@ fn stage_snapshot(
     write_integrity_marker(staging, versionlist, text.as_bytes(), None)?;
     sync_directory(staging).map_err(|e| UnpackError::io("sync staged snapshot directory", e))?;
     Ok(manifest)
+}
+
+/// Publish a staged snapshot of `cache_dir`'s selected version. The selected
+/// version is the cache identity: if the cache changed while it was being
+/// read, the staged payload is a mix and must not be published.
+fn publish_staged(
+    cache_dir: &str,
+    versionlist: &[u8],
+    staging: &Path,
+    dir_path: &Path,
+) -> Result<(), UnpackError> {
+    if read_versionlist(cache_dir)? != versionlist {
+        return Err(UnpackError::new(
+            "cache versionlist changed during preparation; retry",
+        ));
+    }
+    publish(staging, dir_path, false)
+}
+
+fn verify_published(
+    out_dir: &str,
+    version: &str,
+    versionlist: &[u8],
+) -> Result<Manifest, UnpackError> {
+    match snapshot_state_for_version(out_dir, version, versionlist) {
+        SnapshotState::Ready(manifest) => Ok(manifest),
+        other => Err(UnpackError::new(format!(
+            "published snapshot failed verification: {}",
+            other.describe()
+        ))),
+    }
 }
 
 /// Publish a complete staged snapshot. Runtime-retained callers hold the
@@ -1273,13 +1323,6 @@ impl ArchiveTables {
     }
 }
 
-/// Payload source for one archive's required entries. Implementations return
-/// **validated, gunzipped** payloads — the same bytes `unpack_archive` would
-/// write as a record — and fail when a required entry cannot be produced.
-trait PayloadSource {
-    fn payloads(&mut self, archive: i32, files: &[i32]) -> Result<Vec<Vec<u8>>, UnpackError>;
-}
-
 /// Local `main_file_cache` store reader: the normal source when the cache was
 /// unpacked by the engine (or a previous run) and is complete.
 struct StorePayload<'a> {
@@ -1311,7 +1354,10 @@ impl<'a> StorePayload<'a> {
     }
 }
 
-impl PayloadSource for StorePayload<'_> {
+impl StorePayload<'_> {
+    /// **Validated, gunzipped** payloads for `files` — the same bytes
+    /// `unpack_archive` writes as records. A required entry the store cannot
+    /// produce is an error.
     fn payloads(&mut self, archive: i32, files: &[i32]) -> Result<Vec<Vec<u8>>, UnpackError> {
         let mut out = Vec::with_capacity(files.len());
         for &file in files {
@@ -1357,52 +1403,20 @@ impl PayloadSource for StorePayload<'_> {
     }
 }
 
-/// Update-server source for a genuinely cold cache: entries come from the
-/// client's OnDemand worker, which validates each download against the
-/// versionlist before handing it over.
-struct NetworkPayload<'a> {
-    source: &'a mut dyn EntrySource,
-}
-
-impl PayloadSource for NetworkPayload<'_> {
-    fn payloads(&mut self, store_idx: i32, files: &[i32]) -> Result<Vec<Vec<u8>>, UnpackError> {
-        // OnDemand archive indices are 0..3; the store index is archive + 1.
-        let archive = store_idx - 1;
-        let fetched = self
-            .source
-            .fetch_entries(archive, files)
-            .map_err(|e| UnpackError::new(format!("update server: {e}")))?;
-        let mut by_file: HashMap<i32, Vec<u8>> = fetched.into_iter().collect();
-        let mut out = Vec::with_capacity(files.len());
-        for &file in files {
-            match by_file.remove(&file) {
-                Some(raw) => out.push(raw),
-                None => {
-                    return Err(UnpackError::new(format!(
-                        "archive {store_idx} file {file}: update server returned no payload"
-                    )));
-                }
-            }
-        }
-        Ok(out)
-    }
-}
-
-/// Batch size for one payload request: the OnDemand worker keeps at most ten
-/// urgent requests in flight, so a small batch keeps memory bounded and still
-/// pipelines the fetch.
+/// Local-store entries read before each write; bounds the payloads held.
 const PAYLOAD_BATCH: usize = 16;
 
-/// Write one archive's record stream from `source`: every required entry is
-/// fetched and written in index order, `version == 0` entries are counted as
-/// intentionally absent, and any required entry the source cannot produce is
-/// a hard error — an incomplete store or download never yields a snapshot.
+/// Write one archive's record stream from the local store: every required
+/// entry is read and written in index order, `version == 0` entries are
+/// counted as intentionally absent, and any required entry the store cannot
+/// produce is a hard error — an incomplete store never yields a snapshot.
+/// The network fill writes the same records through [`fill::NetworkSnapshot`].
 fn unpack_archive(
     out_dir: &Path,
     tables: &ArchiveTables,
     idx: i32,
     file_name: &str,
-    source: &mut dyn PayloadSource,
+    source: &mut StorePayload<'_>,
 ) -> Result<ArchiveStats, UnpackError> {
     let out_path = out_dir.join(file_name);
     let mut out = File::create(&out_path).map_err(|e| UnpackError::io("create archive file", e))?;
@@ -1442,7 +1456,7 @@ fn write_records(
     out: &mut File,
     stats: &mut ArchiveStats,
     pending: &mut Vec<i32>,
-    source: &mut dyn PayloadSource,
+    source: &mut StorePayload<'_>,
     idx: i32,
 ) -> Result<(), UnpackError> {
     let payloads = source.payloads(idx, pending)?;
@@ -1861,69 +1875,161 @@ fn refresh_jags_with_checksums(
     endpoint: FetchEndpoint<'_>,
     checksums: [i32; 9],
 ) -> Result<JagRefresh, UnpackError> {
+    prepare_jag_dest(sources, dest)?;
+    let mut refresh = JagRefresh {
+        checksums,
+        fetched: Vec::new(),
+        reused: Vec::new(),
+    };
+    for slot in 0..JAG_INDEX.len() {
+        refresh_jag(sources, dest, endpoint, slot, &mut refresh)?;
+    }
+    PREPARE_FETCHED.fetch_add(refresh.fetched.len() as u64, Ordering::Relaxed);
+    Ok(refresh)
+}
+
+/// Check and create the jag destination before any pack is materialized.
+fn prepare_jag_dest(sources: &[&Path], dest: &Path) -> Result<(), UnpackError> {
     if sources.iter().any(|source| same_path(source, dest)) {
         return Err(UnpackError::new(
             "jag destination must not be a source directory",
         ));
     }
-    let dest_str = dest.to_str().ok_or_else(|| {
+    dest.to_str().ok_or_else(|| {
         UnpackError::new(format!("cache dest {} must be valid UTF-8", dest.display()))
     })?;
-    std::fs::create_dir_all(dest).map_err(|e| UnpackError::io("create jag dest", e))?;
+    std::fs::create_dir_all(dest).map_err(|e| UnpackError::io("create jag dest", e))
+}
 
-    let mut fetched = Vec::new();
-    let mut reused = Vec::new();
-    for &(name, index) in &JAG_INDEX {
-        let expected = checksums[index];
-        let dest_file = dest.join(name);
-        if file_crc_matches(&dest_file, expected) {
-            reused.push(name.to_string());
-            continue;
-        }
-        let mut copied = false;
-        for source in sources {
-            let candidate = source.join(name);
-            if file_crc_matches(&candidate, expected) {
-                let bytes = std::fs::read(&candidate)
-                    .map_err(|e| UnpackError::io(&format!("reuse {name}"), e))?;
-                if Packet::getcrc(&bytes, 0, bytes.len()) != expected {
-                    return Err(UnpackError::new(format!(
-                        "source {name} changed during preparation"
-                    )));
-                }
-                std::fs::write(&dest_file, &bytes)
-                    .map_err(|e| UnpackError::io(&format!("reuse {name}"), e))?;
-                reused.push(name.to_string());
-                copied = true;
-                break;
-            }
-        }
-        if copied {
-            continue;
-        }
-        Client::get_jag_file_checked(
-            endpoint.transport,
-            dest_str,
-            endpoint.host,
-            endpoint.port,
-            name,
-            index,
-            &checksums,
-        )
-        .map_err(|e| UnpackError::asset(format!("{name}: fetch or CRC check failed"), e))?;
-        if !file_crc_matches(&dest_file, expected) {
-            return Err(UnpackError::new(format!(
-                "{name}: CRC-checked download was not persisted"
-            )));
-        }
-        fetched.push(name.to_string());
+/// Materialize pack `JAG_INDEX[slot]` into `dest`: keep a matching dest file,
+/// else copy a matching source, else one CRC-checked download. At most one
+/// update-server request.
+fn refresh_jag(
+    sources: &[&Path],
+    dest: &Path,
+    endpoint: FetchEndpoint<'_>,
+    slot: usize,
+    refresh: &mut JagRefresh,
+) -> Result<(), UnpackError> {
+    if reuse_jag(sources, dest, slot, refresh)? {
+        return Ok(());
     }
-    PREPARE_FETCHED.fetch_add(fetched.len() as u64, Ordering::Relaxed);
-    Ok(JagRefresh {
-        checksums,
-        fetched,
-        reused,
+    download_jag(dest, endpoint, slot, refresh)
+}
+
+/// The local part of [`refresh_jag`]: keep a matching dest file or copy a
+/// matching source. False when the pack must be downloaded.
+fn reuse_jag(
+    sources: &[&Path],
+    dest: &Path,
+    slot: usize,
+    refresh: &mut JagRefresh,
+) -> Result<bool, UnpackError> {
+    let (name, index) = JAG_INDEX[slot];
+    let expected = refresh.checksums[index];
+    let dest_file = dest.join(name);
+    if file_crc_matches(&dest_file, expected) {
+        refresh.reused.push(name.to_string());
+        return Ok(true);
+    }
+    for source in sources {
+        let candidate = source.join(name);
+        if file_crc_matches(&candidate, expected) {
+            let bytes = std::fs::read(&candidate)
+                .map_err(|e| UnpackError::io(&format!("reuse {name}"), e))?;
+            if Packet::getcrc(&bytes, 0, bytes.len()) != expected {
+                return Err(UnpackError::new(format!(
+                    "source {name} changed during preparation"
+                )));
+            }
+            std::fs::write(&dest_file, &bytes)
+                .map_err(|e| UnpackError::io(&format!("reuse {name}"), e))?;
+            refresh.reused.push(name.to_string());
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The download part of [`refresh_jag`], waiting for the whole response.
+fn download_jag(
+    dest: &Path,
+    endpoint: FetchEndpoint<'_>,
+    slot: usize,
+    refresh: &mut JagRefresh,
+) -> Result<(), UnpackError> {
+    let (name, index) = JAG_INDEX[slot];
+    Client::get_jag_file_checked(
+        endpoint.transport,
+        jag_dest_str(dest)?,
+        endpoint.host,
+        endpoint.port,
+        name,
+        index,
+        &refresh.checksums,
+    )
+    .map_err(|e| jag_fetch_error(slot, e))?;
+    confirm_jag_download(dest, slot, refresh)
+}
+
+/// Start the download part of [`refresh_jag`] as a stepped fetch to
+/// `addrs`, the endpoint host's looked-up addresses; finish it with
+/// [`accept_jag_download`].
+fn start_jag_download(
+    endpoint: FetchEndpoint<'_>,
+    addrs: &[std::net::SocketAddr],
+    slot: usize,
+    refresh: &JagRefresh,
+) -> Result<http::HttpFetch, UnpackError> {
+    let (name, index) = JAG_INDEX[slot];
+    let crc = refresh.checksums[index];
+    http::HttpFetch::start(
+        endpoint.transport,
+        endpoint.host,
+        addrs,
+        &format!("/{name}{crc}"),
+    )
+    .map_err(|e| jag_fetch_error(slot, e))
+}
+
+/// Check and persist the body of a [`start_jag_download`] fetch as
+/// [`download_jag`] does.
+fn accept_jag_download(
+    dest: &Path,
+    slot: usize,
+    refresh: &mut JagRefresh,
+    bytes: Vec<u8>,
+) -> Result<(), UnpackError> {
+    let (name, index) = JAG_INDEX[slot];
+    Client::accept_jag_download(jag_dest_str(dest)?, name, refresh.checksums[index], bytes)
+        .map_err(|e| jag_fetch_error(slot, e))?;
+    confirm_jag_download(dest, slot, refresh)
+}
+
+fn jag_fetch_error(slot: usize, error: crate::client::client::AssetFetchError) -> UnpackError {
+    let (name, _) = JAG_INDEX[slot];
+    UnpackError::asset(format!("{name}: fetch or CRC check failed"), error)
+}
+
+fn jag_dest_str(dest: &Path) -> Result<&str, UnpackError> {
+    dest.to_str().ok_or_else(|| {
+        UnpackError::new(format!("cache dest {} must be valid UTF-8", dest.display()))
     })
+}
+
+fn confirm_jag_download(
+    dest: &Path,
+    slot: usize,
+    refresh: &mut JagRefresh,
+) -> Result<(), UnpackError> {
+    let (name, index) = JAG_INDEX[slot];
+    if !file_crc_matches(&dest.join(name), refresh.checksums[index]) {
+        return Err(UnpackError::new(format!(
+            "{name}: CRC-checked download was not persisted"
+        )));
+    }
+    refresh.fetched.push(name.to_string());
+    Ok(())
 }
 
 fn file_crc_matches(path: &Path, crc: i32) -> bool {
@@ -2728,18 +2834,23 @@ mod tests {
     struct FakeSource {
         payloads: HashMap<(i32, i32), Vec<u8>>,
         absent: Vec<(i32, i32)>,
+        requested: Vec<(i32, i32)>,
         calls: usize,
     }
 
     impl EntrySource for FakeSource {
-        fn fetch_entries(
+        fn request_entry(&mut self, archive: i32, file: i32) -> Result<(), String> {
+            self.requested.push((archive, file));
+            Ok(())
+        }
+
+        fn take_entries(
             &mut self,
-            archive: i32,
-            files: &[i32],
-        ) -> Result<Vec<(i32, Vec<u8>)>, String> {
+            _until: std::time::Instant,
+            out: &mut Vec<FetchedEntry>,
+        ) -> Result<(), String> {
             self.calls += 1;
-            let mut out = Vec::new();
-            for &file in files {
+            for (archive, file) in self.requested.drain(..) {
                 if self.absent.contains(&(archive, file)) {
                     return Err(format!(
                         "archive {archive} file {file}: the engine reports the entry absent"
@@ -2752,9 +2863,13 @@ mod tests {
                     .ok_or_else(|| {
                         format!("archive {archive} file {file}: the engine returned no payload")
                     })?;
-                out.push((file, payload));
+                out.push(FetchedEntry {
+                    archive,
+                    file,
+                    payload,
+                });
             }
-            Ok(out)
+            Ok(())
         }
     }
 
@@ -2762,6 +2877,7 @@ mod tests {
         let mut source = FakeSource {
             payloads: HashMap::new(),
             absent: Vec::new(),
+            requested: Vec::new(),
             calls: 0,
         };
         source.payloads.insert((0, 0), vec![0u8; 18]);
