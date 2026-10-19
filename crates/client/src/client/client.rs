@@ -5418,7 +5418,10 @@ impl Client {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Movement fields mirror the fixed Java action contract"
+    )]
     fn try_move_impl(
         &mut self,
         src_x: i32,
@@ -7123,19 +7126,11 @@ impl Client {
         self.with_staged_output(false, |client| client.add_friend_impl(userhash));
     }
 
-    #[allow(clippy::if_same_then_else)]
     fn add_friend_impl(&mut self, userhash: i64) {
         if userhash == 0 {
             return;
         }
-        if self.friend_count >= 100 && self.members_account != 1 {
-            self.add_chat(
-                0,
-                "Your friendlist is full. Max of 100 for free users, and 200 for members",
-                "",
-            );
-            return;
-        } else if self.friend_count >= 200 {
+        if (self.friend_count >= 100 && self.members_account != 1) || self.friend_count >= 200 {
             self.add_chat(
                 0,
                 "Your friendlist is full. Max of 100 for free users, and 200 for members",
@@ -13443,7 +13438,8 @@ impl Client {
     /// `handleInputKey`), the
     /// in-game silence watchdog (`timeoutTimer > 750` → `lostCon`), then
     /// idle `NO_TIMEOUT` and flush `out` through `ClientStream::write`.
-    /// Write errors are `lostCon` (Java `catch (IOException)`).
+    /// Fatal write errors are `lostCon` (Java `catch (IOException)`).
+    /// Hosted `WouldBlock` retains encoded output for a later flush.
     pub fn game_loop(&mut self) {
         self.with_output_scope(|client| client.game_loop_impl());
     }
@@ -13771,6 +13767,16 @@ impl Client {
                 }
                 self.out.pos = 0;
                 self.last_outbound = Instant::now();
+            }
+            Some(Err(error))
+                if self.stream.as_ref().is_some_and(ClientStream::is_hosted)
+                    && error.kind() == io::ErrorKind::WouldBlock =>
+            {
+                // The reactor has not taken these bytes. Keep the exact
+                // encoded prefix and cipher position across the next pass.
+                if queued_local_idle_request {
+                    self.pending_local_idle_request = true;
+                }
             }
             Some(Err(error)) => {
                 self.record_write_exit(&error);
@@ -15243,6 +15249,27 @@ mod try_move_path {
             first_cipher
         );
         assert_eq!(client.outbound_overflow, overflow);
+    }
+
+    #[test]
+    fn writer_extent_overrun_is_an_internal_defect_not_a_partial_packet() {
+        let mut client = npc_target_client();
+        assert!(client.encode_output(|out| out.p1(0xaa)));
+        let prefix = client.out.data()[..client.out.pos].to_vec();
+        let calls = std::cell::Cell::new(0);
+        assert!(!client.encode_output(|out| {
+            let pass = calls.get();
+            calls.set(pass + 1);
+            out.p1(0xbb);
+            if pass != 0 {
+                out.p1(0xcc);
+            }
+        }));
+        assert_eq!(calls.get(), 2);
+        assert!(client.output_closed);
+        assert!(client.outbound_encoder_defect);
+        assert_eq!(client.out.pos, prefix.len());
+        assert_eq!(&client.out.data()[..client.out.pos], prefix);
     }
 
     #[test]

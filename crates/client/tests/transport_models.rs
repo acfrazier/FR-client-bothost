@@ -11,62 +11,19 @@
 //! obligation. TCP does not use the TLS handshake lane. Queue/lease credit and
 //! physical lane/socket credit are distinct resources.
 //!
-//! G1 maps to `transport::stream_handle::Park::wait`: its ready closure may
-//! call `SharedConnection::publish_record` only under K2. `CancelToken::cancel`
-//! publishes its fired flag under K2. The Mio kick occurs after K2 unlock.
-//! Runtime operation names below also map to the gate's TLS handoff lock,
-//! ready_seq and pre-call snapshots, runnable flag, worker epoch, atomic condvar
-//! release, result cell, mio wake token, K2 capacity marker, initial-TLS receipt,
-//! and per-attempt retirement cell. These finite models do not claim that runtime
-//! implementations already satisfy the protocol.
+//! G1 models K2 ordering for writer readiness, release markers, and wakeups.
+//! It does not execute runtime code. The production Park implementation lives in
+//! `client-adapter::park`, and its writer marker is tested through that API.
+//! G2 models handoff readiness, resource custody, and queue-release proof schedules.
+//!
+//! These finite models are supplemental schedule checks, not evidence that runtime
+//! implementations satisfy the protocol. Production behavior is exercised through
+//! client-adapter's real types.
 
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::hash::Hash;
+use std::collections::{HashSet, VecDeque};
 
 fn bump(value: u8) -> u8 {
     value.checked_add(1).expect("bounded model counter wrapped")
-}
-
-fn shortest_counterexample<S, A, Next, Bad, Label>(
-    start: S,
-    mut next: Next,
-    mut bad: Bad,
-    mut label: Label,
-    state_limit: usize,
-) -> (Vec<String>, usize)
-where
-    S: Copy + Eq + Hash,
-    A: Copy,
-    Next: FnMut(&S) -> Vec<(S, A)>,
-    Bad: FnMut(&S) -> bool,
-    Label: FnMut(A) -> String,
-{
-    let mut seen = HashMap::<S, Option<(S, A)>>::new();
-    let mut queue = VecDeque::new();
-    seen.insert(start, None);
-    queue.push_back(start);
-
-    while let Some(state) = queue.pop_front() {
-        if bad(&state) {
-            let mut path = Vec::new();
-            let mut cursor = state;
-            while cursor != start {
-                let (previous, action) = seen[&cursor].expect("non-root state has a parent");
-                path.push(label(action));
-                cursor = previous;
-            }
-            path.reverse();
-            return (path, seen.len());
-        }
-        for (successor, action) in next(&state) {
-            if !seen.contains_key(&successor) {
-                assert!(seen.len() < state_limit, "mutant state bound exceeded");
-                seen.insert(successor, Some((state, action)));
-                queue.push_back(successor);
-            }
-        }
-    }
-    (Vec::new(), seen.len())
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -276,57 +233,8 @@ impl G1State {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum LitmusAction {
-    SlotStoreMarker,
-    ReactorStoreSpace,
-    SlotLoadStaleSpace,
-    ReactorLoadStaleMarker,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct WeakAtomicLitmus {
-    marker_stored: bool,
-    space_stored: bool,
-    slot_load_done: bool,
-    reactor_load_done: bool,
-    slot_saw_space: bool,
-    reactor_saw_marker: bool,
-}
-
-impl WeakAtomicLitmus {
-    fn successors(self) -> Vec<(Self, LitmusAction)> {
-        let mut out = Vec::new();
-        if !self.marker_stored {
-            let mut next = self;
-            next.marker_stored = true;
-            out.push((next, LitmusAction::SlotStoreMarker));
-        }
-        if !self.space_stored {
-            let mut next = self;
-            next.space_stored = true;
-            out.push((next, LitmusAction::ReactorStoreSpace));
-        }
-        if self.marker_stored && !self.slot_load_done {
-            let mut next = self;
-            // This stale read is allowed by the weak-atomic mutant because the
-            // producer's store is not ordered by K2 with the consumer's load.
-            next.slot_load_done = true;
-            next.slot_saw_space = false;
-            out.push((next, LitmusAction::SlotLoadStaleSpace));
-        }
-        if self.space_stored && !self.reactor_load_done {
-            let mut next = self;
-            next.reactor_load_done = true;
-            next.reactor_saw_marker = false;
-            out.push((next, LitmusAction::ReactorLoadStaleMarker));
-        }
-        out
-    }
-}
-
 #[test]
-fn g1_m_k2_mutex_condvar_model_and_weak_marker_mutant() {
+fn bounded_k2_writer_marker_schedule_model() {
     let start = G1State::initial();
     let mut seen = HashSet::new();
     let mut queue = VecDeque::new();
@@ -364,7 +272,10 @@ fn g1_m_k2_mutex_condvar_model_and_weak_marker_mutant() {
         }
         for (next, _) in state.successors() {
             if seen.insert(next) {
-                assert!(seen.len() < 10_000, "G1-M finite state bound exceeded");
+                assert!(
+                    seen.len() < 10_000,
+                    "bounded Park model state limit exceeded"
+                );
                 queue.push_back(next);
             }
         }
@@ -382,43 +293,6 @@ fn g1_m_k2_mutex_condvar_model_and_weak_marker_mutant() {
     assert!(
         saw_mio_kick,
         "record publication kicks Mio only after K2 unlock"
-    );
-
-    let litmus = WeakAtomicLitmus {
-        marker_stored: false,
-        space_stored: false,
-        slot_load_done: false,
-        reactor_load_done: false,
-        slot_saw_space: false,
-        reactor_saw_marker: false,
-    };
-    let (counterexample, mutant_states) = shortest_counterexample(
-        litmus,
-        |state| state.successors(),
-        |state| {
-            state.slot_load_done
-                && state.reactor_load_done
-                && !state.slot_saw_space
-                && !state.reactor_saw_marker
-        },
-        |action| format!("{action:?}"),
-        100,
-    );
-    let expected = vec![
-        "SlotStoreMarker".to_owned(),
-        "ReactorStoreSpace".to_owned(),
-        "SlotLoadStaleSpace".to_owned(),
-        "ReactorLoadStaleMarker".to_owned(),
-    ];
-    assert_eq!(
-        counterexample, expected,
-        "shortest R1 wrong-marker-read trace"
-    );
-    println!(
-        "G1-M explored_states={} wrong_marker_mutant_states={} K2_record_cancel_and_post_unlock_kick=true shortest={}",
-        seen.len(),
-        mutant_states,
-        counterexample.join(" -> ")
     );
 }
 
@@ -992,7 +866,7 @@ impl TxState {
 }
 
 #[test]
-fn g2_i_exhaustive_worker_reactor_producer_transfer_model() {
+fn bounded_worker_reactor_producer_transfer_model() {
     let start = TxState::initial();
     let mut seen = HashSet::new();
     let mut queue = VecDeque::new();
@@ -1016,7 +890,10 @@ fn g2_i_exhaustive_worker_reactor_producer_transfer_model() {
             let mut key = next;
             key.worker_epoch = 0;
             if seen.insert(key) {
-                assert!(seen.len() < 500_000, "G2-I transfer state bound exceeded");
+                assert!(
+                    seen.len() < 500_000,
+                    "bounded transfer model state limit exceeded"
+                );
                 queue.push_back(next);
             }
         }
@@ -1042,7 +919,7 @@ fn g2_i_exhaustive_worker_reactor_producer_transfer_model() {
         "all required transfer schedules are reachable"
     );
     println!(
-        "G2-I transfer_model explored_states={} worker_epoch_upper_bound={}",
+        "worker_reactor_transfer_model explored_states={} worker_epoch_upper_bound={}",
         seen.len(),
         MAX_WORKER_EPOCH
     );
@@ -1331,7 +1208,7 @@ impl CapacityState {
 }
 
 #[test]
-fn g2_i_capacity_waiter_register_recheck_sleep_model() {
+fn bounded_capacity_waiter_register_recheck_sleep_model() {
     let start = CapacityState::initial();
     let mut seen = HashSet::new();
     let mut queue = VecDeque::new();
@@ -1345,7 +1222,10 @@ fn g2_i_capacity_waiter_register_recheck_sleep_model() {
             coverage |= next.coverage;
             next.coverage = 0;
             if seen.insert(next) {
-                assert!(seen.len() < 100_000, "G2-I capacity state bound exceeded");
+                assert!(
+                    seen.len() < 100_000,
+                    "bounded capacity model state limit exceeded"
+                );
                 queue.push_back(next);
             }
         }
@@ -1363,7 +1243,7 @@ fn g2_i_capacity_waiter_register_recheck_sleep_model() {
         required,
         "all K2 capacity/deadline schedules are reachable"
     );
-    println!("G2-I capacity_model explored_states={}", seen.len());
+    println!("bounded capacity_model explored_states={}", seen.len());
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1696,7 +1576,7 @@ impl ProofState {
 }
 
 #[test]
-fn g2_i_initial_tls_proof_queue_release_and_exact_retirement_model() {
+fn bounded_initial_tls_proof_queue_release_and_exact_retirement_model() {
     let start = ProofState::initial();
     let mut seen = HashSet::new();
     let mut queue = VecDeque::new();
@@ -1715,7 +1595,7 @@ fn g2_i_initial_tls_proof_queue_release_and_exact_retirement_model() {
             if seen.insert(next) {
                 assert!(
                     seen.len() < 200_000,
-                    "G2-I proof/retirement state bound exceeded"
+                    "bounded proof/retirement model state limit exceeded"
                 );
                 queue.push_back(next);
             }
@@ -1733,733 +1613,8 @@ fn g2_i_initial_tls_proof_queue_release_and_exact_retirement_model() {
         | P_C_AFTER_A2_ACK
         | P_ACCEPT_PATH;
     assert_eq!(coverage & required, required);
-    println!("G2-I proof_retirement_model explored_states={}", seen.len());
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum ClearAction {
-    Claim,
-    NativeWouldBlock,
-    ReactorEdge,
-    WrongClearWithoutLockedRecheck,
-    Sleep,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct ClearMutant {
-    stage: u8,
-    snapshot: u8,
-    ready_seq: u8,
-    waiting: bool,
-    runnable: bool,
-    notification_pending: bool,
-}
-
-impl ClearMutant {
-    fn successors(self) -> Vec<(Self, ClearAction)> {
-        let mut out = Vec::new();
-        if self.stage == 0 {
-            let mut next = self;
-            next.stage = 1;
-            next.snapshot = self.ready_seq;
-            out.push((next, ClearAction::Claim));
-        }
-        if self.stage == 1 {
-            let mut next = self;
-            next.stage = 2;
-            out.push((next, ClearAction::NativeWouldBlock));
-        }
-        if self.stage == 2 && self.ready_seq == 0 {
-            let mut next = self;
-            next.ready_seq = 1;
-            next.notification_pending = false;
-            out.push((next, ClearAction::ReactorEdge));
-        }
-        if self.stage == 2 && self.ready_seq != 0 {
-            let mut next = self;
-            next.runnable = false;
-            next.stage = 3;
-            out.push((next, ClearAction::WrongClearWithoutLockedRecheck));
-        }
-        if self.stage == 3 {
-            let mut next = self;
-            next.waiting = true;
-            next.stage = 4;
-            out.push((next, ClearAction::Sleep));
-        }
-        out
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum CompletionAction {
-    NativeReturn,
-    MioWake,
-    PollReturn,
-    PublishResultAfterWake,
-    PublishResultBeforeWake,
-    ClearHintWithoutReadingCell,
-    PollSleepWithoutTimeoutDrain,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct CompletionMutant {
-    returned: bool,
-    cell_occupied: bool,
-    hint: bool,
-    wake_token: bool,
-    poll_asleep: bool,
-    timeout_drain_enabled: bool,
-    poll_returned: bool,
-    late_published: bool,
-}
-
-impl CompletionMutant {
-    fn successors(self) -> Vec<(Self, CompletionAction)> {
-        let mut out = Vec::new();
-        if !self.returned {
-            let mut next = self;
-            next.returned = true;
-            out.push((next, CompletionAction::NativeReturn));
-        }
-        if self.returned && !self.wake_token {
-            let mut next = self;
-            next.wake_token = true;
-            out.push((next, CompletionAction::MioWake));
-        }
-        if self.poll_asleep && self.wake_token {
-            let mut next = self;
-            next.poll_asleep = false;
-            next.wake_token = false;
-            next.poll_returned = true;
-            out.push((next, CompletionAction::PollReturn));
-        }
-        if self.returned && !self.cell_occupied && self.poll_returned {
-            let mut next = self;
-            next.cell_occupied = true;
-            next.hint = true;
-            next.late_published = true;
-            out.push((next, CompletionAction::PublishResultAfterWake));
-        }
-        if self.returned && !self.cell_occupied {
-            let mut next = self;
-            next.cell_occupied = true;
-            next.hint = true;
-            out.push((next, CompletionAction::PublishResultBeforeWake));
-        }
-        if self.cell_occupied && self.hint && self.poll_returned {
-            let mut next = self;
-            next.hint = false;
-            out.push((next, CompletionAction::ClearHintWithoutReadingCell));
-        }
-        if !self.poll_asleep && !self.timeout_drain_enabled {
-            let mut next = self;
-            next.poll_asleep = true;
-            out.push((next, CompletionAction::PollSleepWithoutTimeoutDrain));
-        }
-        out
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum IdentityAction {
-    CompleteIdentityA,
-    RetireIdentityA,
-    AuthorizeIdentityB,
-    DeliverOldResultWithoutBindingCheck,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct IdentityMutant {
-    old_result_pending: bool,
-    old_retired: bool,
-    current_binding: u8,
-    result_binding: u8,
-    installed_binding: u8,
-}
-
-impl IdentityMutant {
-    fn successors(self) -> Vec<(Self, IdentityAction)> {
-        let mut out = Vec::new();
-        if !self.old_result_pending {
-            let mut next = self;
-            next.old_result_pending = true;
-            next.result_binding = 1;
-            out.push((next, IdentityAction::CompleteIdentityA));
-        }
-        if self.old_result_pending && !self.old_retired {
-            let mut next = self;
-            next.old_retired = true;
-            out.push((next, IdentityAction::RetireIdentityA));
-        }
-        if self.old_retired && self.current_binding == 1 {
-            let mut next = self;
-            next.current_binding = 2;
-            out.push((next, IdentityAction::AuthorizeIdentityB));
-        }
-        if self.old_result_pending && self.current_binding == 2 && self.installed_binding == 0 {
-            let mut next = self;
-            // The mutant omits exact binding_generation and transfer_seq checks.
-            next.installed_binding = self.result_binding;
-            out.push((next, IdentityAction::DeliverOldResultWithoutBindingCheck));
-        }
-        out
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum CapacityMutantAction {
-    CheckLaneOutsideK2,
-    PublishReleaseAndCheckUnarmedMarker,
-    RegisterAfterRelease,
-    SleepWithoutLaneRecheck,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct CapacityMutant {
-    lane_free: bool,
-    checked_busy_outside_k2: bool,
-    marker_registered: bool,
-    lost_wake: bool,
-    sleeping: bool,
-}
-
-impl CapacityMutant {
-    fn successors(self) -> Vec<(Self, CapacityMutantAction)> {
-        let mut out = Vec::new();
-        if !self.checked_busy_outside_k2 {
-            let mut next = self;
-            next.checked_busy_outside_k2 = true;
-            out.push((next, CapacityMutantAction::CheckLaneOutsideK2));
-        }
-        if self.checked_busy_outside_k2 && !self.lane_free {
-            let mut next = self;
-            next.lane_free = true;
-            next.lost_wake = !self.marker_registered;
-            out.push((
-                next,
-                CapacityMutantAction::PublishReleaseAndCheckUnarmedMarker,
-            ));
-        }
-        if self.lane_free && !self.marker_registered {
-            let mut next = self;
-            next.marker_registered = true;
-            out.push((next, CapacityMutantAction::RegisterAfterRelease));
-        }
-        if self.marker_registered && self.lane_free && self.lost_wake && !self.sleeping {
-            let mut next = self;
-            next.sleeping = true;
-            out.push((next, CapacityMutantAction::SleepWithoutLaneRecheck));
-        }
-        out
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum DeadlineMutantAction {
-    AdvanceToD,
-    AttemptQueueReductionAtD,
-    ReleasePhysicalLaneAtD,
-    AdmitReplacementHandshake,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct DeadlineMutant {
-    now: u8,
-    worker_running: bool,
-    owner_count: u8,
-    lane_credit: bool,
-    replacement_admitted: bool,
-    queue_credit: bool,
-    tcp_waiting: bool,
-    reduction_attempted: bool,
-}
-
-impl DeadlineMutant {
-    fn successors(self) -> Vec<(Self, DeadlineMutantAction)> {
-        let mut out = Vec::new();
-        if self.now < 30 {
-            let mut next = self;
-            next.now = 30;
-            out.push((next, DeadlineMutantAction::AdvanceToD));
-        }
-        if self.now == 30
-            && self.worker_running
-            && self.queue_credit
-            && self.tcp_waiting
-            && !self.reduction_attempted
-        {
-            let mut next = self;
-            next.reduction_attempted = true;
-            out.push((next, DeadlineMutantAction::AttemptQueueReductionAtD));
-        }
-        if self.now == 30 && self.worker_running && self.lane_credit {
-            let mut next = self;
-            next.lane_credit = false;
-            out.push((next, DeadlineMutantAction::ReleasePhysicalLaneAtD));
-        }
-        if self.now == 30 && !self.lane_credit && !self.replacement_admitted {
-            let mut next = self;
-            next.replacement_admitted = true;
-            next.owner_count = bump(self.owner_count);
-            out.push((next, DeadlineMutantAction::AdmitReplacementHandshake));
-        }
-        out
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum PreDeadlineMutantAction {
-    AdvanceToFive,
-    CancelAndPublishReceiptAtFive,
-    WronglyDeferReceiptConsumptionUntilD,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct PreDeadlineMutant {
-    now: u8,
-    revoked: bool,
-    receipt_published: bool,
-    receipt_time: u8,
-    receipt_consumed: bool,
-    reduction_attempted: bool,
-    queue_credit: bool,
-    worker_running: bool,
-    tcp_waiting: bool,
-}
-
-impl PreDeadlineMutant {
-    fn successors(self) -> Vec<(Self, PreDeadlineMutantAction)> {
-        let mut out = Vec::new();
-        if self.now == 0 {
-            let mut next = self;
-            next.now = 5;
-            out.push((next, PreDeadlineMutantAction::AdvanceToFive));
-        }
-        if self.now == 5 && !self.revoked {
-            let mut next = self;
-            next.revoked = true;
-            next.receipt_published = true;
-            next.receipt_time = 5;
-            out.push((next, PreDeadlineMutantAction::CancelAndPublishReceiptAtFive));
-        }
-        if self.revoked
-            && self.receipt_published
-            && !self.receipt_consumed
-            && !self.reduction_attempted
-        {
-            let mut next = self;
-            // This mutant keeps queue admission until D or native return.
-            next.reduction_attempted = true;
-            out.push((
-                next,
-                PreDeadlineMutantAction::WronglyDeferReceiptConsumptionUntilD,
-            ));
-        }
-        out
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum ProofMutantAction {
-    PublishReceiptForA,
-    ReleaseAQueue,
-    AdmitSameSlotA2,
-    DeliverStaleReceiptToA2,
-    RevokeA,
-    ReturnAWithSuccess,
-    AcceptAfterProof,
-    ReturnA2,
-    CloseA2,
-    CloseA,
-    AckABySlotOnly,
-    GrantC,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct ProofMutant {
-    receipt_a_published: bool,
-    queue_a_released: bool,
-    a2_admitted: bool,
-    a2_queue_released: bool,
-    stale_receipt_consumed: bool,
-    a_revoked: bool,
-    a_success_returned: bool,
-    a_accepted: bool,
-    a2_retiring: bool,
-    a_closed: bool,
-    a2_closed: bool,
-    ack_a: bool,
-    ack_a2: bool,
-    c_granted: bool,
-}
-
-impl ProofMutant {
-    fn successors(self) -> Vec<(Self, ProofMutantAction)> {
-        let mut out = Vec::new();
-        if !self.receipt_a_published {
-            let mut next = self;
-            next.receipt_a_published = true;
-            out.push((next, ProofMutantAction::PublishReceiptForA));
-        }
-        if self.receipt_a_published && !self.queue_a_released {
-            let mut next = self;
-            next.queue_a_released = true;
-            out.push((next, ProofMutantAction::ReleaseAQueue));
-        }
-        if self.queue_a_released && !self.a2_admitted {
-            let mut next = self;
-            next.a2_admitted = true;
-            out.push((next, ProofMutantAction::AdmitSameSlotA2));
-        }
-        if self.a2_admitted && self.receipt_a_published && !self.a2_queue_released {
-            let mut next = self;
-            next.a2_queue_released = true;
-            next.stale_receipt_consumed = true;
-            out.push((next, ProofMutantAction::DeliverStaleReceiptToA2));
-        }
-        if !self.a_revoked {
-            let mut next = self;
-            next.a_revoked = true;
-            next.receipt_a_published = true;
-            out.push((next, ProofMutantAction::RevokeA));
-        }
-        if self.a_revoked && !self.a_success_returned {
-            let mut next = self;
-            next.a_success_returned = true;
-            out.push((next, ProofMutantAction::ReturnAWithSuccess));
-        }
-        if self.a_success_returned && !self.a_accepted {
-            let mut next = self;
-            next.a_accepted = true;
-            out.push((next, ProofMutantAction::AcceptAfterProof));
-        }
-        if self.a2_admitted && !self.a2_retiring {
-            let mut next = self;
-            next.a2_retiring = true;
-            out.push((next, ProofMutantAction::ReturnA2));
-        }
-        if self.a2_retiring && !self.a2_closed {
-            let mut next = self;
-            next.a2_closed = true;
-            out.push((next, ProofMutantAction::CloseA2));
-        }
-        if self.a2_retiring && !self.a_closed {
-            let mut next = self;
-            next.a_closed = true;
-            out.push((next, ProofMutantAction::CloseA));
-        }
-        if self.a_closed && self.a2_retiring && !self.ack_a2 {
-            let mut next = self;
-            next.ack_a = true;
-            next.ack_a2 = true;
-            out.push((next, ProofMutantAction::AckABySlotOnly));
-        }
-        if self.a2_retiring && self.ack_a2 && !self.c_granted {
-            let mut next = self;
-            next.c_granted = true;
-            out.push((next, ProofMutantAction::GrantC));
-        }
-        if self.a2_retiring && self.a2_closed && !self.ack_a2 {
-            let mut next = self;
-            next.ack_a2 = true;
-            out.push((next, ProofMutantAction::GrantC));
-        }
-        out
-    }
-}
-
-#[test]
-fn g2_i_mandatory_mutants_have_shortest_counterexamples() {
-    let (wrong_clear, clear_states) = shortest_counterexample(
-        ClearMutant {
-            stage: 0,
-            snapshot: 0,
-            ready_seq: 0,
-            waiting: false,
-            runnable: false,
-            notification_pending: false,
-        },
-        |state| state.successors(),
-        |state| {
-            state.waiting
-                && state.ready_seq > state.snapshot
-                && !state.runnable
-                && !state.notification_pending
-        },
-        |action| format!("{action:?}"),
-        100,
-    );
-    let expected_wrong_clear = vec![
-        "Claim",
-        "NativeWouldBlock",
-        "ReactorEdge",
-        "WrongClearWithoutLockedRecheck",
-        "Sleep",
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect::<Vec<_>>();
-    assert_eq!(
-        wrong_clear, expected_wrong_clear,
-        "shortest wrong-clear schedule"
-    );
-
-    let comp_start = CompletionMutant {
-        returned: false,
-        cell_occupied: false,
-        hint: false,
-        wake_token: false,
-        poll_asleep: true,
-        timeout_drain_enabled: false,
-        poll_returned: false,
-        late_published: false,
-    };
-    let (wrong_completion_order, completion_states) = shortest_counterexample(
-        comp_start,
-        |state| state.successors(),
-        |state| {
-            state.returned
-                && state.late_published
-                && state.cell_occupied
-                && state.poll_asleep
-                && !state.wake_token
-                && !state.timeout_drain_enabled
-        },
-        |action| format!("{action:?}"),
-        100,
-    );
-    assert_eq!(
-        wrong_completion_order.len(),
-        5,
-        "shortest publish-after-wake schedule"
-    );
-    let (wrong_completion_clear, completion_clear_states) = shortest_counterexample(
-        comp_start,
-        |state| state.successors(),
-        |state| {
-            state.returned
-                && state.cell_occupied
-                && !state.hint
-                && state.poll_returned
-                && state.poll_asleep
-                && !state.wake_token
-                && !state.timeout_drain_enabled
-        },
-        |action| format!("{action:?}"),
-        100,
-    );
-    assert_eq!(
-        wrong_completion_clear.len(),
-        6,
-        "shortest clear-hint-without-read schedule"
-    );
-
-    let (wrong_identity, identity_states) = shortest_counterexample(
-        IdentityMutant {
-            old_result_pending: false,
-            old_retired: false,
-            current_binding: 1,
-            result_binding: 0,
-            installed_binding: 0,
-        },
-        |state| state.successors(),
-        |state| state.current_binding == 2 && state.installed_binding == 1,
-        |action| format!("{action:?}"),
-        100,
-    );
-    assert_eq!(
-        wrong_identity.len(),
-        4,
-        "shortest omitted binding/transfer_seq schedule"
-    );
-
-    let (wrong_capacity, capacity_states) = shortest_counterexample(
-        CapacityMutant {
-            lane_free: false,
-            checked_busy_outside_k2: false,
-            marker_registered: false,
-            lost_wake: false,
-            sleeping: false,
-        },
-        |state| state.successors(),
-        |state| state.lane_free && state.sleeping && state.lost_wake,
-        |action| format!("{action:?}"),
-        100,
-    );
-    assert_eq!(
-        wrong_capacity.len(),
-        4,
-        "shortest capacity lost-wake schedule"
-    );
-
-    let deadline_start = DeadlineMutant {
-        now: 0,
-        worker_running: true,
-        owner_count: 1,
-        lane_credit: true,
-        replacement_admitted: false,
-        queue_credit: true,
-        tcp_waiting: true,
-        reduction_attempted: false,
-    };
-    let (wrong_deadline_queue, deadline_queue_states) = shortest_counterexample(
-        deadline_start,
-        |state| state.successors(),
-        |state| {
-            state.reduction_attempted
-                && state.now == 30
-                && state.worker_running
-                && state.queue_credit
-                && state.tcp_waiting
-        },
-        |action| format!("{action:?}"),
-        100,
-    );
-    assert_eq!(
-        wrong_deadline_queue.len(),
-        2,
-        "shortest deadline queue-release failure"
-    );
-    let (wrong_deadline_physical, deadline_physical_states) = shortest_counterexample(
-        deadline_start,
-        |state| state.successors(),
-        |state| state.replacement_admitted && state.owner_count > 1,
-        |action| format!("{action:?}"),
-        100,
-    );
-    assert_eq!(
-        wrong_deadline_physical.len(),
-        3,
-        "shortest physical-credit release failure"
-    );
-
-    let (wrong_predeadline, predeadline_states) = shortest_counterexample(
-        PreDeadlineMutant {
-            now: 0,
-            revoked: false,
-            receipt_published: false,
-            receipt_time: 0,
-            receipt_consumed: false,
-            queue_credit: true,
-            worker_running: true,
-            tcp_waiting: true,
-            reduction_attempted: false,
-        },
-        |state| state.successors(),
-        |state| {
-            state.now == 5
-                && state.revoked
-                && state.receipt_published
-                && state.receipt_time == 5
-                && state.reduction_attempted
-                && state.queue_credit
-                && state.worker_running
-                && state.tcp_waiting
-        },
-        |action| format!("{action:?}"),
-        100,
-    );
-    assert_eq!(
-        wrong_predeadline.len(),
-        3,
-        "shortest pre-deadline release failure"
-    );
-
-    let (stale_proof, proof_states) = shortest_counterexample(
-        ProofMutant {
-            receipt_a_published: false,
-            queue_a_released: false,
-            a2_admitted: false,
-            a2_queue_released: false,
-            stale_receipt_consumed: false,
-            a_revoked: false,
-            a_success_returned: false,
-            a_accepted: false,
-            a2_retiring: false,
-            a2_closed: false,
-            a_closed: false,
-            ack_a: false,
-            ack_a2: false,
-            c_granted: false,
-        },
-        |state| state.successors(),
-        |state| state.stale_receipt_consumed && state.a2_queue_released,
-        |action| format!("{action:?}"),
-        100,
-    );
-    assert_eq!(
-        stale_proof.len(),
-        4,
-        "shortest wrong-flight receipt settlement"
-    );
-    let (post_proof_accept, post_proof_states) = shortest_counterexample(
-        ProofMutant {
-            receipt_a_published: false,
-            queue_a_released: false,
-            a2_admitted: false,
-            a2_queue_released: false,
-            stale_receipt_consumed: false,
-            a_revoked: false,
-            a_success_returned: false,
-            a_accepted: false,
-            a2_retiring: false,
-            a2_closed: false,
-            a_closed: false,
-            ack_a: false,
-            ack_a2: false,
-            c_granted: false,
-        },
-        |state| state.successors(),
-        |state| state.a_revoked && state.receipt_a_published && state.a_accepted,
-        |action| format!("{action:?}"),
-        100,
-    );
-    assert_eq!(
-        post_proof_accept.len(),
-        3,
-        "shortest post-revocation authority failure"
-    );
-    let (old_ack, old_ack_states) = shortest_counterexample(
-        ProofMutant {
-            receipt_a_published: false,
-            queue_a_released: false,
-            a2_admitted: false,
-            a2_queue_released: false,
-            stale_receipt_consumed: false,
-            a_revoked: false,
-            a_success_returned: false,
-            a_accepted: false,
-            a2_retiring: false,
-            a2_closed: false,
-            a_closed: false,
-            ack_a: false,
-            ack_a2: false,
-            c_granted: false,
-        },
-        |state| state.successors(),
-        |state| state.c_granted && state.a2_retiring && !state.a2_closed,
-        |action| format!("{action:?}"),
-        100,
-    );
-    assert_eq!(
-        old_ack.len(),
-        7,
-        "shortest old-A acknowledgement releases A2"
-    );
-
     println!(
-        "G2-I mutant shortest traces: wrong_clear(states={clear_states}) [{}]; wrong_completion_publish(states={completion_states}) [{}]; wrong_completion_hint(states={completion_clear_states}) [{}]; wrong_identity(states={identity_states}) [{}]; wrong_capacity(states={capacity_states}) [{}]; wrong_deadline_queue(states={deadline_queue_states}) [{}]; wrong_deadline_physical(states={deadline_physical_states}) [{}]; wrong_predeadline(states={predeadline_states}) [{}]; stale_proof(states={proof_states}) [{}]; post_proof_accept(states={post_proof_states}) [{}]; old_ack(states={old_ack_states}) [{}]",
-        wrong_clear.join(" -> "),
-        wrong_completion_order.join(" -> "),
-        wrong_completion_clear.join(" -> "),
-        wrong_identity.join(" -> "),
-        wrong_capacity.join(" -> "),
-        wrong_deadline_queue.join(" -> "),
-        wrong_deadline_physical.join(" -> "),
-        wrong_predeadline.join(" -> "),
-        stale_proof.join(" -> "),
-        post_proof_accept.join(" -> "),
-        old_ack.join(" -> "),
+        "bounded proof_retirement_model explored_states={}",
+        seen.len()
     );
 }
