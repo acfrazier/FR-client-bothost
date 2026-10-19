@@ -7120,8 +7120,8 @@ impl Client {
 
     /// `addFriend` from client-ts (11492): check the free/member cap, the
     /// friend and ignore lists, then add locally and send `FRIENDLIST_ADD`
-    /// with the p8 userhash. A hash of 0 is ignored (TS). The two identical
-    /// cap messages are kept as TS branches them.
+    /// with the p8 userhash. A hash of 0 is ignored (TS). Both cap checks
+    /// share one message.
     pub fn add_friend(&mut self, userhash: i64) {
         self.with_staged_output(false, |client| client.add_friend_impl(userhash));
     }
@@ -13718,8 +13718,8 @@ impl Client {
         }
 
         // Java appends NO_TIMEOUT even when this pass already queued another
-        // packet; the successful combined flush starts the next one-second
-        // wall-clock interval.
+        // packet. Starting the interval on a retained write attempt prevents
+        // repeated keepalives while hosted output is backpressured.
         if self.last_outbound.elapsed() >= KEEPALIVE_INTERVAL {
             let opcode = self.client_opcode(ClientProt::NO_TIMEOUT);
             let _ = self.encode_output(|out| out.p1_enc(opcode));
@@ -13774,6 +13774,7 @@ impl Client {
             {
                 // The reactor has not taken these bytes. Keep the exact
                 // encoded prefix and cipher position across the next pass.
+                self.last_outbound = Instant::now();
                 if queued_local_idle_request {
                     self.pending_local_idle_request = true;
                 }
