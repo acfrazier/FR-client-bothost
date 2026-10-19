@@ -4,14 +4,16 @@
 //! `method465` / `method160` / `method206` (openrs2-nonfree). Fixtures are
 //! offline and independently justified — not authentic live cache proof.
 
+#[path = "support/local_stream.rs"]
+mod local_stream;
+
 use client::client::{
     Client, ClientConfig, ClientNpc, ClientPlayer, ClientRevision, MiniMenuAction,
 };
 use client::config::if_type::IfType;
 use client::io::{
     load_offline_config_seam, map_client_prot, write_synthetic_cache_dir, CacheArchiveKind,
-    CacheManifest289, ClientProt, ClientProt289, ClientStream, Isaac, ServerProt289,
-    CACHE_JAG_NAMES_289,
+    CacheManifest289, ClientProt, ClientProt289, Isaac, ServerProt289, CACHE_JAG_NAMES_289,
 };
 use client::render::Renderer;
 use client::util::JString;
@@ -65,7 +67,7 @@ fn feed_frames(c: &mut Client, frame: &[u8], max_polls: usize) -> usize {
         let _ = sock.shutdown(std::net::Shutdown::Both);
     });
 
-    c.stream = Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    c.stream = Some(local_stream::connect(&addr.ip().to_string(), addr.port()).unwrap());
     c.random_in = None;
     c.ptype = -1;
 

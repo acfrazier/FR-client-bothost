@@ -1,29 +1,43 @@
+#[cfg(feature = "standalone-native-transport")]
 use client::client::present::PresentTarget;
+#[cfg(feature = "standalone-native-transport")]
 use client::render::backend::FrameOutput;
 use client::render::Renderer;
+#[cfg(feature = "standalone-native-transport")]
 use std::io::{Read, Write};
+#[cfg(feature = "standalone-native-transport")]
 use std::net::TcpListener;
+#[cfg(feature = "standalone-native-transport")]
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(feature = "standalone-native-transport")]
 use std::sync::{Arc, Mutex};
+#[cfg(feature = "standalone-native-transport")]
 use std::thread;
+#[cfg(feature = "standalone-native-transport")]
 use std::time::{Duration, Instant};
 
-use client::client::{Client, ClientConfig, ClientRevision};
+#[cfg(feature = "standalone-native-transport")]
+use client::client::ClientRevision;
+use client::client::{Client, ClientConfig};
 use client::io::Packet;
 
 /// Uncompressed empty jag (packed_size == unpacked_size, file_count 0).
 /// ASCII dummy bodies (`title-seed`) parse as compressed and bunzip2 panics.
+#[cfg(feature = "standalone-native-transport")]
 const EMPTY_JAG: &[u8] = &[0, 0, 6, 0, 0, 6, 0, 0];
 /// Same shape, different CRC — for retry / fetch tests.
+#[cfg(feature = "standalone-native-transport")]
 const EMPTY_JAG_B: &[u8] = &[0, 0, 7, 0, 0, 7, 0, 0];
 
 /// Records every poll/present the headed driver issues during the load,
 /// proving the progress callback pumped the window through `maininit`.
+#[cfg(feature = "standalone-native-transport")]
 struct CountingTarget {
     polls: Arc<AtomicUsize>,
     presents: Arc<AtomicUsize>,
 }
 
+#[cfg(feature = "standalone-native-transport")]
 impl PresentTarget for CountingTarget {
     fn poll(&mut self, _shell: &mut client::client::GameShell) -> bool {
         self.polls.fetch_add(1, Ordering::Relaxed);
@@ -133,6 +147,7 @@ fn draw_progress_headed_paints_torch_columns() {
 /// unread data in the receive buffer sends RST (not FIN) on macOS,
 /// discarding the response the client is waiting for. Returns the raw
 /// request text (for path logging).
+#[cfg(feature = "standalone-native-transport")]
 fn drain_request(s: &mut std::net::TcpStream) -> String {
     let mut req = Vec::new();
     let mut buf = [0u8; 1024];
@@ -145,6 +160,7 @@ fn drain_request(s: &mut std::net::TcpStream) -> String {
     String::from_utf8_lossy(&req).to_string()
 }
 
+#[cfg(feature = "standalone-native-transport")]
 fn respond(s: &mut std::net::TcpStream, body: &[u8]) {
     let resp = [
         b"HTTP/1.0 200 OK\r\nContent-Length: ".as_slice(),
@@ -157,6 +173,7 @@ fn respond(s: &mut std::net::TcpStream, body: &[u8]) {
 }
 
 /// One-shot HTTP/1.0 server: replies to a single connection and closes.
+#[cfg(feature = "standalone-native-transport")]
 fn serve_once(body: Vec<u8>) -> (u16, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -170,6 +187,7 @@ fn serve_once(body: Vec<u8>) -> (u16, thread::JoinHandle<()>) {
 
 /// Accept one connection, bailing after `ms` so a client that makes fewer
 /// requests than expected cannot hang the server thread.
+#[cfg(feature = "standalone-native-transport")]
 fn accept_timeout(
     listener: &TcpListener,
     ms: u64,
@@ -197,6 +215,7 @@ fn accept_timeout(
 /// Multi-shot HTTP/1.0 server: serves one request per connection, in
 /// `bodies` order (used for `/crc` then the jag GETs). Returns the port,
 /// the thread, and the request paths seen.
+#[cfg(feature = "standalone-native-transport")]
 fn serve_in_order(bodies: Vec<Vec<u8>>) -> (u16, thread::JoinHandle<()>, Arc<Mutex<Vec<String>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -218,6 +237,7 @@ fn serve_in_order(bodies: Vec<Vec<u8>>) -> (u16, thread::JoinHandle<()>, Arc<Mut
 }
 
 /// The 9×g4 + hash body `get_jag_checksums` expects from `/crc`.
+#[cfg(feature = "standalone-native-transport")]
 fn crc_body(checksums: &[i32; 9]) -> Vec<u8> {
     let mut body = client::io::Packet::alloc(0);
     for &c in checksums {
@@ -231,6 +251,7 @@ fn crc_body(checksums: &[i32; 9]) -> Vec<u8> {
     body.data()[..body.pos].to_vec()
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn maininit_is_oneshot_and_sets_progress_100_on_crc_hit() {
     // No `Renderer` is constructed anywhere: headless `maininit()` records
@@ -278,6 +299,7 @@ fn maininit_is_oneshot_and_sets_progress_100_on_crc_hit() {
     assert_eq!(c.last_progress_percent, 100);
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn maininit_with_progress_notifies_callback_at_each_progress_point() {
     let dir = std::env::temp_dir().join("274-maininit-callback");
@@ -326,6 +348,7 @@ fn maininit_with_progress_notifies_callback_at_each_progress_point() {
     assert_eq!(c.last_progress_message, "Preparing game engine");
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn maininit_empty_cache_fetches_all_eight_jags_over_http() {
     let dir = std::env::temp_dir().join("274-maininit-empty");
@@ -396,6 +419,7 @@ fn maininit_empty_cache_fetches_all_eight_jags_over_http() {
     }
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn maininit_retries_jag_get_after_crc_mismatch() {
     let dir = std::env::temp_dir().join("274-maininit-retry");
@@ -464,6 +488,7 @@ fn maininit_retries_jag_get_after_crc_mismatch() {
 /// port is not that: Windows retries a refused localhost connect for about
 /// two seconds before it fails, which made the bounded-time checks below
 /// measure the TCP stack instead of the retry budget.
+#[cfg(feature = "standalone-native-transport")]
 fn dead_web_origin() -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -480,6 +505,7 @@ fn dead_web_origin() -> u16 {
 /// "Game updated - please reload page" forever. The port gives up at that
 /// point with `error_loading` — a bounded failure, not the old ~7 min
 /// silent block — and the Java message is what the loading bar shows.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn crc_unreachable_sets_error_loading_in_bounded_time() {
     let dir = std::env::temp_dir().join("274-crc-unreachable");
@@ -517,6 +543,7 @@ fn crc_unreachable_sets_error_loading_in_bounded_time() {
 /// callback — that callback is the pump that keeps the headed window and
 /// audio alive through the retry wait: `"{error} - Will retry in N secs."`
 /// each second, then `"Game updated - please reload page"` at the cap.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn crc_retry_countdown_reports_java_messages() {
     let dir = std::env::temp_dir().join("274-crc-countdown");
@@ -547,6 +574,7 @@ fn crc_retry_countdown_reports_java_messages() {
     );
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn stop_during_crc_retry_countdown_aborts_before_the_next_retry() {
     let dir = std::env::temp_dir().join(format!(
@@ -613,6 +641,7 @@ fn stop_during_crc_retry_countdown_aborts_before_the_next_retry() {
 /// progress point — including each `/crc` retry countdown tick. A windowed
 /// `client-play` therefore stays responsive through a dead-server wait
 /// instead of beachballing (and starving the cpal buffer).
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn crc_retry_pumps_present_target() {
     let mut r = Renderer::new(false);
@@ -647,6 +676,7 @@ fn crc_retry_pumps_present_target() {
     );
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn maininit_clears_error_loading_from_new_unpack() {
     let dir = std::env::temp_dir().join("274-maininit-recover");
@@ -726,6 +756,7 @@ fn get_jag_file_crc_hit_skips_http() {
     assert_eq!(got.as_deref(), Some(bytes.as_slice()));
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn get_jag_file_http_persists() {
     let _r = Renderer::new(false);

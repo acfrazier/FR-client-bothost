@@ -1,8 +1,13 @@
+#[cfg(feature = "standalone-native-transport")]
 use std::io::Read;
+#[cfg(feature = "standalone-native-transport")]
 use std::net::TcpListener;
+#[cfg(feature = "standalone-native-transport")]
 use std::time::{Duration, Instant};
 
-use client::client::{Client, ClientConfig, LoginError, LoginStage};
+#[cfg(feature = "standalone-native-transport")]
+use client::client::LoginStage;
+use client::client::{Client, ClientConfig, LoginError};
 use client::render::Renderer;
 
 #[test]
@@ -29,6 +34,7 @@ fn login_error_carries_code_and_messages() {
     );
 }
 
+#[cfg(feature = "standalone-native-transport")]
 fn client_for(port: u16) -> Client {
     Client::new(ClientConfig {
         host: "127.0.0.1".into(),
@@ -41,6 +47,7 @@ fn client_for(port: u16) -> Client {
 
 /// A refused connection keeps where it failed and the OS error, instead of
 /// a bare code -1.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn refused_login_keeps_the_connect_stage_and_os_error() {
     let port = {
@@ -59,6 +66,7 @@ fn refused_login_keeps_the_connect_stage_and_os_error() {
 }
 
 /// A server that hangs up before answering is told apart from a refusal.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn server_hangup_before_answer_keeps_the_read_stage() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -83,6 +91,7 @@ fn server_hangup_before_answer_keeps_the_read_stage() {
 
 /// A server that accepts the login and then says nothing ends the login at
 /// the deadline the host gave it, not at a 30 s read timeout per byte.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn silent_server_login_stops_at_its_deadline() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -113,6 +122,7 @@ fn silent_server_login_stops_at_its_deadline() {
 }
 
 /// Once the deadline has passed, the login opens no connection at all.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn login_past_its_deadline_does_not_connect() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();

@@ -3,13 +3,25 @@
 //! pending logout request (`logoutTimer > 0`) logs out instead; the in-game
 //! silence watchdog (wall-clock: `last_response` older than the 15 s
 //! `SERVER_TIMEOUT` bound, not 750 pass-counted frames) drives it.
+
+#[path = "support/local_stream.rs"]
+mod local_stream;
 use client::client::client::SessionExitReason;
-use client::client::{Client, ClientConfig, ClientPlayer, ClientRevision};
+#[cfg(feature = "standalone-native-transport")]
+use client::client::ClientPlayer;
+use client::client::{Client, ClientConfig, ClientRevision};
+#[cfg(feature = "standalone-native-transport")]
 use client::config::Cache;
-use client::io::{ClientStream, ServerProt, ServerProt289};
+#[cfg(feature = "standalone-native-transport")]
+use client::io::ServerProt;
+use client::io::ServerProt289;
 use std::io::{Read, Write};
-use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
-use std::sync::{mpsc, Arc};
+#[cfg(feature = "standalone-native-transport")]
+use std::net::{Shutdown, TcpStream};
+use std::net::{SocketAddr, TcpListener};
+use std::sync::mpsc;
+#[cfg(feature = "standalone-native-transport")]
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -23,6 +35,7 @@ fn client() -> Client {
     })
 }
 
+#[cfg(feature = "standalone-native-transport")]
 fn serve_login_success(s: &mut TcpStream) {
     let mut hdr = [0u8; 2];
     s.read_exact(&mut hdr).unwrap();
@@ -37,6 +50,7 @@ fn serve_login_success(s: &mut TcpStream) {
     s.write_all(&[2, 0, 0]).unwrap();
 }
 
+#[cfg(feature = "standalone-native-transport")]
 fn serve_login_reject(s: &mut TcpStream) {
     let mut hdr = [0u8; 2];
     let _ = s.read_exact(&mut hdr);
@@ -48,6 +62,7 @@ fn serve_login_reject(s: &mut TcpStream) {
 
 /// Reconnect grant: `response 15` (`Client.java` 3737) after the opcode-18
 /// wrapper — the live reconnect success, not the cold-login response 2.
+#[cfg(feature = "standalone-native-transport")]
 fn serve_login_reconnect15(s: &mut TcpStream) {
     let mut hdr = [0u8; 2];
     s.read_exact(&mut hdr).unwrap();
@@ -66,6 +81,7 @@ fn serve_login_reconnect15(s: &mut TcpStream) {
 
 /// First connection is a successful cold login; the second is a reconnect
 /// rejected with code 6 (so `lost_con` logs out).
+#[cfg(feature = "standalone-native-transport")]
 fn login_then_reject() -> (SocketAddr, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
@@ -79,6 +95,7 @@ fn login_then_reject() -> (SocketAddr, thread::JoinHandle<()>) {
     (addr, server)
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn lost_con_uses_reconnect_login() {
     let (addr, server) = login_then_reject();
@@ -149,7 +166,7 @@ fn transport_loss_with_a_written_idle_request_is_not_an_idle_logout() {
         ClientRevision::R289,
     );
     c.ingame = true;
-    c.stream = Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    c.stream = Some(local_stream::connect(&addr.ip().to_string(), addr.port()).unwrap());
     let (mut server, _) = listener.accept().unwrap();
     server
         .set_read_timeout(Some(Duration::from_secs(2)))
@@ -169,6 +186,7 @@ fn transport_loss_with_a_written_idle_request_is_not_an_idle_logout() {
     );
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn silence_watchdog_reconnects_with_response_15() {
     // First connection is a successful cold login; the second is a reconnect
@@ -210,6 +228,7 @@ fn silence_watchdog_reconnects_with_response_15() {
     server.join().unwrap();
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn silence_watchdog_calls_lost_con_after_wall_clock_silence() {
     let (addr, server) = login_then_reject();
@@ -227,6 +246,7 @@ fn silence_watchdog_calls_lost_con_after_wall_clock_silence() {
     server.join().unwrap();
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn short_game_frame_does_not_constrain_later_login_seed() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
@@ -276,7 +296,7 @@ fn short_game_frame_does_not_constrain_later_login_seed() {
                 )
             };
             let mut c = make_client();
-            c.stream = Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+            c.stream = Some(local_stream::connect(&addr.ip().to_string(), addr.port()).unwrap());
             c.ptype = -1;
             c.ingame = true;
             c.login_user = "bob".into();
@@ -320,6 +340,7 @@ fn short_game_frame_does_not_constrain_later_login_seed() {
     }
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn peer_closed_game_socket_triggers_lost_con_on_next_frame() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -388,7 +409,7 @@ fn protocol_error_reason_records_size_session_sequence_and_previous_frames() {
         let _ = wait_done.recv_timeout(Duration::from_secs(2));
     });
     let mut c = hosted_r289(addr);
-    c.stream = Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    c.stream = Some(local_stream::connect(&addr.ip().to_string(), addr.port()).unwrap());
     c.ptype = -1;
     c.ingame = true;
     c.gens.session = 3;
@@ -480,6 +501,7 @@ fn only_an_in_world_connection_loss_is_resumable() {
 }
 
 /// A reconnect grant starts a new session: nothing is left to resume.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn reconnect_grant_ends_the_resumable_state() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();

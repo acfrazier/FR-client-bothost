@@ -6,7 +6,7 @@
 //! failing, and nothing completed is retained.
 //!
 //! Unix only: the failure is induced with a read-only directory mode.
-#![cfg(unix)]
+#![cfg(all(unix, feature = "standalone-native-transport"))]
 #[path = "support/startup_snapshot.rs"]
 mod support;
 

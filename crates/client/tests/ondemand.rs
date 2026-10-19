@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "standalone-native-transport")]
 use client::dash3d::Model;
 use client::io::{JagFile, OnDemand};
 
@@ -103,6 +104,7 @@ fn two_handles_share_one_worker_on_the_same_port() {
 /// A sibling that never requested the file must not see it on loop_request
 /// (fan-out used to enqueue every Completed on every handle, including
 /// archive-93 map prefetches).
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn sibling_does_not_complete_a_file_it_did_not_request() {
     let _r = Renderer::new(false);
@@ -171,6 +173,7 @@ fn sibling_does_not_complete_a_file_it_did_not_request() {
 /// `check_scene` waits on loc models via `Model::request_download` (the
 /// process provider), not `OnDemand::request`. Completeds must still land
 /// on the handle or scene_state stays 1.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn provider_model_request_completes_without_ondemand_request() {
     let _model_store = lock_model_store();
@@ -278,6 +281,7 @@ fn hub_ingame_is_or_of_live_handles() {
 }
 
 /// Fifty slots requesting the same map must not open fifty update sockets.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn two_handles_dedupe_the_same_request_on_the_wire() {
     let _r = Renderer::new(false);
@@ -370,6 +374,7 @@ fn two_handles_dedupe_the_same_request_on_the_wire() {
     );
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn drop_socket_on_one_handle_does_not_kill_the_hub() {
     let _r = Renderer::new(false);
@@ -527,6 +532,7 @@ fn unpack_models_from_cache_makes_a_random_event_model_loadable() {
 /// End-to-end worker pump against a mock engine ondemand socket: byte-15
 /// handshake, 4-byte request (archive 2 / file 0 / urgent), and one chunk of
 /// gzip + 2-byte version trailer, which the client gunzips on `loop_request`.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn worker_downloads_and_gunzips_from_ondemand_socket() {
     let _r = Renderer::new(false);
@@ -598,6 +604,7 @@ fn worker_downloads_and_gunzips_from_ondemand_socket() {
 /// wait. The server accepts two connections on the same listener: the first
 /// is served and left to the worker's `drop_socket` to close; the second
 /// (a reconnect) is served right after.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn worker_reopens_socket_immediately_after_drop_socket() {
     let _r = Renderer::new(false);
@@ -685,6 +692,7 @@ fn worker_reopens_socket_immediately_after_drop_socket() {
 /// the next `handleQueue`; this port never writes the cache, so dropping
 /// non-urgent completions would discard every prefetched model and first-
 /// login `get_temp_model` would still network-fetch.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn prefetched_archive0_model_posts_to_completed() {
     let _r = Renderer::new(false);
@@ -886,7 +894,7 @@ fn g3(out: &mut Vec<u8>, value: i32) {
     out.push((value >> 8) as u8);
     out.push(value as u8);
 }
-
+#[cfg(feature = "standalone-native-transport")]
 fn gz(data: &[u8]) -> Vec<u8> {
     let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     enc.write_all(data).unwrap();

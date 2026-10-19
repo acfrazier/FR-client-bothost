@@ -1,4 +1,6 @@
-use client::io::ClientStream;
+#[path = "support/local_stream.rs"]
+mod local_stream;
+
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
@@ -14,7 +16,7 @@ fn tcp_read_write_roundtrip() {
         sock.read_exact(&mut buf).unwrap();
         assert_eq!(&buf, &[1, 2]);
     });
-    let mut stream = ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+    let mut stream = local_stream::connect(&addr.ip().to_string(), addr.port()).unwrap();
     assert_eq!(stream.read().unwrap(), 7);
     let mut buf = [0u8; 2];
     stream.read_bytes(&mut buf, 0, 2).unwrap();
@@ -34,7 +36,7 @@ fn payload_byte_counters() {
         sock.read_exact(&mut buf).unwrap();
         assert_eq!(&buf, &[9, 8, 7, 6]);
     });
-    let mut stream = ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+    let mut stream = local_stream::connect(&addr.ip().to_string(), addr.port()).unwrap();
     assert_eq!(stream.bytes_in(), 0);
     assert_eq!(stream.bytes_out(), 0);
     // Read M = 3 payload bytes: 1 via read(), 2 via read_bytes().

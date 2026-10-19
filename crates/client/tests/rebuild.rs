@@ -162,6 +162,7 @@ fn load_ground_writes_client_mapl_flags() {
 
 /// Loopback `tcp_in`: Isaac-encode `REBUILD_NORMAL` on a listener, login,
 /// then read the framed packet off the socket and assert bases.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn tcp_in_rebuild_normal_over_socket() {
     let _r = Renderer::new(false);

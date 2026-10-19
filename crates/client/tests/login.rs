@@ -1,10 +1,16 @@
+#[cfg(feature = "standalone-native-transport")]
 use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer};
+#[cfg(feature = "standalone-native-transport")]
 use client::io::Packet;
 use client::render::Renderer;
 use client::util::JString;
+#[cfg(feature = "standalone-native-transport")]
 use std::io::{Read, Write};
+#[cfg(feature = "standalone-native-transport")]
 use std::net::TcpListener;
+#[cfg(feature = "standalone-native-transport")]
 use std::thread;
+#[cfg(feature = "standalone-native-transport")]
 use std::time::{Duration, Instant};
 
 #[test]
@@ -24,6 +30,7 @@ fn to_userhash_matches_client_ts() {
     assert_eq!(((JString::to_userhash("bob") >> 16) & 0x1f), 0); // loginServer byte
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn cold_login_opcode_16_success() {
     let _r = Renderer::new(false);
@@ -86,6 +93,7 @@ fn cold_login_opcode_16_success() {
 /// every player/npc table slot like Java `Client.java` 3647-3656, so a
 /// second login does not draw leftover first-session NPCs/players. The
 /// local player is then re-seeded fresh at `players[2047]` (ready = false).
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn cold_login_clears_entity_tables() {
     let _r = Renderer::new(false);
@@ -156,6 +164,7 @@ fn cold_login_clears_entity_tables() {
     server.join().unwrap();
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn reconnect_uses_opcode_18() {
     let _r = Renderer::new(false);
@@ -187,6 +196,7 @@ fn reconnect_uses_opcode_18() {
     server.join().unwrap();
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn reconnect_response_15_keeps_game_and_local_player() {
     let _r = Renderer::new(false);
@@ -254,6 +264,7 @@ fn reconnect_response_15_keeps_game_and_local_player() {
     server.join().unwrap();
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
     let mut r = Renderer::new(false);
@@ -330,6 +341,7 @@ fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
     server.join().unwrap();
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn login_code_6_is_error() {
     let _r = Renderer::new(false);
@@ -362,6 +374,7 @@ fn login_code_6_is_error() {
 /// Response 5 ("already logged in") is a title-screen error, not a process
 /// abort: `login_mes*` carry the Java lines, credentials stay, and a later
 /// `login` on the same `Client` can succeed (bot-host retry).
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn already_logged_in_leaves_title_ready_to_retry() {
     let _r = Renderer::new(false);
@@ -400,6 +413,7 @@ fn already_logged_in_leaves_title_ready_to_retry() {
     server.join().unwrap();
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn failed_login_can_be_retried_on_the_same_client() {
     let _r = Renderer::new(false);
@@ -439,6 +453,7 @@ fn failed_login_can_be_retried_on_the_same_client() {
     server.join().unwrap();
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn externally_owned_response_one_returns_after_one_socket_attempt() {
     let _r = Renderer::new(false);
@@ -466,6 +481,7 @@ fn externally_owned_response_one_returns_after_one_socket_attempt() {
     server.join().unwrap();
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn standalone_response_one_retries_after_two_seconds() {
     let _r = Renderer::new(false);
@@ -497,6 +513,7 @@ fn standalone_response_one_retries_after_two_seconds() {
     server.join().unwrap();
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn externally_owned_response_21_carries_server_delay() {
     let _r = Renderer::new(false);
@@ -529,6 +546,7 @@ fn externally_owned_response_21_carries_server_delay() {
     server.join().unwrap();
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn standalone_response_21_counts_down_then_retries() {
     let _r = Renderer::new(false);
@@ -566,6 +584,7 @@ fn standalone_response_21_counts_down_then_retries() {
     server.join().unwrap();
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn lowmem_login_writes_info_byte_one() {
     let _r = Renderer::new(false);

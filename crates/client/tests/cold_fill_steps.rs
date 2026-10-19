@@ -1,3 +1,5 @@
+#![cfg(feature = "standalone-native-transport")]
+
 //! Stepped cold cache fill against synthetic local servers: byte identity
 //! with the one-call fill, the per-step bound (also against a slow update
 //! server and a held retention lock), cancellation (also during the update

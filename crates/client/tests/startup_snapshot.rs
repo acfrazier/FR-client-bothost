@@ -1,3 +1,5 @@
+#![cfg(feature = "standalone-native-transport")]
+
 //! Cross-process retained-snapshot behavior against synthetic local servers.
 //! No public endpoint, client login, or real user cache is used.
 #[path = "support/startup_snapshot.rs"]

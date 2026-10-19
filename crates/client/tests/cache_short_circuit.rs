@@ -1,3 +1,5 @@
+#![cfg(feature = "standalone-native-transport")]
+
 //! `Client::from_shared` injects a process-wide `Arc<Cache>` + iface
 //! template without a second unpack or `/crc` probe, and `maininit`
 //! short-circuits its `load_cache` re-unpack on the injected cache

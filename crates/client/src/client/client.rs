@@ -2924,35 +2924,6 @@ impl Client {
         }
     }
 
-    /// Fetch using addresses the caller has already resolved.
-    #[cfg(feature = "standalone-native-transport")]
-    fn http_get_resolved(
-        transport: crate::Transport,
-        host: &str,
-        addrs: &[std::net::SocketAddr],
-        path: &str,
-    ) -> Option<Vec<u8>> {
-        if let Some(network) = installed_host_network() {
-            return network
-                .fetch_http_blocking_resolved(transport, host, addrs, path, None, None)
-                .ok();
-        }
-
-        #[cfg(feature = "standalone-native-transport")]
-        {
-            if transport.uses_tls() {
-                Self::https_get_native(host, addrs, path, None)
-            } else {
-                Self::http_get_plain_native(addrs, host, path)
-            }
-        }
-
-        #[cfg(not(feature = "standalone-native-transport"))]
-        {
-            None
-        }
-    }
-
     fn http_get_plain(host: &str, port: u16, path: &str) -> Option<Vec<u8>> {
         Self::http_get_plain_to(crate::Transport::Tcp, host, port, path)
     }
@@ -3155,19 +3126,6 @@ impl Client {
     ) -> Result<[i32; 9], AssetFetchError> {
         let body =
             Self::http_get_to(transport, host, port, "/crc").ok_or(AssetFetchError::Connection)?;
-        Self::parse_jag_checksums(body).map_err(|_| AssetFetchError::Checksum)
-    }
-
-    /// [`Self::get_jag_checksums_checked`] from addresses already resolved by
-    /// the caller; `host` names the server in the request and for TLS.
-    #[cfg(feature = "standalone-native-transport")]
-    pub(crate) fn get_jag_checksums_at(
-        transport: crate::Transport,
-        host: &str,
-        addrs: &[std::net::SocketAddr],
-    ) -> Result<[i32; 9], AssetFetchError> {
-        let body = Self::http_get_resolved(transport, host, addrs, "/crc")
-            .ok_or(AssetFetchError::Connection)?;
         Self::parse_jag_checksums(body).map_err(|_| AssetFetchError::Checksum)
     }
 

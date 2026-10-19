@@ -4,6 +4,9 @@
 //! (independently derived oracles). Cases outside stage-1 (actors, login RSA,
 //! region/widgets) are not asserted here.
 
+#[path = "support/local_stream.rs"]
+mod local_stream;
+
 use client::client::{Client, ClientConfig, ClientPlayer, ClientRevision};
 use client::config::{IfType, IfTypeMut};
 use client::io::{ClientStream, Packet, ServerProt, ServerProt289, SERVER_PROT_SIZES};
@@ -202,7 +205,7 @@ fn feed_frames(c: &mut Client, frame: &[u8], max_polls: usize) -> usize {
 fn feed_chunks(c: &mut Client, chunks: &[Vec<u8>], polls_per_chunk: usize) -> usize {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    c.stream = Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    c.stream = Some(local_stream::connect(&addr.ip().to_string(), addr.port()).unwrap());
     let (mut sock, _) = listener.accept().unwrap();
     sock.set_write_timeout(Some(Duration::from_secs(2)))
         .unwrap();
@@ -238,7 +241,7 @@ fn wait_received(stream: &mut ClientStream, written: usize) {
 fn transport_readiness_counts_unread_bytes_before_fragment_poll() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let mut stream = ClientStream::connect("127.0.0.1", addr.port()).unwrap();
+    let mut stream = local_stream::connect("127.0.0.1", addr.port()).unwrap();
     let (mut server, _) = listener.accept().unwrap();
     server
         .set_write_timeout(Some(Duration::from_secs(2)))
@@ -625,7 +628,7 @@ fn adopt_from_carries_revision_with_stream_baton() {
         let (_sock, _) = listener.accept().unwrap();
         b2.wait();
     });
-    head.stream = Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    head.stream = Some(local_stream::connect(&addr.ip().to_string(), addr.port()).unwrap());
     head.ptype = 47;
     head.psize = 5;
 
@@ -745,7 +748,7 @@ fn adopt_from_failed_leaves_target_entirely_unchanged() {
     });
 
     let mut target = client_289();
-    target.stream = Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    target.stream = Some(local_stream::connect(&addr.ip().to_string(), addr.port()).unwrap());
     target.ptype = 47;
     target.psize = 5;
     target.ptype0 = 1;

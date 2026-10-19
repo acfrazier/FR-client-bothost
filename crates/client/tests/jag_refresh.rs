@@ -1,14 +1,20 @@
 //! Pre-freeze jag refresh: missing or CRC-mismatched packs are materialized
 //! into an explicit dest directory. Source bytes are never written.
 
+#[cfg(feature = "standalone-native-transport")]
 use std::io::{Read, Write};
+#[cfg(feature = "standalone-native-transport")]
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(feature = "standalone-native-transport")]
 use std::sync::Arc;
+#[cfg(feature = "standalone-native-transport")]
 use std::thread;
+#[cfg(feature = "standalone-native-transport")]
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "standalone-native-transport")]
 use client::io::Packet;
 use client::unpack::{refresh_jags, FetchEndpoint};
 use client::Transport;
@@ -41,6 +47,7 @@ fn write_pack(dir: &Path, name: &str, bytes: &[u8]) {
     std::fs::write(dir.join(name), bytes).unwrap();
 }
 
+#[cfg(feature = "standalone-native-transport")]
 fn crc_body(packs: &[(String, Vec<u8>)]) -> Vec<u8> {
     let mut checksums = [0i32; 9];
     for (name, bytes) in packs {
@@ -63,6 +70,7 @@ fn crc_body(packs: &[(String, Vec<u8>)]) -> Vec<u8> {
     body.data()[..body.pos].to_vec()
 }
 
+#[cfg(feature = "standalone-native-transport")]
 fn read_http_request(sock: &mut std::net::TcpStream) -> String {
     let mut request = Vec::new();
     let mut buf = [0u8; 1024];
@@ -75,6 +83,7 @@ fn read_http_request(sock: &mut std::net::TcpStream) -> String {
     String::from_utf8_lossy(&request).to_string()
 }
 
+#[cfg(feature = "standalone-native-transport")]
 fn respond(sock: &mut std::net::TcpStream, body: &[u8]) {
     let response = [
         b"HTTP/1.0 200 OK\r\nContent-Length: ".as_slice(),
@@ -87,6 +96,7 @@ fn respond(sock: &mut std::net::TcpStream, body: &[u8]) {
 }
 
 /// Serve `/crc` forever and each pack file once. Returns fetched names.
+#[cfg(feature = "standalone-native-transport")]
 fn serve_packs(
     packs: Arc<Vec<(String, Vec<u8>)>>,
     max_file_serves: usize,
@@ -97,6 +107,7 @@ fn serve_packs(
 /// Same fixture as [`serve_packs`], with an optional corrupt pack body.
 /// `/crc` always uses the honest checksum table so the client proceeds to the
 /// CRC-checked pack GET; only pack responses may be replaced.
+#[cfg(feature = "standalone-native-transport")]
 fn serve_packs_with_body(
     packs: Arc<Vec<(String, Vec<u8>)>>,
     max_file_serves: usize,
@@ -176,6 +187,7 @@ fn write_source(dir: &Path, packs: &[(String, Vec<u8>)]) {
     }
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn mismatched_versionlist_is_refreshed_into_dest_without_writing_source() {
     let source = tmp("source");
@@ -242,6 +254,7 @@ fn mismatched_versionlist_is_refreshed_into_dest_without_writing_source() {
     let _ = std::fs::remove_dir_all(&dest);
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn matching_files_are_reused_and_not_fetched() {
     let source = tmp("match-source");
@@ -296,6 +309,7 @@ fn source_directory_cannot_be_the_destination() {
     std::fs::remove_dir_all(source).unwrap();
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn download_must_be_persisted_before_refresh_succeeds() {
     let dest = tmp("persist-failure");
@@ -317,6 +331,7 @@ fn download_must_be_persisted_before_refresh_succeeds() {
     std::fs::remove_dir_all(dest).unwrap();
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn corrupt_download_fails_closed() {
     let dest = tmp("corrupt-dest");

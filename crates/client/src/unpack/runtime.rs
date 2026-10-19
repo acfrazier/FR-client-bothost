@@ -473,6 +473,12 @@ struct PendingHostLookup {
     step_deadline: Option<Instant>,
 }
 
+struct HostedLookupTarget<'a> {
+    role: &'static str,
+    host: &'a str,
+    port: u16,
+}
+
 /// A name lookup of a [`RuntimeCacheFill`] that ended after its step deadline.
 /// Hosted DNS reports backend timing from the process Resolver. The standalone
 /// fallback reports the timing of its system resolver call.
@@ -534,9 +540,7 @@ fn poll_hosted_lookup<'a>(
     pending: &'a mut Option<PendingHostLookup>,
     resolved: &'a mut Option<HostLookupAddresses>,
     observer: Option<fn(&SlowLookup<'_>)>,
-    role: &'static str,
-    host: &str,
-    port: u16,
+    target: HostedLookupTarget<'_>,
     until: Option<Instant>,
 ) -> Result<Option<&'a [SocketAddr]>, HostLookupFailure> {
     if resolved.is_some() {
@@ -544,7 +548,7 @@ fn poll_hosted_lookup<'a>(
     }
     if pending.is_none() {
         *pending = Some(PendingHostLookup {
-            ticket: network.start_cold_fill_lookup(host, port)?,
+            ticket: network.start_cold_fill_lookup(target.host, target.port)?,
             step_deadline: until,
         });
     }
@@ -559,8 +563,8 @@ fn poll_hosted_lookup<'a>(
             let completed = pending.take().expect("completed hosted lookup");
             report_slow_hosted_lookup(
                 observer,
-                role,
-                host,
+                target.role,
+                target.host,
                 completed.step_deadline,
                 completed.ticket.backend_timing(),
             );
@@ -572,8 +576,8 @@ fn poll_hosted_lookup<'a>(
             let completed = pending.take().expect("failed hosted lookup");
             report_slow_hosted_lookup(
                 observer,
-                role,
-                host,
+                target.role,
+                target.host,
                 completed.step_deadline,
                 completed.ticket.backend_timing(),
             );
@@ -819,9 +823,11 @@ impl RuntimeCacheFill {
                             &mut self.hosted_lookups.asset_pending,
                             &mut self.hosted_lookups.asset,
                             self.slow_lookups,
-                            "asset host",
-                            &request.asset_host,
-                            request.asset_port,
+                            HostedLookupTarget {
+                                role: "asset host",
+                                host: &request.asset_host,
+                                port: request.asset_port,
+                            },
                             until,
                         )
                         .map_err(|failure| {
@@ -1111,9 +1117,11 @@ impl RuntimeCacheFill {
                         &mut self.hosted_lookups.game_pending,
                         &mut self.hosted_lookups.game,
                         self.slow_lookups,
-                        "game host",
-                        &request.game_host,
-                        request.game_port,
+                        HostedLookupTarget {
+                            role: "game host",
+                            host: &request.game_host,
+                            port: request.game_port,
+                        },
                         until,
                     )
                     .map_err(|failure| {

@@ -1,5 +1,5 @@
-//! The cold cache fill, stepped and one-call, against a slow or failing
-//! system resolver.
+//! The standalone-native cold cache fill, stepped and one-call, against a
+//! slow or failing system resolver.
 //!
 //! This test executable defines its own `getaddrinfo`, which the standard
 //! library's name lookup calls in place of libc's. A name that ends in
@@ -14,7 +14,7 @@
 //! the fill reports each such step to its observer once, and that a cancel
 //! never waits for a lookup. A failed lookup fails the fill at once, and
 //! the error names the host in both fills.
-#![cfg(target_os = "linux")]
+#![cfg(all(target_os = "linux", feature = "standalone-native-transport"))]
 
 #[path = "support/startup_snapshot.rs"]
 mod support;

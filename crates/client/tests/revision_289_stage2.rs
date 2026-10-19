@@ -3,12 +3,19 @@
 //! Fixtures come from `crates/client/tests/fixtures/revision_289/manifest.json`
 //! (independently derived oracles). Production paths only — no parallel decoder.
 
+#[path = "support/local_stream.rs"]
+mod local_stream;
+
 use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer, ClientRevision};
 use client::config::{IfType, IfTypeMut};
-use client::io::{ClientStream, Isaac, Packet, ServerProt, ServerProt289};
+#[cfg(feature = "standalone-native-transport")]
+use client::io::Isaac;
+use client::io::{Packet, ServerProt, ServerProt289};
 use client::util::JString;
 use client::wordfilter::WordPack;
-use std::io::{Read, Write};
+#[cfg(feature = "standalone-native-transport")]
+use std::io::Read;
+use std::io::Write;
 use std::net::TcpListener;
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
@@ -97,7 +104,7 @@ fn feed_frames(c: &mut Client, frame: &[u8], max_polls: usize) -> usize {
         let _ = sock.shutdown(std::net::Shutdown::Both);
     });
 
-    c.stream = Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    c.stream = Some(local_stream::connect(&addr.ip().to_string(), addr.port()).unwrap());
     c.random_in = None;
     c.ptype = -1;
 
@@ -618,6 +625,7 @@ fn login_rsa_plaintext_structure_ordered() {
 
 /// Production `login()` outer wrapper on R289: 16|size|255|p2(289)|lowmem|
 /// 9×jag checksums|RSA blob, then Isaac install into out.random / random_in.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn login_production_outer_frame_and_isaac_r289() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -739,7 +747,7 @@ fn lifecycle_attached_neq_ingame_neq_scene_ready() {
     );
     c.ingame = false;
     c.scene_state = 0;
-    c.stream = Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    c.stream = Some(local_stream::connect(&addr.ip().to_string(), addr.port()).unwrap());
     assert!(
         c.stream.is_some() && !c.ingame && c.scene_state != 2,
         "PASS (a): attached (stream present) while !ingame and not scene_ready"
@@ -1547,7 +1555,7 @@ fn logout_opcode_121_clears_stream_modals_gens() {
         let (_s, _) = listener.accept().unwrap();
         done_s.wait();
     });
-    c.stream = Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    c.stream = Some(local_stream::connect(&addr.ip().to_string(), addr.port()).unwrap());
     let before = c.gens;
     let mut p = Packet::new(vec![]);
     c.psize = 0;
@@ -1580,6 +1588,7 @@ fn logout_opcode_121_clears_stream_modals_gens() {
 }
 
 /// Response 2 (cold) clears players/npcs/scene_state; response 15 keeps them.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn login_response_2_vs_15_distinct_on_r289() {
     // Cold login response 2

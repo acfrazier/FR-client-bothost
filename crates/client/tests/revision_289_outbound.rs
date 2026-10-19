@@ -1,8 +1,11 @@
 //! H fixtures independently chosen from public primary 289 client.java.
+
+#[path = "support/local_stream.rs"]
+mod local_stream;
 use client::client::client::SessionExitReason;
 use client::client::{Client, ClientConfig, ClientRevision};
 use client::config::IfType;
-use client::io::{ClientStream, Packet, ServerProt289};
+use client::io::{Packet, ServerProt289};
 use std::io::Read;
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -37,7 +40,7 @@ fn client(revision: ClientRevision) -> Client {
 fn attach_sink(c: &mut Client) -> TcpStream {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    c.stream = Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    c.stream = Some(local_stream::connect(&addr.ip().to_string(), addr.port()).unwrap());
     let (server, _) = listener.accept().unwrap();
     server
         .set_read_timeout(Some(Duration::from_secs(2)))
@@ -594,6 +597,7 @@ fn movement_minimap_tail_and_isaac_concatenation() {
     }
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn cold_login_resets_focus_click_and_pending_samples() {
     use std::io::{Read, Write};

@@ -1,14 +1,25 @@
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc};
+#[cfg(feature = "standalone-native-transport")]
+use std::io::Read;
+use std::io::Write;
+use std::net::TcpListener;
+#[cfg(feature = "standalone-native-transport")]
+use std::net::TcpStream;
+#[cfg(feature = "standalone-native-transport")]
+use std::path::Path;
+use std::path::PathBuf;
+#[cfg(feature = "standalone-native-transport")]
+use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 
 use client::client::{Client, ClientRevision};
 use client::config::{Cache, IfType, IfTypeMut};
-use client::io::{ClientStream, JagFile, OnDemand, Packet};
+#[cfg(feature = "standalone-native-transport")]
+use client::io::{ClientStream, Packet};
+use client::io::{JagFile, OnDemand};
 use client::{ClientSessionConfig, ClientSessionProfile, Transport};
 
+#[cfg(feature = "standalone-native-transport")]
 const EMPTY_JAG: &[u8] = &[0, 0, 6, 0, 0, 6, 0, 0];
 
 fn temp_dir(name: &str) -> PathBuf {
@@ -55,6 +66,7 @@ fn shared_client(profile: Arc<ClientSessionProfile>) -> Result<Client, String> {
     )
 }
 
+#[cfg(feature = "standalone-native-transport")]
 fn drain_request(stream: &mut TcpStream) -> String {
     let mut request = Vec::new();
     let mut buf = [0u8; 1024];
@@ -68,6 +80,7 @@ fn drain_request(stream: &mut TcpStream) -> String {
     String::from_utf8(request).unwrap()
 }
 
+#[cfg(feature = "standalone-native-transport")]
 fn crc_body(checksums: &[i32; 9]) -> Vec<u8> {
     let mut body = Packet::alloc(1);
     for checksum in checksums {
@@ -81,6 +94,7 @@ fn crc_body(checksums: &[i32; 9]) -> Vec<u8> {
     body.data()[..body.pos].to_vec()
 }
 
+#[cfg(feature = "standalone-native-transport")]
 fn serve_http_once(body: Vec<u8>) -> (u16, thread::JoinHandle<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -99,6 +113,7 @@ fn serve_http_once(body: Vec<u8>) -> (u16, thread::JoinHandle<String>) {
     (port, handle)
 }
 
+#[cfg(feature = "standalone-native-transport")]
 fn read_login_packet(stream: &mut TcpStream, expected_wrapper: u8, grant: &[u8]) -> Vec<u8> {
     let mut probe = [0u8; 2];
     stream.read_exact(&mut probe).unwrap();
@@ -117,6 +132,7 @@ fn read_login_packet(stream: &mut TcpStream, expected_wrapper: u8, grant: &[u8])
     packet
 }
 
+#[cfg(feature = "standalone-native-transport")]
 fn write_empty_cache(dir: &Path) -> [i32; 9] {
     let mut checksums = [0i32; 9];
     for (index, name) in [
@@ -188,6 +204,7 @@ fn profile_rejects_bad_explicit_rsa_and_empty_identity_fields() {
         .contains("content_id"));
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn bound_login_and_reconnect_ignore_mutable_config_and_use_frozen_revision_rsa() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -234,6 +251,7 @@ fn bound_login_and_reconnect_ignore_mutable_config_and_use_frozen_revision_rsa()
     }
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn bound_maininit_uses_asset_endpoint_cache_and_expected_crc() {
     let cache = temp_dir("asset");
@@ -259,6 +277,7 @@ fn bound_maininit_uses_asset_endpoint_cache_and_expected_crc() {
     drop(game_listener);
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn bound_crc_mismatch_fails_without_replacing_frozen_identity() {
     let cache = temp_dir("crc-mismatch");
@@ -282,6 +301,7 @@ fn bound_crc_mismatch_fails_without_replacing_frozen_identity() {
     drop(game_listener);
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn incompatible_bound_adoption_leaves_both_streams_intact() {
     let first_listener = TcpListener::bind("127.0.0.1:0").unwrap();

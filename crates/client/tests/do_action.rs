@@ -126,6 +126,7 @@ fn try_move_out_of_area_destination_returns_false() {
 
 /// After login, `tryMove` + `game_loop` must flush `MOVE_GAMECLICK` onto
 /// the socket (opcode Isaac-encoded; payload plaintext).
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn try_move_flushes_move_gameclick_to_socket() {
     use std::io::{Read, Write};

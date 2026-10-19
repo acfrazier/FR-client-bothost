@@ -1,3 +1,5 @@
+#![cfg(feature = "standalone-native-transport")]
+
 //! Runtime cache identity, transfer refresh and immutable-owner regressions.
 #[path = "support/startup_snapshot.rs"]
 mod support;

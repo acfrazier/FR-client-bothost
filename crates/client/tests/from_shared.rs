@@ -6,16 +6,22 @@
 //! and iface template without a second unpack or `/crc` probe. The /tmp
 //! cache has no packs, so `Client::new` never touches the network beyond
 //! the listener planted here.
+
+#[path = "support/local_stream.rs"]
+mod local_stream;
+#[cfg(feature = "standalone-native-transport")]
 use std::io::{self, Read, Write};
 use std::net::TcpListener;
+#[cfg(feature = "standalone-native-transport")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+#[cfg(feature = "standalone-native-transport")]
 use std::thread;
+#[cfg(feature = "standalone-native-transport")]
 use std::time::Duration;
 
 use client::client::{CheatAdmission, Client, ClientConfig, ClientRevision};
 use client::config::{Cache, IfType, IfTypeMut};
-use client::io::ClientStream;
 
 fn cfg() -> ClientConfig {
     ClientConfig {
@@ -31,6 +37,7 @@ fn cfg() -> ClientConfig {
 /// bytes, response 0, 8-byte seed, then assert the wrapper opcode (`16`
 /// cold / `18` reconnect) and grant with `grant` (response 2 + staff +
 /// mouse, or response 15 alone).
+#[cfg(feature = "standalone-native-transport")]
 fn serve_login(s: &mut std::net::TcpStream, opcode: u8, grant: &[u8]) {
     let mut hdr = [0u8; 2];
     s.read_exact(&mut hdr).unwrap();
@@ -267,6 +274,7 @@ fn mut_overlay_is_small_and_decode_stays_ptr_eq_after_writes() {
 /// ISAAC cursors to a second `Client` built `from_shared`, and that client
 /// reconnects wrapper opcode **18** over the **same** TCP (response **15**
 /// keeps state). The server sees exactly one connection.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn adopt_reconnects_opcode_18_without_tcp_drop() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -354,7 +362,7 @@ fn unbound_adoption_requires_matching_transport_and_admission() {
         let address = listener.local_addr().unwrap();
         let mut client = Client::new(cfg());
         client.stream =
-            Some(ClientStream::connect(&address.ip().to_string(), address.port()).unwrap());
+            Some(local_stream::connect(&address.ip().to_string(), address.port()).unwrap());
         let (server, _) = listener.accept().unwrap();
         (client, server)
     }

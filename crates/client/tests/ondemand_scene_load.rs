@@ -2,21 +2,28 @@
 //! the update socket; a mismatched identity falls back to the wire; a 289
 //! engine that closes on the legacy keepalive must not leave outstanding
 //! requests waiting for the resend timer.
-use std::io::{Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+#[cfg(feature = "standalone-native-transport")]
+use std::io::Read;
+use std::io::Write;
+use std::net::TcpListener;
+#[cfg(feature = "standalone-native-transport")]
+use std::net::{Shutdown, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "standalone-native-transport")]
 use client::client::{Client, ClientConfig};
+#[cfg(feature = "standalone-native-transport")]
 use client::config::Cache;
 use client::io::{ClientRevision, JagFile, OnDemand, Packet};
 use client::render::Renderer;
 use client::Transport;
 
 const MAP_RAW: &[u8] = b"map-bytes";
+#[cfg(feature = "standalone-native-transport")]
 const KEEPALIVE_IDLE: Duration = Duration::from_secs(18);
 static NEXT_TMP: AtomicU64 = AtomicU64::new(1);
 
@@ -118,6 +125,7 @@ fn write_map_store(dir: &Path, payload: &[u8]) {
     std::fs::write(dir.join("main_file_cache.dat"), dat).unwrap();
 }
 
+#[cfg(feature = "standalone-native-transport")]
 fn handshake(sock: &mut TcpStream) {
     sock.set_read_timeout(Some(Duration::from_secs(8))).unwrap();
     sock.set_write_timeout(Some(Duration::from_secs(8)))
@@ -128,6 +136,7 @@ fn handshake(sock: &mut TcpStream) {
     sock.write_all(&[0; 8]).unwrap();
 }
 
+#[cfg(feature = "standalone-native-transport")]
 fn serve_map(sock: &mut TcpStream, body: &[u8]) {
     let mut req = [0u8; 4];
     sock.read_exact(&mut req).unwrap();
@@ -269,6 +278,7 @@ fn bound_file_store_used_when_jag_dir_has_no_store() {
 
 /// A map fetched over ondemand is retained under the content-identity overlay
 /// so a later region load does not reopen the update socket.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn completed_ondemand_maps_are_retained() {
     let _r = Renderer::new(false);
@@ -346,6 +356,7 @@ fn completed_ondemand_maps_are_retained() {
 
 /// CRC/version identity is authoritative: a present but foreign map still
 /// goes over ondemand.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn mismatched_map_identity_falls_back_to_ondemand() {
     let _r = Renderer::new(false);
@@ -380,6 +391,7 @@ fn mismatched_map_identity_falls_back_to_ondemand() {
 
 /// OnDemand.ts closes the client when `priority > 2`. Outstanding map
 /// requests must reconnect and complete without waiting a 50-cycle resend.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn closed_ondemand_socket_reconnects_and_resends_immediately() {
     let _r = Renderer::new(false);
@@ -425,6 +437,7 @@ fn closed_ondemand_socket_reconnects_and_resends_immediately() {
     assert_eq!(accepts.load(Ordering::Relaxed), 2);
 }
 
+#[cfg(feature = "standalone-native-transport")]
 fn bound_ondemand(
     revision: ClientRevision,
     port: u16,
@@ -448,6 +461,7 @@ fn bound_ondemand(
     .unwrap()
 }
 
+#[cfg(feature = "standalone-native-transport")]
 fn idle_run(od: &mut OnDemand, until: Instant, stop: Option<&AtomicBool>) {
     while Instant::now() < until && !stop.is_some_and(|s| s.load(Ordering::Relaxed)) {
         od.run(true);
@@ -459,6 +473,7 @@ fn idle_run(od: &mut OnDemand, until: Instant, stop: Option<&AtomicBool>) {
 /// The legacy Java keepalive is `00 00 00 0a`. A bound 289 worker must not
 /// send it across a long idle; a later map request must complete on the
 /// still-open connection without a resend wait.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn bound_revision_289_does_not_send_legacy_keepalive() {
     let _r = Renderer::new(false);
@@ -530,6 +545,7 @@ fn bound_revision_289_does_not_send_legacy_keepalive() {
 }
 
 /// Bound 274 still speaks the Java keepalive that 289 engines reject.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn bound_revision_274_sends_java_keepalive() {
     let _r = Renderer::new(false);
@@ -581,6 +597,7 @@ fn bound_revision_274_sends_java_keepalive() {
 
 /// `load_on_demand` without a session profile still passes the Client
 /// revision: unbound 274 keeps the Java keepalive.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn unbound_load_on_demand_274_sends_java_keepalive() {
     let _r = Renderer::new(false);
@@ -640,6 +657,7 @@ fn unbound_load_on_demand_274_sends_java_keepalive() {
 
 /// A server that accepts then closes without serving must not tight-loop
 /// reconnects. Backoff grows to the 4 s Java gate.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn no_progress_reconnect_is_rate_limited() {
     let _r = Renderer::new(false);
@@ -693,6 +711,7 @@ fn no_progress_reconnect_is_rate_limited() {
 
 /// A refused connect must keep Java's 4 s open gate so `fail_count` cannot
 /// cross 3 in a 1 s outage (`maininit` errors at `fail_count > 3`).
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn refused_connect_keeps_java_open_gate() {
     let _r = Renderer::new(false);
@@ -736,6 +755,7 @@ fn refused_connect_keeps_java_open_gate() {
 
 /// After a file completed over the network, a later idle close still
 /// reconnects immediately rather than sitting out the 4 s gate.
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn idle_close_after_network_complete_reconnects_immediately() {
     let _r = Renderer::new(false);

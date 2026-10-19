@@ -1,3 +1,5 @@
+#![cfg(feature = "standalone-native-transport")]
+
 //! Task 8: the headless proof.
 //!
 //! A `Client` with no `Renderer`, no `Present`, no `RenderBackend` and no
