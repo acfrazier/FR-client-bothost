@@ -1627,11 +1627,7 @@ impl ProofState {
             next.c_demand = true;
             out.push((next, ProofAction::QueueC));
         }
-        if self.c_demand
-            && !self.c_granted
-            && self.a2_retiring
-            && self.a2_retirement_ack == 1
-        {
+        if self.c_demand && !self.c_granted && self.a2_retiring && self.a2_retirement_ack == 1 {
             let mut next = self;
             next.c_granted = true;
             next.coverage |= P_C_AFTER_A2_ACK;

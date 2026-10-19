@@ -13,14 +13,14 @@
 use std::io::{self, Read, Write};
 use std::net::SocketAddr;
 #[cfg(feature = "standalone-native-transport")]
-use std::net::ToSocketAddrs;
-#[cfg(feature = "standalone-native-transport")]
 use std::net::TcpStream;
+#[cfg(feature = "standalone-native-transport")]
+use std::net::ToSocketAddrs;
 use std::time::{Duration, Instant};
 
+use crate::client::client::AssetFetchError;
 #[cfg(feature = "standalone-native-transport")]
 use crate::client::Client;
-use crate::client::client::AssetFetchError;
 #[cfg(feature = "standalone-native-transport")]
 use crate::io::client_stream::{park_until_ready, PendingConnect, Readiness};
 use crate::io::host_network::{installed_host_network, HostHttpFetch};
@@ -469,8 +469,7 @@ mod tests {
             head_tx.send(read_head(&mut socket)).unwrap();
             socket.write_all(&response(b"crc-body")).unwrap();
         });
-        let mut fetch =
-            HttpFetch::start(Transport::Tcp, "127.0.0.1", port, "/crc").unwrap();
+        let mut fetch = HttpFetch::start(Transport::Tcp, "127.0.0.1", port, "/crc").unwrap();
         let (body, polls, longest) = poll_wrapper_steps(&mut fetch);
         server.join().unwrap();
         assert_eq!(body.unwrap(), b"crc-body");
@@ -497,7 +496,8 @@ mod tests {
             socket.write_all(&response(b"crc-body")).unwrap();
         });
         let mut fetch =
-            StandaloneHttpFetch::start(Transport::Tcp, "127.0.0.1", &loopback(port), "/crc").unwrap();
+            StandaloneHttpFetch::start(Transport::Tcp, "127.0.0.1", &loopback(port), "/crc")
+                .unwrap();
         let (body, polls, longest) = poll_steps(&mut fetch);
         server.join().unwrap();
         assert_eq!(body.unwrap(), b"crc-body");
@@ -523,7 +523,8 @@ mod tests {
         });
         let started = Instant::now();
         let mut fetch =
-            StandaloneHttpFetch::start(Transport::Tcp, "127.0.0.1", &loopback(port), "/crc").unwrap();
+            StandaloneHttpFetch::start(Transport::Tcp, "127.0.0.1", &loopback(port), "/crc")
+                .unwrap();
         let (body, _, longest) = poll_steps(&mut fetch);
         let failed = started.elapsed();
         done_tx.send(()).unwrap();

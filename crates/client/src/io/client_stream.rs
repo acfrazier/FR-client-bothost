@@ -22,9 +22,9 @@
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
-use std::net::{Shutdown, SocketAddr, TcpStream};
 #[cfg(feature = "standalone-native-transport")]
 use std::net::ToSocketAddrs;
+use std::net::{Shutdown, SocketAddr, TcpStream};
 #[cfg(test)]
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -83,7 +83,11 @@ struct WriterState {
 }
 
 impl WriterState {
-    #[cfg(feature = "standalone-native-transport")]
+    #[cfg(any(
+        feature = "standalone-native-transport",
+        test,
+        feature = "test-support"
+    ))]
     fn new() -> Self {
         WriterState {
             buf: Box::new([0; BUF_SIZE]),
@@ -698,6 +702,15 @@ impl Write for WriteOnceWouldBlock {
 // The test-only `Plain` variant makes the enum two-variant, and Windows'
 // TLS stream is far larger than the plain one. Boxing `Tls` would add an
 // allocation to the production path for a test-build-only lint.
+// The no-native product does not construct this compatibility-only WS state.
+#[cfg_attr(
+    not(any(
+        feature = "standalone-native-transport",
+        test,
+        feature = "test-support"
+    )),
+    allow(dead_code)
+)]
 #[cfg_attr(any(test, feature = "test-support"), allow(clippy::large_enum_variant))]
 enum WsConn {
     #[cfg(feature = "standalone-native-transport")]
@@ -707,7 +720,11 @@ enum WsConn {
     /// Loopback plain WS used by unit tests only (no TLS trust bypass).
     #[cfg(any(test, feature = "test-support"))]
     Plain(WebSocket<DeadlineSocket>),
-    #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+    #[cfg(not(any(
+        feature = "standalone-native-transport",
+        test,
+        feature = "test-support"
+    )))]
     Unavailable(std::convert::Infallible),
 }
 
@@ -722,14 +739,22 @@ impl WsConn {
             WsConn::Plain(ws) => ws.read(),
             #[cfg(test)]
             WsConn::BlockedWriter(ws) => ws.read(),
-            #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+            #[cfg(not(any(
+                feature = "standalone-native-transport",
+                test,
+                feature = "test-support"
+            )))]
             WsConn::Unavailable(never) => match *never {},
         }
     }
 
     #[allow(clippy::result_large_err)]
     fn send_message(&mut self, msg: Message) -> Result<(), tungstenite::Error> {
-        #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+        #[cfg(not(any(
+            feature = "standalone-native-transport",
+            test,
+            feature = "test-support"
+        )))]
         let _ = &msg;
         match self {
             #[cfg(feature = "standalone-native-transport")]
@@ -738,7 +763,11 @@ impl WsConn {
             WsConn::Plain(ws) => ws.send(msg),
             #[cfg(test)]
             WsConn::BlockedWriter(ws) => ws.send(msg),
-            #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+            #[cfg(not(any(
+                feature = "standalone-native-transport",
+                test,
+                feature = "test-support"
+            )))]
             WsConn::Unavailable(never) => match *never {},
         }
     }
@@ -752,7 +781,11 @@ impl WsConn {
             WsConn::Plain(ws) => ws.flush(),
             #[cfg(test)]
             WsConn::BlockedWriter(ws) => ws.flush(),
-            #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+            #[cfg(not(any(
+                feature = "standalone-native-transport",
+                test,
+                feature = "test-support"
+            )))]
             WsConn::Unavailable(never) => match *never {},
         }
     }
@@ -766,13 +799,21 @@ impl WsConn {
             WsConn::Plain(ws) => ws.close(None),
             #[cfg(test)]
             WsConn::BlockedWriter(ws) => ws.close(None),
-            #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+            #[cfg(not(any(
+                feature = "standalone-native-transport",
+                test,
+                feature = "test-support"
+            )))]
             WsConn::Unavailable(never) => match *never {},
         }
     }
 
     fn set_nonblocking(&mut self, nonblocking: bool) -> io::Result<()> {
-        #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+        #[cfg(not(any(
+            feature = "standalone-native-transport",
+            test,
+            feature = "test-support"
+        )))]
         let _ = nonblocking;
         match self {
             #[cfg(feature = "standalone-native-transport")]
@@ -781,7 +822,11 @@ impl WsConn {
             WsConn::Plain(ws) => ws.get_mut().set_nonblocking(nonblocking),
             #[cfg(test)]
             WsConn::BlockedWriter(ws) => ws.get_ref().socket.set_nonblocking(nonblocking),
-            #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+            #[cfg(not(any(
+                feature = "standalone-native-transport",
+                test,
+                feature = "test-support"
+            )))]
             WsConn::Unavailable(never) => match *never {},
         }
     }
@@ -794,7 +839,11 @@ impl WsConn {
             WsConn::Plain(ws) => ws.get_ref().deadline,
             #[cfg(test)]
             WsConn::BlockedWriter(_) => None,
-            #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+            #[cfg(not(any(
+                feature = "standalone-native-transport",
+                test,
+                feature = "test-support"
+            )))]
             WsConn::Unavailable(never) => match *never {},
         }
     }
@@ -808,13 +857,21 @@ impl WsConn {
             WsConn::Plain(ws) => &ws.get_ref().sock,
             #[cfg(test)]
             WsConn::BlockedWriter(ws) => &ws.get_ref().socket,
-            #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+            #[cfg(not(any(
+                feature = "standalone-native-transport",
+                test,
+                feature = "test-support"
+            )))]
             WsConn::Unavailable(never) => match *never {},
         }
     }
 
     fn set_deadline(&mut self, deadline: Option<Instant>) -> io::Result<()> {
-        #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+        #[cfg(not(any(
+            feature = "standalone-native-transport",
+            test,
+            feature = "test-support"
+        )))]
         let _ = deadline;
         match self {
             #[cfg(feature = "standalone-native-transport")]
@@ -823,13 +880,21 @@ impl WsConn {
             WsConn::Plain(ws) => ws.get_mut().set_deadline(deadline),
             #[cfg(test)]
             WsConn::BlockedWriter(_) => Ok(()),
-            #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+            #[cfg(not(any(
+                feature = "standalone-native-transport",
+                test,
+                feature = "test-support"
+            )))]
             WsConn::Unavailable(never) => match *never {},
         }
     }
 
     fn set_cancel(&mut self, cancel: Option<LoginCancel>) {
-        #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+        #[cfg(not(any(
+            feature = "standalone-native-transport",
+            test,
+            feature = "test-support"
+        )))]
         let _ = &cancel;
         match self {
             #[cfg(feature = "standalone-native-transport")]
@@ -838,7 +903,11 @@ impl WsConn {
             WsConn::Plain(ws) => ws.get_mut().set_cancel(cancel),
             #[cfg(test)]
             WsConn::BlockedWriter(_) => {}
-            #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+            #[cfg(not(any(
+                feature = "standalone-native-transport",
+                test,
+                feature = "test-support"
+            )))]
             WsConn::Unavailable(never) => match *never {},
         }
     }
@@ -862,7 +931,16 @@ struct HostedInner {
     committed: bool,
 }
 
-
+// Host-only products construct only Hosted; standalone and fixtures retain
+// the Java client's TCP/WS variants without native TLS in product binaries.
+#[cfg_attr(
+    not(any(
+        feature = "standalone-native-transport",
+        test,
+        feature = "test-support"
+    )),
+    allow(dead_code)
+)]
 enum Inner {
     Tcp(TcpInner),
     Ws(Box<WsInner>),
@@ -886,6 +964,7 @@ fn io_other(err: impl std::fmt::Display) -> io::Error {
     io::Error::other(err.to_string())
 }
 
+#[cfg(not(feature = "standalone-native-transport"))]
 fn host_network_unavailable() -> io::Error {
     io::Error::new(
         io::ErrorKind::NotConnected,
@@ -900,9 +979,7 @@ fn host_stream_operation_unavailable(operation: &str) -> io::Error {
     )
 }
 
-fn require_host_attempt_identity(
-    cancel: Option<&LoginCancel>,
-) -> io::Result<HostAttemptIdentity> {
+fn require_host_attempt_identity(cancel: Option<&LoginCancel>) -> io::Result<HostAttemptIdentity> {
     if let Some(cancel) = cancel {
         if cancel.is_cancelled() {
             return Err(login_cancelled());
@@ -1331,7 +1408,18 @@ impl ClientStream {
         Self::tcp_over(TcpStream::connect((host, port))?, None)
     }
 
-    #[cfg(feature = "standalone-native-transport")]
+    /// Local socket for protocol fixtures only; production connections always
+    /// use the installed host transport or the standalone feature.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn connect_tcp_for_test(host: &str, port: u16) -> io::Result<ClientStream> {
+        Self::tcp_over(TcpStream::connect((host, port))?, None)
+    }
+
+    #[cfg(any(
+        feature = "standalone-native-transport",
+        test,
+        feature = "test-support"
+    ))]
     fn tcp_over(socket: TcpStream, deadline: Option<Instant>) -> io::Result<ClientStream> {
         socket.set_read_timeout(Some(READ_TIMEOUT))?;
         socket.set_nodelay(true)?;
@@ -1649,7 +1737,9 @@ impl ClientStream {
         if let Inner::Hosted(hosted) = &mut self.inner {
             if !hosted.dummy {
                 let until = Instant::now() + limit;
-                let until = hosted.deadline.map_or(until, |deadline| until.min(deadline));
+                let until = hosted
+                    .deadline
+                    .map_or(until, |deadline| until.min(deadline));
                 transport_wait(|| hosted.stream.wait_available(need.max(0) as usize, until));
             }
             return;
@@ -1924,6 +2014,7 @@ fn connect_socket_until(host: &str, port: u16, deadline: Instant) -> io::Result<
     Err(last.unwrap_or_else(no_addresses))
 }
 
+#[cfg(feature = "standalone-native-transport")]
 fn no_addresses() -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidInput,
@@ -1937,12 +2028,14 @@ fn no_addresses() -> io::Error {
 /// hold the caller past its own deadline or cancel check. Without a
 /// deadline of its own the connect ends as a blocking one does: connected,
 /// or with the system's error for every address.
+#[cfg(feature = "standalone-native-transport")]
 pub(crate) struct PendingConnect {
     socket: Option<socket2::Socket>,
     addrs: std::vec::IntoIter<SocketAddr>,
     last: Option<io::Error>,
 }
 
+#[cfg(feature = "standalone-native-transport")]
 impl PendingConnect {
     pub(crate) fn start(addrs: Vec<SocketAddr>) -> Self {
         Self {
@@ -1987,6 +2080,7 @@ impl PendingConnect {
     }
 }
 
+#[cfg(feature = "standalone-native-transport")]
 fn begin_connect(addr: SocketAddr) -> io::Result<socket2::Socket> {
     use socket2::{Domain, Protocol, Socket, Type};
     let socket = Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
@@ -1998,12 +2092,12 @@ fn begin_connect(addr: SocketAddr) -> io::Result<socket2::Socket> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(feature = "standalone-native-transport", unix))]
 fn connect_in_progress(error: &io::Error) -> bool {
     error.raw_os_error() == Some(libc::EINPROGRESS)
 }
 
-#[cfg(not(unix))]
+#[cfg(all(feature = "standalone-native-transport", not(unix)))]
 fn connect_in_progress(error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::WouldBlock
 }
@@ -2204,12 +2298,12 @@ fn socket_readable_now(socket: RawSocket) -> bool {
 /// Park until `socket` is ready for `ready` (or reports an error or
 /// hang-up) or `limit` passes, rounded up to whole milliseconds. True when
 /// it became ready. It has no cancel: compare [`wait_ready`].
-#[cfg(unix)]
+#[cfg(all(feature = "standalone-native-transport", unix))]
 pub(crate) fn park_until_ready(socket: &impl AsRawFd, ready: Readiness, limit: Duration) -> bool {
     poll_socket(socket.as_raw_fd(), ready, limit)
 }
 
-#[cfg(windows)]
+#[cfg(all(feature = "standalone-native-transport", windows))]
 pub(crate) fn park_until_ready(
     socket: &impl AsRawSocket,
     ready: Readiness,
@@ -2309,10 +2403,7 @@ mod tests {
         let callback_called = Arc::clone(&called);
         let callback_unlocked = Arc::clone(&unlocked);
         cancel.register_cancel_callback(move || {
-            callback_unlocked.store(
-                callback_cancel.0.try_lock().is_ok(),
-                Ordering::Relaxed,
-            );
+            callback_unlocked.store(callback_cancel.0.try_lock().is_ok(), Ordering::Relaxed);
             callback_called.store(true, Ordering::Relaxed);
         });
 
@@ -2341,9 +2432,7 @@ mod tests {
         cancel.set_host_attempt_identity(HostAttemptIdentity::new(Attempt(42)));
         let identity = cancel.clone().host_attempt_identity().unwrap();
         assert_eq!(
-            identity
-                .downcast_ref::<Attempt>()
-                .map(|attempt| attempt.0),
+            identity.downcast_ref::<Attempt>().map(|attempt| attempt.0),
             Some(42)
         );
 
@@ -2406,6 +2495,7 @@ mod tests {
         (stream, block_next_write, blocked_writes)
     }
 
+    #[cfg(feature = "standalone-native-transport")]
     #[test]
     fn reader_handle_tracks_the_socket_and_wakes_on_data() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -2846,6 +2936,7 @@ mod tests {
     }
 
     /// The same wait over plain TCP.
+    #[cfg(feature = "standalone-native-transport")]
     #[test]
     fn tcp_wait_available_wakes_on_arrival() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -2908,6 +2999,7 @@ mod tests {
     /// A server that accepts the connection and never reads: the handshake's
     /// writes fill both socket buffers and then block, and the write that
     /// blocks still returns at the deadline.
+    #[cfg(feature = "standalone-native-transport")]
     #[test]
     fn login_deadline_ends_a_handshake_write_to_a_peer_that_never_reads() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -2946,6 +3038,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "standalone-native-transport")]
     thread_local! {
         /// When this thread's last call through the transport wait hook
         /// went in and came out.
@@ -2953,6 +3046,7 @@ mod tests {
             const { std::cell::Cell::new(None) };
     }
 
+    #[cfg(feature = "standalone-native-transport")]
     fn record_transport_wait(wait: &mut dyn FnMut()) {
         let entered = Instant::now();
         wait();
@@ -2963,6 +3057,7 @@ mod tests {
     /// hook: the call is still waiting for the peer inside the hook. A game
     /// send to a peer that stopped reading, a login handshake write, and a
     /// read waiting for the peer's next byte.
+    #[cfg(feature = "standalone-native-transport")]
     #[test]
     fn blocking_socket_calls_run_through_the_transport_wait_hook() {
         set_transport_wait_hook(record_transport_wait);
@@ -3044,6 +3139,7 @@ mod tests {
     /// reads end of stream at once, and the read blocked on that socket
     /// returns with the cancel. A handshake cancelled before it connects
     /// fails its connect; a cancel after the handshake leaves the session.
+    #[cfg(feature = "standalone-native-transport")]
     #[test]
     fn login_cancel_shuts_only_the_handshake_socket() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -3207,6 +3303,7 @@ mod tests {
     /// A cancellable connect that completes is an ordinary stream: the
     /// cancel shuts it during the handshake and leaves it alone once
     /// `set_deadline(None)` has ended the handshake.
+    #[cfg(feature = "standalone-native-transport")]
     #[test]
     fn a_cancellable_connect_is_released_when_its_handshake_ends() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -3435,6 +3532,7 @@ mod tests {
     /// arms a 100 ms socket timeout, so no blocking call times out and then
     /// runs again on the same socket. The peer answers after three poll
     /// steps, and each socket keeps its normal timeouts after that.
+    #[cfg(feature = "standalone-native-transport")]
     #[test]
     fn cancellable_handshake_calls_keep_the_normal_socket_timeouts() {
         let normal =
@@ -3521,6 +3619,7 @@ mod tests {
     /// A cancel with no deadline keeps the Java stream: TCP writes go
     /// through the writer thread, and a read with no data ends after the
     /// 30 s read timeout.
+    #[cfg(feature = "standalone-native-transport")]
     #[test]
     fn a_cancel_without_a_deadline_keeps_the_java_timeout_and_writer() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

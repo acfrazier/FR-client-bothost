@@ -730,6 +730,7 @@ fn inv_full_274_still_allows_trailing_pad_inside_psize() {
     assert_eq!(inv_slot(&c, 3, 0), (1, 2));
 }
 
+#[cfg(feature = "standalone-native-transport")]
 #[test]
 fn adopt_from_failed_leaves_target_entirely_unchanged() {
     // Target is live R289 with partial-frame state; source has no stream and
@@ -751,7 +752,7 @@ fn adopt_from_failed_leaves_target_entirely_unchanged() {
     target.ptype1 = 2;
     target.ptype2 = 3;
     target.baton = false;
-    target.out.p1(0xaa);
+    target.out.pos = 1; // Synthetic pending position; no session output is encoded or flushed.
     let out_pos = target.out.pos;
     let in_len = target.r#in.length();
 

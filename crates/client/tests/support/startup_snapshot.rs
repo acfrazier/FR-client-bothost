@@ -858,11 +858,15 @@ fn serve_paced_connection(mut socket: TcpStream, state: Arc<PacedState>) {
             response.extend_from_slice(&(body.len() as u16).to_be_bytes());
             response.push(0);
             response.extend_from_slice(body);
+            // Include the write in the observation's critical section: the
+            // client can receive these bytes and send a replacement request
+            // before this thread is scheduled to decrement `outstanding`.
+            let mut stats = writer_state.stats.lock().unwrap();
             if writer.write_all(&response).is_err() {
                 return;
             }
+            stats.outstanding -= 1;
             last = Instant::now();
-            writer_state.stats.lock().unwrap().outstanding -= 1;
         }
     });
     loop {

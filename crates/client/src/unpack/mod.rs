@@ -1711,13 +1711,7 @@ pub fn prepare_snapshot_with_maintenance(
     source: Option<&mut dyn EntrySource>,
     mut maintenance: impl FnMut(Instant),
 ) -> Arc<SnapshotPreparation> {
-    prepare_snapshot_inner(
-        cache_dir,
-        out_dir,
-        endpoint,
-        source,
-        Some(&mut maintenance),
-    )
+    prepare_snapshot_inner(cache_dir, out_dir, endpoint, source, Some(&mut maintenance))
 }
 
 fn prepare_snapshot_inner(
@@ -1728,24 +1722,19 @@ fn prepare_snapshot_inner(
     maintenance: Option<&mut dyn FnMut(Instant)>,
 ) -> Arc<SnapshotPreparation> {
     let key = snapshot_key(cache_dir, out_dir);
-    let (outcome, _ran) = once_per_key(
-        &SNAPSHOT_PREPARE,
-        &key,
-        maintenance,
-        |maintenance| {
-            let prepared = Arc::new(attempt_prepare(
-                cache_dir,
-                out_dir,
-                endpoint,
-                source,
-                maintenance,
-            ));
-            match &*prepared {
-                SnapshotPreparation::Ready { .. } => Outcome::Success(prepared),
-                SnapshotPreparation::Unavailable { .. } => Outcome::Failure(prepared),
-            }
-        },
-    );
+    let (outcome, _ran) = once_per_key(&SNAPSHOT_PREPARE, &key, maintenance, |maintenance| {
+        let prepared = Arc::new(attempt_prepare(
+            cache_dir,
+            out_dir,
+            endpoint,
+            source,
+            maintenance,
+        ));
+        match &*prepared {
+            SnapshotPreparation::Ready { .. } => Outcome::Success(prepared),
+            SnapshotPreparation::Unavailable { .. } => Outcome::Failure(prepared),
+        }
+    });
     outcome
 }
 
@@ -1857,7 +1846,7 @@ fn attempt_prepare(
 
     match source {
         Some(source) => {
-            let filled = match maintenance.as_deref_mut() {
+            let filled = match maintenance {
                 Some(maintenance) => {
                     fetch_snapshot_with_maintenance(cache_dir, out_dir, source, maintenance)
                 }
@@ -2140,12 +2129,9 @@ fn start_jag_download(
     let crc = refresh.checksums[index];
     let path = format!("/{name}{crc}");
     let fetch = match addrs {
-        Some(addrs) => http::HttpFetch::start_resolved(
-            endpoint.transport,
-            endpoint.host,
-            addrs,
-            &path,
-        ),
+        Some(addrs) => {
+            http::HttpFetch::start_resolved(endpoint.transport, endpoint.host, addrs, &path)
+        }
         None => http::HttpFetch::start(endpoint.transport, endpoint.host, endpoint.port, &path),
     };
     fetch.map_err(|error| jag_fetch_error(slot, error))

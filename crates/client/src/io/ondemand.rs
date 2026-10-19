@@ -2242,18 +2242,8 @@ mod tests {
         };
         for result in [
             Worker::connect_ondemand_socket(None, "127.0.0.1", 1, None),
-            Worker::connect_ondemand_socket(
-                Some(Transport::Tcp),
-                "127.0.0.1",
-                1,
-                None,
-            ),
-            Worker::connect_ondemand_socket(
-                Some(Transport::Tcp),
-                "127.0.0.1",
-                1,
-                Some(&cold),
-            ),
+            Worker::connect_ondemand_socket(Some(Transport::Tcp), "127.0.0.1", 1, None),
+            Worker::connect_ondemand_socket(Some(Transport::Tcp), "127.0.0.1", 1, Some(&cold)),
             Worker::connect_ondemand_socket(
                 Some(Transport::Tcp),
                 "127.0.0.1",

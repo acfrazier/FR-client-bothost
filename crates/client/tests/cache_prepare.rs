@@ -1,3 +1,7 @@
+#![cfg(feature = "standalone-native-transport")]
+// This fixture intentionally uses the client's native HTTP and OnDemand
+// fallbacks without a host network; hosted-only builds refuse those connects.
+
 //! Frozen cold-cache preparation: with no local `main_file_cache` store, the
 //! snapshot is filled from the update-server entry protocol through the real
 //! `OnDemand` worker, every downloaded payload is validated against the

@@ -18,9 +18,9 @@ use super::fill::{FillProgress, NetworkSnapshot, SnapshotStart};
 use super::http::HttpFetch;
 use super::{unpack_cache_from_store, FetchEndpoint, JagRefresh, SnapshotState};
 use crate::client::client::AssetFetchError;
-use crate::io::host_network::installed_host_network;
 use crate::client::Client;
 use crate::content_identity::{compute_decoded_content_identity, DecodedContentIdentity};
+use crate::io::host_network::installed_host_network;
 use crate::io::{ClientRevision, JagFile, OnDemand};
 use crate::Transport;
 
@@ -487,7 +487,6 @@ struct Lookups {
     game: Option<Vec<SocketAddr>>,
 }
 
-
 /// Resolve a host only for the standalone-native fallback, which has no
 /// non-blocking resolver. Hosted paths use the process Resolver through
 /// HostNetwork instead.
@@ -911,10 +910,7 @@ impl RuntimeCacheFill {
                                                 )
                                             })?;
                                             let Some(addrs) = addrs else {
-                                                return Ok((
-                                                    Stage::Jag(held, slot, None),
-                                                    waiting,
-                                                ));
+                                                return Ok((Stage::Jag(held, slot, None), waiting));
                                             };
                                             Box::new(super::start_jag_download(
                                                 request.endpoint(),

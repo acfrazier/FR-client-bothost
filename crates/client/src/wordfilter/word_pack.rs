@@ -2,8 +2,8 @@
 // Nibble codec for chat words: each byte holds two nibbles; a nibble < 13 is a
 // direct TABLE index, a nibble >= 13 carries the high half of a two-nibble
 // value (index = (carry << 4) + nibble - 195).
-use crate::io::Packet;
 use crate::io::packet::PacketOutput;
+use crate::io::Packet;
 
 trait PacketByteWriter {
     fn p1(&mut self, value: i32);

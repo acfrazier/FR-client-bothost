@@ -2925,6 +2925,7 @@ impl Client {
     }
 
     /// Fetch using addresses the caller has already resolved.
+    #[cfg(feature = "standalone-native-transport")]
     fn http_get_resolved(
         transport: crate::Transport,
         host: &str,
@@ -3053,6 +3054,7 @@ impl Client {
         Self::split_http_body(&buf)
     }
 
+    #[cfg(feature = "standalone-native-transport")]
     pub(crate) fn split_http_body(buf: &[u8]) -> Option<Vec<u8>> {
         if !buf.starts_with(b"HTTP/1.0 200 ") && !buf.starts_with(b"HTTP/1.1 200 ") {
             return None;
@@ -3151,13 +3153,14 @@ impl Client {
         host: &str,
         port: u16,
     ) -> Result<[i32; 9], AssetFetchError> {
-        let body = Self::http_get_to(transport, host, port, "/crc")
-            .ok_or(AssetFetchError::Connection)?;
+        let body =
+            Self::http_get_to(transport, host, port, "/crc").ok_or(AssetFetchError::Connection)?;
         Self::parse_jag_checksums(body).map_err(|_| AssetFetchError::Checksum)
     }
 
     /// [`Self::get_jag_checksums_checked`] from addresses already resolved by
     /// the caller; `host` names the server in the request and for TLS.
+    #[cfg(feature = "standalone-native-transport")]
     pub(crate) fn get_jag_checksums_at(
         transport: crate::Transport,
         host: &str,
@@ -3957,9 +3960,7 @@ impl Client {
     }
 
     /// Return the opaque host binding for an adopted hosted game stream.
-    pub fn hosted_stream_binding(
-        &self,
-    ) -> Option<crate::io::host_network::HostStreamIdentity> {
+    pub fn hosted_stream_binding(&self) -> Option<crate::io::host_network::HostStreamIdentity> {
         if !self.baton {
             return None;
         }
@@ -4024,16 +4025,10 @@ impl Client {
                     ));
                 };
                 return match deadline {
-                    Some(deadline) => ClientStream::connect_until(
-                        transport,
-                        &host,
-                        port,
-                        deadline,
-                        Some(cancel),
-                    ),
-                    None => ClientStream::connect_for_cancellable(
-                        transport, &host, port, cancel,
-                    ),
+                    Some(deadline) => {
+                        ClientStream::connect_until(transport, &host, port, deadline, Some(cancel))
+                    }
+                    None => ClientStream::connect_for_cancellable(transport, &host, port, cancel),
                 };
             }
 
@@ -15174,7 +15169,7 @@ mod try_move_path {
         refused.doAction(0);
 
         assert!(
-            required - 1 >= 5,
+            required > 5,
             "the first member fits before the batch overflow"
         );
         assert_eq!(refused.out.pos, before_pos);
@@ -15528,9 +15523,11 @@ mod output_overflow_callers {
     fn toggle_button_commits_varp_only_after_output_reservation() {
         fn toggle_client() -> Client {
             let mut client = client();
-            let mut button = IfType::default();
-            button.id = 7;
-            button.scripts = Some(vec![vec![5, 0]]);
+            let button = IfType {
+                id: 7,
+                scripts: Some(vec![vec![5, 0]]),
+                ..IfType::default()
+            };
             let mut ifaces = vec![None; 8];
             ifaces[7] = Some(Box::new(button));
             client.ifaces = Arc::new(ifaces);
@@ -15560,9 +15557,11 @@ mod output_overflow_callers {
     fn logout_action_commits_only_after_output_reservation() {
         fn logout_client() -> Client {
             let mut client = client();
-            let mut button = IfType::default();
-            button.id = 7;
-            button.client_code = CC_LOGOUT;
+            let button = IfType {
+                id: 7,
+                client_code: CC_LOGOUT,
+                ..IfType::default()
+            };
             let mut ifaces = vec![None; 8];
             ifaces[7] = Some(Box::new(button));
             client.ifaces = Arc::new(ifaces);
@@ -15727,7 +15726,8 @@ mod dead_server_watchdog {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let mut c = client_at_dead_port();
-        let stream = ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+        let stream =
+            ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port()).unwrap();
         c.stream = Some(stream);
         c.ptype = -1;
         c.ingame = true;
@@ -16144,11 +16144,9 @@ mod public_login_key_tests {
         use std::time::{Duration, Instant};
 
         assert!(crate::io::host_network::installed_host_network().is_none());
-        for (response, reconnect, success) in [
-            (2, false, true),
-            (15, true, true),
-            (3, false, false),
-        ] {
+        for (response, reconnect, success) in
+            [(2, false, true), (15, true, true), (3, false, false)]
+        {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             let port = listener.local_addr().unwrap().port();
             let (release_tx, release_rx) = mpsc::channel();
@@ -16162,7 +16160,9 @@ mod public_login_key_tests {
                     socket.write_all(&[0, 1]).unwrap();
                 }
                 release_rx.recv().unwrap();
-                socket.write_all(&[0x5a]).unwrap();
+                if response != 3 {
+                    socket.write_all(&[0x5a]).unwrap();
+                }
             });
             let cache_dir = std::env::temp_dir().join(format!(
                 "274bot-standalone-login-deadline-{}-{response}",
@@ -16173,13 +16173,20 @@ mod public_login_key_tests {
             let deadline = Instant::now() + Duration::from_millis(300);
             client.set_login_deadline(deadline);
             assert_eq!(client.login("alice", "secret", reconnect).is_ok(), success);
-            assert!(!client.stream.as_ref().unwrap().is_hosted());
-
-            std::thread::sleep(
-                deadline.saturating_duration_since(Instant::now()) + Duration::from_millis(1),
-            );
-            release_tx.send(()).unwrap();
-            assert_eq!(client.stream.as_mut().unwrap().read().unwrap(), 0x5a);
+            if success {
+                assert!(!client.stream.as_ref().unwrap().is_hosted());
+                std::thread::sleep(
+                    deadline.saturating_duration_since(Instant::now()) + Duration::from_millis(1),
+                );
+                release_tx.send(()).unwrap();
+                assert_eq!(client.stream.as_mut().unwrap().read().unwrap(), 0x5a);
+            } else {
+                assert!(
+                    client.stream.is_none(),
+                    "a refused login retains no session socket"
+                );
+                release_tx.send(()).unwrap();
+            }
             server.join().unwrap();
             drop(client);
             std::fs::remove_dir_all(cache_dir).unwrap();
@@ -16233,8 +16240,8 @@ mod public_login_key_tests {
     #[cfg(not(feature = "standalone-native-transport"))]
     #[test]
     fn hosted_only_client_fails_closed_without_host_network() {
-        use crate::client::login_error::LoginStage;
         use super::AssetFetchError;
+        use crate::client::login_error::LoginStage;
         use std::io::ErrorKind;
         use std::time::{Duration, Instant};
 
