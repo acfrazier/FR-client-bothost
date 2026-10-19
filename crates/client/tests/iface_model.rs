@@ -17,6 +17,17 @@ fn lock_model_store() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+fn load_model_snapshot(cache: &str) {
+    struct NoopProvider;
+    impl client::dash3d::model::ModelProvider for NoopProvider {
+        fn request_model(&mut self, _id: i32) {}
+    }
+    client::dash3d::AnimFrame::init(40000);
+    Model::init(70000, Box::new(NoopProvider));
+    let home = std::env::var("HOME").unwrap();
+    client::unpack::load_snapshot(cache, &format!("{home}/.274bot/unpack")).expect("274 snapshot");
+}
+
 #[test]
 fn npc_get_head_none_without_head_ids() {
     let _r = Renderer::new(false);
@@ -126,14 +137,7 @@ fn gpu_draw_does_not_crash_on_mysterious_cube_modal() {
         return;
     }
 
-    struct NoopProvider;
-    impl client::dash3d::model::ModelProvider for NoopProvider {
-        fn request_model(&mut self, _id: i32) {}
-    }
-    client::dash3d::AnimFrame::init(40000);
-    client::dash3d::Model::init(70000, Box::new(NoopProvider));
-    let home = std::env::var("HOME").unwrap();
-    client::unpack::load_snapshot(&cache, &format!("{home}/.274bot/unpack")).expect("274 snapshot");
+    load_model_snapshot(&cache);
 
     client::render::Renderer::set_prefer_gpu(true);
     let mut r = client::render::Renderer::new(false);
@@ -202,6 +206,7 @@ fn gpu_draw_does_not_crash_on_mysterious_cube_modal() {
 /// TYPE_MODEL (the little boats).
 #[test]
 fn gpu_main_modal_rect_is_opaque_over_the_scene() {
+    let _model_store = lock_model_store();
     client::render::Renderer::set_prefer_gpu(true);
     let mut r = client::render::Renderer::new(false);
     if r.backend_kind() != client::render::backend::BackendKind::Gpu {
@@ -309,6 +314,7 @@ fn travel_modals_are_full_scene_layers() {
 /// boats. Skips without cache/adapter.
 #[test]
 fn gpu_ship_journey_paints_the_title_over_the_scene() {
+    let _model_store = lock_model_store();
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&format!("{cache}/interface")).is_file()
         || !std::path::Path::new(&format!("{cache}/title")).is_file()
@@ -316,6 +322,7 @@ fn gpu_ship_journey_paints_the_title_over_the_scene() {
         eprintln!("no client cache; skip ship_journey GPU title");
         return;
     }
+    load_model_snapshot(&cache);
     client::render::Renderer::set_prefer_gpu(true);
     let mut r = client::render::Renderer::new(false);
     if r.backend_kind() != client::render::backend::BackendKind::Gpu {
@@ -361,6 +368,7 @@ fn gpu_ship_journey_paints_the_title_over_the_scene() {
 /// drop to the last 3D texture (dock boats, no chart).
 #[test]
 fn gpu_ship_journey_stays_over_a_frozen_scene() {
+    let _model_store = lock_model_store();
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&format!("{cache}/interface")).is_file()
         || !std::path::Path::new(&format!("{cache}/title")).is_file()
@@ -368,6 +376,7 @@ fn gpu_ship_journey_stays_over_a_frozen_scene() {
         eprintln!("no client cache; skip ship_journey freeze");
         return;
     }
+    load_model_snapshot(&cache);
     client::render::Renderer::set_prefer_gpu(true);
     let mut r = client::render::Renderer::new(false);
     if r.backend_kind() != client::render::backend::BackendKind::Gpu {

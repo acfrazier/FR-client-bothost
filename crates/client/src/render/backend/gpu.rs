@@ -106,7 +106,43 @@ static GPU_BACKEND_TRIED: std::sync::atomic::AtomicUsize = std::sync::atomic::At
 /// submission. Backends share one process-wide `GpuAssets` array, so another
 /// slot must not replace layers 17/24 between the current slot's staging
 /// writes and `queue.submit`. Tests use the same production ordering scope.
+///
+/// Retained limitation: this is a synchronous process-wide wait between
+/// heads' scene submissions. A host scene-workspace hook
+/// ([`set_scene_workspace_hook`]) wraps exactly the section that holds it;
+/// the lock stays inside that section until the host replaces the shared
+/// wait.
 static GPU_SCENE_LOCK: Mutex<()> = Mutex::new(());
+
+/// How the embedding host admits one scene submission into the shared GPU
+/// scene workspace; see [`set_scene_workspace_hook`].
+static SCENE_WORKSPACE: OnceLock<fn(&mut dyn FnMut())> = OnceLock::new();
+
+/// Run every GPU scene submission (the [`GPU_SCENE_LOCK`] section, from
+/// animated model-layer staging through `queue.submit`) through `hook`,
+/// which calls its argument once. A host uses it to hold its own render
+/// reservation for exactly that section. Set once per process; later calls
+/// do nothing. Without a hook the section runs directly.
+pub fn set_scene_workspace_hook(hook: fn(&mut dyn FnMut())) {
+    let _ = SCENE_WORKSPACE.set(hook);
+}
+
+/// `submit`, run through the [`set_scene_workspace_hook`] hook if there is
+/// one. A hook that returns without calling its argument still submits.
+fn scene_workspace(submit: impl FnOnce()) {
+    let Some(hook) = SCENE_WORKSPACE.get() else {
+        return submit();
+    };
+    let mut submit = Some(submit);
+    hook(&mut || {
+        if let Some(submit) = submit.take() {
+            submit();
+        }
+    });
+    if let Some(submit) = submit {
+        submit();
+    }
+}
 
 /// How many times the shared context built its shader modules / pipelines
 /// (task 6): the `OnceLock` means the first `GpuContext::new` builds them
@@ -1812,7 +1848,8 @@ impl RenderBackend for GpuBackend {
                 r.pix3d.note_texture_used(id);
             }
         }
-        {
+        // The hook wraps exactly the locked section; the lock stays inside.
+        scene_workspace(|| {
             let _scene_guard = GPU_SCENE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             self.context
                 .assets
@@ -1820,7 +1857,7 @@ impl RenderBackend for GpuBackend {
                 .unwrap()
                 .stage_animated_model_textures(&r.pix3d, &sampled_texture_ids);
             self.render_scene(&mesh);
-        }
+        });
         self.scene_mesh = mesh;
 
         r.world.remove_sprites(&mut core.world);
