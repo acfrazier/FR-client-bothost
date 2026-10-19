@@ -539,8 +539,8 @@ fn poll_hosted_lookup<'a>(
     port: u16,
     until: Option<Instant>,
 ) -> Result<Option<&'a [SocketAddr]>, HostLookupFailure> {
-    if let Some(addresses) = resolved.as_ref() {
-        return Ok(Some(addresses.as_slice()));
+    if resolved.is_some() {
+        return Ok(resolved.as_ref().map(HostLookupAddresses::as_slice));
     }
     if pending.is_none() {
         *pending = Some(PendingHostLookup {
