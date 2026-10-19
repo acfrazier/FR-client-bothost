@@ -121,7 +121,10 @@ pub struct HostLookupAddresses {
 impl HostLookupAddresses {
     /// Copy the adapter's bounded resolver result without a heap allocation.
     pub fn from_slice(addresses: &[SocketAddr]) -> Self {
-        assert!(addresses.len() <= 8, "host lookup exceeds resolver capacity");
+        assert!(
+            addresses.len() <= 8,
+            "host lookup exceeds resolver capacity"
+        );
         let mut result = Self {
             addresses: [SocketAddr::from(([0, 0, 0, 0], 0)); 8],
             len: addresses.len() as u8,
@@ -149,10 +152,7 @@ pub enum HostLookupFailure {
 /// A single cold-fill DNS attempt, polled only until the caller's step
 /// deadline. Real backend timing is absent for cached resolver outcomes.
 pub trait HostLookupTicket: Send {
-    fn poll(
-        &mut self,
-        until: Instant,
-    ) -> Result<Option<HostLookupAddresses>, HostLookupFailure>;
+    fn poll(&mut self, until: Instant) -> Result<Option<HostLookupAddresses>, HostLookupFailure>;
     fn backend_timing(&self) -> Option<(Instant, Instant)>;
 }
 

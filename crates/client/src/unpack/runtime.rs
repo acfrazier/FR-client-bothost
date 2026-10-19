@@ -992,12 +992,7 @@ impl RuntimeCacheFill {
                     let Some(body) = body else {
                         return Ok((Stage::Jag(held, slot, Some(fetch)), waiting));
                     };
-                    super::accept_jag_download(
-                        &held.jag_dir,
-                        slot,
-                        &mut held.refresh,
-                        body,
-                    )?;
+                    super::accept_jag_download(&held.jag_dir, slot, &mut held.refresh, body)?;
                 }
                 if slot + 1 < super::JAGS.len() {
                     return Ok((Stage::Jag(held, slot + 1, None), waiting));
@@ -1101,13 +1096,14 @@ impl RuntimeCacheFill {
                     && self.hosted_lookups.game.is_none()
                     && request.game_host == request.asset_host
                 {
-                    self.hosted_lookups.game = self.hosted_lookups.asset.as_ref().map(|addresses| {
-                        if request.game_port == request.asset_port {
-                            *addresses
-                        } else {
-                            addresses_with_port(addresses.as_slice(), request.game_port)
-                        }
-                    });
+                    self.hosted_lookups.game =
+                        self.hosted_lookups.asset.as_ref().map(|addresses| {
+                            if request.game_port == request.asset_port {
+                                *addresses
+                            } else {
+                                addresses_with_port(addresses.as_slice(), request.game_port)
+                            }
+                        });
                 }
                 let addrs = if let Some(network) = installed_host_network() {
                     let resolved = poll_hosted_lookup(
