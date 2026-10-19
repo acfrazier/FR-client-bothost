@@ -500,6 +500,7 @@ const C_TWO_ACCEPTS: u32 = 1 << 11;
 const C_CANCEL: u32 = 1 << 12;
 const C_DEADLINE: u32 = 1 << 13;
 const C_SHUTDOWN: u32 = 1 << 14;
+const MAX_WORKER_EPOCH: u8 = 10; // two identities × (four readiness edges + one revocation)
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct TxState {
@@ -583,6 +584,11 @@ impl TxState {
 
     fn has_unconsumed_readiness(self) -> bool {
         (0..2).any(|direction| self.ready_seq[direction] > self.pre_call_snapshot[direction])
+    }
+    fn clear_worker_readiness(&mut self) {
+        // Per-direction history has no future observer after the worker returns or drops the stream.
+        self.ready_seq = [0; 2];
+        self.pre_call_snapshot = [0; 2];
     }
 
     fn successors(self) -> Vec<(Self, TxAction)> {
@@ -683,16 +689,19 @@ impl TxState {
                     out.push((next, TxAction::NativeSyntheticLimit));
                 }
                 let mut success = self;
+                success.clear_worker_readiness();
                 success.phase = TxPhase::Returned;
                 success.result_kind = 1;
                 success.coverage |= C_SUCCESS;
                 out.push((success, TxAction::NativeSuccess));
                 let mut error = self;
+                error.clear_worker_readiness();
                 error.phase = TxPhase::Returned;
                 error.result_kind = 2;
                 error.coverage |= C_ERROR;
                 out.push((error, TxAction::NativeError));
                 let mut stuck = self;
+                stuck.clear_worker_readiness();
                 stuck.phase = TxPhase::Stuck;
                 stuck.coverage |= C_STUCK;
                 out.push((stuck, TxAction::NativeRemainsRunning));
@@ -842,6 +851,7 @@ impl TxState {
                 let mut next = self;
                 next.owners[index] = Owner::Closed;
                 next.phase = TxPhase::Released;
+                next.clear_worker_readiness();
                 next.lane_credit = false;
                 next.close_count[index] = 1;
                 next.drop_count[index] = 1;
@@ -987,7 +997,9 @@ fn g2_i_exhaustive_worker_reactor_producer_transfer_model() {
     let mut seen = HashSet::new();
     let mut queue = VecDeque::new();
     let mut coverage = 0_u32;
-    seen.insert(start);
+    let mut start_key = start;
+    start_key.worker_epoch = 0;
+    seen.insert(start_key);
     queue.push_back(start);
     while let Some(state) = queue.pop_front() {
         state.assert_invariants();
@@ -995,7 +1007,15 @@ fn g2_i_exhaustive_worker_reactor_producer_transfer_model() {
             // Coverage is transition history, not scheduler state.
             coverage |= next.coverage;
             next.coverage = 0;
-            if seen.insert(next) {
+            assert!(
+                next.worker_epoch <= MAX_WORKER_EPOCH,
+                "worker epoch respects the finite event bound without wrapping"
+            );
+            // The checked epoch is history-only: readiness snapshots, pending notifications,
+            // runnable, and sleeping state determine every future transition.
+            let mut key = next;
+            key.worker_epoch = 0;
+            if seen.insert(key) {
                 assert!(seen.len() < 500_000, "G2-I transfer state bound exceeded");
                 queue.push_back(next);
             }
@@ -1021,7 +1041,11 @@ fn g2_i_exhaustive_worker_reactor_producer_transfer_model() {
         required,
         "all required transfer schedules are reachable"
     );
-    println!("G2-I transfer_model explored_states={}", seen.len());
+    println!(
+        "G2-I transfer_model explored_states={} worker_epoch_upper_bound={}",
+        seen.len(),
+        MAX_WORKER_EPOCH
+    );
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
