@@ -110,6 +110,52 @@ pub trait HostHttpFetch: Send {
     fn poll(&mut self, until: Instant) -> Result<Option<Vec<u8>>, AssetFetchError>;
 }
 
+/// A bounded host-owned resolver result. Keep the address list inline until
+/// the OnDemand worker needs its owned copy.
+#[derive(Clone, Copy, Debug)]
+pub struct HostLookupAddresses {
+    addresses: [SocketAddr; 8],
+    len: u8,
+}
+
+impl HostLookupAddresses {
+    /// Copy the adapter's bounded resolver result without a heap allocation.
+    pub fn from_slice(addresses: &[SocketAddr]) -> Self {
+        assert!(addresses.len() <= 8, "host lookup exceeds resolver capacity");
+        let mut result = Self {
+            addresses: [SocketAddr::from(([0, 0, 0, 0], 0)); 8],
+            len: addresses.len() as u8,
+        };
+        result.addresses[..addresses.len()].copy_from_slice(addresses);
+        result
+    }
+
+    pub fn as_slice(&self) -> &[SocketAddr] {
+        &self.addresses[..usize::from(self.len)]
+    }
+}
+
+/// Distinguishes a failed name lookup from cancellation, deadlines and
+/// resolver admission failures when selecting another world.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostLookupFailure {
+    Lookup,
+    TimedOut,
+    Cancelled,
+    Unavailable,
+    Busy,
+}
+
+/// A single cold-fill DNS attempt, polled only until the caller's step
+/// deadline. Real backend timing is absent for cached resolver outcomes.
+pub trait HostLookupTicket: Send {
+    fn poll(
+        &mut self,
+        until: Instant,
+    ) -> Result<Option<HostLookupAddresses>, HostLookupFailure>;
+    fn backend_timing(&self) -> Option<(Instant, Instant)>;
+}
+
 /// The process-scoped host networking implementation.
 pub trait HostNetwork: Send + Sync {
     /// Connect with the exact login attempt authorized by host-play.
@@ -131,6 +177,15 @@ pub trait HostNetwork: Send + Sync {
         resolved: Option<&[SocketAddr]>,
         cancel: Option<&LoginCancel>,
     ) -> io::Result<Box<dyn HostGameStream>>;
+
+    /// Resolve one cold-fill host without blocking a preparation step beyond
+    /// its deadline. The returned addresses are reused for all asset fetches
+    /// or passed to OnDemand to avoid a second game-host lookup.
+    fn start_cold_fill_lookup(
+        &self,
+        host: &str,
+        port: u16,
+    ) -> Result<Box<dyn HostLookupTicket>, HostLookupFailure>;
 
     fn start_http(
         &self,
