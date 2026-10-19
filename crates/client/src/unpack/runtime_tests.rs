@@ -107,6 +107,36 @@ fn sweep_runtime_staging_removes_dead_foreign_only() {
 }
 
 #[test]
+fn open_process_failure_classifies_each_error_class() {
+    assert!(
+        !open_process_failure_means_alive(OPEN_PROCESS_DEAD),
+        "ERROR_INVALID_PARAMETER means dead"
+    );
+    assert!(
+        open_process_failure_means_alive(OPEN_PROCESS_ACCESS_DENIED),
+        "access denied means alive"
+    );
+    for error in [
+        0,
+        1,
+        6,
+        50,
+        122,
+        OPEN_PROCESS_DEAD.wrapping_add(1),
+        u32::MAX,
+    ] {
+        assert!(
+            error != OPEN_PROCESS_DEAD,
+            "the other-error cases must not include the dead code"
+        );
+        assert!(
+            open_process_failure_means_alive(error),
+            "error {error} is not the dead class, so it means alive"
+        );
+    }
+}
+
+#[test]
 fn process_is_alive_reports_current_pid() {
     assert!(process_is_alive(std::process::id()));
 }
