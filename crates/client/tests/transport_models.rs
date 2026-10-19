@@ -359,7 +359,7 @@ fn g1_m_k2_mutex_condvar_model_and_weak_marker_mutant() {
                 !state.marker,
                 "slot clears its marker on every terminal path"
             );
-            assert_eq!(state.k2, 0);
+            assert_ne!(state.k2, 1, "terminal slot does not retain K2");
             assert!(!state.record_published || state.mio_kicked);
         }
         for (next, _) in state.successors() {
@@ -510,11 +510,9 @@ struct TxState {
     binding_generation: u8,
     ready_seq: [u8; 2],
     pre_call_snapshot: [u8; 2],
-    edge_count: [u8; 2],
     runnable: bool,
     worker_waiting: bool,
     worker_epoch: u8,
-    sleep_epoch: u8,
     tls_lock: bool,
     cancel_notify_pending: bool,
     notify_pending: [bool; 2],
@@ -550,11 +548,9 @@ impl TxState {
             binding_generation: 0,
             ready_seq: [0; 2],
             pre_call_snapshot: [0; 2],
-            edge_count: [0; 2],
             runnable: false,
             worker_waiting: false,
             worker_epoch: 0,
-            sleep_epoch: 0,
             tls_lock: false,
             cancel_notify_pending: false,
             notify_pending: [false; 2],
@@ -615,10 +611,10 @@ impl TxState {
                 )
             {
                 for direction in 0..2 {
-                    if self.edge_count[direction] < 2 {
+                    if self.ready_seq[direction] < 2 {
                         let mut next = self;
-                        next.edge_count[direction] = bump(self.edge_count[direction]);
                         next.ready_seq[direction] = bump(self.ready_seq[direction]);
+                        next.worker_epoch = bump(self.worker_epoch);
                         next.notify_pending[direction] = true;
                         next.coverage |= if self.would_block_seen {
                             C_EDGE_AFTER_WB
@@ -641,7 +637,6 @@ impl TxState {
                     if self.notify_pending[direction] {
                         let mut next = self;
                         next.notify_pending[direction] = false;
-                        next.worker_epoch = bump(self.worker_epoch);
                         if self.worker_waiting {
                             next.worker_waiting = false;
                             next.runnable = true;
@@ -710,11 +705,7 @@ impl TxState {
             }
             if self.phase == TxPhase::LockedRecheck && self.tls_lock {
                 let mut next = self;
-                if self.revoked_reason != 0 {
-                    next.tls_lock = false;
-                    next.phase = TxPhase::Runnable;
-                    next.runnable = true;
-                } else if self.has_unconsumed_readiness() {
+                if self.revoked_reason != 0 || self.has_unconsumed_readiness() {
                     next.tls_lock = false;
                     next.phase = TxPhase::Runnable;
                     next.runnable = true;
@@ -728,7 +719,6 @@ impl TxState {
                 next.tls_lock = false;
                 next.worker_waiting = true;
                 next.runnable = false;
-                next.sleep_epoch = self.worker_epoch;
                 next.phase = TxPhase::Waiting;
                 next.coverage |= C_WORKER_SLEPT;
                 out.push((next, TxAction::AtomicCondvarRelease));
@@ -736,7 +726,6 @@ impl TxState {
             if self.cancel_notify_pending && !self.tls_lock {
                 let mut next = self;
                 next.cancel_notify_pending = false;
-                next.worker_epoch = bump(self.worker_epoch);
                 if self.worker_waiting {
                     next.worker_waiting = false;
                     next.runnable = true;
@@ -878,12 +867,14 @@ impl TxState {
                 let mut cancel = self;
                 cancel.revoked_reason = 1;
                 cancel.cancel_notify_pending = true;
+                cancel.worker_epoch = bump(self.worker_epoch);
                 cancel.coverage |= C_CANCEL;
                 out.push((cancel, TxAction::RevokeCancel));
                 if self.now == 5 {
                     let mut shutdown = self;
                     shutdown.revoked_reason = 3;
                     shutdown.cancel_notify_pending = true;
+                    shutdown.worker_epoch = bump(self.worker_epoch);
                     shutdown.coverage |= C_SHUTDOWN;
                     out.push((shutdown, TxAction::RevokeShutdown));
                 }
@@ -897,6 +888,7 @@ impl TxState {
                 let mut deadline = self;
                 deadline.revoked_reason = 2;
                 deadline.cancel_notify_pending = true;
+                deadline.worker_epoch = bump(self.worker_epoch);
                 deadline.coverage |= C_DEADLINE;
                 out.push((deadline, TxAction::RevokeDeadline));
             }
@@ -913,7 +905,6 @@ impl TxState {
                 next.owners[1] = Owner::Worker;
                 next.ready_seq = [0; 2];
                 next.pre_call_snapshot = [0; 2];
-                next.edge_count = [0; 2];
                 next.runnable = false;
                 next.worker_waiting = false;
                 next.tls_lock = false;
@@ -1000,8 +991,10 @@ fn g2_i_exhaustive_worker_reactor_producer_transfer_model() {
     queue.push_back(start);
     while let Some(state) = queue.pop_front() {
         state.assert_invariants();
-        coverage |= state.coverage;
-        for (next, _) in state.successors() {
+        for (mut next, _) in state.successors() {
+            // Coverage is transition history, not scheduler state.
+            coverage |= next.coverage;
+            next.coverage = 0;
             if seen.insert(next) {
                 assert!(seen.len() < 500_000, "G2-I transfer state bound exceeded");
                 queue.push_back(next);
@@ -1082,6 +1075,7 @@ struct CapacityState {
     epoch: u8,
     wss_waiting: bool,
     wss_started: bool,
+    wss_started_at: u8,
     wss_refused: bool,
     wss_cancelled: bool,
     wss_expired: bool,
@@ -1112,6 +1106,7 @@ impl CapacityState {
             epoch: 0,
             wss_waiting: true,
             wss_started: false,
+            wss_started_at: 0,
             wss_refused: false,
             wss_cancelled: false,
             wss_expired: false,
@@ -1240,6 +1235,7 @@ impl CapacityState {
             if self.now < self.deadline && remaining >= self.min_remaining {
                 let mut next = self;
                 next.wss_started = true;
+                next.wss_started_at = self.now;
                 next.wss_waiting = false;
                 next.charged_start = true;
                 next.socket_created = true;
@@ -1293,7 +1289,8 @@ impl CapacityState {
             );
         }
         if self.wss_started {
-            assert!(self.deadline - self.now >= self.min_remaining);
+            assert!(self.wss_started_at < self.deadline);
+            assert!(self.deadline - self.wss_started_at >= self.min_remaining);
             assert!(self.charged_start && self.socket_created);
         }
         if self.wss_expired {
@@ -1319,8 +1316,10 @@ fn g2_i_capacity_waiter_register_recheck_sleep_model() {
     queue.push_back(start);
     while let Some(state) = queue.pop_front() {
         state.assert_invariants();
-        coverage |= state.coverage;
-        for (next, _) in state.successors() {
+        for (mut next, _) in state.successors() {
+            // Coverage is transition history, not scheduler state.
+            coverage |= next.coverage;
+            next.coverage = 0;
             if seen.insert(next) {
                 assert!(seen.len() < 100_000, "G2-I capacity state bound exceeded");
                 queue.push_back(next);
@@ -1373,6 +1372,7 @@ enum ProofAction {
     ReturnA2,
     CloseDropA2,
     AckA2,
+    QueueC,
     TryGrantC,
 }
 
@@ -1450,7 +1450,7 @@ impl ProofState {
             a2_retirement_ack: 0,
             a_close_drop: false,
             a_retirement_ack: 0,
-            c_demand: true,
+            c_demand: false,
             c_granted: false,
             reason_mask: 0,
             coverage: 0,
@@ -1562,6 +1562,9 @@ impl ProofState {
         if self.a_close_drop && self.a_retirement_ack == 0 {
             let mut next = self;
             next.a_retirement_ack = 1;
+            if self.a2_retiring && self.a2_retirement_ack == 0 {
+                next.coverage |= P_A2_HELD_AFTER_OLD_ACK;
+            }
             out.push((next, ProofAction::AckA));
         }
         if self.proof_consumed
@@ -1595,19 +1598,20 @@ impl ProofState {
             next.a2_retirement_ack = 1;
             out.push((next, ProofAction::AckA2));
         }
-        if self.c_demand && !self.c_granted && (!self.a2_retiring || self.a2_retirement_ack == 1) {
+        if self.a2_retiring && !self.c_demand {
+            let mut next = self;
+            next.c_demand = true;
+            out.push((next, ProofAction::QueueC));
+        }
+        if self.c_demand
+            && !self.c_granted
+            && self.a2_retiring
+            && self.a2_retirement_ack == 1
+        {
             let mut next = self;
             next.c_granted = true;
-            if self.a2_retiring && self.a2_retirement_ack == 1 {
-                next.coverage |= P_C_AFTER_A2_ACK;
-            }
+            next.coverage |= P_C_AFTER_A2_ACK;
             out.push((next, ProofAction::TryGrantC));
-        }
-        if self.a2_retiring && self.a_retirement_ack == 1 && self.a2_retirement_ack == 0 {
-            let mut next = self;
-            next.coverage |= P_A2_HELD_AFTER_OLD_ACK;
-            // This is a self-loop observation encoded in a persistent bit.
-            out.push((next, ProofAction::AckA));
         }
         out
     }
@@ -1659,6 +1663,12 @@ impl ProofState {
         if self.a2_retiring && self.a2_retirement_ack == 0 && self.c_granted {
             panic!("old A acknowledgement cannot release A2 retirement cell");
         }
+        if self.c_granted {
+            assert!(
+                self.c_demand && self.a2_retiring && self.a2_retirement_ack == 1,
+                "C's retirement blocker is released only by A2's physical acknowledgement"
+            );
+        }
         if self.a2_retirement_ack != 0 {
             assert!(self.a2_close_drop);
         }
@@ -1676,9 +1686,12 @@ fn g2_i_initial_tls_proof_queue_release_and_exact_retirement_model() {
     queue.push_back(start);
     while let Some(state) = queue.pop_front() {
         state.assert_invariants();
-        reason_mask |= state.reason_mask;
-        coverage |= state.coverage;
-        for (next, _) in state.successors() {
+        for (mut next, _) in state.successors() {
+            // Coverage and reason masks summarize explored transitions, not scheduler state.
+            reason_mask |= next.reason_mask;
+            coverage |= next.coverage;
+            next.reason_mask = 0;
+            next.coverage = 0;
             if seen.insert(next) {
                 assert!(
                     seen.len() < 200_000,
@@ -1744,7 +1757,6 @@ impl ClearMutant {
         }
         if self.stage == 2 && self.ready_seq != 0 {
             let mut next = self;
-            next.snapshot = self.ready_seq;
             next.runnable = false;
             next.stage = 3;
             out.push((next, ClearAction::WrongClearWithoutLockedRecheck));
@@ -2158,7 +2170,20 @@ fn g2_i_mandatory_mutants_have_shortest_counterexamples() {
         |action| format!("{action:?}"),
         100,
     );
-    assert_eq!(wrong_clear.len(), 5, "shortest wrong-clear schedule");
+    let expected_wrong_clear = vec![
+        "Claim",
+        "NativeWouldBlock",
+        "ReactorEdge",
+        "WrongClearWithoutLockedRecheck",
+        "Sleep",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<Vec<_>>();
+    assert_eq!(
+        wrong_clear, expected_wrong_clear,
+        "shortest wrong-clear schedule"
+    );
 
     let comp_start = CompletionMutant {
         returned: false,
