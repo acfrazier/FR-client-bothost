@@ -22,7 +22,9 @@
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
-use std::net::{Shutdown, SocketAddr, TcpStream, ToSocketAddrs};
+use std::net::{Shutdown, SocketAddr, TcpStream};
+#[cfg(feature = "standalone-native-transport")]
+use std::net::ToSocketAddrs;
 #[cfg(test)]
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -35,10 +37,20 @@ use std::os::unix::io::{AsRawFd, RawFd};
 #[cfg(windows)]
 use std::os::windows::io::{AsRawSocket, RawSocket};
 
+#[cfg(feature = "standalone-native-transport")]
 use native_tls::TlsStream;
+#[cfg(any(
+    feature = "standalone-native-transport",
+    test,
+    feature = "test-support"
+))]
 use tungstenite::protocol::WebSocket;
 use tungstenite::Message;
 
+use crate::io::host_network::{
+    installed_host_network, HostAttemptIdentity, HostCloseDisposition, HostGameStream,
+    HostStreamExit, HostStreamIdentity,
+};
 use crate::Transport;
 
 const BUF_SIZE: usize = 5000;
@@ -71,6 +83,7 @@ struct WriterState {
 }
 
 impl WriterState {
+    #[cfg(feature = "standalone-native-transport")]
     fn new() -> Self {
         WriterState {
             buf: Box::new([0; BUF_SIZE]),
@@ -159,6 +172,7 @@ fn timeout_at_deadline(deadline: Option<Instant>, error: io::Error) -> io::Error
 
 /// A TLS or WebSocket setup step that failed once the deadline had passed
 /// failed because of it (the libraries flatten the socket error to text).
+#[cfg(feature = "standalone-native-transport")]
 fn setup_error(deadline: Option<Instant>, error: io::Error) -> io::Error {
     match deadline {
         Some(deadline) if Instant::now() >= deadline => deadline_passed(),
@@ -409,19 +423,43 @@ fn poll_ready(socket: &TcpStream, readiness: Readiness, wait: Duration) -> io::R
 /// handshake: a session that completed its login is never touched. The
 /// bot-host cold-fill OnDemand worker uses it the same way for its update
 /// server handshake ([`ClientStream::connect_cancellable`]).
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct LoginCancel(Arc<Mutex<CancelState>>);
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct CancelState {
     cancelled: bool,
     /// A second handle on the handshake's socket, while the handshake runs.
     socket: Option<TcpStream>,
+    callbacks: Vec<Box<dyn FnOnce() + Send + 'static>>,
+    host_attempt_identity: Option<HostAttemptIdentity>,
+}
+
+impl std::fmt::Debug for LoginCancel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LoginCancel")
+            .field("cancelled", &self.is_cancelled())
+            .finish_non_exhaustive()
+    }
 }
 
 impl LoginCancel {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Associate this cancellation handle with its exact host login attempt.
+    pub fn set_host_attempt_identity(&self, identity: HostAttemptIdentity) {
+        let previous = {
+            let mut state = self.state();
+            state.host_attempt_identity.replace(identity)
+        };
+        drop(previous);
+    }
+
+    /// Return a clone of this handle's exact host login-attempt identity.
+    pub fn host_attempt_identity(&self) -> Option<HostAttemptIdentity> {
+        self.state().host_attempt_identity.clone()
     }
 
     /// Shut the handshake's socket in both directions now: the server reads
@@ -435,15 +473,47 @@ impl LoginCancel {
     /// has no timeout. No test shows that Windows wakes a blocked call on
     /// `shutdown` (see [`wait_ready`]).
     pub fn cancel(&self) {
-        let mut state = self.state();
-        state.cancelled = true;
-        if let Some(socket) = state.socket.take() {
-            let _ = socket.shutdown(Shutdown::Both);
+        let callbacks = {
+            let mut state = self.state();
+            if state.cancelled {
+                return;
+            }
+            state.cancelled = true;
+            if let Some(socket) = state.socket.take() {
+                let _ = socket.shutdown(Shutdown::Both);
+            }
+            std::mem::take(&mut state.callbacks)
+        };
+        for callback in callbacks {
+            callback();
         }
     }
 
     pub fn is_cancelled(&self) -> bool {
         self.state().cancelled
+    }
+
+    /// Register a one-shot callback for this cancellation. If cancellation
+    /// already happened, invoke it immediately. In both cases the callback
+    /// runs without the cancellation mutex held.
+    pub fn register_cancel_callback(&self, callback: impl FnOnce() + Send + 'static) {
+        let callback: Box<dyn FnOnce() + Send + 'static> = Box::new(callback);
+        let callback = {
+            let mut state = self.state();
+            if state.cancelled {
+                Some(callback)
+            } else {
+                state.callbacks.push(callback);
+                None
+            }
+        };
+        if let Some(callback) = callback {
+            callback();
+        }
+    }
+
+    fn same_instance(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
     }
 
     fn state(&self) -> std::sync::MutexGuard<'_, CancelState> {
@@ -466,10 +536,24 @@ impl LoginCancel {
 
     /// The handshake is over: a later cancel must not touch its socket.
     fn detach(&self) {
-        self.state().socket = None;
+        let (callbacks, identity) = {
+            let mut state = self.state();
+            state.socket = None;
+            (
+                std::mem::take(&mut state.callbacks),
+                state.host_attempt_identity.take(),
+            )
+        };
+        drop(callbacks);
+        drop(identity);
     }
 }
 
+#[cfg(any(
+    feature = "standalone-native-transport",
+    test,
+    feature = "test-support"
+))]
 /// The TCP socket under a WebSocket. With a deadline, each read and write
 /// is armed with the time left, so no single call, and no run of
 /// WebSocket control frames, outlasts it. With a [`LoginCancel`], each
@@ -486,6 +570,11 @@ struct DeadlineSocket {
     nonblocking: bool,
 }
 
+#[cfg(any(
+    feature = "standalone-native-transport",
+    test,
+    feature = "test-support"
+))]
 impl DeadlineSocket {
     fn new(sock: TcpStream, deadline: Option<Instant>, cancel: Option<LoginCancel>) -> Self {
         DeadlineSocket {
@@ -532,6 +621,11 @@ impl DeadlineSocket {
     }
 }
 
+#[cfg(any(
+    feature = "standalone-native-transport",
+    test,
+    feature = "test-support"
+))]
 impl Read for DeadlineSocket {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if let Some(cancel) = self.waiting_cancel()? {
@@ -546,6 +640,11 @@ impl Read for DeadlineSocket {
     }
 }
 
+#[cfg(any(
+    feature = "standalone-native-transport",
+    test,
+    feature = "test-support"
+))]
 impl Write for DeadlineSocket {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if let Some(cancel) = self.waiting_cancel()? {
@@ -601,12 +700,15 @@ impl Write for WriteOnceWouldBlock {
 // allocation to the production path for a test-build-only lint.
 #[cfg_attr(any(test, feature = "test-support"), allow(clippy::large_enum_variant))]
 enum WsConn {
+    #[cfg(feature = "standalone-native-transport")]
     Tls(WebSocket<TlsStream<DeadlineSocket>>),
     #[cfg(test)]
     BlockedWriter(WebSocket<WriteOnceWouldBlock>),
     /// Loopback plain WS used by unit tests only (no TLS trust bypass).
     #[cfg(any(test, feature = "test-support"))]
     Plain(WebSocket<DeadlineSocket>),
+    #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+    Unavailable(std::convert::Infallible),
 }
 
 impl WsConn {
@@ -614,95 +716,130 @@ impl WsConn {
     #[allow(clippy::result_large_err)]
     fn read_message(&mut self) -> Result<Message, tungstenite::Error> {
         match self {
+            #[cfg(feature = "standalone-native-transport")]
             WsConn::Tls(ws) => ws.read(),
             #[cfg(any(test, feature = "test-support"))]
             WsConn::Plain(ws) => ws.read(),
             #[cfg(test)]
             WsConn::BlockedWriter(ws) => ws.read(),
+            #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+            WsConn::Unavailable(never) => match *never {},
         }
     }
 
     #[allow(clippy::result_large_err)]
     fn send_message(&mut self, msg: Message) -> Result<(), tungstenite::Error> {
+        #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+        let _ = &msg;
         match self {
+            #[cfg(feature = "standalone-native-transport")]
             WsConn::Tls(ws) => ws.send(msg),
             #[cfg(any(test, feature = "test-support"))]
             WsConn::Plain(ws) => ws.send(msg),
             #[cfg(test)]
             WsConn::BlockedWriter(ws) => ws.send(msg),
+            #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+            WsConn::Unavailable(never) => match *never {},
         }
     }
 
     #[allow(clippy::result_large_err)]
     fn flush(&mut self) -> Result<(), tungstenite::Error> {
         match self {
+            #[cfg(feature = "standalone-native-transport")]
             WsConn::Tls(ws) => ws.flush(),
             #[cfg(any(test, feature = "test-support"))]
             WsConn::Plain(ws) => ws.flush(),
             #[cfg(test)]
             WsConn::BlockedWriter(ws) => ws.flush(),
+            #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+            WsConn::Unavailable(never) => match *never {},
         }
     }
 
     #[allow(clippy::result_large_err)]
     fn close(&mut self) -> Result<(), tungstenite::Error> {
         match self {
+            #[cfg(feature = "standalone-native-transport")]
             WsConn::Tls(ws) => ws.close(None),
             #[cfg(any(test, feature = "test-support"))]
             WsConn::Plain(ws) => ws.close(None),
             #[cfg(test)]
             WsConn::BlockedWriter(ws) => ws.close(None),
+            #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+            WsConn::Unavailable(never) => match *never {},
         }
     }
 
     fn set_nonblocking(&mut self, nonblocking: bool) -> io::Result<()> {
+        #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+        let _ = nonblocking;
         match self {
+            #[cfg(feature = "standalone-native-transport")]
             WsConn::Tls(ws) => ws.get_mut().get_mut().set_nonblocking(nonblocking),
             #[cfg(any(test, feature = "test-support"))]
             WsConn::Plain(ws) => ws.get_mut().set_nonblocking(nonblocking),
             #[cfg(test)]
             WsConn::BlockedWriter(ws) => ws.get_ref().socket.set_nonblocking(nonblocking),
+            #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+            WsConn::Unavailable(never) => match *never {},
         }
     }
 
     fn deadline(&self) -> Option<Instant> {
         match self {
+            #[cfg(feature = "standalone-native-transport")]
             WsConn::Tls(ws) => ws.get_ref().get_ref().deadline,
             #[cfg(any(test, feature = "test-support"))]
             WsConn::Plain(ws) => ws.get_ref().deadline,
             #[cfg(test)]
             WsConn::BlockedWriter(_) => None,
+            #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+            WsConn::Unavailable(never) => match *never {},
         }
     }
 
     /// The TCP socket under the WebSocket.
     fn socket(&self) -> &TcpStream {
         match self {
+            #[cfg(feature = "standalone-native-transport")]
             WsConn::Tls(ws) => &ws.get_ref().get_ref().sock,
             #[cfg(any(test, feature = "test-support"))]
             WsConn::Plain(ws) => &ws.get_ref().sock,
             #[cfg(test)]
             WsConn::BlockedWriter(ws) => &ws.get_ref().socket,
+            #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+            WsConn::Unavailable(never) => match *never {},
         }
     }
 
     fn set_deadline(&mut self, deadline: Option<Instant>) -> io::Result<()> {
+        #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+        let _ = deadline;
         match self {
+            #[cfg(feature = "standalone-native-transport")]
             WsConn::Tls(ws) => ws.get_mut().get_mut().set_deadline(deadline),
             #[cfg(any(test, feature = "test-support"))]
             WsConn::Plain(ws) => ws.get_mut().set_deadline(deadline),
             #[cfg(test)]
             WsConn::BlockedWriter(_) => Ok(()),
+            #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+            WsConn::Unavailable(never) => match *never {},
         }
     }
 
     fn set_cancel(&mut self, cancel: Option<LoginCancel>) {
+        #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+        let _ = &cancel;
         match self {
+            #[cfg(feature = "standalone-native-transport")]
             WsConn::Tls(ws) => ws.get_mut().get_mut().set_cancel(cancel),
             #[cfg(any(test, feature = "test-support"))]
             WsConn::Plain(ws) => ws.get_mut().set_cancel(cancel),
             #[cfg(test)]
             WsConn::BlockedWriter(_) => {}
+            #[cfg(not(any(feature = "standalone-native-transport", test, feature = "test-support")))]
+            WsConn::Unavailable(never) => match *never {},
         }
     }
 }
@@ -718,10 +855,18 @@ struct WsInner {
     #[cfg(windows)]
     socket: RawSocket,
 }
+struct HostedInner {
+    stream: Box<dyn HostGameStream>,
+    dummy: bool,
+    deadline: Option<Instant>,
+    committed: bool,
+}
+
 
 enum Inner {
     Tcp(TcpInner),
     Ws(Box<WsInner>),
+    Hosted(HostedInner),
 }
 
 pub struct ClientStream {
@@ -732,31 +877,133 @@ pub struct ClientStream {
     cancel: Option<LoginCancel>,
 }
 
+#[cfg(any(
+    feature = "standalone-native-transport",
+    test,
+    feature = "test-support"
+))]
 fn io_other(err: impl std::fmt::Display) -> io::Error {
     io::Error::other(err.to_string())
 }
 
-impl ClientStream {
-    /// Connect an unbound standalone client over plain TCP.
-    pub fn connect(host: &str, port: u16) -> io::Result<ClientStream> {
-        Self::connect_tcp(host, port)
-    }
+fn host_network_unavailable() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::NotConnected,
+        "host network is not installed and standalone native transport is disabled",
+    )
+}
 
-    /// Connect using the explicit frozen session transport.
-    pub fn connect_for(transport: Transport, host: &str, port: u16) -> io::Result<ClientStream> {
-        if transport.uses_tls() {
-            return Self::connect_wss(host, port);
+fn host_stream_operation_unavailable(operation: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Unsupported,
+        format!("{operation} is unavailable for this client stream"),
+    )
+}
+
+fn require_host_attempt_identity(
+    cancel: Option<&LoginCancel>,
+) -> io::Result<HostAttemptIdentity> {
+    if let Some(cancel) = cancel {
+        if cancel.is_cancelled() {
+            return Err(login_cancelled());
         }
-        Self::connect_tcp(host, port)
+        return cancel.host_attempt_identity().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotConnected,
+                "host login attempt identity is missing",
+            )
+        });
+    }
+    Err(io::Error::new(
+        io::ErrorKind::NotConnected,
+        "host login attempt identity is missing",
+    ))
+}
+
+impl ClientStream {
+    /// Connect an unbound stream with standalone TCP. Hosted logins require
+    /// an attempt-bearing connector such as `connect_for_cancellable`.
+    pub fn connect(host: &str, port: u16) -> io::Result<ClientStream> {
+        if let Some(network) = installed_host_network() {
+            let attempt = require_host_attempt_identity(None)?;
+            return Self::hosted_result(
+                network.connect_game(Transport::Tcp, host, port, None, None, &attempt),
+                None,
+                None,
+                false,
+            );
+        }
+        #[cfg(feature = "standalone-native-transport")]
+        {
+            Self::connect_tcp(host, port)
+        }
+        #[cfg(not(feature = "standalone-native-transport"))]
+        {
+            Err(host_network_unavailable())
+        }
     }
 
-    /// Connect for one login handshake that must stop at `deadline`: the
-    /// TCP connect, and for WSS the TLS and WebSocket setup, are bounded by
-    /// it, and so is every later read and write until [`Self::set_deadline`]
-    /// clears it. Name resolution is the system resolver's and cannot be
-    /// interrupted, but no connect starts after the deadline. `cancel`
-    /// shuts the socket from another thread from the moment it connects
-    /// until the deadline is cleared.
+    /// Connect with standalone transport. Hosted logins require an attempt
+    /// identity carried by their `LoginCancel`.
+    pub fn connect_for(transport: Transport, host: &str, port: u16) -> io::Result<ClientStream> {
+        if let Some(network) = installed_host_network() {
+            let attempt = require_host_attempt_identity(None)?;
+            return Self::hosted_result(
+                network.connect_game(transport, host, port, None, None, &attempt),
+                None,
+                None,
+                false,
+            );
+        }
+        #[cfg(feature = "standalone-native-transport")]
+        {
+            if transport.uses_tls() {
+                return Self::connect_wss(host, port);
+            }
+            Self::connect_tcp(host, port)
+        }
+        #[cfg(not(feature = "standalone-native-transport"))]
+        {
+            let _ = transport;
+            Err(host_network_unavailable())
+        }
+    }
+
+    /// Connect using the explicit transport and attach cancellation from
+    /// connection setup through the login handshake.
+    pub fn connect_for_cancellable(
+        transport: Transport,
+        host: &str,
+        port: u16,
+        cancel: &LoginCancel,
+    ) -> io::Result<ClientStream> {
+        if let Some(network) = installed_host_network() {
+            let attempt = require_host_attempt_identity(Some(cancel))?;
+            return Self::hosted_result(
+                network.connect_game(transport, host, port, None, Some(cancel), &attempt),
+                None,
+                Some(cancel),
+                false,
+            );
+        }
+        #[cfg(feature = "standalone-native-transport")]
+        {
+            if cancel.is_cancelled() {
+                return Err(login_cancelled());
+            }
+            let socket = TcpStream::connect((host, port))?;
+            Self::open_handshake(transport, socket, host, port, None, Some(cancel))
+        }
+        #[cfg(not(feature = "standalone-native-transport"))]
+        {
+            let _ = (transport, cancel);
+            Err(host_network_unavailable())
+        }
+    }
+
+    /// Connect for one login handshake that must stop at `deadline`. The
+    /// installed host receives the absolute deadline and cancellation token;
+    /// standalone builds retain their native connect/TLS behavior.
     pub fn connect_until(
         transport: Transport,
         host: &str,
@@ -764,19 +1011,29 @@ impl ClientStream {
         deadline: Instant,
         cancel: Option<&LoginCancel>,
     ) -> io::Result<ClientStream> {
-        let socket = connect_socket_until(host, port, deadline)?;
-        Self::open_handshake(transport, socket, host, port, Some(deadline), cancel)
+        if let Some(network) = installed_host_network() {
+            let attempt = require_host_attempt_identity(cancel)?;
+            return Self::hosted_result(
+                network.connect_game(transport, host, port, Some(deadline), cancel, &attempt),
+                Some(deadline),
+                cancel,
+                false,
+            );
+        }
+        #[cfg(feature = "standalone-native-transport")]
+        {
+            let socket = connect_socket_until(host, port, deadline)?;
+            Self::open_handshake(transport, socket, host, port, Some(deadline), cancel)
+        }
+        #[cfg(not(feature = "standalone-native-transport"))]
+        {
+            let _ = (transport, deadline, cancel);
+            Err(host_network_unavailable())
+        }
     }
 
-    /// Connect to `addrs`, the addresses of `host` that the caller looked
-    /// up, for a handshake that `cancel` can stop from another thread at
-    /// every point until [`Self::set_deadline`]`(None)` ends it. This call
-    /// never calls the resolver, which cannot be interrupted. The TCP
-    /// connect waits in slices of at most 10 ms and stops between them once
-    /// `cancel` fired. After the connect, `cancel` shuts the socket, which
-    /// ends a blocked TLS or WebSocket setup or handshake read. There is no
-    /// deadline: otherwise every wait is that of [`Self::connect_for`].
-    /// `host` and `port` name the server for the TLS and WebSocket setup.
+    /// Connect to caller-resolved addresses for an OnDemand handshake.
+    /// Standalone mode keeps its cancellable native connector.
     pub fn connect_cancellable(
         transport: Transport,
         host: &str,
@@ -784,21 +1041,153 @@ impl ClientStream {
         addrs: &[SocketAddr],
         cancel: &LoginCancel,
     ) -> io::Result<ClientStream> {
-        const SLICE: Duration = Duration::from_millis(10);
-        let mut connect = PendingConnect::start(addrs.to_vec());
-        let socket = loop {
+        Self::connect_ondemand_cancellable(transport, host, port, Some(addrs), cancel)
+    }
+
+    /// Connect an OnDemand handshake; hosted mode may delegate resolution
+    /// when `resolved` is `None`, while standalone mode requires prelookup.
+    pub(crate) fn connect_ondemand_cancellable(
+        transport: Transport,
+        host: &str,
+        port: u16,
+        resolved: Option<&[SocketAddr]>,
+        cancel: &LoginCancel,
+    ) -> io::Result<ClientStream> {
+        if let Some(network) = installed_host_network() {
+            return Self::hosted_result(
+                network.connect_ondemand(transport, host, port, resolved, Some(cancel)),
+                None,
+                Some(cancel),
+                true,
+            );
+        }
+        #[cfg(feature = "standalone-native-transport")]
+        {
             if cancel.is_cancelled() {
                 return Err(login_cancelled());
             }
-            if let Some(socket) = connect.poll(Instant::now() + SLICE)? {
-                break socket;
-            }
-        };
-        Self::open_handshake(transport, socket, host, port, None, Some(cancel))
+            let addrs = resolved.ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "standalone OnDemand connect requires pre-resolved addresses",
+                )
+            })?;
+            const SLICE: Duration = Duration::from_millis(10);
+            let mut connect = PendingConnect::start(addrs.to_vec());
+            let socket = loop {
+                if cancel.is_cancelled() {
+                    return Err(login_cancelled());
+                }
+                if let Some(socket) = connect.poll(Instant::now() + SLICE)? {
+                    break socket;
+                }
+            };
+            Self::open_handshake(transport, socket, host, port, None, Some(cancel))
+        }
+        #[cfg(not(feature = "standalone-native-transport"))]
+        {
+            let _ = (transport, host, port, resolved, cancel);
+            Err(host_network_unavailable())
+        }
     }
 
-    /// Set up the stream over a connected `socket`, with `cancel` attached
-    /// from before the TLS or WebSocket setup until the handshake ends.
+    /// Wrap a stream returned by a host-owned connector.
+    pub fn from_host(stream: Box<dyn HostGameStream>) -> ClientStream {
+        Self::from_host_parts(stream, None, None, true)
+    }
+
+    fn from_host_parts(
+        stream: Box<dyn HostGameStream>,
+        deadline: Option<Instant>,
+        cancel: Option<LoginCancel>,
+        committed: bool,
+    ) -> ClientStream {
+        ClientStream {
+            inner: Inner::Hosted(HostedInner {
+                stream,
+                dummy: false,
+                deadline,
+                committed,
+            }),
+            bytes_in: AtomicU64::new(0),
+            bytes_out: AtomicU64::new(0),
+            cancel,
+        }
+    }
+
+    fn hosted_result(
+        result: io::Result<Box<dyn HostGameStream>>,
+        deadline: Option<Instant>,
+        cancel: Option<&LoginCancel>,
+        committed: bool,
+    ) -> io::Result<ClientStream> {
+        match result {
+            Ok(mut stream) => {
+                if let Some(cancel) = cancel {
+                    if cancel.is_cancelled() {
+                        stream.close(HostCloseDisposition::AbortAttempt);
+                        cancel.detach();
+                        return Err(login_cancelled());
+                    }
+                }
+                Ok(Self::from_host_parts(
+                    stream,
+                    deadline,
+                    cancel.cloned(),
+                    committed,
+                ))
+            }
+            Err(error) => {
+                if let Some(cancel) = cancel {
+                    cancel.detach();
+                    if cancel.is_cancelled() {
+                        return Err(login_cancelled());
+                    }
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Whether this stream is backed by the process host-network hook.
+    pub fn is_hosted(&self) -> bool {
+        matches!(&self.inner, Inner::Hosted(_))
+    }
+
+    /// Return the opaque identity for a live host-owned binding.
+    pub fn hosted_binding_identity(&self) -> Option<HostStreamIdentity> {
+        match &self.inner {
+            Inner::Hosted(hosted) if !hosted.dummy => Some(hosted.stream.binding_identity()),
+            _ => None,
+        }
+    }
+
+    /// Seal a hosted login candidate before Phase C validates its commit.
+    pub fn seal_host_login(&mut self) -> io::Result<crate::io::host_network::SealReceipt> {
+        match &mut self.inner {
+            Inner::Hosted(hosted) => hosted.stream.seal_login(),
+            _ => Err(host_stream_operation_unavailable("seal login")),
+        }
+    }
+
+    /// Commit a hosted login after its seal receipt has been validated.
+    pub fn commit_host_login(
+        &mut self,
+        receipt: crate::io::host_network::SealReceipt,
+    ) -> io::Result<()> {
+        match &mut self.inner {
+            Inner::Hosted(hosted) => {
+                hosted.stream.commit_login(receipt)?;
+                hosted.committed = true;
+                Ok(())
+            }
+            _ => Err(host_stream_operation_unavailable("commit login")),
+        }
+    }
+
+    /// Set up a standalone stream over `socket`, with cancellation attached
+    /// from before TLS or WebSocket setup until the handshake ends.
+    #[cfg(feature = "standalone-native-transport")]
     fn open_handshake(
         transport: Transport,
         socket: TcpStream,
@@ -837,24 +1226,78 @@ impl ClientStream {
         }
     }
 
-    /// Let `cancel` shut this stream's socket from another thread until the
-    /// deadline is cleared (a login over an adopted stream).
+    /// Attach cancellation to a stream, including its exact host attempt.
     pub fn attach_cancel(&mut self, cancel: &LoginCancel) -> io::Result<()> {
-        match &self.inner {
+        if cancel.is_cancelled() {
+            return Err(login_cancelled());
+        }
+        match &mut self.inner {
             Inner::Tcp(t) => cancel.attach(&t.reader)?,
             Inner::Ws(w) => {
                 let mut ws = w.ws.lock().unwrap();
                 cancel.attach(ws.socket())?;
                 ws.set_cancel(Some(cancel.clone()));
             }
+            Inner::Hosted(hosted) => {
+                let identity = require_host_attempt_identity(Some(cancel))?;
+                hosted.stream.attach_cancel(cancel, &identity)?;
+            }
         }
-        self.cancel = Some(cancel.clone());
+        if let Some(previous) = self.cancel.replace(cancel.clone()) {
+            if !previous.same_instance(cancel) {
+                previous.detach();
+            }
+        }
         Ok(())
     }
 
-    /// Set or clear (`None`) the deadline for this stream's reads and
-    /// writes. Clearing ends the handshake: it restores the plain 30 s read
-    /// timeout and unblocked writes, and lets go of the [`LoginCancel`].
+    /// Rebind an adopted host stream before the new login reads or writes.
+    pub fn rebind_hosted(
+        &mut self,
+        deadline: Option<Instant>,
+        cancel: &LoginCancel,
+    ) -> io::Result<()> {
+        if cancel.is_cancelled() {
+            return Err(login_cancelled());
+        }
+        let identity = require_host_attempt_identity(Some(cancel))?;
+        let result = match &mut self.inner {
+            Inner::Hosted(hosted) => hosted
+                .stream
+                .attach_cancel(cancel, &identity)
+                .and_then(|()| hosted.stream.rebind(&identity, deadline)),
+            _ => Err(host_stream_operation_unavailable("hosted Rebind")),
+        };
+        match result {
+            Ok(()) if !cancel.is_cancelled() => {
+                if let Some(previous) = self.cancel.replace(cancel.clone()) {
+                    if !previous.same_instance(cancel) {
+                        previous.detach();
+                    }
+                }
+                if let Inner::Hosted(hosted) = &mut self.inner {
+                    hosted.deadline = deadline;
+                    hosted.committed = false;
+                }
+                Ok(())
+            }
+            Ok(()) => {
+                cancel.detach();
+                Err(login_cancelled())
+            }
+            Err(error) => {
+                cancel.detach();
+                Err(if cancel.is_cancelled() {
+                    login_cancelled()
+                } else {
+                    error
+                })
+            }
+        }
+    }
+
+    /// Set or clear (`None`) the deadline for this stream's reads and writes.
+    /// Clearing ends a login handshake and releases its cancellation hooks.
     pub fn set_deadline(&mut self, deadline: Option<Instant>) -> io::Result<()> {
         if deadline.is_none() {
             if let Some(cancel) = self.cancel.take() {
@@ -874,13 +1317,21 @@ impl ClientStream {
                 Ok(())
             }
             Inner::Ws(w) => w.ws.lock().unwrap().set_deadline(deadline),
+            Inner::Hosted(hosted) => {
+                hosted.stream.set_deadline(deadline)?;
+                hosted.deadline = deadline;
+                hosted.committed = deadline.is_none();
+                Ok(())
+            }
         }
     }
 
+    #[cfg(feature = "standalone-native-transport")]
     fn connect_tcp(host: &str, port: u16) -> io::Result<ClientStream> {
         Self::tcp_over(TcpStream::connect((host, port))?, None)
     }
 
+    #[cfg(feature = "standalone-native-transport")]
     fn tcp_over(socket: TcpStream, deadline: Option<Instant>) -> io::Result<ClientStream> {
         socket.set_read_timeout(Some(READ_TIMEOUT))?;
         socket.set_nodelay(true)?;
@@ -900,12 +1351,14 @@ impl ClientStream {
         })
     }
 
+    #[cfg(feature = "standalone-native-transport")]
     fn connect_wss(host: &str, port: u16) -> io::Result<ClientStream> {
         let tcp = TcpStream::connect((host, port))?;
         let connector = native_tls::TlsConnector::new().map_err(io_other)?;
         Self::wss_over(&connector, tcp, host, port, None, None)
     }
 
+    #[cfg(feature = "standalone-native-transport")]
     fn wss_over(
         connector: &native_tls::TlsConnector,
         tcp: TcpStream,
@@ -968,32 +1421,38 @@ impl ClientStream {
     }
 
     pub(crate) fn take_exit_reason(&mut self) -> Option<StreamExitReason> {
-        match &self.inner {
+        match &mut self.inner {
             Inner::Tcp(_) => None,
             Inner::Ws(w) => w.pending_exit.lock().unwrap().take(),
+            Inner::Hosted(hosted) => hosted.stream.take_exit_reason().map(|reason| match reason {
+                HostStreamExit::WebSocketClose { code, reason } => {
+                    StreamExitReason::WebSocketClose { code, reason }
+                }
+                HostStreamExit::Tls(message) => StreamExitReason::Tls(message),
+                HostStreamExit::WebSocket(message) => StreamExitReason::WebSocket(message),
+            }),
         }
     }
 
-    /// The reader socket's raw fd, for `poll(2)` readability waits by the
-    /// host's idle-slot scheduler. The writer thread runs on a clone of the
-    /// socket, so polling this fd cannot race the writer; `close` shuts
-    /// both ends down, which wakes a parked poll with EOF.
+    /// The reader socket's raw fd for standalone socket waits. Host-owned
+    /// streams have no client-visible OS descriptor.
     #[cfg(unix)]
-    pub fn fd(&self) -> RawFd {
+    pub fn fd(&self) -> io::Result<RawFd> {
         match &self.inner {
-            Inner::Tcp(t) => t.reader.as_raw_fd(),
-            Inner::Ws(w) => w.fd,
+            Inner::Tcp(t) => Ok(t.reader.as_raw_fd()),
+            Inner::Ws(w) => Ok(w.fd),
+            Inner::Hosted(_) => Err(host_stream_operation_unavailable("OS descriptor access")),
         }
     }
 
-    /// Reader socket as a Windows `SOCKET` (pointer-width), for `WSAPoll`
-    /// readability waits by the host's idle-slot scheduler. Same ownership
-    /// notes as [`Self::fd`]: writer uses a clone; `close` wakes waiters.
+    /// Standalone reader socket as a Windows `SOCKET`. Host-owned streams
+    /// have no client-visible OS descriptor.
     #[cfg(windows)]
-    pub fn raw_socket(&self) -> RawSocket {
+    pub fn raw_socket(&self) -> io::Result<RawSocket> {
         match &self.inner {
-            Inner::Tcp(t) => t.reader.as_raw_socket(),
-            Inner::Ws(w) => w.socket,
+            Inner::Tcp(t) => Ok(t.reader.as_raw_socket()),
+            Inner::Ws(w) => Ok(w.socket),
+            Inner::Hosted(_) => Err(host_stream_operation_unavailable("OS descriptor access")),
         }
     }
 
@@ -1074,6 +1533,24 @@ impl ClientStream {
                 self.bytes_in.fetch_add(n as u64, Ordering::Relaxed);
                 Ok(n as i32)
             }
+            Inner::Hosted(hosted) => {
+                if hosted.dummy {
+                    return Ok(0);
+                }
+                if let Some(deadline) = hosted.deadline {
+                    time_left(deadline)?;
+                }
+                let read_len = dst.len().min(i32::MAX as usize);
+                let result = transport_wait(|| hosted.stream.read(&mut dst[..read_len]));
+                match result {
+                    Ok(0) => Ok(-1),
+                    Ok(n) => {
+                        self.bytes_in.fetch_add(n as u64, Ordering::Relaxed);
+                        Ok(n as i32)
+                    }
+                    Err(error) => Err(timeout_at_deadline(hosted.deadline, error)),
+                }
+            }
         }
     }
 
@@ -1099,6 +1576,7 @@ impl ClientStream {
         match &self.inner {
             Inner::Tcp(t) => t.shared.lock().unwrap().dummy,
             Inner::Ws(w) => *w.dummy.lock().unwrap(),
+            Inner::Hosted(hosted) => hosted.dummy,
         }
     }
 
@@ -1155,15 +1633,27 @@ impl ClientStream {
                 let n = w.leftover.lock().unwrap().len().min(AVAILABLE_BUF);
                 Ok(n as i32)
             }
+            Inner::Hosted(hosted) => {
+                if hosted.dummy {
+                    return Ok(0);
+                }
+                Ok(hosted.stream.available()?.min(AVAILABLE_BUF) as i32)
+            }
         }
     }
 
-    /// Wait until [`Self::available`] reports at least `need` bytes, a read
-    /// error is pending, or `limit` passes. A quiet socket parks in `poll`
-    /// (`WSAPoll` on Windows), so the caller wakes as soon as the first byte
-    /// arrives. Bytes that are already buffered but short of `need` are
-    /// re-checked every millisecond: a readable socket would not park.
+    /// Wait until at least `need` bytes are available or `limit` passes.
+    /// Host-owned streams delegate this wait to the host Park; standalone
+    /// streams retain their native descriptor wait.
     pub(crate) fn wait_available(&mut self, need: i32, limit: Duration) {
+        if let Inner::Hosted(hosted) = &mut self.inner {
+            if !hosted.dummy {
+                let until = Instant::now() + limit;
+                let until = hosted.deadline.map_or(until, |deadline| until.min(deadline));
+                transport_wait(|| hosted.stream.wait_available(need.max(0) as usize, until));
+            }
+            return;
+        }
         let deadline = Instant::now() + limit;
         loop {
             let available = match self.available() {
@@ -1187,12 +1677,28 @@ impl ClientStream {
 
     #[cfg(unix)]
     fn park_readable(&self, limit: Duration) {
-        poll_socket(self.fd(), Readiness::Read, limit);
+        match &self.inner {
+            Inner::Tcp(t) => {
+                poll_socket(t.reader.as_raw_fd(), Readiness::Read, limit);
+            }
+            Inner::Ws(w) => {
+                poll_socket(w.fd, Readiness::Read, limit);
+            }
+            Inner::Hosted(_) => {}
+        }
     }
 
     #[cfg(windows)]
     fn park_readable(&self, limit: Duration) {
-        poll_socket(self.raw_socket(), Readiness::Read, limit);
+        match &self.inner {
+            Inner::Tcp(t) => {
+                poll_socket(t.reader.as_raw_socket(), Readiness::Read, limit);
+            }
+            Inner::Ws(w) => {
+                poll_socket(w.socket, Readiness::Read, limit);
+            }
+            Inner::Hosted(_) => {}
+        }
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -1240,7 +1746,34 @@ impl ClientStream {
                 self.bytes_out.fetch_add(len as u64, Ordering::Relaxed);
                 Ok(())
             }
+            Inner::Hosted(hosted) => {
+                if hosted.dummy {
+                    return Ok(());
+                }
+                if let Some(deadline) = hosted.deadline {
+                    time_left(deadline)?;
+                }
+                match transport_wait(|| hosted.stream.write_record(&buf[..len])) {
+                    Ok(()) => {
+                        self.bytes_out.fetch_add(len as u64, Ordering::Relaxed);
+                        Ok(())
+                    }
+                    Err(_) if cancel.is_some_and(LoginCancel::is_cancelled) => {
+                        Err(login_cancelled())
+                    }
+                    Err(error) => Err(error),
+                }
+            }
         }
+    }
+
+    /// Close a hosted stream as a session after Phase C committed, even if
+    /// the reactor's commit acknowledgement failed.
+    pub fn close_as_session(&mut self) {
+        if let Inner::Hosted(hosted) = &mut self.inner {
+            hosted.committed = true;
+        }
+        self.close();
     }
 
     /// Java `close`: mark dummy, shut the socket, stop the writer thread.
@@ -1270,6 +1803,18 @@ impl ClientStream {
                 transport_wait(|| {
                     let _ = w.ws.lock().unwrap().close();
                 });
+            }
+            Inner::Hosted(hosted) => {
+                if hosted.dummy {
+                    return;
+                }
+                hosted.dummy = true;
+                let disposition = if hosted.committed {
+                    HostCloseDisposition::GracefulSession
+                } else {
+                    HostCloseDisposition::AbortAttempt
+                };
+                transport_wait(|| hosted.stream.close(disposition));
             }
         }
     }
@@ -1367,6 +1912,7 @@ fn fill_ws_nonblocking(w: &WsInner) -> io::Result<()> {
 
 /// `TcpStream::connect` over every resolved address, each connect bounded
 /// by the time left before `deadline`.
+#[cfg(feature = "standalone-native-transport")]
 fn connect_socket_until(host: &str, port: u16, deadline: Instant) -> io::Result<TcpStream> {
     let mut last = None;
     for addr in (host, port).to_socket_addrs()? {
@@ -1754,6 +2300,57 @@ mod tests {
     use std::sync::mpsc;
     use tungstenite::WebSocket as TungsteniteWs;
 
+    #[test]
+    fn cancellation_callbacks_run_outside_lock_even_when_registered_late() {
+        let cancel = LoginCancel::new();
+        let called = Arc::new(AtomicBool::new(false));
+        let unlocked = Arc::new(AtomicBool::new(false));
+        let callback_cancel = cancel.clone();
+        let callback_called = Arc::clone(&called);
+        let callback_unlocked = Arc::clone(&unlocked);
+        cancel.register_cancel_callback(move || {
+            callback_unlocked.store(
+                callback_cancel.0.try_lock().is_ok(),
+                Ordering::Relaxed,
+            );
+            callback_called.store(true, Ordering::Relaxed);
+        });
+
+        cancel.cancel();
+        assert!(called.load(Ordering::Relaxed));
+        assert!(unlocked.load(Ordering::Relaxed));
+
+        let late_called = Arc::new(AtomicBool::new(false));
+        let late_unlocked = Arc::new(AtomicBool::new(false));
+        let late_cancel = cancel.clone();
+        let callback_called = Arc::clone(&late_called);
+        let callback_unlocked = Arc::clone(&late_unlocked);
+        cancel.register_cancel_callback(move || {
+            callback_unlocked.store(late_cancel.0.try_lock().is_ok(), Ordering::Relaxed);
+            callback_called.store(true, Ordering::Relaxed);
+        });
+        assert!(late_called.load(Ordering::Relaxed));
+        assert!(late_unlocked.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn login_cancel_retains_and_detaches_attempt_identity() {
+        struct Attempt(u64);
+
+        let cancel = LoginCancel::new();
+        cancel.set_host_attempt_identity(HostAttemptIdentity::new(Attempt(42)));
+        let identity = cancel.clone().host_attempt_identity().unwrap();
+        assert_eq!(
+            identity
+                .downcast_ref::<Attempt>()
+                .map(|attempt| attempt.0),
+            Some(42)
+        );
+
+        cancel.detach();
+        assert!(cancel.host_attempt_identity().is_none());
+    }
+
     fn spawn_ws_server(
         on_ready: impl FnOnce(TungsteniteWs<TcpStream>) + Send + 'static,
     ) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
@@ -1816,10 +2413,13 @@ mod tests {
         let mut stream = ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
         let (mut server, _) = listener.accept().unwrap();
         #[cfg(unix)]
-        assert!(stream.fd() >= 0, "fd must be a valid socket descriptor");
+        assert!(
+            stream.fd().unwrap() >= 0,
+            "fd must be a valid socket descriptor"
+        );
         #[cfg(windows)]
         assert!(
-            stream.raw_socket()
+            stream.raw_socket().unwrap()
                 != windows_sys::Win32::Networking::WinSock::INVALID_SOCKET as RawSocket,
             "raw_socket must be a valid SOCKET"
         );
@@ -1840,10 +2440,10 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         #[cfg(unix)]
-        assert!(stream.fd() >= 0);
+        assert!(stream.fd().unwrap() >= 0);
         #[cfg(windows)]
         assert!(
-            stream.raw_socket()
+            stream.raw_socket().unwrap()
                 != windows_sys::Win32::Networking::WinSock::INVALID_SOCKET as RawSocket
         );
     }
@@ -2559,6 +3159,7 @@ mod tests {
     /// A cancellable connect to a server that takes the TCP connection but
     /// never starts TLS ends at the cancel, not at the 30 s read timeout,
     /// and the server sees the connection close.
+    #[cfg(feature = "standalone-native-transport")]
     #[test]
     fn cancel_ends_a_stalled_tls_setup_of_a_cancellable_connect() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -2992,6 +3593,7 @@ mod tests {
     /// A cancel during the TLS handshake: the server takes the ClientHello
     /// and never answers it. The handshake returns "login cancelled by its
     /// host" soon after the cancel, and the server reads end of stream.
+    #[cfg(feature = "standalone-native-transport")]
     #[test]
     fn login_cancel_stops_a_tls_handshake_the_server_never_answers() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -3051,6 +3653,7 @@ mod tests {
     /// test CA in `tests/fixtures/tls` to its trusted roots. Each server
     /// socket call has a 10 s timeout, and the test waits at most 20 s for
     /// the server to finish, so a hung fixture fails the test.
+    #[cfg(feature = "standalone-native-transport")]
     #[test]
     fn a_tls_handshake_reaches_a_local_tls_server() {
         let ca =

@@ -3,6 +3,23 @@
 // direct TABLE index, a nibble >= 13 carries the high half of a two-nibble
 // value (index = (carry << 4) + nibble - 195).
 use crate::io::Packet;
+use crate::io::packet::PacketOutput;
+
+trait PacketByteWriter {
+    fn p1(&mut self, value: i32);
+}
+
+impl PacketByteWriter for Packet {
+    fn p1(&mut self, value: i32) {
+        Packet::p1(self, value);
+    }
+}
+
+impl PacketByteWriter for PacketOutput<'_> {
+    fn p1(&mut self, value: i32) {
+        PacketOutput::p1(self, value);
+    }
+}
 
 pub struct WordPack;
 
@@ -57,9 +74,16 @@ impl WordPack {
     }
 
     pub fn pack(word: &mut Packet, str: &str) {
-        let str: String = str.chars().take(80).collect::<String>().to_lowercase();
+        Self::pack_inner(word, str);
+    }
+
+    pub(crate) fn pack_output(word: &mut PacketOutput<'_>, str: &str) {
+        Self::pack_inner(word, str);
+    }
+
+    fn pack_inner(writer: &mut impl PacketByteWriter, str: &str) {
         let mut carry: i32 = -1;
-        for char in str.chars() {
+        for char in str.chars().take(80).flat_map(char::to_lowercase) {
             let mut current_char: i32 = 0;
             for (lookup_index, table_char) in Self::TABLE.iter().enumerate() {
                 if char == *table_char {
@@ -74,18 +98,18 @@ impl WordPack {
                 if current_char < 13 {
                     carry = current_char;
                 } else {
-                    word.p1(current_char);
+                    writer.p1(current_char);
                 }
             } else if current_char < 13 {
-                word.p1((carry << 4) + current_char);
+                writer.p1((carry << 4) + current_char);
                 carry = -1;
             } else {
-                word.p1((carry << 4) + (current_char >> 4));
+                writer.p1((carry << 4) + (current_char >> 4));
                 carry = current_char & 0xf;
             }
         }
         if carry != -1 {
-            word.p1(carry << 4);
+            writer.p1(carry << 4);
         }
     }
 }

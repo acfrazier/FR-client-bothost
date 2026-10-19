@@ -5,6 +5,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
+#[cfg(feature = "standalone-native-transport")]
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -17,6 +18,7 @@ use super::fill::{FillProgress, NetworkSnapshot, SnapshotStart};
 use super::http::HttpFetch;
 use super::{unpack_cache_from_store, FetchEndpoint, JagRefresh, SnapshotState};
 use crate::client::client::AssetFetchError;
+use crate::io::host_network::installed_host_network;
 use crate::client::Client;
 use crate::content_identity::{compute_decoded_content_identity, DecodedContentIdentity};
 use crate::io::{ClientRevision, JagFile, OnDemand};
@@ -409,37 +411,38 @@ pub enum RuntimeCacheStep {
 }
 
 /// [`prepare_runtime_cache`] in bounded steps for a cooperative scheduler.
-/// One step does one of: the asset host's name lookup; the `/crc` request;
-/// the preparation and retention locks; one JAG pack; the retained or
-/// local-store snapshot; the game host's name lookup; the start of the
-/// update-server fill; the update-server fill; the publication; the decoded
-/// identity; retention, pruning and the map index. With a deadline, a step
-/// waits for the update server and for the locks only until the deadline:
-/// an unfinished HTTP request or a lock that another holder keeps continues
-/// in the next step. A name lookup step is the one exception: it can run
-/// past its deadline by as long as the system resolver takes, once per
-/// host per fill (`looked_up`). The fill reports each such step to the
-/// observer that [`Self::observe_slow_lookups`] sets, and writes nothing
-/// itself. The calls and their order are those of the one-call preparation.
+/// One step does one of: standalone asset-host lookup; the `/crc` request; the
+/// preparation and retention locks; one JAG pack; the retained or local-store
+/// snapshot; standalone game-host lookup; the start of the update-server fill;
+/// the update-server fill; publication; decoded identity; retention, pruning
+/// and the map index. With a deadline, a step waits for the update server and
+/// for the locks only until the deadline: an unfinished HTTP request or a lock
+/// that another holder keeps continues in the next step. In hosted mode the
+/// HTTP and game connections delegate DNS to the process Resolver. Only the
+/// standalone-native fallback can run a system lookup past its deadline; the
+/// fill reports each such step to the observer that
+/// [`Self::observe_slow_lookups`] sets, and writes nothing itself. The calls
+/// and their order are those of the one-call preparation.
 ///
 /// Between steps the fill holds the preparation lock, the retention lease,
 /// the runtime and staging directories, an HTTP request in flight and the
-/// fill's OnDemand worker. Dropping it before it is ready, or after an
-/// error, stops the worker (it does not wait for the update server's
-/// handshake or for a name lookup) and removes the staging and runtime
-/// directories, the lease and the lock, in that order. Nothing is
-/// published, so a later fill starts again cleanly.
+/// fill's OnDemand worker. Dropping it before it is ready, or after an error,
+/// stops the worker (it does not wait for the update server's handshake or a
+/// standalone name lookup) and removes the staging and runtime directories,
+/// the lease and the lock, in that order. Nothing is published, so a later
+/// fill starts again cleanly.
 pub struct RuntimeCacheFill {
     request: OwnedRuntimeCacheRequest,
+    #[cfg(feature = "standalone-native-transport")]
     lookups: Lookups,
+    #[cfg(feature = "standalone-native-transport")]
     slow_lookups: Option<fn(&SlowLookup<'_>)>,
     stage: Stage,
 }
 
-/// A name lookup step of a [`RuntimeCacheFill`] that ended after its
-/// deadline. This is the one exception to the step deadline (see
-/// [`RuntimeCacheFill`]). The fill gives it to the observer that
-/// [`RuntimeCacheFill::observe_slow_lookups`] sets, for the caller's log.
+/// A standalone name lookup step of a [`RuntimeCacheFill`] that ended after
+/// its deadline. Hosted DNS is delegated to the process Resolver and is not
+/// reported through this observer.
 #[derive(Debug, Clone, Copy)]
 pub struct SlowLookup<'a> {
     /// `"asset host"` or `"game host"`.
@@ -452,30 +455,22 @@ pub struct SlowLookup<'a> {
     pub past_deadline: Duration,
 }
 
-/// The server addresses that this fill looked up, each at most once
-/// ([`looked_up`]), kept until the fill ends.
+/// The standalone-native address results, each host looked up at most once,
+/// kept until the fill ends. Hosted mode leaves these empty.
+#[cfg(feature = "standalone-native-transport")]
 #[derive(Default)]
 struct Lookups {
-    /// The asset host's, for the `/crc` request and the stepped JAG
-    /// requests.
+    /// Standalone asset-host addresses for `/crc` and stepped JAG requests.
     asset: Option<Vec<SocketAddr>>,
-    /// The game host's, for the OnDemand worker, which never looks up a
-    /// name itself.
+    /// Standalone game-host addresses for the OnDemand worker.
     game: Option<Vec<SocketAddr>>,
 }
 
-/// The addresses of `host` at `port` in `slot`; if the fill has not looked
-/// them up yet, look them up now, keep them in `slot` and return `Ok(None)`:
-/// the lookup ends the step.
-///
-/// Exception to the step deadline: the standard library and the system
-/// resolver have no non-blocking or cancellable name lookup, and the fill
-/// adds no thread, so this step can run past `until` by as long as the
-/// resolver takes. To keep that cost small, the step does the lookup and
-/// nothing else, the fill looks up each host at most once and keeps the
-/// addresses until it ends, and a step that runs past its deadline goes to
-/// `observer` (a failed lookup too). The OnDemand worker gets only
-/// addresses, so a cancel never waits for a lookup.
+
+/// Resolve a host only for the standalone-native fallback, which has no
+/// non-blocking resolver. Hosted paths use the process Resolver through
+/// HostNetwork instead.
+#[cfg(feature = "standalone-native-transport")]
 fn looked_up<'a>(
     slot: &'a mut Option<Vec<SocketAddr>>,
     observer: Option<fn(&SlowLookup<'_>)>,
@@ -639,17 +634,24 @@ impl RuntimeCacheFill {
                 game_host: request.game_host.to_string(),
                 game_port: request.game_port,
             },
+            #[cfg(feature = "standalone-native-transport")]
             lookups: Lookups::default(),
+            #[cfg(feature = "standalone-native-transport")]
             slow_lookups: None,
             stage: Stage::Negotiate(None),
         }
     }
 
-    /// Give each name lookup step that ends after its deadline to
-    /// `observer` ([`SlowLookup`]). Without an observer the fill reports
-    /// nothing.
+    /// Give each standalone-native name lookup step that ends after its
+    /// deadline to `observer` ([`SlowLookup`]). Hosted DNS uses the process
+    /// Resolver and is not reported here.
     pub fn observe_slow_lookups(&mut self, observer: fn(&SlowLookup<'_>)) {
-        self.slow_lookups = Some(observer);
+        #[cfg(feature = "standalone-native-transport")]
+        {
+            self.slow_lookups = Some(observer);
+        }
+        #[cfg(not(feature = "standalone-native-transport"))]
+        let _ = observer;
     }
 
     /// Do the next bounded unit of preparation. Waits for the update server,
@@ -679,57 +681,105 @@ impl RuntimeCacheFill {
                     kind,
                     message: format!("update server /crc: {}", kind.message()),
                 };
+                #[cfg(feature = "standalone-native-transport")]
                 let lookup_error = |_: io::Error| RuntimeCacheError::Lookup {
                     host: request.asset_host.clone(),
                     message: crc_error(AssetFetchError::Connection).to_string(),
                 };
                 let checksums = match until {
                     None => {
-                        // The one-call fill also looks the asset host up in
-                        // its own step, once, so that a failed name reaches
-                        // the caller (`RuntimeCacheError::failed_lookup`)
-                        // and the caller's world fallback skips each world
-                        // with that name.
-                        let Some(addrs) = looked_up(
-                            &mut self.lookups.asset,
-                            None,
-                            "asset host",
-                            &request.asset_host,
-                            request.asset_port,
-                            None,
-                        )
-                        .map_err(lookup_error)?
-                        else {
-                            return Ok((Stage::Negotiate(None), waiting));
-                        };
-                        Client::get_jag_checksums_at(request.transport, &request.asset_host, addrs)
+                        if installed_host_network().is_some() {
+                            Client::get_jag_checksums_checked(
+                                request.transport,
+                                &request.asset_host,
+                                request.asset_port,
+                            )
                             .map_err(crc_error)?
+                        } else {
+                            #[cfg(feature = "standalone-native-transport")]
+                            {
+                                let Some(addrs) = looked_up(
+                                    &mut self.lookups.asset,
+                                    None,
+                                    "asset host",
+                                    &request.asset_host,
+                                    request.asset_port,
+                                    None,
+                                )
+                                .map_err(lookup_error)?
+                                else {
+                                    return Ok((Stage::Negotiate(None), waiting));
+                                };
+                                Client::get_jag_checksums_at(
+                                    request.transport,
+                                    &request.asset_host,
+                                    addrs,
+                                )
+                                .map_err(crc_error)?
+                            }
+                            #[cfg(not(feature = "standalone-native-transport"))]
+                            {
+                                Client::get_jag_checksums_checked(
+                                    request.transport,
+                                    &request.asset_host,
+                                    request.asset_port,
+                                )
+                                .map_err(crc_error)?
+                            }
+                        }
                     }
                     Some(until) => {
                         let mut fetch = match fetch {
                             Some(fetch) => fetch,
                             None => {
-                                let addrs = looked_up(
-                                    &mut self.lookups.asset,
-                                    self.slow_lookups,
-                                    "asset host",
-                                    &request.asset_host,
-                                    request.asset_port,
-                                    Some(until),
-                                )
-                                .map_err(lookup_error)?;
-                                let Some(addrs) = addrs else {
-                                    return Ok((Stage::Negotiate(None), waiting));
-                                };
-                                Box::new(
-                                    HttpFetch::start(
-                                        request.transport,
-                                        &request.asset_host,
-                                        addrs,
-                                        "/crc",
+                                if installed_host_network().is_some() {
+                                    Box::new(
+                                        HttpFetch::start(
+                                            request.transport,
+                                            &request.asset_host,
+                                            request.asset_port,
+                                            "/crc",
+                                        )
+                                        .map_err(crc_error)?,
                                     )
-                                    .map_err(crc_error)?,
-                                )
+                                } else {
+                                    #[cfg(feature = "standalone-native-transport")]
+                                    {
+                                        let addrs = looked_up(
+                                            &mut self.lookups.asset,
+                                            self.slow_lookups,
+                                            "asset host",
+                                            &request.asset_host,
+                                            request.asset_port,
+                                            Some(until),
+                                        )
+                                        .map_err(lookup_error)?;
+                                        let Some(addrs) = addrs else {
+                                            return Ok((Stage::Negotiate(None), waiting));
+                                        };
+                                        Box::new(
+                                            HttpFetch::start_resolved(
+                                                request.transport,
+                                                &request.asset_host,
+                                                addrs,
+                                                "/crc",
+                                            )
+                                            .map_err(crc_error)?,
+                                        )
+                                    }
+                                    #[cfg(not(feature = "standalone-native-transport"))]
+                                    {
+                                        Box::new(
+                                            HttpFetch::start(
+                                                request.transport,
+                                                &request.asset_host,
+                                                request.asset_port,
+                                                "/crc",
+                                            )
+                                            .map_err(crc_error)?,
+                                        )
+                                    }
+                                }
                             }
                         };
                         let Some(body) = fetch.poll(until).map_err(crc_error)? else {
@@ -814,27 +864,54 @@ impl RuntimeCacheFill {
                             let mut fetch = match fetch {
                                 Some(fetch) => fetch,
                                 None => {
-                                    // Looked up in the `/crc` step.
-                                    let addrs = looked_up(
-                                        &mut self.lookups.asset,
-                                        self.slow_lookups,
-                                        "asset host",
-                                        &request.asset_host,
-                                        request.asset_port,
-                                        Some(until),
-                                    )
-                                    .map_err(|_| {
-                                        super::jag_fetch_error(slot, AssetFetchError::Connection)
-                                    })?;
-                                    let Some(addrs) = addrs else {
-                                        return Ok((Stage::Jag(held, slot, None), waiting));
-                                    };
-                                    Box::new(super::start_jag_download(
-                                        request.endpoint(),
-                                        addrs,
-                                        slot,
-                                        &held.refresh,
-                                    )?)
+                                    if installed_host_network().is_some() {
+                                        Box::new(super::start_jag_download(
+                                            request.endpoint(),
+                                            None,
+                                            slot,
+                                            &held.refresh,
+                                        )?)
+                                    } else {
+                                        #[cfg(feature = "standalone-native-transport")]
+                                        {
+                                            // Looked up in the `/crc` step.
+                                            let addrs = looked_up(
+                                                &mut self.lookups.asset,
+                                                self.slow_lookups,
+                                                "asset host",
+                                                &request.asset_host,
+                                                request.asset_port,
+                                                Some(until),
+                                            )
+                                            .map_err(|_| {
+                                                super::jag_fetch_error(
+                                                    slot,
+                                                    AssetFetchError::Connection,
+                                                )
+                                            })?;
+                                            let Some(addrs) = addrs else {
+                                                return Ok((
+                                                    Stage::Jag(held, slot, None),
+                                                    waiting,
+                                                ));
+                                            };
+                                            Box::new(super::start_jag_download(
+                                                request.endpoint(),
+                                                Some(addrs),
+                                                slot,
+                                                &held.refresh,
+                                            )?)
+                                        }
+                                        #[cfg(not(feature = "standalone-native-transport"))]
+                                        {
+                                            Box::new(super::start_jag_download(
+                                                request.endpoint(),
+                                                None,
+                                                slot,
+                                                &held.refresh,
+                                            )?)
+                                        }
+                                    }
                                 }
                             };
                             let body = fetch
@@ -922,8 +999,13 @@ impl RuntimeCacheFill {
                 Ok((Stage::Worker(held, Box::new(jag)), waiting))
             }
             Stage::Worker(mut held, jag) => {
-                if self.lookups.game.is_none() && request.game_host == request.asset_host {
-                    // The same host: its asset lookup serves the game port.
+                #[cfg(feature = "standalone-native-transport")]
+                if installed_host_network().is_none()
+                    && self.lookups.game.is_none()
+                    && request.game_host == request.asset_host
+                {
+                    // The same host: its standalone asset lookup serves the
+                    // game port.
                     self.lookups.game = self.lookups.asset.as_ref().map(|addrs| {
                         addrs
                             .iter()
@@ -935,24 +1017,36 @@ impl RuntimeCacheFill {
                             .collect()
                     });
                 }
-                let addrs = looked_up(
-                    &mut self.lookups.game,
-                    self.slow_lookups,
-                    "game host",
-                    &request.game_host,
-                    request.game_port,
-                    until,
-                )
-                .map_err(|error| RuntimeCacheError::Lookup {
-                    host: request.game_host.clone(),
-                    message: format!(
-                        "local store: {}; update-server fill: update server {}: \
-                         name lookup failed: {error}",
-                        held.local_error, request.game_host
-                    ),
-                })?;
-                let Some(addrs) = addrs else {
-                    return Ok((Stage::Worker(held, jag), waiting));
+                let addrs = if installed_host_network().is_some() {
+                    None
+                } else {
+                    #[cfg(feature = "standalone-native-transport")]
+                    {
+                        let addrs = looked_up(
+                            &mut self.lookups.game,
+                            self.slow_lookups,
+                            "game host",
+                            &request.game_host,
+                            request.game_port,
+                            until,
+                        )
+                        .map_err(|error| RuntimeCacheError::Lookup {
+                            host: request.game_host.clone(),
+                            message: format!(
+                                "local store: {}; update-server fill: update server {}: \
+                                 name lookup failed: {error}",
+                                held.local_error, request.game_host
+                            ),
+                        })?;
+                        let Some(addrs) = addrs else {
+                            return Ok((Stage::Worker(held, jag), waiting));
+                        };
+                        Some(addrs)
+                    }
+                    #[cfg(not(feature = "standalone-native-transport"))]
+                    {
+                        None
+                    }
                 };
                 let (cache, root) = (held.cache()?.to_string(), held.root()?.to_string());
                 let store = request.jag_source.to_string_lossy().into_owned();

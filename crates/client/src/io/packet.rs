@@ -53,6 +53,265 @@ pub struct Packet {
     pub bit_pos: usize,
     pub random: Option<Isaac>,
     frame_end: Option<usize>,
+    requires_reservation: bool,
+    output_staging: bool,
+    staged_opcodes: Vec<(usize, i32)>,
+}
+
+pub(crate) enum PacketEncodeError {
+    Capacity { required: usize, remaining: usize },
+    ExtentMismatch,
+}
+
+/// A no-allocation packet writer. Its planning pass counts exact bytes; its
+/// writing pass cannot exceed the reservation. Callers must emit only through
+/// this writer and keep the encoding closure deterministic and side-effect-free.
+pub struct PacketOutput<'a> {
+    packet: Option<&'a mut Packet>,
+    start: usize,
+    pub(crate) pos: usize,
+    end: usize,
+    failed: bool,
+}
+impl PacketOutput<'_> {
+    fn planning() -> PacketOutput<'static> {
+        PacketOutput {
+            packet: None,
+            start: 0,
+            pos: 0,
+            end: usize::MAX,
+            failed: false,
+        }
+    }
+
+    fn writing(packet: &mut Packet, start: usize, end: usize) -> PacketOutput<'_> {
+        PacketOutput {
+            packet: Some(packet),
+            start,
+            pos: start,
+            end,
+            failed: false,
+        }
+    }
+
+    fn reserve(&mut self, length: usize) -> Option<usize> {
+        let Some(end) = self.pos.checked_add(length) else {
+            self.failed = true;
+            return None;
+        };
+        if end > self.end {
+            self.failed = true;
+            return None;
+        }
+        let start = self.pos;
+        self.pos = end;
+        Some(start)
+    }
+
+    /// Current writer cursor, for computing bounded backpatch lengths.
+    pub fn position(&self) -> usize {
+        self.pos
+    }
+
+    pub fn p1_enc(&mut self, opcode: i32) {
+        let Some(pos) = self.reserve(1) else {
+            return;
+        };
+        if let Some(packet) = self.packet.as_deref_mut() {
+            let random = packet
+                .random
+                .as_mut()
+                .map(|random| random.next_int())
+                .unwrap_or(0);
+            packet.data[pos] = opcode.wrapping_add(random) as u8;
+        }
+    }
+
+    pub fn p1(&mut self, value: i32) {
+        if let Some(pos) = self.reserve(1) {
+            if let Some(packet) = self.packet.as_deref_mut() {
+                packet.data[pos] = value as u8;
+            }
+        }
+    }
+
+    pub fn p2(&mut self, value: i32) {
+        if let Some(pos) = self.reserve(2) {
+            if let Some(packet) = self.packet.as_deref_mut() {
+                packet.data[pos] = (value >> 8) as u8;
+                packet.data[pos + 1] = value as u8;
+            }
+        }
+    }
+
+    pub fn ip2(&mut self, value: i32) {
+        if let Some(pos) = self.reserve(2) {
+            if let Some(packet) = self.packet.as_deref_mut() {
+                packet.data[pos] = value as u8;
+                packet.data[pos + 1] = (value >> 8) as u8;
+            }
+        }
+    }
+
+    pub fn p3(&mut self, value: i32) {
+        if let Some(pos) = self.reserve(3) {
+            if let Some(packet) = self.packet.as_deref_mut() {
+                packet.data[pos] = (value >> 16) as u8;
+                packet.data[pos + 1] = (value >> 8) as u8;
+                packet.data[pos + 2] = value as u8;
+            }
+        }
+    }
+
+    pub fn p4(&mut self, value: i32) {
+        if let Some(pos) = self.reserve(4) {
+            if let Some(packet) = self.packet.as_deref_mut() {
+                packet.data[pos] = (value >> 24) as u8;
+                packet.data[pos + 1] = (value >> 16) as u8;
+                packet.data[pos + 2] = (value >> 8) as u8;
+                packet.data[pos + 3] = value as u8;
+            }
+        }
+    }
+
+    pub fn ip4(&mut self, value: i32) {
+        if let Some(pos) = self.reserve(4) {
+            if let Some(packet) = self.packet.as_deref_mut() {
+                packet.data[pos] = value as u8;
+                packet.data[pos + 1] = (value >> 8) as u8;
+                packet.data[pos + 2] = (value >> 16) as u8;
+                packet.data[pos + 3] = (value >> 24) as u8;
+            }
+        }
+    }
+
+    pub fn p8(&mut self, value: i64) {
+        if let Some(pos) = self.reserve(8) {
+            if let Some(packet) = self.packet.as_deref_mut() {
+                packet.data[pos..pos + 8].copy_from_slice(&value.to_be_bytes());
+            }
+        }
+    }
+
+    pub fn pjstr(&mut self, value: &str) {
+        for character in value.chars() {
+            self.p1(character as i32);
+        }
+        self.p1(10);
+    }
+
+    pub fn pdata(&mut self, source: &[u8], offset: usize, length: usize) {
+        let Some(source_end) = offset.checked_add(length) else {
+            self.failed = true;
+            return;
+        };
+        if source_end > source.len() {
+            self.failed = true;
+            return;
+        }
+        if let Some(pos) = self.reserve(length) {
+            if let Some(packet) = self.packet.as_deref_mut() {
+                packet.data[pos..pos + length].copy_from_slice(&source[offset..source_end]);
+            }
+        }
+    }
+
+    pub fn psize1(&mut self, size: i32) {
+        let Ok(size) = usize::try_from(size) else {
+            self.failed = true;
+            return;
+        };
+        let Some(index) = self.pos.checked_sub(size.saturating_add(1)) else {
+            self.failed = true;
+            return;
+        };
+        if index < self.start || index >= self.pos {
+            self.failed = true;
+            return;
+        }
+        if let Some(packet) = self.packet.as_deref_mut() {
+            packet.data[index] = size as u8;
+        }
+    }
+}
+
+impl Packet {
+    pub(crate) fn require_output_reservation(&mut self) {
+        self.requires_reservation = true;
+    }
+    pub(crate) fn reserve_output_opcode_markers(&mut self) {
+        self.staged_opcodes.reserve(16);
+    }
+
+    pub(crate) fn begin_output_staging(&mut self) {
+        self.pos = 0;
+        self.staged_opcodes.clear();
+        self.output_staging = true;
+    }
+
+    pub(crate) fn finish_output_staging(&mut self) {
+        self.output_staging = false;
+    }
+
+    pub(crate) fn staged_opcodes(&self) -> &[(usize, i32)] {
+        &self.staged_opcodes
+    }
+
+    pub(crate) fn reset_output_epoch(&mut self) {
+        self.pos = 0;
+        self.requires_reservation = true;
+    }
+
+    pub(crate) fn write_unreserved(&mut self, write: impl FnOnce(&mut Self)) {
+        let requires_reservation = std::mem::replace(&mut self.requires_reservation, false);
+        write(self);
+        self.requires_reservation = requires_reservation;
+    }
+
+    pub(crate) fn encode_planned(
+        &mut self,
+        encode: impl Fn(&mut PacketOutput<'_>),
+    ) -> Result<(), PacketEncodeError> {
+        assert!(
+            self.requires_reservation,
+            "planned writes require session output"
+        );
+        let mut plan = PacketOutput::planning();
+        encode(&mut plan);
+        let required = plan.pos;
+        if plan.failed {
+            return Err(PacketEncodeError::ExtentMismatch);
+        }
+        let remaining = self.data.len().saturating_sub(self.pos);
+        if required > remaining {
+            return Err(PacketEncodeError::Capacity {
+                required,
+                remaining,
+            });
+        }
+        let start = self.pos;
+        let end = start
+            .checked_add(required)
+            .ok_or(PacketEncodeError::Capacity {
+                required,
+                remaining,
+            })?;
+        let mut writer = PacketOutput::writing(self, start, end);
+        encode(&mut writer);
+        let actual = writer.pos.saturating_sub(start);
+        if writer.failed || actual != required {
+            return Err(PacketEncodeError::ExtentMismatch);
+        }
+        self.pos = end;
+        Ok(())
+    }
+
+    fn assert_raw_write_allowed(&self) {
+        assert!(
+            !self.requires_reservation,
+            "session output must use Packet::encode_planned"
+        );
+    }
 }
 
 impl Packet {
@@ -63,6 +322,9 @@ impl Packet {
             bit_pos: 0,
             random: None,
             frame_end: None,
+            requires_reservation: false,
+            output_staging: false,
+            staged_opcodes: Vec::new(),
         }
     }
 
@@ -126,6 +388,9 @@ impl Packet {
         if let Some(mut p) = cached {
             p.pos = 0;
             p.frame_end = None;
+            p.requires_reservation = false;
+            p.output_staging = false;
+            p.staged_opcodes.clear();
             return p;
         }
         match kind {
@@ -266,29 +531,39 @@ impl Packet {
     }
 
     pub fn p1_enc(&mut self, opcode: i32) {
-        let r = self.random.as_mut().map(|r| r.next_int()).unwrap_or(0);
-        self.data[self.pos] = opcode.wrapping_add(r) as u8;
+        self.assert_raw_write_allowed();
+        if self.output_staging {
+            self.staged_opcodes.push((self.pos, opcode));
+            self.data[self.pos] = opcode as u8;
+        } else {
+            let r = self.random.as_mut().map(|r| r.next_int()).unwrap_or(0);
+            self.data[self.pos] = opcode.wrapping_add(r) as u8;
+        }
         self.pos += 1;
     }
 
     pub fn p1(&mut self, value: i32) {
+        self.assert_raw_write_allowed();
         self.data[self.pos] = value as u8;
         self.pos += 1;
     }
 
     pub fn p2(&mut self, value: i32) {
+        self.assert_raw_write_allowed();
         self.data[self.pos] = (value >> 8) as u8;
         self.data[self.pos + 1] = value as u8;
         self.pos += 2;
     }
 
     pub fn ip2(&mut self, value: i32) {
+        self.assert_raw_write_allowed();
         self.data[self.pos] = value as u8;
         self.data[self.pos + 1] = (value >> 8) as u8;
         self.pos += 2;
     }
 
     pub fn p3(&mut self, value: i32) {
+        self.assert_raw_write_allowed();
         self.data[self.pos] = (value >> 16) as u8;
         self.data[self.pos + 1] = (value >> 8) as u8;
         self.data[self.pos + 2] = value as u8;
@@ -296,6 +571,7 @@ impl Packet {
     }
 
     pub fn p4(&mut self, value: i32) {
+        self.assert_raw_write_allowed();
         self.data[self.pos] = (value >> 24) as u8;
         self.data[self.pos + 1] = (value >> 16) as u8;
         self.data[self.pos + 2] = (value >> 8) as u8;
@@ -304,6 +580,7 @@ impl Packet {
     }
 
     pub fn ip4(&mut self, value: i32) {
+        self.assert_raw_write_allowed();
         self.data[self.pos] = value as u8;
         self.data[self.pos + 1] = (value >> 8) as u8;
         self.data[self.pos + 2] = (value >> 16) as u8;
@@ -312,11 +589,13 @@ impl Packet {
     }
 
     pub fn p8(&mut self, value: i64) {
+        self.assert_raw_write_allowed();
         self.data[self.pos..self.pos + 8].copy_from_slice(&value.to_be_bytes());
         self.pos += 8;
     }
 
     pub fn pjstr(&mut self, s: &str) {
+        self.assert_raw_write_allowed();
         for c in s.chars() {
             self.data[self.pos] = c as u8;
             self.pos += 1;
@@ -326,12 +605,14 @@ impl Packet {
     }
 
     pub fn pdata(&mut self, src: &[u8], offset: usize, length: usize) {
+        self.assert_raw_write_allowed();
         let end = self.pos + length;
         self.data[self.pos..end].copy_from_slice(&src[offset..offset + length]);
         self.pos = end;
     }
 
     pub fn psize1(&mut self, size: i32) {
+        self.assert_raw_write_allowed();
         self.data[self.pos - size as usize - 1] = size as u8;
     }
 

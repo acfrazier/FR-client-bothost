@@ -45,6 +45,8 @@ pub use crate::dash3d::{ClientNpc, ClientPlayer};
 use crate::datastruct::LinkList;
 use crate::graphics::Pix3D;
 use crate::io::client_stream::{LoginCancel, StreamExitReason};
+use crate::io::host_network::installed_host_network;
+use crate::io::packet::{PacketEncodeError, PacketOutput};
 use crate::io::{
     ClientProt, ClientRevision, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt,
     ServerProt289,
@@ -359,6 +361,19 @@ pub enum SessionExitReason {
         previous: RecentFrames,
     },
     ConnectionLost,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OutboundOverflow {
+    session_epoch: u64,
+    required: usize,
+    remaining: usize,
+}
+
+enum PendingSocialMutation {
+    AddFriend { userhash: i64, display_name: String },
+    AddIgnore(i64),
+    DelFriend(i64),
+    DelIgnore(i64),
 }
 
 impl std::fmt::Display for SessionExitReason {
@@ -1583,6 +1598,19 @@ pub struct Client {
     /// First typed session-exit cause. It survives teardown until the host
     /// consumes it and is cleared by the next successful login.
     session_exit_reason: Option<SessionExitReason>,
+    outbound_overflow: Option<OutboundOverflow>,
+    outbound_encoder_defect: bool,
+    output_closed: bool,
+    output_epoch: u64,
+    output_scope_epoch: u64,
+    output_scope_depth: usize,
+    defer_route_output: bool,
+    pending_output_route: Option<PendingRoute>,
+    pending_social_mutation: Option<PendingSocialMutation>,
+    pending_varp_update: Option<(i32, i32)>,
+    pending_report_abuse_input: Option<String>,
+    pending_logout_action: bool,
+    action_out: Option<Packet>,
     /// The last session ended in the in-world connection-loss branch, which
     /// keeps the map for a reconnect (see [`Client::session_resumable`]).
     session_resumable: bool,
@@ -1590,6 +1618,63 @@ pub struct Client {
     /// protocol-error reason.
     session_frames: u64,
     recent_frames: RecentFrames,
+}
+
+#[derive(Clone, Copy)]
+struct MinimapTrailer {
+    x: i32,
+    y: i32,
+    camera_yaw: i32,
+    angle: i32,
+    zoom: i32,
+    player_x: i32,
+    player_z: i32,
+}
+
+struct PendingRoute {
+    opcode: Option<i32>,
+    payload_length: i32,
+    prefix_len: usize,
+    run: i32,
+    start_x: i32,
+    start_z: i32,
+    base_x: i32,
+    base_z: i32,
+    deltas: [i8; 48],
+    delta_count: usize,
+    trailer: Option<MinimapTrailer>,
+    minimap_flag_x: i32,
+    minimap_flag_z: i32,
+    try_move_nearest: i32,
+    path: Vec<(i32, i32)>,
+}
+
+impl PendingRoute {
+    fn encode(&self, out: &mut PacketOutput<'_>) {
+        if let Some(opcode) = self.opcode {
+            out.p1_enc(opcode);
+            out.p1(self.payload_length);
+        }
+        out.p1(self.run);
+        out.p2(self.start_x + self.base_x);
+        out.p2(self.start_z + self.base_z);
+        for delta in &self.deltas[..self.delta_count] {
+            out.p1(*delta as i32);
+        }
+        if let Some(trailer) = self.trailer {
+            out.p1(trailer.x);
+            out.p1(trailer.y);
+            out.p2(trailer.camera_yaw);
+            out.p1(57);
+            out.p1(trailer.angle);
+            out.p1(trailer.zoom);
+            out.p1(89);
+            out.p2(trailer.player_x);
+            out.p2(trailer.player_z);
+            out.p1(self.try_move_nearest);
+            out.p1(63);
+        }
+    }
 }
 
 struct ClientConstruction {
@@ -1838,6 +1923,288 @@ impl Client {
         self.session_exit_reason.take()
     }
 
+    pub(crate) fn with_output_scope<R>(&mut self, action: impl FnOnce(&mut Self) -> R) -> R {
+        let outermost = self.output_scope_depth == 0;
+        if outermost {
+            self.output_scope_epoch = self.output_epoch;
+        }
+        self.output_scope_depth += 1;
+        let result = action(self);
+        self.output_scope_depth -= 1;
+        if outermost {
+            self.output_scope_epoch = self.output_epoch;
+        }
+        result
+    }
+
+    fn output_scope_is_current(&self) -> bool {
+        self.output_scope_depth == 0 || self.output_scope_epoch == self.output_epoch
+    }
+
+    fn begin_output_epoch(&mut self) {
+        self.output_epoch = self.output_epoch.wrapping_add(1);
+        self.out.reset_output_epoch();
+        self.output_closed = false;
+        self.outbound_overflow = None;
+        self.outbound_encoder_defect = false;
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn clear_output_for_test(&mut self) {
+        self.out.pos = 0;
+    }
+
+    /// Atomically append one session-output record after reserving its exact
+    /// encoded extent. The closure runs once for planning and once for writing;
+    /// it must be deterministic and must not publish side effects.
+    pub fn encode_output(&mut self, encode: impl Fn(&mut PacketOutput<'_>)) -> bool {
+        if self.output_closed || !self.output_scope_is_current() {
+            return false;
+        }
+        self.out.require_output_reservation();
+        match self.out.encode_planned(encode) {
+            Ok(()) => true,
+            Err(PacketEncodeError::Capacity {
+                required,
+                remaining,
+            }) => {
+                self.output_closed = true;
+                self.outbound_overflow.get_or_insert(OutboundOverflow {
+                    session_epoch: self.output_epoch,
+                    required,
+                    remaining,
+                });
+                self.lost_con();
+                false
+            }
+            Err(PacketEncodeError::ExtentMismatch) => {
+                self.output_closed = true;
+                self.outbound_encoder_defect = true;
+                self.lost_con();
+                false
+            }
+        }
+    }
+
+    fn encode_action_output(
+        &mut self,
+        encode: impl Fn(&mut PacketOutput<'_>, Option<&PendingRoute>),
+    ) -> bool {
+        let route = self.pending_output_route.take();
+        let accepted = self.encode_output(|out| encode(out, route.as_ref()));
+        if accepted {
+            if let Some(route) = route {
+                self.try_move_path = route.path;
+                self.minimap_flag_x = route.minimap_flag_x;
+                self.minimap_flag_z = route.minimap_flag_z;
+                self.try_move_nearest = route.try_move_nearest;
+            }
+        }
+        accepted
+    }
+
+    fn with_staged_output<R: Default>(
+        &mut self,
+        defer_route_output: bool,
+        action: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        if self.output_closed || !self.output_scope_is_current() {
+            return R::default();
+        }
+        if self.action_out.is_none() {
+            let previous_defer_route_output = self.defer_route_output;
+            self.defer_route_output |= defer_route_output;
+            let result = action(self);
+            self.defer_route_output = previous_defer_route_output;
+            return result;
+        }
+        self.with_output_scope(|client| {
+            let Some(mut staged) = client.action_out.take() else {
+                let previous_defer_route_output = client.defer_route_output;
+                client.defer_route_output |= defer_route_output;
+                let result = action(client);
+                client.defer_route_output = previous_defer_route_output;
+                return result;
+            };
+            client.pending_social_mutation = None;
+            client.pending_varp_update = None;
+            client.pending_report_abuse_input = None;
+            client.pending_logout_action = false;
+            let action_epoch = client.output_epoch;
+            let crosshair = [
+                client.cross_x,
+                client.cross_y,
+                client.cross_mode,
+                client.cross_cycle,
+            ];
+            let oplogic = [
+                client.oplogic1,
+                client.oplogic2,
+                client.oplogic3,
+                client.oplogic4,
+                client.oplogic5,
+                client.oplogic6,
+                client.oplogic7,
+                client.oplogic8,
+                client.oplogic9,
+            ];
+            let cyclelogic2 = client.cyclelogic2;
+            let dialog_input_open = client.dialog_input_open;
+            let action_controls = (
+                client.active_icon,
+                client.use_mode,
+                client.target_mode,
+                client.target_com_id,
+                client.target_mask,
+                client.obj_com_id,
+                client.obj_selected_com_id,
+                client.selected_cycle,
+                client.selected_com_id,
+                client.selected_item,
+                client.selected_area,
+                client.logout_timer,
+                client.pending_local_idle_request,
+                client.report_abuse_com_id,
+                client.report_abuse_mute_option,
+            );
+            let modal_state = (
+                client.side_modal_id,
+                client.chat_modal_id,
+                client.main_modal_id,
+                client.resumed_pause_button,
+            );
+            let chat_modes = (
+                client.chat_public_mode,
+                client.chat_private_mode,
+                client.chat_trade_mode,
+            );
+            let redraw_state = (
+                client.redraw_chat,
+                client.redraw_chat_mode,
+                client.redraw_side,
+                client.redraw_icons,
+                client.redraw_frame,
+            );
+            let previous_defer_route_output = client.defer_route_output;
+            client.defer_route_output |= defer_route_output;
+            staged.begin_output_staging();
+            std::mem::swap(&mut client.out, &mut staged);
+            let result = action(client);
+            std::mem::swap(&mut client.out, &mut staged);
+            staged.finish_output_staging();
+            client.defer_route_output = previous_defer_route_output;
+            let accepted = client.encode_action_output(|out, route| {
+                let bytes = staged.data();
+                let length = staged.pos;
+                let prefix_len = route.map_or(length, |route| route.prefix_len.min(length));
+                let opcodes = staged.staged_opcodes();
+                let mut cursor = 0;
+                let mut opcode_index = 0;
+                while let Some(&(offset, opcode)) = opcodes.get(opcode_index) {
+                    if offset >= prefix_len {
+                        break;
+                    }
+                    out.pdata(bytes, cursor, offset - cursor);
+                    out.p1_enc(opcode);
+                    cursor = offset + 1;
+                    opcode_index += 1;
+                }
+                out.pdata(bytes, cursor, prefix_len - cursor);
+                if let Some(route) = route {
+                    route.encode(out);
+                }
+                cursor = prefix_len;
+                for &(offset, opcode) in &opcodes[opcode_index..] {
+                    out.pdata(bytes, cursor, offset - cursor);
+                    out.p1_enc(opcode);
+                    cursor = offset + 1;
+                }
+                out.pdata(bytes, cursor, length - cursor);
+            });
+            if accepted && client.output_epoch == action_epoch {
+                if let Some(mutation) = client.pending_social_mutation.take() {
+                    client.apply_pending_social_mutation(mutation);
+                }
+                if let Some((varp, value)) = client.pending_varp_update.take() {
+                    grow_write(&mut client.var, varp, value);
+                    client.client_var(varp);
+                    client.redraw_side = true;
+                }
+                if let Some(report_input) = client.pending_report_abuse_input.take() {
+                    client.report_abuse_input = report_input;
+                }
+                if client.pending_logout_action {
+                    client.pending_local_idle_request = false;
+                    client.logout_timer = 250;
+                    client.pending_logout_action = false;
+                }
+            } else {
+                client.pending_social_mutation = None;
+                client.pending_varp_update = None;
+                client.pending_report_abuse_input = None;
+                client.pending_logout_action = false;
+            }
+            if !accepted && client.output_epoch == action_epoch {
+                [
+                    client.cross_x,
+                    client.cross_y,
+                    client.cross_mode,
+                    client.cross_cycle,
+                ] = crosshair;
+                [
+                    client.oplogic1,
+                    client.oplogic2,
+                    client.oplogic3,
+                    client.oplogic4,
+                    client.oplogic5,
+                    client.oplogic6,
+                    client.oplogic7,
+                    client.oplogic8,
+                    client.oplogic9,
+                ] = oplogic;
+                client.cyclelogic2 = cyclelogic2;
+                client.dialog_input_open = dialog_input_open;
+                (
+                    client.active_icon,
+                    client.use_mode,
+                    client.target_mode,
+                    client.target_com_id,
+                    client.target_mask,
+                    client.obj_com_id,
+                    client.obj_selected_com_id,
+                    client.selected_cycle,
+                    client.selected_com_id,
+                    client.selected_item,
+                    client.selected_area,
+                    client.logout_timer,
+                    client.pending_local_idle_request,
+                    client.report_abuse_com_id,
+                    client.report_abuse_mute_option,
+                ) = action_controls;
+                (
+                    client.side_modal_id,
+                    client.chat_modal_id,
+                    client.main_modal_id,
+                    client.resumed_pause_button,
+                ) = modal_state;
+                (
+                    client.chat_public_mode,
+                    client.chat_private_mode,
+                    client.chat_trade_mode,
+                ) = chat_modes;
+                (
+                    client.redraw_chat,
+                    client.redraw_chat_mode,
+                    client.redraw_side,
+                    client.redraw_icons,
+                    client.redraw_frame,
+                ) = redraw_state;
+            }
+            client.action_out = Some(staged);
+            result
+        })
+    }
+
     /// Whether the session that just ended may be resumed with a reconnect
     /// (opcode 18). True only after an in-world connection loss under an
     /// external owner (Java `lostCon`, `Client.ts:2679-2706`): the map is
@@ -1931,9 +2298,13 @@ impl Client {
             return CheatSend::Refused(CheatRefusal::NotIngame);
         }
         let opcode = self.client_opcode(ClientProt::CLIENT_CHEAT);
-        self.out.p1_enc(opcode);
-        self.out.p1((command.len() + 1) as i32);
-        self.out.pjstr(command);
+        if !self.encode_output(|out| {
+            out.p1_enc(opcode);
+            out.p1((command.len() + 1) as i32);
+            out.pjstr(command);
+        }) {
+            return CheatSend::Refused(CheatRefusal::NotIngame);
+        }
         self.cheat_packets_sent = self.cheat_packets_sent.saturating_add(1);
         CheatSend::Sent
     }
@@ -2218,9 +2589,13 @@ impl Client {
             obj_drag_cycles: 0,
             bank_arrange_mode: 0,
 
-            out: Packet::alloc(1),
+            out: {
+                let mut out = Packet::alloc(1);
+                out.require_output_reservation();
+                out
+            },
             r#in: Packet::alloc(1),
-            ptype: 0,
+            ptype: -1,
             ptype0: 0,
             ptype1: 0,
             ptype2: 0,
@@ -2229,10 +2604,26 @@ impl Client {
             r289_packet_reset: false,
             pending_local_idle_request: false,
             session_exit_reason: None,
+            outbound_overflow: None,
+            outbound_encoder_defect: false,
+            output_closed: false,
+            output_epoch: 0,
+            output_scope_epoch: 0,
+            output_scope_depth: 0,
+            defer_route_output: false,
+            pending_social_mutation: None,
+            pending_varp_update: None,
+            pending_report_abuse_input: None,
+            pending_logout_action: false,
+            action_out: {
+                let mut output = Packet::alloc(1);
+                output.reserve_output_opcode_markers();
+                Some(output)
+            },
+            pending_output_route: None,
             session_resumable: false,
             session_frames: 0,
             recent_frames: RecentFrames::default(),
-
             stream: None,
             on_demand: construction.on_demand,
             staffmodlevel: 0,
@@ -2515,31 +2906,83 @@ impl Client {
         port: u16,
         path: &str,
     ) -> Option<Vec<u8>> {
-        Self::http_get_to(transport, host, (host, port), path)
+        Self::http_get_to(transport, host, port, path)
     }
 
-    /// [`Self::http_get_for`] that connects to `target`; `host` names the
-    /// server in the request and for TLS.
+    /// [`Self::http_get_for`] by unresolved host and port, allowing the
+    /// installed host hook to own name lookup and transport.
     fn http_get_to(
         transport: crate::Transport,
         host: &str,
-        target: impl std::net::ToSocketAddrs,
+        port: u16,
         path: &str,
     ) -> Option<Vec<u8>> {
         if transport.uses_tls() {
-            Self::https_get_to(host, target, path, None)
+            Self::https_get_to(transport, host, port, path, None, None)
         } else {
-            Self::http_get_plain_to(host, target, path)
+            Self::http_get_plain_to(transport, host, port, path)
+        }
+    }
+
+    /// Fetch using addresses the caller has already resolved.
+    fn http_get_resolved(
+        transport: crate::Transport,
+        host: &str,
+        addrs: &[std::net::SocketAddr],
+        path: &str,
+    ) -> Option<Vec<u8>> {
+        if let Some(network) = installed_host_network() {
+            return network
+                .fetch_http_blocking_resolved(transport, host, addrs, path, None, None)
+                .ok();
+        }
+
+        #[cfg(feature = "standalone-native-transport")]
+        {
+            if transport.uses_tls() {
+                Self::https_get_native(host, addrs, path, None)
+            } else {
+                Self::http_get_plain_native(addrs, host, path)
+            }
+        }
+
+        #[cfg(not(feature = "standalone-native-transport"))]
+        {
+            None
         }
     }
 
     fn http_get_plain(host: &str, port: u16, path: &str) -> Option<Vec<u8>> {
-        Self::http_get_plain_to(host, (host, port), path)
+        Self::http_get_plain_to(crate::Transport::Tcp, host, port, path)
     }
 
     fn http_get_plain_to(
+        transport: crate::Transport,
         host: &str,
+        port: u16,
+        path: &str,
+    ) -> Option<Vec<u8>> {
+        if let Some(network) = installed_host_network() {
+            return network
+                .fetch_http_blocking(transport, host, port, path, None, None)
+                .ok();
+        }
+
+        #[cfg(feature = "standalone-native-transport")]
+        {
+            Self::http_get_plain_native((host, port), host, path)
+        }
+
+        #[cfg(not(feature = "standalone-native-transport"))]
+        {
+            None
+        }
+    }
+
+    #[cfg(feature = "standalone-native-transport")]
+    fn http_get_plain_native(
         target: impl std::net::ToSocketAddrs,
+        host: &str,
         path: &str,
     ) -> Option<Vec<u8>> {
         use std::io::{Read, Write};
@@ -2551,16 +2994,34 @@ impl Client {
         Self::split_http_body(&buf)
     }
 
-    fn https_get(
+    fn https_get_to(
+        transport: crate::Transport,
         host: &str,
         port: u16,
         path: &str,
         login_key_timeout: Option<Duration>,
+        cancel: Option<&LoginCancel>,
     ) -> Option<Vec<u8>> {
-        Self::https_get_to(host, (host, port), path, login_key_timeout)
+        if let Some(network) = installed_host_network() {
+            let login_key_class = login_key_timeout.map(|_| Instant::now());
+            return network
+                .fetch_http_blocking(transport, host, port, path, login_key_class, cancel)
+                .ok();
+        }
+
+        #[cfg(feature = "standalone-native-transport")]
+        {
+            Self::https_get_native(host, (host, port), path, login_key_timeout)
+        }
+
+        #[cfg(not(feature = "standalone-native-transport"))]
+        {
+            None
+        }
     }
 
-    fn https_get_to(
+    #[cfg(feature = "standalone-native-transport")]
+    fn https_get_native(
         host: &str,
         target: impl std::net::ToSocketAddrs,
         path: &str,
@@ -2629,12 +3090,37 @@ impl Client {
         host: &str,
         port: u16,
     ) -> Option<String> {
+        Self::fetch_login_modulus_for_with_cancel(transport, host, port, None)
+    }
+
+    /// Fetch the login key with cancellation owned by the caller.
+    ///
+    /// For a TLS fetch the installed host network receives `cancel` and can
+    /// wake its HTTP result-cell wait when the attempt is stopped. Plain HTTP
+    /// continues to use the ordinary blocking fetch.
+    pub fn fetch_login_modulus_for_cancellable(
+        transport: crate::Transport,
+        host: &str,
+        port: u16,
+        cancel: &LoginCancel,
+    ) -> Option<String> {
+        Self::fetch_login_modulus_for_with_cancel(transport, host, port, Some(cancel))
+    }
+
+    fn fetch_login_modulus_for_with_cancel(
+        transport: crate::Transport,
+        host: &str,
+        port: u16,
+        cancel: Option<&LoginCancel>,
+    ) -> Option<String> {
         let body = if transport.uses_tls() {
-            Self::https_get(
+            Self::https_get_to(
+                transport,
                 host,
                 port,
                 "/client/client.js",
                 Some(Duration::from_secs(2)),
+                cancel,
             )?
         } else {
             Self::http_get_plain(host, port, "/client/client.js")?
@@ -2665,18 +3151,19 @@ impl Client {
         host: &str,
         port: u16,
     ) -> Result<[i32; 9], AssetFetchError> {
-        Self::get_jag_checksums_at(transport, host, (host, port))
+        let body = Self::http_get_to(transport, host, port, "/crc")
+            .ok_or(AssetFetchError::Connection)?;
+        Self::parse_jag_checksums(body).map_err(|_| AssetFetchError::Checksum)
     }
 
-    /// [`Self::get_jag_checksums_checked`] from the addresses in `target`,
-    /// which the caller looked up; `host` names the server in the request
-    /// and for TLS.
+    /// [`Self::get_jag_checksums_checked`] from addresses already resolved by
+    /// the caller; `host` names the server in the request and for TLS.
     pub(crate) fn get_jag_checksums_at(
         transport: crate::Transport,
         host: &str,
-        target: impl std::net::ToSocketAddrs,
+        addrs: &[std::net::SocketAddr],
     ) -> Result<[i32; 9], AssetFetchError> {
-        let body = Self::http_get_to(transport, host, target, "/crc")
+        let body = Self::http_get_resolved(transport, host, addrs, "/crc")
             .ok_or(AssetFetchError::Connection)?;
         Self::parse_jag_checksums(body).map_err(|_| AssetFetchError::Checksum)
     }
@@ -3387,15 +3874,28 @@ impl Client {
     /// tests can pin the per-client uid in the wrapper bytes (the uid sits
     /// at offset 17, inside the block `rsaenc` ciphertexts).
     pub fn write_login_block(&mut self, seed: [i32; 4], username: &str, password: &str) {
-        self.out.pos = 0;
-        self.out.p1(10);
-        self.out.p4(seed[0]);
-        self.out.p4(seed[1]);
-        self.out.p4(seed[2]);
-        self.out.p4(seed[3]);
-        self.out.p4(self.login_uid);
-        self.out.pjstr(username);
-        self.out.pjstr(password);
+        let login_uid = self.login_uid;
+        self.out.write_unreserved(|out| {
+            Self::write_login_block_to(out, login_uid, seed, username, password);
+        });
+    }
+
+    fn write_login_block_to(
+        out: &mut Packet,
+        login_uid: i32,
+        seed: [i32; 4],
+        username: &str,
+        password: &str,
+    ) {
+        out.pos = 0;
+        out.p1(10);
+        out.p4(seed[0]);
+        out.p4(seed[1]);
+        out.p4(seed[2]);
+        out.p4(seed[3]);
+        out.p4(login_uid);
+        out.pjstr(username);
+        out.pjstr(password);
     }
 
     /// The next [`Client::login`] stops all of its socket I/O at `deadline`:
@@ -3415,6 +3915,68 @@ impl Client {
     /// an attempt whose turn ran out before it lets the next one start.
     pub fn set_login_cancel(&mut self, cancel: LoginCancel) {
         self.login_cancel = Some(cancel);
+    }
+
+    /// Seal a hosted login candidate before Play validates its Phase-C commit.
+    pub fn seal_host_login(&mut self) -> io::Result<crate::io::host_network::SealReceipt> {
+        self.stream
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "login stream is absent"))?
+            .seal_host_login()
+    }
+
+    /// Commit a sealed hosted login and clear its deadline only after commit.
+    pub fn commit_host_login(
+        &mut self,
+        receipt: crate::io::host_network::SealReceipt,
+    ) -> io::Result<()> {
+        let stream = self
+            .stream
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "login stream is absent"))?;
+        stream.commit_host_login(receipt)?;
+        stream.set_deadline(None)
+    }
+
+    /// Close the candidate as a committed session when Phase-C transport
+    /// acknowledgement fails. The caller reports the session loss; it must
+    /// not retry this login.
+    pub fn close_failed_host_commit_as_session(&mut self) {
+        if let Some(mut stream) = self.stream.take() {
+            stream.close_as_session();
+        }
+        self.ingame = false;
+        self.baton = false;
+        self.session_resumable = false;
+        self.pending_local_idle_request = false;
+    }
+
+    /// Whether this client currently retains a game stream.
+    pub fn has_stream(&self) -> bool {
+        self.stream.is_some()
+    }
+
+    /// Return the opaque host binding for an adopted hosted game stream.
+    pub fn hosted_stream_binding(
+        &self,
+    ) -> Option<crate::io::host_network::HostStreamIdentity> {
+        if !self.baton {
+            return None;
+        }
+        self.stream
+            .as_ref()
+            .and_then(ClientStream::hosted_binding_identity)
+    }
+
+    /// Abort a hosted login before Phase C and reset its candidate session state.
+    pub fn abort_host_login(&mut self) {
+        if let Some(mut stream) = self.stream.take() {
+            stream.close();
+        }
+        self.ingame = false;
+        self.baton = false;
+        self.session_resumable = false;
+        self.pending_local_idle_request = false;
     }
 
     /// Login handshake, 1:1 of `Client.ts` `login` (1719-1867) / Java
@@ -3453,19 +4015,49 @@ impl Client {
         let (transport, host, port) = self.session_game_endpoint();
         let deadline = self.login_deadline.take();
         let cancel = self.login_cancel.take();
-        let connect = || match deadline {
-            Some(deadline) => {
-                ClientStream::connect_until(transport, &host, port, deadline, cancel.as_ref())
+        let connect = || {
+            if installed_host_network().is_some() {
+                let Some(cancel) = cancel.as_ref() else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotConnected,
+                        "hosted login requires an attempt identity",
+                    ));
+                };
+                return match deadline {
+                    Some(deadline) => ClientStream::connect_until(
+                        transport,
+                        &host,
+                        port,
+                        deadline,
+                        Some(cancel),
+                    ),
+                    None => ClientStream::connect_for_cancellable(
+                        transport, &host, port, cancel,
+                    ),
+                };
             }
-            None => ClientStream::connect_for(transport, &host, port).and_then(|mut stream| {
-                match &cancel {
-                    Some(cancel) => stream.attach_cancel(cancel).map(|()| stream),
-                    None => Ok(stream),
+
+            match deadline {
+                Some(deadline) => {
+                    ClientStream::connect_until(transport, &host, port, deadline, cancel.as_ref())
                 }
-            }),
+                None => match &cancel {
+                    Some(cancel) => {
+                        ClientStream::connect_for_cancellable(transport, &host, port, cancel)
+                    }
+                    None => ClientStream::connect_for(transport, &host, port),
+                },
+            }
         };
         let adopted = if reuse { self.stream.take() } else { None };
         let opened = match adopted {
+            Some(mut adopted) if adopted.is_hosted() => match &cancel {
+                Some(cancel) => adopted.rebind_hosted(deadline, cancel).map(|()| adopted),
+                None => Err(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "hosted Rebind requires an attempt identity",
+                )),
+            },
             Some(mut adopted) => adopted
                 .set_deadline(deadline)
                 .and_then(|()| match &cancel {
@@ -3485,11 +4077,11 @@ impl Client {
         let userhash = JString::to_userhash(username);
         let login_server = ((userhash >> 16) & 0x1f) as i32;
 
-        self.out.pos = 0;
-        self.out.p1(14);
-        self.out.p1(login_server);
+        let mut hello = Packet::alloc(0);
+        hello.p1(14);
+        hello.p1(login_server);
         stream
-            .write(self.out.data(), 2)
+            .write(hello.data(), hello.pos)
             .map_err(|e| self.fail_title_login(io_error(LoginStage::SendHello, &e), reconnect))?;
 
         for _ in 0..8 {
@@ -3519,13 +4111,14 @@ impl Client {
                 (login_seed & 0xffff_ffff) as i32,
             ];
 
-            self.write_login_block(seed, username, password);
+            let mut login_block = Packet::alloc(1);
+            Self::write_login_block_to(&mut login_block, self.login_uid, seed, username, password);
             if let Some(profile) = &self.session_profile {
                 let (n, e) = profile.rsa_biguints();
-                self.out.rsaenc(n, e);
+                login_block.rsaenc(n, e);
             } else {
                 let (n, e) = login_rsa::active_biguints();
-                self.out.rsaenc(&n, &e);
+                login_block.rsaenc(&n, &e);
             }
 
             let mut loginout = Packet::alloc(1);
@@ -3534,7 +4127,7 @@ impl Client {
             } else {
                 loginout.p1(16);
             }
-            loginout.p1((self.out.pos + 36 + 1 + 1 + 2) as i32);
+            loginout.p1((login_block.pos + 36 + 1 + 1 + 2) as i32);
             loginout.p1(255);
             // 274 default / 289 explicit session profile (client.java:8378 p2 289).
             loginout.p2(self.revision.as_i32());
@@ -3542,7 +4135,7 @@ impl Client {
             for i in 0..9 {
                 loginout.p4(self.jag_checksum[i]);
             }
-            loginout.pdata(self.out.data(), 0, self.out.pos);
+            loginout.pdata(login_block.data(), 0, login_block.pos);
 
             self.out.random = Some(Isaac::new(&seed));
             for s in seed.iter_mut() {
@@ -3602,15 +4195,18 @@ impl Client {
             self.mouse_tracked = stream.read().map_err(|e| {
                 self.fail_title_login(io_error(LoginStage::ReadAccept, &e), reconnect)
             })? == 1;
-            // The session reads with the plain 30 s timeout from here on.
-            stream.set_deadline(None).map_err(|e| {
-                self.fail_title_login(io_error(LoginStage::ReadAccept, &e), reconnect)
-            })?;
+            // Standalone streams switch to their session timeout here.
+            // Hosted candidates retain the login deadline until Host Play
+            // commits the post-login handoff in Phase C.
+            if !stream.is_hosted() {
+                stream.set_deadline(None).map_err(|e| {
+                    self.fail_title_login(io_error(LoginStage::ReadAccept, &e), reconnect)
+                })?;
+            }
             if self.revision.is_289() {
                 self.cold_login_input_289();
             }
             self.ingame = true;
-            self.out.pos = 0;
             self.r#in.pos = 0;
             self.ptype = -1;
             self.ptype0 = -1;
@@ -3673,6 +4269,7 @@ impl Client {
             self.local_player = Some(player);
             self.reset_packet_observations();
             self.gens.session = self.gens.session.wrapping_add(1);
+            self.begin_output_epoch();
             self.session_start_gens = self.gens;
             // Java `Client.java` 3700: `prepareGame()` rebuilds the game
             // frame the title draw consumed (Task 4b nulls the game areas,
@@ -3688,11 +4285,12 @@ impl Client {
             // Java `Client.java` 3737: reconnect grant. Same buffer/state
             // reset as response 2 minus the cold-login field init — Java
             // keeps `localPlayer`/`players` and never touches `logoutTimer`.
-            stream.set_deadline(None).map_err(|e| {
-                self.fail_title_login(io_error(LoginStage::ReadResponse, &e), reconnect)
-            })?;
+            if !stream.is_hosted() {
+                stream.set_deadline(None).map_err(|e| {
+                    self.fail_title_login(io_error(LoginStage::ReadResponse, &e), reconnect)
+                })?;
+            }
             self.ingame = true;
-            self.out.pos = 0;
             self.r#in.pos = 0;
             self.ptype = -1;
             self.ptype0 = -1;
@@ -3707,6 +4305,7 @@ impl Client {
             self.scene_load_start_time = Instant::now();
             self.reset_packet_observations();
             self.gens.session = self.gens.session.wrapping_add(1);
+            self.begin_output_epoch();
             self.session_start_gens = self.gens;
             self.stream = Some(stream);
             return Ok(());
@@ -3770,10 +4369,11 @@ impl Client {
                 "Please try using a different world.".into(),
             ),
         };
-        // A refused socket carries no session; if resetting its timeout
-        // fails, its reads only keep timing out.
-        let _ = stream.set_deadline(None);
-        self.stream = Some(stream);
+        // A refused standalone socket carries no session. Hosted candidates
+        // remain deadline-bound until Host Play aborts or commits them.
+        if !stream.is_hosted() {
+            let _ = stream.set_deadline(None);
+        }
         let mut error = LoginError::response(response, mes1, mes2);
         if response == -1 {
             // `read` reports end of stream as -1: the server hung up instead
@@ -3874,10 +4474,16 @@ impl Client {
     /// trailing `use_mode`/`target_mode` wipe so Use/Target stays armed.
     #[allow(non_snake_case)] // Java name kept for the RawClient mapping
     pub fn doAction(&mut self, option_id: i32) {
+        if option_id < 0 || self.output_closed {
+            return;
+        }
+        self.with_staged_output(true, |client| client.do_action_impl(option_id));
+    }
+
+    fn do_action_impl(&mut self, option_id: i32) {
         if option_id < 0 {
             return;
         }
-
         // TS 8553-8556: an open enter-name dialog closes on any action.
         if self.dialog_input_open {
             self.dialog_input_open = false;
@@ -4548,9 +5154,7 @@ impl Client {
                 if script.first() == Some(&5) {
                     let varp = script.get(1).copied().unwrap_or(0);
                     let current = self.var.get(varp as usize).copied().unwrap_or(0);
-                    grow_write(&mut self.var, varp, 1 - current);
-                    self.client_var(varp);
-                    self.redraw_side = true;
+                    self.pending_varp_update = Some((varp, 1 - current));
                 }
             }
         }
@@ -4571,9 +5175,7 @@ impl Client {
                     let varp = script.get(1).copied().unwrap_or(0);
                     if let Some(operand) = operand {
                         if self.var.get(varp as usize).copied() != Some(operand) {
-                            grow_write(&mut self.var, varp, operand);
-                            self.client_var(varp);
-                            self.redraw_side = true;
+                            self.pending_varp_update = Some((varp, operand));
                         }
                     }
                 }
@@ -4598,7 +5200,7 @@ impl Client {
             let option = self.menu_option[option_id as usize].clone();
             if let Some(tag) = option.find("@whi@") {
                 self.close_modal();
-                self.report_abuse_input = option[tag + 5..].trim().to_string();
+                self.pending_report_abuse_input = Some(option[tag + 5..].trim().to_string());
                 self.report_abuse_mute_option = false;
                 let report = self
                     .ifaces_merged()
@@ -4822,6 +5424,63 @@ impl Client {
         forceapproach: i32,
         r#type: i32,
     ) -> bool {
+        if self.output_closed || !self.output_scope_is_current() {
+            return false;
+        }
+        self.with_output_scope(|client| {
+            let (player_x, player_z) = client
+                .local_player
+                .as_ref()
+                .map_or((0, 0), |player| (player.x, player.z));
+            let trailer = if r#type == 1 {
+                let (x, y) =
+                    Self::minimap_hit(client.shell.mouse_click_x, client.shell.mouse_click_y)
+                        .unwrap_or((0, 0));
+                Some(MinimapTrailer {
+                    x,
+                    y,
+                    camera_yaw: client.orbit_camera_yaw,
+                    angle: client.macro_minimap_angle,
+                    zoom: client.macro_minimap_zoom,
+                    player_x,
+                    player_z,
+                })
+            } else {
+                None
+            };
+            client.try_move_impl(
+                src_x,
+                src_z,
+                dx,
+                dz,
+                try_nearest,
+                loc_width,
+                loc_length,
+                loc_angle,
+                loc_shape,
+                forceapproach,
+                r#type,
+                trailer,
+            )
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn try_move_impl(
+        &mut self,
+        src_x: i32,
+        src_z: i32,
+        dx: i32,
+        dz: i32,
+        try_nearest: bool,
+        loc_width: i32,
+        loc_length: i32,
+        loc_angle: i32,
+        loc_shape: i32,
+        forceapproach: i32,
+        r#type: i32,
+        trailer: Option<MinimapTrailer>,
+    ) -> bool {
         let collision_map = &self.collision[self.minusedlevel as usize];
         let scene_width = BuildArea::SIZE;
         let scene_length = BuildArea::SIZE;
@@ -5012,7 +5671,7 @@ impl Client {
             }
         }
 
-        self.try_move_nearest = 0;
+        let mut try_move_nearest = 0;
 
         if !arrived {
             if try_nearest {
@@ -5026,7 +5685,7 @@ impl Client {
                                     min = self.dist_map[index];
                                     x = px;
                                     z = pz;
-                                    self.try_move_nearest = 1;
+                                    try_move_nearest = 1;
                                     arrived = true;
                                 }
                             }
@@ -5039,6 +5698,7 @@ impl Client {
             }
 
             if !arrived {
+                self.try_move_nearest = 0;
                 return false;
             }
         }
@@ -5046,7 +5706,7 @@ impl Client {
         // Full BFS tile list (every step dest→src, reversed to src→dest)
         // for nav debug. The waypoint loop below only records direction
         // changes for the MOVE packet.
-        self.try_move_path = Self::try_move_tiles(&self.dir_map, x, z, src_x, src_z);
+        let path = Self::try_move_tiles(&self.dir_map, x, z, src_x, src_z);
 
         length = 0;
         self.route_x[length] = x;
@@ -5121,46 +5781,55 @@ impl Client {
                 }
             }
 
-            match r#type {
-                0 => {
-                    self.out
-                        .p1_enc(self.client_opcode(ClientProt::MOVE_GAMECLICK));
-                    self.out.p1((buffer_size + buffer_size + 3) as i32);
-                }
-                1 => {
-                    self.out
-                        .p1_enc(self.client_opcode(ClientProt::MOVE_MINIMAPCLICK));
-                    self.out.p1((buffer_size + buffer_size + 3 + 14) as i32);
-                }
-                2 => {
-                    self.out
-                        .p1_enc(self.client_opcode(ClientProt::MOVE_OPCLICK));
-                    self.out.p1((buffer_size + buffer_size + 3) as i32);
-                }
-                _ => {}
-            }
-
-            if self.shell.key_held[5] == 1 {
-                self.out.p1(1);
-            } else {
-                self.out.p1(0);
-            }
-
-            self.out.p2(start_x + self.map_build_base_x);
-            self.out.p2(start_z + self.map_build_base_z);
-
-            self.minimap_flag_x = self.route_x[0];
-            self.minimap_flag_z = self.route_z[0];
-
+            let opcode = match r#type {
+                0 => Some(self.client_opcode(ClientProt::MOVE_GAMECLICK)),
+                1 => Some(self.client_opcode(ClientProt::MOVE_MINIMAPCLICK)),
+                2 => Some(self.client_opcode(ClientProt::MOVE_OPCLICK)),
+                _ => None,
+            };
+            let mut deltas = [0i8; 48];
+            let mut delta_count = 0;
             let mut i = 1;
             while i < buffer_size {
                 length -= 1;
-                self.out.p1(self.route_x[length] - start_x);
-                self.out.p1(self.route_z[length] - start_z);
+                deltas[delta_count] = (self.route_x[length] - start_x) as i8;
+                deltas[delta_count + 1] = (self.route_z[length] - start_z) as i8;
+                delta_count += 2;
                 i += 1;
             }
-
-            return true;
+            let route = PendingRoute {
+                opcode,
+                payload_length: (buffer_size
+                    + buffer_size
+                    + 3
+                    + if trailer.is_some() { 14 } else { 0 })
+                    as i32,
+                prefix_len: self.out.pos,
+                run: i32::from(self.shell.key_held[5] == 1),
+                start_x,
+                start_z,
+                base_x: self.map_build_base_x,
+                base_z: self.map_build_base_z,
+                deltas,
+                delta_count,
+                trailer,
+                minimap_flag_x: self.route_x[0],
+                minimap_flag_z: self.route_z[0],
+                try_move_nearest,
+                path,
+            };
+            if self.defer_route_output {
+                self.pending_output_route = Some(route);
+                return true;
+            }
+            let accepted = self.encode_output(|out| route.encode(out));
+            if accepted {
+                self.try_move_path = route.path;
+                self.minimap_flag_x = route.minimap_flag_x;
+                self.minimap_flag_z = route.minimap_flag_z;
+                self.try_move_nearest = route.try_move_nearest;
+            }
+            return accepted;
         }
 
         r#type != 1
@@ -6307,6 +6976,29 @@ impl Client {
     /// Java client.java:3159-3183, applied only after exact-frame decode.
     /// DNS is optional lifecycle-owned display state, not packet-time IO.
     fn apply_last_login_info(&mut self, info: LastLoginInfo) -> R289Publication {
+        let closes_modal = info.ip != 0 && self.main_modal_id == -1;
+        let welcome_interface_id = if closes_modal {
+            let client_code = if info.recovery_days != 201 || info.members_warning == 1 {
+                655
+            } else {
+                650
+            };
+            self.ifaces
+                .iter()
+                .flatten()
+                .find(|component| component.client_code == client_code)
+                .map(|component| component.layer_id)
+                .unwrap_or(-1)
+        } else {
+            -1
+        };
+        if closes_modal {
+            let opcode = self.client_opcode(ClientProt::CLOSE_MODAL);
+            if !self.encode_output(|out| out.p1_enc(opcode)) {
+                return R289Publication::default();
+            }
+        }
+
         self.last_login_ip = info.ip;
         self.days_since_login = info.days;
         self.days_since_recovery_change = info.recovery_days;
@@ -6315,11 +7007,9 @@ impl Client {
         self.last_login_dns_display = None;
         self.welcome_interface_id = -1;
         let mut publication = R289Publication::default();
-        if self.last_login_ip != 0 && self.main_modal_id == -1 {
-            // Java method110, not the inbound IF_CLOSE operation: emit the
-            // close acknowledgement, retain count-dialog state, and only
-            // clear resumed pause when a side/chat modal was closed.
-            self.out.p1_enc(self.client_opcode(ClientProt::CLOSE_MODAL));
+        if closes_modal {
+            // Java method110 emits the close acknowledgement before changing
+            // the modal state; a refused append above leaves the UI untouched.
             if self.side_modal_id != -1 {
                 self.side_modal_id = -1;
                 self.redraw_side = true;
@@ -6331,23 +7021,8 @@ impl Client {
                 self.redraw_chat = true;
                 self.resumed_pause_button = false;
             }
-            // Closing alone is an iface effect, even with no matching welcome
-            // component. Conservative once-per-operation publication also
-            // covers the report state reset and an already-closed UI.
             publication.iface = true;
-            let client_code = if self.days_since_recovery_change != 201 || self.members_warning == 1
-            {
-                655
-            } else {
-                650
-            };
-            self.welcome_interface_id = self
-                .ifaces
-                .iter()
-                .flatten()
-                .find(|component| component.client_code == client_code)
-                .map(|component| component.layer_id)
-                .unwrap_or(-1);
+            self.welcome_interface_id = welcome_interface_id;
             if self.welcome_interface_id != -1 {
                 self.main_modal_id = self.welcome_interface_id;
                 self.redraw_frame = true;
@@ -6441,12 +7116,62 @@ impl Client {
         }
     }
 
+    fn apply_pending_social_mutation(&mut self, mutation: PendingSocialMutation) {
+        match mutation {
+            PendingSocialMutation::AddFriend {
+                userhash,
+                display_name,
+            } => {
+                let index = self.friend_count as usize;
+                self.friend_username[index] = display_name;
+                self.friend_userhash[index] = userhash;
+                self.friend_node_id[index] = 0;
+                self.friend_count += 1;
+                self.redraw_side = true;
+            }
+            PendingSocialMutation::AddIgnore(userhash) => {
+                self.ignore_userhash[self.ignore_count as usize] = userhash;
+                self.ignore_count += 1;
+                self.redraw_side = true;
+            }
+            PendingSocialMutation::DelFriend(userhash) => {
+                if let Some(index) =
+                    (0..self.friend_count).find(|&i| self.friend_userhash[i as usize] == userhash)
+                {
+                    self.friend_count -= 1;
+                    self.redraw_side = true;
+                    for i in index..self.friend_count {
+                        self.friend_username[i as usize] =
+                            std::mem::take(&mut self.friend_username[(i + 1) as usize]);
+                        self.friend_node_id[i as usize] = self.friend_node_id[(i + 1) as usize];
+                        self.friend_userhash[i as usize] = self.friend_userhash[(i + 1) as usize];
+                    }
+                }
+            }
+            PendingSocialMutation::DelIgnore(userhash) => {
+                if let Some(index) =
+                    (0..self.ignore_count).find(|&i| self.ignore_userhash[i as usize] == userhash)
+                {
+                    self.ignore_count -= 1;
+                    self.redraw_side = true;
+                    for i in index..self.ignore_count {
+                        self.ignore_userhash[i as usize] = self.ignore_userhash[(i + 1) as usize];
+                    }
+                }
+            }
+        }
+    }
+
     /// `addFriend` from client-ts (11492): check the free/member cap, the
     /// friend and ignore lists, then add locally and send `FRIENDLIST_ADD`
     /// with the p8 userhash. A hash of 0 is ignored (TS). The two identical
     /// cap messages are kept as TS branches them.
-    #[allow(clippy::if_same_then_else)]
     pub fn add_friend(&mut self, userhash: i64) {
+        self.with_staged_output(false, |client| client.add_friend_impl(userhash));
+    }
+
+    #[allow(clippy::if_same_then_else)]
+    fn add_friend_impl(&mut self, userhash: i64) {
         if userhash == 0 {
             return;
         }
@@ -6490,14 +7215,13 @@ impl Client {
             return;
         };
         if display_name != local_name {
-            self.friend_username[self.friend_count as usize] = display_name;
-            self.friend_userhash[self.friend_count as usize] = userhash;
-            self.friend_node_id[self.friend_count as usize] = 0;
-            self.friend_count += 1;
-            self.redraw_side = true;
-            self.out
-                .p1_enc(self.client_opcode(ClientProt::FRIENDLIST_ADD));
+            let opcode = self.client_opcode(ClientProt::FRIENDLIST_ADD);
+            self.out.p1_enc(opcode);
             self.out.p8(userhash);
+            self.pending_social_mutation = Some(PendingSocialMutation::AddFriend {
+                userhash,
+                display_name,
+            });
         }
     }
 
@@ -6505,6 +7229,10 @@ impl Client {
     /// lists, then add locally and send `IGNORELIST_ADD` with the p8
     /// userhash. A hash of 0 is ignored (TS).
     pub fn add_ignore(&mut self, userhash: i64) {
+        self.with_staged_output(false, |client| client.add_ignore_impl(userhash));
+    }
+
+    fn add_ignore_impl(&mut self, userhash: i64) {
         if userhash == 0 {
             return;
         }
@@ -6533,34 +7261,29 @@ impl Client {
                 return;
             }
         }
-        self.ignore_userhash[self.ignore_count as usize] = userhash;
-        self.ignore_count += 1;
-        self.redraw_side = true;
-        self.out
-            .p1_enc(self.client_opcode(ClientProt::IGNORELIST_ADD));
+        let opcode = self.client_opcode(ClientProt::IGNORELIST_ADD);
+        self.out.p1_enc(opcode);
         self.out.p8(userhash);
+        self.pending_social_mutation = Some(PendingSocialMutation::AddIgnore(userhash));
     }
 
     /// `delFriend` from client-ts (11568): shift the friend arrays down over
     /// the removed hash and send `FRIENDLIST_DEL` with the p8 userhash. A
     /// hash of 0 is ignored (TS).
     pub fn del_friend(&mut self, userhash: i64) {
+        self.with_staged_output(false, |client| client.del_friend_impl(userhash));
+    }
+
+    fn del_friend_impl(&mut self, userhash: i64) {
         if userhash == 0 {
             return;
         }
         for i in 0..self.friend_count {
             if self.friend_userhash[i as usize] == userhash {
-                self.friend_count -= 1;
-                self.redraw_side = true;
-                for j in i..self.friend_count {
-                    self.friend_username[j as usize] =
-                        std::mem::take(&mut self.friend_username[(j + 1) as usize]);
-                    self.friend_node_id[j as usize] = self.friend_node_id[(j + 1) as usize];
-                    self.friend_userhash[j as usize] = self.friend_userhash[(j + 1) as usize];
-                }
-                self.out
-                    .p1_enc(self.client_opcode(ClientProt::FRIENDLIST_DEL));
+                let opcode = self.client_opcode(ClientProt::FRIENDLIST_DEL);
+                self.out.p1_enc(opcode);
                 self.out.p8(userhash);
+                self.pending_social_mutation = Some(PendingSocialMutation::DelFriend(userhash));
                 return;
             }
         }
@@ -6570,19 +7293,19 @@ impl Client {
     /// the removed hash and send `IGNORELIST_DEL` with the p8 userhash. A
     /// hash of 0 is ignored (TS).
     pub fn del_ignore(&mut self, userhash: i64) {
+        self.with_staged_output(false, |client| client.del_ignore_impl(userhash));
+    }
+
+    fn del_ignore_impl(&mut self, userhash: i64) {
         if userhash == 0 {
             return;
         }
         for i in 0..self.ignore_count {
             if self.ignore_userhash[i as usize] == userhash {
-                self.ignore_count -= 1;
-                self.redraw_side = true;
-                for j in i..self.ignore_count {
-                    self.ignore_userhash[j as usize] = self.ignore_userhash[(j + 1) as usize];
-                }
-                self.out
-                    .p1_enc(self.client_opcode(ClientProt::IGNORELIST_DEL));
+                let opcode = self.client_opcode(ClientProt::IGNORELIST_DEL);
+                self.out.p1_enc(opcode);
                 self.out.p8(userhash);
+                self.pending_social_mutation = Some(PendingSocialMutation::DelIgnore(userhash));
                 return;
             }
         }
@@ -6890,11 +7613,17 @@ impl Client {
                             com.swap_slots(src, dst);
                         }
                     }
-                    self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTOND));
-                    self.out.p2(self.obj_drag_com_id);
-                    self.out.p2(self.obj_drag_slot);
-                    self.out.p2(self.hovered_slot);
-                    self.out.p1(mode);
+                    let opcode = self.client_opcode(ClientProt::INV_BUTTOND);
+                    let component = self.obj_drag_com_id;
+                    let source = self.obj_drag_slot;
+                    let target = self.hovered_slot;
+                    let _ = self.encode_output(|out| {
+                        out.p1_enc(opcode);
+                        out.p2(component);
+                        out.p2(source);
+                        out.p2(target);
+                        out.p1(mode);
+                    });
                 }
             }
         } else if (self.one_mouse_button == 1
@@ -6967,6 +7696,10 @@ impl Client {
     /// prompt and falls through); logout and accept-design return `true`
     /// and the click is sent.
     pub fn client_button(&mut self, com_id: i32) -> bool {
+        self.with_staged_output(false, |client| client.client_button_impl(com_id))
+    }
+
+    fn client_button_impl(&mut self, com_id: i32) -> bool {
         let Some(client_code) = self.if_(com_id as usize).map(|com| com.client_code) else {
             return false;
         };
@@ -6989,8 +7722,7 @@ impl Client {
         }
 
         if client_code == CC_LOGOUT {
-            self.pending_local_idle_request = false;
-            self.logout_timer = 250;
+            self.pending_logout_action = true;
             return true;
         } else if client_code == CC_ADD_IGNORE {
             self.redraw_chat = true;
@@ -7370,6 +8102,10 @@ impl Client {
     /// `redrawSide`/`redrawIcons`/`redrawChat`. Not to be confused with the
     /// incoming-server `apply_if_close`.
     fn close_modal(&mut self) {
+        self.with_staged_output(false, |client| client.close_modal_impl());
+    }
+
+    fn close_modal_impl(&mut self) {
         self.out.p1_enc(self.client_opcode(ClientProt::CLOSE_MODAL));
         if self.side_modal_id != -1 {
             self.side_modal_id = -1;
@@ -10900,6 +11636,10 @@ impl Client {
     /// first interface with client code 600. `reportAbuseInput`,
     /// `reportAbuseMuteOption` and `reportAbuseComId` are not ported.
     pub fn chat_mode_loop(&mut self) {
+        self.with_staged_output(false, |client| client.chat_mode_loop_impl());
+    }
+
+    fn chat_mode_loop_impl(&mut self) {
         if self.shell.mouse_click_button != 1 {
             return;
         }
@@ -10979,12 +11719,17 @@ impl Client {
     pub fn handle_chat_input(&mut self) {
         if self.revision.is_289() {
             // J:10743-10750: count poll calls, not queued characters.
-            self.outbound_289.cyclelogic4 += 1;
-            if self.outbound_289.cyclelogic4 > 192 {
-                self.outbound_289.cyclelogic4 = 0;
-                self.out
-                    .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC4));
-                self.out.p1(232);
+            let next_cycle = self.outbound_289.cyclelogic4 + 1;
+            if next_cycle > 192 {
+                let opcode = self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC4);
+                if self.encode_output(|out| {
+                    out.p1_enc(opcode);
+                    out.p1(232);
+                }) {
+                    self.outbound_289.cyclelogic4 = 0;
+                }
+            } else {
+                self.outbound_289.cyclelogic4 = next_cycle;
             }
         }
         loop {
@@ -11009,6 +11754,7 @@ impl Client {
                 self.redraw_chat = true;
             }
             if key == 13 || key == 10 {
+                let social_epoch = self.output_epoch;
                 self.social_input_open = false;
                 self.redraw_chat = true;
 
@@ -11024,28 +11770,44 @@ impl Client {
                     && !self.social_input.is_empty()
                     && self.social_userhash != 0
                 {
-                    self.out
-                        .p1_enc(self.client_opcode(ClientProt::MESSAGE_PRIVATE));
-                    self.out.p1(0);
-                    let start = self.out.pos;
-                    self.out.p8(self.social_userhash);
-                    WordPack::pack(&mut self.out, &self.social_input);
-                    self.out.psize1((self.out.pos - start) as i32);
-
-                    let mut text = JString::to_sentence_case(&self.social_input);
-                    text = WordFilter::filter(&text);
-                    let screen_name =
-                        JString::to_screen_name(&JString::to_raw_username(self.social_userhash));
-                    self.add_chat(6, &text, &screen_name);
-
-                    if self.chat_private_mode == 2 {
-                        self.chat_private_mode = 1;
-                        self.redraw_chat_mode = true;
-                        self.out
-                            .p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
-                        self.out.p1(self.chat_public_mode);
-                        self.out.p1(self.chat_private_mode);
-                        self.out.p1(self.chat_trade_mode);
+                    let private_input = std::mem::take(&mut self.social_input);
+                    let userhash = self.social_userhash;
+                    let public_mode = self.chat_public_mode;
+                    let private_mode = self.chat_private_mode;
+                    let trade_mode = self.chat_trade_mode;
+                    let new_private_mode = if private_mode == 2 { 1 } else { private_mode };
+                    let message_opcode = self.client_opcode(ClientProt::MESSAGE_PRIVATE);
+                    let mode_opcode = self.client_opcode(ClientProt::CHAT_SETMODE);
+                    let action_epoch = self.output_epoch;
+                    let accepted = self.encode_output(|out| {
+                        out.p1_enc(message_opcode);
+                        out.p1(0);
+                        let start = out.pos;
+                        out.p8(userhash);
+                        WordPack::pack_output(out, &private_input);
+                        out.psize1((out.pos - start) as i32);
+                        if private_mode == 2 {
+                            out.p1_enc(mode_opcode);
+                            out.p1(public_mode);
+                            out.p1(new_private_mode);
+                            out.p1(trade_mode);
+                        }
+                    });
+                    if self.output_epoch == action_epoch {
+                        self.social_input = private_input;
+                    }
+                    if accepted {
+                        let mut text = JString::to_sentence_case(&self.social_input);
+                        text = WordFilter::filter(&text);
+                        let screen_name =
+                            JString::to_screen_name(&JString::to_raw_username(userhash));
+                        self.add_chat(6, &text, &screen_name);
+                        if private_mode == 2 {
+                            self.chat_private_mode = new_private_mode;
+                            self.redraw_chat_mode = true;
+                        }
+                    } else if self.output_epoch == action_epoch {
+                        self.social_input_open = true;
                     }
                 }
                 if self.social_input_type == 4 && self.ignore_count < 100 {
@@ -11055,6 +11817,9 @@ impl Client {
                 if self.social_input_type == 5 && self.ignore_count > 0 {
                     let userhash = JString::to_userhash(&self.social_input) as i64;
                     self.del_ignore(userhash);
+                }
+                if self.output_epoch == social_epoch && self.output_closed {
+                    self.social_input_open = true;
                 }
             }
             return;
@@ -11075,15 +11840,20 @@ impl Client {
             }
 
             if key == 13 || key == 10 {
-                if !self.dialog_input.is_empty() {
+                let accepted = if self.dialog_input.is_empty() {
+                    true
+                } else {
                     let value: i32 = self.dialog_input.parse().unwrap_or(0);
-                    self.out
-                        .p1_enc(self.client_opcode(ClientProt::RESUME_P_COUNTDIALOG));
-                    self.out.p4(value);
+                    let opcode = self.client_opcode(ClientProt::RESUME_P_COUNTDIALOG);
+                    self.encode_output(|out| {
+                        out.p1_enc(opcode);
+                        out.p4(value);
+                    })
+                };
+                if accepted {
+                    self.dialog_input_open = false;
+                    self.redraw_chat = true;
                 }
-
-                self.dialog_input_open = false;
-                self.redraw_chat = true;
             }
             return;
         }
@@ -11106,9 +11876,14 @@ impl Client {
         }
 
         if (key == 13 || key == 10) && !self.chat_input.is_empty() {
+            let mut preserve_input = false;
             if self.chat_input.starts_with("::") {
                 let input = std::mem::take(&mut self.chat_input);
-                let _ = self.send_cheat(&input[2..]);
+                let sent = self.send_cheat(&input[2..]);
+                if !matches!(sent, CheatSend::Sent) && self.output_closed {
+                    self.chat_input = input;
+                    preserve_input = true;
+                }
             } else {
                 let mut text = self.chat_input.clone();
                 let mut colour = 0;
@@ -11193,63 +11968,76 @@ impl Client {
                     }
                 }
 
-                self.out
-                    .p1_enc(self.client_opcode(ClientProt::MESSAGE_PUBLIC));
-                self.out.p1(0);
-                let start = self.out.pos;
-                self.out.p1(colour);
-                self.out.p1(effect);
-                WordPack::pack(&mut self.out, &text);
-                self.out.psize1((self.out.pos - start) as i32);
+                let mode_update = self.chat_public_mode == 2;
+                let public_mode = if mode_update {
+                    3
+                } else {
+                    self.chat_public_mode
+                };
+                let private_mode = self.chat_private_mode;
+                let trade_mode = self.chat_trade_mode;
+                let message_opcode = self.client_opcode(ClientProt::MESSAGE_PUBLIC);
+                let mode_opcode = self.client_opcode(ClientProt::CHAT_SETMODE);
+                let accepted = self.encode_output(|out| {
+                    out.p1_enc(message_opcode);
+                    out.p1(0);
+                    let start = out.pos;
+                    out.p1(colour);
+                    out.p1(effect);
+                    WordPack::pack_output(out, &text);
+                    out.psize1((out.pos - start) as i32);
+                    if mode_update {
+                        out.p1_enc(mode_opcode);
+                        out.p1(public_mode);
+                        out.p1(private_mode);
+                        out.p1(trade_mode);
+                    }
+                });
 
-                // Echo the own message as TS 3169-3179:
-                // toSentenceCase then WordFilter (identity until the
-                // wordenc jag loads), stamping the local player's chat
-                // bubble only once it has a name (TS 3168-3174). Name
-                // falls back to the login user, then "player", so the
-                // echo is never dropped pre-spawn.
-                text = JString::to_sentence_case(&text);
-                text = WordFilter::filter(&text);
-                if let Some(p) = self.local_player.as_mut() {
-                    if p.name.is_some() {
-                        p.chat_message = Some(text.clone());
-                        p.chat_colour = colour;
-                        p.chat_effect = effect;
-                        p.chat_timer = 150;
+                if accepted {
+                    // Echo the own message as TS 3169-3179:
+                    // toSentenceCase then WordFilter, stamping the local player's
+                    // chat bubble only once it has a name. Fall back to the login
+                    // name and then "player" before the local player spawns.
+                    text = JString::to_sentence_case(&text);
+                    text = WordFilter::filter(&text);
+                    if let Some(p) = self.local_player.as_mut() {
+                        if p.name.is_some() {
+                            p.chat_message = Some(text.clone());
+                            p.chat_colour = colour;
+                            p.chat_effect = effect;
+                            p.chat_timer = 150;
+                        }
+                    }
+                    let name = self
+                        .local_player
+                        .as_ref()
+                        .and_then(|p| p.name.clone())
+                        .or_else(|| {
+                            let user = self.login_user.clone();
+                            (!user.is_empty()).then_some(user)
+                        })
+                        .unwrap_or_else(|| "player".to_string());
+                    let sender = if self.staffmodlevel == 2 {
+                        format!("@cr2@{name}")
+                    } else if self.staffmodlevel == 1 {
+                        format!("@cr1@{name}")
+                    } else {
+                        name
+                    };
+                    self.add_chat(2, &text, &sender);
+                    if mode_update {
+                        self.chat_public_mode = public_mode;
+                        self.redraw_chat_mode = true;
                     }
                 }
-                let name = self
-                    .local_player
-                    .as_ref()
-                    .and_then(|p| p.name.clone())
-                    .or_else(|| {
-                        let user = self.login_user.clone();
-                        (!user.is_empty()).then_some(user)
-                    })
-                    .unwrap_or_else(|| "player".to_string());
-                let sender = if self.staffmodlevel == 2 {
-                    format!("@cr2@{name}")
-                } else if self.staffmodlevel == 1 {
-                    format!("@cr1@{name}")
-                } else {
-                    name
-                };
-                self.add_chat(2, &text, &sender);
-
-                // TS 3183-3189: a public send while the mode is "off"
-                // (2) auto-hides the bubble by switching to "friends"
-                // (3) and telling the server.
-                if self.chat_public_mode == 2 {
-                    self.chat_public_mode = 3;
-                    self.redraw_chat_mode = true;
-                    self.out
-                        .p1_enc(self.client_opcode(ClientProt::CHAT_SETMODE));
-                    self.out.p1(self.chat_public_mode);
-                    self.out.p1(self.chat_private_mode);
-                    self.out.p1(self.chat_trade_mode);
+                if !accepted && self.output_closed {
+                    preserve_input = true;
                 }
             }
-            self.chat_input.clear();
+            if !preserve_input {
+                self.chat_input.clear();
+            }
             self.redraw_chat = true;
         }
     }
@@ -11888,20 +12676,7 @@ impl Client {
         let tile_x = (px + rel_x) >> 7;
         let tile_z = (pz - rel_y) >> 7;
 
-        if self.tryMove(src_x, src_z, tile_x, tile_z, true, 0, 0, 0, 0, 0, 1) {
-            // the 14 bytes trailing MOVE_MINIMAPCLICK, as TS 2773-2781
-            self.out.p1(x);
-            self.out.p1(y);
-            self.out.p2(self.orbit_camera_yaw);
-            self.out.p1(57);
-            self.out.p1(self.macro_minimap_angle);
-            self.out.p1(self.macro_minimap_zoom);
-            self.out.p1(89);
-            self.out.p2(px);
-            self.out.p2(pz);
-            self.out.p1(self.try_move_nearest);
-            self.out.p1(63);
-        }
+        let _ = self.tryMove(src_x, src_z, tile_x, tile_z, true, 0, 0, 0, 0, 0, 1);
     }
 
     /// SIM half of `checkMinimap` from client-ts (5076): a low-memory
@@ -11978,8 +12753,8 @@ impl Client {
 
         self.scene_state = 2;
         self.map_build();
-        self.out
-            .p1_enc(self.client_opcode(ClientProt::MAP_BUILD_COMPLETE));
+        let opcode = self.client_opcode(ClientProt::MAP_BUILD_COMPLETE);
+        let _ = self.encode_output(|out| out.p1_enc(opcode));
         0
     }
 
@@ -12087,7 +12862,8 @@ impl Client {
         }
 
         if !self.map_build_ground_data.is_empty() {
-            self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
+            let opcode = self.client_opcode(ClientProt::NO_TIMEOUT);
+            let _ = self.encode_output(|out| out.p1_enc(opcode));
 
             for i in 0..self.map_build_ground_data.len() {
                 let x = (self.map_build_index[i] >> 8) * 64 - self.map_build_base_x;
@@ -12122,7 +12898,8 @@ impl Client {
         self.world.groundh.clone_from(&self.groundh);
 
         if !self.map_build_location_data.is_empty() {
-            self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
+            let opcode = self.client_opcode(ClientProt::NO_TIMEOUT);
+            let _ = self.encode_output(|out| out.p1_enc(opcode));
 
             for i in 0..self.map_build_location_data.len() {
                 if let Some(data) = &self.map_build_location_data[i] {
@@ -12143,7 +12920,8 @@ impl Client {
             }
         }
 
-        self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
+        let opcode = self.client_opcode(ClientProt::NO_TIMEOUT);
+        let _ = self.encode_output(|out| out.p1_enc(opcode));
 
         build.finish_build(
             &self.cache,
@@ -12164,7 +12942,8 @@ impl Client {
         // loc list from the fresh world, never the previous build's locs.
         self.gens.scene += 1;
 
-        self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
+        let opcode = self.client_opcode(ClientProt::NO_TIMEOUT);
+        let _ = self.encode_output(|out| out.p1_enc(opcode));
 
         for x in 0..BuildArea::SIZE {
             for z in 0..BuildArea::SIZE {
@@ -12713,6 +13492,10 @@ impl Client {
     /// idle `NO_TIMEOUT` and flush `out` through `ClientStream::write`.
     /// Write errors are `lostCon` (Java `catch (IOException)`).
     pub fn game_loop(&mut self) {
+        self.with_output_scope(|client| client.game_loop_impl());
+    }
+
+    fn game_loop_impl(&mut self) {
         let mut queued_local_idle_request = false;
         if self.ingame {
             if let Some(t) = &mut self.shell.ground_trace {
@@ -12813,11 +13596,14 @@ impl Client {
         }
         // Primary 289 J:6023-6027: after drag consumption, before walking.
         if self.revision.is_289() {
-            self.cyclelogic7_289 += 1;
-            if self.cyclelogic7_289 > 62 {
-                self.cyclelogic7_289 = 0;
-                self.out
-                    .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC7));
+            let next_cycle = self.cyclelogic7_289 + 1;
+            if next_cycle > 62 {
+                let opcode = self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC7);
+                if self.encode_output(|out| out.p1_enc(opcode)) {
+                    self.cyclelogic7_289 = 0;
+                }
+            } else {
+                self.cyclelogic7_289 = next_cycle;
             }
         }
         self.handle_tab_clicks();
@@ -12835,7 +13621,6 @@ impl Client {
                 .map(|p| (p.route_x[0], p.route_z[0]));
             let ground_x = self.world.ground_x;
             let ground_z = self.world.ground_z;
-            self.world.ground_x = -1;
             if let Some(t) = self
                 .shell
                 .ground_trace
@@ -12898,12 +13683,17 @@ impl Client {
                         t.complete("route_failed");
                     }
                 }
-                if moved {
-                    self.cross_x = self.shell.mouse_click_x;
-                    self.cross_y = self.shell.mouse_click_y;
-                    self.cross_mode = 1;
-                    self.cross_cycle = 0;
+                if !self.output_closed && self.output_scope_is_current() {
+                    self.world.ground_x = -1;
+                    if moved {
+                        self.cross_x = self.shell.mouse_click_x;
+                        self.cross_y = self.shell.mouse_click_y;
+                        self.cross_mode = 1;
+                        self.cross_cycle = 0;
+                    }
                 }
+            } else if !self.output_closed && self.output_scope_is_current() {
+                self.world.ground_x = -1;
             }
         }
         self.mouse_loop();
@@ -12957,10 +13747,12 @@ impl Client {
         } else if self.revision.is_289() {
             self.shell.idle_cycles += 1;
             if self.shell.idle_cycles > 4500 {
-                self.shell.idle_cycles -= 500;
-                self.logout_timer = 250;
-                self.out.p1_enc(self.client_opcode(ClientProt::IDLE_TIMER));
-                queued_local_idle_request = true;
+                let opcode = self.client_opcode(ClientProt::IDLE_TIMER);
+                if self.encode_output(|out| out.p1_enc(opcode)) {
+                    self.shell.idle_cycles -= 500;
+                    self.logout_timer = 250;
+                    queued_local_idle_request = true;
+                }
             }
         }
         // Dead-server watchdog, wall-clock: the 20 ms pass count is not a
@@ -12980,7 +13772,8 @@ impl Client {
         // packet; the successful combined flush starts the next one-second
         // wall-clock interval.
         if self.last_outbound.elapsed() >= KEEPALIVE_INTERVAL {
-            self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
+            let opcode = self.client_opcode(ClientProt::NO_TIMEOUT);
+            let _ = self.encode_output(|out| out.p1_enc(opcode));
         }
 
         let write_result = if let Some(stream) = self.stream.as_mut() {
@@ -14263,6 +15056,584 @@ mod try_move_path {
             "scene rebuild must keep world-stable trail tiles"
         );
     }
+    fn fill_output_prefix(client: &mut Client, length: usize) {
+        const ZEROES: [u8; 5000] = [0; 5000];
+        assert!(client.encode_output(|out| out.pdata(&ZEROES, 0, length)));
+    }
+
+    fn npc_target_client() -> Client {
+        let mut client = empty_client();
+        client.set_external_reconnect_owner(true);
+        client.local_player = Some(ClientPlayer::at(50, 50));
+        client.npc.clear();
+        client.npc.push(Some(Box::new(ClientNpc::at(50, 50))));
+        client.menu_action[0] = MiniMenuAction::TGT_NPC;
+        client.menu_param_a[0] = 0;
+        client.target_com_id = 0x1234;
+        client.out.random = Some(Isaac::new(&[1, 2, 3, 4]));
+        client
+    }
+
+    #[test]
+    fn do_action_reserves_movement_and_target_before_encoding() {
+        const REQUIRED: usize = 12;
+
+        let mut refused = npc_target_client();
+        fill_output_prefix(&mut refused, 5000 - (REQUIRED - 1));
+        let before_bytes = refused.out.data()[..refused.out.pos].to_vec();
+        let before_pos = refused.out.pos;
+        let mut expected_cipher = refused.out.random.as_ref().unwrap().clone();
+        let first_cipher = expected_cipher.next_int();
+
+        refused.doAction(0);
+
+        assert_eq!(refused.out.pos, before_pos);
+        assert_eq!(&refused.out.data()[..before_pos], before_bytes.as_slice());
+        assert_eq!(
+            refused.out.random.as_ref().unwrap().clone().next_int(),
+            first_cipher,
+            "refusal must not consume the action batch's ISAAC opcode"
+        );
+        assert!(refused.output_closed);
+        assert_eq!(
+            refused.outbound_overflow,
+            Some(OutboundOverflow {
+                session_epoch: refused.output_epoch,
+                required: REQUIRED,
+                remaining: REQUIRED - 1,
+            })
+        );
+        assert_eq!(refused.cross_mode, 0);
+
+        let mut exact = npc_target_client();
+        fill_output_prefix(&mut exact, 5000 - REQUIRED);
+        let mut expected_cipher = exact.out.random.as_ref().unwrap().clone();
+        let route_opcode = exact
+            .client_opcode(ClientProt::MOVE_OPCLICK)
+            .wrapping_add(expected_cipher.next_int()) as u8;
+        let target_opcode = exact
+            .client_opcode(ClientProt::OPNPCT)
+            .wrapping_add(expected_cipher.next_int()) as u8;
+        let next_cipher = expected_cipher.next_int();
+        exact.doAction(0);
+
+        assert_eq!(exact.out.pos, 5000);
+        assert_eq!(exact.out.data()[4988], route_opcode);
+        assert_eq!(exact.out.data()[4989], 5);
+        assert_eq!(exact.out.data()[4995], target_opcode);
+        assert_eq!(&exact.out.data()[4996..4998], &[0, 0]);
+        assert_eq!(&exact.out.data()[4998..5000], &[0x12, 0x34]);
+        assert_eq!(
+            exact.out.random.as_ref().unwrap().clone().next_int(),
+            next_cipher,
+            "the exact-fit action encodes each opcode once"
+        );
+        assert_eq!(exact.outbound_overflow, None);
+    }
+
+    #[test]
+    fn do_action_reserves_anticheat_route_and_operation_as_one_batch() {
+        fn object_action_client() -> Client {
+            let mut client = empty_client();
+            client.set_external_reconnect_owner(true);
+            client.local_player = Some(ClientPlayer::at(50, 50));
+            client.menu_action[0] = MiniMenuAction::OP_OBJ1;
+            client.menu_param_a[0] = 7;
+            client.menu_param_b[0] = 52;
+            client.menu_param_c[0] = 50;
+            client.oplogic7 = 122;
+            client.cross_x = 111;
+            client.cross_y = 222;
+            client.cross_mode = 3;
+            client.cross_cycle = 4;
+            client.try_move_path = vec![(7, 9)];
+            client.minimap_flag_x = 31;
+            client.minimap_flag_z = 32;
+            client.try_move_nearest = 33;
+            client.out.random = Some(Isaac::new(&[5, 6, 7, 8]));
+            client
+        }
+
+        let mut measured = object_action_client();
+        measured.doAction(0);
+        let required = measured.out.pos;
+        assert!(
+            required >= 6,
+            "the 5-byte anticheat member must precede route and operation bytes"
+        );
+        assert_eq!(measured.try_move_path, vec![(50, 50), (51, 50), (52, 50)]);
+
+        let mut refused = object_action_client();
+        let prefix = refused.out.data().len() - (required - 1);
+        fill_output_prefix(&mut refused, prefix);
+        let before_pos = refused.out.pos;
+        let before_bytes = refused.out.data()[..before_pos].to_vec();
+        let mut expected_cipher = refused.out.random.as_ref().unwrap().clone();
+        let first_cipher = expected_cipher.next_int();
+
+        refused.doAction(0);
+
+        assert!(
+            required - 1 >= 5,
+            "the first member fits before the batch overflow"
+        );
+        assert_eq!(refused.out.pos, before_pos);
+        assert_eq!(&refused.out.data()[..before_pos], before_bytes.as_slice());
+        assert_eq!(
+            refused.out.random.as_ref().unwrap().clone().next_int(),
+            first_cipher,
+            "batch refusal must not encode even its fitting anticheat member"
+        );
+        assert_eq!(refused.oplogic7, 122);
+        assert_eq!(refused.try_move_path, vec![(7, 9)]);
+        assert_eq!(refused.minimap_flag_x, 31);
+        assert_eq!(refused.minimap_flag_z, 32);
+        assert_eq!(refused.try_move_nearest, 33);
+        assert_eq!(refused.cross_x, 111);
+        assert_eq!(refused.cross_y, 222);
+        assert_eq!(refused.cross_mode, 3);
+        assert_eq!(refused.cross_cycle, 4);
+        assert_eq!(
+            refused
+                .outbound_overflow
+                .map(|overflow| (overflow.required, overflow.remaining)),
+            Some((required, required - 1))
+        );
+    }
+
+    #[test]
+    fn minimap_route_refuses_if_only_its_prefix_fits() {
+        fn client() -> Client {
+            let mut client = empty_client();
+            client.set_external_reconnect_owner(true);
+            client.shell.mouse_click_x = 201;
+            client.shell.mouse_click_y = 202;
+            client.orbit_camera_yaw = 203;
+            client.macro_minimap_angle = 204;
+            client.macro_minimap_zoom = 205;
+            client.try_move_path = vec![(7, 9)];
+            client.minimap_flag_x = 31;
+            client.minimap_flag_z = 32;
+            client.try_move_nearest = 33;
+            client.out.random = Some(Isaac::new(&[9, 10, 11, 12]));
+            client
+        }
+
+        let mut measured = client();
+        assert!(measured.tryMove(50, 50, 51, 50, false, 0, 0, 0, 0, 0, 1));
+        let required = measured.out.pos;
+        let route_prefix = required - 14;
+        assert!(route_prefix > 0);
+
+        let mut refused = client();
+        let remaining = required - 1;
+        let prefix = refused.out.data().len() - remaining;
+        fill_output_prefix(&mut refused, prefix);
+        let before_pos = refused.out.pos;
+        let before_bytes = refused.out.data()[..before_pos].to_vec();
+        let mut expected_cipher = refused.out.random.as_ref().unwrap().clone();
+        let first_cipher = expected_cipher.next_int();
+
+        assert!(!refused.tryMove(50, 50, 51, 50, false, 0, 0, 0, 0, 0, 1));
+
+        assert_eq!(remaining, route_prefix + 13);
+        assert_eq!(refused.out.pos, before_pos);
+        assert_eq!(&refused.out.data()[..before_pos], before_bytes.as_slice());
+        assert_eq!(
+            refused.out.random.as_ref().unwrap().clone().next_int(),
+            first_cipher,
+            "the minimap trailer must be included in the route reservation"
+        );
+        assert_eq!(refused.try_move_path, vec![(7, 9)]);
+        assert_eq!(refused.minimap_flag_x, 31);
+        assert_eq!(refused.minimap_flag_z, 32);
+        assert_eq!(refused.try_move_nearest, 33);
+        assert_eq!(
+            refused
+                .outbound_overflow
+                .map(|overflow| (overflow.required, overflow.remaining)),
+            Some((required, remaining))
+        );
+    }
+
+    #[test]
+    fn overflow_closes_every_later_session_append() {
+        let mut client = npc_target_client();
+        fill_output_prefix(&mut client, 4998);
+        let before_pos = client.out.pos;
+        let before_bytes = client.out.data()[..before_pos].to_vec();
+        let mut expected_cipher = client.out.random.as_ref().unwrap().clone();
+        let first_cipher = expected_cipher.next_int();
+        let epoch = client.output_epoch;
+
+        client.doAction(0);
+
+        assert_eq!(client.out.pos, before_pos);
+        assert_eq!(&client.out.data()[..before_pos], before_bytes.as_slice());
+        assert_eq!(
+            client.out.random.as_ref().unwrap().clone().next_int(),
+            first_cipher
+        );
+        let overflow = client.outbound_overflow;
+        assert!(overflow.is_some());
+        assert!(client.output_closed);
+        assert_eq!(client.output_epoch, epoch);
+
+        let no_timeout = client.client_opcode(ClientProt::NO_TIMEOUT);
+        assert!(!client.encode_output(|out| out.p1_enc(no_timeout)));
+        assert!(!client.encode_output(|out| out.p1_enc(no_timeout)));
+
+        assert_eq!(client.out.pos, before_pos);
+        assert_eq!(&client.out.data()[..before_pos], before_bytes.as_slice());
+        assert_eq!(
+            client.out.random.as_ref().unwrap().clone().next_int(),
+            first_cipher
+        );
+        assert_eq!(client.outbound_overflow, overflow);
+    }
+
+    #[test]
+    fn old_output_scope_cannot_append_after_a_new_epoch() {
+        let mut client = npc_target_client();
+        client.with_output_scope(|client| {
+            let old_epoch = client.output_epoch;
+            client.begin_output_epoch();
+            assert_ne!(client.output_epoch, old_epoch);
+            let no_timeout = client.client_opcode(ClientProt::NO_TIMEOUT);
+            assert!(!client.encode_output(|out| out.p1_enc(no_timeout)));
+            assert_eq!(client.out.pos, 0);
+        });
+    }
+}
+
+#[cfg(test)]
+mod output_overflow_callers {
+    use super::*;
+
+    fn client() -> Client {
+        let mut client = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        client.set_external_reconnect_owner(true);
+        client.out.random = Some(Isaac::new(&[1, 2, 3, 4]));
+        client
+    }
+
+    fn fill_prefix(client: &mut Client, length: usize) {
+        const ZEROES: [u8; 5000] = [0; 5000];
+        assert!(client.encode_output(|out| out.pdata(&ZEROES, 0, length)));
+    }
+
+    #[test]
+    fn public_chat_overflow_preserves_input_and_chat_mode() {
+        fn public_client() -> Client {
+            let mut client = client();
+            client.chat_input = "hello".to_string();
+            client.chat_public_mode = 2;
+            client
+        }
+
+        let mut measured = public_client();
+        measured.consume_chat_key(13);
+        let required = measured.out.pos;
+        assert!(required > 0);
+
+        let mut refused = public_client();
+        let remaining = required - 1;
+        let prefix = refused.out.length() - remaining;
+        fill_prefix(&mut refused, prefix);
+        let before_pos = refused.out.pos;
+        let before_bytes = refused.out.data()[..before_pos].to_vec();
+        let mut expected_cipher = refused.out.random.as_ref().unwrap().clone();
+        let first_cipher = expected_cipher.next_int();
+
+        refused.consume_chat_key(13);
+
+        assert_eq!(refused.out.pos, before_pos);
+        assert_eq!(&refused.out.data()[..before_pos], before_bytes.as_slice());
+        assert_eq!(
+            refused.out.random.as_ref().unwrap().clone().next_int(),
+            first_cipher
+        );
+        assert_eq!(refused.chat_input, "hello");
+        assert_eq!(refused.chat_public_mode, 2);
+        assert!(refused.output_closed);
+        assert_eq!(
+            refused
+                .outbound_overflow
+                .map(|overflow| (overflow.required, overflow.remaining)),
+            Some((required, remaining))
+        );
+    }
+
+    #[test]
+    fn cheat_overflow_preserves_command_and_does_not_count_it() {
+        fn cheat_client() -> Client {
+            let mut client = client();
+            client.set_cheat_admission(CheatAdmission::Granted);
+            client.ingame = true;
+            client.chat_input = "::dance".to_string();
+            client
+        }
+
+        let mut measured = cheat_client();
+        measured.consume_chat_key(13);
+        let required = measured.out.pos;
+        assert!(required > 0);
+
+        let mut refused = cheat_client();
+        let prefix = refused.out.length() - (required - 1);
+        fill_prefix(&mut refused, prefix);
+        let before_pos = refused.out.pos;
+        let mut expected_cipher = refused.out.random.as_ref().unwrap().clone();
+        let first_cipher = expected_cipher.next_int();
+
+        refused.consume_chat_key(13);
+
+        assert_eq!(refused.out.pos, before_pos);
+        assert_eq!(
+            refused.out.random.as_ref().unwrap().clone().next_int(),
+            first_cipher
+        );
+        assert_eq!(refused.chat_input, "::dance");
+        assert_eq!(refused.cheat_packets_sent(), 0);
+        assert!(refused.output_closed);
+    }
+
+    #[test]
+    fn private_message_overflow_preserves_open_prompt_and_input() {
+        fn private_client() -> Client {
+            let mut client = client();
+            client.social_input_open = true;
+            client.social_input_type = 3;
+            client.social_userhash = 0x1234_5678;
+            client.social_input = "hello".to_string();
+            client.chat_private_mode = 2;
+            client
+        }
+
+        let mut measured = private_client();
+        measured.consume_chat_key(13);
+        let required = measured.out.pos;
+        assert!(required > 0);
+
+        let mut refused = private_client();
+        let remaining = required - 1;
+        let prefix = refused.out.length() - remaining;
+        fill_prefix(&mut refused, prefix);
+        let before_pos = refused.out.pos;
+        let mut expected_cipher = refused.out.random.as_ref().unwrap().clone();
+        let first_cipher = expected_cipher.next_int();
+
+        refused.consume_chat_key(13);
+
+        assert_eq!(refused.out.pos, before_pos);
+        assert_eq!(
+            refused.out.random.as_ref().unwrap().clone().next_int(),
+            first_cipher
+        );
+        assert_eq!(refused.social_input, "hello");
+        assert!(refused.social_input_open);
+        assert_eq!(refused.chat_private_mode, 2);
+        assert!(refused.output_closed);
+        assert_eq!(
+            refused
+                .outbound_overflow
+                .map(|overflow| (overflow.required, overflow.remaining)),
+            Some((required, remaining))
+        );
+    }
+
+    #[test]
+    fn count_dialog_overflow_keeps_the_dialog_open() {
+        let mut client = client();
+        client.dialog_input_open = true;
+        client.dialog_input = "123".to_string();
+        fill_prefix(&mut client, 4999);
+
+        client.consume_chat_key(13);
+
+        assert_eq!(client.out.pos, 4999);
+        assert_eq!(client.dialog_input, "123");
+        assert!(client.dialog_input_open);
+        assert!(client.output_closed);
+        assert_eq!(
+            client
+                .outbound_overflow
+                .map(|overflow| (overflow.required, overflow.remaining)),
+            Some((5, 1))
+        );
+    }
+
+    #[test]
+    fn social_list_mutations_commit_only_after_reservation() {
+        let userhash = JString::to_userhash("alice") as i64;
+
+        let mut local = client();
+        local.local_player = Some(ClientPlayer::at(50, 50));
+        local.local_player.as_mut().unwrap().name = Some("Local".to_string());
+        local.social_input_open = true;
+        local.social_input_type = 1;
+        local.social_input = "alice".to_string();
+        fill_prefix(&mut local, 4992);
+        local.consume_chat_key(13);
+        assert_eq!(local.friend_count, 0);
+        assert_eq!(local.friend_userhash[0], 0);
+        assert_eq!(local.social_input, "alice");
+        assert!(local.social_input_open);
+        assert!(local.output_closed);
+        let mut exact = client();
+        exact.local_player = Some(ClientPlayer::at(50, 50));
+        exact.local_player.as_mut().unwrap().name = Some("Local".to_string());
+        fill_prefix(&mut exact, 4991);
+        exact.add_friend(userhash);
+        assert_eq!(exact.out.pos, 5000);
+        assert_eq!(exact.friend_count, 1);
+        assert_eq!(exact.friend_userhash[0], userhash);
+        assert_eq!(exact.friend_node_id[0], 0);
+
+        let mut deleted = client();
+        deleted.friend_count = 1;
+        deleted.friend_username[0] = "Alice".to_string();
+        deleted.friend_userhash[0] = userhash;
+        deleted.friend_node_id[0] = 3;
+        fill_prefix(&mut deleted, 4992);
+        deleted.del_friend(userhash);
+        assert_eq!(deleted.friend_count, 1);
+        assert_eq!(deleted.friend_username[0], "Alice");
+        assert_eq!(deleted.friend_userhash[0], userhash);
+        assert_eq!(deleted.friend_node_id[0], 3);
+
+        let mut ignored = client();
+        fill_prefix(&mut ignored, 4992);
+        ignored.add_ignore(userhash);
+        assert_eq!(ignored.ignore_count, 0);
+        assert_eq!(ignored.ignore_userhash[0], 0);
+        assert!(ignored.output_closed);
+
+        let mut unignored = client();
+        unignored.ignore_count = 1;
+        unignored.ignore_userhash[0] = userhash;
+        fill_prefix(&mut unignored, 4992);
+        unignored.del_ignore(userhash);
+        assert_eq!(unignored.ignore_count, 1);
+        assert_eq!(unignored.ignore_userhash[0], userhash);
+    }
+
+    #[test]
+    fn toggle_button_commits_varp_only_after_output_reservation() {
+        fn toggle_client() -> Client {
+            let mut client = client();
+            let mut button = IfType::default();
+            button.id = 7;
+            button.scripts = Some(vec![vec![5, 0]]);
+            let mut ifaces = vec![None; 8];
+            ifaces[7] = Some(Box::new(button));
+            client.ifaces = Arc::new(ifaces);
+            client.var = vec![0];
+            client.menu_action[0] = MiniMenuAction::TOGGLE_BUTTON;
+            client.menu_param_c[0] = 7;
+            client.redraw_side = false;
+            client
+        }
+
+        let mut refused = toggle_client();
+        fill_prefix(&mut refused, 4998);
+        refused.doAction(0);
+        assert_eq!(refused.var[0], 0);
+        assert!(!refused.redraw_side);
+        assert!(refused.output_closed);
+
+        let mut exact = toggle_client();
+        fill_prefix(&mut exact, 4997);
+        exact.doAction(0);
+        assert_eq!(exact.var[0], 1);
+        assert!(exact.redraw_side);
+        assert!(!exact.output_closed);
+    }
+
+    #[test]
+    fn logout_action_commits_only_after_output_reservation() {
+        fn logout_client() -> Client {
+            let mut client = client();
+            let mut button = IfType::default();
+            button.id = 7;
+            button.client_code = CC_LOGOUT;
+            let mut ifaces = vec![None; 8];
+            ifaces[7] = Some(Box::new(button));
+            client.ifaces = Arc::new(ifaces);
+            client.menu_action[0] = MiniMenuAction::IF_BUTTON;
+            client.menu_param_c[0] = 7;
+            client.pending_local_idle_request = true;
+            client.logout_timer = 0;
+            client
+        }
+
+        let mut refused = logout_client();
+        fill_prefix(&mut refused, 4998);
+        refused.doAction(0);
+        assert!(refused.pending_local_idle_request);
+        assert_eq!(refused.logout_timer, 0);
+        assert!(refused.output_closed);
+
+        let mut exact = logout_client();
+        fill_prefix(&mut exact, 4997);
+        exact.doAction(0);
+        assert!(!exact.pending_local_idle_request);
+        assert_eq!(exact.logout_timer, 250);
+        assert!(!exact.output_closed);
+    }
+
+    #[test]
+    fn abuse_report_overflow_preserves_form_state() {
+        let mut client = client();
+        client.menu_action[0] = MiniMenuAction::ABUSE_REPORT;
+        client.menu_option[0] = "Report abuse @whi@Spam".to_string();
+        client.report_abuse_input = "prior report".to_string();
+        client.report_abuse_mute_option = true;
+        client.report_abuse_com_id = 42;
+        client.main_modal_id = 13;
+        fill_prefix(&mut client, 5000);
+
+        client.doAction(0);
+
+        assert_eq!(client.report_abuse_input, "prior report");
+        assert!(client.report_abuse_mute_option);
+        assert_eq!(client.report_abuse_com_id, 42);
+        assert_eq!(client.main_modal_id, 13);
+        assert!(client.output_closed);
+    }
+
+    #[test]
+    fn close_modal_overflow_preserves_modal_state() {
+        let mut client = client();
+        client.side_modal_id = 11;
+        client.chat_modal_id = 12;
+        client.main_modal_id = 13;
+        client.resumed_pause_button = true;
+        client.redraw_side = false;
+        client.redraw_icons = false;
+        client.redraw_chat = false;
+        client.redraw_frame = false;
+        fill_prefix(&mut client, 5000);
+
+        client.close_modal();
+
+        assert_eq!(client.out.pos, 5000);
+        assert!(client.output_closed);
+        assert_eq!(client.side_modal_id, 11);
+        assert_eq!(client.chat_modal_id, 12);
+        assert_eq!(client.main_modal_id, 13);
+        assert!(client.resumed_pause_button);
+        assert!(!client.redraw_side);
+        assert!(!client.redraw_icons);
+        assert!(!client.redraw_chat);
+        assert!(!client.redraw_frame);
+    }
 }
 
 #[cfg(test)]
@@ -14686,9 +16057,12 @@ mod audio_toggle {
 mod public_login_key_tests {
     use super::Client;
     use crate::Transport;
+    #[cfg(feature = "standalone-native-transport")]
     use std::io::{BufRead, BufReader, Write};
+    #[cfg(feature = "standalone-native-transport")]
     use std::net::TcpListener;
 
+    #[cfg(feature = "standalone-native-transport")]
     #[test]
     fn extracts_first_long_decimal_run_and_fetches_from_client_js() {
         let modulus = "1234567890".repeat(26);
@@ -14723,6 +16097,7 @@ mod public_login_key_tests {
         );
         server.join().unwrap();
     }
+    #[cfg(feature = "standalone-native-transport")]
     #[test]
     fn public_key_fetch_times_out_when_tls_peer_never_answers() {
         use std::sync::mpsc;
@@ -14744,6 +16119,74 @@ mod public_login_key_tests {
         server.join().unwrap();
         assert!(started.elapsed() < Duration::from_secs(5));
     }
+
+    #[cfg(feature = "standalone-native-transport")]
+    fn standalone_client(port: u16, cache_dir: &std::path::Path) -> Client {
+        Client::from_shared(
+            crate::client::config::ClientConfig {
+                host: "127.0.0.1".into(),
+                port,
+                cache_dir: cache_dir.to_str().unwrap().into(),
+                members: true,
+                lowmem: true,
+            },
+            std::sync::Arc::new(crate::config::Cache::default()),
+            std::sync::Arc::new(Vec::new()),
+            Vec::new(),
+        )
+    }
+
+    #[cfg(feature = "standalone-native-transport")]
+    #[test]
+    fn standalone_login_clears_deadline_for_accept_reconnect_and_refusal() {
+        use std::io::Read;
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+
+        assert!(crate::io::host_network::installed_host_network().is_none());
+        for (response, reconnect, success) in [
+            (2, false, true),
+            (15, true, true),
+            (3, false, false),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let (release_tx, release_rx) = mpsc::channel();
+            let server = std::thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                let mut hello = [0; 2];
+                socket.read_exact(&mut hello).unwrap();
+                socket.write_all(&[0; 8]).unwrap();
+                socket.write_all(&[response]).unwrap();
+                if response == 2 {
+                    socket.write_all(&[0, 1]).unwrap();
+                }
+                release_rx.recv().unwrap();
+                socket.write_all(&[0x5a]).unwrap();
+            });
+            let cache_dir = std::env::temp_dir().join(format!(
+                "274bot-standalone-login-deadline-{}-{response}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&cache_dir).unwrap();
+            let mut client = standalone_client(port, &cache_dir);
+            let deadline = Instant::now() + Duration::from_millis(300);
+            client.set_login_deadline(deadline);
+            assert_eq!(client.login("alice", "secret", reconnect).is_ok(), success);
+            assert!(!client.stream.as_ref().unwrap().is_hosted());
+
+            std::thread::sleep(
+                deadline.saturating_duration_since(Instant::now()) + Duration::from_millis(1),
+            );
+            release_tx.send(()).unwrap();
+            assert_eq!(client.stream.as_mut().unwrap().read().unwrap(), 0x5a);
+            server.join().unwrap();
+            drop(client);
+            std::fs::remove_dir_all(cache_dir).unwrap();
+        }
+    }
+
+    #[cfg(feature = "standalone-native-transport")]
     #[test]
     fn asset_fetch_distinguishes_unreachable_endpoint_from_invalid_crc() {
         use super::AssetFetchError;
@@ -14771,6 +16214,7 @@ mod public_login_key_tests {
         );
     }
 
+    #[cfg(feature = "standalone-native-transport")]
     /// Read the whole request head and return its request line. A mock that
     /// stops after the first line closes with unread headers, and Linux then
     /// answers with RST, which can discard the response before the client
@@ -14786,6 +16230,58 @@ mod public_login_key_tests {
         request.trim_end().to_string()
     }
 
+    #[cfg(not(feature = "standalone-native-transport"))]
+    #[test]
+    fn hosted_only_client_fails_closed_without_host_network() {
+        use crate::client::login_error::LoginStage;
+        use super::AssetFetchError;
+        use std::io::ErrorKind;
+        use std::time::{Duration, Instant};
+
+        assert!(crate::io::host_network::installed_host_network().is_none());
+        let mut client = Client::from_shared(
+            crate::client::config::ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
+                members: true,
+                lowmem: true,
+            },
+            std::sync::Arc::new(crate::config::Cache::default()),
+            std::sync::Arc::new(Vec::new()),
+            Vec::new(),
+        );
+        client.set_login_deadline(Instant::now() + Duration::from_secs(1));
+        let error = client.login("alice", "secret", false).unwrap_err();
+        let transport = error.transport.expect("connect error carries transport");
+        assert_eq!(transport.stage, LoginStage::Connect);
+        assert_eq!(transport.kind, ErrorKind::NotConnected);
+        assert!(client.hosted_stream_binding().is_none());
+
+        assert_eq!(
+            Client::fetch_login_modulus_for(Transport::Tcp, "127.0.0.1", 1),
+            None
+        );
+        assert_eq!(
+            Client::fetch_login_modulus_for(Transport::Wss, "127.0.0.1", 1),
+            None
+        );
+        assert_eq!(
+            Client::fetch_login_modulus_for_cancellable(
+                Transport::Wss,
+                "127.0.0.1",
+                1,
+                &crate::io::client_stream::LoginCancel::new(),
+            ),
+            None
+        );
+        assert_eq!(
+            Client::get_jag_checksums_checked(Transport::Tcp, "127.0.0.1", 1),
+            Err(AssetFetchError::Connection)
+        );
+    }
+
+    #[cfg(feature = "standalone-native-transport")]
     #[test]
     fn selected_world_changes_login_endpoint_and_node_id_without_moving_assets() {
         use crate::io::ClientRevision;

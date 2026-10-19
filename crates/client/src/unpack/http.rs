@@ -6,24 +6,142 @@
 //! TCP, and also `Connection: close` over TLS; the body after the first blank
 //! line of a 200 response. A connection that stays quiet fails after the same
 //! read timeout, 2 s over TCP and 8 s over TLS, counted from the last bytes
-//! received. The caller looks up the host's addresses: the fetch never
-//! calls the resolver, which cannot be interrupted.
+//! received. Hosted lookups go through the process host hook; standalone
+//! callers resolve names before starting the native socket.
 
+#[cfg(feature = "standalone-native-transport")]
 use std::io::{self, Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::net::SocketAddr;
+#[cfg(feature = "standalone-native-transport")]
+use std::net::ToSocketAddrs;
+#[cfg(feature = "standalone-native-transport")]
+use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
-use crate::client::client::AssetFetchError;
+#[cfg(feature = "standalone-native-transport")]
 use crate::client::Client;
+use crate::client::client::AssetFetchError;
+#[cfg(feature = "standalone-native-transport")]
 use crate::io::client_stream::{park_until_ready, PendingConnect, Readiness};
+use crate::io::host_network::{installed_host_network, HostHttpFetch};
 use crate::Transport;
 
 /// Read timeout of `Client::http_get_plain`.
+#[cfg(feature = "standalone-native-transport")]
 const TCP_QUIET_LIMIT: Duration = Duration::from_secs(2);
 /// Read timeout of `Client::https_get` without a login-key timeout.
+#[cfg(feature = "standalone-native-transport")]
 const TLS_QUIET_LIMIT: Duration = Duration::from_secs(8);
 
 pub(super) struct HttpFetch {
+    backend: Backend,
+}
+
+enum Backend {
+    Hosted(Box<dyn HostHttpFetch>),
+    #[cfg(feature = "standalone-native-transport")]
+    Standalone(StandaloneHttpFetch),
+}
+
+impl HttpFetch {
+    /// Start an update-server fetch by host and port. Once the process host
+    /// hook is installed, it owns lookup and transport work; the standalone
+    /// fallback resolves the name before starting its native socket.
+    pub(super) fn start(
+        transport: Transport,
+        host: &str,
+        port: u16,
+        path: &str,
+    ) -> Result<Self, AssetFetchError> {
+        if let Some(network) = installed_host_network() {
+            return network
+                .start_http(transport, host, port, path)
+                .map(|fetch| Self {
+                    backend: Backend::Hosted(fetch),
+                });
+        }
+
+        #[cfg(feature = "standalone-native-transport")]
+        {
+            let addrs = (host, port)
+                .to_socket_addrs()
+                .map_err(|_| FAILED)?
+                .collect::<Vec<_>>();
+            if addrs.is_empty() {
+                return Err(FAILED);
+            }
+            StandaloneHttpFetch::start(transport, host, &addrs, path).map(|fetch| Self {
+                backend: Backend::Standalone(fetch),
+            })
+        }
+
+        #[cfg(not(feature = "standalone-native-transport"))]
+        {
+            Err(FAILED)
+        }
+    }
+
+    /// Start an update-server fetch with addresses the caller already
+    /// resolved. Hosted polling delegates directly to the host connector.
+    pub(super) fn start_resolved(
+        transport: Transport,
+        host: &str,
+        addrs: &[SocketAddr],
+        path: &str,
+    ) -> Result<Self, AssetFetchError> {
+        if let Some(network) = installed_host_network() {
+            return network
+                .start_http_resolved(transport, host, addrs, path)
+                .map(|fetch| Self {
+                    backend: Backend::Hosted(fetch),
+                });
+        }
+
+        #[cfg(feature = "standalone-native-transport")]
+        {
+            StandaloneHttpFetch::start(transport, host, addrs, path).map(|fetch| Self {
+                backend: Backend::Standalone(fetch),
+            })
+        }
+
+        #[cfg(not(feature = "standalone-native-transport"))]
+        {
+            Err(FAILED)
+        }
+    }
+
+    /// Poll the owned backend once. Hosted polling delegates directly to the
+    /// host connector; it never creates a client-side readiness poll or wait.
+    pub(super) fn poll(&mut self, until: Instant) -> Result<Option<Vec<u8>>, AssetFetchError> {
+        match &mut self.backend {
+            Backend::Hosted(fetch) => fetch.poll(until),
+            #[cfg(feature = "standalone-native-transport")]
+            Backend::Standalone(fetch) => fetch.poll(until),
+        }
+    }
+
+    /// Finish an update-server fetch while running owner maintenance between
+    /// bounded poll waits.
+    pub(super) fn blocking_with_maintenance(
+        &mut self,
+        maintenance: &mut dyn FnMut(Instant),
+    ) -> Result<Vec<u8>, AssetFetchError> {
+        loop {
+            let until = Instant::now() + MAINTENANCE_INTERVAL;
+            if let Some(body) = self.poll(until)? {
+                return Ok(body);
+            }
+            maintenance(Instant::now());
+        }
+    }
+}
+
+pub(super) const MAINTENANCE_INTERVAL: Duration = Duration::from_millis(100);
+
+const FAILED: AssetFetchError = AssetFetchError::Connection;
+
+#[cfg(feature = "standalone-native-transport")]
+struct StandaloneHttpFetch {
     host: String,
     request: Vec<u8>,
     /// The TLS connector for a fetch over TLS; `None` over plain TCP.
@@ -35,6 +153,7 @@ pub(super) struct HttpFetch {
     state: State,
 }
 
+#[cfg(feature = "standalone-native-transport")]
 enum State {
     Connecting(PendingConnect),
     Handshaking(native_tls::MidHandshakeTlsStream<TcpStream>),
@@ -43,11 +162,13 @@ enum State {
     Failed,
 }
 
+#[cfg(feature = "standalone-native-transport")]
 enum Conn {
     Tcp(TcpStream),
     Tls(Box<native_tls::TlsStream<TcpStream>>),
 }
 
+#[cfg(feature = "standalone-native-transport")]
 impl Conn {
     fn socket(&self) -> &TcpStream {
         match self {
@@ -71,20 +192,19 @@ impl Conn {
     }
 }
 
-/// What one non-blocking pass of [`HttpFetch::advance`] got to.
+/// What one non-blocking pass of [`StandaloneHttpFetch::advance`] got to.
+#[cfg(feature = "standalone-native-transport")]
 enum Advance {
     Done(Vec<u8>),
     /// The socket must become ready for this before the fetch can go on.
     Blocked(Readiness),
 }
 
-const FAILED: AssetFetchError = AssetFetchError::Connection;
-
-impl HttpFetch {
-    /// Start the connect to `addrs`, the addresses of `host` that the
-    /// caller looked up. No other wait happens here. `host` names the
-    /// server in the request and for TLS.
-    pub(super) fn start(
+#[cfg(feature = "standalone-native-transport")]
+impl StandaloneHttpFetch {
+    /// Start the standalone connect to `addrs`, the addresses of `host` that
+    /// the caller looked up. No other wait happens here.
+    fn start(
         transport: Transport,
         host: &str,
         addrs: &[SocketAddr],
@@ -126,7 +246,7 @@ impl HttpFetch {
     /// Go on with the fetch until `until`. `Ok(Some)` is the response body;
     /// `Ok(None)` means the fetch is still in flight at `until`. After an
     /// error the fetch is over.
-    pub(super) fn poll(&mut self, until: Instant) -> Result<Option<Vec<u8>>, AssetFetchError> {
+    fn poll(&mut self, until: Instant) -> Result<Option<Vec<u8>>, AssetFetchError> {
         loop {
             if let State::Connecting(connect) = &mut self.state {
                 match connect.poll(until) {
@@ -266,7 +386,7 @@ impl HttpFetch {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "standalone-native-transport"))]
 mod tests {
     use super::*;
     use std::net::TcpListener;
@@ -279,7 +399,27 @@ mod tests {
 
     /// Poll `fetch` with `STEP` deadlines until it ends; the result, the
     /// number of polls and the longest poll.
-    fn poll_steps(fetch: &mut HttpFetch) -> (Result<Vec<u8>, AssetFetchError>, usize, Duration) {
+    fn poll_steps(
+        fetch: &mut StandaloneHttpFetch,
+    ) -> (Result<Vec<u8>, AssetFetchError>, usize, Duration) {
+        let mut polls = 0;
+        let mut longest = Duration::ZERO;
+        loop {
+            let started = Instant::now();
+            let result = fetch.poll(started + STEP);
+            longest = longest.max(started.elapsed());
+            polls += 1;
+            match result {
+                Ok(None) => {}
+                Ok(Some(body)) => return (Ok(body), polls, longest),
+                Err(error) => return (Err(error), polls, longest),
+            }
+        }
+    }
+
+    fn poll_wrapper_steps(
+        fetch: &mut HttpFetch,
+    ) -> (Result<Vec<u8>, AssetFetchError>, usize, Duration) {
         let mut polls = 0;
         let mut longest = Duration::ZERO;
         loop {
@@ -317,6 +457,31 @@ mod tests {
         [SocketAddr::from(([127, 0, 0, 1], port))]
     }
 
+    /// Exercise the adapter-facing wrapper with no installed host hook.
+    #[test]
+    fn wrapper_uses_standalone_transport_without_a_host_hook() {
+        assert!(installed_host_network().is_none());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (head_tx, head_rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            head_tx.send(read_head(&mut socket)).unwrap();
+            socket.write_all(&response(b"crc-body")).unwrap();
+        });
+        let mut fetch =
+            HttpFetch::start(Transport::Tcp, "127.0.0.1", port, "/crc").unwrap();
+        let (body, polls, longest) = poll_wrapper_steps(&mut fetch);
+        server.join().unwrap();
+        assert_eq!(body.unwrap(), b"crc-body");
+        assert_eq!(
+            head_rx.recv().unwrap(),
+            b"GET /crc HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n"
+        );
+        assert!(polls >= 1);
+        assert!(longest < STEP_BOUND, "longest poll {longest:?}");
+    }
+
     /// A plain update server that answers 200 ms late: the fetch waits
     /// in short polls, sends the blocking fetch's exact request and
     /// returns the body.
@@ -332,7 +497,7 @@ mod tests {
             socket.write_all(&response(b"crc-body")).unwrap();
         });
         let mut fetch =
-            HttpFetch::start(Transport::Tcp, "127.0.0.1", &loopback(port), "/crc").unwrap();
+            StandaloneHttpFetch::start(Transport::Tcp, "127.0.0.1", &loopback(port), "/crc").unwrap();
         let (body, polls, longest) = poll_steps(&mut fetch);
         server.join().unwrap();
         assert_eq!(body.unwrap(), b"crc-body");
@@ -358,7 +523,7 @@ mod tests {
         });
         let started = Instant::now();
         let mut fetch =
-            HttpFetch::start(Transport::Tcp, "127.0.0.1", &loopback(port), "/crc").unwrap();
+            StandaloneHttpFetch::start(Transport::Tcp, "127.0.0.1", &loopback(port), "/crc").unwrap();
         let (body, _, longest) = poll_steps(&mut fetch);
         let failed = started.elapsed();
         done_tx.send(()).unwrap();
@@ -400,8 +565,12 @@ mod tests {
             .add_root_certificate(native_tls::Certificate::from_pem(cert).unwrap())
             .build()
             .unwrap();
-        let mut fetch =
-            HttpFetch::start_with(Some(connector), "localhost", &loopback(port), "/config1234");
+        let mut fetch = StandaloneHttpFetch::start_with(
+            Some(connector),
+            "localhost",
+            &loopback(port),
+            "/config1234",
+        );
         let (fetched, polls, longest) = poll_steps(&mut fetch);
         server.join().unwrap();
         assert_eq!(fetched.unwrap(), body);
@@ -411,5 +580,23 @@ mod tests {
         );
         assert!(polls > 10, "{polls} polls");
         assert!(longest < STEP_BOUND, "longest poll {longest:?}");
+    }
+}
+
+#[cfg(all(test, not(feature = "standalone-native-transport")))]
+mod hosted_only_tests {
+    use super::{installed_host_network, HttpFetch};
+    use crate::client::client::AssetFetchError;
+    use crate::Transport;
+
+    #[test]
+    fn http_fetch_requires_the_host_network_without_native_transport() {
+        assert!(installed_host_network().is_none());
+        for transport in [Transport::Tcp, Transport::Wss] {
+            assert_eq!(
+                HttpFetch::start(transport, "127.0.0.1", 1, "/crc").err(),
+                Some(AssetFetchError::Connection)
+            );
+        }
     }
 }

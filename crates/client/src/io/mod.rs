@@ -5,7 +5,13 @@ pub use client_prot::ClientProt;
 pub mod client_prot_289;
 pub use client_prot_289::{map_client_prot, ClientProt289};
 pub mod client_stream;
+pub mod host_network;
 pub use client_stream::ClientStream;
+pub use host_network::{
+    install_host_network, installed_host_network, AlreadyInstalled, HostAttemptIdentity,
+    HostCloseDisposition, HostGameStream, HostHttpFetch, HostNetwork, HostStreamExit,
+    HostStreamIdentity, SealReceipt,
+};
 pub mod isaac;
 pub use isaac::Isaac;
 pub mod jagfile;

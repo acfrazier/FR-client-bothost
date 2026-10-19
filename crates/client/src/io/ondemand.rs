@@ -20,6 +20,7 @@ use sha2::{Digest, Sha256};
 use crate::dash3d::model::ModelProvider;
 use crate::datastruct::{Arena, LinkList, LinkList2, LinkableTrait, Links};
 use crate::io::client_stream::{ClientStream, LoginCancel};
+use crate::io::host_network::installed_host_network;
 use crate::io::jagfile::JagFile;
 use crate::io::packet::Packet;
 use crate::io::ClientRevision;
@@ -180,17 +181,16 @@ struct BoundHubIdentity<'a> {
     file_store_dir: Option<&'a str>,
     persist_dir: Option<&'a str>,
     map_archive: Option<Arc<PreparedMapArchive>>,
-    /// The update server's addresses for a cold-fill hub, looked up by the
-    /// fill; `None` for every other hub.
-    cold_fill_addrs: Option<&'a [SocketAddr]>,
+    /// Cold-fill resolution: `None` outside cold fill, `Some(None)` for host
+    /// resolution, or `Some(Some(addrs))` for caller prelookup.
+    cold_fill_addrs: Option<Option<&'a [SocketAddr]>>,
 }
 
 /// Cold-fill worker only: how it connects to the update server.
 struct ColdConnect {
-    /// The update server's addresses, looked up by the fill before the
-    /// worker starts. The worker never calls the resolver, so nothing that
-    /// joins it waits for a name lookup.
-    addrs: Vec<SocketAddr>,
+    /// Pre-resolved addresses for standalone mode; `None` delegates lookup
+    /// to the installed host resolver.
+    addrs: Option<Vec<SocketAddr>>,
     /// Lets the hub's last detach stop the connect and handshake from
     /// another thread.
     cancel: LoginCancel,
@@ -467,10 +467,9 @@ impl OnDemand {
     /// cycles, not wake-ups.
     /// The identity differs from every [`Self::new_bound`] hub, so in-game
     /// handles never share this worker or its pacing.
-    /// `addrs` are the addresses of `host` at `port`, looked up by the
-    /// caller: the worker connects to them and never calls the resolver,
-    /// so a cancel never waits for a name lookup. `host` keys the hub and
-    /// names the server for the TLS and WebSocket setup.
+    /// `resolved_addrs` are optional caller-prelooked addresses for `host`
+    /// at `port`; `None` delegates lookup to the installed host. Standalone
+    /// cold fill supplies its prelookup so its worker never resolves names.
     #[allow(clippy::too_many_arguments)]
     pub fn new_cold_fill(
         versionlist: &JagFile,
@@ -478,7 +477,7 @@ impl OnDemand {
         revision: ClientRevision,
         host: &str,
         port: u16,
-        addrs: &[SocketAddr],
+        resolved_addrs: Option<&[SocketAddr]>,
         cache_dir: &str,
         content_id: &str,
         file_store_dir: Option<&str>,
@@ -496,7 +495,7 @@ impl OnDemand {
                 file_store_dir,
                 persist_dir: None,
                 map_archive: None,
-                cold_fill_addrs: Some(addrs),
+                cold_fill_addrs: Some(resolved_addrs),
             }),
             None,
         )?
@@ -587,7 +586,7 @@ impl OnDemand {
         let cold_fill_addrs = bound
             .as_ref()
             .and_then(|identity| identity.cold_fill_addrs)
-            .map(<[SocketAddr]>::to_vec);
+            .map(|resolved| resolved.map(<[SocketAddr]>::to_vec));
         let (cmd, message_rx, worker_running, hub_ingame, slot_id) = subscribe_hub(
             host,
             port,
@@ -1094,7 +1093,7 @@ fn subscribe_hub(
     crcs: &[Vec<i32>],
     identity: Option<HubIdentity>,
     revision: Option<ClientRevision>,
-    cold_fill_addrs: Option<Vec<SocketAddr>>,
+    cold_fill_addrs: Option<Option<Vec<SocketAddr>>>,
 ) -> Result<WorkerEnds, String> {
     let key = (host.to_string(), port);
     let slot_id = NEXT_SLOT.fetch_add(1, Ordering::Relaxed) as u64;
@@ -1651,24 +1650,45 @@ impl Worker {
         }
     }
 
-    /// Java `openSocket(portOff + 43594)`: handshake is byte 15, then the
-    /// engine replies with 8 bytes. A cold-fill worker connects to the
-    /// addresses its fill looked up, through
-    /// [`ClientStream::connect_cancellable`], so its hub's last detach can
-    /// end a connect or handshake that the server never answers; every
-    /// other worker resolves its host and waits as Java does.
-    fn open_socket(&mut self) -> io::Result<()> {
-        let mut stream = match (self.transport, &self.cold_connect) {
-            (Some(transport), Some(cold)) => ClientStream::connect_cancellable(
+    fn connect_ondemand_socket(
+        configured_transport: Option<Transport>,
+        host: &str,
+        port: u16,
+        cold_connect: Option<&ColdConnect>,
+    ) -> io::Result<ClientStream> {
+        let transport = configured_transport.unwrap_or(Transport::Tcp);
+        match cold_connect {
+            Some(cold) => ClientStream::connect_ondemand_cancellable(
                 transport,
-                &self.host,
-                self.port,
-                &cold.addrs,
+                host,
+                port,
+                cold.addrs.as_deref(),
                 &cold.cancel,
-            )?,
-            (Some(transport), None) => ClientStream::connect_for(transport, &self.host, self.port)?,
-            (None, _) => ClientStream::connect(&self.host, self.port)?,
-        };
+            ),
+            None => match installed_host_network() {
+                Some(network) => {
+                    let host_stream =
+                        network.connect_ondemand(transport, host, port, None, None)?;
+                    Ok(ClientStream::from_host(host_stream))
+                }
+                None => match configured_transport {
+                    Some(transport) => ClientStream::connect_for(transport, host, port),
+                    None => ClientStream::connect(host, port),
+                },
+            },
+        }
+    }
+
+    /// Java `openSocket(portOff + 43594)`: handshake is byte 15, then the
+    /// engine replies with 8 bytes. Cold-fill connects pass caller-prelooked
+    /// addresses in standalone mode, or let the host resolve the endpoint.
+    fn open_socket(&mut self) -> io::Result<()> {
+        let mut stream = Self::connect_ondemand_socket(
+            self.transport,
+            &self.host,
+            self.port,
+            self.cold_connect.as_ref(),
+        )?;
         stream.write(&[15], 1)?;
         for _ in 0..8 {
             stream.read()?;
@@ -2183,7 +2203,7 @@ fn read_raw_table<F: Fn(&mut Packet) -> i32>(
 
 #[cfg(test)]
 mod tests {
-    use super::OnDemand;
+    use super::{ColdConnect, OnDemand, Worker};
 
     /// Java `Client.maininit` (5251-5277) maps `getModelUse` bits to a
     /// prefetch priority: the first matching bit in the 8/0x20/0x10/0x40/
@@ -2200,5 +2220,101 @@ mod tests {
         assert_eq!(OnDemand::model_use_priority(0x40), 7);
         assert_eq!(OnDemand::model_use_priority(0x80), 6);
         assert_eq!(OnDemand::model_use_priority(0x09), 3); // 8 then &1 -> 3
+    }
+
+    #[cfg(not(feature = "standalone-native-transport"))]
+    #[test]
+    fn on_demand_connectors_require_the_host_without_native_transport() {
+        use crate::io::client_stream::LoginCancel;
+        use crate::Transport;
+        use std::io::ErrorKind;
+        use std::net::SocketAddr;
+
+        assert!(super::installed_host_network().is_none());
+        let address = SocketAddr::from(([127, 0, 0, 1], 1));
+        let cold = ColdConnect {
+            addrs: Some(vec![address]),
+            cancel: LoginCancel::new(),
+        };
+        let unresolved = ColdConnect {
+            addrs: None,
+            cancel: LoginCancel::new(),
+        };
+        for result in [
+            Worker::connect_ondemand_socket(None, "127.0.0.1", 1, None),
+            Worker::connect_ondemand_socket(
+                Some(Transport::Tcp),
+                "127.0.0.1",
+                1,
+                None,
+            ),
+            Worker::connect_ondemand_socket(
+                Some(Transport::Tcp),
+                "127.0.0.1",
+                1,
+                Some(&cold),
+            ),
+            Worker::connect_ondemand_socket(
+                Some(Transport::Tcp),
+                "127.0.0.1",
+                1,
+                Some(&unresolved),
+            ),
+        ] {
+            assert_eq!(
+                result.err().expect("no host connector is installed").kind(),
+                ErrorKind::NotConnected
+            );
+        }
+    }
+
+    #[cfg(feature = "standalone-native-transport")]
+    #[test]
+    fn on_demand_connectors_keep_standalone_native_fallback() {
+        use crate::io::client_stream::LoginCancel;
+        use crate::Transport;
+        use std::io::ErrorKind;
+        use std::net::{SocketAddr, TcpListener};
+        use std::thread;
+
+        assert!(super::installed_host_network().is_none());
+
+        let unresolved = ColdConnect {
+            addrs: None,
+            cancel: LoginCancel::new(),
+        };
+        let error = Worker::connect_ondemand_socket(
+            Some(Transport::Tcp),
+            "127.0.0.1",
+            1,
+            Some(&unresolved),
+        )
+        .err()
+        .expect("standalone cold fill needs caller-prelooked addresses");
+        assert_eq!(error.kind(), ErrorKind::InvalidInput);
+        for use_cold in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = thread::spawn(move || listener.accept().unwrap());
+            let stream = if use_cold {
+                let address = SocketAddr::from(([127, 0, 0, 1], port));
+                let cold = ColdConnect {
+                    addrs: Some(vec![address]),
+                    cancel: LoginCancel::new(),
+                };
+                Worker::connect_ondemand_socket(
+                    Some(Transport::Tcp),
+                    "127.0.0.1",
+                    port,
+                    Some(&cold),
+                )
+                .unwrap()
+            } else {
+                Worker::connect_ondemand_socket(None, "127.0.0.1", port, None).unwrap()
+            };
+            assert!(!stream.is_hosted());
+            drop(stream);
+            server.join().unwrap();
+        }
     }
 }

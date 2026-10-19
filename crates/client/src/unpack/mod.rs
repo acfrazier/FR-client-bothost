@@ -32,15 +32,19 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
+#[cfg(feature = "standalone-native-transport")]
+use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
 
+use crate::client::client::AssetFetchError;
 use crate::client::Client;
+use crate::io::host_network::installed_host_network;
 use crate::io::jagfile::JagFile;
 use crate::io::ondemand::cache_read;
 use crate::io::packet::Packet;
@@ -120,6 +124,8 @@ const JAG_INDEX: [(&str, usize); 8] = [
     ("wordenc", 7),
     ("sounds", 8),
 ];
+
+const PREPARE_MAINTENANCE_INTERVAL: Duration = http::MAINTENANCE_INTERVAL;
 
 /// Per-archive totals for the manifest.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -334,6 +340,26 @@ pub fn fetch_snapshot(
         fill::SnapshotStart::Fill(snapshot) => *snapshot,
     };
     while snapshot.step(source, None)? != fill::FillProgress::Staged {}
+    snapshot.publish()
+}
+
+fn fetch_snapshot_with_maintenance(
+    cache_dir: &str,
+    out_dir: &str,
+    source: &mut dyn EntrySource,
+    maintenance: &mut dyn FnMut(Instant),
+) -> Result<Manifest, UnpackError> {
+    let mut snapshot = match fill::NetworkSnapshot::begin(cache_dir, out_dir)? {
+        fill::SnapshotStart::Ready(manifest) => return Ok(manifest),
+        fill::SnapshotStart::Fill(snapshot) => *snapshot,
+    };
+    loop {
+        let until = Instant::now() + PREPARE_MAINTENANCE_INTERVAL;
+        if snapshot.step(source, Some(until))? == fill::FillProgress::Staged {
+            break;
+        }
+        maintenance(Instant::now());
+    }
     snapshot.publish()
 }
 
@@ -1575,7 +1601,7 @@ pub fn load_snapshot(cache_dir: &str, out_dir: &str) -> Result<Loaded, UnpackErr
 /// attempt's outcome. Returns `(loaded, first)` so `maininit` prints once.
 pub fn load_snapshot_once(cache_dir: &str, out_dir: &str) -> Result<(Loaded, bool), UnpackError> {
     let key = snapshot_key(cache_dir, out_dir);
-    let (outcome, ran) = once_per_key(&SNAPSHOT_INJECT, &key, || {
+    let (outcome, ran) = once_per_key(&SNAPSHOT_INJECT, &key, None, |_| {
         PREPARE_INJECTS.fetch_add(1, Ordering::Relaxed);
         match load_snapshot(cache_dir, out_dir) {
             Ok(loaded) => Outcome::Success(Ok(loaded)),
@@ -1673,14 +1699,53 @@ pub fn prepare_snapshot(
     endpoint: Option<FetchEndpoint<'_>>,
     source: Option<&mut dyn EntrySource>,
 ) -> Arc<SnapshotPreparation> {
+    prepare_snapshot_inner(cache_dir, out_dir, endpoint, source, None)
+}
+
+/// Prepare a snapshot while running `maintenance` at each bounded network or
+/// same-key wait boundary. Each such wait lasts no longer than 100 ms.
+pub fn prepare_snapshot_with_maintenance(
+    cache_dir: &str,
+    out_dir: &str,
+    endpoint: Option<FetchEndpoint<'_>>,
+    source: Option<&mut dyn EntrySource>,
+    mut maintenance: impl FnMut(Instant),
+) -> Arc<SnapshotPreparation> {
+    prepare_snapshot_inner(
+        cache_dir,
+        out_dir,
+        endpoint,
+        source,
+        Some(&mut maintenance),
+    )
+}
+
+fn prepare_snapshot_inner(
+    cache_dir: &str,
+    out_dir: &str,
+    endpoint: Option<FetchEndpoint<'_>>,
+    source: Option<&mut dyn EntrySource>,
+    maintenance: Option<&mut dyn FnMut(Instant)>,
+) -> Arc<SnapshotPreparation> {
     let key = snapshot_key(cache_dir, out_dir);
-    let (outcome, _ran) = once_per_key(&SNAPSHOT_PREPARE, &key, || {
-        let prepared = Arc::new(attempt_prepare(cache_dir, out_dir, endpoint, source));
-        match &*prepared {
-            SnapshotPreparation::Ready { .. } => Outcome::Success(prepared),
-            SnapshotPreparation::Unavailable { .. } => Outcome::Failure(prepared),
-        }
-    });
+    let (outcome, _ran) = once_per_key(
+        &SNAPSHOT_PREPARE,
+        &key,
+        maintenance,
+        |maintenance| {
+            let prepared = Arc::new(attempt_prepare(
+                cache_dir,
+                out_dir,
+                endpoint,
+                source,
+                maintenance,
+            ));
+            match &*prepared {
+                SnapshotPreparation::Ready { .. } => Outcome::Success(prepared),
+                SnapshotPreparation::Unavailable { .. } => Outcome::Failure(prepared),
+            }
+        },
+    );
     outcome
 }
 
@@ -1701,6 +1766,7 @@ fn attempt_prepare(
     out_dir: &str,
     endpoint: Option<FetchEndpoint<'_>>,
     source: Option<&mut dyn EntrySource>,
+    mut maintenance: Option<&mut dyn FnMut(Instant)>,
 ) -> SnapshotPreparation {
     PREPARE_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
 
@@ -1724,7 +1790,13 @@ fn attempt_prepare(
                 ),
             };
         };
-        match fetch_jags(cache_dir, endpoint, &missing) {
+        let fetched = match maintenance.as_deref_mut() {
+            Some(maintenance) => {
+                fetch_jags_with_maintenance(cache_dir, endpoint, &missing, maintenance)
+            }
+            None => fetch_jags(cache_dir, endpoint, &missing),
+        };
+        match fetched {
             Ok(fetched) => fetched,
             Err(e) => {
                 return SnapshotPreparation::Unavailable {
@@ -1784,27 +1856,35 @@ fn attempt_prepare(
     }
 
     match source {
-        Some(source) => match fetch_snapshot(cache_dir, out_dir, source) {
-            Ok(manifest) => {
-                PREPARE_PUBLISHED.fetch_add(1, Ordering::Relaxed);
-                PREPARE_NETWORK.fetch_add(1, Ordering::Relaxed);
-                SnapshotPreparation::Ready {
-                    version: manifest.version,
-                    dir: manifest.dir,
-                    models: manifest.models.unpacked,
-                    anim_records: manifest.anims.unpacked,
-                    source: "update-server",
-                    fetched,
-                    published: true,
+        Some(source) => {
+            let filled = match maintenance.as_deref_mut() {
+                Some(maintenance) => {
+                    fetch_snapshot_with_maintenance(cache_dir, out_dir, source, maintenance)
+                }
+                None => fetch_snapshot(cache_dir, out_dir, source),
+            };
+            match filled {
+                Ok(manifest) => {
+                    PREPARE_PUBLISHED.fetch_add(1, Ordering::Relaxed);
+                    PREPARE_NETWORK.fetch_add(1, Ordering::Relaxed);
+                    SnapshotPreparation::Ready {
+                        version: manifest.version,
+                        dir: manifest.dir,
+                        models: manifest.models.unpacked,
+                        anim_records: manifest.anims.unpacked,
+                        source: "update-server",
+                        fetched,
+                        published: true,
+                    }
+                }
+                Err(e) => {
+                    reasons.push(format!("update-server fill: {e}"));
+                    SnapshotPreparation::Unavailable {
+                        reason: reasons.join("; "),
+                    }
                 }
             }
-            Err(e) => {
-                reasons.push(format!("update-server fill: {e}"));
-                SnapshotPreparation::Unavailable {
-                    reason: reasons.join("; "),
-                }
-            }
-        },
+        }
         None => {
             reasons.push("no update-server entry source is available for a cold fill".to_string());
             SnapshotPreparation::Unavailable {
@@ -1845,6 +1925,81 @@ fn fetch_jags(
     }
     PREPARE_FETCHED.fetch_add(fetched.len() as u64, Ordering::Relaxed);
     Ok(fetched)
+}
+
+fn fetch_jags_with_maintenance(
+    cache_dir: &str,
+    endpoint: FetchEndpoint<'_>,
+    missing: &[&str],
+    maintenance: &mut dyn FnMut(Instant),
+) -> Result<Vec<String>, UnpackError> {
+    let addrs: Option<Vec<std::net::SocketAddr>> = if installed_host_network().is_some() {
+        None
+    } else {
+        #[cfg(feature = "standalone-native-transport")]
+        {
+            let addrs = (endpoint.host, endpoint.port)
+                .to_socket_addrs()
+                .map_err(|error| {
+                    UnpackError::asset(
+                        format!("update server /crc address lookup: {error}"),
+                        AssetFetchError::Connection,
+                    )
+                })?
+                .collect::<Vec<_>>();
+            if addrs.is_empty() {
+                return Err(UnpackError::asset(
+                    "update server /crc: no addresses resolved",
+                    AssetFetchError::Connection,
+                ));
+            }
+            Some(addrs)
+        }
+        #[cfg(not(feature = "standalone-native-transport"))]
+        {
+            None
+        }
+    };
+
+    let mut crc = match addrs.as_deref() {
+        Some(addrs) => {
+            http::HttpFetch::start_resolved(endpoint.transport, endpoint.host, addrs, "/crc")
+        }
+        None => http::HttpFetch::start(endpoint.transport, endpoint.host, endpoint.port, "/crc"),
+    }
+    .map_err(|error| {
+        UnpackError::asset(format!("update server /crc: {}", error.message()), error)
+    })?;
+
+    let body = crc
+        .blocking_with_maintenance(maintenance)
+        .map_err(|error| {
+            UnpackError::asset(format!("update server /crc: {}", error.message()), error)
+        })?;
+    let checksums = Client::parse_jag_checksums(body).map_err(|_| {
+        UnpackError::asset(
+            "update server /crc: invalid checksum response",
+            AssetFetchError::Checksum,
+        )
+    })?;
+    let mut refresh = JagRefresh {
+        checksums,
+        fetched: Vec::with_capacity(missing.len()),
+        reused: Vec::new(),
+    };
+    for name in missing {
+        let slot = JAG_INDEX
+            .iter()
+            .position(|(jag, _)| jag == name)
+            .ok_or_else(|| UnpackError::new(format!("{name}: not a jag pack file")))?;
+        let mut fetch = start_jag_download(endpoint, addrs.as_deref(), slot, &refresh)?;
+        let body = fetch
+            .blocking_with_maintenance(maintenance)
+            .map_err(|error| jag_fetch_error(slot, error))?;
+        accept_jag_download(Path::new(cache_dir), slot, &mut refresh, body)?;
+    }
+    PREPARE_FETCHED.fetch_add(refresh.fetched.len() as u64, Ordering::Relaxed);
+    Ok(refresh.fetched)
 }
 
 /// Negotiate `/crc` and materialize every jag into `dest`.
@@ -1972,24 +2127,28 @@ fn download_jag(
     confirm_jag_download(dest, slot, refresh)
 }
 
-/// Start the download part of [`refresh_jag`] as a stepped fetch to
-/// `addrs`, the endpoint host's looked-up addresses; finish it with
-/// [`accept_jag_download`].
+/// Start the download part of [`refresh_jag`] as a stepped fetch. The
+/// unresolved path delegates name lookup to the installed host hook; the
+/// resolved path uses addresses looked up by the caller.
 fn start_jag_download(
     endpoint: FetchEndpoint<'_>,
-    addrs: &[std::net::SocketAddr],
+    addrs: Option<&[std::net::SocketAddr]>,
     slot: usize,
     refresh: &JagRefresh,
 ) -> Result<http::HttpFetch, UnpackError> {
     let (name, index) = JAG_INDEX[slot];
     let crc = refresh.checksums[index];
-    http::HttpFetch::start(
-        endpoint.transport,
-        endpoint.host,
-        addrs,
-        &format!("/{name}{crc}"),
-    )
-    .map_err(|e| jag_fetch_error(slot, e))
+    let path = format!("/{name}{crc}");
+    let fetch = match addrs {
+        Some(addrs) => http::HttpFetch::start_resolved(
+            endpoint.transport,
+            endpoint.host,
+            addrs,
+            &path,
+        ),
+        None => http::HttpFetch::start(endpoint.transport, endpoint.host, endpoint.port, &path),
+    };
+    fetch.map_err(|error| jag_fetch_error(slot, error))
 }
 
 /// Check and persist the body of a [`start_jag_download`] fetch as
@@ -2145,10 +2304,12 @@ type OnceCell<T> = OnceLock<(Mutex<OnceTable<T>>, Condvar)>;
 fn once_per_key<T: Clone>(
     cell: &'static OnceCell<T>,
     key: &str,
-    work: impl FnOnce() -> Outcome<T>,
+    mut maintenance: Option<&mut dyn FnMut(Instant)>,
+    work: impl FnOnce(Option<&mut dyn FnMut(Instant)>) -> Outcome<T>,
 ) -> (T, bool) {
     let (lock, cv) = cell.get_or_init(|| (Mutex::new(OnceTable::default()), Condvar::new()));
     let mut waited = false;
+    let mut next_maintenance = Instant::now() + PREPARE_MAINTENANCE_INTERVAL;
     let mut table = lock.lock().unwrap_or_else(|p| p.into_inner());
     loop {
         match table.record.entry(key.to_string()) {
@@ -2161,7 +2322,21 @@ fn once_per_key<T: Clone>(
         }
         if table.in_flight.contains(key) {
             waited = true;
-            table = cv.wait(table).unwrap_or_else(|p| p.into_inner());
+            if let Some(maintenance) = maintenance.as_deref_mut() {
+                let remaining = next_maintenance.saturating_duration_since(Instant::now());
+                let (next, _) = cv
+                    .wait_timeout(table, remaining)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                table = next;
+                if Instant::now() >= next_maintenance {
+                    drop(table);
+                    maintenance(Instant::now());
+                    next_maintenance = Instant::now() + PREPARE_MAINTENANCE_INTERVAL;
+                    table = lock.lock().unwrap_or_else(|p| p.into_inner());
+                }
+            } else {
+                table = cv.wait(table).unwrap_or_else(|p| p.into_inner());
+            }
             continue;
         }
         table.in_flight.insert(key.to_string());
@@ -2169,7 +2344,7 @@ fn once_per_key<T: Clone>(
     }
     drop(table);
 
-    let outcome = work();
+    let outcome = work(maintenance);
 
     let mut table = lock.lock().unwrap_or_else(|p| p.into_inner());
     table.in_flight.remove(key);

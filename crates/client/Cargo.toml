@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = []
+default = ["standalone-native-transport"]
+standalone-native-transport = ["dep:native-tls", "tungstenite/native-tls"]
 window = ["dep:winit", "dep:softbuffer"]
 # Windows test/fixture workers may own a window loop; never enabled by product frontends.
 headed-fixture = ["window"]
@@ -26,11 +27,10 @@ num-bigint = "0.4"
 pollster = "0.4"
 rustysynth = { version = "1.3", optional = true }
 sha2 = "0.10"
-# Non-blocking TCP connect for the bot-host cold cache fill (stepped HTTP,
-# cancellable OnDemand handshake); 274bot already links it through tokio.
+# Non-blocking TCP connect for the standalone native OnDemand fallback.
 socket2 = "0.6"
-native-tls = "0.2"
-tungstenite = { version = "0.24", features = ["native-tls"] }
+native-tls = { version = "0.2", optional = true }
+tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
 softbuffer = { version = "0.4", optional = true }
 wgpu = "29"
 winit = { version = "0.30", optional = true }

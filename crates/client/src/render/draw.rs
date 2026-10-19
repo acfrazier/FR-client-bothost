@@ -601,12 +601,15 @@ impl Renderer {
             } else if client.cross_mode == 2 {
                 // Primary 289 J:1773-1778: count drawn op crosshairs only.
                 if client.revision().is_289() {
-                    client.outbound_289.cyclelogic5 += 1;
-                    if client.outbound_289.cyclelogic5 > 57 {
-                        client.outbound_289.cyclelogic5 = 0;
-                        client.out.p1_enc(
-                            client.client_opcode(crate::io::ClientProt::ANTICHEAT_CYCLELOGIC5),
-                        );
+                    let next_cycle = client.outbound_289.cyclelogic5 + 1;
+                    if next_cycle > 57 {
+                        let opcode =
+                            client.client_opcode(crate::io::ClientProt::ANTICHEAT_CYCLELOGIC5);
+                        if client.encode_output(|out| out.p1_enc(opcode)) {
+                            client.outbound_289.cyclelogic5 = 0;
+                        }
+                    } else {
+                        client.outbound_289.cyclelogic5 = next_cycle;
                     }
                 }
                 let idx = (client.cross_cycle / 100) as usize + 4;
@@ -816,13 +819,17 @@ impl Renderer {
         if let Some(player) = client.local_player.as_ref() {
             if player.x >> 7 == client.minimap_flag_x && player.z >> 7 == client.minimap_flag_z {
                 client.minimap_flag_x = 0;
-                client.cyclelogic6 += 1;
-                if client.cyclelogic6 > 122 {
-                    client.cyclelogic6 = 0;
-                    client
-                        .out
-                        .p1_enc(client.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC6));
-                    client.out.p1(62);
+                let next_cycle = client.cyclelogic6 + 1;
+                if next_cycle > 122 {
+                    let opcode = client.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC6);
+                    if client.encode_output(|out| {
+                        out.p1_enc(opcode);
+                        out.p1(62);
+                    }) {
+                        client.cyclelogic6 = 0;
+                    }
+                } else {
+                    client.cyclelogic6 = next_cycle;
                 }
             }
         }
@@ -1046,34 +1053,46 @@ impl Renderer {
         }
 
         // TS 4387-4413: `cyclelogic1` anticheat every 1175 cycles.
-        self.cyclelogic1 += 1;
-        if self.cyclelogic1 > 1174 {
-            self.cyclelogic1 = 0;
-
-            client
-                .out
-                .p1_enc(client.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC1));
-            client.out.p1(0);
-            let start = client.out.pos;
-            if (random_float() * 2.0) as i32 == 0 {
-                client.out.p2(11499);
+        let next_cycle = self.cyclelogic1 + 1;
+        if next_cycle > 1174 {
+            let add_11499 = (random_float() * 2.0) as i32 == 0;
+            let add_139 = (random_float() * 2.0) as i32 == 0;
+            let add_94 = (random_float() * 2.0) as i32 == 0;
+            let add_65 = (random_float() * 2.0) as i32 == 0;
+            let random_byte = (random_float() * 256.0) as i32;
+            let payload_length = 9
+                + if add_11499 { 2 } else { 0 }
+                + i32::from(add_139)
+                + i32::from(add_94)
+                + i32::from(add_65)
+                + 1;
+            let opcode = client.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC1);
+            if client.encode_output(|out| {
+                out.p1_enc(opcode);
+                out.p1(payload_length);
+                if add_11499 {
+                    out.p2(11499);
+                }
+                out.p2(10548);
+                if add_139 {
+                    out.p1(139);
+                }
+                if add_94 {
+                    out.p1(94);
+                }
+                out.p2(51693);
+                out.p1(16);
+                out.p2(15036);
+                if add_65 {
+                    out.p1(65);
+                }
+                out.p1(random_byte);
+                out.p2(22990);
+            }) {
+                self.cyclelogic1 = 0;
             }
-            client.out.p2(10548);
-            if (random_float() * 2.0) as i32 == 0 {
-                client.out.p1(139);
-            }
-            if (random_float() * 2.0) as i32 == 0 {
-                client.out.p1(94);
-            }
-            client.out.p2(51693);
-            client.out.p1(16);
-            client.out.p2(15036);
-            if (random_float() * 2.0) as i32 == 0 {
-                client.out.p1(65);
-            }
-            client.out.p1((random_float() * 256.0) as i32);
-            client.out.p2(22990);
-            client.out.psize1((client.out.pos - start) as i32);
+        } else {
+            self.cyclelogic1 = next_cycle;
         }
     }
 
@@ -3434,11 +3453,14 @@ impl Renderer {
     /// `areaGame.setPixels()` is a no-op here (no global Pix2D target).
     pub(crate) fn draw_icons(&mut self, client: &mut Client) {
         if client.tut_flash_icon != -1 && client.tut_flash_icon == client.active_icon {
-            client.tut_flash_icon = -1;
-            client
-                .out
-                .p1_enc(client.client_opcode(ClientProt::TUT_CLICKSIDE));
-            client.out.p1(client.active_icon);
+            let active_icon = client.active_icon;
+            let opcode = client.client_opcode(ClientProt::TUT_CLICKSIDE);
+            if client.encode_output(|out| {
+                out.p1_enc(opcode);
+                out.p1(active_icon);
+            }) {
+                client.tut_flash_icon = -1;
+            }
         }
         if client.journal_paint_hidden() {
             // Packet-producing draw_icons edges above remain live; only the
@@ -4318,14 +4340,17 @@ impl Renderer {
             }
         }
 
-        self.cyclelogic3 += 1;
-        if self.cyclelogic3 > 112 {
-            self.cyclelogic3 = 0;
-
-            client
-                .out
-                .p1_enc(client.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC3));
-            client.out.p1(50);
+        let next_cycle = self.cyclelogic3 + 1;
+        if next_cycle > 112 {
+            let opcode = client.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC3);
+            if client.encode_output(|out| {
+                out.p1_enc(opcode);
+                out.p1(50);
+            }) {
+                self.cyclelogic3 = 0;
+            }
+        } else {
+            self.cyclelogic3 = next_cycle;
         }
     }
 
