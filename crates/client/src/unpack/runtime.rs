@@ -284,9 +284,32 @@ pub(super) fn is_valid_foreign_pid(pid: u32) -> bool {
     }
 }
 
+/// Windows `ERROR_INVALID_PARAMETER`. Only this `OpenProcess` failure means dead.
+#[cfg(any(windows, test))]
+const OPEN_PROCESS_DEAD: u32 = 87;
+
+/// Windows `ERROR_ACCESS_DENIED`. This failure means the process may still be live.
+#[cfg(any(windows, test))]
+const OPEN_PROCESS_ACCESS_DENIED: u32 = 5;
+
+#[cfg(windows)]
+const _: () = {
+    assert!(windows_sys::Win32::Foundation::ERROR_INVALID_PARAMETER == OPEN_PROCESS_DEAD);
+    assert!(windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED == OPEN_PROCESS_ACCESS_DENIED);
+};
+
+/// Classify an `OpenProcess` failure from an injected code.
+///
+/// Only `ERROR_INVALID_PARAMETER` means the process is gone. Access denied and
+/// every other error mean it may still be live.
+#[cfg(any(windows, test))]
+fn open_process_failure_means_alive(error: u32) -> bool {
+    error != OPEN_PROCESS_DEAD
+}
+
 /// True when `pid` still appears to own a live process. Unknown results count as
 /// alive so a staging directory that might still be in use is never deleted.
-pub(super) fn process_is_alive(pid: u32) -> bool {
+pub fn process_is_alive(pid: u32) -> bool {
     if !is_valid_foreign_pid(pid) {
         // Invalid/special pids are treated as live so their dirs are kept.
         return true;
@@ -308,9 +331,7 @@ pub(super) fn process_is_alive(pid: u32) -> bool {
     }
     #[cfg(windows)]
     {
-        use windows_sys::Win32::Foundation::{
-            CloseHandle, GetLastError, ERROR_INVALID_PARAMETER, STILL_ACTIVE,
-        };
+        use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, STILL_ACTIVE};
         use windows_sys::Win32::System::Threading::{
             GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
         };
@@ -322,7 +343,7 @@ pub(super) fn process_is_alive(pid: u32) -> bool {
             let err = unsafe { GetLastError() };
             // Only the documented no-such-process failure means dead. ACCESS_DENIED
             // and every other error are treated as alive (keep the directory).
-            return err != ERROR_INVALID_PARAMETER;
+            return open_process_failure_means_alive(err);
         }
         let mut exit_code = 0u32;
         // SAFETY: `handle` is a process handle from OpenProcess above.
