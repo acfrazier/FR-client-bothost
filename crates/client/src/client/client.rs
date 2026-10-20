@@ -14903,6 +14903,26 @@ mod main_modal_packet_tests {
     }
 
     #[test]
+    fn local_close_is_not_counted_before_the_server_close() {
+        let mut client = r289_client();
+        handle_r289_packet(&mut client, ServerProt289::IF_OPENMAIN, vec![0, 42]);
+        let opened = client.main_modal_packet_state();
+
+        client.close_modal();
+        let locally_closed = client.main_modal_packet_state();
+        assert_eq!(client.main_modal_id, -1);
+        assert_eq!(locally_closed.close_packets, opened.close_packets);
+
+        close_main_modal(&mut client);
+        let server_closed = client.main_modal_packet_state();
+        assert_eq!(
+            server_closed.close_packets,
+            opened.close_packets.wrapping_add(1)
+        );
+        assert_eq!(server_closed.generation, locally_closed.generation);
+    }
+
+    #[test]
     fn two_close_packets_in_one_frame_count_twice() {
         let mut client = r289_client();
         close_main_modal(&mut client);
@@ -14939,6 +14959,7 @@ mod main_modal_packet_tests {
 
     #[test]
     fn close_counter_stays_inline() {
+        // Design 4.8 R4-1 adds one u64 (+8 B); exact inline layout, 0 B headroom.
         assert_eq!(std::mem::size_of::<MainModalPacketState>(), 32);
     }
 }
