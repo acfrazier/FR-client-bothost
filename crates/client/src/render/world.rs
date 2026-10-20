@@ -5,7 +5,7 @@
 //! the sprite draw buffer, the ground draw vertex scratch, the ground
 //! minimap pass (`render2DGround`) and the share-light merge scratch is
 //! *not* here (see below). The per-tile data — typecodes, models, the
-//! sprite arena, occluders, `occlusion_cycle`, `groundh` — lives in the
+//! sprite arena, occluders and `groundh` — lives in the
 //! sim half (`core::world::World`); every render method takes that world
 //! and reads the tiles through it, exactly as the brief's "the renderer
 //! reads `Client.world` for typecodes".
@@ -412,6 +412,9 @@ pub struct RenderWorld {
     /// TS `World.activeOccluders`, as indices into the sim world's
     /// `occluders` arena.
     active_occluders: Vec<Option<usize>>,
+    /// Per-frame occlusion stamps, sized for the current world's corner
+    /// grid at first scene preparation. A fresh head starts with no cache.
+    occlusion_cycle: Vec<i32>,
     /// TS `World.spriteBuffer`, as indices into the sim world's `sprites`.
     sprite_buffer: Vec<Option<usize>>,
     /// TS `Ground.drawVertexX/Y` and `drawTextureVertexX/Y/Z` statics.
@@ -498,6 +501,7 @@ impl RenderWorld {
             y_orig: 0,
             num_active_occluders: 0,
             active_occluders: vec![None; MAX_ACTIVE_OCCLUDERS],
+            occlusion_cycle: Vec::new(),
             sprite_buffer: vec![None; MAX_SPRITE_BUFFER],
             ground_draw_vertex_x: [0; 6],
             ground_draw_vertex_y: [0; 6],
@@ -734,12 +738,10 @@ impl RenderWorld {
     /// clear the dynamic arena (run once per frame by the render pass, the
     /// TS `gameDrawMain`).
     pub fn remove_sprites(&mut self, world: &mut World) {
-        let dynamic: Vec<usize> = world.dynamic_sprites[..world.dynamic_count as usize]
-            .iter()
-            .flatten()
-            .copied()
-            .collect();
-        for index in dynamic {
+        for i in 0..world.dynamic_count as usize {
+            let Some(index) = world.dynamic_sprites[i].take() else {
+                continue;
+            };
             world.release_dynamic_sprite(index);
             if let Some(stamp) = self.sprite_stamps.get_mut(index) {
                 *stamp = i32::MIN;
@@ -747,9 +749,6 @@ impl RenderWorld {
             if let Some(slot) = self.sprite_models.get_mut(index) {
                 *slot = None;
             }
-        }
-        for slot in world.dynamic_sprites.iter_mut() {
-            *slot = None;
         }
         world.dynamic_count = 0;
     }
@@ -2376,6 +2375,11 @@ impl RenderWorld {
         eye_yaw: i32,
         eye_pitch: i32,
     ) {
+        let corners =
+            (world.max_tile_level * (world.max_tile_x + 1) * (world.max_tile_z + 1)) as usize;
+        if self.occlusion_cycle.len() != corners {
+            self.occlusion_cycle = vec![0; corners];
+        }
         if world.build_generation != self.last_build_generation {
             self.tile_models.clear();
             self.linked_models.clear();
@@ -3392,16 +3396,8 @@ impl RenderWorld {
                         self.sprite_occluded(world, original_level, tile_x, tile_z, min_y);
                     if decor_occluded {
                         render_trace!(decor(
-                            tile_x,
-                            tile_z,
-                            typecode,
-                            wshape,
-                            angle as i32,
-                            "front",
-                            true,
-                            "occluded",
-                            "n/a",
-                            false,
+                            tile_x, tile_z, typecode, wshape, angle, "front", true, "occluded",
+                            "n/a", false,
                         ));
                     } else if (wshape & front_wall_types) != 0 {
                         #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
@@ -3423,7 +3419,7 @@ impl RenderWorld {
                             tile_z,
                             typecode,
                             wshape,
-                            angle as i32,
+                            angle,
                             "front",
                             false,
                             "front-wall",
@@ -4894,7 +4890,7 @@ impl RenderWorld {
         let stride_z = world.max_tile_z + 1;
         let stride_x = world.max_tile_x + 1;
         let index = (level * stride_x + x) * stride_z + z;
-        let cycle = world
+        let cycle = self
             .occlusion_cycle
             .get(index as usize)
             .copied()
@@ -4926,12 +4922,12 @@ impl RenderWorld {
                     sz + 128 - 1,
                 )
             {
-                if let Some(slot) = world.occlusion_cycle.get_mut(index as usize) {
+                if let Some(slot) = self.occlusion_cycle.get_mut(index as usize) {
                     *slot = self.cycle_no;
                 }
                 true
             } else {
-                if let Some(slot) = world.occlusion_cycle.get_mut(index as usize) {
+                if let Some(slot) = self.occlusion_cycle.get_mut(index as usize) {
                     *slot = -self.cycle_no;
                 }
                 false
@@ -5177,8 +5173,7 @@ impl RenderWorld {
         let stride_z = world.max_tile_z + 1;
         let stride_x = world.max_tile_x + 1;
         let index = (level * stride_x + x) * stride_z + z;
-        world
-            .occlusion_cycle
+        self.occlusion_cycle
             .get(index as usize)
             .copied()
             .unwrap_or(0)
@@ -6154,6 +6149,33 @@ mod fill_java_order_tests {
     use crate::dash3d::{Model, SceneModel, TerrainOverlayShape};
     use crate::graphics::{Pix2D, Pix3D, Pix3DDraw, PixMap};
 
+    #[test]
+    fn occlusion_cache_belongs_to_the_head_and_reuses_its_allocation() {
+        let mut world = World::new(vec![vec![vec![0; 5]; 5]], 4, 1, 4);
+        let cache = Cache::default();
+        let mut head = RenderWorld::new();
+        assert!(head.occlusion_cycle.is_empty());
+        head.prepare_scene(&mut world, &cache, 0, 64, 0, 64, 0, 0, 128);
+        assert_eq!(head.occlusion_cycle.len(), 25);
+        let allocation = head.occlusion_cycle.as_ptr();
+        let capacity = head.occlusion_cycle.capacity();
+        assert!(!head.ground_occluded(&mut world, 0, 0, 0));
+        assert_eq!(head.occ_cycle(&world, 0, 0, 0), -head.cycle_no);
+        let mut fresh = RenderWorld::new();
+        fresh.prepare_scene(&mut world, &cache, 0, 64, 0, 64, 0, 0, 128);
+        assert_eq!(fresh.occ_cycle(&world, 0, 0, 0), 0);
+        assert_ne!(fresh.occlusion_cycle.as_ptr(), allocation);
+        world.reset_map();
+        head.prepare_scene(&mut world, &cache, 0, 64, 0, 64, 0, 0, 128);
+        assert_eq!(head.occlusion_cycle.as_ptr(), allocation);
+        assert_eq!(head.occlusion_cycle.capacity(), capacity);
+        assert!(!head.ground_occluded(&mut world, 0, 0, 0));
+        assert_eq!(head.occ_cycle(&world, 0, 0, 0), -head.cycle_no);
+        let mut larger = World::new(vec![vec![vec![0; 6]; 6]; 2], 5, 2, 5);
+        head.prepare_scene(&mut larger, &cache, 0, 64, 0, 64, 0, 0, 128);
+        assert_eq!(head.occlusion_cycle.len(), 72);
+        assert!(head.occlusion_cycle.iter().all(|&stamp| stamp == 0));
+    }
     const SHADE: i32 = 200 * 128 + 100;
     const SOUTH_SHADE: i32 = 40 * 128 + 80;
     const NORTH_SHADE: i32 = 90 * 128 + 40;

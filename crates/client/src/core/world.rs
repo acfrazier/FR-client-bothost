@@ -59,6 +59,8 @@ pub struct World {
     free_dynamic_sprites: Vec<usize>,
     last_sprite: Option<usize>,
     pub(crate) dynamic_count: i32,
+    /// Temporary render entity indices. Materialized on first draw use,
+    /// retained across frames, and released by `dematerialize_overlay`.
     pub(crate) dynamic_sprites: Vec<Option<usize>>,
     /// Occluder table. Written by the sim build (`ClientBuild::finish_build`
     /// `set_occlude`), consumed by the render pass (`calc_occlude`). Per-
@@ -67,12 +69,6 @@ pub struct World {
     /// overflows small test-thread stacks in debug builds.
     pub(crate) num_occluders: [i32; OCCLUDER_LEVELS],
     pub(crate) occluders: Vec<Option<Occlude>>,
-    /// TS `World.occlusionCycle`, `[maxLevel][maxTileX + 1][maxTileZ + 1]`
-    /// i32s, flat. The render pass (`ground_occluded`/`wall_occluded`/
-    /// `sprite_occluded`) stamps ±`cycle_no` to cache per-frame occlusion
-    /// answers; never cleared (like TS), stale stamps are aged out by the
-    /// cycle comparison.
-    pub(crate) occlusion_cycle: Vec<i32>,
     /// Pick-arm state: `doAction` (sim) arms a ground click, the render
     /// pass raycasts it and writes `ground_x`/`ground_z`, and `game_loop`
     /// (sim) consumes the answer into a `MOVE_GAMECLICK` walk. The state is
@@ -132,10 +128,9 @@ impl World {
             free_dynamic_sprites: Vec::new(),
             last_sprite: None,
             dynamic_count: 0,
-            dynamic_sprites: vec![None; MAX_DYNAMIC_SPRITES],
+            dynamic_sprites: Vec::new(),
             num_occluders: [0; OCCLUDER_LEVELS],
             occluders: (0..OCCLUDER_LEVELS * MAX_OCCLUDERS).map(|_| None).collect(),
-            occlusion_cycle: vec![0; (max_level * (max_tile_x + 1) * (max_tile_z + 1)) as usize],
             click: false,
             click_x: 0,
             click_y: 0,
@@ -684,6 +679,12 @@ impl World {
         self.dynamic_count
     }
 
+    /// Bytes reserved for transient draw-sprite indices, excluding allocator overhead.
+    /// This diagnostic does not count the simulation's shared sprite arena.
+    pub fn dynamic_sprite_storage_bytes(&self) -> usize {
+        self.dynamic_sprites.capacity() * std::mem::size_of::<Option<usize>>()
+    }
+
     pub fn get_wall(&self, level: i32, x: i32, z: i32) -> Option<&Wall> {
         self.squares[level as usize][x as usize][z as usize]
             .as_ref()
@@ -975,6 +976,9 @@ impl World {
         }
 
         if dynamic {
+            if self.dynamic_sprites.is_empty() {
+                self.dynamic_sprites = vec![None; MAX_DYNAMIC_SPRITES];
+            }
             self.dynamic_sprites[self.dynamic_count as usize] = Some(index);
             self.dynamic_count += 1;
         }
@@ -1040,8 +1044,8 @@ impl World {
     /// detach (`draw` off) must not leave headed data on the sim. Re-arms
     /// `overlay_pending` so the next attach's `prepare_scene` re-runs
     /// `materialize_overlay` from the stamps, and `share_light_pending`
-    /// because loc models died with the renderer. Idempotent — a stamp-less
-    /// tile (no overlay) and a repeated call are no-ops.
+    /// because loc models died with the renderer. Also removes any transient
+    /// draw sprites and releases their index storage. Repeated calls are harmless.
     pub fn dematerialize_overlay(&mut self) {
         for level in 0..self.max_tile_level {
             for x in 0..self.max_tile_x {
@@ -1057,6 +1061,15 @@ impl World {
                 }
             }
         }
+        // A draw-off edge ends the lifetime of the transient render list.
+        // Clean any interrupted frame before dropping its index storage.
+        for i in 0..self.dynamic_count as usize {
+            if let Some(index) = self.dynamic_sprites[i].take() {
+                self.release_dynamic_sprite(index);
+            }
+        }
+        self.dynamic_count = 0;
+        self.dynamic_sprites = Vec::new();
         self.overlay_pending = true;
         self.share_light_pending = true;
     }
@@ -1225,10 +1238,12 @@ mod sprite_reuse_tests {
     #[test]
     fn dynamic_sprite_slots_stay_bounded_across_frames() {
         let mut world = World::new(vec![vec![vec![0; 5]; 5]], 4, 1, 4);
+        assert_eq!(world.dynamic_sprite_storage_bytes(), 0);
         let mut render = crate::render::world::RenderWorld::new();
         let static_index = world
             .set_sprite(64, 64, 0, 0, 0, 0, 1, 1, 1, 0, 0, false, 0, 0, 0, 0)
             .unwrap();
+        assert_eq!(world.dynamic_sprite_storage_bytes(), 0);
         for _ in 0..1000 {
             let index = world
                 .set_sprite(192, 192, 0, 0, 1, 1, 1, 1, 2, 0, 0, true, 0, 0, 0, 0)
@@ -1238,6 +1253,11 @@ mod sprite_reuse_tests {
             render.remove_sprites(&mut world);
             assert!(world.sprites[static_index].is_some());
             assert_eq!(world.square(0, 1, 1).unwrap().sprite_count, 0);
+            assert_eq!(world.dynamic_count(), 0);
+            assert_eq!(
+                world.dynamic_sprite_storage_bytes(),
+                MAX_DYNAMIC_SPRITES * std::mem::size_of::<Option<usize>>()
+            );
         }
         assert_eq!(
             world.sprites.len(),
@@ -1257,6 +1277,42 @@ mod sprite_reuse_tests {
         let independent = World::new(vec![vec![vec![0; 5]; 5]], 4, 1, 4);
         assert!(independent.sprites.is_empty());
         assert!(independent.free_dynamic_sprites.is_empty());
+    }
+
+    #[test]
+    fn detach_releases_draw_storage_and_keeps_static_scene_for_reattach() {
+        let mut world = World::new(vec![vec![vec![0; 5]; 5]], 4, 1, 4);
+        let static_index = world
+            .set_sprite(64, 64, 0, 0, 0, 0, 1, 1, 1, 0, 0, false, 0, 0, 0, 0)
+            .unwrap();
+        let dynamic = world
+            .set_sprite(192, 192, 0, 0, 1, 1, 1, 1, 2, 0, 0, true, 0, 0, 0, 0)
+            .unwrap();
+        let generation = world.static_loc_generation();
+        assert_eq!(world.dynamic_count(), 1);
+        assert!(world.dynamic_sprite_storage_bytes() > 0);
+        world.dematerialize_overlay();
+        world.dematerialize_overlay();
+        assert_eq!(world.dynamic_sprite_storage_bytes(), 0);
+        assert_eq!(world.dynamic_count(), 0);
+        assert_eq!(world.static_loc_generation(), generation);
+        assert!(world.sprites[static_index].is_some());
+        assert!(world.sprites[dynamic].is_none());
+        assert_eq!(world.square(0, 1, 1).unwrap().sprite_count, 0);
+        assert_eq!(world.free_dynamic_sprites, [dynamic]);
+        let reattached = world
+            .set_sprite(192, 192, 0, 0, 1, 1, 1, 1, 2, 0, 0, true, 0, 0, 0, 0)
+            .unwrap();
+        assert_eq!(reattached, dynamic);
+        // A map reset discards old render indices before arena indices can
+        // be reused by the replacement scene.
+        world.reset_map();
+        let replacement = world
+            .set_sprite(64, 64, 0, 0, 0, 0, 1, 1, 3, 0, 0, false, 0, 0, 0, 0)
+            .unwrap();
+        world.dematerialize_overlay();
+        assert_eq!(world.dynamic_sprite_storage_bytes(), 0);
+        assert!(world.sprites[replacement].is_some());
     }
 }
 

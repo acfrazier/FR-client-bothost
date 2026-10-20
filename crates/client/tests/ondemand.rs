@@ -14,6 +14,16 @@ use std::time::{Duration, Instant};
 use client::dash3d::Model;
 use client::io::{JagFile, OnDemand};
 
+// Resetting and snapshot-loading models mutate the same process-wide stores.
+// Match the isolation used by the interface-model integration fixtures.
+static MODEL_STORE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock_model_store() -> std::sync::MutexGuard<'static, ()> {
+    MODEL_STORE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[test]
 fn request_increments_remaining() {
     let _r = Renderer::new(false);
@@ -163,6 +173,7 @@ fn sibling_does_not_complete_a_file_it_did_not_request() {
 /// on the handle or scene_state stays 1.
 #[test]
 fn provider_model_request_completes_without_ondemand_request() {
+    let _model_store = lock_model_store();
     let _r = Renderer::new(false);
     use std::io::Read;
     use std::net::TcpListener;
@@ -486,6 +497,7 @@ fn request_all_models_requests_every_model() {
 /// loadable without any OnDemand request.
 #[test]
 fn unpack_models_from_cache_makes_a_random_event_model_loadable() {
+    let _model_store = lock_model_store();
     let _r = Renderer::new(false);
     let cache = client::cache_dir().display().to_string();
     if !std::path::Path::new(&format!("{cache}/versionlist")).is_file() {
