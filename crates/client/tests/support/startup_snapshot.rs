@@ -1039,11 +1039,11 @@ fn serve_paced_connection(mut socket: TcpStream, state: Arc<PacedState>) {
             let mut stats = writer_state.stats.lock().unwrap();
             if writer.write_all(&response).is_err() {
                 stats.write_failures += 1;
-                let mut failed = vec![(archive, file)];
-                failed.extend(due_rx.try_iter().map(|(_, archive, file)| (archive, file)));
                 {
                     let mut seen = writer_state.seen.lock().unwrap();
-                    for key in failed {
+                    for key in std::iter::once((archive, file))
+                        .chain(due_rx.try_iter().map(|(_, archive, file)| (archive, file)))
+                    {
                         if let Some(request) = seen.get_mut(&key) {
                             request.scheduled = false;
                         }
