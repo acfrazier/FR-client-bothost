@@ -468,6 +468,9 @@ pub struct MainModalPacketState {
     pub generation: u64,
     pub opened_observation: u64,
     pub closed_observation: u64,
+    /// Number of received `IF_CLOSE` packets in this session, including
+    /// closes received while no main modal is open.
+    pub close_packets: u64,
 }
 
 /// The most recent animation instruction received for the local player.
@@ -5753,6 +5756,8 @@ impl Client {
     /// the enter-name dialog, and the main modal. The packet has no payload
     /// (TS only reads `ptype`).
     pub fn apply_if_close(&mut self) {
+        self.main_modal_packet_state.close_packets =
+            self.main_modal_packet_state.close_packets.wrapping_add(1);
         self.observe_main_modal_close();
         if self.side_modal_id != -1 {
             self.side_modal_id = -1;
@@ -14835,5 +14840,126 @@ mod public_login_key_tests {
         assert_eq!(bound.asset_host(), "w1.rs2b2t.com");
         assert_eq!(bound.rsa_modulus(), changed_key);
         std::fs::remove_dir_all(cache).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod main_modal_packet_tests {
+    use super::{Client, ClientConfig, MainModalPacketState};
+    use crate::config::Cache;
+    use crate::io::{ClientRevision, Packet, ServerProt289};
+    use std::sync::Arc;
+
+    fn r289_client() -> Client {
+        Client::from_shared_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                members: true,
+                lowmem: true,
+            },
+            Arc::new(Cache::default()),
+            Arc::new(Vec::new()),
+            Vec::new(),
+            ClientRevision::R289,
+        )
+    }
+
+    fn handle_r289_packet(client: &mut Client, ptype: i32, bytes: Vec<u8>) {
+        client.psize = bytes.len() as i32;
+        let mut packet = Packet::new(bytes);
+        client.handle_packet(ptype, &mut packet);
+        assert_eq!(packet.pos, packet.length());
+    }
+
+    fn close_main_modal(client: &mut Client) {
+        handle_r289_packet(client, ServerProt289::IF_CLOSE, Vec::new());
+    }
+
+    #[test]
+    fn absent_main_modal_close_counts_without_changing_modal_observations() {
+        let mut client = r289_client();
+        let before = client.main_modal_packet_state();
+        close_main_modal(&mut client);
+        let after = client.main_modal_packet_state();
+
+        assert_eq!(after.close_packets, before.close_packets.wrapping_add(1));
+        assert_eq!(after.generation, before.generation);
+        assert_eq!(after.opened_observation, before.opened_observation);
+        assert_eq!(after.closed_observation, before.closed_observation);
+    }
+
+    #[test]
+    fn open_main_modal_close_counts_packet_and_generation() {
+        let mut client = r289_client();
+        handle_r289_packet(&mut client, ServerProt289::IF_OPENMAIN, vec![0, 42]);
+        let before = client.main_modal_packet_state();
+        close_main_modal(&mut client);
+        let after = client.main_modal_packet_state();
+
+        assert_eq!(after.close_packets, before.close_packets.wrapping_add(1));
+        assert_eq!(after.generation, before.generation.wrapping_add(1));
+    }
+
+    #[test]
+    fn local_close_is_not_counted_before_the_server_close() {
+        let mut client = r289_client();
+        handle_r289_packet(&mut client, ServerProt289::IF_OPENMAIN, vec![0, 42]);
+        let opened = client.main_modal_packet_state();
+
+        client.close_modal();
+        let locally_closed = client.main_modal_packet_state();
+        assert_eq!(client.main_modal_id, -1);
+        assert_eq!(locally_closed.close_packets, opened.close_packets);
+
+        close_main_modal(&mut client);
+        let server_closed = client.main_modal_packet_state();
+        assert_eq!(
+            server_closed.close_packets,
+            opened.close_packets.wrapping_add(1)
+        );
+        assert_eq!(server_closed.generation, locally_closed.generation);
+    }
+
+    #[test]
+    fn two_close_packets_in_one_frame_count_twice() {
+        let mut client = r289_client();
+        close_main_modal(&mut client);
+        close_main_modal(&mut client);
+
+        let state = client.main_modal_packet_state();
+        assert_eq!(state.close_packets, 2);
+        assert_eq!(state.generation, 0);
+    }
+
+    #[test]
+    fn packet_observation_reset_clears_close_counter() {
+        let mut client = r289_client();
+        handle_r289_packet(&mut client, ServerProt289::IF_OPENMAIN, vec![0, 42]);
+        close_main_modal(&mut client);
+        assert_eq!(client.main_modal_packet_state().close_packets, 1);
+
+        client.reset_packet_observations();
+
+        assert_eq!(
+            client.main_modal_packet_state(),
+            MainModalPacketState::default()
+        );
+    }
+
+    #[test]
+    fn close_counter_uses_wrapping_increment() {
+        let mut client = r289_client();
+        client.main_modal_packet_state.close_packets = u64::MAX;
+        close_main_modal(&mut client);
+
+        assert_eq!(client.main_modal_packet_state().close_packets, 0);
+    }
+
+    #[test]
+    fn close_counter_stays_inline() {
+        // Design 4.8 R4-1 adds one u64 (+8 B); exact inline layout, 0 B headroom.
+        assert_eq!(std::mem::size_of::<MainModalPacketState>(), 32);
     }
 }
