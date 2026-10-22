@@ -795,14 +795,16 @@ fn serve_entry_connection(mut socket: TcpStream, state: Arc<EntryState>) {
     }
 }
 
-/// What a [`PacedEntryServer`] saw. `requests` counts packets, and `responses`
-/// counts successful writes. `write_failures` counts failed response writes.
-/// `max_outstanding` is the largest number of unanswered requests at once.
-/// `idle_restarts` counts requests that arrived when no request was outstanding.
-/// `last_idle_restart` is the 0-based index of the latest such request.
+/// What a [`PacedEntryServer`] saw. `requests` counts request packets, and
+/// `unique_requests` counts distinct archive/file entries. `responses` counts
+/// successful writes for those entries. `max_outstanding` is the largest number
+/// of distinct entries that have not received a successful response.
+/// `idle_restarts` counts new entries that arrived with no entry outstanding.
+/// `last_idle_restart` is the 0-based index of the latest such entry.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PacedStats {
     pub requests: usize,
+    pub unique_requests: usize,
     pub responses: usize,
     pub max_outstanding: usize,
     pub idle_restarts: usize,
@@ -811,11 +813,18 @@ pub struct PacedStats {
     outstanding: usize,
 }
 
+#[derive(Default)]
+struct PacedRequest {
+    requests: usize,
+    scheduled: bool,
+    completed: bool,
+}
+
 struct PacedState {
     entries: HashMap<(u8, u16), Vec<u8>>,
     /// Requests the server reads but never answers.
     hold: Vec<(u8, u16)>,
-    seen: Mutex<HashMap<(u8, u16), usize>>,
+    seen: Mutex<HashMap<(u8, u16), PacedRequest>>,
     delay: Duration,
     service: Duration,
     stats: Mutex<PacedStats>,
@@ -827,9 +836,8 @@ struct PacedState {
 
 /// OnDemand entry server that answers each request `delay` after it arrives
 /// and at most one response per `service` interval, in arrival order, from a
-/// writer separate from the request reader. The reader keeps counting
-/// requests while responses are held, so the stats show the client's
-/// requests in flight.
+/// writer separate from the request reader. The reader counts every request
+/// packet while responses are held and tracks distinct entries separately.
 pub struct PacedEntryServer {
     port: u16,
     state: Arc<PacedState>,
@@ -934,6 +942,13 @@ impl PacedEntryServer {
         })
     }
 
+    /// Wait until the reader observes `count` distinct entries.
+    pub fn wait_for_unique_requests(&self, count: usize, timeout: Duration) -> bool {
+        wait_until(&self.state.stats, &self.state.changed, timeout, |stats| {
+            stats.unique_requests >= count
+        })
+    }
+
     /// Wait until the writer sends `count` responses.
     pub fn wait_for_responses(&self, count: usize, timeout: Duration) -> bool {
         wait_until(&self.state.stats, &self.state.changed, timeout, |stats| {
@@ -956,7 +971,7 @@ impl PacedEntryServer {
             .lock()
             .unwrap()
             .get(&(archive, file))
-            .copied()
+            .map(|seen| seen.requests)
             .unwrap_or(0)
     }
 
@@ -1019,22 +1034,39 @@ fn serve_paced_connection(mut socket: TcpStream, state: Arc<PacedState>) {
             response.extend_from_slice(&(body.len() as u16).to_be_bytes());
             response.push(0);
             response.extend_from_slice(body);
-            // The reader counts requests under this same lock. Hold it
-            // through the write so a replacement cannot race the decrement.
+            // Hold the stats lock through the write so a new unique request
+            // cannot race the outstanding decrement.
             let mut stats = writer_state.stats.lock().unwrap();
             if writer.write_all(&response).is_err() {
                 stats.write_failures += 1;
-                stats.outstanding -= 1 + due_rx.try_iter().count();
+                let mut failed = vec![(archive, file)];
+                failed.extend(due_rx.try_iter().map(|(_, archive, file)| (archive, file)));
+                {
+                    let mut seen = writer_state.seen.lock().unwrap();
+                    for key in failed {
+                        if let Some(request) = seen.get_mut(&key) {
+                            request.scheduled = false;
+                        }
+                    }
+                }
                 writer_state.changed.notify_all();
                 drop(stats);
                 // A disconnected request can consume a gate permit without a reply.
-                // Return it so a live request can use the permit.
+                // Return it so a live retry can use the permit.
                 if let Some(gate) = &writer_state.response_gate {
                     gate.release(1);
                 }
                 return;
             }
             last = Instant::now();
+            {
+                let mut seen = writer_state.seen.lock().unwrap();
+                let request = seen
+                    .get_mut(&(archive, file))
+                    .expect("written entries have an observed request");
+                request.scheduled = false;
+                request.completed = true;
+            }
             stats.outstanding -= 1;
             stats.responses += 1;
             writer_state.changed.notify_all();
@@ -1049,24 +1081,37 @@ fn serve_paced_connection(mut socket: TcpStream, state: Arc<PacedState>) {
             break;
         }
         let (archive, file) = (request[0], u16::from_be_bytes([request[1], request[2]]));
-        *state
-            .seen
-            .lock()
-            .unwrap()
-            .entry((archive, file))
-            .or_default() += 1;
+        let key = (archive, file);
+        let (is_new, schedule) = {
+            let mut seen = state.seen.lock().unwrap();
+            let request = seen.entry(key).or_default();
+            let is_new = request.requests == 0;
+            request.requests += 1;
+            let schedule = !request.completed && !request.scheduled;
+            if schedule {
+                request.scheduled = true;
+            }
+            (is_new, schedule)
+        };
         let arrived = Instant::now();
         let mut stats = state.stats.lock().unwrap();
-        if stats.requests > 0 && stats.outstanding == 0 {
-            stats.idle_restarts += 1;
-            stats.last_idle_restart = Some(stats.requests);
-        }
         stats.requests += 1;
-        stats.outstanding += 1;
-        stats.max_outstanding = stats.max_outstanding.max(stats.outstanding);
+        if is_new {
+            if stats.unique_requests > 0 && stats.outstanding == 0 {
+                stats.idle_restarts += 1;
+                stats.last_idle_restart = Some(stats.unique_requests);
+            }
+            stats.unique_requests += 1;
+            stats.outstanding += 1;
+            stats.max_outstanding = stats.max_outstanding.max(stats.outstanding);
+        }
         state.changed.notify_all();
-        if due_tx.send((arrived, archive, file)).is_err() {
-            stats.outstanding -= 1;
+        if schedule && due_tx.send((arrived, archive, file)).is_err() {
+            if let Some(request) = state.seen.lock().unwrap().get_mut(&key) {
+                if !request.completed {
+                    request.scheduled = false;
+                }
+            }
             state.changed.notify_all();
             break;
         }

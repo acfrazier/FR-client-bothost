@@ -260,7 +260,7 @@ fn no_fill_step_outlasts_the_step_bound() {
         entries.port(),
     ));
     let mut steps = 0;
-    while !entries.wait_for_requests(10, Duration::from_millis(1)) {
+    while !entries.wait_for_unique_requests(10, Duration::from_millis(1)) {
         assert!(matches!(
             fill.step(Some(Instant::now() + STEP_DEADLINE)).unwrap(),
             RuntimeCacheStep::Continue { .. }
@@ -372,15 +372,15 @@ fn fill_keeps_ten_requests_in_flight_and_never_idles() {
     });
 
     assert!(
-        entries.wait_for_requests(10, Duration::from_secs(30)),
-        "the worker did not fill its initial ten-request window"
+        entries.wait_for_unique_requests(10, Duration::from_secs(30)),
+        "the worker did not fill its initial ten-entry window"
     );
     assert_eq!(entries.stats().max_outstanding, 10);
-    for request in 11..=expected_requests {
+    for unique_request in 11..=expected_requests {
         entries.release_next_response();
         assert!(
-            entries.wait_for_requests(request, Duration::from_secs(30)),
-            "request {request} did not replace the released response"
+            entries.wait_for_unique_requests(unique_request, Duration::from_secs(30)),
+            "unique request {unique_request} did not replace the released response"
         );
     }
     for _ in 0..10 {
@@ -394,7 +394,7 @@ fn fill_keeps_ten_requests_in_flight_and_never_idles() {
     let stats = entries.stats();
     eprintln!("window: {stats:?}");
     completed.unwrap();
-    assert_eq!(stats.requests, expected_requests);
+    assert_eq!(stats.unique_requests, expected_requests);
     const { assert!(FILL_WINDOW > 10) };
     assert_eq!(stats.max_outstanding, 10, "{stats:?}");
     assert_eq!(stats.idle_restarts, 0, "{stats:?}");
