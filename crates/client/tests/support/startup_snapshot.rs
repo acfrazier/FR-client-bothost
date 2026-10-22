@@ -795,10 +795,10 @@ fn serve_entry_connection(mut socket: TcpStream, state: Arc<EntryState>) {
     }
 }
 
-/// What a [`PacedEntryServer`] saw: `max_outstanding` is the most requests
-/// it held unanswered at once; `idle_restarts` counts requests that arrived
-/// after every earlier request had been answered (the client let the
-/// connection go idle in the middle of the fill), and
+/// What a [`PacedEntryServer`] saw. `requests` counts packets, and `responses`
+/// counts successful writes. `write_failures` counts failed response writes.
+/// `max_outstanding` is the largest number of unanswered requests at once.
+/// `idle_restarts` counts requests that arrived when no request was outstanding.
 /// `last_idle_restart` is the 0-based index of the latest such request.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PacedStats {
@@ -807,6 +807,7 @@ pub struct PacedStats {
     pub max_outstanding: usize,
     pub idle_restarts: usize,
     pub last_idle_restart: Option<usize>,
+    pub write_failures: usize,
     outstanding: usize,
 }
 
@@ -1022,6 +1023,15 @@ fn serve_paced_connection(mut socket: TcpStream, state: Arc<PacedState>) {
             // through the write so a replacement cannot race the decrement.
             let mut stats = writer_state.stats.lock().unwrap();
             if writer.write_all(&response).is_err() {
+                stats.write_failures += 1;
+                stats.outstanding -= 1 + due_rx.try_iter().count();
+                writer_state.changed.notify_all();
+                drop(stats);
+                // A disconnected request can consume a gate permit without a reply.
+                // Return it so a live request can use the permit.
+                if let Some(gate) = &writer_state.response_gate {
+                    gate.release(1);
+                }
                 return;
             }
             last = Instant::now();
@@ -1045,18 +1055,19 @@ fn serve_paced_connection(mut socket: TcpStream, state: Arc<PacedState>) {
             .unwrap()
             .entry((archive, file))
             .or_default() += 1;
-        {
-            let mut stats = state.stats.lock().unwrap();
-            if stats.requests > 0 && stats.outstanding == 0 {
-                stats.idle_restarts += 1;
-                stats.last_idle_restart = Some(stats.requests);
-            }
-            stats.requests += 1;
-            stats.outstanding += 1;
-            stats.max_outstanding = stats.max_outstanding.max(stats.outstanding);
-            state.changed.notify_all();
+        let arrived = Instant::now();
+        let mut stats = state.stats.lock().unwrap();
+        if stats.requests > 0 && stats.outstanding == 0 {
+            stats.idle_restarts += 1;
+            stats.last_idle_restart = Some(stats.requests);
         }
-        if due_tx.send((Instant::now(), archive, file)).is_err() {
+        stats.requests += 1;
+        stats.outstanding += 1;
+        stats.max_outstanding = stats.max_outstanding.max(stats.outstanding);
+        state.changed.notify_all();
+        if due_tx.send((arrived, archive, file)).is_err() {
+            stats.outstanding -= 1;
+            state.changed.notify_all();
             break;
         }
     }

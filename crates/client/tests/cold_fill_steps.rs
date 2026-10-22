@@ -390,9 +390,10 @@ fn fill_keeps_ten_requests_in_flight_and_never_idles() {
         entries.wait_for_responses(expected_requests, Duration::from_secs(30)),
         "the worker did not receive every released response"
     );
-    fill.join().unwrap();
+    let completed = fill.join();
     let stats = entries.stats();
     eprintln!("window: {stats:?}");
+    completed.unwrap();
     assert_eq!(stats.requests, expected_requests);
     const { assert!(FILL_WINDOW > 10) };
     assert_eq!(stats.max_outstanding, 10, "{stats:?}");
