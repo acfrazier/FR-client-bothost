@@ -539,12 +539,12 @@ mod tests {
 
     /// The HTTPS fetch of a TLS asset server: the TLS handshake and the
     /// response wait in short polls, the request is the blocking fetch's,
-    /// and the body arrives intact. The server's certificate is a
-    /// throwaway self-signed one that this test alone trusts.
+    /// and the body arrives intact. The fixture CA signs the server
+    /// certificate. This test adds the CA to its TLS connector.
     #[test]
     fn tls_fetch_waits_in_steps_and_returns_the_body() {
-        let cert = include_bytes!("../../tests/fixtures/tls/localhost.cert.pem");
-        let key = include_bytes!("../../tests/fixtures/tls/localhost.key.pem");
+        let cert = include_bytes!("../../tests/fixtures/tls/localhost.pem");
+        let key = include_bytes!("../../tests/fixtures/tls/localhost.key");
         let identity = native_tls::Identity::from_pkcs8(cert, key).unwrap();
         let acceptor = native_tls::TlsAcceptor::new(identity).unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -562,8 +562,9 @@ mod tests {
             tls.write_all(&response(&served)).unwrap();
             tls.shutdown().unwrap();
         });
+        let ca = include_bytes!("../../tests/fixtures/tls/ca.pem");
         let connector = native_tls::TlsConnector::builder()
-            .add_root_certificate(native_tls::Certificate::from_pem(cert).unwrap())
+            .add_root_certificate(native_tls::Certificate::from_pem(ca).unwrap())
             .build()
             .unwrap();
         let mut fetch = StandaloneHttpFetch::start_with(
