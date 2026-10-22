@@ -341,15 +341,21 @@ fn cancelled_fill_releases_everything_and_the_next_fill_succeeds() {
             .unwrap_or_else(|error| panic!("{} still locked: {error}", lock.display()));
         file.unlock().unwrap();
     }
-    let requested_before = entries.stats().requests;
-
-    let prepared = prepare_runtime_cache(&req).unwrap();
+    let retry_entries = PacedEntryServer::start(
+        fixture.packs.entries.clone(),
+        Duration::from_millis(2),
+        Duration::ZERO,
+    );
+    let retry_req = request(
+        fixture.source.path(),
+        root.path(),
+        fixture.http.port(),
+        retry_entries.port(),
+    );
+    let prepared = prepare_runtime_cache(&retry_req).unwrap();
     assert_eq!(prepared.source, "update-server");
     assert!(retained_dir(root.path()).is_some());
-    assert!(
-        entries.stats().requests >= requested_before + total as usize,
-        "the next fill downloads every entry again"
-    );
+    assert_eq!(retry_entries.stats().unique_requests, total as usize);
 }
 
 /// The fill keeps ten requests in flight and refills the window without
