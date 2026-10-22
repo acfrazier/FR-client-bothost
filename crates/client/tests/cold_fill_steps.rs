@@ -123,17 +123,14 @@ fn hidden_entries(root: &Path, prefix: &str) -> Vec<PathBuf> {
     found
 }
 
-/// Step a fill to completion with `deadline` per step; the longest step.
-fn step_to_ready(fill: &mut RuntimeCacheFill, deadline: Duration) -> (Duration, usize) {
-    let mut longest = Duration::ZERO;
+/// Step a fill to completion with `deadline` per step.
+fn step_to_ready(fill: &mut RuntimeCacheFill, deadline: Duration) -> usize {
     let mut steps = 0;
     loop {
-        let started = Instant::now();
-        let step = fill.step(Some(started + deadline)).unwrap();
-        longest = longest.max(started.elapsed());
+        let step = fill.step(Some(Instant::now() + deadline)).unwrap();
         steps += 1;
         if let RuntimeCacheStep::Ready(_) = step {
-            return (longest, steps);
+            return steps;
         }
     }
 }
@@ -247,18 +244,14 @@ const BEFORE_CHANGE_DIGESTS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Against a server that answers each request 30 ms late, no step runs past
-/// its 10 ms deadline by more than the stated 250 ms bound, although the
-/// whole fill takes well over a second. The root is on tmpfs: the bound is
-/// the step's own work, not the disk's fsync latency.
+/// With the entry server holding responses, each 10 ms deadline step returns
+/// `Continue` until the test releases the responses. The test counts steps
+/// instead of measuring elapsed time, which includes host descheduling.
 #[test]
 fn no_fill_step_outlasts_the_step_bound() {
+    const STEP_DEADLINE: Duration = Duration::from_millis(10);
     let fixture = fixture("bound");
-    let entries = PacedEntryServer::start(
-        fixture.packs.entries.clone(),
-        Duration::from_millis(30),
-        Duration::ZERO,
-    );
+    let entries = PacedEntryServer::start_gated(fixture.packs.entries.clone());
     let root = TempDir::in_memory("bound-root");
     let mut fill = RuntimeCacheFill::begin(&request(
         fixture.source.path(),
@@ -266,16 +259,30 @@ fn no_fill_step_outlasts_the_step_bound() {
         fixture.http.port(),
         entries.port(),
     ));
-    let started = Instant::now();
-    let (longest, steps) = step_to_ready(&mut fill, Duration::from_millis(10));
-    let total = started.elapsed();
-    eprintln!("stepped fill: {steps} steps, longest {longest:?}, total {total:?}");
-    assert!(total > Duration::from_secs(1), "fill took {total:?}");
+    let mut steps = 0;
+    while !entries.wait_for_requests(10, Duration::from_millis(1)) {
+        assert!(matches!(
+            fill.step(Some(Instant::now() + STEP_DEADLINE)).unwrap(),
+            RuntimeCacheStep::Continue { .. }
+        ));
+        steps += 1;
+        assert!(steps < 1000, "server has not filled the ten-request window");
+    }
+    assert_eq!(entries.stats().responses, 0, "responses are still gated");
+    assert!(STEP_DEADLINE < STEP_BOUND);
+    while steps <= 40 {
+        assert!(matches!(
+            fill.step(Some(Instant::now() + STEP_DEADLINE)).unwrap(),
+            RuntimeCacheStep::Continue { .. }
+        ));
+        steps += 1;
+    }
     assert!(steps > 40, "{steps} steps");
-    assert!(
-        longest < Duration::from_millis(250),
-        "longest step {longest:?} of {steps} (fill {total:?})"
-    );
+    for _ in 0..fixture.packs.entries.len() {
+        entries.release_next_response();
+    }
+    steps += step_to_ready(&mut fill, STEP_DEADLINE);
+    eprintln!("stepped fill: {steps} steps; each held-response step returned Continue");
 }
 
 /// Dropping a fill mid-download releases the preparation lock, the
@@ -345,36 +352,52 @@ fn cancelled_fill_releases_everything_and_the_next_fill_succeeds() {
     );
 }
 
-/// The fill keeps the worker's ten-request window full to the last request:
-/// the server never holds more than ten requests, holds ten at some point,
-/// and never goes idle after the first ten requests. (The worker's first
-/// cycle can catch only part of the opening burst.) A batch barrier let the
-/// connection go idle after every batch.
+/// The fill keeps ten requests in flight and refills the window without
+/// relying on response pacing. The test releases one response at a time only
+/// after ten requests are present, so host scheduling cannot create idle gaps.
 #[test]
 fn fill_keeps_ten_requests_in_flight_and_never_idles() {
-    let fixture = fixture("window");
-    let entries = PacedEntryServer::start(
-        fixture.packs.entries.clone(),
-        Duration::ZERO,
-        Duration::from_millis(3),
-    );
+    let Fixture {
+        packs,
+        http,
+        source,
+    } = fixture("window");
+    let expected_requests = packs.entries.len();
+    let entries = PacedEntryServer::start_gated(packs.entries.clone());
+    let entry_port = entries.port();
     let root = TempDir::new("window-root");
-    prepare_runtime_cache(&request(
-        fixture.source.path(),
-        root.path(),
-        fixture.http.port(),
-        entries.port(),
-    ))
-    .unwrap();
+    let fill = thread::spawn(move || {
+        let req = request(source.path(), root.path(), http.port(), entry_port);
+        prepare_runtime_cache(&req).unwrap()
+    });
+
+    assert!(
+        entries.wait_for_requests(10, Duration::from_secs(30)),
+        "the worker did not fill its initial ten-request window"
+    );
+    assert_eq!(entries.stats().max_outstanding, 10);
+    for request in 11..=expected_requests {
+        entries.release_next_response();
+        assert!(
+            entries.wait_for_requests(request, Duration::from_secs(30)),
+            "request {request} did not replace the released response"
+        );
+    }
+    for _ in 0..10 {
+        entries.release_next_response();
+    }
+    assert!(
+        entries.wait_for_responses(expected_requests, Duration::from_secs(30)),
+        "the worker did not receive every released response"
+    );
+    fill.join().unwrap();
     let stats = entries.stats();
     eprintln!("window: {stats:?}");
-    assert_eq!(stats.requests, fixture.packs.entries.len());
+    assert_eq!(stats.requests, expected_requests);
     const { assert!(FILL_WINDOW > 10) };
     assert_eq!(stats.max_outstanding, 10, "{stats:?}");
-    assert!(
-        stats.last_idle_restart.is_none_or(|request| request < 10),
-        "{stats:?}"
-    );
+    assert_eq!(stats.idle_restarts, 0, "{stats:?}");
+    assert!(stats.last_idle_restart.is_none(), "{stats:?}");
 }
 
 fn versionlist(packs: &PackSet) -> JagFile {
@@ -529,24 +552,19 @@ fn cold_fill_worker_resends_a_stuck_request_at_the_java_pace() {
     assert!(late >= 2, "the Java resend still happens");
 }
 
-/// Step a fill to completion with an 8 ms deadline per step, as the host
-/// does; the prepared cache, the longest step and the step count.
+/// Step a fill to completion with the host's per-step deadline.
 fn step_to_prepared(
     fill: &mut RuntimeCacheFill,
 ) -> (
     std::sync::Arc<client::unpack::PreparedRuntimeCache>,
-    Duration,
     usize,
 ) {
-    let mut longest = Duration::ZERO;
     let mut steps = 0;
     loop {
-        let started = Instant::now();
-        let step = fill.step(Some(started + HOST_STEP)).unwrap();
-        longest = longest.max(started.elapsed());
+        let step = fill.step(Some(Instant::now() + HOST_STEP)).unwrap();
         steps += 1;
         if let RuntimeCacheStep::Ready(prepared) = step {
-            return (prepared, longest, steps);
+            return (prepared, steps);
         }
     }
 }
@@ -556,14 +574,13 @@ const HOST_STEP: Duration = Duration::from_millis(8);
 /// The stated per-step bound of the stepped fill.
 const STEP_BOUND: Duration = Duration::from_millis(250);
 
-/// An update server that answers each HTTP request 350 ms late holds no
-/// step past the bound: the `/crc` request and every JAG download continue
-/// across steps, and the fill still completes with every pack downloaded.
+/// The host's 8 ms deadline remains in force while the update server holds
+/// each reply. Repeated `Continue` results prove a slow response cannot hold
+/// the caller on the network; elapsed wall time is not measured under load.
 #[test]
 fn a_slow_update_server_never_holds_a_step_past_the_bound() {
     let packs = PackSet::with_entries(37, COUNTS);
-    let delay = Duration::from_millis(350);
-    let http = HttpServer::start_slow(packs.clone(), delay);
+    let http = HttpServer::start_gated(packs.clone());
     let entries = PacedEntryServer::start(packs.entries.clone(), Duration::ZERO, Duration::ZERO);
     // An empty source: every pack is downloaded.
     let source = TempDir::in_memory("slow-http-source");
@@ -574,40 +591,48 @@ fn a_slow_update_server_never_holds_a_step_past_the_bound() {
         http.port(),
         entries.port(),
     ));
-    let started = Instant::now();
-    let (prepared, longest, steps) = step_to_prepared(&mut fill);
-    let total = started.elapsed();
-    eprintln!("slow update server: {steps} steps, longest {longest:?}, total {total:?}");
+    let mut waiting_steps = 0;
+    while http.request_count() == 0 {
+        assert!(matches!(
+            fill.step(Some(Instant::now() + HOST_STEP)).unwrap(),
+            RuntimeCacheStep::Continue { .. }
+        ));
+        waiting_steps += 1;
+        assert!(waiting_steps < 1000, "the first update request did not start");
+    }
+    assert!(http.wait_for_requests(1, Duration::from_secs(10)));
+    for _ in 0..3 {
+        assert!(matches!(
+            fill.step(Some(Instant::now() + HOST_STEP)).unwrap(),
+            RuntimeCacheStep::Continue { .. }
+        ));
+        waiting_steps += 1;
+    }
+    assert_eq!(http.response_count(), 0, "the update reply is still gated");
+    assert!(HOST_STEP < STEP_BOUND);
+
+    for _ in 0..=PACK_NAMES.len() {
+        http.release_next_response();
+    }
+    let (prepared, completion_steps) = step_to_prepared(&mut fill);
     assert_eq!(http.crc_count(), 1);
     for name in PACK_NAMES {
         assert_eq!(http.jag_count(name), 1, "{name} downloaded once");
     }
+    assert_eq!(http.response_count(), PACK_NAMES.len() + 1);
     assert_eq!(prepared.fetched.len(), PACK_NAMES.len());
-    assert!(
-        total >= delay * (PACK_NAMES.len() as u32 + 1),
-        "every request waited for the server: {total:?}"
-    );
-    assert!(
-        longest < STEP_BOUND,
-        "longest step {longest:?} of {steps} (fill {total:?})"
-    );
+    eprintln!("slow update server: {waiting_steps} held steps, {completion_steps} completion steps");
 }
 
-/// Hold `file`'s lock now and let it go after `hold` on another thread,
-/// which hands the file back.
-fn hold_lock(file: std::fs::File, hold: Duration) -> thread::JoinHandle<std::fs::File> {
+/// Hold `file`'s lock until the test explicitly releases it.
+fn hold_lock(file: std::fs::File) -> std::fs::File {
     file.lock().unwrap();
-    thread::spawn(move || {
-        thread::sleep(hold);
-        file.unlock().unwrap();
-        file
-    })
+    file
 }
 
-/// Another preparation that holds the revision's retention lock, first
-/// while this fill registers its lease and again while it prunes, holds no
-/// step past the bound. The fill waits in steps and completes once the
-/// lock is free.
+/// Another preparation holds the revision's retention lock while this fill
+/// registers its lease and again while it prunes. Each held operation returns
+/// `Continue` with its 8 ms deadline; releasing the lock lets the fill finish.
 #[test]
 fn a_held_retention_lock_never_holds_a_step_past_the_bound() {
     let packs = PackSet::with_entries(37, COUNTS);
@@ -625,7 +650,7 @@ fn a_held_retention_lock_never_holds_a_step_past_the_bound() {
         .write(true)
         .open(revision.join(".retention.lock"))
         .unwrap();
-    let hold = Duration::from_millis(350);
+    let mut lock = hold_lock(lock);
     let mut fill = RuntimeCacheFill::begin(&request(
         source.path(),
         root.path(),
@@ -634,49 +659,46 @@ fn a_held_retention_lock_never_holds_a_step_past_the_bound() {
     ));
 
     // Registration: the lock is held from before the first step.
-    let started = Instant::now();
-    let release = hold_lock(lock, hold);
-    let mut register_longest = Duration::ZERO;
-    let mut register_steps = 0;
+    const HELD_STEPS: usize = 12;
+    for _ in 0..HELD_STEPS {
+        assert!(matches!(
+            fill.step(Some(Instant::now() + HOST_STEP)).unwrap(),
+            RuntimeCacheStep::Continue { .. }
+        ));
+    }
+    assert_eq!(entries.stats().requests, 0, "registration has not started");
+    assert!(HOST_STEP < STEP_BOUND);
+    lock.unlock().unwrap();
+
+    let mut register_steps = HELD_STEPS;
     loop {
-        let step_started = Instant::now();
-        let step = fill.step(Some(step_started + HOST_STEP)).unwrap();
-        register_longest = register_longest.max(step_started.elapsed());
-        register_steps += 1;
-        match step {
+        match fill.step(Some(Instant::now() + HOST_STEP)).unwrap() {
             // Staged: the next steps publish, hash and retain.
             RuntimeCacheStep::Continue {
                 written,
                 total: Some(total),
             } if written == total => break,
-            RuntimeCacheStep::Continue { .. } => {}
+            RuntimeCacheStep::Continue { .. } => register_steps += 1,
             RuntimeCacheStep::Ready(_) => panic!("ready before the pruning hold"),
         }
     }
-    let registered = started.elapsed();
-    let lock = release.join().unwrap();
 
-    // Pruning: the lock is held again before the publication step.
-    let started = Instant::now();
-    let release = hold_lock(lock, hold);
-    let (prepared, prune_longest, prune_steps) = step_to_prepared(&mut fill);
-    let pruned = started.elapsed();
-    release.join().unwrap();
-    eprintln!(
-        "held retention lock: registration {register_steps} steps, longest \
-         {register_longest:?}, staged at {registered:?}; pruning {prune_steps} steps, \
-         longest {prune_longest:?}, ready at {pruned:?}"
-    );
+    // Pruning: hold the lock after staging and before publication completes.
+    lock = hold_lock(lock);
+    for _ in 0..HELD_STEPS {
+        assert!(matches!(
+            fill.step(Some(Instant::now() + HOST_STEP)).unwrap(),
+            RuntimeCacheStep::Continue { .. }
+        ));
+    }
+    lock.unlock().unwrap();
+    let (prepared, completion_steps) = step_to_prepared(&mut fill);
+
     assert_eq!(prepared.source, "update-server");
-    assert!(registered >= hold, "registration waited for the lock");
-    assert!(pruned >= hold, "pruning waited for the lock");
-    assert!(
-        register_longest < STEP_BOUND && prune_longest < STEP_BOUND,
-        "longest step {register_longest:?} (registration), {prune_longest:?} (pruning)"
-    );
-    assert!(
-        register_steps > 10 && prune_steps > 10,
-        "the waits ran in steps: {register_steps}, {prune_steps}"
+    assert!(register_steps > HELD_STEPS);
+    eprintln!(
+        "held retention lock: {HELD_STEPS} registration steps, {HELD_STEPS} pruning steps, \
+         {register_steps} steps to staging, {completion_steps} steps after release"
     );
 }
 

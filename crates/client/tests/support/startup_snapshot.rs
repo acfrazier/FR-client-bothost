@@ -299,15 +299,77 @@ impl Drop for TempDir {
 }
 
 #[derive(Default)]
+struct ResponseGate {
+    permits: Mutex<usize>,
+    changed: Condvar,
+}
+
+impl ResponseGate {
+    fn acquire(&self, stop: &AtomicBool) -> bool {
+        let mut permits = self.permits.lock().unwrap();
+        while *permits == 0 && !stop.load(Ordering::Acquire) {
+            permits = self.changed.wait(permits).unwrap();
+        }
+        if stop.load(Ordering::Acquire) {
+            false
+        } else {
+            *permits -= 1;
+            true
+        }
+    }
+
+    fn release(&self, count: usize) {
+        let mut permits = self.permits.lock().unwrap();
+        *permits = permits.saturating_add(count);
+        self.changed.notify_all();
+    }
+
+    fn wake(&self) {
+        let _permits = self.permits.lock().unwrap();
+        self.changed.notify_all();
+    }
+}
+
+fn wait_until<T>(
+    state: &Mutex<T>,
+    changed: &Condvar,
+    timeout: Duration,
+    ready: impl Fn(&T) -> bool,
+) -> bool {
+    let deadline = Instant::now() + timeout;
+    let mut state = state.lock().unwrap();
+    while !ready(&state) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return false;
+        }
+        let (next, result) = changed.wait_timeout(state, remaining).unwrap();
+        state = next;
+        if result.timed_out() && !ready(&state) {
+            return false;
+        }
+    }
+    true
+}
+
+#[derive(Default)]
 struct HttpCounts {
     crcs: usize,
     jags: HashMap<String, usize>,
+    responses: usize,
+}
+
+impl HttpCounts {
+    fn requests(&self) -> usize {
+        self.crcs + self.jags.values().sum::<usize>()
+    }
 }
 
 struct HttpState {
     packs: PackSet,
     counts: Mutex<HttpCounts>,
     changed: Condvar,
+    response_gate: Option<Arc<ResponseGate>>,
     stop: AtomicBool,
 }
 
@@ -325,13 +387,24 @@ impl HttpServer {
     /// [`Self::start`] that holds every response for `delay` after it has
     /// read the request, as a slow update server does.
     pub fn start_slow(packs: PackSet, delay: Duration) -> Self {
+        Self::start_inner(packs, delay, false)
+    }
+
+    /// [`Self::start`] that holds each response until the test releases it.
+    pub fn start_gated(packs: PackSet) -> Self {
+        Self::start_inner(packs, Duration::ZERO, true)
+    }
+
+    fn start_inner(packs: PackSet, delay: Duration, gated: bool) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let crc_body = checksum_body(&packs);
+        let response_gate = gated.then(|| Arc::new(ResponseGate::default()));
         let state = Arc::new(HttpState {
             packs,
             counts: Mutex::new(HttpCounts::default()),
             changed: Condvar::new(),
+            response_gate,
             stop: AtomicBool::new(false),
         });
         let server_state = Arc::clone(&state);
@@ -369,8 +442,18 @@ impl HttpServer {
             } else {
                 panic!("unexpected synthetic update-server request {path}");
             };
+            if let Some(gate) = &server_state.response_gate {
+                if !gate.acquire(&server_state.stop) {
+                    break;
+                }
+            }
             thread::sleep(delay);
-            respond_http(&mut socket, body).unwrap();
+            if respond_http(&mut socket, body).is_err() {
+                break;
+            }
+            let mut counts = server_state.counts.lock().unwrap();
+            counts.responses += 1;
+            server_state.changed.notify_all();
         });
         Self {
             port,
@@ -398,27 +481,56 @@ impl HttpServer {
             .unwrap_or(&0)
     }
 
+    pub fn request_count(&self) -> usize {
+        self.state.counts.lock().unwrap().requests()
+    }
+
+    pub fn response_count(&self) -> usize {
+        self.state.counts.lock().unwrap().responses
+    }
+
     pub fn wait_for_crcs(&self, count: usize, timeout: Duration) -> bool {
-        let deadline = Instant::now() + timeout;
-        let mut counts = self.state.counts.lock().unwrap();
-        while counts.crcs < count {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return false;
-            }
-            let (next, result) = self.state.changed.wait_timeout(counts, remaining).unwrap();
-            counts = next;
-            if result.timed_out() && counts.crcs < count {
-                return false;
-            }
-        }
-        true
+        wait_until(
+            &self.state.counts,
+            &self.state.changed,
+            timeout,
+            |counts| counts.crcs >= count,
+        )
+    }
+
+    pub fn wait_for_requests(&self, count: usize, timeout: Duration) -> bool {
+        wait_until(
+            &self.state.counts,
+            &self.state.changed,
+            timeout,
+            |counts| counts.requests() >= count,
+        )
+    }
+
+    pub fn wait_for_responses(&self, count: usize, timeout: Duration) -> bool {
+        wait_until(
+            &self.state.counts,
+            &self.state.changed,
+            timeout,
+            |counts| counts.responses >= count,
+        )
+    }
+
+    pub fn release_next_response(&self) {
+        self.state
+            .response_gate
+            .as_ref()
+            .expect("response release requires a gated HTTP server")
+            .release(1);
     }
 }
 
 impl Drop for HttpServer {
     fn drop(&mut self) {
         self.state.stop.store(true, Ordering::Release);
+        if let Some(gate) = &self.state.response_gate {
+            gate.wake();
+        }
         let _ = TcpStream::connect(("127.0.0.1", self.port));
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
@@ -700,6 +812,7 @@ fn serve_entry_connection(mut socket: TcpStream, state: Arc<EntryState>) {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PacedStats {
     pub requests: usize,
+    pub responses: usize,
     pub max_outstanding: usize,
     pub idle_restarts: usize,
     pub last_idle_restart: Option<usize>,
@@ -714,6 +827,8 @@ struct PacedState {
     delay: Duration,
     service: Duration,
     stats: Mutex<PacedStats>,
+    changed: Condvar,
+    response_gate: Option<Arc<ResponseGate>>,
     stop: AtomicBool,
     active: Mutex<Vec<TcpStream>>,
 }
@@ -741,6 +856,21 @@ impl PacedEntryServer {
         service: Duration,
         hold: &[(u8, u16)],
     ) -> Self {
+        Self::start_inner(entries, delay, service, hold, false)
+    }
+
+    /// [`Self::start`] that holds each response until the test releases it.
+    pub fn start_gated(entries: Vec<Entry>) -> Self {
+        Self::start_inner(entries, Duration::ZERO, Duration::ZERO, &[], true)
+    }
+
+    fn start_inner(
+        entries: Vec<Entry>,
+        delay: Duration,
+        service: Duration,
+        hold: &[(u8, u16)],
+        gated: bool,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let entries = entries
@@ -751,6 +881,7 @@ impl PacedEntryServer {
                 ((entry.archive, entry.file), body)
             })
             .collect();
+        let response_gate = gated.then(|| Arc::new(ResponseGate::default()));
         let state = Arc::new(PacedState {
             entries,
             hold: hold.to_vec(),
@@ -758,6 +889,8 @@ impl PacedEntryServer {
             delay,
             service,
             stats: Mutex::new(PacedStats::default()),
+            changed: Condvar::new(),
+            response_gate,
             stop: AtomicBool::new(false),
             active: Mutex::new(Vec::new()),
         });
@@ -802,6 +935,34 @@ impl PacedEntryServer {
         *self.state.stats.lock().unwrap()
     }
 
+    /// Wait until the reader observes `count` requests.
+    pub fn wait_for_requests(&self, count: usize, timeout: Duration) -> bool {
+        wait_until(
+            &self.state.stats,
+            &self.state.changed,
+            timeout,
+            |stats| stats.requests >= count,
+        )
+    }
+
+    /// Wait until the writer sends `count` responses.
+    pub fn wait_for_responses(&self, count: usize, timeout: Duration) -> bool {
+        wait_until(
+            &self.state.stats,
+            &self.state.changed,
+            timeout,
+            |stats| stats.responses >= count,
+        )
+    }
+
+    pub fn release_next_response(&self) {
+        self.state
+            .response_gate
+            .as_ref()
+            .expect("response release requires a gated entry server")
+            .release(1);
+    }
+
     /// How many times the server read a request for this entry.
     pub fn requests_for(&self, archive: u8, file: u16) -> usize {
         self.state
@@ -812,11 +973,15 @@ impl PacedEntryServer {
             .copied()
             .unwrap_or(0)
     }
-}
 
-impl Drop for PacedEntryServer {
-    fn drop(&mut self) {
+    pub fn shutdown(&mut self) {
+        if self.thread.is_none() {
+            return;
+        }
         self.state.stop.store(true, Ordering::Release);
+        if let Some(gate) = &self.state.response_gate {
+            gate.wake();
+        }
         for socket in self.state.active.lock().unwrap().iter() {
             let _ = socket.shutdown(Shutdown::Both);
         }
@@ -826,6 +991,12 @@ impl Drop for PacedEntryServer {
         }
     }
 }
+impl Drop for PacedEntryServer {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
 
 fn serve_paced_connection(mut socket: TcpStream, state: Arc<PacedState>) {
     // One write per response and no Nagle delay: a split header and body
@@ -847,6 +1018,11 @@ fn serve_paced_connection(mut socket: TcpStream, state: Arc<PacedState>) {
             if writer_state.hold.contains(&(archive, file)) {
                 continue;
             }
+            if let Some(gate) = &writer_state.response_gate {
+                if !gate.acquire(&writer_state.stop) {
+                    break;
+                }
+            }
             let due = (arrived + writer_state.delay).max(last + writer_state.service);
             thread::sleep(due.saturating_duration_since(Instant::now()));
             let Some(body) = writer_state.entries.get(&(archive, file)) else {
@@ -858,11 +1034,16 @@ fn serve_paced_connection(mut socket: TcpStream, state: Arc<PacedState>) {
             response.extend_from_slice(&(body.len() as u16).to_be_bytes());
             response.push(0);
             response.extend_from_slice(body);
+            // The reader counts requests under this same lock. Hold it
+            // through the write so a replacement cannot race the decrement.
+            let mut stats = writer_state.stats.lock().unwrap();
             if writer.write_all(&response).is_err() {
                 return;
             }
             last = Instant::now();
-            writer_state.stats.lock().unwrap().outstanding -= 1;
+            stats.outstanding -= 1;
+            stats.responses += 1;
+            writer_state.changed.notify_all();
         }
     });
     loop {
@@ -889,6 +1070,7 @@ fn serve_paced_connection(mut socket: TcpStream, state: Arc<PacedState>) {
             stats.requests += 1;
             stats.outstanding += 1;
             stats.max_outstanding = stats.max_outstanding.max(stats.outstanding);
+            state.changed.notify_all();
         }
         if due_tx.send((Instant::now(), archive, file)).is_err() {
             break;
