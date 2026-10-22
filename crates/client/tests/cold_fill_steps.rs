@@ -637,10 +637,7 @@ impl Drop for StepWatchdog {
     }
 }
 
-fn timed_step(
-    fill: &mut RuntimeCacheFill,
-    deadline: Duration,
-) -> (RuntimeCacheStep, Duration) {
+fn timed_step(fill: &mut RuntimeCacheFill, deadline: Duration) -> (RuntimeCacheStep, Duration) {
     let started = Instant::now();
     let step = fill.step(Some(started + deadline)).unwrap();
     (step, started.elapsed())
