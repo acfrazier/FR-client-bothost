@@ -12,11 +12,13 @@ use client::unpack::{
 };
 use client::Transport;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::net::{SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use support::{HttpServer, PacedEntryServer, PackSet, TempDir, PACK_NAMES};
@@ -245,13 +247,15 @@ const BEFORE_CHANGE_DIGESTS: &[(&str, &str)] = &[
 ];
 
 /// With the entry server holding responses, each 10 ms deadline step returns
-/// `Continue` until the test releases the responses. The test counts steps
-/// instead of measuring elapsed time, which includes host descheduling.
+/// `Continue` until the test releases the responses. The cumulative step time
+/// must stay within `held_steps × STEP_BOUND`. A watchdog releases responses
+/// if a step blocks.
 #[test]
 fn no_fill_step_outlasts_the_step_bound() {
     const STEP_DEADLINE: Duration = Duration::from_millis(10);
+    const HELD_STEPS: usize = 41;
     let fixture = fixture("bound");
-    let entries = PacedEntryServer::start_gated(fixture.packs.entries.clone());
+    let entries = Arc::new(PacedEntryServer::start_gated(fixture.packs.entries.clone()));
     let root = TempDir::in_memory("bound-root");
     let mut fill = RuntimeCacheFill::begin(&request(
         fixture.source.path(),
@@ -259,30 +263,38 @@ fn no_fill_step_outlasts_the_step_bound() {
         fixture.http.port(),
         entries.port(),
     ));
+    let entry_count = fixture.packs.entries.len();
+    let watchdog_entries = Arc::clone(&entries);
+    let watchdog = StepWatchdog::start(move || {
+        for _ in 0..entry_count {
+            watchdog_entries.release_next_response();
+        }
+    });
     let mut steps = 0;
     while !entries.wait_for_unique_requests(10, Duration::from_millis(1)) {
-        assert!(matches!(
-            fill.step(Some(Instant::now() + STEP_DEADLINE)).unwrap(),
-            RuntimeCacheStep::Continue { .. }
-        ));
+        let (step, _) = timed_step(&mut fill, STEP_DEADLINE);
+        watchdog.assert_live("entry request window");
+        assert!(matches!(step, RuntimeCacheStep::Continue { .. }));
         steps += 1;
         assert!(steps < 1000, "server has not filled the ten-request window");
     }
     assert_eq!(entries.stats().responses, 0, "responses are still gated");
-    assert!(STEP_DEADLINE < STEP_BOUND);
-    while steps <= 40 {
-        assert!(matches!(
-            fill.step(Some(Instant::now() + STEP_DEADLINE)).unwrap(),
-            RuntimeCacheStep::Continue { .. }
-        ));
+    let mut held_time = Duration::ZERO;
+    for _ in 0..HELD_STEPS {
+        let (step, elapsed) = timed_step(&mut fill, STEP_DEADLINE);
+        watchdog.assert_live("held entry responses");
+        assert!(matches!(step, RuntimeCacheStep::Continue { .. }));
+        held_time += elapsed;
         steps += 1;
     }
-    assert!(steps > 40, "{steps} steps");
-    for _ in 0..fixture.packs.entries.len() {
+    assert_eq!(entries.stats().responses, 0, "responses remain gated");
+    assert_held_time_within_bound(HELD_STEPS, held_time, "entry responses");
+    for _ in 0..entry_count {
         entries.release_next_response();
     }
     steps += step_to_ready(&mut fill, STEP_DEADLINE);
-    eprintln!("stepped fill: {steps} steps; each held-response step returned Continue");
+    watchdog.assert_live("entry fill completion");
+    eprintln!("stepped fill: {steps} steps; {HELD_STEPS} held steps took {held_time:?}");
 }
 
 /// Dropping a fill mid-download releases the preparation lock, the
@@ -578,13 +590,78 @@ const HOST_STEP: Duration = Duration::from_millis(8);
 /// The stated per-step bound of the stepped fill.
 const STEP_BOUND: Duration = Duration::from_millis(250);
 
+/// Maximum time before a watchdog releases a server reply or retention lock.
+const STEP_WATCHDOG_TIMEOUT: Duration = Duration::from_secs(10);
+
+struct StepWatchdog {
+    cancel: mpsc::Sender<()>,
+    fired: Arc<AtomicBool>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl StepWatchdog {
+    fn start(release: impl FnOnce() + Send + 'static) -> Self {
+        let (cancel, wait) = mpsc::channel();
+        let fired = Arc::new(AtomicBool::new(false));
+        let watchdog_fired = Arc::clone(&fired);
+        let thread = thread::spawn(move || {
+            if matches!(
+                wait.recv_timeout(STEP_WATCHDOG_TIMEOUT),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ) {
+                watchdog_fired.store(true, Ordering::Release);
+                release();
+            }
+        });
+        Self {
+            cancel,
+            fired,
+            thread: Some(thread),
+        }
+    }
+
+    fn assert_live(&self, phase: &str) {
+        assert!(
+            !self.fired.load(Ordering::Acquire),
+            "{phase} did not return before the {STEP_WATCHDOG_TIMEOUT:?} watchdog"
+        );
+    }
+}
+
+impl Drop for StepWatchdog {
+    fn drop(&mut self) {
+        let _ = self.cancel.send(());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn timed_step(
+    fill: &mut RuntimeCacheFill,
+    deadline: Duration,
+) -> (RuntimeCacheStep, Duration) {
+    let started = Instant::now();
+    let step = fill.step(Some(started + deadline)).unwrap();
+    (step, started.elapsed())
+}
+
+fn assert_held_time_within_bound(held_steps: usize, elapsed: Duration, phase: &str) {
+    let allowance = STEP_BOUND * u32::try_from(held_steps).unwrap();
+    assert!(
+        elapsed <= allowance,
+        "{phase}: {held_steps} held steps took {elapsed:?}, above the cumulative {allowance:?} bound"
+    );
+}
+
 /// The host's 8 ms deadline remains in force while the update server holds
-/// each reply. Repeated `Continue` results prove a slow response cannot hold
-/// the caller on the network; elapsed wall time is not measured under load.
+/// each `/crc` and JAG reply. Each three-step hold must stay within three
+/// 250 ms bounds. A watchdog releases all replies if a step blocks.
 #[test]
 fn a_slow_update_server_never_holds_a_step_past_the_bound() {
+    const HELD_STEPS_PER_REPLY: usize = 3;
     let packs = PackSet::with_entries(37, COUNTS);
-    let http = HttpServer::start_gated(packs.clone());
+    let http = Arc::new(HttpServer::start_gated(packs.clone()));
     let entries = PacedEntryServer::start(packs.entries.clone(), Duration::ZERO, Duration::ZERO);
     // An empty source: every pack is downloaded.
     let source = TempDir::in_memory("slow-http-source");
@@ -595,12 +672,17 @@ fn a_slow_update_server_never_holds_a_step_past_the_bound() {
         http.port(),
         entries.port(),
     ));
+    let watchdog_http = Arc::clone(&http);
+    let watchdog = StepWatchdog::start(move || {
+        for _ in 0..=PACK_NAMES.len() {
+            watchdog_http.release_next_response();
+        }
+    });
     let mut waiting_steps = 0;
     while http.request_count() == 0 {
-        assert!(matches!(
-            fill.step(Some(Instant::now() + HOST_STEP)).unwrap(),
-            RuntimeCacheStep::Continue { .. }
-        ));
+        let (step, _) = timed_step(&mut fill, HOST_STEP);
+        watchdog.assert_live("first update request");
+        assert!(matches!(step, RuntimeCacheStep::Continue { .. }));
         waiting_steps += 1;
         assert!(
             waiting_steps < 1000,
@@ -608,20 +690,69 @@ fn a_slow_update_server_never_holds_a_step_past_the_bound() {
         );
     }
     assert!(http.wait_for_requests(1, Duration::from_secs(10)));
-    for _ in 0..3 {
-        assert!(matches!(
-            fill.step(Some(Instant::now() + HOST_STEP)).unwrap(),
-            RuntimeCacheStep::Continue { .. }
-        ));
-        waiting_steps += 1;
+    watchdog.assert_live("first update request observation");
+    let mut crc_time = Duration::ZERO;
+    for _ in 0..HELD_STEPS_PER_REPLY {
+        let (step, elapsed) = timed_step(&mut fill, HOST_STEP);
+        watchdog.assert_live("held CRC response");
+        assert!(matches!(step, RuntimeCacheStep::Continue { .. }));
+        crc_time += elapsed;
     }
-    assert_eq!(http.response_count(), 0, "the update reply is still gated");
-    assert!(HOST_STEP < STEP_BOUND);
+    assert_eq!(http.response_count(), 0, "the CRC reply is still gated");
+    assert_held_time_within_bound(HELD_STEPS_PER_REPLY, crc_time, "CRC reply");
+    http.release_next_response();
+    assert!(
+        http.wait_for_responses(1, Duration::from_secs(10)),
+        "the CRC reply was not sent"
+    );
+    watchdog.assert_live("CRC response");
 
-    for _ in 0..=PACK_NAMES.len() {
+    let mut request_steps = 0;
+    let mut released_jags = BTreeSet::new();
+    while released_jags.len() < PACK_NAMES.len() {
+        let name = loop {
+            if let Some(name) = PACK_NAMES
+                .iter()
+                .copied()
+                .find(|name| !released_jags.contains(name) && http.jag_count(name) > 0)
+            {
+                break name;
+            }
+            let (step, _) = timed_step(&mut fill, HOST_STEP);
+            watchdog.assert_live("JAG request");
+            assert!(matches!(step, RuntimeCacheStep::Continue { .. }));
+            request_steps += 1;
+            assert!(request_steps < 1000, "the next JAG request did not start");
+        };
+        let next_response = released_jags.len() + 2;
+        assert!(
+            http.wait_for_requests(next_response, Duration::from_secs(10)),
+            "the {name} request was not observed"
+        );
+        watchdog.assert_live("JAG request observation");
+        let mut jag_time = Duration::ZERO;
+        for _ in 0..HELD_STEPS_PER_REPLY {
+            let (step, elapsed) = timed_step(&mut fill, HOST_STEP);
+            watchdog.assert_live("held JAG response");
+            assert!(matches!(step, RuntimeCacheStep::Continue { .. }));
+            jag_time += elapsed;
+        }
+        assert_eq!(
+            http.response_count(),
+            next_response - 1,
+            "{name} reply is still gated"
+        );
+        assert_held_time_within_bound(HELD_STEPS_PER_REPLY, jag_time, name);
         http.release_next_response();
+        assert!(
+            http.wait_for_responses(next_response, Duration::from_secs(10)),
+            "{name} reply was not sent"
+        );
+        watchdog.assert_live("JAG response");
+        assert!(released_jags.insert(name));
     }
     let (prepared, completion_steps) = step_to_prepared(&mut fill);
+    watchdog.assert_live("update fill completion");
     assert_eq!(http.crc_count(), 1);
     for name in PACK_NAMES {
         assert_eq!(http.jag_count(name), 1, "{name} downloaded once");
@@ -629,7 +760,8 @@ fn a_slow_update_server_never_holds_a_step_past_the_bound() {
     assert_eq!(http.response_count(), PACK_NAMES.len() + 1);
     assert_eq!(prepared.fetched.len(), PACK_NAMES.len());
     eprintln!(
-        "slow update server: {waiting_steps} held steps, {completion_steps} completion steps"
+        "slow update server: {waiting_steps} setup steps, {request_steps} JAG request steps, \
+         {HELD_STEPS_PER_REPLY} held steps per reply, {completion_steps} completion steps"
     );
 }
 
@@ -640,10 +772,11 @@ fn hold_lock(file: std::fs::File) -> std::fs::File {
 }
 
 /// Another preparation holds the revision's retention lock while this fill
-/// registers its lease and again while it prunes. Each held operation returns
-/// `Continue` with its 8 ms deadline; releasing the lock lets the fill finish.
+/// registers its lease and again while it prunes. Each held phase has a
+/// cumulative 250 ms-per-step bound. A watchdog releases a blocked lock.
 #[test]
 fn a_held_retention_lock_never_holds_a_step_past_the_bound() {
+    const HELD_STEPS: usize = 12;
     let packs = PackSet::with_entries(37, COUNTS);
     let http = HttpServer::start(packs.clone());
     let entries = PacedEntryServer::start(packs.entries.clone(), Duration::ZERO, Duration::ZERO);
@@ -668,15 +801,18 @@ fn a_held_retention_lock_never_holds_a_step_past_the_bound() {
     ));
 
     // Registration: the lock is held from before the first step.
-    const HELD_STEPS: usize = 12;
+    let watchdog_lock = lock.try_clone().unwrap();
+    let watchdog = StepWatchdog::start(move || watchdog_lock.unlock().unwrap());
+    let mut registration_time = Duration::ZERO;
     for _ in 0..HELD_STEPS {
-        assert!(matches!(
-            fill.step(Some(Instant::now() + HOST_STEP)).unwrap(),
-            RuntimeCacheStep::Continue { .. }
-        ));
+        let (step, elapsed) = timed_step(&mut fill, HOST_STEP);
+        watchdog.assert_live("retention registration lock");
+        assert!(matches!(step, RuntimeCacheStep::Continue { .. }));
+        registration_time += elapsed;
     }
+    assert_held_time_within_bound(HELD_STEPS, registration_time, "retention registration");
     assert_eq!(entries.stats().requests, 0, "registration has not started");
-    assert!(HOST_STEP < STEP_BOUND);
+    drop(watchdog);
     lock.unlock().unwrap();
 
     let mut register_steps = HELD_STEPS;
@@ -694,20 +830,26 @@ fn a_held_retention_lock_never_holds_a_step_past_the_bound() {
 
     // Pruning: hold the lock after staging and before publication completes.
     lock = hold_lock(lock);
+    let watchdog_lock = lock.try_clone().unwrap();
+    let watchdog = StepWatchdog::start(move || watchdog_lock.unlock().unwrap());
+    let mut pruning_time = Duration::ZERO;
     for _ in 0..HELD_STEPS {
-        assert!(matches!(
-            fill.step(Some(Instant::now() + HOST_STEP)).unwrap(),
-            RuntimeCacheStep::Continue { .. }
-        ));
+        let (step, elapsed) = timed_step(&mut fill, HOST_STEP);
+        watchdog.assert_live("retention pruning lock");
+        assert!(matches!(step, RuntimeCacheStep::Continue { .. }));
+        pruning_time += elapsed;
     }
+    assert_held_time_within_bound(HELD_STEPS, pruning_time, "retention pruning");
+    drop(watchdog);
     lock.unlock().unwrap();
     let (prepared, completion_steps) = step_to_prepared(&mut fill);
 
     assert_eq!(prepared.source, "update-server");
     assert!(register_steps > HELD_STEPS);
     eprintln!(
-        "held retention lock: {HELD_STEPS} registration steps, {HELD_STEPS} pruning steps, \
-         {register_steps} steps to staging, {completion_steps} steps after release"
+        "held retention lock: {HELD_STEPS} registration steps took {registration_time:?}, \
+         {HELD_STEPS} pruning steps took {pruning_time:?}, {register_steps} steps to staging, \
+         {completion_steps} steps after release"
     );
 }
 
