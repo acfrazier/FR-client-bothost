@@ -555,10 +555,7 @@ fn cold_fill_worker_resends_a_stuck_request_at_the_java_pace() {
 /// Step a fill to completion with the host's per-step deadline.
 fn step_to_prepared(
     fill: &mut RuntimeCacheFill,
-) -> (
-    std::sync::Arc<client::unpack::PreparedRuntimeCache>,
-    usize,
-) {
+) -> (std::sync::Arc<client::unpack::PreparedRuntimeCache>, usize) {
     let mut steps = 0;
     loop {
         let step = fill.step(Some(Instant::now() + HOST_STEP)).unwrap();
@@ -598,7 +595,10 @@ fn a_slow_update_server_never_holds_a_step_past_the_bound() {
             RuntimeCacheStep::Continue { .. }
         ));
         waiting_steps += 1;
-        assert!(waiting_steps < 1000, "the first update request did not start");
+        assert!(
+            waiting_steps < 1000,
+            "the first update request did not start"
+        );
     }
     assert!(http.wait_for_requests(1, Duration::from_secs(10)));
     for _ in 0..3 {
@@ -621,7 +621,9 @@ fn a_slow_update_server_never_holds_a_step_past_the_bound() {
     }
     assert_eq!(http.response_count(), PACK_NAMES.len() + 1);
     assert_eq!(prepared.fetched.len(), PACK_NAMES.len());
-    eprintln!("slow update server: {waiting_steps} held steps, {completion_steps} completion steps");
+    eprintln!(
+        "slow update server: {waiting_steps} held steps, {completion_steps} completion steps"
+    );
 }
 
 /// Hold `file`'s lock until the test explicitly releases it.

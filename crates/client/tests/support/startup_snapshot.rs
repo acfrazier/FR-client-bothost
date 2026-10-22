@@ -490,30 +490,21 @@ impl HttpServer {
     }
 
     pub fn wait_for_crcs(&self, count: usize, timeout: Duration) -> bool {
-        wait_until(
-            &self.state.counts,
-            &self.state.changed,
-            timeout,
-            |counts| counts.crcs >= count,
-        )
+        wait_until(&self.state.counts, &self.state.changed, timeout, |counts| {
+            counts.crcs >= count
+        })
     }
 
     pub fn wait_for_requests(&self, count: usize, timeout: Duration) -> bool {
-        wait_until(
-            &self.state.counts,
-            &self.state.changed,
-            timeout,
-            |counts| counts.requests() >= count,
-        )
+        wait_until(&self.state.counts, &self.state.changed, timeout, |counts| {
+            counts.requests() >= count
+        })
     }
 
     pub fn wait_for_responses(&self, count: usize, timeout: Duration) -> bool {
-        wait_until(
-            &self.state.counts,
-            &self.state.changed,
-            timeout,
-            |counts| counts.responses >= count,
-        )
+        wait_until(&self.state.counts, &self.state.changed, timeout, |counts| {
+            counts.responses >= count
+        })
     }
 
     pub fn release_next_response(&self) {
@@ -937,22 +928,16 @@ impl PacedEntryServer {
 
     /// Wait until the reader observes `count` requests.
     pub fn wait_for_requests(&self, count: usize, timeout: Duration) -> bool {
-        wait_until(
-            &self.state.stats,
-            &self.state.changed,
-            timeout,
-            |stats| stats.requests >= count,
-        )
+        wait_until(&self.state.stats, &self.state.changed, timeout, |stats| {
+            stats.requests >= count
+        })
     }
 
     /// Wait until the writer sends `count` responses.
     pub fn wait_for_responses(&self, count: usize, timeout: Duration) -> bool {
-        wait_until(
-            &self.state.stats,
-            &self.state.changed,
-            timeout,
-            |stats| stats.responses >= count,
-        )
+        wait_until(&self.state.stats, &self.state.changed, timeout, |stats| {
+            stats.responses >= count
+        })
     }
 
     pub fn release_next_response(&self) {
@@ -996,7 +981,6 @@ impl Drop for PacedEntryServer {
         self.shutdown();
     }
 }
-
 
 fn serve_paced_connection(mut socket: TcpStream, state: Arc<PacedState>) {
     // One write per response and no Nagle delay: a split header and body
