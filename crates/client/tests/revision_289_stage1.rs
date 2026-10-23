@@ -761,7 +761,7 @@ fn adopt_from_failed_leaves_target_entirely_unchanged() {
 
     assert_eq!(
         target.adopt_from(&mut source),
-        Err(client::client::ClientAdoptionError::ProfileMismatch)
+        Err(client::client::ClientAdoptionError::NoLiveStream)
     );
     assert_eq!(target.revision(), ClientRevision::R289);
     assert!(target.stream.is_some(), "target live stream kept");
@@ -791,7 +791,7 @@ fn adopt_from_failed_across_revisions_does_not_assign_source_revision() {
     assert!(source.stream.is_none());
     assert_eq!(
         target.adopt_from(&mut source),
-        Err(client::client::ClientAdoptionError::ProfileMismatch)
+        Err(client::client::ClientAdoptionError::NoLiveStream)
     );
     assert_eq!(
         target.revision(),

@@ -347,53 +347,50 @@ fn adopt_without_live_stream_returns_typed_refusal() {
 }
 
 #[test]
-fn adoption_rejects_general_source_packets_without_state_loss() {
+fn adoption_rejects_general_output_packets_without_state_loss() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
-    let mut target = Client::new(cfg());
-    target.ptype = 41;
-    target.psize = 3;
-    target.out.p1(0x5a);
-    let target_output = target.out.data()[..target.out.pos].to_vec();
-    let target_revision = target.revision();
+    for replace_target in [false, true] {
+        for mut output in [Packet::new(vec![0; 100]), Packet::alloc(0)] {
+            let mut target = Client::new(cfg());
+            target.ptype = 41;
+            target.psize = 3;
+            target.out.p1(0x5a);
+            let mut source = Client::new(cfg());
+            source.stream =
+                Some(ClientStream::connect(&address.ip().to_string(), address.port()).unwrap());
+            let (server, _) = listener.accept().unwrap();
+            source.ptype = 47;
+            source.psize = 5;
+            source.out.p1(0xa5);
+            output.p1(0x7e);
+            let refusal = if replace_target {
+                target.out = output;
+                ClientAdoptionError::TargetPacketNotOutbound
+            } else {
+                source.out = output;
+                ClientAdoptionError::SourcePacketNotOutbound
+            };
+            let source_output = source.out.data()[..source.out.pos].to_vec();
+            let target_output = target.out.data()[..target.out.pos].to_vec();
+            let source_revision = source.revision();
+            let target_revision = target.revision();
 
-    for mut output in [Packet::new(vec![0; 100]), Packet::alloc(0)] {
-        let mut source = Client::new(cfg());
-        source.stream =
-            Some(ClientStream::connect(&address.ip().to_string(), address.port()).unwrap());
-        let (server, _) = listener.accept().unwrap();
-        source.ptype = 47;
-        source.psize = 5;
-        output.p1(0xa5);
-        source.out = output;
-        let source_output = source.out.data()[..source.out.pos].to_vec();
-        let source_revision = source.revision();
-
-        let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            target.adopt_from(&mut source)
-        }));
-        assert!(
-            attempt.is_ok(),
-            "a general source output packet must be refused without panicking"
-        );
-        assert_eq!(
-            format!("{:?}", attempt.unwrap()),
-            "Err(SourcePacketNotOutbound)"
-        );
-
-        assert!(
-            source.stream.is_some(),
-            "the refused stream stays with source"
-        );
-        assert!(target.stream.is_none(), "the receiver stays disconnected");
-        assert_eq!(source.revision(), source_revision);
-        assert_eq!(target.revision(), target_revision);
-        assert_eq!((source.ptype, source.psize), (47, 5));
-        assert_eq!((target.ptype, target.psize), (41, 3));
-        assert_eq!(&source.out.data()[..source.out.pos], source_output);
-        assert_eq!(&target.out.data()[..target.out.pos], target_output);
-        assert!(!target.baton);
-        drop(server);
+            assert_eq!(target.adopt_from(&mut source), Err(refusal));
+            assert!(
+                source.stream.is_some(),
+                "the refused stream stays with source"
+            );
+            assert!(target.stream.is_none(), "the receiver stays disconnected");
+            assert_eq!(source.revision(), source_revision);
+            assert_eq!(target.revision(), target_revision);
+            assert_eq!((source.ptype, source.psize), (47, 5));
+            assert_eq!((target.ptype, target.psize), (41, 3));
+            assert_eq!(&source.out.data()[..source.out.pos], source_output);
+            assert_eq!(&target.out.data()[..target.out.pos], target_output);
+            assert!(!target.baton);
+            drop(server);
+        }
     }
 }
 
