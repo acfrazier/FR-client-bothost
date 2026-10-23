@@ -2234,8 +2234,9 @@ impl Client {
             obj_drag_cycles: 0,
             bank_arrange_mode: 0,
 
-            out: Packet::alloc(1),
-            r#in: Packet::alloc(1),
+            out: Packet::alloc_outbound(1),
+            r#in: Packet::alloc_inbound(1),
+
             ptype: 0,
             ptype0: 0,
             ptype1: 0,
@@ -3384,10 +3385,10 @@ impl Client {
         self.shell.telemetry_289 = self.revision.is_289();
         self.stream = Some(stream);
         self.random_in = other.random_in.take();
-        let mut out = std::mem::replace(&mut other.out, Packet::alloc(1));
+        let mut out = std::mem::replace(&mut other.out, Packet::alloc_outbound(1));
         out.preserve_observer_from(&mut self.out);
         self.out = out;
-        self.r#in = std::mem::replace(&mut other.r#in, Packet::alloc(1));
+        self.r#in = std::mem::replace(&mut other.r#in, Packet::alloc_inbound(1));
         self.ptype = std::mem::replace(&mut other.ptype, 0);
         self.ptype0 = std::mem::replace(&mut other.ptype0, 0);
         self.ptype1 = std::mem::replace(&mut other.ptype1, 0);
@@ -5198,7 +5199,7 @@ impl Client {
                 // `in` buffer out for the dispatch and put it back.
                 let ptype = self.ptype;
                 let psize = self.psize;
-                let mut packet = std::mem::replace(&mut self.r#in, Packet::alloc(1));
+                let mut packet = std::mem::replace(&mut self.r#in, Packet::alloc_inbound(1));
                 self.handle_packet(ptype, &mut packet);
                 self.r#in = packet;
                 // Recorded after dispatch: a protocol error inside it

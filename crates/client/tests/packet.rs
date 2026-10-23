@@ -38,6 +38,18 @@ impl PacketObserver for RecordingObserver {
             .push(ObserverEvent::Tick(tick, session));
     }
 }
+fn packet_role_test_client() -> client::client::Client {
+    client::client::Client::new_with_revision(
+        client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: true,
+        },
+        client::client::ClientRevision::R289,
+    )
+}
 
 #[test]
 fn observer_preserves_ciphertext_and_reports_completed_packets_across_resets() {
@@ -123,6 +135,67 @@ fn tick_boundary_precedes_manual_packet_observation() {
     assert_eq!(
         *observer.0.lock().unwrap(),
         [ObserverEvent::Tick(17, 4), ObserverEvent::Packet(130, 3),]
+    );
+}
+#[test]
+fn client_packet_roles_reject_cross_direction_mutations_without_state_loss() {
+    let mut client = packet_role_test_client();
+    let inbound_observer = Arc::new(RecordingObserver::default());
+
+    client.r#in.set_frame_end(0);
+    let framed_attach = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.r#in.set_observer(Some(inbound_observer.clone()));
+    }));
+    assert!(framed_attach.is_err());
+    assert_eq!(client.r#in.frame_end(), Some(0));
+    assert!(!client.r#in.has_observer());
+
+    client.r#in.clear_frame_end();
+    let unframed_attach = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.r#in.set_observer(Some(inbound_observer.clone()));
+    }));
+    assert!(unframed_attach.is_err());
+    assert_eq!(client.r#in.frame_end(), None);
+    assert!(!client.r#in.has_observer());
+
+    let first_observer = Arc::new(RecordingObserver::default());
+    client.out.set_observer(Some(first_observer.clone()));
+    let bound_output = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.out.set_frame_end(0);
+    }));
+    assert!(bound_output.is_err());
+    assert!(client.out.has_observer());
+    assert_eq!(client.out.frame_end(), None);
+    client.out.clear_frame_end();
+    assert!(client.out.has_observer());
+    assert_eq!(client.out.frame_end(), None);
+    client.out.p1_enc(121);
+    assert_eq!(
+        *first_observer.0.lock().unwrap(),
+        [ObserverEvent::Packet(121, 1)]
+    );
+
+    client.out.set_observer(None);
+    client.out.clear_frame_end();
+    assert!(!client.out.has_observer());
+    assert_eq!(client.out.frame_end(), None);
+    let unobserved_output = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.out.set_frame_end(0);
+    }));
+    assert!(unobserved_output.is_err());
+    assert!(!client.out.has_observer());
+    assert_eq!(client.out.frame_end(), None);
+
+    let replacement_observer = Arc::new(RecordingObserver::default());
+    client.out.set_observer(Some(replacement_observer.clone()));
+    client.out.p1_enc(121);
+    assert_eq!(
+        *first_observer.0.lock().unwrap(),
+        [ObserverEvent::Packet(121, 1)]
+    );
+    assert_eq!(
+        *replacement_observer.0.lock().unwrap(),
+        [ObserverEvent::Packet(121, 1)]
     );
 }
 
