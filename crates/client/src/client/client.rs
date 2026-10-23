@@ -293,11 +293,10 @@ pub const APPLET_W: i32 = 765;
 pub const APPLET_H: i32 = 503;
 
 /// Packet-family and lifecycle generations the host reads between polls.
-/// `handle_packet` bumps one family per applied packet; `REBUILD_NORMAL` and
-/// `logout()` (T1/T2/LOGOUT) bump all families. `player_info` records only an
-/// actually applied PLAYER_INFO packet, while `session` records only a
-/// successful login or reconnect grant; neither is part of an all-family
-/// invalidation.
+/// `handle_packet` bumps one state family per applied packet; `REBUILD_NORMAL`
+/// and `logout()` (T1/T2/LOGOUT) bump all state-family generations.
+/// `player_info` and `npc_info` record only their corresponding applied actor
+/// packets and are excluded from all-family invalidations.
 #[derive(Default, Clone, Copy)]
 pub struct ClientGens {
     pub npc: u64,
@@ -312,6 +311,7 @@ pub struct ClientGens {
     pub map_flag: u64,
     pub world: u64,
     pub player_info: u64,
+    pub npc_info: u64,
     pub session: u64,
     /// Explicit all-family invalidations, excluded from packet observations.
     pub invalidations: u64,
@@ -504,6 +504,7 @@ struct R289Publication {
     map_flag: bool,
     world: bool,
     player_info: bool,
+    npc_info: bool,
     invalidation: bool,
 }
 
@@ -521,6 +522,7 @@ impl R289Publication {
         map_flag: true,
         world: true,
         player_info: false,
+        npc_info: false,
         invalidation: true,
     };
 
@@ -537,6 +539,7 @@ impl R289Publication {
         gens.map_flag += u64::from(self.map_flag);
         gens.world += u64::from(self.world);
         gens.player_info += u64::from(self.player_info);
+        gens.npc_info += u64::from(self.npc_info);
         gens.invalidations += u64::from(self.invalidation);
     }
 }
@@ -5332,7 +5335,10 @@ impl Client {
             "R289 publication requires an apply outcome"
         );
         match ptype {
-            ServerProt::NPC_INFO => self.gens.npc += 1,
+            ServerProt::NPC_INFO => {
+                self.gens.npc += 1;
+                self.gens.npc_info += 1;
+            }
             ServerProt::PLAYER_INFO => {
                 self.gens.player += 1;
                 self.gens.player_info += 1;
@@ -14961,5 +14967,32 @@ mod main_modal_packet_tests {
     fn close_counter_stays_inline() {
         // Design 4.8 R4-1 adds one u64 (+8 B); exact inline layout, 0 B headroom.
         assert_eq!(std::mem::size_of::<MainModalPacketState>(), 32);
+    }
+    #[test]
+    fn client_npc_info_counts_applied_npc_info_only() {
+        let mut client = r289_client();
+        let npc_info = client.gens.npc_info;
+        let player_info = client.gens.player_info;
+
+        // An empty actor frame reaches the real decoder and publication path.
+        handle_r289_packet(&mut client, ServerProt289::NPC_INFO, vec![0]);
+        assert_eq!(client.gens.npc_info, npc_info + 1);
+        assert_eq!(client.gens.player_info, player_info);
+
+        handle_r289_packet(&mut client, ServerProt289::PLAYER_INFO, vec![0, 0]);
+        handle_r289_packet(&mut client, ServerProt289::RESET_ANIMS, Vec::new());
+        handle_r289_packet(&mut client, ServerProt289::REBUILD_NORMAL, vec![0, 0, 0, 0]);
+        assert_eq!(client.gens.npc_info, npc_info + 1);
+        assert_eq!(client.gens.player_info, player_info + 1);
+    }
+
+    #[test]
+    fn client_player_info_counter_unchanged() {
+        let mut client = r289_client();
+        let player_info = client.gens.player_info;
+
+        handle_r289_packet(&mut client, ServerProt289::NPC_INFO, vec![0]);
+
+        assert_eq!(client.gens.player_info, player_info);
     }
 }

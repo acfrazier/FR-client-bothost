@@ -438,6 +438,7 @@ impl ActorFrame {
             player: !self.npc,
             npc: self.npc,
             player_info: !self.npc,
+            npc_info: self.npc,
             ..Default::default()
         };
         if let Some(plane) = self.plane {
