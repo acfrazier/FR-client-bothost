@@ -659,8 +659,9 @@ impl RenderBackend for CpuBackend {
             }
 
             // `sideModalId`/`animateInterface` redrawSide trigger (TS 3931-3937).
-            if core.side_modal_id != -1
-                && r.animate_interface(core, core.side_modal_id, core.world_update_num)
+            if !core.hosted_animation_cycles
+                && core.side_modal_id != -1
+                && Renderer::animate_interface(core, core.side_modal_id, core.world_update_num)
             {
                 core.redraw_side = true;
             }
@@ -714,8 +715,9 @@ impl RenderBackend for CpuBackend {
                 }
             }
 
-            if core.chat_modal_id != -1
-                && r.animate_interface(core, core.chat_modal_id, core.world_update_num)
+            if !core.hosted_animation_cycles
+                && core.chat_modal_id != -1
+                && Renderer::animate_interface(core, core.chat_modal_id, core.world_update_num)
             {
                 core.redraw_chat = true;
             }

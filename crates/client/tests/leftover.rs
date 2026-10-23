@@ -382,8 +382,6 @@ fn shake_yaw_wraps_11_bit() {
 
 #[test]
 fn runweight_reaches_stats_tab_script() {
-    let _r = Renderer::new(false);
-    let r = Renderer::new(false);
     let mut c = client();
     c.runweight = 42;
     c.set_iface(
@@ -393,7 +391,7 @@ fn runweight_reaches_stats_tab_script() {
             ..IfType::default()
         },
     );
-    assert_eq!(r.get_if_var(&c, 9, 0), Some(42));
+    assert_eq!(Renderer::get_if_var(&c, 9, 0), Some(42));
 }
 
 #[test]

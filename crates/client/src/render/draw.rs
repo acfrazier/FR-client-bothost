@@ -615,11 +615,23 @@ impl Renderer {
                 }
             }
             if client.main_overlay_id != -1 {
-                self.animate_interface(client, client.main_overlay_id, client.world_update_num);
+                if !client.hosted_animation_cycles {
+                    Renderer::animate_interface(
+                        client,
+                        client.main_overlay_id,
+                        client.world_update_num,
+                    );
+                }
                 self.draw_interface(client, client.main_overlay_id, 0, 0, 0, &mut surface);
             }
             if client.main_modal_id != -1 {
-                self.animate_interface(client, client.main_modal_id, client.world_update_num);
+                if !client.hosted_animation_cycles {
+                    Renderer::animate_interface(
+                        client,
+                        client.main_modal_id,
+                        client.world_update_num,
+                    );
+                }
                 if !client.journal_paint_hidden() {
                     self.draw_interface(client, client.main_modal_id, 0, 0, 0, &mut surface);
                 }
@@ -990,60 +1002,18 @@ impl Renderer {
     /// `cyclelogic1` anticheat payload (TS 4387-4413) writes a length-
     /// prefixed random blob.
     pub(crate) fn add_projectiles(&mut self, client: &mut Client) {
-        let mut node = client.projectiles.head();
-        while let Some(proj) = node {
-            if proj.level != client.minusedlevel || client.loop_cycle > proj.t2 {
-                client.projectiles.unlink_last();
-            } else if client.loop_cycle >= proj.t1 {
-                if proj.target > 0 {
-                    let index = (proj.target - 1) as usize;
-                    if let Some(npc) = client.npc.get(index).and_then(|n| n.as_deref()) {
-                        let h2 = proj.h2;
-                        let level = proj.level;
-                        let y = get_av_h(&client.groundh, &client.mapl, npc.x, npc.z, level) - h2;
-                        proj.set_target(npc.x as f64, y as f64, npc.z as f64, client.loop_cycle);
-                    }
-                }
-
-                if proj.target < 0 {
-                    let index = -proj.target - 1;
-                    let player = if index == client.self_slot {
-                        client.local_player.as_ref()
-                    } else {
-                        client
-                            .players
-                            .get(index as usize)
-                            .and_then(|p| p.as_deref())
-                    };
-                    if let Some(player) = player {
-                        let h2 = proj.h2;
-                        let level = proj.level;
-                        let y =
-                            get_av_h(&client.groundh, &client.mapl, player.x, player.z, level) - h2;
-                        proj.set_target(
-                            player.x as f64,
-                            y as f64,
-                            player.z as f64,
-                            client.loop_cycle,
-                        );
-                    }
-                }
-
-                proj.move_by(client.world_update_num);
-                // TS 4382-4383: `proj.x | 0` (Rust `as i32`), typecode -1,
-                // padding 60, no forward padding.
-                let (x, y, z, yaw) = (proj.x as i32, proj.y as i32, proj.z as i32, proj.yaw);
-                let model = Some(SceneModel::Proj(proj.clone()));
-                if let Some(index) =
-                    client
-                        .world
-                        .add_dynamic(client.minusedlevel, x, y, z, -1, yaw, 60, false)
-                {
-                    self.world.set_sprite_model(&client.world, index, model);
-                }
+        let delta = if client.hosted_animation_cycles {
+            0
+        } else {
+            client.world_update_num
+        };
+        visit_projectiles(client, delta, |world, proj| {
+            let (x, y, z, yaw) = (proj.x as i32, proj.y as i32, proj.z as i32, proj.yaw);
+            let model = Some(SceneModel::Proj(proj.clone()));
+            if let Some(index) = world.add_dynamic(proj.level, x, y, z, -1, yaw, 60, false) {
+                self.world.set_sprite_model(world, index, model);
             }
-            node = client.projectiles.next_node();
-        }
+        });
 
         // TS 4387-4413: `cyclelogic1` anticheat every 1175 cycles.
         self.cyclelogic1 += 1;
@@ -1082,25 +1052,19 @@ impl Renderer {
     /// `world_update_num`), unlink when that completes the anim, else place
     /// the spot as a dynamic sprite (typecode -1, yaw 0, padding 60).
     pub(crate) fn add_map_anim(&mut self, client: &mut Client) {
-        let mut node = client.spotanims.head();
-        while let Some(spot) = node {
-            if spot.level != client.minusedlevel || spot.anim_complete {
-                client.spotanims.unlink_last();
-            } else if client.loop_cycle >= spot.start_cycle {
-                spot.update(&client.cache, client.world_update_num);
-                if spot.anim_complete {
-                    client.spotanims.unlink_last();
-                } else {
-                    let (level, x, y, z) = (spot.level, spot.x, spot.y, spot.z);
-                    let model = Some(SceneModel::SpotAnim(spot.clone()));
-                    if let Some(index) = client.world.add_dynamic(level, x, y, z, -1, 0, 60, false)
-                    {
-                        self.world.set_sprite_model(&client.world, index, model);
-                    }
-                }
+        let delta = if client.hosted_animation_cycles {
+            0
+        } else {
+            client.world_update_num
+        };
+        visit_map_anims(client, delta, |world, spot| {
+            let model = Some(SceneModel::SpotAnim(spot.clone()));
+            if let Some(index) =
+                world.add_dynamic(spot.level, spot.x, spot.y, spot.z, -1, 0, 60, false)
+            {
+                self.world.set_sprite_model(world, index, model);
             }
-            node = client.spotanims.next_node();
-        }
+        });
     }
 
     /// `camFollow` from client-ts (4432): position the eye at `distance`
@@ -1204,7 +1168,7 @@ impl Renderer {
     /// a bridge over a drop reads the undercroft and the pitch slams
     /// top-down. `macro_camera_x/z` stay 0 (TS initial values; the macro
     /// random-drift block is a separate gameLoop chunk not ported).
-    pub fn follow_camera(&mut self, client: &mut Client) {
+    pub fn follow_camera(client: &mut Client) {
         let Some(player) = &client.local_player else {
             return;
         };
@@ -2262,7 +2226,7 @@ impl Renderer {
                     let hovered = client.over_main_com_id == child.id
                         || client.over_side_com_id == child.id
                         || client.over_chat_com_id == child.id;
-                    let colour = if self.get_if_active(client, child.id) {
+                    let colour = if Renderer::get_if_active(client, child.id) {
                         if hovered && child.colour2_over != 0 {
                             child.colour2_over
                         } else {
@@ -2301,7 +2265,7 @@ impl Renderer {
                     }
                 }
                 ComponentType::TYPE_TEXT => {
-                    let active = self.get_if_active(client, child.id);
+                    let active = Renderer::get_if_active(client, child.id);
                     let mut text = child.text.to_string();
                     // TS 10077-10098: hovered picks `colour_over`/
                     // `colour2_over`; an active text renders `text2`.
@@ -2347,7 +2311,7 @@ impl Renderer {
                         for n in 0..5 {
                             let token = format!("%{}", n + 1);
                             while let Some(index) = text.find(token.as_str()) {
-                                let value = self.get_if_var(client, child.id, n).unwrap_or(-2);
+                                let value = Renderer::get_if_var(client, child.id, n).unwrap_or(-2);
                                 text = format!(
                                     "{}{}{}",
                                     &text[..index],
@@ -2399,7 +2363,7 @@ impl Renderer {
                 ComponentType::TYPE_GRAPHIC => {
                     // TS 10187-10190: `getIfActive` picks graphic2, else
                     // graphic.
-                    let graphic_name = if self.get_if_active(client, child.id)
+                    let graphic_name = if Renderer::get_if_active(client, child.id)
                         && !child.graphic2_name.is_empty()
                     {
                         child.graphic2_name.as_str()
@@ -2683,7 +2647,7 @@ impl Renderer {
                     let eye_y = sin_xan.wrapping_mul(child.model_zoom) >> 16;
                     let eye_z = cos_xan.wrapping_mul(child.model_zoom) >> 16;
 
-                    let active = self.get_if_active(client, child.id);
+                    let active = Renderer::get_if_active(client, child.id);
                     let model_anim = if active {
                         child.model_anim2
                     } else {
@@ -2800,9 +2764,7 @@ impl Renderer {
     /// `getIfActive` from client-ts (10361): comparator scripts pick the
     /// active colour for a component. Every comparator's script runs
     /// through `get_if_var`; a component without scripts reads inactive.
-    /// `pub(crate)` so `client.rs`'s `animate_interface` can select the
-    /// active model anim.
-    pub(crate) fn get_if_active(&self, client: &Client, com_id: i32) -> bool {
+    pub(crate) fn get_if_active(client: &Client, com_id: i32) -> bool {
         let Some(com) = client.if_(com_id as usize) else {
             return false;
         };
@@ -2813,7 +2775,7 @@ impl Renderer {
             return false;
         };
         for i in 0..comparator.len() {
-            let Some(value) = self.get_if_var(client, com_id, i as i32) else {
+            let Some(value) = Renderer::get_if_var(client, com_id, i as i32) else {
                 return false;
             };
             match comparator[i] {
@@ -2847,7 +2809,7 @@ impl Renderer {
     /// TS `-2` (no scripts / script id out of range), which keeps
     /// `get_if_active` treating such components as inactive; malformed
     /// scripts map to TS `-1` (the catch).
-    pub fn get_if_var(&self, client: &Client, com_id: i32, script_id: i32) -> Option<i32> {
+    pub fn get_if_var(client: &Client, com_id: i32, script_id: i32) -> Option<i32> {
         let com = client.if_(com_id as usize)?;
         let scripts = com.scripts.as_ref()?;
         if script_id < 0 || script_id as usize >= scripts.len() {
@@ -4371,8 +4333,10 @@ impl Renderer {
             // scene_state==1 (GPU freeze-last-frame): otherwise a run-tick
             // of travel during rebuild trips the 500-unit orbit snap when
             // the new 3D appears.
-            if client.scene_state == 1 || client.scene_state == 2 {
-                self.follow_camera(client);
+            if !client.hosted_animation_cycles
+                && (client.scene_state == 1 || client.scene_state == 2)
+            {
+                Renderer::follow_camera(client);
             }
             self.game_draw(client)
         } else {
@@ -4388,16 +4352,19 @@ impl Renderer {
     /// `model_anim`), adds `delta` to `anim_cycle`, and steps `anim_frame`
     /// while the cycle exceeds the frame delay, wrapping with `loops` (TS
     /// 10571-10589). Missing children or a missing seq skip. Returns
-    /// whether any child frame advanced. Re-homed onto `Renderer` (task 2b)
-    /// so it can select the seq via `get_if_active`.
-    pub fn animate_interface(&mut self, client: &mut Client, id: i32, delta: i32) -> bool {
-        let Some(children) = client.if_(id as usize).and_then(|com| com.children.clone()) else {
+    /// whether any child frame advanced. This state-only pass needs no head.
+    pub fn animate_interface(client: &mut Client, id: i32, delta: i32) -> bool {
+        let Some(child_count) = client
+            .if_(id as usize)
+            .and_then(|com| com.children.as_ref().map(|children| children.len()))
+        else {
             return false;
         };
 
         let mut updated = false;
 
-        for child_id in children {
+        for child_index in 0..child_count {
+            let child_id = client.if_(id as usize).unwrap().children.as_ref().unwrap()[child_index];
             if child_id == -1 {
                 break;
             }
@@ -4414,12 +4381,12 @@ impl Renderer {
             let mut anim_cycle = child.anim_cycle + delta;
             let mut anim_frame = child.anim_frame;
             let active = if is_model && (model_anim != -1 || model_anim2 != -1) {
-                self.get_if_active(client, child_id)
+                Renderer::get_if_active(client, child_id)
             } else {
                 false
             };
             if is_layer {
-                updated |= self.animate_interface(client, child_id, delta);
+                updated |= Renderer::animate_interface(client, child_id, delta);
             }
 
             if is_model && (model_anim != -1 || model_anim2 != -1) {
@@ -4451,6 +4418,123 @@ impl Renderer {
         }
 
         updated
+    }
+}
+
+/// Advance and visit scene effects without constructing models or a render head.
+/// A hosted client already advanced this cycle, so its renderer only visits.
+fn visit_projectiles(
+    client: &mut Client,
+    delta: i32,
+    mut visit: impl FnMut(&mut World, &crate::dash3d::ClientProj),
+) {
+    let mut node = client.projectiles.head();
+    while let Some(proj) = node {
+        if proj.level != client.minusedlevel || client.loop_cycle > proj.t2 {
+            client.projectiles.unlink_last();
+        } else if client.loop_cycle >= proj.t1 {
+            if delta != 0 || !client.hosted_animation_cycles {
+                if proj.target > 0 {
+                    let index = (proj.target - 1) as usize;
+                    if let Some(npc) = client.npc.get(index).and_then(|n| n.as_deref()) {
+                        let y = get_av_h(&client.groundh, &client.mapl, npc.x, npc.z, proj.level)
+                            - proj.h2;
+                        proj.set_target(npc.x as f64, y as f64, npc.z as f64, client.loop_cycle);
+                    }
+                }
+                if proj.target < 0 {
+                    let index = -proj.target - 1;
+                    let player = if index == client.self_slot {
+                        client.local_player.as_ref()
+                    } else {
+                        client
+                            .players
+                            .get(index as usize)
+                            .and_then(|p| p.as_deref())
+                    };
+                    if let Some(player) = player {
+                        let y = get_av_h(
+                            &client.groundh,
+                            &client.mapl,
+                            player.x,
+                            player.z,
+                            proj.level,
+                        ) - proj.h2;
+                        proj.set_target(
+                            player.x as f64,
+                            y as f64,
+                            player.z as f64,
+                            client.loop_cycle,
+                        );
+                    }
+                }
+                proj.move_by(delta);
+            }
+            visit(&mut client.world, proj);
+        }
+        node = client.projectiles.next_node();
+    }
+}
+
+fn visit_map_anims(
+    client: &mut Client,
+    delta: i32,
+    mut visit: impl FnMut(&mut World, &crate::dash3d::MapSpotAnim),
+) {
+    let mut node = client.spotanims.head();
+    while let Some(spot) = node {
+        if spot.level != client.minusedlevel || spot.anim_complete {
+            client.spotanims.unlink_last();
+        } else if client.loop_cycle >= spot.start_cycle {
+            if delta != 0 || !client.hosted_animation_cycles {
+                spot.update(&client.cache, delta);
+            }
+            if spot.anim_complete {
+                client.spotanims.unlink_last();
+            } else {
+                visit(&mut client.world, spot);
+            }
+        }
+        node = client.spotanims.next_node();
+    }
+}
+
+impl Client {
+    /// Opt into host-owned animation time and advance one completed logic cycle.
+    ///
+    /// Call after movement on every ordinary and recovered cycle. This updates
+    /// map effects, projectile flight, orbit tracking, and open interface models
+    /// without drawing, allocating models, reading packets, or writing the wire.
+    /// The renderer then only presents those states. Unused, the standalone
+    /// client's animation cadence is unchanged.
+    /// When `recovered_cycle` is true, this also advances the cutscene camera
+    /// after orbit tracking. An ordinary game loop already advances that camera.
+    pub fn advance_hosted_animations(&mut self, recovered_cycle: bool) {
+        self.hosted_animation_cycles = true;
+        if !self.ingame || self.error_loading {
+            return;
+        }
+        if self.scene_state == 2 {
+            visit_projectiles(self, 1, |_, _| {});
+            visit_map_anims(self, 1, |_, _| {});
+        }
+        if self.scene_state == 1 || self.scene_state == 2 {
+            Renderer::follow_camera(self);
+        }
+        if recovered_cycle && self.scene_state == 2 && self.cinema_cam {
+            self.cinema_camera();
+        }
+        for id in [self.main_overlay_id, self.main_modal_id] {
+            if id != -1 {
+                Renderer::animate_interface(self, id, 1);
+            }
+        }
+        if self.side_modal_id != -1 && Renderer::animate_interface(self, self.side_modal_id, 1) {
+            self.redraw_side = true;
+        }
+        if self.chat_modal_id != -1 && Renderer::animate_interface(self, self.chat_modal_id, 1) {
+            self.redraw_chat = true;
+        }
     }
 }
 
