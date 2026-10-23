@@ -10,6 +10,8 @@ window = ["dep:winit", "dep:softbuffer"]
 headed-fixture = ["window"]
 audio = ["dep:rustysynth", "dep:cpal"]
 render-diagnostics = []
+# Production scene-boundary controls for render regression tests only.
+render-test-hooks = []
 # Failure injection for independent-process snapshot publication tests only.
 # Product frontends never enable this feature.
 snapshot-test-hooks = []
