@@ -71,9 +71,8 @@ fn flush_test_client() -> client::client::Client {
 fn attach_game_loop_sink(client: &mut client::client::Client) -> TcpStream {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
-    client.stream = Some(
-        client::io::ClientStream::connect(&address.ip().to_string(), address.port()).unwrap(),
-    );
+    client.stream =
+        Some(client::io::ClientStream::connect(&address.ip().to_string(), address.port()).unwrap());
     let (server, _) = listener.accept().unwrap();
     server
         .set_read_timeout(Some(Duration::from_secs(2)))
@@ -381,7 +380,10 @@ fn game_loop_flush_commits_last_minimap_walk_with_all_fourteen_trailer_bytes() {
         observed_bytes[5].wrapping_sub(opcode_cipher.next_int() as u8),
         ClientProt289::MOVE_MINIMAPCLICK.id as u8
     );
-    assert_eq!(decoded[6], 19, "the body includes all 14 minimap trailer bytes");
+    assert_eq!(
+        decoded[6], 19,
+        "the body includes all 14 minimap trailer bytes"
+    );
     assert_eq!(&decoded[7..12], &[0, 0, 10, 0, 10]);
     assert_eq!(
         &decoded[12..],

@@ -341,10 +341,7 @@ fn adopt_reconnects_opcode_18_without_tcp_drop() {
 fn adopt_without_live_stream_returns_typed_refusal() {
     let mut a = Client::new(cfg());
     let mut b = Client::new(cfg());
-    assert_eq!(
-        b.adopt_from(&mut a),
-        Err(ClientAdoptionError::NoLiveStream)
-    );
+    assert_eq!(b.adopt_from(&mut a), Err(ClientAdoptionError::NoLiveStream));
     assert!(!b.baton);
     assert!(b.stream.is_none());
 }
@@ -362,9 +359,8 @@ fn adoption_rejects_general_source_packets_without_state_loss() {
 
     for mut output in [Packet::new(vec![0; 100]), Packet::alloc(0)] {
         let mut source = Client::new(cfg());
-        source.stream = Some(
-            ClientStream::connect(&address.ip().to_string(), address.port()).unwrap(),
-        );
+        source.stream =
+            Some(ClientStream::connect(&address.ip().to_string(), address.port()).unwrap());
         let (server, _) = listener.accept().unwrap();
         source.ptype = 47;
         source.psize = 5;
@@ -385,7 +381,10 @@ fn adoption_rejects_general_source_packets_without_state_loss() {
             "Err(SourcePacketNotOutbound)"
         );
 
-        assert!(source.stream.is_some(), "the refused stream stays with source");
+        assert!(
+            source.stream.is_some(),
+            "the refused stream stays with source"
+        );
         assert!(target.stream.is_none(), "the receiver stays disconnected");
         assert_eq!(source.revision(), source_revision);
         assert_eq!(target.revision(), target_revision);

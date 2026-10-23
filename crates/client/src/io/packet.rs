@@ -190,7 +190,6 @@ impl Packet {
         )
     }
 
-
     fn observer(&self) -> Option<&Arc<dyn PacketObserver>> {
         match &self.role {
             PacketRole::OutboundObserved(state) => Some(&state.observer),
