@@ -120,7 +120,7 @@ fn animation_state_at_first_draw(hosted: bool) -> Vec<u64> {
         c.local_player.as_mut().unwrap().x += 2;
         c.npc[7].as_mut().unwrap().x += 1;
         if hosted {
-            c.advance_hosted_animations();
+            c.advance_hosted_animations(false);
         }
         if !hosted || cycle == 120 {
             c.set_draw(true);

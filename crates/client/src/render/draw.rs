@@ -4507,7 +4507,9 @@ impl Client {
     /// without drawing, allocating models, reading packets, or writing the wire.
     /// The renderer then only presents those states. Unused, the standalone
     /// client's animation cadence is unchanged.
-    pub fn advance_hosted_animations(&mut self) {
+    /// When `recovered_cycle` is true, this also advances the cutscene camera
+    /// after orbit tracking. An ordinary game loop already advances that camera.
+    pub fn advance_hosted_animations(&mut self, recovered_cycle: bool) {
         self.hosted_animation_cycles = true;
         if !self.ingame || self.error_loading {
             return;
@@ -4518,6 +4520,9 @@ impl Client {
         }
         if self.scene_state == 1 || self.scene_state == 2 {
             Renderer::follow_camera(self);
+        }
+        if recovered_cycle && self.scene_state == 2 && self.cinema_cam {
+            self.cinema_camera();
         }
         for id in [self.main_overlay_id, self.main_modal_id] {
             if id != -1 {
