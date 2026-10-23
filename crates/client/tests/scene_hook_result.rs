@@ -41,6 +41,7 @@ struct Observation {
     points: Mutex<Vec<SceneTestPoint>>,
     lease_live: AtomicBool,
     overlay_saw_live_lease: AtomicBool,
+    overlay_gate: Mutex<Option<(Sender<()>, Receiver<()>)>>,
     overlay_lock_results: Mutex<Vec<bool>>,
     lock_probes: Mutex<Vec<JoinHandle<()>>>,
 }
@@ -149,6 +150,16 @@ fn record_scene_point(point: SceneTestPoint) {
         .push(point);
 
     if point == SceneTestPoint::OverlayEntry {
+        let overlay_gate = observation
+            .overlay_gate
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+        if let Some((entered, resume)) = overlay_gate {
+            let _ = entered.send(());
+            let _ = resume.recv_timeout(Duration::from_secs(30));
+        }
+
         if observation.lease_live.load(Ordering::Acquire) {
             observation
                 .overlay_saw_live_lease
@@ -245,83 +256,135 @@ fn submit_result_is_local_to_the_invocation() {
 
     let scene_lock = test_hooks::hold_scene_lock();
     let host_observation = Arc::new(Observation::default());
-    let (submit_tx, submit_rx) = mpsc::channel();
-    let (resume_tx, resume_rx) = mpsc::channel();
-    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
-    let (finished_tx, finished_rx) = mpsc::sync_channel(1);
-    let worker_observation = Arc::clone(&host_observation);
+    let (host_submit_tx, host_submit_rx) = mpsc::channel();
+    let (host_resume_tx, host_resume_rx) = mpsc::channel();
+    let (host_ready_tx, host_ready_rx) = mpsc::sync_channel(1);
+    let (host_finished_tx, host_finished_rx) = mpsc::sync_channel(1);
+    let host_worker_observation = Arc::clone(&host_observation);
     let host = thread::spawn(move || {
         let Some((mut client, mut renderer)) = scene_fixture::gpu_scene() else {
-            let _ = ready_tx.send(false);
+            let _ = host_ready_tx.send(false);
             return;
         };
         let context = Rc::new(RunContext {
-            observation: worker_observation,
+            observation: host_worker_observation,
             workspace: WorkspaceMode::SubmitThenPause {
-                submitted: submit_tx,
-                resume: resume_rx,
+                submitted: host_submit_tx,
+                resume: host_resume_rx,
             },
         });
         let _run = RunScope::enter(SceneAdmission::Rebuild, context);
         let _events = test_hooks::install_for_thread(record_scene_point);
-        let _ = ready_tx.send(true);
+        let _ = host_ready_tx.send(true);
         let _ = renderer.game_draw(&mut client);
-        let _ = finished_tx.send(());
+        let _ = host_finished_tx.send(());
     });
 
-    let gpu_available = ready_rx
+    match host_ready_rx.recv_timeout(Duration::from_secs(30)) {
+        Ok(true) => {}
+        Ok(false) => {
+            drop(scene_lock);
+            host.join().expect("unavailable GPU host worker must exit");
+            eprintln!("no adapter; invocation-local submit test skips");
+            return;
+        }
+        Err(_) => {
+            drop(scene_lock);
+            let _ = host_resume_tx.send(());
+            let _ = host.join();
+            panic!("the GPU host worker must initialize its scene");
+        }
+    }
+
+    if host_submit_rx
         .recv_timeout(Duration::from_secs(30))
-        .expect("GPU fixture must initialize or report an unavailable adapter");
-    if !gpu_available {
+        .is_err()
+    {
         drop(scene_lock);
-        host.join().expect("unavailable GPU worker must exit");
-        eprintln!("no adapter; invocation-local submit test skips");
-        return;
-    }
-
-    let callback_ready = submit_rx.recv_timeout(Duration::from_secs(30));
-    if callback_ready.is_err() {
-        drop(scene_lock);
-        let _ = resume_tx.send(());
+        let _ = host_resume_tx.send(());
         let _ = host.join();
-        panic!("the Rebuild submit callback must return while the scene lock is held");
+        panic!("the Rebuild callback must reach its result pause while the scene lock is held");
     }
 
-    // The host callback has run the real Rebuild's try-lock path and is now
-    // paused before it reads the result. Release its lock so a standalone
-    // scene can successfully submit before that host read.
+    // The host has stored LockContended and now waits before reading it.
     drop(scene_lock);
     let standalone_observation = Arc::new(Observation::default());
-    let Some((mut standalone_client, mut standalone_renderer)) = scene_fixture::gpu_scene() else {
-        let _ = resume_tx.send(());
-        let _ = host.join();
-        panic!("the second GPU scene must reuse the available adapter");
-    };
-    let standalone_context = Rc::new(RunContext {
-        observation: Arc::clone(&standalone_observation),
-        workspace: WorkspaceMode::Submit,
+    let (standalone_submit_tx, standalone_submit_rx) = mpsc::channel();
+    let (standalone_resume_tx, standalone_resume_rx) = mpsc::channel();
+    let (standalone_ready_tx, standalone_ready_rx) = mpsc::sync_channel(1);
+    let (standalone_finished_tx, standalone_finished_rx) = mpsc::sync_channel(1);
+    let standalone_worker_observation = Arc::clone(&standalone_observation);
+    let standalone = thread::spawn(move || {
+        let Some((mut client, mut renderer)) = scene_fixture::gpu_scene() else {
+            let _ = standalone_ready_tx.send(false);
+            return;
+        };
+        let context = Rc::new(RunContext {
+            observation: standalone_worker_observation,
+            workspace: WorkspaceMode::SubmitThenPause {
+                submitted: standalone_submit_tx,
+                resume: standalone_resume_rx,
+            },
+        });
+        let _run = RunScope::enter(SceneAdmission::Standalone, context);
+        let _events = test_hooks::install_for_thread(record_scene_point);
+        let _ = standalone_ready_tx.send(true);
+        let _ = renderer.game_draw(&mut client);
+        let _ = standalone_finished_tx.send(());
     });
-    let _standalone_run = RunScope::enter(SceneAdmission::Standalone, standalone_context);
-    let _standalone_events = test_hooks::install_for_thread(record_scene_point);
-    let _ = standalone_renderer.game_draw(&mut standalone_client);
-    drain_lock_probes(&standalone_observation);
-    assert_eq!(
-        *standalone_observation
-            .terminal_results
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()),
-        [SceneSubmit::Submitted]
-    );
 
-    resume_tx
+    match standalone_ready_rx.recv_timeout(Duration::from_secs(30)) {
+        Ok(true) => {}
+        Ok(false) => {
+            let _ = host_resume_tx.send(());
+            host.join().expect("the host worker must finish");
+            standalone
+                .join()
+                .expect("unavailable standalone worker must exit");
+            panic!("the second GPU scene must reuse the available adapter");
+        }
+        Err(_) => {
+            let _ = standalone_resume_tx.send(());
+            let _ = host_resume_tx.send(());
+            let _ = standalone.join();
+            let _ = host.join();
+            panic!("the standalone GPU worker must initialize its scene");
+        }
+    }
+
+    if standalone_submit_rx
+        .recv_timeout(Duration::from_secs(30))
+        .is_err()
+    {
+        let _ = standalone_resume_tx.send(());
+        let _ = host_resume_tx.send(());
+        let _ = standalone.join();
+        let _ = host.join();
+        panic!("the standalone callback must submit and pause before it reads its result");
+    }
+
+    // The standalone callback now waits after its successful submit. Resume
+    // the host and read LockContended while that invocation is still active.
+    host_resume_tx
         .send(())
         .expect("the host callback must still be waiting to read its result");
-    finished_rx
+    host_finished_rx
         .recv_timeout(Duration::from_secs(30))
         .expect("the host scene must finish after its result is read");
-    host.join().expect("host scene worker must not panic");
-    drain_lock_probes(&host_observation);
+    host.join().expect("the host scene worker must not panic");
 
+    standalone_resume_tx
+        .send(())
+        .expect("the standalone callback must still be paused");
+    standalone_finished_rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("the standalone scene must finish after its callback resumes");
+    standalone
+        .join()
+        .expect("the standalone scene worker must not panic");
+
+    drain_lock_probes(&standalone_observation);
+    drain_lock_probes(&host_observation);
     assert_eq!(host_observation.workspace_calls.load(Ordering::Relaxed), 1);
     assert_eq!(host_observation.submit_calls.load(Ordering::Relaxed), 1);
     assert_eq!(host_observation.terminal_calls.load(Ordering::Relaxed), 1);
@@ -337,6 +400,13 @@ fn submit_result_is_local_to_the_invocation() {
     assert!(!host_observation
         .overlay_saw_live_lease
         .load(Ordering::Acquire));
+    assert_eq!(
+        *standalone_observation
+            .terminal_results
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        [SceneSubmit::Submitted]
+    );
     assert_eq!(current_scene_submit_result(), SceneSubmit::NotRun);
 }
 
@@ -369,6 +439,189 @@ fn pre_submit_resource_failures_reach_terminal_once_and_roll_back() {
     run_resource_failure(SceneTestPoint::AfterAdmission, false, false);
     run_resource_failure(SceneTestPoint::BeforeTerminal, true, false);
     run_resource_failure(SceneTestPoint::BeforeTerminal, true, true);
+}
+
+#[test]
+fn prepared_submit_failure_removes_sprites_and_restores_camera() {
+    let _gpu_serial = gpu_serial::lock();
+    if gpu_serial::skipped() {
+        eprintln!("SKIP_GPU=1; LockContended rollback needs a GPU scene");
+        return;
+    }
+    ensure_hooks();
+
+    let (mut camera_control, mut camera_control_renderer) =
+        scene_fixture::gpu_scene().expect("adapter checked above");
+    make_ready_local_player(&mut camera_control);
+    camera_control.cinema_cam = false;
+    let camera_control_before = [
+        camera_control.cam_x,
+        camera_control.cam_y,
+        camera_control.cam_z,
+        camera_control.cam_pitch,
+        camera_control.cam_yaw,
+    ];
+    let _ = camera_control_renderer.game_draw(&mut camera_control);
+    assert_ne!(
+        [
+            camera_control.cam_x,
+            camera_control.cam_y,
+            camera_control.cam_z,
+            camera_control.cam_pitch,
+            camera_control.cam_yaw,
+        ],
+        camera_control_before,
+        "the fixture must change the camera during scene preparation"
+    );
+
+    let scene_lock = test_hooks::hold_scene_lock();
+    let observation = Arc::new(Observation::default());
+    let (overlay_entered_tx, overlay_entered_rx) = mpsc::channel();
+    let (overlay_resume_tx, overlay_resume_rx) = mpsc::sync_channel(1);
+    *observation
+        .overlay_gate
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+        Some((overlay_entered_tx, overlay_resume_rx));
+
+    let worker_observation = Arc::clone(&observation);
+    let camera_before = [1234, 2345, 3456, 456, 567];
+    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+    let (finished_tx, finished_rx) = mpsc::sync_channel(1);
+    let worker = thread::spawn(move || {
+        let Some((mut client, mut renderer)) = scene_fixture::gpu_scene() else {
+            let _ = ready_tx.send(false);
+            return;
+        };
+        make_ready_local_player(&mut client);
+        client.cinema_cam = false;
+        [
+            client.cam_x,
+            client.cam_y,
+            client.cam_z,
+            client.cam_pitch,
+            client.cam_yaw,
+        ] = camera_before;
+        client.pick_count = 3;
+        client.pick_typecodes[..3].copy_from_slice(&[701, 702, 703]);
+        arm_ground_click(&mut client);
+        client
+            .world
+            .add_dynamic(0, 50 * 128 + 64, 0, 50 * 128 + 64, 0, 0, 60, false)
+            .expect("fixture dynamic sprite must fit the build area");
+        assert_eq!(client.world.dynamic_count(), 1);
+
+        let context = Rc::new(RunContext {
+            observation: Arc::clone(&worker_observation),
+            workspace: WorkspaceMode::Submit,
+        });
+        let _run = RunScope::enter(SceneAdmission::Rebuild, context);
+        let _events = test_hooks::install_for_thread(record_scene_point);
+        let _ = ready_tx.send(true);
+        let _ = renderer.game_draw(&mut client);
+        drain_lock_probes(&worker_observation);
+
+        let snapshot = (
+            [
+                client.cam_x,
+                client.cam_y,
+                client.cam_z,
+                client.cam_pitch,
+                client.cam_yaw,
+            ],
+            (
+                client.world.ground_x,
+                client.world.ground_z,
+                client.world.click,
+            ),
+            client.pick_count,
+            [
+                client.pick_typecodes[0],
+                client.pick_typecodes[1],
+                client.pick_typecodes[2],
+            ],
+            renderer.pix3d.capture.is_none(),
+            client.world.dynamic_count(),
+            current_scene_submit_result(),
+        );
+        let _ = finished_tx.send(snapshot);
+    });
+
+    match ready_rx.recv_timeout(Duration::from_secs(30)) {
+        Ok(true) => {}
+        Ok(false) => {
+            drop(scene_lock);
+            let _ = overlay_resume_tx.send(());
+            worker.join().expect("unavailable GPU worker must exit");
+            eprintln!("no adapter; LockContended rollback test skips");
+            return;
+        }
+        Err(_) => {
+            drop(scene_lock);
+            let _ = overlay_resume_tx.send(());
+            let _ = worker.join();
+            panic!("the LockContended worker must initialize its GPU fixture");
+        }
+    }
+
+    if overlay_entered_rx
+        .recv_timeout(Duration::from_secs(30))
+        .is_err()
+    {
+        drop(scene_lock);
+        let _ = overlay_resume_tx.send(());
+        let _ = worker.join();
+        panic!("LockContended cleanup must reach overlay entry while the lock is held");
+    }
+    drop(scene_lock);
+    overlay_resume_tx
+        .send(())
+        .expect("the overlay hook must wait for the lock release");
+    let snapshot = finished_rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("the LockContended paint must finish after overlay entry");
+    worker
+        .join()
+        .expect("the LockContended worker must not panic");
+
+    assert_eq!(observation.workspace_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(observation.submit_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(observation.terminal_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(observation.resource_faults.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        *observation
+            .terminal_results
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        [SceneSubmit::LockContended]
+    );
+    assert!(!observation.lease_live.load(Ordering::Acquire));
+    assert!(!observation.overlay_saw_live_lease.load(Ordering::Acquire));
+    assert_eq!(
+        *observation
+            .overlay_lock_results
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        [true],
+        "the scene lock must be available at overlay entry after the holder releases it"
+    );
+    assert_eq!(
+        snapshot.0, camera_before,
+        "failed preparation restores camera"
+    );
+    assert_eq!(
+        snapshot.1,
+        (-1, -1, true),
+        "failed preparation restores the armed ground click"
+    );
+    assert_eq!(snapshot.2, 3);
+    assert_eq!(snapshot.3, [701, 702, 703]);
+    assert!(snapshot.4, "failed preparation clears the capture state");
+    assert_eq!(
+        snapshot.5, 0,
+        "failed preparation removes temporary sprites"
+    );
+    assert_eq!(snapshot.6, SceneSubmit::NotRun);
 }
 
 /// Use the same deterministic terrain click as `ground_input_composed`.
@@ -541,7 +794,7 @@ fn scoped_scene_hooks_restore_after_unwind() {
             client.cam_yaw
         ],
         camera_before,
-        "the failed Rebuild must restore camera state while unwinding"
+        "the failed Rebuild must restore camera before overlay entry"
     );
 
     // The outer hook and AfterAdmission failure scope must both have been

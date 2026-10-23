@@ -5,10 +5,10 @@ mod gpu_serial;
 #[path = "common/scene_fixture.rs"]
 mod scene_fixture;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, LazyLock};
 use std::thread;
 use std::time::Duration;
 
@@ -18,9 +18,13 @@ use client::render::backend::gpu::{
     SceneAdmission, SceneSubmit,
 };
 
-static HOOKS: OnceLock<()> = OnceLock::new();
+static HOOKS: LazyLock<()> = LazyLock::new(|| {
+    set_scene_admission_hook(admission_dispatcher);
+    set_scene_workspace_hook(omitted_workspace);
+});
 
 thread_local! {
+    static ADMISSION: Cell<SceneAdmission> = const { Cell::new(SceneAdmission::Rebuild) };
     static ACTIVE_OBSERVATION: RefCell<Option<Arc<Observation>>> = const { RefCell::new(None) };
 }
 
@@ -35,10 +39,13 @@ struct Observation {
 }
 
 fn admission_dispatcher() -> SceneAdmission {
-    if let Some(observation) = active_observation() {
-        observation.lease_live.store(true, Ordering::Release);
+    let admission = ADMISSION.get();
+    if admission == SceneAdmission::Rebuild {
+        if let Some(observation) = active_observation() {
+            observation.lease_live.store(true, Ordering::Release);
+        }
     }
-    SceneAdmission::Rebuild
+    admission
 }
 
 fn omitted_workspace(_submit: &mut dyn FnMut()) {
@@ -48,8 +55,8 @@ fn omitted_workspace(_submit: &mut dyn FnMut()) {
             current_scene_submit_result() == SceneSubmit::NotRun,
             Ordering::Release,
         );
-        // This host callback deliberately declines to invoke the client
-        // closure. A Rebuild must not add its own fallback after it returns.
+        // This callback omits the submit closure. Rebuild must not fall
+        // back after it returns, but Standalone must retain that fallback.
         observation.lease_live.store(false, Ordering::Release);
     }
 }
@@ -73,10 +80,7 @@ fn observe_overlay(point: SceneTestPoint) {
 }
 
 fn ensure_hooks() {
-    HOOKS.get_or_init(|| {
-        set_scene_admission_hook(admission_dispatcher);
-        set_scene_workspace_hook(omitted_workspace);
-    });
+    LazyLock::force(&HOOKS);
 }
 
 #[test]

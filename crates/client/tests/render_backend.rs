@@ -41,9 +41,20 @@ static GPU_WORKSPACE_CALLS: AtomicUsize = AtomicUsize::new(0);
 static GPU_SUBMIT_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(feature = "render-test-hooks")]
+thread_local! {
+    static WORKSPACE_PAUSE: RefCell<Option<(mpsc::SyncSender<()>, mpsc::Receiver<()>)>> =
+        const { RefCell::new(None) };
+}
+
+#[cfg(feature = "render-test-hooks")]
 fn count_workspace_submit(submit: &mut dyn FnMut()) {
     GPU_WORKSPACE_CALLS.fetch_add(1, Ordering::Relaxed);
     GPU_SUBMIT_CALLS.fetch_add(1, Ordering::Relaxed);
+    let pause = WORKSPACE_PAUSE.with(|slot| slot.borrow_mut().take());
+    if let Some((entered, resume)) = pause {
+        let _ = entered.send(());
+        let _ = resume.recv();
+    }
     submit();
 }
 
@@ -338,7 +349,10 @@ enum SceneMessage {
 #[cfg(feature = "render-test-hooks")]
 enum SceneCommand {
     Freeze,
-    Rebuild,
+    Rebuild {
+        workspace_entered: mpsc::SyncSender<()>,
+        workspace_resume: mpsc::Receiver<()>,
+    },
 }
 
 #[cfg(feature = "render-test-hooks")]
@@ -409,8 +423,15 @@ fn unused_admission_keeps_rebuild_and_freeze_behavior() {
             }
         }
 
-        if let Ok(SceneCommand::Rebuild) = command_rx.recv() {
+        if let Ok(SceneCommand::Rebuild {
+            workspace_entered,
+            workspace_resume,
+        }) = command_rx.recv()
+        {
             client.scene_state = 2;
+            WORKSPACE_PAUSE.with(|slot| {
+                slot.replace(Some((workspace_entered, workspace_resume)));
+            });
             let output = renderer.game_draw(&mut client);
             let _ = frame_tx.send(SceneMessage::Painted(scene_frame(
                 ScenePhase::RebuildAfterFreeze,
@@ -447,7 +468,7 @@ fn unused_admission_keeps_rebuild_and_freeze_behavior() {
         .send(SceneCommand::Freeze)
         .expect("scene worker must wait for the freeze command");
     let freeze_while_locked = frame_rx.recv_timeout(Duration::from_secs(10));
-    let returned_while_locked = freeze_while_locked.is_ok();
+    let freeze_returned_while_locked = freeze_while_locked.is_ok();
     drop(scene_lock);
     let freeze = freeze_while_locked.unwrap_or_else(|_| {
         frame_rx
@@ -458,20 +479,47 @@ fn unused_admission_keeps_rebuild_and_freeze_behavior() {
         panic!("the state-1 paint must return a frame");
     };
 
+    let scene_lock = test_hooks::hold_scene_lock();
+    let (workspace_entered_tx, workspace_entered_rx) = mpsc::sync_channel(1);
+    let (workspace_resume_tx, workspace_resume_rx) = mpsc::sync_channel(1);
     command_tx
-        .send(SceneCommand::Rebuild)
+        .send(SceneCommand::Rebuild {
+            workspace_entered: workspace_entered_tx,
+            workspace_resume: workspace_resume_rx,
+        })
         .expect("scene worker must wait for the rebuild command");
-    let rebuilt = frame_rx
+    if workspace_entered_rx
         .recv_timeout(Duration::from_secs(30))
-        .expect("state-2 paint must rebuild after the freeze");
+        .is_err()
+    {
+        drop(scene_lock);
+        let _ = workspace_resume_tx.send(());
+        let _ = worker.join();
+        panic!("the state-2 workspace callback must pause before submitting");
+    }
+    workspace_resume_tx
+        .send(())
+        .expect("the state-2 workspace callback must be paused");
+    let rebuilt_while_locked = frame_rx.recv_timeout(Duration::from_secs(1));
+    let rebuild_returned_while_locked = rebuilt_while_locked.is_ok();
+    drop(scene_lock);
+    let rebuilt = rebuilt_while_locked.unwrap_or_else(|_| {
+        frame_rx
+            .recv_timeout(Duration::from_secs(30))
+            .expect("state-2 paint must finish after the scene lock is released")
+    });
     worker.join().expect("scene fixture worker must not panic");
     let SceneMessage::Painted(rebuilt) = rebuilt else {
         panic!("the second state-2 paint must return a frame");
     };
 
     assert!(
-        returned_while_locked,
+        freeze_returned_while_locked,
         "state 1 must not acquire the scene lock"
+    );
+    assert!(
+        !rebuild_returned_while_locked,
+        "state 2 must wait for the scene lock before submitting"
     );
     assert_eq!(freeze.phase, ScenePhase::Freeze);
     assert_ne!(
