@@ -202,8 +202,10 @@ fn movement_passes_do_not_allocate_per_entity() {
     c.loop_cycle = 1;
     c.self_slot = 500;
 
-    let mut local = ClientPlayer::default();
-    local.entity = movement_entity(20, 20, true);
+    let mut local = ClientPlayer {
+        entity: movement_entity(20, 20, true),
+        ..ClientPlayer::default()
+    };
     local.face_entity = 32768 + c.self_slot;
     c.local_player = Some(local);
 
@@ -216,8 +218,10 @@ fn movement_passes_do_not_allocate_per_entity() {
             2 => (40, 40, false),
             _ => (30 + (index % 12) as i32, 30 + (index / 12) as i32, true),
         };
-        let mut player = ClientPlayer::default();
-        player.entity = movement_entity(tile_x, tile_z, walking);
+        let mut player = ClientPlayer {
+            entity: movement_entity(tile_x, tile_z, walking),
+            ..ClientPlayer::default()
+        };
         if index == 0 {
             player.face_entity = 32768;
         } else if index == 1 {
@@ -236,8 +240,10 @@ fn movement_passes_do_not_allocate_per_entity() {
             1 => (50, 50, false),
             _ => (55 + (index % 8) as i32, 55 + (index / 8) as i32, true),
         };
-        let mut npc = ClientNpc::default();
-        npc.entity = movement_entity(tile_x, tile_z, walking);
+        let mut npc = ClientNpc {
+            entity: movement_entity(tile_x, tile_z, walking),
+            ..ClientNpc::default()
+        };
         if index < 2 {
             npc.face_entity = 0;
         }

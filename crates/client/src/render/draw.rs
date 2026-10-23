@@ -4421,6 +4421,118 @@ impl Renderer {
     }
 }
 
+/// Advance and visit scene effects without constructing models or a render head.
+/// A hosted client already advanced this cycle, so its renderer only visits.
+fn visit_projectiles(
+    client: &mut Client,
+    delta: i32,
+    mut visit: impl FnMut(&mut World, &crate::dash3d::ClientProj),
+) {
+    let mut node = client.projectiles.head();
+    while let Some(proj) = node {
+        if proj.level != client.minusedlevel || client.loop_cycle > proj.t2 {
+            client.projectiles.unlink_last();
+        } else if client.loop_cycle >= proj.t1 {
+            if delta != 0 || !client.hosted_animation_cycles {
+                if proj.target > 0 {
+                    let index = (proj.target - 1) as usize;
+                    if let Some(npc) = client.npc.get(index).and_then(|n| n.as_deref()) {
+                        let y = get_av_h(&client.groundh, &client.mapl, npc.x, npc.z, proj.level)
+                            - proj.h2;
+                        proj.set_target(npc.x as f64, y as f64, npc.z as f64, client.loop_cycle);
+                    }
+                }
+                if proj.target < 0 {
+                    let index = -proj.target - 1;
+                    let player = if index == client.self_slot {
+                        client.local_player.as_ref()
+                    } else {
+                        client
+                            .players
+                            .get(index as usize)
+                            .and_then(|p| p.as_deref())
+                    };
+                    if let Some(player) = player {
+                        let y = get_av_h(
+                            &client.groundh,
+                            &client.mapl,
+                            player.x,
+                            player.z,
+                            proj.level,
+                        ) - proj.h2;
+                        proj.set_target(
+                            player.x as f64,
+                            y as f64,
+                            player.z as f64,
+                            client.loop_cycle,
+                        );
+                    }
+                }
+                proj.move_by(delta);
+            }
+            visit(&mut client.world, proj);
+        }
+        node = client.projectiles.next_node();
+    }
+}
+
+fn visit_map_anims(
+    client: &mut Client,
+    delta: i32,
+    mut visit: impl FnMut(&mut World, &crate::dash3d::MapSpotAnim),
+) {
+    let mut node = client.spotanims.head();
+    while let Some(spot) = node {
+        if spot.level != client.minusedlevel || spot.anim_complete {
+            client.spotanims.unlink_last();
+        } else if client.loop_cycle >= spot.start_cycle {
+            if delta != 0 || !client.hosted_animation_cycles {
+                spot.update(&client.cache, delta);
+            }
+            if spot.anim_complete {
+                client.spotanims.unlink_last();
+            } else {
+                visit(&mut client.world, spot);
+            }
+        }
+        node = client.spotanims.next_node();
+    }
+}
+
+impl Client {
+    /// Opt into host-owned animation time and advance one completed logic cycle.
+    ///
+    /// Call after movement on every ordinary and recovered cycle. This updates
+    /// map effects, projectile flight, orbit tracking, and open interface models
+    /// without drawing, allocating models, reading packets, or writing the wire.
+    /// The renderer then only presents those states. Unused, the standalone
+    /// client's animation cadence is unchanged.
+    pub fn advance_hosted_animations(&mut self) {
+        self.hosted_animation_cycles = true;
+        if !self.ingame || self.error_loading {
+            return;
+        }
+        if self.scene_state == 2 {
+            visit_projectiles(self, 1, |_, _| {});
+            visit_map_anims(self, 1, |_, _| {});
+        }
+        if self.scene_state == 1 || self.scene_state == 2 {
+            Renderer::follow_camera(self);
+        }
+        for id in [self.main_overlay_id, self.main_modal_id] {
+            if id != -1 {
+                Renderer::animate_interface(self, id, 1);
+            }
+        }
+        if self.side_modal_id != -1 && Renderer::animate_interface(self, self.side_modal_id, 1) {
+            self.redraw_side = true;
+        }
+        if self.chat_modal_id != -1 && Renderer::animate_interface(self, self.chat_modal_id, 1) {
+            self.redraw_chat = true;
+        }
+    }
+}
+
 #[cfg(test)]
 mod texture_anim_tests {
     use super::*;
@@ -4576,117 +4688,5 @@ mod texture_anim_tests {
         );
         assert!(renderer.pix3d.active_texels[24].is_none());
         assert_eq!(renderer.pix3d.pool_size, 1);
-    }
-}
-
-/// Advance and visit scene effects without constructing models or a render head.
-/// A hosted client already advanced this cycle, so its renderer only visits.
-fn visit_projectiles(
-    client: &mut Client,
-    delta: i32,
-    mut visit: impl FnMut(&mut World, &crate::dash3d::ClientProj),
-) {
-    let mut node = client.projectiles.head();
-    while let Some(proj) = node {
-        if proj.level != client.minusedlevel || client.loop_cycle > proj.t2 {
-            client.projectiles.unlink_last();
-        } else if client.loop_cycle >= proj.t1 {
-            if delta != 0 || !client.hosted_animation_cycles {
-                if proj.target > 0 {
-                    let index = (proj.target - 1) as usize;
-                    if let Some(npc) = client.npc.get(index).and_then(|n| n.as_deref()) {
-                        let y = get_av_h(&client.groundh, &client.mapl, npc.x, npc.z, proj.level)
-                            - proj.h2;
-                        proj.set_target(npc.x as f64, y as f64, npc.z as f64, client.loop_cycle);
-                    }
-                }
-                if proj.target < 0 {
-                    let index = -proj.target - 1;
-                    let player = if index == client.self_slot {
-                        client.local_player.as_ref()
-                    } else {
-                        client
-                            .players
-                            .get(index as usize)
-                            .and_then(|p| p.as_deref())
-                    };
-                    if let Some(player) = player {
-                        let y = get_av_h(
-                            &client.groundh,
-                            &client.mapl,
-                            player.x,
-                            player.z,
-                            proj.level,
-                        ) - proj.h2;
-                        proj.set_target(
-                            player.x as f64,
-                            y as f64,
-                            player.z as f64,
-                            client.loop_cycle,
-                        );
-                    }
-                }
-                proj.move_by(delta);
-            }
-            visit(&mut client.world, proj);
-        }
-        node = client.projectiles.next_node();
-    }
-}
-
-fn visit_map_anims(
-    client: &mut Client,
-    delta: i32,
-    mut visit: impl FnMut(&mut World, &crate::dash3d::MapSpotAnim),
-) {
-    let mut node = client.spotanims.head();
-    while let Some(spot) = node {
-        if spot.level != client.minusedlevel || spot.anim_complete {
-            client.spotanims.unlink_last();
-        } else if client.loop_cycle >= spot.start_cycle {
-            if delta != 0 || !client.hosted_animation_cycles {
-                spot.update(&client.cache, delta);
-            }
-            if spot.anim_complete {
-                client.spotanims.unlink_last();
-            } else {
-                visit(&mut client.world, spot);
-            }
-        }
-        node = client.spotanims.next_node();
-    }
-}
-
-impl Client {
-    /// Opt into host-owned animation time and advance one completed logic cycle.
-    ///
-    /// Call after movement on every ordinary and recovered cycle. This updates
-    /// map effects, projectile flight, orbit tracking, and open interface models
-    /// without drawing, allocating models, reading packets, or writing the wire.
-    /// The renderer then only presents those states. Unused, the standalone
-    /// client's animation cadence is unchanged.
-    pub fn advance_hosted_animations(&mut self) {
-        self.hosted_animation_cycles = true;
-        if !self.ingame || self.error_loading {
-            return;
-        }
-        if self.scene_state == 2 {
-            visit_projectiles(self, 1, |_, _| {});
-            visit_map_anims(self, 1, |_, _| {});
-        }
-        if self.scene_state == 1 || self.scene_state == 2 {
-            Renderer::follow_camera(self);
-        }
-        for id in [self.main_overlay_id, self.main_modal_id] {
-            if id != -1 {
-                Renderer::animate_interface(self, id, 1);
-            }
-        }
-        if self.side_modal_id != -1 && Renderer::animate_interface(self, self.side_modal_id, 1) {
-            self.redraw_side = true;
-        }
-        if self.chat_modal_id != -1 && Renderer::animate_interface(self, self.chat_modal_id, 1) {
-            self.redraw_chat = true;
-        }
     }
 }
