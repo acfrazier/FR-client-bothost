@@ -5,6 +5,7 @@
 use client::client::{Client, ClientConfig};
 use client::config::SeqType;
 use client::dash3d::{ClientEntity, ClientNpc, ClientPlayer};
+use client::render::Renderer;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
@@ -273,7 +274,10 @@ fn movement_passes_do_not_allocate_per_entity() {
 
     let self_facing_player = c.players[0].as_ref().unwrap();
     assert_eq!(self_facing_player.x, 40 * 128 + 64 + 8);
-    assert_eq!(self_facing_player.yaw, 64, "self-target reads its old position");
+    assert_eq!(
+        self_facing_player.yaw, 64,
+        "self-target reads its old position"
+    );
     assert_eq!(self_facing_player.primary_anim, 0);
     assert_eq!(self_facing_player.secondary_anim, 0);
     assert_eq!(
@@ -293,7 +297,10 @@ fn movement_passes_do_not_allocate_per_entity() {
 
     let self_facing_npc = c.npc[0].as_ref().unwrap();
     assert_eq!(self_facing_npc.x, 50 * 128 + 64 + 8);
-    assert_eq!(self_facing_npc.yaw, 64, "NPC self-target reads its old position");
+    assert_eq!(
+        self_facing_npc.yaw, 64,
+        "NPC self-target reads its old position"
+    );
     assert_eq!(self_facing_npc.primary_anim, 0);
     assert_eq!(self_facing_npc.secondary_anim, 0);
     assert_eq!(
