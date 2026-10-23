@@ -3384,7 +3384,9 @@ impl Client {
         self.shell.telemetry_289 = self.revision.is_289();
         self.stream = Some(stream);
         self.random_in = other.random_in.take();
-        self.out = std::mem::replace(&mut other.out, Packet::alloc(1));
+        let mut out = std::mem::replace(&mut other.out, Packet::alloc(1));
+        out.preserve_observer_from(&mut self.out);
+        self.out = out;
         self.r#in = std::mem::replace(&mut other.r#in, Packet::alloc(1));
         self.ptype = std::mem::replace(&mut other.ptype, 0);
         self.ptype0 = std::mem::replace(&mut other.ptype0, 0);
@@ -5175,6 +5177,7 @@ impl Client {
                 self.out.p1(self.route_z[length] - start_z);
                 i += 1;
             }
+            self.out.finish_packet();
 
             return true;
         }
@@ -12762,10 +12765,15 @@ impl Client {
         if self.logout_timer > 0 {
             self.logout_timer -= 1;
         }
+        let observed_tick = self.out.has_observer().then_some(self.gens.player_info);
         for _ in 0..5 {
             if !self.tcp_in() {
                 break;
             }
+        }
+        if observed_tick.is_some_and(|tick| tick != self.gens.player_info) {
+            self.out
+                .observe_tick(self.gens.player_info, self.gens.session);
         }
         if self.ingame && self.logout_timer == 0 {
             self.pending_local_idle_request = false;

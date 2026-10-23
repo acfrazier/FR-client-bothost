@@ -2,10 +2,44 @@
 // (p1Enc and rsaenc are ported separately). CRC is bit-identical to the TS
 // table; all value math uses i32 wrapping like JS `| 0`.
 use std::cell::RefCell;
+use std::num::NonZeroUsize;
+use std::sync::Arc;
 
 use num_bigint::BigUint;
 
 use super::isaac::Isaac;
+
+/// Observes completed encrypted output packets without changing their bytes.
+///
+/// Packet bodies use their revision-specific descriptor: a nonnegative value
+/// is a fixed body length, `-1` is a one-byte variable-length prefix, and `-2`
+/// is a two-byte variable-length prefix.
+pub trait PacketObserver: Send + Sync {
+    /// Returns the revision-specific body-length descriptor for this opcode.
+    fn packet_body_length(&self, opcode: u8) -> i16;
+
+    /// Reports one completed encoded packet, including its opcode and length
+    /// prefix.
+    fn packet_committed(&self, opcode: u8, encoded_length: usize);
+
+    /// Reports the observed player-info tick and current session boundary.
+    fn observed_tick(&self, _tick: u64, _session: u64) {}
+
+    /// Reports an accepted local edit that may encode no packet.
+    fn foreign_local_input(&self) {}
+
+    /// Returns the observer's monotonic count of all committed packet types.
+    fn committed_packet_count(&self) -> Option<u64> {
+        None
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PacketObservation {
+    opcode: u8,
+    body_start: NonZeroUsize,
+    body_length: i16,
+}
 
 const CRC32_POLYNOMIAL: u32 = 0xedb8_8320;
 
@@ -53,6 +87,8 @@ pub struct Packet {
     pub bit_pos: usize,
     pub random: Option<Isaac>,
     frame_end: Option<usize>,
+    observer: Option<Arc<dyn PacketObserver>>,
+    observation: Option<PacketObservation>,
 }
 
 impl Packet {
@@ -63,6 +99,87 @@ impl Packet {
             bit_pos: 0,
             random: None,
             frame_end: None,
+            observer: None,
+            observation: None,
+        }
+    }
+
+    /// Sets the optional observer for completed encrypted output packets.
+    pub fn set_observer(&mut self, observer: Option<Arc<dyn PacketObserver>>) {
+        self.observation = None;
+        self.observer = observer;
+    }
+
+    /// Keep the receiving slot's observation identity across socket adoption.
+    pub(crate) fn preserve_observer_from(&mut self, previous: &mut Self) {
+        if let Some(observer) = previous.observer.take() {
+            self.set_observer(Some(observer));
+            previous.observation = None;
+        }
+    }
+
+    /// Returns whether an encrypted-output observer is installed.
+    pub fn has_observer(&self) -> bool {
+        self.observer.is_some()
+    }
+
+    /// Finalizes a variable-length packet after its caller has finished
+    /// encoding it. Incomplete or mismatched packets are not reported.
+    pub fn finish_packet(&mut self) {
+        self.finish_observation(true);
+    }
+    /// Reports an input observation boundary to the optional host observer.
+    pub fn observe_tick(&self, tick: u64, session: u64) {
+        if let Some(observer) = &self.observer {
+            observer.observed_tick(tick, session);
+        }
+    }
+
+    /// Reads the installed observer's count without copying packet or cipher data.
+    pub fn committed_packet_count(&self) -> Option<u64> {
+        self.observer.as_ref()?.committed_packet_count()
+    }
+
+    /// Reports a local prompt edit without treating it as a committed packet.
+    pub fn observe_foreign_local_input(&self) {
+        if let Some(observer) = &self.observer {
+            observer.foreign_local_input();
+        }
+    }
+
+    fn observe_progress(&mut self) {
+        if self.observer.is_some() {
+            self.finish_observation(false);
+        }
+    }
+
+    fn finish_observation(&mut self, variable_is_final: bool) {
+        let Some(observation) = self.observation else {
+            return;
+        };
+        let Some(body_length) = self.pos.checked_sub(observation.body_start.get()) else {
+            return;
+        };
+        let encoded_length = body_length + 1;
+        let complete = match observation.body_length {
+            body_length if body_length >= 0 => encoded_length == 1 + body_length as usize,
+            -1 if variable_is_final && encoded_length >= 2 => {
+                self.data[observation.body_start.get()] as usize == encoded_length - 2
+            }
+            -2 if variable_is_final && encoded_length >= 3 => {
+                u16::from_be_bytes([
+                    self.data[observation.body_start.get()],
+                    self.data[observation.body_start.get() + 1],
+                ]) as usize
+                    == encoded_length - 3
+            }
+            _ => false,
+        };
+        if complete {
+            self.observation = None;
+            if let Some(observer) = &self.observer {
+                observer.packet_committed(observation.opcode, encoded_length);
+            }
         }
     }
 
@@ -126,6 +243,8 @@ impl Packet {
         if let Some(mut p) = cached {
             p.pos = 0;
             p.frame_end = None;
+            p.observer = None;
+            p.observation = None;
             return p;
         }
         match kind {
@@ -135,7 +254,9 @@ impl Packet {
         }
     }
 
-    pub fn release(self) {
+    pub fn release(mut self) {
+        self.observer = None;
+        self.observation = None;
         match self.data.len() {
             100 => CACHE_MIN.with(|c| {
                 let mut cache = c.borrow_mut();
@@ -266,26 +387,42 @@ impl Packet {
     }
 
     pub fn p1_enc(&mut self, opcode: i32) {
+        if self.observer.is_some() {
+            self.finish_observation(true);
+        }
         let r = self.random.as_mut().map(|r| r.next_int()).unwrap_or(0);
         self.data[self.pos] = opcode.wrapping_add(r) as u8;
         self.pos += 1;
+        if let Some(observer) = &self.observer {
+            let opcode = opcode as u8;
+            self.observation = Some(PacketObservation {
+                opcode,
+                body_start: NonZeroUsize::new(self.pos)
+                    .expect("an opcode has a nonzero end cursor"),
+                body_length: observer.packet_body_length(opcode),
+            });
+            self.finish_observation(false);
+        }
     }
 
     pub fn p1(&mut self, value: i32) {
         self.data[self.pos] = value as u8;
         self.pos += 1;
+        self.observe_progress();
     }
 
     pub fn p2(&mut self, value: i32) {
         self.data[self.pos] = (value >> 8) as u8;
         self.data[self.pos + 1] = value as u8;
         self.pos += 2;
+        self.observe_progress();
     }
 
     pub fn ip2(&mut self, value: i32) {
         self.data[self.pos] = value as u8;
         self.data[self.pos + 1] = (value >> 8) as u8;
         self.pos += 2;
+        self.observe_progress();
     }
 
     pub fn p3(&mut self, value: i32) {
@@ -293,6 +430,7 @@ impl Packet {
         self.data[self.pos + 1] = (value >> 8) as u8;
         self.data[self.pos + 2] = value as u8;
         self.pos += 3;
+        self.observe_progress();
     }
 
     pub fn p4(&mut self, value: i32) {
@@ -301,6 +439,7 @@ impl Packet {
         self.data[self.pos + 2] = (value >> 8) as u8;
         self.data[self.pos + 3] = value as u8;
         self.pos += 4;
+        self.observe_progress();
     }
 
     pub fn ip4(&mut self, value: i32) {
@@ -309,11 +448,13 @@ impl Packet {
         self.data[self.pos + 2] = (value >> 16) as u8;
         self.data[self.pos + 3] = (value >> 24) as u8;
         self.pos += 4;
+        self.observe_progress();
     }
 
     pub fn p8(&mut self, value: i64) {
         self.data[self.pos..self.pos + 8].copy_from_slice(&value.to_be_bytes());
         self.pos += 8;
+        self.observe_progress();
     }
 
     pub fn pjstr(&mut self, s: &str) {
@@ -323,16 +464,19 @@ impl Packet {
         }
         self.data[self.pos] = 10;
         self.pos += 1;
+        self.observe_progress();
     }
 
     pub fn pdata(&mut self, src: &[u8], offset: usize, length: usize) {
         let end = self.pos + length;
         self.data[self.pos..end].copy_from_slice(&src[offset..offset + length]);
         self.pos = end;
+        self.observe_progress();
     }
 
     pub fn psize1(&mut self, size: i32) {
         self.data[self.pos - size as usize - 1] = size as u8;
+        self.finish_observation(true);
     }
 
     pub fn gbit_start(&mut self) {
@@ -389,5 +533,21 @@ impl Packet {
         self.pos = 0;
         self.p1(raw_enc.len() as i32);
         self.pdata(&raw_enc, 0, raw_enc.len());
+    }
+}
+
+#[cfg(test)]
+mod observer_memory_tests {
+    use super::*;
+
+    #[test]
+    fn observer_layout_keeps_per_packet_growth_at_thirty_two_bytes() {
+        assert_eq!(std::mem::size_of::<PacketObservation>(), 16);
+        assert_eq!(std::mem::size_of::<Option<PacketObservation>>(), 16);
+        assert_eq!(std::mem::size_of::<Option<Arc<dyn PacketObserver>>>(), 16);
+        eprintln!(
+            "S3 client memory: packet={} observer-option=16 pending-packet-option=16 observer heap=0",
+            std::mem::size_of::<Packet>(),
+        );
     }
 }
