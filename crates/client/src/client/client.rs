@@ -215,6 +215,12 @@ const BUILD_AREA_SIZE: i32 = 104;
 const BUILD_AREA_TILES: usize = (BUILD_AREA_SIZE * BUILD_AREA_SIZE) as usize;
 const ROUTE_BUFFER: usize = 4000;
 
+#[derive(Clone, Copy)]
+enum DetachedMovementTarget {
+    Player { index: usize, x: i32, z: i32 },
+    Npc { index: usize, x: i32, z: i32 },
+}
+
 /// JAG archives whose CRC values go out in the login wrapper; slot 0 of the
 /// 9-slot `getJagChecksums` layout has no pack file and stays 0.
 const JAG_FILES: [&str; 8] = [
@@ -1086,6 +1092,9 @@ pub struct Client {
     pub self_slot: i32,
     pub members_account: i32,
     pub world_update_num: i32,
+    /// The host advances persistent animation state without a render head.
+    /// False preserves the standalone renderer-owned update path.
+    pub(crate) hosted_animation_cycles: bool,
 
     pub stat_base_level: Vec<i32>,
     pub stat_effective_level: Vec<i32>,
@@ -2087,6 +2096,7 @@ impl Client {
             self_slot: -1,
             members_account: 0,
             world_update_num: 0,
+            hosted_animation_cycles: false,
 
             stat_base_level: vec![0; Skill::count],
             stat_effective_level: vec![0; Skill::count],
@@ -13039,27 +13049,26 @@ impl Client {
         }
     }
 
-    /// `movePlayers` from Java (`Client.java` 7559): one movement step for
-    /// the local player — the `i == -1` slot. Rust login clones
-    /// `players[LOCAL_PLAYER_INDEX]` into `local_player`, so the live walk
-    /// interpolates `local_player`, not the stale clone — then every
-    /// tracked player in `playerIds` order.
+    /// `movePlayers` from Java (`Client.java` 7559): move the local player
+    /// (`i == -1`), then each tracked player in `playerIds` order. A removed
+    /// slot's old position is retained for face-target lookups.
     pub fn move_players(&mut self) {
-        if let Some(local) = self.local_player.as_ref() {
-            let mut e = local.entity.clone();
-            self.move_entity(true, &mut e);
-            self.local_player.as_mut().unwrap().entity = e;
+        if let Some(mut local) = self.local_player.take() {
+            self.move_entity(true, &mut local.entity, None);
+            self.local_player = Some(local);
         }
         for i in 0..self.player_count as usize {
             let index = self.player_ids[i] as usize;
-            let Some(player) = self.players.get(index).and_then(|p| p.as_ref()) else {
+            let Some(mut player) = self.players.get_mut(index).and_then(|slot| slot.take()) else {
                 continue;
             };
-            let mut e = player.entity.clone();
-            self.move_entity(false, &mut e);
-            if let Some(slot) = self.players.get_mut(index).and_then(|p| p.as_mut()) {
-                slot.entity = e;
-            }
+            let target = DetachedMovementTarget::Player {
+                index,
+                x: player.entity.x,
+                z: player.entity.z,
+            };
+            self.move_entity(false, &mut player.entity, Some(target));
+            self.players[index] = Some(player);
         }
     }
 
@@ -13094,19 +13103,21 @@ impl Client {
         }
     }
 
-    /// `moveNpcs` from Java (`Client.java` 10547): one movement step for
-    /// every tracked NPC in `npcIds` order.
+    /// `moveNpcs` from Java (`Client.java` 10547): move every tracked NPC
+    /// in `npcIds` order.
     pub fn move_npcs(&mut self) {
         for i in 0..self.npc_count as usize {
             let index = self.npc_ids[i] as usize;
-            let Some(npc) = self.npc.get(index).and_then(|n| n.as_ref()) else {
+            let Some(mut npc) = self.npc.get_mut(index).and_then(|slot| slot.take()) else {
                 continue;
             };
-            let mut e = npc.entity.clone();
-            self.move_entity(false, &mut e);
-            if let Some(slot) = self.npc.get_mut(index).and_then(|n| n.as_mut()) {
-                slot.entity = e;
-            }
+            let target = DetachedMovementTarget::Npc {
+                index,
+                x: npc.entity.x,
+                z: npc.entity.z,
+            };
+            self.move_entity(false, &mut npc.entity, Some(target));
+            self.npc[index] = Some(npc);
         }
     }
 
@@ -13114,9 +13125,14 @@ impl Client {
     /// entities back to their route head, then step an exact move
     /// (`exact_move_1` before it starts, `exact_move_2` during it) or a
     /// `route_move` walk, and finish with `entity_face` + `entity_anim`.
-    /// `is_local` marks the live local player (the Java
-    /// `arg0 == localPlayer` bounds check and the facing-self read).
-    fn move_entity(&self, is_local: bool, e: &mut ClientEntity) {
+    /// `detached_target` preserves the prior position of a temporarily
+    /// removed player/NPC slot when that entity faces itself.
+    fn move_entity(
+        &self,
+        is_local: bool,
+        e: &mut ClientEntity,
+        detached_target: Option<DetachedMovementTarget>,
+    ) {
         if e.x < 128 || e.z < 128 || e.x >= 13184 || e.z >= 13184 {
             e.primary_anim = -1;
             e.spotanim_id = -1;
@@ -13145,7 +13161,7 @@ impl Client {
         } else {
             e.route_move(&self.cache);
         }
-        self.entity_face(is_local, e);
+        self.entity_face(is_local, e, detached_target);
         e.entity_anim(&self.cache, self.loop_cycle);
     }
 
@@ -13217,21 +13233,33 @@ impl Client {
     /// `entityFace(e)` from Java (`Client.java` 10755): resolve the face
     /// target — an NPC, a player, or the last loc-square click — into a
     /// `dst_yaw`, then turn `yaw` toward it at `turnspeed`, switching to
-    /// the turn anim. The target positions are read while the entity is a
-    /// detached clone, so the pass never aliases `&mut players[i]` with a
-    /// read of `players[j]`.
-    fn entity_face(&self, is_local: bool, e: &mut ClientEntity) {
+    /// the turn anim. A temporarily removed entity's old coordinates stand
+    /// in for the detached slot so self-targeting remains unchanged.
+    fn entity_face(
+        &self,
+        is_local: bool,
+        e: &mut ClientEntity,
+        detached_target: Option<DetachedMovementTarget>,
+    ) {
         if e.turnspeed == 0 {
             return;
         }
         if e.face_entity != -1 && e.face_entity < 32768 {
-            if let Some(npc) = self
-                .npc
-                .get(e.face_entity as usize)
-                .and_then(|n| n.as_ref())
-            {
-                let dx = e.x - npc.x;
-                let dz = e.z - npc.z;
+            let target = match detached_target {
+                Some(DetachedMovementTarget::Npc { index, x, z })
+                    if index == e.face_entity as usize =>
+                {
+                    Some((x, z))
+                }
+                _ => self
+                    .npc
+                    .get(e.face_entity as usize)
+                    .and_then(|n| n.as_ref())
+                    .map(|npc| (npc.x, npc.z)),
+            };
+            if let Some((npc_x, npc_z)) = target {
+                let dx = e.x - npc_x;
+                let dz = e.z - npc_z;
                 if dx != 0 || dz != 0 {
                     e.dst_yaw = ((dx as f64).atan2(dz as f64) * 325.949) as i32 & 0x7ff;
                 }
@@ -13251,10 +13279,18 @@ impl Client {
                     self.local_player.as_ref().map(|local| (local.x, local.z))
                 }
             } else {
-                self.players
-                    .get(index as usize)
-                    .and_then(|p| p.as_ref())
-                    .map(|player| (player.x, player.z))
+                match detached_target {
+                    Some(DetachedMovementTarget::Player {
+                        index: detached_index,
+                        x,
+                        z,
+                    }) if detached_index == index as usize => Some((x, z)),
+                    _ => self
+                        .players
+                        .get(index as usize)
+                        .and_then(|p| p.as_ref())
+                        .map(|player| (player.x, player.z)),
+                }
             };
             if let Some((player_x, player_z)) = target {
                 let dx = e.x - player_x;
