@@ -329,7 +329,7 @@ fn game_loop_flush_commits_last_cheat_after_tick_without_changing_bytes() {
     let (_, decoded) = decode_first_opcode(observed_bytes);
     assert_eq!(decoded[0], ClientProt289::CLIENT_CHEAT.id as u8);
     assert_eq!(decoded[1] as usize, command.len() + 1);
-    assert_eq!(&decoded[2..], b"where\\n");
+    assert_eq!(&decoded[2..], b"where\n");
     assert_eq!(observed.gens.player_info, 1);
     assert_eq!(
         *observer.0.lock().unwrap(),
