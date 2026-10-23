@@ -942,6 +942,19 @@ impl R289Operation {
     }
 }
 
+/// A typed reason that a client socket handoff was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientAdoptionError {
+    /// The clients have incompatible session identities.
+    ProfileMismatch,
+    /// The client being adopted has no live game stream.
+    NoLiveStream,
+    /// The source client's output slot is not a client outbound packet.
+    SourcePacketNotOutbound,
+    /// The receiving client's output slot is not a client outbound packet.
+    TargetPacketNotOutbound,
+}
+
 /// Host-owned admission for the client's only `CLIENT_CHEAT` encoder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CheatAdmission {
@@ -3362,19 +3375,28 @@ impl Client {
     /// transport and cheat admission. `other` must not touch the game stream
     /// afterwards (drop it or reuse it for another account); no TCP is closed.
     /// Arms `baton`, so the next `login(..., reconnect = true)` runs the
-    /// opcode-18 handshake over the adopted socket instead of a fresh TCP.
-    /// Returns `None` when the identities differ or `other` has no live stream.
-    pub fn adopt_from(&mut self, other: &mut Client) -> Option<()> {
+    /// opcode-18 handshake over the adopted socket.
+    ///
+    /// Returns a typed refusal before mutating either client if identities
+    /// differ, the source has no live stream, or either output packet slot is
+    /// no longer a client outbound packet.
+    pub fn adopt_from(&mut self, other: &mut Client) -> Result<(), ClientAdoptionError> {
         match (&self.session_profile, &other.session_profile) {
             (None, None)
                 if self.transport == other.transport
                     && self.cheat_admission == other.cheat_admission => {}
             (Some(left), Some(right)) if left == right => {}
-            _ => return None,
+            _ => return Err(ClientAdoptionError::ProfileMismatch),
         }
-        // Take the live stream first. A failed handoff must leave `self`
-        // entirely unchanged (including revision and any partial-frame state).
-        let stream = other.stream.take()?;
+        if !other.out.is_outbound() {
+            return Err(ClientAdoptionError::SourcePacketNotOutbound);
+        }
+        if !self.out.is_outbound() {
+            return Err(ClientAdoptionError::TargetPacketNotOutbound);
+        }
+        let Some(stream) = other.stream.take() else {
+            return Err(ClientAdoptionError::NoLiveStream);
+        };
         // Session baton carries the stream's revision with ISAAC/frame state
         // so size tables and dispatch cannot silently diverge midstream.
         self.revision = other.revision;
@@ -3397,7 +3419,7 @@ impl Client {
         self.session_frames = std::mem::take(&mut other.session_frames);
         self.recent_frames = std::mem::take(&mut other.recent_frames);
         self.baton = true;
-        Some(())
+        Ok(())
     }
 
     /// Write the RSA plaintext block for the 274 login wrapper into
@@ -13015,6 +13037,7 @@ impl Client {
 
         let write_result = if let Some(stream) = self.stream.as_mut() {
             if self.out.pos > 0 {
+                self.out.finish_packet();
                 Some(stream.write(self.out.data(), self.out.pos))
             } else {
                 None

@@ -13,9 +13,9 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use client::client::{CheatAdmission, Client, ClientConfig, ClientRevision};
+use client::client::{CheatAdmission, Client, ClientAdoptionError, ClientConfig, ClientRevision};
 use client::config::{Cache, IfType, IfTypeMut};
-use client::io::ClientStream;
+use client::io::{ClientStream, Packet};
 
 fn cfg() -> ClientConfig {
     ClientConfig {
@@ -311,7 +311,7 @@ fn adopt_reconnects_opcode_18_without_tcp_drop() {
     let mut sim = Client::from_shared(cfg(), Arc::new(Cache::default()), Arc::new(vec![]), vec![]);
     sim.config.host = addr.ip().to_string();
     sim.config.port = addr.port();
-    assert!(sim.adopt_from(&mut head).is_some());
+    assert!(sim.adopt_from(&mut head).is_ok());
     assert!(head.stream.is_none(), "handoff must detach the source");
     assert!(head.random_in.is_none());
     assert!(sim.stream.is_some(), "adopted socket must be live");
@@ -336,15 +336,66 @@ fn adopt_reconnects_opcode_18_without_tcp_drop() {
     server.join().unwrap();
 }
 
-/// Adopting a `Client` with no live stream is a no-op (`None`) and does
-/// not arm `baton`.
+/// Adopting a `Client` with no live stream is refused without arming `baton`.
 #[test]
-fn adopt_without_live_stream_returns_none() {
+fn adopt_without_live_stream_returns_typed_refusal() {
     let mut a = Client::new(cfg());
     let mut b = Client::new(cfg());
-    assert!(b.adopt_from(&mut a).is_none());
+    assert_eq!(
+        b.adopt_from(&mut a),
+        Err(ClientAdoptionError::NoLiveStream)
+    );
     assert!(!b.baton);
     assert!(b.stream.is_none());
+}
+
+#[test]
+fn adoption_rejects_general_source_packets_without_state_loss() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut target = Client::new(cfg());
+    target.ptype = 41;
+    target.psize = 3;
+    target.out.p1(0x5a);
+    let target_output = target.out.data()[..target.out.pos].to_vec();
+    let target_revision = target.revision();
+
+    for mut output in [Packet::new(vec![0; 100]), Packet::alloc(0)] {
+        let mut source = Client::new(cfg());
+        source.stream = Some(
+            ClientStream::connect(&address.ip().to_string(), address.port()).unwrap(),
+        );
+        let (server, _) = listener.accept().unwrap();
+        source.ptype = 47;
+        source.psize = 5;
+        output.p1(0xa5);
+        source.out = output;
+        let source_output = source.out.data()[..source.out.pos].to_vec();
+        let source_revision = source.revision();
+
+        let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            target.adopt_from(&mut source)
+        }));
+        assert!(
+            attempt.is_ok(),
+            "a general source output packet must be refused without panicking"
+        );
+        assert_eq!(
+            format!("{:?}", attempt.unwrap()),
+            "Err(SourcePacketNotOutbound)"
+        );
+
+        assert!(source.stream.is_some(), "the refused stream stays with source");
+        assert!(target.stream.is_none(), "the receiver stays disconnected");
+        assert_eq!(source.revision(), source_revision);
+        assert_eq!(target.revision(), target_revision);
+        assert_eq!((source.ptype, source.psize), (47, 5));
+        assert_eq!((target.ptype, target.psize), (41, 3));
+        assert_eq!(&source.out.data()[..source.out.pos], source_output);
+        assert_eq!(&target.out.data()[..target.out.pos], target_output);
+        assert!(!target.baton);
+        drop(server);
+    }
 }
 
 #[test]
@@ -362,7 +413,10 @@ fn unbound_adoption_requires_matching_transport_and_admission() {
     let (mut source, source_server) = connected_client();
     let (mut target, target_server) = connected_client();
     source.set_transport(client::Transport::Wss);
-    assert!(target.adopt_from(&mut source).is_none());
+    assert_eq!(
+        target.adopt_from(&mut source),
+        Err(ClientAdoptionError::ProfileMismatch)
+    );
     assert!(source.stream.is_some());
     assert!(target.stream.is_some());
     drop(source_server);
@@ -371,7 +425,10 @@ fn unbound_adoption_requires_matching_transport_and_admission() {
     let (mut source, source_server) = connected_client();
     let (mut target, target_server) = connected_client();
     source.set_cheat_admission(CheatAdmission::Granted);
-    assert!(target.adopt_from(&mut source).is_none());
+    assert_eq!(
+        target.adopt_from(&mut source),
+        Err(ClientAdoptionError::ProfileMismatch)
+    );
     assert!(source.stream.is_some());
     assert!(target.stream.is_some());
     drop(source_server);

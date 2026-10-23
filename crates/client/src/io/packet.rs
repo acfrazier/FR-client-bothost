@@ -182,6 +182,15 @@ impl Packet {
         matches!(&self.role, PacketRole::OutboundObserved(_))
     }
 
+    /// Whether this packet still carries a client outbound role.
+    pub(crate) fn is_outbound(&self) -> bool {
+        matches!(
+            &self.role,
+            PacketRole::Outbound | PacketRole::OutboundObserved(_)
+        )
+    }
+
+
     fn observer(&self) -> Option<&Arc<dyn PacketObserver>> {
         match &self.role {
             PacketRole::OutboundObserved(state) => Some(&state.observer),

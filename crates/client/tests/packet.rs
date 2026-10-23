@@ -1,7 +1,11 @@
-use client::io::{Isaac, Packet, PacketObserver};
+use client::io::{ClientProt289, Isaac, Packet, PacketObserver, ServerProt289};
 use num_bigint::BigUint;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, PartialEq, Eq)]
 enum ObserverEvent {
@@ -20,6 +24,9 @@ impl PacketObserver for RecordingObserver {
             130 => -1,
             131 => -2,
             opcode if opcode == client::io::ClientProt289::MOVE_GAMECLICK.id as u8 => -1,
+            opcode if opcode == ClientProt289::EVENT_MOUSE_CLICK.id as u8 => 4,
+            opcode if opcode == ClientProt289::CLIENT_CHEAT.id as u8 => -1,
+            opcode if opcode == ClientProt289::MOVE_MINIMAPCLICK.id as u8 => -1,
             _ => 0,
         }
     }
@@ -49,6 +56,48 @@ fn packet_role_test_client() -> client::client::Client {
         },
         client::client::ClientRevision::R289,
     )
+}
+
+fn flush_test_client() -> client::client::Client {
+    let mut client = packet_role_test_client();
+    client.ingame = true;
+    client.ptype = -1;
+    client.out.random = Some(Isaac::new(&[1, 2, 3, 4]));
+    client.last_outbound = Instant::now();
+    client.local_player = Some(client::client::ClientPlayer::at(10, 10));
+    client
+}
+
+fn attach_game_loop_sink(client: &mut client::client::Client) -> TcpStream {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    client.stream = Some(
+        client::io::ClientStream::connect(&address.ip().to_string(), address.port()).unwrap(),
+    );
+    let (server, _) = listener.accept().unwrap();
+    server
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    server
+}
+
+fn send_empty_289_player_info(server: &mut TcpStream) {
+    server
+        .write_all(&[ServerProt289::PLAYER_INFO as u8, 0, 2, 0, 0])
+        .unwrap();
+}
+
+fn read_game_loop_flush(server: &mut TcpStream, length: usize) -> Vec<u8> {
+    let mut bytes = vec![0; length];
+    server.read_exact(&mut bytes).unwrap();
+    bytes
+}
+
+fn decode_first_opcode(mut packet: Vec<u8>) -> (u8, Vec<u8>) {
+    let mut isaac = Isaac::new(&[1, 2, 3, 4]);
+    let opcode = packet[0].wrapping_sub(isaac.next_int() as u8);
+    packet[0] = opcode;
+    (opcode, packet)
 }
 
 #[test]
@@ -246,6 +295,106 @@ fn legacy_movement_reports_completion_before_return_without_changing_ciphertext(
             client::io::ClientProt289::MOVE_GAMECLICK.id as u8,
             observed.out.pos,
         )]
+    );
+}
+
+#[test]
+fn game_loop_flush_commits_last_cheat_after_tick_without_changing_bytes() {
+    let command = "where";
+    let mut plain = flush_test_client();
+    let mut observed = flush_test_client();
+    plain.set_cheat_admission(client::client::CheatAdmission::Granted);
+    observed.set_cheat_admission(client::client::CheatAdmission::Granted);
+    let observer = Arc::new(RecordingObserver::default());
+    observed.out.set_observer(Some(observer.clone()));
+    let mut plain_server = attach_game_loop_sink(&mut plain);
+    let mut observed_server = attach_game_loop_sink(&mut observed);
+    send_empty_289_player_info(&mut plain_server);
+    send_empty_289_player_info(&mut observed_server);
+
+    assert!(plain.send_cheat(command).is_sent());
+    assert!(observed.send_cheat(command).is_sent());
+    plain.last_outbound = Instant::now();
+    observed.last_outbound = Instant::now();
+    plain.game_loop();
+    observed.game_loop();
+
+    let encoded_length = command.len() + 3;
+    let plain_bytes = read_game_loop_flush(&mut plain_server, encoded_length);
+    let observed_bytes = read_game_loop_flush(&mut observed_server, encoded_length);
+    assert_eq!(
+        observed_bytes, plain_bytes,
+        "installing the observer must not change client wire bytes"
+    );
+    let (_, decoded) = decode_first_opcode(observed_bytes);
+    assert_eq!(decoded[0], ClientProt289::CLIENT_CHEAT.id as u8);
+    assert_eq!(decoded[1] as usize, command.len() + 1);
+    assert_eq!(&decoded[2..], b"where\\n");
+    assert_eq!(observed.gens.player_info, 1);
+    assert_eq!(
+        *observer.0.lock().unwrap(),
+        [
+            ObserverEvent::Tick(1, 0),
+            ObserverEvent::Packet(ClientProt289::CLIENT_CHEAT.id as u8, encoded_length),
+        ]
+    );
+}
+
+#[test]
+fn game_loop_flush_commits_last_minimap_walk_with_all_fourteen_trailer_bytes() {
+    fn minimap_client() -> client::client::Client {
+        let mut client = flush_test_client();
+        let mut player = client::client::ClientPlayer::at(10, 10);
+        player.x = 1344;
+        player.z = 1344;
+        client.local_player = Some(player);
+        client.shell.apply_mouse_down(1, 648, 83);
+        client.shell.latch_click();
+        client
+    }
+
+    let mut plain = minimap_client();
+    let mut observed = minimap_client();
+    let observer = Arc::new(RecordingObserver::default());
+    observed.out.set_observer(Some(observer.clone()));
+    let mut plain_server = attach_game_loop_sink(&mut plain);
+    let mut observed_server = attach_game_loop_sink(&mut observed);
+    send_empty_289_player_info(&mut plain_server);
+    send_empty_289_player_info(&mut observed_server);
+
+    plain.last_outbound = Instant::now();
+    observed.last_outbound = Instant::now();
+    plain.game_loop();
+    observed.game_loop();
+
+    let plain_bytes = read_game_loop_flush(&mut plain_server, 26);
+    let observed_bytes = read_game_loop_flush(&mut observed_server, 26);
+    assert_eq!(
+        observed_bytes, plain_bytes,
+        "installing the observer must not change client wire bytes"
+    );
+    let (_, decoded) = decode_first_opcode(observed_bytes.clone());
+    assert_eq!(decoded[0], ClientProt289::EVENT_MOUSE_CLICK.id as u8);
+    let mut opcode_cipher = Isaac::new(&[1, 2, 3, 4]);
+    let _ = opcode_cipher.next_int();
+    assert_eq!(
+        observed_bytes[5].wrapping_sub(opcode_cipher.next_int() as u8),
+        ClientProt289::MOVE_MINIMAPCLICK.id as u8
+    );
+    assert_eq!(decoded[6], 19, "the body includes all 14 minimap trailer bytes");
+    assert_eq!(&decoded[7..12], &[0, 0, 10, 0, 10]);
+    assert_eq!(
+        &decoded[12..],
+        &[0, 0, 0, 0, 57, 0, 0, 89, 5, 64, 5, 64, 0, 63]
+    );
+    assert_eq!(observed.gens.player_info, 1);
+    assert_eq!(
+        *observer.0.lock().unwrap(),
+        [
+            ObserverEvent::Tick(1, 0),
+            ObserverEvent::Packet(ClientProt289::EVENT_MOUSE_CLICK.id as u8, 5),
+            ObserverEvent::Packet(ClientProt289::MOVE_MINIMAPCLICK.id as u8, 21),
+        ]
     );
 }
 
