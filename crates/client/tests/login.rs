@@ -299,6 +299,7 @@ fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
     c.minimap_flag_z = 2;
     c.chat_text[0] = "leftover".into();
     c.logout();
+    let chat_gen_after_logout = c.gens.chat;
     r.title_screen_draw(&mut c); // consumes the game frame (Task 4b)
     assert!(r.area_chat.is_none());
     c.login("bob", "pw", false).unwrap();
@@ -314,6 +315,11 @@ fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
     assert!(
         c.chat_text.iter().all(|t| t.is_empty()),
         "response 2 must clear the chat history"
+    );
+    assert!(
+        c.gens.chat > chat_gen_after_logout,
+        "the response-2 chat clear must move the chat generation, or the \
+         host snapshot keeps the pre-login ring"
     );
     assert!(c.redraw_frame && c.redraw_side && c.redraw_icons);
     // `login` no longer runs `prepare_game` eagerly (task 2b: the renderer

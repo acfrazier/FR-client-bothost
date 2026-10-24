@@ -3682,6 +3682,13 @@ impl Client {
             for entry in self.chat_text.iter_mut() {
                 *entry = String::new();
             }
+            // The host snapshot rebuilds its chat view only when
+            // `gens.chat` moves. Logout moved every generation but kept
+            // `chat_text`, so the snapshot still holds the old ring; this
+            // clear must move the chat generation too, or that stale ring
+            // survives into the new session. (`gens` is a bot-host hook
+            // with no Java counterpart, so client behaviour is unchanged.)
+            self.gens.chat += 1;
             self.redraw_frame = true;
             self.redraw_side = true;
             self.redraw_icons = true;
