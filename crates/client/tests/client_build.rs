@@ -23,6 +23,16 @@ use client::dash3d::{
 use client::graphics::Colour;
 use client::io::{OnDemand, Packet};
 
+// The model store and provider are process-wide. Serialize tests that replace
+// the provider so those mutations cannot race.
+static MODEL_STORE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock_model_store() -> std::sync::MutexGuard<'static, ()> {
+    MODEL_STORE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Records the model ids `Model.requestDownload` routes to it, standing in
 /// for the `OnDemand` handle `maininit` wires via `Model.init`.
 struct RecordingProvider {
@@ -37,10 +47,9 @@ impl ModelProvider for RecordingProvider {
 
 #[test]
 fn check_model_all_requests_through_wired_provider() {
+    let _model_store = lock_model_store();
     let _r = Renderer::new(false);
-    // Tests in this binary share the process-wide `Model` store and may run
-    // in parallel, so the assertions tolerate extra 60000 requests from the
-    // sibling not-ready tests instead of pinning the exact request vector.
+    // `Model::init` installs this provider for the assertions below.
     let requested = Arc::new(Mutex::new(Vec::<i32>::new()));
     Model::init(
         70000,
@@ -1085,6 +1094,7 @@ fn scene_model_ids_protects_push_down_linked_walls() {
 /// until a tele re-fetched them.
 #[test]
 fn lowmem_does_not_unload_process_wide_models() {
+    let _model_store = lock_model_store();
     struct Noop;
     impl ModelProvider for Noop {
         fn request_model(&mut self, _id: i32) {}
