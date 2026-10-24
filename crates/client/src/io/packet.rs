@@ -664,3 +664,24 @@ mod observer_memory_tests {
         assert_eq!(client_size, 28872);
     }
 }
+
+#[cfg(test)]
+mod rsa_encoding_tests {
+    use super::*;
+
+    #[test]
+    fn rsaenc_omits_zero_top_byte_like_java_big_integer() {
+        let mut raw = vec![0u8; 64];
+        raw[1] = 0x7f;
+        raw[63] = 0x2a;
+
+        let mut packet = Packet::new(raw.clone());
+        packet.pos = raw.len();
+        let modulus = BigUint::from(1u8) << 512usize;
+        let exponent = BigUint::from(1u8);
+        packet.rsaenc(&modulus, &exponent);
+
+        assert_eq!(packet.data[0], 63);
+        assert_eq!(&packet.data[1..], &raw[1..]);
+    }
+}
