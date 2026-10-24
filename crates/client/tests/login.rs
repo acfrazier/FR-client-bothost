@@ -53,11 +53,13 @@ fn cold_login_opcode_16_success() {
         if client::login_rsa::login_rsan()
             .starts_with("7162900525229798032761816791230527296329313291")
         {
-            // Java `Packet.rsaenc` writes `BigInteger.toByteArray()`:
-            // 63 bytes when leading zero bytes are omitted, 64 normally, or
-            // 65 when a leading 0x00 sign byte is needed.
+            // Java `Packet.rsaenc` (Packet.java:300-310) writes
+            // `BigInteger.toByteArray()`: the ciphertext is below the 64-byte
+            // modulus, so at most 64 bytes plus a 0x00 sign byte when its top
+            // bit is set; leading zero bytes are omitted, so it can be shorter
+            // (63 bytes about 1 login in 256, 62 about 1 in 65,536, ...).
             let rsa_len = buf[42] as usize;
-            assert!((63..=65).contains(&rsa_len), "rsa len byte {rsa_len}");
+            assert!((1..=65).contains(&rsa_len), "rsa len byte {rsa_len}");
             assert_eq!(n, 2 + 40 + 1 + rsa_len);
         }
         s.write_all(&[2, 0, 0]).unwrap(); // response 2, staff=0, mouseTrack=0
