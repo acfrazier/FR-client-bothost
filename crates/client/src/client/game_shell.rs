@@ -317,6 +317,10 @@ impl GameShell {
             self.ratio = 256;
             self.delta = (self.deltime as i64 - elapsed / 10) as i32;
         }
+        // GameShell.java:178-180 caps the delta at deltime before the shift.
+        if self.delta > self.deltime {
+            self.delta = self.deltime;
+        }
 
         self.otim[self.opos] = now;
         self.opos = (self.opos + 1) % 10;
@@ -354,10 +358,10 @@ mod tests {
         shell.frame_bookkeeping_at(10_000);
 
         assert_eq!(shell.ratio, 256);
-        assert_eq!(
-            shell.delta,
-            (20_i64 - (10_000_i64 - 10_100_i64) / 10) as i32
-        );
+        // GameShell.java:176 gives 20 - (10000 - 10100) / 10 = 30; :178-180 caps it at deltime.
+        assert_eq!(shell.delta, 20);
+        // The cap applies before the shift, so the stored slot moves by 20, not 30.
+        assert_eq!(shell.otim[0], 10_000 + 20);
     }
 
     #[test]
