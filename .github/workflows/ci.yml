@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [r274-bh-modular]
+    branches: [multirev-bh-modular]
   pull_request:
-    branches: [r274-bh-modular]
+    branches: [multirev-bh-modular]
 
 env:
   CARGO_TERM_COLOR: always

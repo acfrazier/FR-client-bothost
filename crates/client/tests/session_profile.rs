@@ -326,7 +326,10 @@ fn incompatible_bound_adoption_leaves_both_streams_intact() {
     let first_server = first_accept.join().unwrap();
     let second_server = second_accept.join().unwrap();
 
-    assert!(second.adopt_from(&mut first).is_none());
+    assert_eq!(
+        second.adopt_from(&mut first),
+        Err(client::client::ClientAdoptionError::ProfileMismatch)
+    );
     assert!(first.stream.is_some());
     assert!(second.stream.is_some());
     drop(first_server);

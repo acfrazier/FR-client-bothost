@@ -1,5 +1,12 @@
 # Revision 289 implementation plan
 
+> Note (2026-10-10): the `file:line` anchors below predate later growth of
+> `client.rs` and friends — read them as file/module pointers, not exact
+> lines. The architecture decisions (explicit revision selection, unchanged
+> 274 defaults, no bot action API, `scene_state == 1` freeze) still hold, and
+> the stage 1–3 work described here is implemented. The example
+> `CARGO_TARGET_DIR=/Users/…` is an operator-local path, not a repo requirement.
+
 This plan is deliberately tied to production client paths. Standalone packet decoders do not satisfy a stage gate.
 
 ## Architecture decision

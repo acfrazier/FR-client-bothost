@@ -19,7 +19,7 @@ pub use jagfile::JagFile;
 pub mod ondemand;
 pub use ondemand::{OnDemand, OnDemandProvider, OnDemandRequest};
 pub mod packet;
-pub use packet::Packet;
+pub use packet::{Packet, PacketObserver};
 pub mod revision;
 pub use revision::{ClientRevision, ServerProt289, SERVER_PROT_SIZES_289};
 pub mod server_prot;

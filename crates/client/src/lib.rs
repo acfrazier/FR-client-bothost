@@ -1,5 +1,5 @@
 //! 274 client library for the 274bot host (`FR-client-bothost`
-//! `r274-bh-modular`). wgpu GPU 3D by default; `BOT_CPU=1` is CpuPix3D.
+//! `multirev-bh-modular`). wgpu GPU 3D by default; `BOT_CPU=1` is CpuPix3D.
 //! No bot action API — packet timing and `doAction` stay Java-shaped.
 
 pub mod client;
@@ -19,7 +19,7 @@ pub mod transport;
 pub mod unpack;
 pub mod util;
 pub mod wordfilter;
-pub use client::client::{CheatAdmission, CheatRefusal, CheatSend};
+pub use client::client::{CheatAdmission, CheatRefusal, CheatSend, ClientAdoptionError};
 pub use login_rsa::{
     active_pair, JAVA_LOGIN_RSAE, JAVA_LOGIN_RSAN, PROD_LOGIN_RSAE, PROD_LOGIN_RSAN,
 };

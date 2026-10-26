@@ -2,10 +2,84 @@
 // (p1Enc and rsaenc are ported separately). CRC is bit-identical to the TS
 // table; all value math uses i32 wrapping like JS `| 0`.
 use std::cell::RefCell;
+use std::num::NonZeroUsize;
+use std::sync::Arc;
 
 use num_bigint::BigUint;
 
 use super::isaac::Isaac;
+
+/// Observes completed encrypted output packets without changing their bytes.
+///
+/// Packet bodies use their revision-specific descriptor: a nonnegative value
+/// is a fixed body length, `-1` is a one-byte variable-length prefix, and `-2`
+/// is a two-byte variable-length prefix.
+pub trait PacketObserver: Send + Sync {
+    /// Returns the revision-specific body-length descriptor for this opcode.
+    fn packet_body_length(&self, opcode: u8) -> i16;
+
+    /// Reports one completed encoded packet, including its opcode and length
+    /// prefix.
+    fn packet_committed(&self, opcode: u8, encoded_length: usize);
+
+    /// Reports the observed player-info tick and current session boundary.
+    fn observed_tick(&self, _tick: u64, _session: u64) {}
+
+    /// Reports an accepted local edit that may encode no packet.
+    fn foreign_local_input(&self) {}
+
+    /// Returns the observer's monotonic count of all committed packet types.
+    fn committed_packet_count(&self) -> Option<u64> {
+        None
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PacketObservation {
+    opcode: u8,
+    body_start: NonZeroUsize,
+    body_length: i16,
+}
+struct ObserverState {
+    observer: Arc<dyn PacketObserver>,
+    observation: Option<PacketObservation>,
+}
+
+/// Returns the encoded length of the observed packet when its bytes up to
+/// `pos` form exactly one complete packet. A variable-length packet counts as
+/// complete only when `variable_is_final` and its length prefix matches.
+fn observed_extent(
+    observation: &PacketObservation,
+    data: &[u8],
+    pos: usize,
+    variable_is_final: bool,
+) -> Option<usize> {
+    let body_length = pos.checked_sub(observation.body_start.get())?;
+    let encoded_length = body_length + 1;
+    let complete = match observation.body_length {
+        body_length if body_length >= 0 => encoded_length == 1 + body_length as usize,
+        -1 if variable_is_final && encoded_length >= 2 => {
+            data[observation.body_start.get()] as usize == encoded_length - 2
+        }
+        -2 if variable_is_final && encoded_length >= 3 => {
+            u16::from_be_bytes([
+                data[observation.body_start.get()],
+                data[observation.body_start.get() + 1],
+            ]) as usize
+                == encoded_length - 3
+        }
+        _ => false,
+    };
+    complete.then_some(encoded_length)
+}
+
+enum PacketRole {
+    General,
+    Inbound,
+    InboundFrame(usize),
+    Outbound,
+    OutboundObserved(Box<ObserverState>),
+}
 
 const CRC32_POLYNOMIAL: u32 = 0xedb8_8320;
 
@@ -52,7 +126,7 @@ pub struct Packet {
     pub pos: usize,
     pub bit_pos: usize,
     pub random: Option<Isaac>,
-    frame_end: Option<usize>,
+    role: PacketRole,
     requires_reservation: bool,
     output_staging: bool,
     staged_opcodes: Vec<(usize, i32)>,
@@ -66,6 +140,15 @@ pub(crate) enum PacketEncodeError {
 /// A no-allocation packet writer. Its planning pass counts exact bytes; its
 /// writing pass cannot exceed the reservation. Callers must emit only through
 /// this writer and keep the encoding closure deterministic and side-effect-free.
+///
+/// The writing pass drives the destination packet's [`PacketObserver`] state
+/// with the same completion rules as the raw `Packet` writers: a packet is
+/// reported once its extent matches its length descriptor, and a
+/// variable-length packet when the next opcode starts, its length backpatch
+/// runs or [`Packet::finish_packet`] is called. The open packet stays open
+/// across records until then, as a raw writer's does. The cipher advances in
+/// the same pass, so the observer sees exactly the packets whose opcodes
+/// consumed cipher state.
 pub struct PacketOutput<'a> {
     packet: Option<&'a mut Packet>,
     start: usize,
@@ -108,12 +191,31 @@ impl PacketOutput<'_> {
         Some(start)
     }
 
+    /// Reports the observed packet when its bytes up to the cursor complete it.
+    fn finish_observation(&mut self, variable_is_final: bool) {
+        let end = self.pos;
+        if let Some(packet) = self.packet.as_deref_mut() {
+            packet.finish_observation_at(end, variable_is_final);
+        }
+    }
+
+    fn observe_progress(&mut self) {
+        self.finish_observation(false);
+    }
+
     /// Current writer cursor, for computing bounded backpatch lengths.
     pub fn position(&self) -> usize {
         self.pos
     }
 
+    /// Completes a variable-length packet at the end of its encoder, like
+    /// [`Packet::finish_packet`] for raw writers.
+    pub fn finish_packet(&mut self) {
+        self.finish_observation(true);
+    }
+
     pub fn p1_enc(&mut self, opcode: i32) {
+        self.finish_observation(true);
         let Some(pos) = self.reserve(1) else {
             return;
         };
@@ -124,7 +226,9 @@ impl PacketOutput<'_> {
                 .map(|random| random.next_int())
                 .unwrap_or(0);
             packet.data[pos] = opcode.wrapping_add(random) as u8;
+            packet.begin_observation(opcode as u8, pos + 1);
         }
+        self.observe_progress();
     }
 
     pub fn p1(&mut self, value: i32) {
@@ -132,6 +236,7 @@ impl PacketOutput<'_> {
             if let Some(packet) = self.packet.as_deref_mut() {
                 packet.data[pos] = value as u8;
             }
+            self.observe_progress();
         }
     }
 
@@ -141,6 +246,7 @@ impl PacketOutput<'_> {
                 packet.data[pos] = (value >> 8) as u8;
                 packet.data[pos + 1] = value as u8;
             }
+            self.observe_progress();
         }
     }
 
@@ -150,6 +256,7 @@ impl PacketOutput<'_> {
                 packet.data[pos] = value as u8;
                 packet.data[pos + 1] = (value >> 8) as u8;
             }
+            self.observe_progress();
         }
     }
 
@@ -160,6 +267,7 @@ impl PacketOutput<'_> {
                 packet.data[pos + 1] = (value >> 8) as u8;
                 packet.data[pos + 2] = value as u8;
             }
+            self.observe_progress();
         }
     }
 
@@ -171,6 +279,7 @@ impl PacketOutput<'_> {
                 packet.data[pos + 2] = (value >> 8) as u8;
                 packet.data[pos + 3] = value as u8;
             }
+            self.observe_progress();
         }
     }
 
@@ -182,6 +291,7 @@ impl PacketOutput<'_> {
                 packet.data[pos + 2] = (value >> 16) as u8;
                 packet.data[pos + 3] = (value >> 24) as u8;
             }
+            self.observe_progress();
         }
     }
 
@@ -190,6 +300,7 @@ impl PacketOutput<'_> {
             if let Some(packet) = self.packet.as_deref_mut() {
                 packet.data[pos..pos + 8].copy_from_slice(&value.to_be_bytes());
             }
+            self.observe_progress();
         }
     }
 
@@ -213,6 +324,7 @@ impl PacketOutput<'_> {
             if let Some(packet) = self.packet.as_deref_mut() {
                 packet.data[pos..pos + length].copy_from_slice(&source[offset..source_end]);
             }
+            self.observe_progress();
         }
     }
 
@@ -232,6 +344,7 @@ impl PacketOutput<'_> {
         if let Some(packet) = self.packet.as_deref_mut() {
             packet.data[index] = size as u8;
         }
+        self.finish_observation(true);
     }
 }
 
@@ -321,10 +434,164 @@ impl Packet {
             pos: 0,
             bit_pos: 0,
             random: None,
-            frame_end: None,
+            role: PacketRole::General,
             requires_reservation: false,
             output_staging: false,
             staged_opcodes: Vec::new(),
+        }
+    }
+
+    /// Sets the optional observer for completed encrypted output packets.
+    ///
+    /// # Panics
+    ///
+    /// Panics when attaching an observer to an inbound packet.
+    pub fn set_observer(&mut self, observer: Option<Arc<dyn PacketObserver>>) {
+        assert!(
+            !matches!(
+                &self.role,
+                PacketRole::Inbound | PacketRole::InboundFrame(_)
+            ) || observer.is_none(),
+            "cannot observe encrypted output on an inbound packet"
+        );
+        let role = std::mem::replace(&mut self.role, PacketRole::General);
+        self.role = match (role, observer) {
+            (PacketRole::General, Some(observer)) | (PacketRole::Outbound, Some(observer)) => {
+                PacketRole::OutboundObserved(Box::new(ObserverState {
+                    observer,
+                    observation: None,
+                }))
+            }
+            (PacketRole::OutboundObserved(mut state), Some(observer)) => {
+                state.observer = observer;
+                state.observation = None;
+                PacketRole::OutboundObserved(state)
+            }
+            (PacketRole::OutboundObserved(_), None) => PacketRole::Outbound,
+            (role, None) => role,
+            (role, Some(_)) => {
+                self.role = role;
+                unreachable!("inbound observer attachment was rejected above")
+            }
+        };
+    }
+
+    /// Keep the receiving slot's observation identity across socket adoption.
+    pub(crate) fn preserve_observer_from(&mut self, previous: &mut Self) {
+        assert!(
+            !matches!(
+                &self.role,
+                PacketRole::Inbound | PacketRole::InboundFrame(_)
+            ),
+            "cannot preserve an output observer into an inbound packet"
+        );
+        assert!(
+            matches!(
+                &previous.role,
+                PacketRole::Outbound | PacketRole::OutboundObserved(_)
+            ),
+            "observer identity must come from an outbound packet"
+        );
+        let previous_role = std::mem::replace(&mut previous.role, PacketRole::Outbound);
+        let observer_state = match previous_role {
+            PacketRole::OutboundObserved(mut state) => {
+                state.observation = None;
+                Some(state)
+            }
+            PacketRole::Outbound => None,
+            _ => unreachable!("outbound role was checked above"),
+        };
+        self.role = observer_state
+            .map(PacketRole::OutboundObserved)
+            .unwrap_or(PacketRole::Outbound);
+    }
+
+    /// Returns whether an encrypted-output observer is installed.
+    pub fn has_observer(&self) -> bool {
+        matches!(&self.role, PacketRole::OutboundObserved(_))
+    }
+
+    /// Whether this packet still carries a client outbound role.
+    pub(crate) fn is_outbound(&self) -> bool {
+        matches!(
+            &self.role,
+            PacketRole::Outbound | PacketRole::OutboundObserved(_)
+        )
+    }
+
+    fn observer(&self) -> Option<&Arc<dyn PacketObserver>> {
+        match &self.role {
+            PacketRole::OutboundObserved(state) => Some(&state.observer),
+            _ => None,
+        }
+    }
+
+    /// Finalizes a variable-length packet after its caller has finished
+    /// encoding it. Incomplete or mismatched packets are not reported.
+    pub fn finish_packet(&mut self) {
+        self.finish_observation(true);
+    }
+
+    /// Reports an input observation boundary to the optional host observer.
+    pub fn observe_tick(&self, tick: u64, session: u64) {
+        if let Some(observer) = self.observer() {
+            observer.observed_tick(tick, session);
+        }
+    }
+
+    /// Reads the installed observer's count without copying packet or cipher data.
+    pub fn committed_packet_count(&self) -> Option<u64> {
+        self.observer()?.committed_packet_count()
+    }
+
+    /// Reports a local prompt edit without treating it as a committed packet.
+    pub fn observe_foreign_local_input(&self) {
+        if let Some(observer) = self.observer() {
+            observer.foreign_local_input();
+        }
+    }
+
+    fn observe_progress(&mut self) {
+        if self.has_observer() {
+            self.finish_observation(false);
+        }
+    }
+
+    fn finish_observation(&mut self, variable_is_final: bool) {
+        self.finish_observation_at(self.pos, variable_is_final);
+    }
+
+    /// Starts observing the packet whose opcode was just written, if any
+    /// observer is installed. `body_start` is the cursor after the opcode.
+    fn begin_observation(&mut self, opcode: u8, body_start: usize) {
+        if let PacketRole::OutboundObserved(state) = &mut self.role {
+            state.observation = Some(PacketObservation {
+                opcode,
+                body_start: NonZeroUsize::new(body_start)
+                    .expect("an opcode has a nonzero end cursor"),
+                body_length: state.observer.packet_body_length(opcode),
+            });
+        }
+    }
+
+    /// Reports the observed packet when its bytes up to `end` complete it.
+    fn finish_observation_at(&mut self, end: usize, variable_is_final: bool) {
+        let observation = match &self.role {
+            PacketRole::OutboundObserved(state) => state.observation,
+            _ => None,
+        };
+        let Some(observation) = observation else {
+            return;
+        };
+        if let Some(encoded_length) =
+            observed_extent(&observation, &self.data, end, variable_is_final)
+        {
+            if let PacketRole::OutboundObserved(state) = &mut self.role {
+                state.observation = None;
+                state
+                    .observer
+                    .packet_committed(observation.opcode, encoded_length);
+            }
         }
     }
 
@@ -341,30 +608,46 @@ impl Packet {
     }
 
     pub fn available(&self) -> usize {
-        self.frame_end.unwrap_or(self.data.len()) - self.pos
+        self.frame_end().unwrap_or(self.data.len()) - self.pos
     }
 
     /// Restrict reads to the exact bytes of the current wire frame. The
     /// backing allocation is intentionally reusable, so handlers must not see
     /// bytes left by a previous, longer packet.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on an outbound packet or if `end` exceeds the buffer.
     pub fn set_frame_end(&mut self, end: usize) {
+        assert!(
+            !matches!(
+                &self.role,
+                PacketRole::Outbound | PacketRole::OutboundObserved(_)
+            ),
+            "cannot apply an inbound frame bound to an outbound packet"
+        );
         assert!(end <= self.data.len());
-        self.frame_end = Some(end);
+        self.role = PacketRole::InboundFrame(end);
     }
 
     pub fn clear_frame_end(&mut self) {
-        self.frame_end = None;
+        if matches!(&self.role, PacketRole::InboundFrame(_)) {
+            self.role = PacketRole::Inbound;
+        }
     }
 
     pub fn frame_end(&self) -> Option<usize> {
-        self.frame_end
+        match &self.role {
+            PacketRole::InboundFrame(end) => Some(*end),
+            _ => None,
+        }
     }
 
     fn assert_can_read(&self, length: usize) {
         assert!(self
             .pos
             .checked_add(length)
-            .is_some_and(|end| { end <= self.frame_end.unwrap_or(self.data.len()) }));
+            .is_some_and(|end| end <= self.frame_end().unwrap_or(self.data.len())));
     }
 
     pub fn getcrc(src: &[u8], offset: usize, length: usize) -> i32 {
@@ -387,7 +670,7 @@ impl Packet {
         };
         if let Some(mut p) = cached {
             p.pos = 0;
-            p.frame_end = None;
+            p.role = PacketRole::General;
             p.requires_reservation = false;
             p.output_staging = false;
             p.staged_opcodes.clear();
@@ -400,7 +683,20 @@ impl Packet {
         }
     }
 
-    pub fn release(self) {
+    pub(crate) fn alloc_inbound(kind: i32) -> Packet {
+        let mut packet = Self::alloc(kind);
+        packet.role = PacketRole::Inbound;
+        packet
+    }
+
+    pub(crate) fn alloc_outbound(kind: i32) -> Packet {
+        let mut packet = Self::alloc(kind);
+        packet.role = PacketRole::Outbound;
+        packet
+    }
+
+    pub fn release(mut self) {
+        self.role = PacketRole::General;
         match self.data.len() {
             100 => CACHE_MIN.with(|c| {
                 let mut cache = c.borrow_mut();
@@ -508,7 +804,7 @@ impl Packet {
 
     pub fn gjstr(&mut self) -> String {
         let mut s = String::new();
-        while self.pos < self.frame_end.unwrap_or(self.data.len()) {
+        while self.pos < self.frame_end().unwrap_or(self.data.len()) {
             let b = self.data[self.pos];
             self.pos += 1;
             if b == 10 {
@@ -517,7 +813,7 @@ impl Packet {
             s.push(b as char);
         }
         assert!(
-            self.frame_end.is_none(),
+            self.frame_end().is_none(),
             "unterminated string in bounded frame"
         );
         s
@@ -532,6 +828,9 @@ impl Packet {
 
     pub fn p1_enc(&mut self, opcode: i32) {
         self.assert_raw_write_allowed();
+        if self.has_observer() {
+            self.finish_observation(true);
+        }
         if self.output_staging {
             self.staged_opcodes.push((self.pos, opcode));
             self.data[self.pos] = opcode as u8;
@@ -540,12 +839,17 @@ impl Packet {
             self.data[self.pos] = opcode.wrapping_add(r) as u8;
         }
         self.pos += 1;
+        self.begin_observation(opcode as u8, self.pos);
+        if self.has_observer() {
+            self.finish_observation(false);
+        }
     }
 
     pub fn p1(&mut self, value: i32) {
         self.assert_raw_write_allowed();
         self.data[self.pos] = value as u8;
         self.pos += 1;
+        self.observe_progress();
     }
 
     pub fn p2(&mut self, value: i32) {
@@ -553,6 +857,7 @@ impl Packet {
         self.data[self.pos] = (value >> 8) as u8;
         self.data[self.pos + 1] = value as u8;
         self.pos += 2;
+        self.observe_progress();
     }
 
     pub fn ip2(&mut self, value: i32) {
@@ -560,6 +865,7 @@ impl Packet {
         self.data[self.pos] = value as u8;
         self.data[self.pos + 1] = (value >> 8) as u8;
         self.pos += 2;
+        self.observe_progress();
     }
 
     pub fn p3(&mut self, value: i32) {
@@ -568,6 +874,7 @@ impl Packet {
         self.data[self.pos + 1] = (value >> 8) as u8;
         self.data[self.pos + 2] = value as u8;
         self.pos += 3;
+        self.observe_progress();
     }
 
     pub fn p4(&mut self, value: i32) {
@@ -577,6 +884,7 @@ impl Packet {
         self.data[self.pos + 2] = (value >> 8) as u8;
         self.data[self.pos + 3] = value as u8;
         self.pos += 4;
+        self.observe_progress();
     }
 
     pub fn ip4(&mut self, value: i32) {
@@ -586,12 +894,14 @@ impl Packet {
         self.data[self.pos + 2] = (value >> 16) as u8;
         self.data[self.pos + 3] = (value >> 24) as u8;
         self.pos += 4;
+        self.observe_progress();
     }
 
     pub fn p8(&mut self, value: i64) {
         self.assert_raw_write_allowed();
         self.data[self.pos..self.pos + 8].copy_from_slice(&value.to_be_bytes());
         self.pos += 8;
+        self.observe_progress();
     }
 
     pub fn pjstr(&mut self, s: &str) {
@@ -602,6 +912,7 @@ impl Packet {
         }
         self.data[self.pos] = 10;
         self.pos += 1;
+        self.observe_progress();
     }
 
     pub fn pdata(&mut self, src: &[u8], offset: usize, length: usize) {
@@ -609,11 +920,13 @@ impl Packet {
         let end = self.pos + length;
         self.data[self.pos..end].copy_from_slice(&src[offset..offset + length]);
         self.pos = end;
+        self.observe_progress();
     }
 
     pub fn psize1(&mut self, size: i32) {
         self.assert_raw_write_allowed();
         self.data[self.pos - size as usize - 1] = size as u8;
+        self.finish_observation(true);
     }
 
     pub fn gbit_start(&mut self) {
@@ -670,5 +983,52 @@ impl Packet {
         self.pos = 0;
         self.p1(raw_enc.len() as i32);
         self.pdata(&raw_enc, 0, raw_enc.len());
+    }
+}
+
+#[cfg(test)]
+mod observer_memory_tests {
+    use super::*;
+
+    #[test]
+    fn packet_observer_layout_preserves_base_packet_and_client_sizes() {
+        #[cfg(target_pointer_width = "64")]
+        {
+            assert_eq!(std::mem::size_of::<PacketObservation>(), 16);
+            assert_eq!(std::mem::size_of::<ObserverState>(), 32);
+            assert_eq!(std::mem::size_of::<PacketRole>(), 16);
+            // 2128 on the observer-only tree; the T1.4 output reservation
+            // adds the staged-opcode list (24 bytes, flags fit in padding).
+            assert_eq!(std::mem::size_of::<Packet>(), 2152);
+        }
+        let packet_size = std::mem::size_of::<Packet>();
+        let client_size = std::mem::size_of::<crate::client::Client>();
+        println!("S3 client memory: packet={packet_size} client={client_size}");
+        // 28,872 on the observer-only tree. The T1.4 output reservation adds
+        // the inline staging `Packet` (`action_out`), the pending route and
+        // the output-epoch state: +2,520 bytes per Client, measured on macOS.
+        #[cfg(target_os = "macos")]
+        assert_eq!(client_size, 31392);
+    }
+}
+
+#[cfg(test)]
+mod rsa_encoding_tests {
+    use super::*;
+
+    #[test]
+    fn rsaenc_omits_zero_top_byte_like_java_big_integer() {
+        let mut raw = vec![0u8; 64];
+        raw[1] = 0x7f;
+        raw[63] = 0x2a;
+
+        let mut packet = Packet::new(raw.clone());
+        packet.pos = raw.len();
+        let modulus = BigUint::from(1u8) << 512usize;
+        let exponent = BigUint::from(1u8);
+        packet.rsaenc(&modulus, &exponent);
+
+        assert_eq!(packet.data[0], 63);
+        assert_eq!(&packet.data[1..], &raw[1..]);
     }
 }

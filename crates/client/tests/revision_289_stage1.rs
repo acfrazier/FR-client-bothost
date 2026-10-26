@@ -634,7 +634,7 @@ fn adopt_from_carries_revision_with_stream_baton() {
 
     let mut sim = client_274();
     assert_eq!(sim.revision(), ClientRevision::R274);
-    assert!(sim.adopt_from(&mut head).is_some());
+    assert!(sim.adopt_from(&mut head).is_ok());
     assert_eq!(
         sim.revision(),
         ClientRevision::R289,
@@ -763,7 +763,10 @@ fn adopt_from_failed_leaves_target_entirely_unchanged() {
     assert!(source.stream.is_none());
     assert_eq!(source.revision(), ClientRevision::R274);
 
-    assert!(target.adopt_from(&mut source).is_none());
+    assert_eq!(
+        target.adopt_from(&mut source),
+        Err(client::client::ClientAdoptionError::NoLiveStream)
+    );
     assert_eq!(target.revision(), ClientRevision::R289);
     assert!(target.stream.is_some(), "target live stream kept");
     assert_eq!(target.ptype, 47);
@@ -790,7 +793,10 @@ fn adopt_from_failed_across_revisions_does_not_assign_source_revision() {
     target.psize = 0;
     let mut source = client_289();
     assert!(source.stream.is_none());
-    assert!(target.adopt_from(&mut source).is_none());
+    assert_eq!(
+        target.adopt_from(&mut source),
+        Err(client::client::ClientAdoptionError::NoLiveStream)
+    );
     assert_eq!(
         target.revision(),
         ClientRevision::R274,

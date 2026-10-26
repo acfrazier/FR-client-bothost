@@ -290,27 +290,36 @@ impl GameShell {
         self.shutdown();
     }
 
-    /// Ratio/delta/otim bookkeeping from `GameShell.run` (143-178).
+    /// Ratio/delta/otim bookkeeping from Java `GameShell.run` (164-188).
     fn frame_bookkeeping(&mut self) {
+        self.frame_bookkeeping_at(Self::now_millis());
+    }
+
+    #[inline]
+    fn frame_bookkeeping_at(&mut self, now: u64) {
         let last_ratio = self.ratio;
         let last_delta = self.delta;
         self.ratio = 300;
         self.delta = 1;
 
-        let now = Self::now_millis();
         let otime = self.otim[self.opos];
+        let elapsed = now as i64 - otime as i64;
         if otime == 0 {
             self.ratio = last_ratio;
             self.delta = last_delta;
         } else if now > otime {
-            self.ratio = (self.deltime * 2560) / (now - otime) as i32;
+            self.ratio = ((self.deltime * 2560) as i64 / elapsed) as i32;
         }
 
         if self.ratio < 25 {
             self.ratio = 25;
         } else if self.ratio > 256 {
             self.ratio = 256;
-            self.delta = self.deltime - (now - otime) as i32 / 10;
+            self.delta = (self.deltime as i64 - elapsed / 10) as i32;
+        }
+        // GameShell.java:178-180 caps the delta at deltime before the shift.
+        if self.delta > self.deltime {
+            self.delta = self.deltime;
         }
 
         self.otim[self.opos] = now;
@@ -331,5 +340,40 @@ impl GameShell {
 
     fn shutdown(&mut self) {
         self.state = -2;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GameShell;
+
+    #[test]
+    fn frame_bookkeeping_uses_java_delta_formula_for_future_frame_time() {
+        let mut shell = GameShell::new();
+        shell.deltime = 20;
+        shell.otim = [0; 10];
+        shell.opos = 0;
+        shell.otim[0] = 10_100;
+
+        shell.frame_bookkeeping_at(10_000);
+
+        assert_eq!(shell.ratio, 256);
+        // GameShell.java:176 gives 20 - (10000 - 10100) / 10 = 30; :178-180 caps it at deltime.
+        assert_eq!(shell.delta, 20);
+        // The cap applies before the shift, so the stored slot moves by 20, not 30.
+        assert_eq!(shell.otim[0], 10_000 + 20);
+    }
+
+    #[test]
+    fn frame_bookkeeping_uses_full_frame_interval_for_ratio() {
+        let mut shell = GameShell::new();
+        shell.deltime = 20;
+        shell.otim = [0; 10];
+        shell.opos = 0;
+        shell.otim[0] = 1;
+
+        shell.frame_bookkeeping_at(4_294_967_298);
+
+        assert_eq!(shell.ratio, 25);
     }
 }

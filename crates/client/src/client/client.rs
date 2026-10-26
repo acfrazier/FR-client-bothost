@@ -217,6 +217,12 @@ const BUILD_AREA_SIZE: i32 = 104;
 const BUILD_AREA_TILES: usize = (BUILD_AREA_SIZE * BUILD_AREA_SIZE) as usize;
 const ROUTE_BUFFER: usize = 4000;
 
+#[derive(Clone, Copy)]
+enum DetachedMovementTarget {
+    Player { index: usize, x: i32, z: i32 },
+    Npc { index: usize, x: i32, z: i32 },
+}
+
 /// JAG archives whose CRC values go out in the login wrapper; slot 0 of the
 /// 9-slot `getJagChecksums` layout has no pack file and stays 0.
 const JAG_FILES: [&str; 8] = [
@@ -295,11 +301,10 @@ pub const APPLET_W: i32 = 765;
 pub const APPLET_H: i32 = 503;
 
 /// Packet-family and lifecycle generations the host reads between polls.
-/// `handle_packet` bumps one family per applied packet; `REBUILD_NORMAL` and
-/// `logout()` (T1/T2/LOGOUT) bump all families. `player_info` records only an
-/// actually applied PLAYER_INFO packet, while `session` records only a
-/// successful login or reconnect grant; neither is part of an all-family
-/// invalidation.
+/// `handle_packet` bumps one state family per applied packet; `REBUILD_NORMAL`
+/// and `logout()` (T1/T2/LOGOUT) bump all state-family generations.
+/// `player_info` and `npc_info` record only their corresponding applied actor
+/// packets and are excluded from all-family invalidations.
 #[derive(Default, Clone, Copy)]
 pub struct ClientGens {
     pub npc: u64,
@@ -314,6 +319,7 @@ pub struct ClientGens {
     pub map_flag: u64,
     pub world: u64,
     pub player_info: u64,
+    pub npc_info: u64,
     pub session: u64,
     /// Explicit all-family invalidations, excluded from packet observations.
     pub invalidations: u64,
@@ -519,6 +525,7 @@ struct R289Publication {
     map_flag: bool,
     world: bool,
     player_info: bool,
+    npc_info: bool,
     invalidation: bool,
 }
 
@@ -536,6 +543,7 @@ impl R289Publication {
         map_flag: true,
         world: true,
         player_info: false,
+        npc_info: false,
         invalidation: true,
     };
 
@@ -552,6 +560,7 @@ impl R289Publication {
         gens.map_flag += u64::from(self.map_flag);
         gens.world += u64::from(self.world);
         gens.player_info += u64::from(self.player_info);
+        gens.npc_info += u64::from(self.npc_info);
         gens.invalidations += u64::from(self.invalidation);
     }
 }
@@ -948,6 +957,19 @@ impl R289Operation {
     }
 }
 
+/// A typed reason that a client socket handoff was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientAdoptionError {
+    /// The clients have incompatible session identities.
+    ProfileMismatch,
+    /// The client being adopted has no live game stream.
+    NoLiveStream,
+    /// The source client's output slot is not a client outbound packet.
+    SourcePacketNotOutbound,
+    /// The receiving client's output slot is not a client outbound packet.
+    TargetPacketNotOutbound,
+}
+
 /// Host-owned admission for the client's only `CLIENT_CHEAT` encoder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CheatAdmission {
@@ -1101,6 +1123,9 @@ pub struct Client {
     pub self_slot: i32,
     pub members_account: i32,
     pub world_update_num: i32,
+    /// The host advances persistent animation state without a render head.
+    /// False preserves the standalone renderer-owned update path.
+    pub(crate) hosted_animation_cycles: bool,
 
     pub stat_base_level: Vec<i32>,
     pub stat_effective_level: Vec<i32>,
@@ -1677,6 +1702,7 @@ impl PendingRoute {
             out.p1(self.try_move_nearest);
             out.p1(63);
         }
+        out.finish_packet();
     }
 }
 
@@ -2458,6 +2484,7 @@ impl Client {
             self_slot: -1,
             members_account: 0,
             world_update_num: 0,
+            hosted_animation_cycles: false,
 
             stat_base_level: vec![0; Skill::count],
             stat_effective_level: vec![0; Skill::count],
@@ -2593,11 +2620,11 @@ impl Client {
             bank_arrange_mode: 0,
 
             out: {
-                let mut out = Packet::alloc(1);
+                let mut out = Packet::alloc_outbound(1);
                 out.require_output_reservation();
                 out
             },
-            r#in: Packet::alloc(1),
+            r#in: Packet::alloc_inbound(1),
             ptype: -1,
             ptype0: 0,
             ptype1: 0,
@@ -3796,19 +3823,28 @@ impl Client {
     /// transport and cheat admission. `other` must not touch the game stream
     /// afterwards (drop it or reuse it for another account); no TCP is closed.
     /// Arms `baton`, so the next `login(..., reconnect = true)` runs the
-    /// opcode-18 handshake over the adopted socket instead of a fresh TCP.
-    /// Returns `None` when the identities differ or `other` has no live stream.
-    pub fn adopt_from(&mut self, other: &mut Client) -> Option<()> {
+    /// opcode-18 handshake over the adopted socket.
+    ///
+    /// Returns a typed refusal before mutating either client if identities
+    /// differ, the source has no live stream, or either output packet slot is
+    /// no longer a client outbound packet.
+    pub fn adopt_from(&mut self, other: &mut Client) -> Result<(), ClientAdoptionError> {
         match (&self.session_profile, &other.session_profile) {
             (None, None)
                 if self.transport == other.transport
                     && self.cheat_admission == other.cheat_admission => {}
             (Some(left), Some(right)) if left == right => {}
-            _ => return None,
+            _ => return Err(ClientAdoptionError::ProfileMismatch),
         }
-        // Take the live stream first. A failed handoff must leave `self`
-        // entirely unchanged (including revision and any partial-frame state).
-        let stream = other.stream.take()?;
+        if !other.out.is_outbound() {
+            return Err(ClientAdoptionError::SourcePacketNotOutbound);
+        }
+        if !self.out.is_outbound() {
+            return Err(ClientAdoptionError::TargetPacketNotOutbound);
+        }
+        let Some(stream) = other.stream.take() else {
+            return Err(ClientAdoptionError::NoLiveStream);
+        };
         // Session baton carries the stream's revision with ISAAC/frame state
         // so size tables and dispatch cannot silently diverge midstream.
         self.revision = other.revision;
@@ -3819,8 +3855,10 @@ impl Client {
         self.shell.telemetry_289 = self.revision.is_289();
         self.stream = Some(stream);
         self.random_in = other.random_in.take();
-        self.out = std::mem::replace(&mut other.out, Packet::alloc(1));
-        self.r#in = std::mem::replace(&mut other.r#in, Packet::alloc(1));
+        let mut out = std::mem::replace(&mut other.out, Packet::alloc_outbound(1));
+        out.preserve_observer_from(&mut self.out);
+        self.out = out;
+        self.r#in = std::mem::replace(&mut other.r#in, Packet::alloc_inbound(1));
         self.ptype = std::mem::replace(&mut other.ptype, 0);
         self.ptype0 = std::mem::replace(&mut other.ptype0, 0);
         self.ptype1 = std::mem::replace(&mut other.ptype1, 0);
@@ -3829,7 +3867,7 @@ impl Client {
         self.session_frames = std::mem::take(&mut other.session_frames);
         self.recent_frames = std::mem::take(&mut other.recent_frames);
         self.baton = true;
-        Some(())
+        Ok(())
     }
 
     /// Write the RSA plaintext block for the 274 login wrapper into
@@ -4193,6 +4231,13 @@ impl Client {
             for entry in self.chat_text.iter_mut() {
                 *entry = String::new();
             }
+            // The host snapshot rebuilds its chat view only when
+            // `gens.chat` moves. Logout moved every generation but kept
+            // `chat_text`, so the snapshot still holds the old ring; this
+            // clear must move the chat generation too, or that stale ring
+            // survives into the new session. (`gens` is a bot-host hook
+            // with no Java counterpart, so client behaviour is unchanged.)
+            self.gens.chat += 1;
             self.redraw_frame = true;
             self.redraw_side = true;
             self.redraw_icons = true;
@@ -5807,7 +5852,7 @@ impl Client {
                 // `in` buffer out for the dispatch and put it back.
                 let ptype = self.ptype;
                 let psize = self.psize;
-                let mut packet = std::mem::replace(&mut self.r#in, Packet::alloc(1));
+                let mut packet = std::mem::replace(&mut self.r#in, Packet::alloc_inbound(1));
                 self.handle_packet(ptype, &mut packet);
                 self.r#in = packet;
                 // Recorded after dispatch: a protocol error inside it
@@ -5957,7 +6002,10 @@ impl Client {
             "R289 publication requires an apply outcome"
         );
         match ptype {
-            ServerProt::NPC_INFO => self.gens.npc += 1,
+            ServerProt::NPC_INFO => {
+                self.gens.npc += 1;
+                self.gens.npc_info += 1;
+            }
             ServerProt::PLAYER_INFO => {
                 self.gens.player += 1;
                 self.gens.player_info += 1;
@@ -13478,10 +13526,15 @@ impl Client {
         if self.logout_timer > 0 {
             self.logout_timer -= 1;
         }
+        let observed_tick = self.out.has_observer().then_some(self.gens.player_info);
         for _ in 0..5 {
             if !self.tcp_in() {
                 break;
             }
+        }
+        if observed_tick.is_some_and(|tick| tick != self.gens.player_info) {
+            self.out
+                .observe_tick(self.gens.player_info, self.gens.session);
         }
         if self.ingame && self.logout_timer == 0 {
             self.pending_local_idle_request = false;
@@ -13732,6 +13785,7 @@ impl Client {
 
         let write_result = if let Some(stream) = self.stream.as_mut() {
             if self.out.pos > 0 {
+                self.out.finish_packet();
                 Some(stream.write(self.out.data(), self.out.pos))
             } else {
                 None
@@ -13792,27 +13846,26 @@ impl Client {
         }
     }
 
-    /// `movePlayers` from Java (`Client.java` 7559): one movement step for
-    /// the local player — the `i == -1` slot. Rust login clones
-    /// `players[LOCAL_PLAYER_INDEX]` into `local_player`, so the live walk
-    /// interpolates `local_player`, not the stale clone — then every
-    /// tracked player in `playerIds` order.
+    /// `movePlayers` from Java (`Client.java` 7559): move the local player
+    /// (`i == -1`), then each tracked player in `playerIds` order. A removed
+    /// slot's old position is retained for face-target lookups.
     pub fn move_players(&mut self) {
-        if let Some(local) = self.local_player.as_ref() {
-            let mut e = local.entity.clone();
-            self.move_entity(true, &mut e);
-            self.local_player.as_mut().unwrap().entity = e;
+        if let Some(mut local) = self.local_player.take() {
+            self.move_entity(true, &mut local.entity, None);
+            self.local_player = Some(local);
         }
         for i in 0..self.player_count as usize {
             let index = self.player_ids[i] as usize;
-            let Some(player) = self.players.get(index).and_then(|p| p.as_ref()) else {
+            let Some(mut player) = self.players.get_mut(index).and_then(|slot| slot.take()) else {
                 continue;
             };
-            let mut e = player.entity.clone();
-            self.move_entity(false, &mut e);
-            if let Some(slot) = self.players.get_mut(index).and_then(|p| p.as_mut()) {
-                slot.entity = e;
-            }
+            let target = DetachedMovementTarget::Player {
+                index,
+                x: player.entity.x,
+                z: player.entity.z,
+            };
+            self.move_entity(false, &mut player.entity, Some(target));
+            self.players[index] = Some(player);
         }
     }
 
@@ -13847,19 +13900,21 @@ impl Client {
         }
     }
 
-    /// `moveNpcs` from Java (`Client.java` 10547): one movement step for
-    /// every tracked NPC in `npcIds` order.
+    /// `moveNpcs` from Java (`Client.java` 10547): move every tracked NPC
+    /// in `npcIds` order.
     pub fn move_npcs(&mut self) {
         for i in 0..self.npc_count as usize {
             let index = self.npc_ids[i] as usize;
-            let Some(npc) = self.npc.get(index).and_then(|n| n.as_ref()) else {
+            let Some(mut npc) = self.npc.get_mut(index).and_then(|slot| slot.take()) else {
                 continue;
             };
-            let mut e = npc.entity.clone();
-            self.move_entity(false, &mut e);
-            if let Some(slot) = self.npc.get_mut(index).and_then(|n| n.as_mut()) {
-                slot.entity = e;
-            }
+            let target = DetachedMovementTarget::Npc {
+                index,
+                x: npc.entity.x,
+                z: npc.entity.z,
+            };
+            self.move_entity(false, &mut npc.entity, Some(target));
+            self.npc[index] = Some(npc);
         }
     }
 
@@ -13867,9 +13922,14 @@ impl Client {
     /// entities back to their route head, then step an exact move
     /// (`exact_move_1` before it starts, `exact_move_2` during it) or a
     /// `route_move` walk, and finish with `entity_face` + `entity_anim`.
-    /// `is_local` marks the live local player (the Java
-    /// `arg0 == localPlayer` bounds check and the facing-self read).
-    fn move_entity(&self, is_local: bool, e: &mut ClientEntity) {
+    /// `detached_target` preserves the prior position of a temporarily
+    /// removed player/NPC slot when that entity faces itself.
+    fn move_entity(
+        &self,
+        is_local: bool,
+        e: &mut ClientEntity,
+        detached_target: Option<DetachedMovementTarget>,
+    ) {
         if e.x < 128 || e.z < 128 || e.x >= 13184 || e.z >= 13184 {
             e.primary_anim = -1;
             e.spotanim_id = -1;
@@ -13898,7 +13958,7 @@ impl Client {
         } else {
             e.route_move(&self.cache);
         }
-        self.entity_face(is_local, e);
+        self.entity_face(is_local, e, detached_target);
         e.entity_anim(&self.cache, self.loop_cycle);
     }
 
@@ -13970,21 +14030,33 @@ impl Client {
     /// `entityFace(e)` from Java (`Client.java` 10755): resolve the face
     /// target — an NPC, a player, or the last loc-square click — into a
     /// `dst_yaw`, then turn `yaw` toward it at `turnspeed`, switching to
-    /// the turn anim. The target positions are read while the entity is a
-    /// detached clone, so the pass never aliases `&mut players[i]` with a
-    /// read of `players[j]`.
-    fn entity_face(&self, is_local: bool, e: &mut ClientEntity) {
+    /// the turn anim. A temporarily removed entity's old coordinates stand
+    /// in for the detached slot so self-targeting remains unchanged.
+    fn entity_face(
+        &self,
+        is_local: bool,
+        e: &mut ClientEntity,
+        detached_target: Option<DetachedMovementTarget>,
+    ) {
         if e.turnspeed == 0 {
             return;
         }
         if e.face_entity != -1 && e.face_entity < 32768 {
-            if let Some(npc) = self
-                .npc
-                .get(e.face_entity as usize)
-                .and_then(|n| n.as_ref())
-            {
-                let dx = e.x - npc.x;
-                let dz = e.z - npc.z;
+            let target = match detached_target {
+                Some(DetachedMovementTarget::Npc { index, x, z })
+                    if index == e.face_entity as usize =>
+                {
+                    Some((x, z))
+                }
+                _ => self
+                    .npc
+                    .get(e.face_entity as usize)
+                    .and_then(|n| n.as_ref())
+                    .map(|npc| (npc.x, npc.z)),
+            };
+            if let Some((npc_x, npc_z)) = target {
+                let dx = e.x - npc_x;
+                let dz = e.z - npc_z;
                 if dx != 0 || dz != 0 {
                     e.dst_yaw = ((dx as f64).atan2(dz as f64) * 325.949) as i32 & 0x7ff;
                 }
@@ -14004,10 +14076,18 @@ impl Client {
                     self.local_player.as_ref().map(|local| (local.x, local.z))
                 }
             } else {
-                self.players
-                    .get(index as usize)
-                    .and_then(|p| p.as_ref())
-                    .map(|player| (player.x, player.z))
+                match detached_target {
+                    Some(DetachedMovementTarget::Player {
+                        index: detached_index,
+                        x,
+                        z,
+                    }) if detached_index == index as usize => Some((x, z)),
+                    _ => self
+                        .players
+                        .get(index as usize)
+                        .and_then(|p| p.as_ref())
+                        .map(|player| (player.x, player.z)),
+                }
             };
             if let Some((player_x, player_z)) = target {
                 let dx = e.x - player_x;
@@ -16450,5 +16530,32 @@ mod main_modal_packet_tests {
     fn close_counter_stays_inline() {
         // Design 4.8 R4-1 adds one u64 (+8 B); exact inline layout, 0 B headroom.
         assert_eq!(std::mem::size_of::<MainModalPacketState>(), 32);
+    }
+    #[test]
+    fn client_npc_info_counts_applied_npc_info_only() {
+        let mut client = r289_client();
+        let npc_info = client.gens.npc_info;
+        let player_info = client.gens.player_info;
+
+        // An empty actor frame reaches the real decoder and publication path.
+        handle_r289_packet(&mut client, ServerProt289::NPC_INFO, vec![0]);
+        assert_eq!(client.gens.npc_info, npc_info + 1);
+        assert_eq!(client.gens.player_info, player_info);
+
+        handle_r289_packet(&mut client, ServerProt289::PLAYER_INFO, vec![0, 0]);
+        handle_r289_packet(&mut client, ServerProt289::RESET_ANIMS, Vec::new());
+        handle_r289_packet(&mut client, ServerProt289::REBUILD_NORMAL, vec![0, 0, 0, 0]);
+        assert_eq!(client.gens.npc_info, npc_info + 1);
+        assert_eq!(client.gens.player_info, player_info + 1);
+    }
+
+    #[test]
+    fn client_player_info_counter_unchanged() {
+        let mut client = r289_client();
+        let player_info = client.gens.player_info;
+
+        handle_r289_packet(&mut client, ServerProt289::NPC_INFO, vec![0]);
+
+        assert_eq!(client.gens.player_info, player_info);
     }
 }

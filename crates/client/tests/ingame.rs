@@ -305,7 +305,7 @@ fn follow_camera_moves_eye_above_local_player() {
     player.entity.teleport(&c.cache, true, 5, 7);
     c.local_player = Some(player);
     c.game_loop();
-    r.follow_camera(&mut c); // mainredraw runs follow_camera ahead of game_draw
+    Renderer::follow_camera(&mut c); // mainredraw runs follow_camera ahead of game_draw
     let player_x = c.local_player.as_ref().unwrap().x;
     let player_z = c.local_player.as_ref().unwrap().z;
     assert_eq!(
@@ -327,7 +327,6 @@ fn follow_camera_moves_eye_above_local_player() {
 /// `scene_state == 1`, or the first built frame 500-snaps after a run.
 #[test]
 fn follow_camera_chases_while_the_scene_is_loading() {
-    let mut r = Renderer::new(false);
     let mut c = client("/tmp".into());
     c.ingame = true;
     c.scene_state = 1;
@@ -339,7 +338,7 @@ fn follow_camera_chases_while_the_scene_is_loading() {
     };
     player.entity.teleport(&c.cache, true, 5, 7);
     c.local_player = Some(player);
-    r.follow_camera(&mut c);
+    Renderer::follow_camera(&mut c);
     let player_x = c.local_player.as_ref().unwrap().x;
     let player_z = c.local_player.as_ref().unwrap().z;
     assert_eq!(c.orbit_camera_x, player_x);
@@ -375,7 +374,7 @@ fn get_av_h_link_below_reads_level_above() {
     c.mapl[1][2][2] = MapFlag::LINK_BELOW as u8;
 
     c.game_loop();
-    r.follow_camera(&mut c); // eases the orbit camera to the player
+    Renderer::follow_camera(&mut c); // eases the orbit camera to the player
     r.game_draw(&mut c); // gameDrawMain's camFollow targets getAvH(player) - 50
     let lifted_y = c.cam_y;
 
@@ -396,7 +395,6 @@ fn get_av_h_link_below_reads_level_above() {
 /// hitch on hills and stacked floors.
 #[test]
 fn follow_camera_pitch_clamp_lifts_link_below_neighbors() {
-    let mut r = Renderer::new(false);
     let mut c = client("/tmp".into());
     c.ingame = true;
     c.scene_state = 2;
@@ -417,7 +415,7 @@ fn follow_camera_pitch_clamp_lifts_link_below_neighbors() {
     }
     c.game_loop();
     for _ in 0..80 {
-        r.follow_camera(&mut c);
+        Renderer::follow_camera(&mut c);
     }
     assert!(
         c.camera_pitch_clamp < 40_000,

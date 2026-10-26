@@ -933,8 +933,6 @@ fn text_com_mut(text: &str) -> IfTypeMut {
 
 #[test]
 fn get_if_var_stat_effective() {
-    let _r = Renderer::new(false);
-    let r = Renderer::new(false);
     let mut c = client();
     c.stat_effective_level[0] = 12;
     c.set_iface(
@@ -944,13 +942,11 @@ fn get_if_var_stat_effective() {
             ..IfType::default()
         },
     );
-    assert_eq!(r.get_if_var(&c, 9, 0), Some(12));
+    assert_eq!(Renderer::get_if_var(&c, 9, 0), Some(12));
 }
 
 #[test]
 fn get_if_var_pushvar() {
-    let _r = Renderer::new(false);
-    let r = Renderer::new(false);
     let mut c = client();
     c.var = vec![0, 0, 0, 42];
     c.set_iface(
@@ -960,13 +956,11 @@ fn get_if_var_pushvar() {
             ..IfType::default()
         },
     );
-    assert_eq!(r.get_if_var(&c, 9, 0), Some(42));
+    assert_eq!(Renderer::get_if_var(&c, 9, 0), Some(42));
 }
 
 #[test]
 fn get_if_var_missing_scripts_is_none() {
-    let _r = Renderer::new(false);
-    let r = Renderer::new(false);
     let mut c = client();
     c.set_iface(
         9,
@@ -975,13 +969,11 @@ fn get_if_var_missing_scripts_is_none() {
             ..IfType::default()
         },
     );
-    assert_eq!(r.get_if_var(&c, 9, 0), None);
+    assert_eq!(Renderer::get_if_var(&c, 9, 0), None);
 }
 
 #[test]
 fn get_if_var_out_of_range_script_id_is_none() {
-    let _r = Renderer::new(false);
-    let r = Renderer::new(false);
     let mut c = client();
     c.set_iface(
         9,
@@ -990,7 +982,7 @@ fn get_if_var_out_of_range_script_id_is_none() {
             ..IfType::default()
         },
     );
-    assert_eq!(r.get_if_var(&c, 9, 1), None);
+    assert_eq!(Renderer::get_if_var(&c, 9, 1), None);
 }
 
 #[test]
@@ -1809,8 +1801,6 @@ fn mouse_loop_skips_walk_when_main_modal_open() {
 
 #[test]
 fn animate_interface_advances_model_frame() {
-    let _r = Renderer::new(false);
-    let mut r = Renderer::new(false);
     let mut c = client();
     let layer = IfType {
         r#type: ComponentType::TYPE_LAYER,
@@ -1841,7 +1831,7 @@ fn animate_interface_advances_model_frame() {
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].iframes = Some(vec![-1, -1]);
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].delay = Some(vec![1, 1]);
     Arc::get_mut(&mut c.cache).unwrap().seqs[0].loops = 2;
-    assert!(r.animate_interface(&mut c, 1, 2));
+    assert!(Renderer::animate_interface(&mut c, 1, 2));
     assert_eq!(c.if_(2).unwrap().anim_frame, 1);
 }
 
