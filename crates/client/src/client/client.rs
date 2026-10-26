@@ -1689,6 +1689,10 @@ impl PendingRoute {
         for delta in &self.deltas[..self.delta_count] {
             out.p1(*delta as i32);
         }
+        // Java's tryMove completes its own packet here. A minimap click's
+        // 14-byte trailer is written afterwards, so that packet is not
+        // complete yet and the observer reports it at the flush.
+        out.finish_packet();
         if let Some(trailer) = self.trailer {
             out.p1(trailer.x);
             out.p1(trailer.y);
@@ -1702,7 +1706,6 @@ impl PendingRoute {
             out.p1(self.try_move_nearest);
             out.p1(63);
         }
-        out.finish_packet();
     }
 }
 
