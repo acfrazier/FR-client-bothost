@@ -19,7 +19,7 @@ pub mod transport;
 pub mod unpack;
 pub mod util;
 pub mod wordfilter;
-pub use client::client::{CheatAdmission, CheatRefusal, CheatSend};
+pub use client::client::{CheatAdmission, CheatRefusal, CheatSend, ClientAdoptionError};
 pub use login_rsa::{
     active_pair, JAVA_LOGIN_RSAE, JAVA_LOGIN_RSAN, PROD_LOGIN_RSAE, PROD_LOGIN_RSAN,
 };

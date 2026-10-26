@@ -28,6 +28,7 @@
 //! remain CPU-drawn; `finish` uploads their RGBA8 atlas lazily and uses the
 //! coverage byte to expose the 3D/nav scene beneath it.
 
+use std::cell::Cell;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::client::client::Client;
@@ -107,11 +108,8 @@ static GPU_BACKEND_TRIED: std::sync::atomic::AtomicUsize = std::sync::atomic::At
 /// slot must not replace layers 17/24 between the current slot's staging
 /// writes and `queue.submit`. Tests use the same production ordering scope.
 ///
-/// Retained limitation: this is a synchronous process-wide wait between
-/// heads' scene submissions. A host scene-workspace hook
-/// ([`set_scene_workspace_hook`]) wraps exactly the section that holds it;
-/// the lock stays inside that section until the host replaces the shared
-/// wait.
+/// Standalone renderers wait for this lock. An admitted host rebuild tries
+/// it once and reports contention through [`SceneSubmit`].
 static GPU_SCENE_LOCK: Mutex<()> = Mutex::new(());
 
 /// How the embedding host admits one scene submission into the shared GPU
@@ -127,20 +125,217 @@ pub fn set_scene_workspace_hook(hook: fn(&mut dyn FnMut())) {
     let _ = SCENE_WORKSPACE.set(hook);
 }
 
-/// `submit`, run through the [`set_scene_workspace_hook`] hook if there is
-/// one. A hook that returns without calling its argument still submits.
-fn scene_workspace(submit: impl FnOnce()) {
-    let Some(hook) = SCENE_WORKSPACE.get() else {
-        return submit();
-    };
-    let mut submit = Some(submit);
-    hook(&mut || {
-        if let Some(submit) = submit.take() {
-            submit();
+/// The host's decision for this scene invocation. Unused admission hooks keep
+/// the standalone client's blocking submit and callback fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SceneAdmission {
+    Standalone,
+    Rebuild,
+    Retained,
+}
+
+/// The terminal outcome of one scene invocation, visible inside its workspace
+/// callback after that callback invokes the submit closure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SceneSubmit {
+    NotRun,
+    Submitted,
+    LockContended,
+    ResourceLimited,
+}
+
+static SCENE_ADMISSION: OnceLock<fn() -> SceneAdmission> = OnceLock::new();
+
+/// Install the host's admission callback once. Without it, scenes remain
+/// standalone. Admission runs before any scene preparation.
+pub fn set_scene_admission_hook(hook: fn() -> SceneAdmission) {
+    let _ = SCENE_ADMISSION.set(hook);
+}
+
+thread_local! {
+    static SCENE_RESULT: Cell<SceneSubmit> = const { Cell::new(SceneSubmit::NotRun) };
+}
+
+/// Read this invocation's result from its workspace callback. Outside that
+/// callback, the prior enclosing invocation's result is restored.
+pub fn current_scene_submit_result() -> SceneSubmit {
+    SCENE_RESULT.get()
+}
+
+struct SceneResultScope {
+    previous: SceneSubmit,
+}
+
+impl SceneResultScope {
+    fn enter() -> Self {
+        Self {
+            previous: SCENE_RESULT.replace(SceneSubmit::NotRun),
         }
-    });
-    if let Some(submit) = submit {
-        submit();
+    }
+}
+
+impl Drop for SceneResultScope {
+    fn drop(&mut self) {
+        SCENE_RESULT.set(self.previous);
+    }
+}
+
+/// The terminal callback runs once even on a resource failure. Only standalone
+/// scenes retain the old fallback when a hook omits its submit closure.
+fn scene_workspace(admission: SceneAdmission, submit: impl FnOnce() -> SceneSubmit) -> SceneSubmit {
+    let _scope = SceneResultScope::enter();
+    let mut submit = Some(submit);
+    let mut run = || {
+        if let Some(submit) = submit.take() {
+            SCENE_RESULT.set(submit());
+        }
+    };
+    if let Some(hook) = SCENE_WORKSPACE.get() {
+        hook(&mut run);
+    } else {
+        run();
+    }
+    if admission == SceneAdmission::Standalone {
+        run();
+    }
+    current_scene_submit_result()
+}
+
+/// Scoped controls for integration tests of the production scene boundary.
+/// Product frontends never enable this feature.
+#[cfg(feature = "render-test-hooks")]
+pub mod test_hooks {
+    use std::cell::Cell;
+    use std::marker::PhantomData;
+    use std::rc::Rc;
+    use std::sync::MutexGuard;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum SceneTestPoint {
+        AfterAdmission,
+        BeforeTerminal,
+        OverlayEntry,
+    }
+
+    thread_local! {
+        static HOOK: Cell<Option<fn(SceneTestPoint)>> = const { Cell::new(None) };
+        static RESOURCE_FAILURE: Cell<Option<SceneTestPoint>> = const { Cell::new(None) };
+    }
+
+    pub struct ScopedSceneTestHook {
+        previous: Option<fn(SceneTestPoint)>,
+        thread_bound: PhantomData<Rc<()>>,
+    }
+
+    pub fn install_for_thread(hook: fn(SceneTestPoint)) -> ScopedSceneTestHook {
+        ScopedSceneTestHook {
+            previous: HOOK.replace(Some(hook)),
+            thread_bound: PhantomData,
+        }
+    }
+
+    impl Drop for ScopedSceneTestHook {
+        fn drop(&mut self) {
+            HOOK.set(self.previous);
+        }
+    }
+
+    pub struct ScopedResourceFailure {
+        previous: Option<SceneTestPoint>,
+        thread_bound: PhantomData<Rc<()>>,
+    }
+
+    pub fn resource_failure_at(point: SceneTestPoint) -> ScopedResourceFailure {
+        assert!(point != SceneTestPoint::OverlayEntry);
+        ScopedResourceFailure {
+            previous: RESOURCE_FAILURE.replace(Some(point)),
+            thread_bound: PhantomData,
+        }
+    }
+
+    impl Drop for ScopedResourceFailure {
+        fn drop(&mut self) {
+            RESOURCE_FAILURE.set(self.previous);
+        }
+    }
+
+    pub struct SceneLockHolder {
+        _guard: MutexGuard<'static, ()>,
+    }
+
+    pub fn hold_scene_lock() -> SceneLockHolder {
+        SceneLockHolder {
+            _guard: super::GPU_SCENE_LOCK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+        }
+    }
+
+    pub(super) fn at(point: SceneTestPoint) -> bool {
+        if let Some(hook) = HOOK.get() {
+            hook(point);
+        }
+        RESOURCE_FAILURE.get() == Some(point)
+    }
+}
+
+/// Own preparation rollback through terminal delivery and unwind. The scalar
+/// snapshot keeps failed picks armed without copying either client pick array.
+struct SceneRollback {
+    camera: [i32; 5],
+    ground: [i32; 2],
+    click: bool,
+}
+
+struct PreparedScene<'a> {
+    core: &'a mut Client,
+    renderer: &'a mut Renderer,
+    rollback: SceneRollback,
+    submitted: bool,
+}
+
+impl<'a> PreparedScene<'a> {
+    fn new(core: &'a mut Client, renderer: &'a mut Renderer) -> Self {
+        let rollback = SceneRollback {
+            camera: [
+                core.cam_x,
+                core.cam_y,
+                core.cam_z,
+                core.cam_pitch,
+                core.cam_yaw,
+            ],
+            ground: [core.world.ground_x, core.world.ground_z],
+            click: core.world.click,
+        };
+        Self {
+            core,
+            renderer,
+            rollback,
+            submitted: false,
+        }
+    }
+
+    fn mark_submitted(&mut self) {
+        self.submitted = true;
+    }
+}
+
+impl Drop for PreparedScene<'_> {
+    fn drop(&mut self) {
+        self.renderer.world.remove_sprites(&mut self.core.world);
+        if !self.submitted {
+            let [x, y, z, pitch, yaw] = self.rollback.camera;
+            self.core.cam_x = x;
+            self.core.cam_y = y;
+            self.core.cam_z = z;
+            self.core.cam_pitch = pitch;
+            self.core.cam_yaw = yaw;
+            [self.core.world.ground_x, self.core.world.ground_z] = self.rollback.ground;
+            self.core.world.click = self.rollback.click;
+            // capture_scene normally returns this storage before the terminal
+            // callback. Unwind must not leave capture bound for a later paint.
+            self.renderer.pix3d.capture = None;
+        }
     }
 }
 
@@ -1546,6 +1741,8 @@ impl GpuBackend {
     /// The retained nav texture composites first; freezes keep the last
     /// scene/nav target without accumulating alpha.
     fn draw_scene_overlays(&mut self, core: &mut Client, r: &mut Renderer) {
+        #[cfg(feature = "render-test-hooks")]
+        test_hooks::at(test_hooks::SceneTestPoint::OverlayEntry);
         self.render_nav_overlay(core, r);
         if should_cls_scene_overlays(self.last_kind, core.scene_state) {
             if let Some(game) = r.area_game.as_mut() {
@@ -1717,161 +1914,198 @@ impl RenderBackend for GpuBackend {
             return;
         }
 
-        r.scene_cycle += 1;
-        r.add_players(core, true);
-        r.add_npcs(core, true);
-        r.add_players(core, false);
-        r.add_npcs(core, false);
-        r.add_projectiles(core);
-        r.add_map_anim(core);
-
-        let mut pitch = core.orbit_camera_pitch;
-        if core.camera_pitch_clamp / 256 > pitch {
-            pitch = core.camera_pitch_clamp / 256;
+        let admission = SCENE_ADMISSION
+            .get()
+            .map_or(SceneAdmission::Standalone, |admit| admit());
+        if admission == SceneAdmission::Retained {
+            self.draw_scene_overlays(core, r);
+            return;
         }
-        if core.cam_shake[4] && core.cam_shake_ran[4] + 128 > pitch {
-            pitch = core.cam_shake_ran[4] + 128;
+        #[cfg(feature = "render-test-hooks")]
+        if admission == SceneAdmission::Rebuild
+            && test_hooks::at(test_hooks::SceneTestPoint::AfterAdmission)
+        {
+            scene_workspace(admission, || SceneSubmit::ResourceLimited);
+            self.draw_scene_overlays(core, r);
+            return;
         }
-        let yaw = (core.orbit_camera_yaw + core.macro_camera_angle) & 0x7ff;
 
-        if !core.cinema_cam {
-            if let Some(player) = &core.local_player {
-                let target_y = get_av_h(
-                    &core.groundh,
-                    &core.mapl,
-                    player.x,
-                    player.z,
-                    core.minusedlevel,
-                ) - 50;
-                r.cam_follow(
-                    core,
-                    pitch,
-                    yaw,
-                    core.orbit_camera_x,
-                    target_y,
-                    core.orbit_camera_z,
-                    pitch * 3 + 600,
-                );
+        {
+            let mut prepared = PreparedScene::new(core, r);
+            let core = &mut *prepared.core;
+            let r = &mut *prepared.renderer;
+            r.scene_cycle += 1;
+            r.add_players(core, true);
+            r.add_npcs(core, true);
+            r.add_players(core, false);
+            r.add_npcs(core, false);
+            r.add_projectiles(core);
+            r.add_map_anim(core);
+
+            let mut pitch = core.orbit_camera_pitch;
+            if core.camera_pitch_clamp / 256 > pitch {
+                pitch = core.camera_pitch_clamp / 256;
             }
-        }
-
-        let level = if core.cinema_cam {
-            r.roof_check2(core)
-        } else {
-            r.roof_check(core)
-        };
-
-        let eye_x = core.cam_x;
-        let eye_y = core.cam_y;
-        let eye_z = core.cam_z;
-        let eye_pitch = core.cam_pitch;
-        let eye_yaw = core.cam_yaw;
-
-        let (cam_x, cam_y, cam_z, cam_pitch, cam_yaw) =
-            r.cam_shake_jitter(core, eye_x, eye_y, eye_z, eye_pitch, eye_yaw);
-
-        #[cfg(feature = "render-diagnostics")]
-        crate::render::diagnostics::begin_frame(crate::render::diagnostics::FrameCam {
-            cycle: core.loop_cycle,
-            eye_x: cam_x,
-            eye_y: cam_y,
-            eye_z: cam_z,
-            yaw: cam_yaw,
-            pitch: cam_pitch,
-            pre_jitter_x: eye_x,
-            pre_jitter_y: eye_y,
-            pre_jitter_z: eye_z,
-            orbit_x: core.orbit_camera_x,
-            orbit_z: core.orbit_camera_z,
-            orbit_yaw: core.orbit_camera_yaw,
-            orbit_pitch: core.orbit_camera_pitch,
-            macro_x: core.macro_camera_x,
-            macro_z: core.macro_camera_z,
-            macro_angle: core.macro_camera_angle,
-            base_x: core.map_build_base_x,
-            base_z: core.map_build_base_z,
-        });
-
-        if !r.vis_calc_done {
-            r.vis_calc_done = true;
-            let mut distance = [0i32; 9];
-            for (x, slot) in distance.iter_mut().enumerate() {
-                let angle = x as i32 * 32 + 128 + 15;
-                let offset = angle * 3 + 600;
-                let sin = Pix3D::sin_table().get(angle as usize).copied().unwrap_or(0);
-                *slot = (offset * sin) >> 16;
+            if core.cam_shake[4] && core.cam_shake_ran[4] + 128 > pitch {
+                pitch = core.cam_shake_ran[4] + 128;
             }
-            r.world.reset_vis_calc(&distance, 500, 800, 512, 334);
-        }
+            let yaw = (core.orbit_camera_yaw + core.macro_camera_angle) & 0x7ff;
 
-        let cycle = r.pix3d.cycle;
-        r.pix3d.mouse_check = true;
-        r.pix3d.picked_count = 0;
-        r.pix3d.mouse_x = core.shell.mouse_x - 4;
-        r.pix3d.mouse_y = core.shell.mouse_y - 4;
-        // The projection origin the painter pass's winding/pick tests read
-        // (the CPU scene binds it via `set_clipping` on `area_game`).
-        r.pix3d.set_clipping(512, 334);
-
-        let cache = &core.cache;
-        let loop_cycle = core.loop_cycle;
-
-        // The GPU rasterization: the CPU painter pass captures its
-        // triangles in draw order (this also resolves the lazy model
-        // caches, appends the mouse picks and runs the ground click
-        // raycast), then they are rasterized in that order into
-        // `scene_texture`. Static model textures upload into the shared
-        // array once per id. Sampled animated ids 17/24 are staged later,
-        // immediately before this slot's scene submission.
-        self.context
-            .assets
-            .lock()
-            .unwrap()
-            .ensure_model_textures(&r.pix3d);
-        let mut mesh = std::mem::take(&mut self.scene_mesh);
-        r.world.capture_scene(
-            &mut core.world,
-            &mut r.pix3d,
-            cache,
-            loop_cycle,
-            cam_x,
-            cam_y,
-            cam_z,
-            level,
-            cam_yaw,
-            cam_pitch,
-            &mut mesh,
-        );
-        let sampled_texture_ids = mesh.sampled_texture_ids();
-        for (id, sampled) in sampled_texture_ids.iter().copied().enumerate() {
-            if sampled {
-                r.pix3d.note_texture_used(id);
+            if !core.cinema_cam {
+                if let Some(player) = &core.local_player {
+                    let target_y = get_av_h(
+                        &core.groundh,
+                        &core.mapl,
+                        player.x,
+                        player.z,
+                        core.minusedlevel,
+                    ) - 50;
+                    r.cam_follow(
+                        core,
+                        pitch,
+                        yaw,
+                        core.orbit_camera_x,
+                        target_y,
+                        core.orbit_camera_z,
+                        pitch * 3 + 600,
+                    );
+                }
             }
-        }
-        // The hook wraps exactly the locked section; the lock stays inside.
-        scene_workspace(|| {
-            let _scene_guard = GPU_SCENE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+            let level = if core.cinema_cam {
+                r.roof_check2(core)
+            } else {
+                r.roof_check(core)
+            };
+
+            let eye_x = core.cam_x;
+            let eye_y = core.cam_y;
+            let eye_z = core.cam_z;
+            let eye_pitch = core.cam_pitch;
+            let eye_yaw = core.cam_yaw;
+
+            let (cam_x, cam_y, cam_z, cam_pitch, cam_yaw) =
+                r.cam_shake_jitter(core, eye_x, eye_y, eye_z, eye_pitch, eye_yaw);
+
+            #[cfg(feature = "render-diagnostics")]
+            crate::render::diagnostics::begin_frame(crate::render::diagnostics::FrameCam {
+                cycle: core.loop_cycle,
+                eye_x: cam_x,
+                eye_y: cam_y,
+                eye_z: cam_z,
+                yaw: cam_yaw,
+                pitch: cam_pitch,
+                pre_jitter_x: eye_x,
+                pre_jitter_y: eye_y,
+                pre_jitter_z: eye_z,
+                orbit_x: core.orbit_camera_x,
+                orbit_z: core.orbit_camera_z,
+                orbit_yaw: core.orbit_camera_yaw,
+                orbit_pitch: core.orbit_camera_pitch,
+                macro_x: core.macro_camera_x,
+                macro_z: core.macro_camera_z,
+                macro_angle: core.macro_camera_angle,
+                base_x: core.map_build_base_x,
+                base_z: core.map_build_base_z,
+            });
+
+            if !r.vis_calc_done {
+                r.vis_calc_done = true;
+                let mut distance = [0i32; 9];
+                for (x, slot) in distance.iter_mut().enumerate() {
+                    let angle = x as i32 * 32 + 128 + 15;
+                    let offset = angle * 3 + 600;
+                    let sin = Pix3D::sin_table().get(angle as usize).copied().unwrap_or(0);
+                    *slot = (offset * sin) >> 16;
+                }
+                r.world.reset_vis_calc(&distance, 500, 800, 512, 334);
+            }
+
+            let cycle = r.pix3d.cycle;
+            r.pix3d.mouse_check = true;
+            r.pix3d.picked_count = 0;
+            r.pix3d.mouse_x = core.shell.mouse_x - 4;
+            r.pix3d.mouse_y = core.shell.mouse_y - 4;
+            // The projection origin the painter pass's winding/pick tests read
+            // (the CPU scene binds it via `set_clipping` on `area_game`).
+            r.pix3d.set_clipping(512, 334);
+
+            let cache = &core.cache;
+            let loop_cycle = core.loop_cycle;
+
+            // The GPU rasterization: the CPU painter pass captures its
+            // triangles in draw order (this also resolves the lazy model
+            // caches, appends the mouse picks and runs the ground click
+            // raycast), then they are rasterized in that order into
+            // `scene_texture`. Static model textures upload into the shared
+            // array once per id. Sampled animated ids 17/24 are staged later,
+            // immediately before this slot's scene submission.
             self.context
                 .assets
                 .lock()
                 .unwrap()
-                .stage_animated_model_textures(&r.pix3d, &sampled_texture_ids);
-            self.render_scene(&mesh);
-        });
-        self.scene_mesh = mesh;
+                .ensure_model_textures(&r.pix3d);
+            let mut mesh = std::mem::take(&mut self.scene_mesh);
+            r.world.capture_scene(
+                &mut core.world,
+                &mut r.pix3d,
+                cache,
+                loop_cycle,
+                cam_x,
+                cam_y,
+                cam_z,
+                level,
+                cam_yaw,
+                cam_pitch,
+                &mut mesh,
+            );
+            let sampled_texture_ids = mesh.sampled_texture_ids();
+            for (id, sampled) in sampled_texture_ids.iter().copied().enumerate() {
+                if sampled {
+                    r.pix3d.note_texture_used(id);
+                }
+            }
+            #[cfg(feature = "render-test-hooks")]
+            let resource_limited = admission == SceneAdmission::Rebuild
+                && test_hooks::at(test_hooks::SceneTestPoint::BeforeTerminal);
+            #[cfg(not(feature = "render-test-hooks"))]
+            let resource_limited = false;
+            // Both success and pre-submit failure reach this terminal callback.
+            // Guards stay inside its closure and drop before the host reads result.
+            let result = scene_workspace(admission, || {
+                if resource_limited {
+                    return SceneSubmit::ResourceLimited;
+                }
+                let _scene_guard = if admission == SceneAdmission::Standalone {
+                    GPU_SCENE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+                } else {
+                    match GPU_SCENE_LOCK.try_lock() {
+                        Ok(guard) => guard,
+                        Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
+                        Err(std::sync::TryLockError::WouldBlock) => {
+                            return SceneSubmit::LockContended
+                        }
+                    }
+                };
+                self.context
+                    .assets
+                    .lock()
+                    .unwrap()
+                    .stage_animated_model_textures(&r.pix3d, &sampled_texture_ids);
+                self.render_scene(&mesh);
+                SceneSubmit::Submitted
+            });
+            self.scene_mesh = mesh;
 
-        r.world.remove_sprites(&mut core.world);
-        r.texture_run_anims(core, cycle);
-        core.pick_count = r.pix3d.picked_count;
-        core.pick_typecodes
-            .copy_from_slice(&r.pix3d.picked_entity_typecode);
+            if result == SceneSubmit::Submitted {
+                r.texture_run_anims(core, cycle);
+                core.pick_count = r.pix3d.picked_count;
+                core.pick_typecodes
+                    .copy_from_slice(&r.pix3d.picked_entity_typecode);
+                prepared.mark_submitted();
+            }
+        }
         self.draw_scene_overlays(core, r);
-
-        core.cam_x = eye_x;
-        core.cam_y = eye_y;
-        core.cam_z = eye_z;
-        core.cam_pitch = eye_pitch;
-        core.cam_yaw = eye_yaw;
     }
 
     /// The composite seam: `area_game` overlay pixels blit into

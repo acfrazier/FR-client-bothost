@@ -942,6 +942,19 @@ impl R289Operation {
     }
 }
 
+/// A typed reason that a client socket handoff was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientAdoptionError {
+    /// The clients have incompatible session identities.
+    ProfileMismatch,
+    /// The client being adopted has no live game stream.
+    NoLiveStream,
+    /// The source client's output slot is not a client outbound packet.
+    SourcePacketNotOutbound,
+    /// The receiving client's output slot is not a client outbound packet.
+    TargetPacketNotOutbound,
+}
+
 /// Host-owned admission for the client's only `CLIENT_CHEAT` encoder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CheatAdmission {
@@ -2234,8 +2247,9 @@ impl Client {
             obj_drag_cycles: 0,
             bank_arrange_mode: 0,
 
-            out: Packet::alloc(1),
-            r#in: Packet::alloc(1),
+            out: Packet::alloc_outbound(1),
+            r#in: Packet::alloc_inbound(1),
+
             ptype: 0,
             ptype0: 0,
             ptype1: 0,
@@ -3361,19 +3375,28 @@ impl Client {
     /// transport and cheat admission. `other` must not touch the game stream
     /// afterwards (drop it or reuse it for another account); no TCP is closed.
     /// Arms `baton`, so the next `login(..., reconnect = true)` runs the
-    /// opcode-18 handshake over the adopted socket instead of a fresh TCP.
-    /// Returns `None` when the identities differ or `other` has no live stream.
-    pub fn adopt_from(&mut self, other: &mut Client) -> Option<()> {
+    /// opcode-18 handshake over the adopted socket.
+    ///
+    /// Returns a typed refusal before mutating either client if identities
+    /// differ, the source has no live stream, or either output packet slot is
+    /// no longer a client outbound packet.
+    pub fn adopt_from(&mut self, other: &mut Client) -> Result<(), ClientAdoptionError> {
         match (&self.session_profile, &other.session_profile) {
             (None, None)
                 if self.transport == other.transport
                     && self.cheat_admission == other.cheat_admission => {}
             (Some(left), Some(right)) if left == right => {}
-            _ => return None,
+            _ => return Err(ClientAdoptionError::ProfileMismatch),
         }
-        // Take the live stream first. A failed handoff must leave `self`
-        // entirely unchanged (including revision and any partial-frame state).
-        let stream = other.stream.take()?;
+        if !other.out.is_outbound() {
+            return Err(ClientAdoptionError::SourcePacketNotOutbound);
+        }
+        if !self.out.is_outbound() {
+            return Err(ClientAdoptionError::TargetPacketNotOutbound);
+        }
+        let Some(stream) = other.stream.take() else {
+            return Err(ClientAdoptionError::NoLiveStream);
+        };
         // Session baton carries the stream's revision with ISAAC/frame state
         // so size tables and dispatch cannot silently diverge midstream.
         self.revision = other.revision;
@@ -3384,8 +3407,10 @@ impl Client {
         self.shell.telemetry_289 = self.revision.is_289();
         self.stream = Some(stream);
         self.random_in = other.random_in.take();
-        self.out = std::mem::replace(&mut other.out, Packet::alloc(1));
-        self.r#in = std::mem::replace(&mut other.r#in, Packet::alloc(1));
+        let mut out = std::mem::replace(&mut other.out, Packet::alloc_outbound(1));
+        out.preserve_observer_from(&mut self.out);
+        self.out = out;
+        self.r#in = std::mem::replace(&mut other.r#in, Packet::alloc_inbound(1));
         self.ptype = std::mem::replace(&mut other.ptype, 0);
         self.ptype0 = std::mem::replace(&mut other.ptype0, 0);
         self.ptype1 = std::mem::replace(&mut other.ptype1, 0);
@@ -3394,7 +3419,7 @@ impl Client {
         self.session_frames = std::mem::take(&mut other.session_frames);
         self.recent_frames = std::mem::take(&mut other.recent_frames);
         self.baton = true;
-        Some(())
+        Ok(())
     }
 
     /// Write the RSA plaintext block for the 274 login wrapper into
@@ -3657,6 +3682,13 @@ impl Client {
             for entry in self.chat_text.iter_mut() {
                 *entry = String::new();
             }
+            // The host snapshot rebuilds its chat view only when
+            // `gens.chat` moves. Logout moved every generation but kept
+            // `chat_text`, so the snapshot still holds the old ring; this
+            // clear must move the chat generation too, or that stale ring
+            // survives into the new session. (`gens` is a bot-host hook
+            // with no Java counterpart, so client behaviour is unchanged.)
+            self.gens.chat += 1;
             self.redraw_frame = true;
             self.redraw_side = true;
             self.redraw_icons = true;
@@ -5175,6 +5207,7 @@ impl Client {
                 self.out.p1(self.route_z[length] - start_z);
                 i += 1;
             }
+            self.out.finish_packet();
 
             return true;
         }
@@ -5195,7 +5228,7 @@ impl Client {
                 // `in` buffer out for the dispatch and put it back.
                 let ptype = self.ptype;
                 let psize = self.psize;
-                let mut packet = std::mem::replace(&mut self.r#in, Packet::alloc(1));
+                let mut packet = std::mem::replace(&mut self.r#in, Packet::alloc_inbound(1));
                 self.handle_packet(ptype, &mut packet);
                 self.r#in = packet;
                 // Recorded after dispatch: a protocol error inside it
@@ -12762,10 +12795,15 @@ impl Client {
         if self.logout_timer > 0 {
             self.logout_timer -= 1;
         }
+        let observed_tick = self.out.has_observer().then_some(self.gens.player_info);
         for _ in 0..5 {
             if !self.tcp_in() {
                 break;
             }
+        }
+        if observed_tick.is_some_and(|tick| tick != self.gens.player_info) {
+            self.out
+                .observe_tick(self.gens.player_info, self.gens.session);
         }
         if self.ingame && self.logout_timer == 0 {
             self.pending_local_idle_request = false;
@@ -13006,6 +13044,7 @@ impl Client {
 
         let write_result = if let Some(stream) = self.stream.as_mut() {
             if self.out.pos > 0 {
+                self.out.finish_packet();
                 Some(stream.write(self.out.data(), self.out.pos))
             } else {
                 None

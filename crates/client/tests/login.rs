@@ -53,11 +53,13 @@ fn cold_login_opcode_16_success() {
         if client::login_rsa::login_rsan()
             .starts_with("7162900525229798032761816791230527296329313291")
         {
-            // Java `Packet.rsaenc` writes `BigInteger.toByteArray()` length:
-            // 64, or 65 with the leading 0x00 two's-complement byte when the
-            // ciphertext MSB is set (random per login).
+            // Java `Packet.rsaenc` (Packet.java:300-310) writes
+            // `BigInteger.toByteArray()`: the ciphertext is below the 64-byte
+            // modulus, so at most 64 bytes plus a 0x00 sign byte when its top
+            // bit is set; leading zero bytes are omitted, so it can be shorter
+            // (63 bytes about 1 login in 256, 62 about 1 in 65,536, ...).
             let rsa_len = buf[42] as usize;
-            assert!(rsa_len == 64 || rsa_len == 65, "rsa len byte {rsa_len}");
+            assert!((1..=65).contains(&rsa_len), "rsa len byte {rsa_len}");
             assert_eq!(n, 2 + 40 + 1 + rsa_len);
         }
         s.write_all(&[2, 0, 0]).unwrap(); // response 2, staff=0, mouseTrack=0
@@ -299,6 +301,7 @@ fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
     c.minimap_flag_z = 2;
     c.chat_text[0] = "leftover".into();
     c.logout();
+    let chat_gen_after_logout = c.gens.chat;
     r.title_screen_draw(&mut c); // consumes the game frame (Task 4b)
     assert!(r.area_chat.is_none());
     c.login("bob", "pw", false).unwrap();
@@ -314,6 +317,11 @@ fn cold_login_response_2_resets_tab_chat_and_rebuilds_frame() {
     assert!(
         c.chat_text.iter().all(|t| t.is_empty()),
         "response 2 must clear the chat history"
+    );
+    assert!(
+        c.gens.chat > chat_gen_after_logout,
+        "the response-2 chat clear must move the chat generation, or the \
+         host snapshot keeps the pre-login ring"
     );
     assert!(c.redraw_frame && c.redraw_side && c.redraw_icons);
     // `login` no longer runs `prepare_game` eagerly (task 2b: the renderer
