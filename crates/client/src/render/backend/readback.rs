@@ -52,7 +52,7 @@ impl ReadbackBudget {
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| ReadbackError::Busy)?;
         Ok(ReadbackPermit {
-            budget: self,
+            occupied: &self.occupied,
             geometry,
             stage_bytes,
             raw_bytes,
@@ -93,7 +93,8 @@ impl ReadbackBudget {
 /// the single slot; a submitted readback moves it into storage until output
 /// handoff.
 pub struct ReadbackPermit {
-    budget: &'static ReadbackBudget,
+    // The permit owns slot occupancy, not the quarantined GPU-storage graph.
+    occupied: &'static AtomicBool,
     geometry: CaptureGeometry,
     stage_bytes: usize,
     raw_bytes: usize,
@@ -120,7 +121,7 @@ impl ReadbackPermit {
 
 impl Drop for ReadbackPermit {
     fn drop(&mut self) {
-        self.budget.occupied.store(false, Ordering::Release);
+        self.occupied.store(false, Ordering::Release);
     }
 }
 
@@ -319,7 +320,7 @@ impl PendingCore {
         let Some(storage) = self.storage.take() else {
             return;
         };
-        let budget = storage.permit.budget;
+        let budget = ReadbackBudget::process();
         let mut slot = budget
             .quarantine
             .lock()
