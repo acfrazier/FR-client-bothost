@@ -748,7 +748,7 @@ pub struct GpuAssets {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RenderTestAtlasLayout {
     pub max_texture_dimension_2d: u32,
-    pub max_storage_buffer_binding_size: u32,
+    pub max_storage_buffer_binding_size: u64,
     pub sprite_layer_count: usize,
     pub model_gpu_bytes: usize,
     pub sprite_layer_gpu_bytes: usize,

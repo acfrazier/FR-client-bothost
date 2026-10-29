@@ -272,7 +272,7 @@ pub fn render_test_content_layout(
     ]
     .into_iter()
     .try_fold(0usize, usize::checked_add)?;
-    let active_map_function_slots = 1000;
+    let active_map_function_slots = 1000usize;
     let active_map_function_bytes = active_map_function_slots
         .checked_mul(std::mem::size_of::<Option<Pix32>>())?
         .checked_add(

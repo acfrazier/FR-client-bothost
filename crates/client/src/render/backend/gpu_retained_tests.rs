@@ -53,11 +53,13 @@ impl Producer {
                 view_formats: &[],
             })
         };
+        let source = texture("r274 retained acceptance source");
+        let present = texture("r274 retained acceptance display");
         Self {
             context,
             gate: PresentGate::new(),
-            source: texture("r274 retained acceptance source"),
-            present: texture("r274 retained acceptance display"),
+            source,
+            present,
         }
     }
 
@@ -255,7 +257,7 @@ fn registered_delayed_consumer_survives_retire_without_aliasing_reattach() {
     let baseline = crate::render::backend::present::process_retained_present_resource_count();
     let old = Producer::new(Arc::clone(&context));
     let old_first = old.paint([0, 0, 0, 255], true);
-    let old_registration = old
+    let old_registration = old_first
         .try_register_consumer()
         .expect("old tracked head registers");
     let old_n = old.paint([255, 0, 0, 255], true);
@@ -346,7 +348,7 @@ fn released_consumer_token_cannot_copy_reused_storage() {
     let (error, stale_n, permit) = match stale_n.try_begin_readback(ReadbackKind::AnyFrame, permit)
     {
         Err(rejected) => rejected,
-        Ok(pending) => panic!("released token unexpectedly copied reused storage: {pending:?}"),
+        Ok(_) => panic!("released token unexpectedly copied reused storage"),
     };
     assert_eq!(error, ReadbackError::StalePresent);
     drop(stale_n);
@@ -489,10 +491,7 @@ fn held_consumer_backpressure_never_overwrites_or_multiplies_resources() {
         .map(|((producer, registration), held)| (producer, registration, held))
     {
         let next = producer.paint([0, 0, 255, 255], true);
-        assert!(
-            next.is_fresh(),
-            "held N does not block ordinary display N+1"
-        );
+        assert!(next.fresh, "held N does not block ordinary display N+1");
         assert_eq!(next.read_back(), [0x0000ff]);
         assert!(
             registration
@@ -503,7 +502,8 @@ fn held_consumer_backpressure_never_overwrites_or_multiplies_resources() {
         );
         assert_ne!(
             held.present_token(),
-            next.present_token(),
+            next.present_token()
+                .expect("submitted frame N+1 has a token"),
             "the held offer remains N while the ordinary display advances to N+1"
         );
     }
@@ -545,7 +545,9 @@ fn held_consumer_backpressure_never_overwrites_or_multiplies_resources() {
     let held_replacement = take_frame(&replacement_registration);
     assert_eq!(
         held_replacement.present_token(),
-        replacement_n.present_token()
+        replacement_n
+            .present_token()
+            .expect("replacement N has a submitted token")
     );
     assert_eq!(
         crate::render::backend::present::process_retained_present_resource_count(),

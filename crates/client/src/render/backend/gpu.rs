@@ -250,6 +250,7 @@ fn scene_workspace(admission: SceneAdmission, submit: impl FnOnce() -> SceneSubm
 /// Product frontends never enable this feature.
 #[cfg(feature = "render-test-hooks")]
 pub mod test_hooks {
+    use crate::render::backend::TextureHandle;
     use std::cell::Cell;
     use std::marker::PhantomData;
     use std::rc::Rc;
