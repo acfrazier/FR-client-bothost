@@ -17,6 +17,7 @@ pub struct JagFile {
     file_unpacked_size: Vec<i32>,
     file_packed_size: Vec<i32>,
     file_offset: Vec<i32>,
+    file_unpacked: RefCell<Vec<Option<Vec<u8>>>>,
     _render_charge: Option<BudgetCharge>,
 }
 

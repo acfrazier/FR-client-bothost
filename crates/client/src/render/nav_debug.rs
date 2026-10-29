@@ -881,7 +881,7 @@ fn tile_quad(
     let p2 = r.project_overlay(client, x0 + TILE, z0 + TILE, 0);
     let p3 = r.project_overlay(client, x0, z0 + TILE, 0);
     if p0.0 == -1 || p1.0 == -1 || p2.0 == -1 || p3.0 == -1 {
-        return Ok(());
+        return None;
     }
     let depth = scene_depth(client, x0 + TILE / 2, z0 + TILE / 2, 0);
     Some(Quad {
@@ -1016,7 +1016,7 @@ fn clip_polygon_edge(
     keep_greater: bool,
 ) -> usize {
     if input_len == 0 {
-        return Ok(());
+        return 0;
     }
     let coordinate = |point: (f32, f32)| if axis == 0 { point.0 } else { point.1 };
     let inside = |point: (f32, f32)| {

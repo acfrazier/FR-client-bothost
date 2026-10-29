@@ -356,6 +356,9 @@ fn busy_nav_does_not_accumulate_into_retained_scene() {
         "Busy fairness starts from the actual rendered Rebuild"
     );
     let scene_cycle = renderer.scene_cycle;
+    let a_nav_vertices = backend.nav_mesh.vertices.as_ptr();
+    let a_nav_bytes = backend.nav_mesh.retained_capacity();
+    let vertex_capacity = backend.vertex_buf_capacity;
     let a_busy_nav = TextureHandle::untracked(
         backend.context.device.clone(),
         backend.context.queue.clone(),
@@ -390,7 +393,7 @@ fn busy_nav_does_not_accumulate_into_retained_scene() {
         "repeated Busy paints retain the last Rebuild's nav/scene pixels"
     );
     assert_eq!(backend.nav_mesh.vertices.as_ptr(), a_nav_vertices);
-    assert_eq!(backend_b.vertex_buf_capacity, b_capacity_before);
+    assert_eq!(backend.vertex_buf_capacity, vertex_capacity);
     assert_eq!(backend.nav_mesh.retained_capacity(), a_nav_bytes);
 
     assert!(
@@ -444,7 +447,7 @@ fn install_nav_scene_world(core: &mut Client) {
     core.cam_z = 0;
     core.cam_pitch = 96;
     core.cam_yaw = 0;
-    core.world = crate::client::core::World::new(vec![vec![vec![2000; 105]; 105]; 4], 104, 4, 104);
+    core.world = crate::core::World::new(vec![vec![vec![2000; 105]; 105]; 4], 104, 4, 104);
     core.set_draw(true);
     core.world.fill_base_level(0);
     for x in 2..=4 {

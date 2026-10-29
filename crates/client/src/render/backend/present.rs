@@ -261,6 +261,7 @@ impl PresentGate {
             },
         );
         let retained = state.consumer.clone();
+        let mut retained_guard = None;
         if let Some(retained) = retained.as_ref() {
             match retained.state.try_lock() {
                 Ok(mut retained_state) => {

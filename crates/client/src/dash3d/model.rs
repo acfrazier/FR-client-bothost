@@ -683,10 +683,7 @@ impl Model {
 
     /// Move a charged model into shared Arc ownership, including the Arc
     /// allocation header in the same resource charge.
-    pub fn try_into_arc_for_render(
-        mut self,
-        budget: &ByteBudget,
-    ) -> Result<Arc<Model>, RenderLimit> {
+    pub fn try_into_arc_for_render(self, budget: &ByteBudget) -> Result<Arc<Model>, RenderLimit> {
         let arc_header = 2usize
             .checked_mul(std::mem::size_of::<usize>())
             .ok_or_else(|| Self::render_error_for_overflow(budget))?;

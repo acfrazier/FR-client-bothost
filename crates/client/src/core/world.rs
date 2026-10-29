@@ -300,10 +300,7 @@ impl World {
             overlay, underlay,
         );
         tile.overlay_stamp = Some(Box::new(stamp));
-        if self.overlay_mesh
-            && !crate::render::fair::enabled()
-            && !crate::render::budget::RenderBudget::is_scoped()
-        {
+        if self.overlay_mesh && !crate::render::budget::RenderBudget::is_scoped() {
             stamp.apply_to(tile);
         } else if self.overlay_mesh {
             // A host build records only inputs. Its render owner admits the
@@ -1112,7 +1109,7 @@ impl World {
         }
         self.dynamic_count = 0;
         self.dynamic_sprites = Vec::new();
-        if crate::render::fair::enabled() {
+        if crate::render::budget::RenderBudget::is_scoped() {
             self.free_dynamic_sprites = Vec::new();
             let retained = self
                 .sprites

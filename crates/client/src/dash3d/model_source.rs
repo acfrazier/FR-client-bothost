@@ -125,25 +125,19 @@ impl SceneModel {
     /// before changing their variant; standalone rendering keeps Arc's
     /// original copy-on-write behavior.
     pub fn try_as_model_mut_for_render(&mut self) -> Result<Option<&mut Model>, RenderLimit> {
-        match self {
-            SceneModel::Model(model) => Ok(Some(model)),
-            SceneModel::Shared(shared) => {
-                if Arc::strong_count(shared) == 1 && Arc::weak_count(shared) == 0 {
-                    return Ok(Arc::get_mut(shared));
-                }
-                let Some(budget) = RenderBudget::current_resource(RenderResource::HeadModels)
-                else {
-                    return Ok(Some(Arc::make_mut(shared)));
-                };
-                let owned = shared.try_clone_for_render(&budget)?;
-                *self = SceneModel::Model(owned);
-                match self {
-                    SceneModel::Model(model) => Ok(Some(model)),
-                    _ => unreachable!("shared model was replaced with an owned model"),
+        if let SceneModel::Shared(shared) = &*self {
+            if Arc::strong_count(shared) != 1 || Arc::weak_count(shared) != 0 {
+                if let Some(budget) = RenderBudget::current_resource(RenderResource::HeadModels) {
+                    let owned = shared.try_clone_for_render(&budget)?;
+                    *self = SceneModel::Model(owned);
                 }
             }
-            _ => Ok(None),
         }
+        Ok(match self {
+            SceneModel::Model(model) => Some(model),
+            SceneModel::Shared(shared) => Some(Arc::make_mut(shared)),
+            _ => None,
+        })
     }
 
     /// `ModelSource.getTempModel()` from client-ts, dispatched over the

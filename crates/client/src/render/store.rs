@@ -882,16 +882,28 @@ mod tests {
         );
 
         // both renderers resolved a wall model for the tile.
-        assert!(rw1.wall_model1(&world, &cache, 0, 0, 0, 0).is_some());
-        assert!(rw2.wall_model1(&world, &cache, 0, 0, 0, 0).is_some());
+        assert!(rw1
+            .wall_model1(&world, &cache, 0, 0, 0, 0)
+            .expect("unscoped wall lookup succeeds")
+            .is_some());
+        assert!(rw2
+            .wall_model1(&world, &cache, 0, 0, 0, 0)
+            .expect("unscoped wall lookup succeeds")
+            .is_some());
 
         // Task 6: the cached loc is one GeometryStore Arc, not a per-head
         // owned clone sitting in TileModels.
-        let a = match rw1.wall_model1(&world, &cache, 0, 0, 0, 0) {
+        let a = match rw1
+            .wall_model1(&world, &cache, 0, 0, 0, 0)
+            .expect("unscoped wall lookup succeeds")
+        {
             Some(SceneModel::Shared(m)) => Arc::clone(m),
             _ => panic!("wall 0 must decode to a shared loc Arc"),
         };
-        let b = match rw2.wall_model1(&world, &cache, 0, 0, 0, 0) {
+        let b = match rw2
+            .wall_model1(&world, &cache, 0, 0, 0, 0)
+            .expect("unscoped wall lookup succeeds")
+        {
             Some(SceneModel::Shared(m)) => Arc::clone(m),
             _ => panic!("wall 1 must decode to a shared loc Arc"),
         };
@@ -1088,7 +1100,10 @@ mod tests {
         let index = world.add_dynamic(0, 64, 0, 64, 0, 0, 0, false);
         assert!(index.is_some(), "a dynamic sprite places on the tile");
 
-        match rw.wall_model1(&world, &cache, 0, 0, 0, 0) {
+        match rw
+            .wall_model1(&world, &cache, 0, 0, 0, 0)
+            .expect("unscoped wall lookup succeeds")
+        {
             Some(SceneModel::Model(m)) => assert_eq!(
                 m.face_colour_a.as_deref(),
                 Some(&[12345][..]),
@@ -1103,19 +1118,31 @@ mod tests {
 
     /// The resolved wall model's vertex count (0 when none).
     fn wall_points(rw: &mut RenderWorld, world: &World, cache: &Cache) -> i32 {
-        model_points(rw.wall_model1(world, cache, 0, 0, 0, 0))
+        model_points(
+            rw.wall_model1(world, cache, 0, 0, 0, 0)
+                .expect("unscoped wall lookup succeeds"),
+        )
     }
 
     fn decor_points(rw: &mut RenderWorld, world: &World, cache: &Cache) -> i32 {
-        model_points(rw.decor_model(world, cache, 0, 0, 0, 0))
+        model_points(
+            rw.decor_model(world, cache, 0, 0, 0, 0)
+                .expect("unscoped decor lookup succeeds"),
+        )
     }
 
     fn gd_points(rw: &mut RenderWorld, world: &World, cache: &Cache) -> i32 {
-        model_points(rw.gd_model(world, cache, 0, 0, 0, 0))
+        model_points(
+            rw.gd_model(world, cache, 0, 0, 0, 0)
+                .expect("unscoped ground-decor lookup succeeds"),
+        )
     }
 
     fn sprite_points(rw: &mut RenderWorld, world: &World, cache: &Cache, index: usize) -> i32 {
-        model_points(rw.sprite_model(world, cache, 0, index))
+        model_points(
+            rw.sprite_model(world, cache, 0, index)
+                .expect("unscoped sprite lookup succeeds"),
+        )
     }
 
     fn model_points(model: Option<&SceneModel>) -> i32 {

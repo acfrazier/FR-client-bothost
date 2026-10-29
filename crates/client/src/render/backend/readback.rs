@@ -451,14 +451,17 @@ impl ConsumerFrame {
                 Err(error) => return Err((error, self, permit)),
             };
         let state = match self.retained.state.try_lock() {
-            Ok(state) => state,
-            Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
-            Err(std::sync::TryLockError::WouldBlock) => {
-                drop(encoder);
-                drop(buffer);
-                return Err((ReadbackError::Busy, self, permit));
-            }
+            Ok(state) => Some(state),
+            Err(std::sync::TryLockError::Poisoned(error)) => Some(error.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => None,
         };
+        if state.is_none() {
+            drop(state);
+            drop(encoder);
+            drop(buffer);
+            return Err((ReadbackError::Busy, self, permit));
+        }
+        let state = state.expect("the contended branch returned its owners");
         if !self.key_matches(&state) {
             drop(state);
             drop(encoder);
