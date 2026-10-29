@@ -221,51 +221,6 @@ pub struct RenderTestGraphicSpriteLayout {
 }
 
 #[cfg(feature = "render-test-hooks")]
-pub fn render_test_content_layout(
-    media: &JagFile,
-    keys: &[(String, i32)],
-) -> Option<RenderTestGraphicSpriteLayout> {
-    let mut cache = GraphicSpriteCache::new();
-    for (name, index) in keys {
-        if cache
-            .entries
-            .iter()
-            .any(|entry| entry.name == *name && entry.index == *index)
-        {
-            continue;
-        }
-        cache.entries.reserve(1);
-        cache.entries.push(Entry {
-            name: name.to_owned(),
-            index: *index,
-            sprite: Pix32::depack(media, name, *index),
-            _key_charge: None,
-            _pixel_charge: None,
-        });
-    }
-    let entry_bytes = cache.entries.capacity().checked_mul(size_of::<Entry>())?;
-    let key_bytes = cache.entries.iter().try_fold(0usize, |total, entry| {
-        total.checked_add(entry.name.capacity())
-    })?;
-    let sprite_pixel_bytes = cache.entries.iter().try_fold(0usize, |total, entry| {
-        total.checked_add(
-            entry
-                .sprite
-                .as_ref()
-                .map_or(0, |sprite| vec_capacity_bytes(&sprite.data)),
-        )
-    })?;
-    Some(RenderTestGraphicSpriteLayout {
-        unique_keys: cache.entries.len(),
-        entry_bytes,
-        key_bytes,
-        sprite_pixel_bytes,
-        retained_bytes: cache.retained_bytes(),
-        temp_models_peak_bytes: 0,
-    })
-}
-
-#[cfg(feature = "render-test-hooks")]
 pub fn render_test_scoped_content_layout(
     cache_dir: &str,
     keys: &[(String, i32)],

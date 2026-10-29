@@ -1261,7 +1261,7 @@ fn cpu_freeze_appear_move_remove_restores_clean_scene() {
     let _host = HostOverlayScope::enter(true);
     let mut client = empty_client();
     prepare_cpu_scene(&mut client);
-    client.hosted_animation_cycles = true;
+    client.advance_hosted_animations(false);
     let mut renderer = Renderer::new(false);
     let _ = cpu_frame(renderer.mainredraw(&mut client));
     assert!(renderer.has_valid_scene());
