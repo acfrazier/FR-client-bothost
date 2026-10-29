@@ -931,6 +931,10 @@ fn scoped_hook_guards_unwind_without_gpu() {
     let _failure = test_hooks::resource_failure_at(SceneTestPoint::BeforeTerminal);
 }
 fn prepare_cpu_scene(client: &mut Client) {
+    prepare_cpu_scene_with_colour(client, 25700);
+}
+
+fn prepare_cpu_scene_with_colour(client: &mut Client, colour: i32) {
     client::graphics::Pix3D::init_colour_table(0.6);
     client.ingame = true;
     client.draw = true;
@@ -957,14 +961,14 @@ fn prepare_cpu_scene(client: &mut Client) {
                 2000,
                 2000,
                 2000,
-                25700,
-                25700,
-                25700,
-                25700,
-                25700,
-                25700,
-                25700,
-                25700,
+                colour,
+                colour,
+                colour,
+                colour,
+                colour,
+                colour,
+                colour,
+                colour,
                 0,
                 0,
             );
@@ -1449,33 +1453,7 @@ fn cpu_distinct_heads_retain_independent_clean_scenes() {
     let mut first_client = empty_client();
     let mut second_client = empty_client();
     prepare_cpu_scene(&mut first_client);
-    prepare_cpu_scene(&mut second_client);
-    for x in 49..=51 {
-        for z in 49..=51 {
-            second_client.world.set_ground(
-                0,
-                x,
-                z,
-                TerrainOverlayShape::PLAIN,
-                0,
-                -1,
-                2000,
-                2000,
-                2000,
-                2000,
-                40300,
-                40300,
-                40300,
-                40300,
-                40300,
-                40300,
-                40300,
-                40300,
-                0,
-                0,
-            );
-        }
-    }
+    prepare_cpu_scene_with_colour(&mut second_client, 40300);
     let mut first = Renderer::new_prefer(false, false);
     let mut second = Renderer::new_prefer(false, false);
     for _ in 0..3 {
