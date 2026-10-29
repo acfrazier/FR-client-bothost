@@ -41,6 +41,23 @@ pub enum RenderFault {
     InjectedResourceLimit,
 }
 
+impl std::fmt::Display for RenderFault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Budget(limit) => std::fmt::Display::fmt(limit, f),
+            Self::CaptureContended => f.write_str("capture is busy"),
+            Self::AssetsContended => f.write_str("render assets are busy"),
+            Self::SceneLockContended => f.write_str("scene is busy"),
+            Self::PresentContended => f.write_str("presentation is busy"),
+            Self::PresentIdentityExhausted => f.write_str("presentation sequence is exhausted"),
+            Self::MailboxSequenceExhausted => f.write_str("frame mailbox sequence is exhausted"),
+            Self::PresentRetired => f.write_str("presentation has been retired"),
+            #[cfg(feature = "render-test-hooks")]
+            Self::InjectedResourceLimit => f.write_str("fixture render limit was reached"),
+        }
+    }
+}
+
 /// A wgpu texture view returned by the renderer. Direct display binding is
 /// available through `display_view`; host readback authority is only granted
 /// by a registered [`present::ConsumerRegistration`].
@@ -382,3 +399,39 @@ pub trait RenderBackend {
 pub use cpu::CpuBackend;
 pub use gpu::inject_device;
 pub use gpu::GpuBackend;
+
+#[cfg(test)]
+mod tests {
+    use super::RenderFault;
+    use crate::render::budget::{RenderLimit, RenderResource};
+
+    #[test]
+    fn render_fault_display_uses_operator_wording() {
+        for (fault, expected) in [
+            (RenderFault::CaptureContended, "capture is busy"),
+            (RenderFault::AssetsContended, "render assets are busy"),
+            (RenderFault::SceneLockContended, "scene is busy"),
+            (RenderFault::PresentContended, "presentation is busy"),
+            (
+                RenderFault::PresentIdentityExhausted,
+                "presentation sequence is exhausted",
+            ),
+            (
+                RenderFault::MailboxSequenceExhausted,
+                "frame mailbox sequence is exhausted",
+            ),
+            (RenderFault::PresentRetired, "presentation has been retired"),
+            (
+                RenderFault::Budget(RenderLimit::new(RenderResource::Capture, 2, 1)),
+                "capture budget exceeded: requested 2 bytes, maximum 1 bytes",
+            ),
+        ] {
+            assert_eq!(fault.to_string(), expected);
+        }
+        #[cfg(feature = "render-test-hooks")]
+        assert_eq!(
+            RenderFault::InjectedResourceLimit.to_string(),
+            "fixture render limit was reached",
+        );
+    }
+}
