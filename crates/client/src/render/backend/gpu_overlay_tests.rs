@@ -1204,12 +1204,10 @@ fn busy_ship_glider_modal_minimenu_layers_are_current() {
     let _host = HostOverlayScope::enter();
     let mut backend = GpuBackend::try_new().expect("GPU required for retained overlay proof");
     let mut renderer = Renderer::new(false);
-    renderer.area_game = Some(PixMap::new(SCENE_W as i32, SCENE_H as i32));
     let mut media = crate::render::media::Media::empty();
     let mut crown = Pix32::new(3, 3);
     crown.data.fill(0xff00ff);
     media.headicons[2] = Some(crown);
-    renderer.media = std::sync::Arc::new(media);
     let mut core = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
@@ -1220,6 +1218,8 @@ fn busy_ship_glider_modal_minimenu_layers_are_current() {
         members: true,
         lowmem: false,
     });
+    renderer.prepare_game(&mut core);
+    renderer.media = std::sync::Arc::new(media);
     install_ship_glider_modal_fixture(&mut core);
     core.scene_state = 2;
     core.ingame = true;
@@ -1346,12 +1346,10 @@ fn cpu_freeze_ship_glider_modal_minimenu_layers_are_current() {
     let _host = HostOverlayScope::enter();
     let mut backend = super::super::cpu::CpuBackend::default();
     let mut renderer = Renderer::new(false);
-    renderer.area_game = Some(PixMap::new(SCENE_W as i32, SCENE_H as i32));
     let mut media = crate::render::media::Media::empty();
     let mut crown = Pix32::new(3, 3);
     crown.data.fill(0xff00ff);
     media.headicons[2] = Some(crown);
-    renderer.media = std::sync::Arc::new(media);
     let mut core = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
@@ -1362,6 +1360,8 @@ fn cpu_freeze_ship_glider_modal_minimenu_layers_are_current() {
         members: true,
         lowmem: false,
     });
+    renderer.prepare_game(&mut core);
+    renderer.media = std::sync::Arc::new(media);
     install_ship_glider_modal_fixture(&mut core);
     core.scene_state = 2;
     core.ingame = true;
