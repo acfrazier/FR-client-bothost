@@ -1229,7 +1229,7 @@ fn busy_ship_glider_modal_minimenu_layers_are_current() {
     core.cam_z = 7000;
     core.cam_pitch = 512;
     core.cam_yaw = 1200;
-    seed_retained_scene(&mut backend, [9000, 1000, 7000, 512, 1200]);
+    seed_retained_scene(&mut backend, [0; 5]);
     core.npc[0] = Some(Box::new(ClientNpc {
         r#type: Some(0),
         ..Default::default()
@@ -1366,6 +1366,14 @@ fn cpu_freeze_ship_glider_modal_minimenu_layers_are_current() {
     core.scene_state = 2;
     core.ingame = true;
     core.loop_cycle = 0;
+    core.cinema_cam = true;
+    [
+        core.cam_x,
+        core.cam_y,
+        core.cam_z,
+        core.cam_pitch,
+        core.cam_yaw,
+    ] = [0; 5];
     std::sync::Arc::get_mut(&mut core.cache)
         .expect("unique CPU overlay fixture cache")
         .npcs
@@ -1395,6 +1403,11 @@ fn cpu_freeze_ship_glider_modal_minimenu_layers_are_current() {
     assert_eq!(backend.scene_progress(), SceneProgress::Rebuilt);
     assert_eq!(backend.retained_storage_allocations(), 1);
     let live_scene_cycle = renderer.scene_cycle;
+    assert_eq!(
+        renderer.area_game.as_ref().expect("game surface").pixels[93 * SCENE_W as usize + 397],
+        0xff00ff,
+        "the completed scene contains the original hint at the fixed camera projection"
+    );
 
     core.scene_state = 1;
     core.cam_x = 9000;
