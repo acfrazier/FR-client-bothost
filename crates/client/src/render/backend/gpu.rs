@@ -420,7 +420,6 @@ struct GpuContext {
     assets: Arc<Mutex<GpuAssets>>,
     render_budget: Option<RenderBudget>,
     model_bind_group: wgpu::BindGroup,
-    model_bind_group_layout: wgpu::BindGroupLayout,
     scene_data_layout: wgpu::BindGroupLayout,
     pipeline_scene: wgpu::RenderPipeline,
     chrome_layout: wgpu::BindGroupLayout,
@@ -573,7 +572,6 @@ impl GpuContext {
             assets,
             render_budget,
             model_bind_group,
-            model_bind_group_layout,
             scene_data_layout,
             pipeline_scene,
             nav_pipeline,
@@ -1783,7 +1781,16 @@ impl GpuBackend {
 
         let key = NavProjectionKey::from_client(core);
         if self.nav_projection_key != Some(key) {
-            crate::render::nav_debug::build_gpu_mesh(core, r, &mut self.nav_mesh);
+            if let Err(error) =
+                crate::render::nav_debug::build_gpu_mesh(core, r, &mut self.nav_mesh)
+            {
+                self.last_render_fault = Some(discard_failed_nav_mesh(
+                    &mut self.nav_mesh,
+                    &mut self.nav_projection_key,
+                    error,
+                ));
+                return;
+            }
             self.nav_projection_key = Some(key);
             if self.nav_mesh.vertices.is_empty() {
                 self.nav_mesh.release();
@@ -1888,6 +1895,9 @@ impl GpuBackend {
         test_hooks::at(test_hooks::SceneTestPoint::OverlayEntry);
         if compose == SceneCompose::Rebuilt {
             self.render_nav_overlay(core, r);
+            if self.last_render_fault.is_some() {
+                return;
+            }
         }
         let host_overlays = super::cpu::host_overlays_active();
         if host_overlays || should_cls_scene_overlays(self.last_kind, core.scene_state) {
@@ -1921,6 +1931,15 @@ impl GpuBackend {
         }
         drop(_cov_guard);
     }
+}
+fn discard_failed_nav_mesh(
+    mesh: &mut crate::render::nav_debug::NavMesh,
+    projection_key: &mut Option<NavProjectionKey>,
+    error: RenderLimit,
+) -> RenderFault {
+    mesh.release();
+    *projection_key = None;
+    RenderFault::Budget(error)
 }
 
 /// The scene pipeline: the captured painter-ordered triangles, alpha-blended
@@ -3074,6 +3093,35 @@ mod tests {
     use crate::graphics::PixMap;
     use crate::render::backend::{FrameKind, RenderBackend};
     use crate::render::Renderer;
+    #[test]
+    fn failed_nav_projection_discards_partial_mesh_and_retries_projection() {
+        let mut mesh = crate::render::nav_debug::NavMesh::default();
+        mesh.vertices.push(crate::render::nav_debug::NavVertex {
+            x: 1.0,
+            y: 2.0,
+            rgba: [3, 4, 5, 6],
+        });
+        let key = super::NavProjectionKey {
+            cam_x: 0,
+            cam_y: 0,
+            cam_z: 0,
+            cam_pitch: 0,
+            cam_yaw: 0,
+        };
+        let mut projection_key = Some(key);
+        let error = crate::render::budget::RenderLimit::new(
+            crate::render::budget::RenderResource::NavVertices,
+            64,
+            32,
+        );
+
+        let fault = super::discard_failed_nav_mesh(&mut mesh, &mut projection_key, error);
+
+        assert_eq!(fault, crate::render::backend::RenderFault::Budget(error));
+        assert!(mesh.vertices.is_empty());
+        assert_eq!(mesh.vertices.capacity(), 0);
+        assert_eq!(projection_key, None);
+    }
 
     #[test]
     fn gpu_vertex_storage_requirement_rejects_unsupported_adapters() {

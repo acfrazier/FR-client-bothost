@@ -59,7 +59,7 @@ pub struct TextureHandle {
 
 impl TextureHandle {
     /// Construct a successfully submitted GPU presentation.
-    pub(crate) fn presented(
+    fn presented(
         device: wgpu::Device,
         queue: wgpu::Queue,
         view: wgpu::TextureView,
@@ -109,7 +109,7 @@ impl TextureHandle {
 
     /// An output whose final present copy was refused. Its display view is
     /// the prior stable texture and it cannot publish a new consumer token.
-    pub(crate) fn nonfresh(
+    fn nonfresh(
         device: wgpu::Device,
         queue: wgpu::Queue,
         view: wgpu::TextureView,

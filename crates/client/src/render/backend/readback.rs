@@ -403,7 +403,7 @@ fn begin_map(
     permit: ReadbackPermit,
 ) -> ReadbackStorage {
     let (sender, completion) = mpsc::channel();
-    #[cfg(test)]
+    #[cfg(all(test, feature = "render-test-hooks"))]
     buffer
         .slice(..)
         .map_async(wgpu::MapMode::Read, move |result| {
@@ -411,7 +411,7 @@ fn begin_map(
                 let _ = sender.send(result);
             }
         });
-    #[cfg(not(test))]
+    #[cfg(not(all(test, feature = "render-test-hooks")))]
     buffer
         .slice(..)
         .map_async(wgpu::MapMode::Read, move |result| {
@@ -485,7 +485,7 @@ impl ConsumerFrame {
 
 /// Deterministically hold observation of one real map callback while leaving
 /// the driver callback itself free to return.
-#[cfg(test)]
+#[cfg(all(test, feature = "render-test-hooks"))]
 pub(crate) mod test_hooks {
     use super::*;
 

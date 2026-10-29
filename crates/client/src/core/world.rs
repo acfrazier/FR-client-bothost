@@ -1297,7 +1297,9 @@ mod sprite_reuse_tests {
             let index = world
                 .set_sprite(192, 192, 0, 0, 1, 1, 1, 1, 2, 0, 0, true, 0, 0, 0, 0)
                 .unwrap();
-            render.set_sprite_model(&world, index, None);
+            render
+                .set_sprite_model(&world, index, None)
+                .expect("unscoped sprite clear stays within its render budget");
             assert_eq!(world.last_sprite_index(), Some(index));
             render.remove_sprites(&mut world);
             assert!(world.sprites[static_index].is_some());
@@ -1441,5 +1443,87 @@ mod static_loc_observation_tests {
         assert!(world.get_scene(0, 1, 1).is_none());
         world.reset_map();
         assert_eq!(world.static_loc_generation(), 3);
+    }
+}
+
+#[cfg(test)]
+mod overlay_scope_tests {
+    use super::*;
+    use crate::dash3d::TerrainOverlayShape;
+    use crate::render::budget::{RenderBudget, RenderBudgetLimits};
+
+    fn ground_world() -> World {
+        World::new(vec![vec![vec![0; 5]; 5]], 4, 1, 4)
+    }
+
+    fn stamp_plain(world: &mut World) {
+        world.set_ground(
+            0,
+            1,
+            1,
+            TerrainOverlayShape::PLAIN,
+            0,
+            -1,
+            0,
+            0,
+            0,
+            0,
+            100,
+            100,
+            100,
+            100,
+            100,
+            100,
+            100,
+            100,
+            0,
+            0,
+        );
+    }
+
+    #[test]
+    fn set_ground_under_scope_records_inputs_without_materializing_mesh() {
+        let budget = RenderBudget::fixture(RenderBudgetLimits::new(
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ));
+        let _scope = budget.scope();
+        let mut world = ground_world();
+        stamp_plain(&mut world);
+        let (stamped, quick, ground) = match world.square(0, 1, 1) {
+            Some(tile) => (
+                tile.overlay_stamp.is_some(),
+                tile.quick_ground.is_some(),
+                tile.ground.is_some(),
+            ),
+            None => panic!("scoped set_ground must create the stamped tile"),
+        };
+        assert!(stamped, "scoped set_ground records the overlay inputs");
+        assert!(
+            !quick && !ground,
+            "scoped set_ground must not materialize the render mesh"
+        );
+        assert!(
+            world.overlay_pending,
+            "scoped set_ground flags the pending host attach"
+        );
+    }
+
+    #[test]
+    fn set_ground_unscoped_still_materializes_mesh() {
+        let mut world = ground_world();
+        stamp_plain(&mut world);
+        let (stamped, quick) = match world.square(0, 1, 1) {
+            Some(tile) => (tile.overlay_stamp.is_some(), tile.quick_ground.is_some()),
+            None => panic!("unscoped set_ground must create the stamped tile"),
+        };
+        assert!(stamped, "legacy set_ground records the overlay inputs");
+        assert!(
+            quick,
+            "unscoped legacy set_ground materializes the render mesh"
+        );
+        assert!(
+            !world.overlay_pending,
+            "legacy set_ground leaves nothing pending"
+        );
     }
 }

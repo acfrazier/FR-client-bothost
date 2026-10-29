@@ -85,17 +85,15 @@ fn flat_world() -> World {
 /// model textures (ids 7 and 12) — the multi-texture case. Each face maps
 /// the quad through texture-mapping vertices 0/1/2.
 fn textured_wall_model() -> client::dash3d::Model {
-    let mut model = client::dash3d::Model {
-        num_points: 4,
-        point_x: Some(vec![-60, 60, 60, -60]),
-        point_y: Some(vec![0, 0, -180, -180]),
-        point_z: Some(vec![0, 0, 0, 0]),
-        num_faces: 2,
-        face_vertex_a: Some(vec![0, 0]),
-        face_vertex_b: Some(vec![1, 2]),
-        face_vertex_c: Some(vec![2, 3]),
-        ..Default::default()
-    };
+    let mut model = client::dash3d::Model::default();
+    model.num_points = 4;
+    model.point_x = Some(vec![-60, 60, 60, -60]);
+    model.point_y = Some(vec![0, 0, -180, -180]);
+    model.point_z = Some(vec![0, 0, 0, 0]);
+    model.num_faces = 2;
+    model.face_vertex_a = Some(vec![0, 0]);
+    model.face_vertex_b = Some(vec![1, 2]);
+    model.face_vertex_c = Some(vec![2, 3]);
     // `renderType & 0x3 == 2` = textured; `>> 2` = texture-vertex index 0.
     model.face_render_type = Some(vec![2, 2]);
     model.face_colour = Some(vec![TEXTURE_RED, TEXTURE_BLUE]);
@@ -202,25 +200,23 @@ fn address_probe_model(texture: i32, vertical_wrap_probe: bool) -> client::dash3
         points_y.extend([90, 90, -270]);
     }
     points_z.extend([0; 3]);
-    let mut model = client::dash3d::Model {
-        num_points: 7,
-        point_x: Some(points_x),
-        point_y: Some(points_y),
-        point_z: Some(points_z),
-        num_faces: 2,
-        face_vertex_a: Some(vec![0, 0]),
-        face_vertex_b: Some(vec![1, 2]),
-        face_vertex_c: Some(vec![2, 3]),
-        face_render_type: Some(vec![2, 2]),
-        face_colour: Some(vec![texture, texture]),
-        face_colour_a: Some(vec![TEX_SHADE, TEX_SHADE]),
-        face_colour_b: Some(vec![TEX_SHADE, TEX_SHADE]),
-        face_colour_c: Some(vec![TEX_SHADE, TEX_SHADE]),
-        face_texture_p: Some(vec![4]),
-        face_texture_m: Some(vec![5]),
-        face_texture_n: Some(vec![6]),
-        ..Default::default()
-    };
+    let mut model = client::dash3d::Model::default();
+    model.num_points = 7;
+    model.point_x = Some(points_x);
+    model.point_y = Some(points_y);
+    model.point_z = Some(points_z);
+    model.num_faces = 2;
+    model.face_vertex_a = Some(vec![0, 0]);
+    model.face_vertex_b = Some(vec![1, 2]);
+    model.face_vertex_c = Some(vec![2, 3]);
+    model.face_render_type = Some(vec![2, 2]);
+    model.face_colour = Some(vec![texture, texture]);
+    model.face_colour_a = Some(vec![TEX_SHADE, TEX_SHADE]);
+    model.face_colour_b = Some(vec![TEX_SHADE, TEX_SHADE]);
+    model.face_colour_c = Some(vec![TEX_SHADE, TEX_SHADE]);
+    model.face_texture_p = Some(vec![4]);
+    model.face_texture_m = Some(vec![5]);
+    model.face_texture_n = Some(vec![6]);
     model.calc_bounding_cylinder();
     model
 }
@@ -245,10 +241,9 @@ fn probe_mesh(
     let mut world = flat_world();
     let mut rw = RenderWorld::new();
     if let Some(model) = model {
-        world
-            .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
-            .unwrap();
-        rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
+        world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+        rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None)
+            .expect("unscoped probe wall stays within its render budget");
     }
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
         .unwrap();
@@ -313,9 +308,7 @@ fn filter_probe_mesh(
     let mut world = flat_world();
     let mut rw = RenderWorld::new();
     if let Some(texture) = texture {
-        world
-            .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
-            .unwrap();
+        world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
         rw.set_wall_model(
             &world,
             0,
@@ -323,7 +316,8 @@ fn filter_probe_mesh(
             2,
             Some(SceneModel::Model(filter_probe_model(texture))),
             None,
-        );
+        )
+        .expect("unscoped filter probe wall stays within its render budget");
     }
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
         .unwrap();
@@ -380,18 +374,18 @@ fn animated_frame(
     client.cam_z = 192;
     client.cam_pitch = 128;
     client.world = flat_world();
-    client
+    client.world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+    renderer
         .world
-        .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
-        .unwrap();
-    renderer.world.set_wall_model(
-        &client.world,
-        0,
-        1,
-        2,
-        Some(SceneModel::Model(animated_wall_model())),
-        None,
-    );
+        .set_wall_model(
+            &client.world,
+            0,
+            1,
+            2,
+            Some(SceneModel::Model(animated_wall_model())),
+            None,
+        )
+        .expect("unscoped animated wall stays within its render budget");
     renderer.pix3d.textures[TEXTURE_ANIMATED as usize] = Some(animated_texture());
     renderer.pix3d.tex_pal[TEXTURE_ANIMATED as usize] = Some(vec![0, 0xff0000, 0x00ff00]);
     renderer.pix3d.cycle = 41;
@@ -425,9 +419,7 @@ fn textured_wall_mesh(
     pix: &mut Pix3DDraw,
 ) -> (RenderWorld, World, client::render::world::SceneMesh) {
     let mut world = flat_world();
-    world
-        .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
-        .unwrap();
+    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
     let mut rw = RenderWorld::new();
     rw.set_wall_model(
         &world,
@@ -436,7 +428,8 @@ fn textured_wall_mesh(
         2,
         Some(SceneModel::Model(textured_wall_model())),
         None,
-    );
+    )
+    .expect("unscoped textured wall stays within its render budget");
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
         .unwrap();
     let mut mesh = SceneMesh::default();
@@ -528,14 +521,13 @@ fn textured_type3_face_carries_tex_id_and_uv() {
     Pix3D::init_colour_table(0.6);
     let mut pix = textured_pix();
     let mut world = flat_world();
-    world
-        .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
-        .unwrap();
+    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
     let mut rw = RenderWorld::new();
     let mut model = textured_wall_model();
     // Both faces textured with a flat shade (renderType = 3 | 0<<2).
     model.face_render_type = Some(vec![3, 3]);
-    rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
+    rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None)
+        .expect("unscoped type-3 wall stays within its render budget");
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
         .unwrap();
     let mut mesh = SceneMesh::default();
@@ -582,26 +574,23 @@ fn wall_face_crossing_the_near_plane_still_emits() {
     pix.set_clipping(512, 334);
 
     let mut world = flat_world();
-    world
-        .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
-        .unwrap();
+    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
     let mut rw = RenderWorld::new();
-    let mut model = client::dash3d::Model {
-        num_points: 4,
-        point_x: Some(vec![-60, 60, 60, -60]),
-        point_y: Some(vec![0, 0, -180, -180]),
-        point_z: Some(vec![0, 0, 0, 0]),
-        num_faces: 2,
-        face_vertex_a: Some(vec![0, 0]),
-        face_vertex_b: Some(vec![1, 2]),
-        face_vertex_c: Some(vec![2, 3]),
-        face_colour_a: Some(vec![SHADE, SHADE]),
-        face_colour_b: Some(vec![SHADE, SHADE]),
-        face_colour_c: Some(vec![SHADE, SHADE]),
-        ..Default::default()
-    };
+    let mut model = client::dash3d::Model::default();
+    model.num_points = 4;
+    model.point_x = Some(vec![-60, 60, 60, -60]);
+    model.point_y = Some(vec![0, 0, -180, -180]);
+    model.point_z = Some(vec![0, 0, 0, 0]);
+    model.num_faces = 2;
+    model.face_vertex_a = Some(vec![0, 0]);
+    model.face_vertex_b = Some(vec![1, 2]);
+    model.face_vertex_c = Some(vec![2, 3]);
+    model.face_colour_a = Some(vec![SHADE, SHADE]);
+    model.face_colour_b = Some(vec![SHADE, SHADE]);
+    model.face_colour_c = Some(vec![SHADE, SHADE]);
     model.calc_bounding_cylinder();
-    rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
+    rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None)
+        .expect("unscoped near-plane wall stays within its render budget");
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
         .unwrap();
     // Camera 40 units in front of the wall (z=320): the base is in front
@@ -649,28 +638,25 @@ fn gpu_gouraud_face_shades_like_the_colour_table() {
         return;
     };
     // A one-face gouraud wall with a known 16-bit shade.
-    let mut model = client::dash3d::Model {
-        num_points: 4,
-        point_x: Some(vec![-60, 60, 60, -60]),
-        point_y: Some(vec![0, 0, -180, -180]),
-        point_z: Some(vec![0, 0, 0, 0]),
-        num_faces: 2,
-        face_vertex_a: Some(vec![0, 0]),
-        face_vertex_b: Some(vec![1, 2]),
-        face_vertex_c: Some(vec![2, 3]),
-        face_colour_a: Some(vec![SHADE, SHADE]),
-        face_colour_b: Some(vec![SHADE, SHADE]),
-        face_colour_c: Some(vec![SHADE, SHADE]),
-        ..Default::default()
-    };
+    let mut model = client::dash3d::Model::default();
+    model.num_points = 4;
+    model.point_x = Some(vec![-60, 60, 60, -60]);
+    model.point_y = Some(vec![0, 0, -180, -180]);
+    model.point_z = Some(vec![0, 0, 0, 0]);
+    model.num_faces = 2;
+    model.face_vertex_a = Some(vec![0, 0]);
+    model.face_vertex_b = Some(vec![1, 2]);
+    model.face_vertex_c = Some(vec![2, 3]);
+    model.face_colour_a = Some(vec![SHADE, SHADE]);
+    model.face_colour_b = Some(vec![SHADE, SHADE]);
+    model.face_colour_c = Some(vec![SHADE, SHADE]);
     model.calc_bounding_cylinder();
 
     let mut world = flat_world();
-    world
-        .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
-        .unwrap();
+    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
     let mut rw = RenderWorld::new();
-    rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
+    rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None)
+        .expect("unscoped gouraud wall stays within its render budget");
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
         .unwrap();
     let mut pix = Pix3DDraw::default();
@@ -788,9 +774,7 @@ fn gpu_textured_shade_scales_texel_brightness() {
     for (shade, expected) in cases {
         let mut pix = textured_pix();
         let mut world = flat_world();
-        world
-            .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
-            .unwrap();
+        world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
         let mut rw = RenderWorld::new();
         let mut model = textured_wall_model();
         // Both faces red, the requested 0..127 texel brightness.
@@ -798,7 +782,8 @@ fn gpu_textured_shade_scales_texel_brightness() {
         model.face_colour_a = Some(vec![shade, shade]);
         model.face_colour_b = Some(vec![shade, shade]);
         model.face_colour_c = Some(vec![shade, shade]);
-        rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
+        rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None)
+            .expect("unscoped shaded wall stays within its render budget");
         rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
             .unwrap();
         let mut mesh = SceneMesh::default();
@@ -850,13 +835,12 @@ fn gpu_render_clamps_out_of_range_tex_id() {
     pix.tex_pal[49] = Some(vec![0, 0x00ff00]);
 
     let mut world = flat_world();
-    world
-        .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
-        .unwrap();
+    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
     let mut rw = RenderWorld::new();
     let mut model = textured_wall_model();
     model.face_colour = Some(vec![60, 60]); // both faces past the 50-texture range
-    rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
+    rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None)
+        .expect("unscoped clamped-id wall stays within its render budget");
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
         .unwrap();
     let mut mesh = SceneMesh::default();
@@ -913,13 +897,12 @@ fn gpu_lowmem_texture_samples_the_full_128px_layer() {
     pix.tex_pal[TEXTURE_QUAD as usize] = Some(vec![0, 0xff0000, 0x00ff00, 0x0000ff, 0xffff00]);
 
     let mut world = flat_world();
-    world
-        .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
-        .unwrap();
+    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
     let mut rw = RenderWorld::new();
     let mut model = textured_wall_model();
     model.face_colour = Some(vec![TEXTURE_QUAD, TEXTURE_QUAD]);
-    rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
+    rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None)
+        .expect("unscoped quadrant wall stays within its render budget");
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
         .unwrap();
     let mut mesh = SceneMesh::default();
@@ -1396,17 +1379,17 @@ fn composite_lands_the_scene_in_the_full_frame() {
     c.menu_width = 100;
     c.menu_height = 120;
     c.world = flat_world();
-    c.world
-        .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
-        .unwrap();
-    r.world.set_wall_model(
-        &c.world,
-        0,
-        1,
-        2,
-        Some(SceneModel::Model(textured_wall_model())),
-        None,
-    );
+    c.world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+    r.world
+        .set_wall_model(
+            &c.world,
+            0,
+            1,
+            2,
+            Some(SceneModel::Model(textured_wall_model())),
+            None,
+        )
+        .expect("unscoped game-draw wall stays within its render budget");
     r.pix3d.textures[TEXTURE_RED as usize] = Some(solid_texture(0xff0000));
     r.pix3d.tex_pal[TEXTURE_RED as usize] = Some(vec![0, 0xff0000]);
     r.pix3d.textures[TEXTURE_BLUE as usize] = Some(solid_texture(0x0000ff));

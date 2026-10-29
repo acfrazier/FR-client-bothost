@@ -78,10 +78,6 @@ impl RetainedPresentBudget {
         }
     }
 
-    #[cfg(test)]
-    pub(super) fn live_resources(&self) -> usize {
-        self.live_resources.load(Ordering::Acquire)
-    }
     fn is_configured(&self) -> bool {
         self.cap.get().is_some()
     }

@@ -38,19 +38,21 @@ fn pixels(model: &Model, pix: &mut Pix3DDraw, pitch: i32, gpu: bool) -> (Vec<i32
     if gpu {
         pix.capture = Some(SceneMesh::default());
     }
-    model.world_render(
-        pix,
-        &mut surface,
-        0,
-        Pix3D::sin_table()[pitch as usize],
-        Pix3D::cos_table()[pitch as usize],
-        0,
-        65536,
-        6912 - 6720,
-        -eye_y,
-        7552 - eye_z,
-        0,
-    );
+    model
+        .world_render(
+            pix,
+            &mut surface,
+            0,
+            Pix3D::sin_table()[pitch as usize],
+            Pix3D::cos_table()[pitch as usize],
+            0,
+            65536,
+            6912 - 6720,
+            -eye_y,
+            7552 - eye_z,
+            0,
+        )
+        .expect("unscoped world_render stays within its render budget");
     (out, pix.capture.take().unwrap_or_default())
 }
 
@@ -165,26 +167,24 @@ fn offline_fountain_views() {
 }
 
 fn textured_triangle(x: [i32; 3], y: [i32; 3], z: [i32; 3], shades: [i32; 3]) -> Model {
-    let mut model = Model {
-        num_points: 3,
-        point_x: Some(x.to_vec()),
-        point_y: Some(y.to_vec()),
-        point_z: Some(z.to_vec()),
-        num_faces: 1,
-        num_t: 1,
-        face_vertex_a: Some(vec![0]),
-        face_vertex_b: Some(vec![1]),
-        face_vertex_c: Some(vec![2]),
-        face_render_type: Some(vec![2]),
-        face_colour: Some(vec![24]),
-        face_colour_a: Some(vec![shades[0]]),
-        face_colour_b: Some(vec![shades[1]]),
-        face_colour_c: Some(vec![shades[2]]),
-        face_texture_p: Some(vec![0]),
-        face_texture_m: Some(vec![1]),
-        face_texture_n: Some(vec![2]),
-        ..Default::default()
-    };
+    let mut model = Model::default();
+    model.num_points = 3;
+    model.point_x = Some(x.to_vec());
+    model.point_y = Some(y.to_vec());
+    model.point_z = Some(z.to_vec());
+    model.num_faces = 1;
+    model.num_t = 1;
+    model.face_vertex_a = Some(vec![0]);
+    model.face_vertex_b = Some(vec![1]);
+    model.face_vertex_c = Some(vec![2]);
+    model.face_render_type = Some(vec![2]);
+    model.face_colour = Some(vec![24]);
+    model.face_colour_a = Some(vec![shades[0]]);
+    model.face_colour_b = Some(vec![shades[1]]);
+    model.face_colour_c = Some(vec![shades[2]]);
+    model.face_texture_p = Some(vec![0]);
+    model.face_texture_m = Some(vec![1]);
+    model.face_texture_n = Some(vec![2]);
     model.calc_bounding_cylinder();
     model
 }
@@ -201,19 +201,21 @@ fn triangle_pixels(
         if capture {
             pix.capture = Some(SceneMesh::default());
         }
-        model.world_render(
-            pix,
-            &mut surface,
-            0,
-            0,
-            65536,
-            0,
-            65536,
-            offset.0,
-            offset.1,
-            offset.2,
-            0,
-        );
+        model
+            .world_render(
+                pix,
+                &mut surface,
+                0,
+                0,
+                65536,
+                0,
+                65536,
+                offset.0,
+                offset.1,
+                offset.2,
+                0,
+            )
+            .expect("unscoped world_render stays within its render budget");
     }
     (cpu, pix.capture.take().unwrap())
 }
@@ -459,7 +461,8 @@ fn textured_lighting_survives_vertex_buffer_growth() {
     // buffer. The final lit triangle covers the tiny padding primitives.
     for i in 0..=15_000 {
         let face = if i == 15_000 { &model } else { &padding };
-        face.world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 768, 0);
+        face.world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 768, 0)
+            .expect("unscoped world_render stays within its render budget");
     }
     let mesh = pix.capture.take().unwrap();
     assert!(std::mem::size_of_val(mesh.vertices()) > 1 << 20);

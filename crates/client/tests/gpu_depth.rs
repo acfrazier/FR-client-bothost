@@ -343,22 +343,20 @@ fn make_scene(booth_tile_x: i32, include_wall: bool, include_booth: bool) -> Sce
     let z_tile = 2i32;
     let mut world = flat_world(6);
     if include_wall {
-        world
-            .set_wall(
-                0,
-                wall_tile,
-                z_tile,
-                2000,
-                4,
-                0,
-                scene_typecode(1602),
-                0,
-                2000,
-                2000,
-                2000,
-                2000,
-            )
-            .unwrap();
+        world.set_wall(
+            0,
+            wall_tile,
+            z_tile,
+            2000,
+            4,
+            0,
+            scene_typecode(1602),
+            0,
+            2000,
+            2000,
+            2000,
+            2000,
+        );
     }
     if include_booth {
         assert!(world.add_scenery(
@@ -388,13 +386,15 @@ fn make_scene(booth_tile_x: i32, include_wall: bool, include_booth: bool) -> Sce
             z_tile,
             Some(SceneModel::Model(wall)),
             None,
-        );
+        )
+        .expect("unscoped scene wall stays within its render budget");
     }
     if include_booth {
         let sprite_index = world.last_sprite_index().expect("booth sprite");
         let mut booth = prep_model(BOOTH_MODEL, LocAngle::EAST);
         paint_flat(&mut booth, BOOTH_RED);
-        rw.set_sprite_model(&world, sprite_index, Some(SceneModel::Model(booth)));
+        rw.set_sprite_model(&world, sprite_index, Some(SceneModel::Model(booth)))
+            .expect("unscoped scene booth stays within its render budget");
     }
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
         .unwrap();
@@ -669,22 +669,20 @@ fn booth_typecode2() -> i32 {
 
 fn place_wall_run(world: &mut World, z_tiles: std::ops::RangeInclusive<i32>, booth: bool) {
     for z in z_tiles {
-        world
-            .set_wall(
-                0,
-                2,
-                z,
-                2000,
-                4,
-                0,
-                scene_typecode(1602),
-                wall_typecode2(),
-                2000,
-                2000,
-                2000,
-                2000,
-            )
-            .unwrap();
+        world.set_wall(
+            0,
+            2,
+            z,
+            2000,
+            4,
+            0,
+            scene_typecode(1602),
+            wall_typecode2(),
+            2000,
+            2000,
+            2000,
+            2000,
+        );
     }
     if booth {
         assert!(world.add_scenery(
@@ -998,22 +996,20 @@ fn sharelight_wall_run_cpu_vs_gpu() {
     // south-edge wall's inner 8 units (wall z[-64,-48] after SOUTH rotate).
     eprintln!("--- same-tile SOUTH wall + booth ---");
     let mut world = flat_world(8);
-    world
-        .set_wall(
-            0,
-            2,
-            2,
-            2000,
-            8, // WSHAPE0[SOUTH]
-            0,
-            scene_typecode(1602),
-            (LocAngle::SOUTH << 6) + LocShape::WALL_STRAIGHT,
-            2000,
-            2000,
-            2000,
-            2000,
-        )
-        .unwrap();
+    world.set_wall(
+        0,
+        2,
+        2,
+        2000,
+        8, // WSHAPE0[SOUTH]
+        0,
+        scene_typecode(1602),
+        (LocAngle::SOUTH << 6) + LocShape::WALL_STRAIGHT,
+        2000,
+        2000,
+        2000,
+        2000,
+    );
     assert!(world.add_scenery(
         0,
         2,
@@ -1083,22 +1079,20 @@ fn sharelight_wall_run_cpu_vs_gpu() {
         "south_same",
     );
     let mut world = flat_world(8);
-    world
-        .set_wall(
-            0,
-            2,
-            2,
-            2000,
-            8,
-            0,
-            scene_typecode(1602),
-            (LocAngle::SOUTH << 6) + LocShape::WALL_STRAIGHT,
-            2000,
-            2000,
-            2000,
-            2000,
-        )
-        .unwrap();
+    world.set_wall(
+        0,
+        2,
+        2,
+        2000,
+        8,
+        0,
+        scene_typecode(1602),
+        (LocAngle::SOUTH << 6) + LocShape::WALL_STRAIGHT,
+        2000,
+        2000,
+        2000,
+        2000,
+    );
     assert!(world.add_scenery(
         0,
         2,
@@ -1147,22 +1141,20 @@ fn sharelight_wall_run_cpu_vs_gpu() {
     // Control: same camera, wall only. If the gray bands remain, they are
     // wall self-z-fight, not the booth.
     let mut world = flat_world(8);
-    world
-        .set_wall(
-            0,
-            2,
-            2,
-            2000,
-            8,
-            0,
-            scene_typecode(1602),
-            (LocAngle::SOUTH << 6) + LocShape::WALL_STRAIGHT,
-            2000,
-            2000,
-            2000,
-            2000,
-        )
-        .unwrap();
+    world.set_wall(
+        0,
+        2,
+        2,
+        2000,
+        8,
+        0,
+        scene_typecode(1602),
+        (LocAngle::SOUTH << 6) + LocShape::WALL_STRAIGHT,
+        2000,
+        2000,
+        2000,
+        2000,
+    );
     world.share_light_pending = true;
     let mut rw = RenderWorld::new();
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
@@ -1182,22 +1174,20 @@ fn sharelight_wall_run_cpu_vs_gpu() {
         "south_nobooth",
     );
     let mut world = flat_world(8);
-    world
-        .set_wall(
-            0,
-            2,
-            2,
-            2000,
-            8,
-            0,
-            scene_typecode(1602),
-            (LocAngle::SOUTH << 6) + LocShape::WALL_STRAIGHT,
-            2000,
-            2000,
-            2000,
-            2000,
-        )
-        .unwrap();
+    world.set_wall(
+        0,
+        2,
+        2,
+        2000,
+        8,
+        0,
+        scene_typecode(1602),
+        (LocAngle::SOUTH << 6) + LocShape::WALL_STRAIGHT,
+        2000,
+        2000,
+        2000,
+        2000,
+    );
     world.share_light_pending = true;
     let mut rw = RenderWorld::new();
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
@@ -1229,22 +1219,20 @@ fn sharelight_wall_run_cpu_vs_gpu() {
 
     // Recolor the booth red so poke-through is a pixel count, not a vibe.
     let mut world = flat_world(8);
-    world
-        .set_wall(
-            0,
-            2,
-            2,
-            2000,
-            8,
-            0,
-            scene_typecode(1602),
-            (LocAngle::SOUTH << 6) + LocShape::WALL_STRAIGHT,
-            2000,
-            2000,
-            2000,
-            2000,
-        )
-        .unwrap();
+    world.set_wall(
+        0,
+        2,
+        2,
+        2000,
+        8,
+        0,
+        scene_typecode(1602),
+        (LocAngle::SOUTH << 6) + LocShape::WALL_STRAIGHT,
+        2000,
+        2000,
+        2000,
+        2000,
+    );
     assert!(world.add_scenery(
         0,
         2,
@@ -1289,8 +1277,10 @@ fn sharelight_wall_run_cpu_vs_gpu() {
         .expect("booth");
     paint_flat(&mut booth, BOOTH_RED);
     let mut rw = RenderWorld::new();
-    rw.set_wall_model(&world, 0, 2, 2, Some(SceneModel::Model(wall)), None);
-    rw.set_sprite_model(&world, sprite_index, Some(SceneModel::Model(booth)));
+    rw.set_wall_model(&world, 0, 2, 2, Some(SceneModel::Model(wall)), None)
+        .expect("unscoped south wall stays within its render budget");
+    rw.set_sprite_model(&world, sprite_index, Some(SceneModel::Model(booth)))
+        .expect("unscoped booth sprite stays within its render budget");
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
         .unwrap();
     let mut pix = Pix3DDraw::default();
@@ -1325,22 +1315,20 @@ fn make_same_tile_west(include_wall: bool, include_booth: bool) -> Scene {
     let tile_z = 2i32;
     let mut world = flat_world(6);
     if include_wall {
-        world
-            .set_wall(
-                0,
-                tile_x,
-                tile_z,
-                2000,
-                1, // WSHAPE0[WEST]
-                0,
-                scene_typecode(1602),
-                LocAngle::WEST,
-                2000,
-                2000,
-                2000,
-                2000,
-            )
-            .unwrap();
+        world.set_wall(
+            0,
+            tile_x,
+            tile_z,
+            2000,
+            1, // WSHAPE0[WEST]
+            0,
+            scene_typecode(1602),
+            LocAngle::WEST,
+            2000,
+            2000,
+            2000,
+            2000,
+        );
     }
     if include_booth {
         assert!(world.add_scenery(
@@ -1370,13 +1358,15 @@ fn make_same_tile_west(include_wall: bool, include_booth: bool) -> Scene {
             tile_z,
             Some(SceneModel::Model(wall)),
             None,
-        );
+        )
+        .expect("unscoped west wall stays within its render budget");
     }
     if include_booth {
         let sprite_index = world.last_sprite_index().expect("booth sprite");
         let mut booth = prep_model(BOOTH_MODEL, LocAngle::EAST);
         paint_flat(&mut booth, BOOTH_RED);
-        rw.set_sprite_model(&world, sprite_index, Some(SceneModel::Model(booth)));
+        rw.set_sprite_model(&world, sprite_index, Some(SceneModel::Model(booth)))
+            .expect("unscoped booth sprite stays within its render budget");
     }
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
         .unwrap();
@@ -1488,20 +1478,18 @@ fn same_tile_west_wall_occludes_booth() {
 }
 
 fn flat_quad(half_width: i32, top: i32, bottom: i32, z: i32, shade: i32) -> Model {
-    let mut model = Model {
-        num_points: 4,
-        point_x: Some(vec![-half_width, half_width, half_width, -half_width]),
-        point_y: Some(vec![top, top, bottom, bottom]),
-        point_z: Some(vec![z; 4]),
-        num_faces: 2,
-        face_vertex_a: Some(vec![0, 0]),
-        face_vertex_b: Some(vec![1, 2]),
-        face_vertex_c: Some(vec![2, 3]),
-        face_colour_a: Some(vec![shade; 2]),
-        face_colour_b: Some(vec![shade; 2]),
-        face_colour_c: Some(vec![shade; 2]),
-        ..Default::default()
-    };
+    let mut model = Model::default();
+    model.num_points = 4;
+    model.point_x = Some(vec![-half_width, half_width, half_width, -half_width]);
+    model.point_y = Some(vec![top, top, bottom, bottom]);
+    model.point_z = Some(vec![z; 4]);
+    model.num_faces = 2;
+    model.face_vertex_a = Some(vec![0, 0]);
+    model.face_vertex_b = Some(vec![1, 2]);
+    model.face_vertex_c = Some(vec![2, 3]);
+    model.face_colour_a = Some(vec![shade; 2]);
+    model.face_colour_b = Some(vec![shade; 2]);
+    model.face_colour_c = Some(vec![shade; 2]);
     model.calc_bounding_cylinder();
     model
 }
@@ -1514,22 +1502,20 @@ fn embedded_decor_scene() -> Scene {
     let (tile_x, tile_z) = (2, 2);
     let mut world = World::new(vec![vec![vec![2000i32; 7]; 7]], 6, 1, 6);
     world.fill_base_level(0);
-    world
-        .set_wall(
-            0,
-            tile_x,
-            tile_z,
-            2000,
-            1,
-            0,
-            scene_typecode(1911),
-            0,
-            2000,
-            2000,
-            2000,
-            2000,
-        )
-        .unwrap();
+    world.set_wall(
+        0,
+        tile_x,
+        tile_z,
+        2000,
+        1,
+        0,
+        scene_typecode(1911),
+        0,
+        2000,
+        2000,
+        2000,
+        2000,
+    );
     {
         world.set_decor(
             0,
@@ -1556,7 +1542,8 @@ fn embedded_decor_scene() -> Scene {
         tile_z,
         Some(SceneModel::Model(flat_quad(64, -10, -230, 0, WALL_GREEN))),
         None,
-    );
+    )
+    .expect("unscoped embedded wall stays within its render budget");
     {
         rw.set_decor_model(
             &world,
@@ -1564,7 +1551,8 @@ fn embedded_decor_scene() -> Scene {
             tile_x,
             tile_z,
             SceneModel::Model(flat_quad(48, -10, -230, 16, BOOTH_RED)),
-        );
+        )
+        .expect("unscoped embedded decor stays within its render budget");
     }
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
         .unwrap();

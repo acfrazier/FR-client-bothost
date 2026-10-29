@@ -34,13 +34,11 @@ use client::dash3d::{
 #[test]
 fn rotate_x_axis_90_swaps_y_and_z() {
     let _r = Renderer::new(false);
-    let mut m = Model {
-        num_points: 1,
-        point_x: Some(vec![0]),
-        point_y: Some(vec![128]),
-        point_z: Some(vec![0]),
-        ..Default::default()
-    };
+    let mut m = Model::default();
+    m.num_points = 1;
+    m.point_x = Some(vec![0]);
+    m.point_y = Some(vec![128]);
+    m.point_z = Some(vec![0]);
     m.rotate_x_axis(512); // 90° in 2048-circle; sin≈65536, cos≈0
     let y = m.point_y.as_ref().unwrap()[0];
     let z = m.point_z.as_ref().unwrap()[0];
@@ -314,7 +312,8 @@ fn change_loc_unchecked_wall_straight_with_anim_sets_wall() {
     let mut rw = RenderWorld::new();
     rw.resolve_tile(&world, &cache, 0, 0, 2, 2).unwrap();
     assert!(matches!(
-        rw.wall_model1(&world, &cache, 0, 0, 2, 2),
+        rw.wall_model1(&world, &cache, 0, 0, 2, 2)
+            .expect("unscoped wall lookup stays within its render budget"),
         Some(SceneModel::LocAnim(_))
     ));
 }
@@ -572,11 +571,13 @@ fn loc_anim_door_packet_overrides_non_door_placement() {
     rw.resolve_tile(&c.world, &c.cache, c.loop_cycle, 0, 1, 1)
         .unwrap();
     let m1_anim = matches!(
-        rw.wall_model1(&c.world, &c.cache, c.loop_cycle, 0, 1, 1),
+        rw.wall_model1(&c.world, &c.cache, c.loop_cycle, 0, 1, 1)
+            .expect("unscoped wall lookup stays within its render budget"),
         Some(SceneModel::LocAnim(_))
     );
     let m2_anim = matches!(
-        rw.wall_model2(&c.world, &c.cache, c.loop_cycle, 0, 1, 1),
+        rw.wall_model2(&c.world, &c.cache, c.loop_cycle, 0, 1, 1)
+            .expect("unscoped wall lookup stays within its render budget"),
         Some(SceneModel::LocAnim(_))
     );
     assert!(m1_anim, "model1 must animate");

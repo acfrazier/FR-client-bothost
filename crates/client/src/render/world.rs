@@ -6796,14 +6796,12 @@ mod fill_java_order_tests {
     }
 
     fn ns_box_model() -> Model {
-        let mut model = Model {
-            num_points: 8,
-            point_x: Some(vec![-128, 128, 128, -128, -128, 128, 128, -128]),
-            point_y: Some(vec![0, 0, -200, -200, 0, 0, -200, -200]),
-            point_z: Some(vec![-128, -128, -128, -128, 128, 128, 128, 128]),
-            num_faces: 4,
-            ..Default::default()
-        };
+        let mut model = Model::default();
+        model.num_points = 8;
+        model.point_x = Some(vec![-128, 128, 128, -128, -128, 128, 128, -128]);
+        model.point_y = Some(vec![0, 0, -200, -200, 0, 0, -200, -200]);
+        model.point_z = Some(vec![-128, -128, -128, -128, 128, 128, 128, 128]);
+        model.num_faces = 4;
         model.face_vertex_a = Some(vec![0, 0, 4, 4]);
         model.face_vertex_b = Some(vec![1, 2, 6, 7]);
         model.face_vertex_c = Some(vec![2, 3, 5, 6]);
@@ -6816,14 +6814,12 @@ mod fill_java_order_tests {
     }
 
     fn corner_wall_model() -> Model {
-        let mut model = Model {
-            num_points: 4,
-            point_x: Some(vec![-60, 60, 60, -60]),
-            point_y: Some(vec![0, 0, -180, -180]),
-            point_z: Some(vec![0, 0, 0, 0]),
-            num_faces: 2,
-            ..Default::default()
-        };
+        let mut model = Model::default();
+        model.num_points = 4;
+        model.point_x = Some(vec![-60, 60, 60, -60]);
+        model.point_y = Some(vec![0, 0, -180, -180]);
+        model.point_z = Some(vec![0, 0, 0, 0]);
+        model.num_faces = 2;
         model.face_vertex_a = Some(vec![0, 0]);
         model.face_vertex_b = Some(vec![1, 2]);
         model.face_vertex_c = Some(vec![2, 3]);
@@ -6995,7 +6991,8 @@ mod fill_java_order_tests {
                 0,
                 (0, wall_x, wall_z),
                 false,
-            );
+            )
+            .expect("the leftover-corner fill stays within its render budget");
         }
         fill_trace::take()
     }
@@ -7129,6 +7126,7 @@ mod fill_java_order_tests {
 #[cfg(test)]
 mod budget_capture_tests {
     use super::*;
+    use crate::graphics::PixMap;
     use crate::render::budget::RenderBudgetLimits;
     use std::alloc::{GlobalAlloc, Layout, System};
     use std::cell::Cell;
@@ -7186,12 +7184,13 @@ mod budget_capture_tests {
         let _scope = budget.scope();
         let mut mesh = SceneMesh::default();
         mesh.prepare_budget().unwrap();
-        let source = Model {
-            num_points: 3,
-            point_x: Some(vec![0, 64, 0]),
-            point_y: Some(vec![0, 0, 64]),
-            point_z: Some(vec![128, 128, 128]),
-            ..Model::default()
+        let source = {
+            let mut model = Model::default();
+            model.num_points = 3;
+            model.point_x = Some(vec![0, 64, 0]);
+            model.point_y = Some(vec![0, 0, 64]);
+            model.point_z = Some(vec![128, 128, 128]);
+            model
         };
         let source_storage = source.point_x.as_ref().unwrap().as_ptr();
         let mesh_storage = mesh.vertices.as_ptr();
@@ -7353,6 +7352,51 @@ mod budget_capture_tests {
         assert!(world.dynamic_sprites.is_empty());
         assert_eq!(world.render_storage_bytes(), 0);
         assert_eq!(budget.for_resource(RenderResource::HeadMisc).live(), 0);
+    }
+
+    #[test]
+    fn obj_render_capture_budget_zero_rejects_and_retains_nothing() {
+        const SHADE: i32 = 200 * 128 + 100;
+        Pix3D::init_colour_table(0.6);
+        let budget = fixture(0, 0);
+        let _scope = budget.scope();
+        let mut mesh = SceneMesh::default();
+        mesh.prepare_budget().unwrap();
+        let mut pix = Pix3DDraw::default();
+        pix.trans = 0;
+        pix.capture = Some(mesh);
+        // Front-facing one-face model (a=0, b=2, c=1) on the ground plane;
+        // num_t writes the view-space coordinates the capture reads.
+        let mut model = Model::default();
+        model.num_points = 3;
+        model.point_x = Some(vec![-50, 50, 50]);
+        model.point_y = Some(vec![-50, -50, 50]);
+        model.point_z = Some(vec![0, 0, 0]);
+        model.num_faces = 1;
+        model.num_t = 1;
+        model.face_vertex_a = Some(vec![0]);
+        model.face_vertex_b = Some(vec![2]);
+        model.face_vertex_c = Some(vec![1]);
+        model.face_colour_a = Some(vec![SHADE]);
+        model.face_colour_b = Some(vec![SHADE]);
+        model.face_colour_c = Some(vec![SHADE]);
+        model.calc_bounding_cylinder();
+        let mut map = PixMap::new(512, 334);
+        let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
+        pix.set_render_clipping(&surface);
+        let error = model
+            .obj_render(&mut pix, &mut surface, 0, 0, 0, 0, 0, 0, 512)
+            .expect_err("zero capture budget must reject the obj_render face");
+        assert_eq!(error.resource(), RenderResource::Capture);
+        assert_eq!(
+            budget.for_resource(RenderResource::Capture).live(),
+            0,
+            "the rejected capture must retain no bytes"
+        );
+        assert!(
+            pix.capture.as_ref().unwrap().vertices().is_empty(),
+            "the rejected capture must retain no vertices"
+        );
     }
 }
 

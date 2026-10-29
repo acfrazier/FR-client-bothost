@@ -2806,7 +2806,7 @@ impl Renderer {
                         }
                     };
                     if let Some(model) = model {
-                        model.obj_render(
+                        if let Err(error) = model.obj_render(
                             &mut self.pix3d,
                             surface,
                             0,
@@ -2816,7 +2816,10 @@ impl Renderer {
                             0,
                             eye_y,
                             eye_z,
-                        );
+                        ) {
+                            surface.set_clipping(left, top, right, bottom);
+                            return Err(error);
+                        }
                     }
                 }
                 _ => {}

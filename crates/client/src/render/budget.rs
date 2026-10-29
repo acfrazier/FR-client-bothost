@@ -465,6 +465,7 @@ pub(crate) fn reserve_deque<T>(
 }
 
 /// Explicit ceilings for the resources participating in one render fixture.
+#[cfg(any(test, feature = "render-test-hooks"))]
 pub struct RenderBudgetLimits {
     capture: usize,
     nav_vertices: usize,
@@ -481,6 +482,7 @@ pub struct RenderBudgetLimits {
     context_gpu: usize,
 }
 
+#[cfg(any(test, feature = "render-test-hooks"))]
 impl RenderBudgetLimits {
     #[allow(clippy::too_many_arguments)]
     #[cfg(any(test, feature = "render-test-hooks"))]

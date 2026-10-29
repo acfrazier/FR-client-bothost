@@ -418,18 +418,16 @@ mod tests {
         }
 
         // Model vertex translate via frame A group 1 label 1.
-        let mut model = Model {
-            num_points: 2,
-            point_x: Some(vec![10, 100]),
-            point_y: Some(vec![20, 200]),
-            point_z: Some(vec![30, 300]),
-            label_vertices: Some(vec![
-                Some(vec![0]), // label 0
-                Some(vec![1]), // label 1 → point 1
-                Some(vec![0]),
-            ]),
-            ..Default::default()
-        };
+        let mut model = Model::default();
+        model.num_points = 2;
+        model.point_x = Some(vec![10, 100]);
+        model.point_y = Some(vec![20, 200]);
+        model.point_z = Some(vec![30, 300]);
+        model.label_vertices = Some(vec![
+            Some(vec![0]), // label 0
+            Some(vec![1]), // label 1 → point 1
+            Some(vec![0]),
+        ]);
         model.animate(ID_A as i32);
         // ORIGIN (label 0) updates origin only; TRANSLATE applies (1,-2,3) to label 1.
         // SCALE on label 0 with defaults 128 is identity relative to origin.
@@ -708,28 +706,26 @@ mod tests {
     /// group 2 / label 1 is secondary (walkmerge). Skeleton types
     /// ORIGIN, TRANSLATE, TRANSLATE.
     fn membership_model() -> Model {
-        Model {
-            num_points: 2,
-            point_x: Some(vec![0, 0]),
-            point_y: Some(vec![0, 0]),
-            point_z: Some(vec![0, 0]),
-            label_vertices: Some(vec![Some(vec![0]), Some(vec![1])]),
-            ..Default::default()
-        }
+        let mut model = Model::default();
+        model.num_points = 2;
+        model.point_x = Some(vec![0, 0]);
+        model.point_y = Some(vec![0, 0]);
+        model.point_z = Some(vec![0, 0]);
+        model.label_vertices = Some(vec![Some(vec![0]), Some(vec![1])]);
+        model
     }
 
     /// v0 origin source, v1 scaled walkmerge vertex, v2 primary-only
     /// translate target (not asserted: primary membership is the other
     /// fixture). Skeleton ORIGIN, TRANSLATE, SCALE.
     fn origin_model() -> Model {
-        Model {
-            num_points: 3,
-            point_x: Some(vec![10, 50, 0]),
-            point_y: Some(vec![20, 20, 0]),
-            point_z: Some(vec![30, 30, 0]),
-            label_vertices: Some(vec![Some(vec![0]), Some(vec![1]), Some(vec![2])]),
-            ..Default::default()
-        }
+        let mut model = Model::default();
+        model.num_points = 3;
+        model.point_x = Some(vec![10, 50, 0]);
+        model.point_y = Some(vec![20, 20, 0]);
+        model.point_z = Some(vec![30, 30, 0]);
+        model.label_vertices = Some(vec![Some(vec![0]), Some(vec![1]), Some(vec![2])]);
+        model
     }
 
     /// Primary walkmerge membership is Java `!=` (type 0 always).

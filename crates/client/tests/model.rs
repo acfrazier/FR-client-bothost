@@ -13,20 +13,18 @@ use client::graphics::{Pix2D, Pix3D, Pix3DDraw, PixMap};
 const SHADE: i32 = 200 * 128 + 100;
 
 fn one_face_model() -> Model {
-    let mut model = Model {
-        num_points: 3,
-        point_x: Some(vec![-50, 50, 50]),
-        point_y: Some(vec![-50, -50, 50]),
-        point_z: Some(vec![0, 0, 0]),
-        num_faces: 1,
-        face_vertex_a: Some(vec![0]),
-        face_vertex_b: Some(vec![2]),
-        face_vertex_c: Some(vec![1]),
-        face_colour_a: Some(vec![SHADE]),
-        face_colour_b: Some(vec![SHADE]),
-        face_colour_c: Some(vec![SHADE]),
-        ..Default::default()
-    };
+    let mut model = Model::default();
+    model.num_points = 3;
+    model.point_x = Some(vec![-50, 50, 50]);
+    model.point_y = Some(vec![-50, -50, 50]);
+    model.point_z = Some(vec![0, 0, 0]);
+    model.num_faces = 1;
+    model.face_vertex_a = Some(vec![0]);
+    model.face_vertex_b = Some(vec![2]);
+    model.face_vertex_c = Some(vec![1]);
+    model.face_colour_a = Some(vec![SHADE]);
+    model.face_colour_b = Some(vec![SHADE]);
+    model.face_colour_c = Some(vec![SHADE]);
     model.calc_bounding_cylinder();
     model
 }
@@ -63,7 +61,9 @@ fn world_render_with_mouse_check_picks_the_face_in_front_of_camera() {
         pix.mouse_y = 160;
 
         // Camera at the origin looking +z (eye yaw/pitch 0, model 500 away).
-        model.world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 500, 5);
+        model
+            .world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 500, 5)
+            .expect("unscoped world_render stays within its render budget");
     }
 
     assert!(pix.picked_count >= 1, "mouse over the model must pick it");
@@ -89,7 +89,9 @@ fn world_render_with_aabb_mouse_check_picks_without_triangle_test() {
         pix.mouse_check = true;
         pix.mouse_x = 256;
         pix.mouse_y = 160;
-        model.world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 500, 5);
+        model
+            .world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 500, 5)
+            .expect("unscoped world_render stays within its render budget");
     }
 
     assert!(pix.picked_count >= 1, "AABB pick must append the typecode");
@@ -109,7 +111,9 @@ fn world_render_miss_leaves_pick_unchanged() {
         pix.mouse_check = true;
         pix.mouse_x = 0; // top-left corner, far from the model
         pix.mouse_y = 0;
-        model.world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 500, 5);
+        model
+            .world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 500, 5)
+            .expect("unscoped world_render stays within its render budget");
     }
 
     assert_eq!(pix.picked_count, 0, "a miss must not pick anything");
@@ -129,19 +133,21 @@ fn world_render_off_screen_model_is_skipped() {
         pix.mouse_x = 256;
         pix.mouse_y = 160;
         // Model 20000 tiles left of the camera: outside the viewport cull.
-        model.world_render(
-            &mut pix,
-            &mut surface,
-            0,
-            0,
-            65536,
-            0,
-            65536,
-            -20000 * 128,
-            0,
-            500,
-            5,
-        );
+        model
+            .world_render(
+                &mut pix,
+                &mut surface,
+                0,
+                0,
+                65536,
+                0,
+                65536,
+                -20000 * 128,
+                0,
+                500,
+                5,
+            )
+            .expect("unscoped world_render stays within its render budget");
     }
 
     assert_eq!(pix.picked_count, 0);
@@ -165,7 +171,9 @@ fn world_render_skips_models_with_missing_points() {
         pix.mouse_check = true;
         pix.mouse_x = 256;
         pix.mouse_y = 160;
-        model.world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 500, 5);
+        model
+            .world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 500, 5)
+            .expect("unscoped world_render stays within its render budget");
     }
 
     assert_eq!(pix.picked_count, 0);
@@ -186,7 +194,9 @@ fn world_render_skips_faces_with_missing_colours() {
         pix.mouse_check = true;
         pix.mouse_x = 256;
         pix.mouse_y = 160;
-        model.world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 500, 5);
+        model
+            .world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 500, 5)
+            .expect("unscoped world_render stays within its render budget");
     }
 
     assert!(pix.picked_count >= 1, "the geometric pick still fires");
@@ -196,14 +206,12 @@ fn world_render_skips_faces_with_missing_colours() {
 #[test]
 fn obj_render_vertex_on_camera_plane_does_not_panic() {
     Pix3D::init_colour_table(0.6);
-    let mut model = Model {
-        num_points: 1,
-        point_x: Some(vec![10]),
-        point_y: Some(vec![10]),
-        point_z: Some(vec![0]),
-        num_faces: 0,
-        ..Default::default()
-    };
+    let mut model = Model::default();
+    model.num_points = 1;
+    model.point_x = Some(vec![10]);
+    model.point_y = Some(vec![10]);
+    model.point_z = Some(vec![0]);
+    model.num_faces = 0;
     model.calc_bounding_cylinder();
 
     let mut pix = Pix3DDraw::default();
@@ -213,7 +221,9 @@ fn obj_render_vertex_on_camera_plane_does_not_panic() {
         viewport(&mut pix, &mut surface);
         // The vertex lands exactly on the camera plane (view z == 0): the TS
         // `((x << 9) / z) | 0` is 0, so the port must not divide by zero.
-        model.obj_render(&mut pix, &mut surface, 0, 0, 0, 0, 0, 0, 0);
+        model
+            .obj_render(&mut pix, &mut surface, 0, 0, 0, 0, 0, 0, 0)
+            .expect("camera-plane vertex must not fail obj_render");
     }
     assert_eq!(pix.model_scratch.vertex_screen_x[0], 256);
     assert_eq!(pix.model_scratch.vertex_screen_y[0], 167);
@@ -222,20 +232,18 @@ fn obj_render_vertex_on_camera_plane_does_not_panic() {
 #[test]
 fn world_render_wide_winding_cross_does_not_overflow() {
     Pix3D::init_colour_table(0.6);
-    let mut model = Model {
-        num_points: 3,
-        point_x: Some(vec![20000, -20000, 500]),
-        point_y: Some(vec![10000, -10000, 500]),
-        point_z: Some(vec![0, 0, 0]),
-        num_faces: 1,
-        face_vertex_a: Some(vec![0]),
-        face_vertex_b: Some(vec![2]),
-        face_vertex_c: Some(vec![1]),
-        face_colour_a: Some(vec![SHADE]),
-        face_colour_b: Some(vec![SHADE]),
-        face_colour_c: Some(vec![SHADE]),
-        ..Default::default()
-    };
+    let mut model = Model::default();
+    model.num_points = 3;
+    model.point_x = Some(vec![20000, -20000, 500]);
+    model.point_y = Some(vec![10000, -10000, 500]);
+    model.point_z = Some(vec![0, 0, 0]);
+    model.num_faces = 1;
+    model.face_vertex_a = Some(vec![0]);
+    model.face_vertex_b = Some(vec![2]);
+    model.face_vertex_c = Some(vec![1]);
+    model.face_colour_a = Some(vec![SHADE]);
+    model.face_colour_b = Some(vec![SHADE]);
+    model.face_colour_c = Some(vec![SHADE]);
     // Vertices far from the camera axis: projected screen coordinates reach
     // ±100k, so the winding cross product overflows i32 (TS computes it in
     // doubles). relative_x = 20 * 65536 wraps to mid_x = 0 in the eye
@@ -250,19 +258,21 @@ fn world_render_wide_winding_cross_does_not_overflow() {
         pix.mouse_check = true;
         pix.mouse_x = 256;
         pix.mouse_y = 160;
-        model.world_render(
-            &mut pix,
-            &mut surface,
-            0,
-            0,
-            65536,
-            0,
-            65536,
-            20 * 65536,
-            0,
-            100,
-            5,
-        );
+        model
+            .world_render(
+                &mut pix,
+                &mut surface,
+                0,
+                0,
+                65536,
+                0,
+                65536,
+                20 * 65536,
+                0,
+                100,
+                5,
+            )
+            .expect("unscoped world_render stays within its render budget");
     }
 
     // No panic, and the (culled, clockwise-on-screen) face draws nothing.
@@ -276,20 +286,18 @@ fn world_render_wide_winding_cross_does_not_overflow() {
 #[test]
 fn depth_bucket_overflow_does_not_spill_into_next_row() {
     Pix3D::init_colour_table(0.6);
-    let mut model = Model {
-        num_points: 3,
-        point_x: Some(vec![-50, 50, 50]),
-        point_y: Some(vec![-50, -50, 50]),
-        point_z: Some(vec![0, 0, 0]),
-        num_faces: 600,
-        face_vertex_a: Some(vec![0; 600]),
-        face_vertex_b: Some(vec![2; 600]),
-        face_vertex_c: Some(vec![1; 600]),
-        face_colour_a: Some(vec![SHADE; 600]),
-        face_colour_b: Some(vec![SHADE; 600]),
-        face_colour_c: Some(vec![SHADE; 600]),
-        ..Default::default()
-    };
+    let mut model = Model::default();
+    model.num_points = 3;
+    model.point_x = Some(vec![-50, 50, 50]);
+    model.point_y = Some(vec![-50, -50, 50]);
+    model.point_z = Some(vec![0, 0, 0]);
+    model.num_faces = 600;
+    model.face_vertex_a = Some(vec![0; 600]);
+    model.face_vertex_b = Some(vec![2; 600]);
+    model.face_vertex_c = Some(vec![1; 600]);
+    model.face_colour_a = Some(vec![SHADE; 600]);
+    model.face_colour_b = Some(vec![SHADE; 600]);
+    model.face_colour_c = Some(vec![SHADE; 600]);
     // 600 identical faces at one depth: more than the 512-slot bucket row.
     model.calc_bounding_cylinder();
 
@@ -298,7 +306,9 @@ fn depth_bucket_overflow_does_not_spill_into_next_row() {
     {
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
         viewport(&mut pix, &mut surface);
-        model.world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 500, 0);
+        model
+            .world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 500, 0)
+            .expect("unscoped world_render stays within its render budget");
     }
 
     // The count advances past the row width (like TS), but the face writes
@@ -311,21 +321,19 @@ fn depth_bucket_overflow_does_not_spill_into_next_row() {
 #[test]
 fn world_render_priority_model_draws_via_merge_buckets() {
     Pix3D::init_colour_table(0.6);
-    let mut model = Model {
-        num_points: 3,
-        point_x: Some(vec![-50, 50, 50]),
-        point_y: Some(vec![-50, -50, 50]),
-        point_z: Some(vec![0, 0, 0]),
-        num_faces: 2,
-        face_vertex_a: Some(vec![0, 0]),
-        face_vertex_b: Some(vec![2, 2]),
-        face_vertex_c: Some(vec![1, 1]),
-        face_colour_a: Some(vec![SHADE, SHADE]),
-        face_colour_b: Some(vec![SHADE, SHADE]),
-        face_colour_c: Some(vec![SHADE, SHADE]),
-        face_priority: Some(vec![10, 10]),
-        ..Default::default()
-    };
+    let mut model = Model::default();
+    model.num_points = 3;
+    model.point_x = Some(vec![-50, 50, 50]);
+    model.point_y = Some(vec![-50, -50, 50]);
+    model.point_z = Some(vec![0, 0, 0]);
+    model.num_faces = 2;
+    model.face_vertex_a = Some(vec![0, 0]);
+    model.face_vertex_b = Some(vec![2, 2]);
+    model.face_vertex_c = Some(vec![1, 1]);
+    model.face_colour_a = Some(vec![SHADE, SHADE]);
+    model.face_colour_b = Some(vec![SHADE, SHADE]);
+    model.face_colour_c = Some(vec![SHADE, SHADE]);
+    model.face_priority = Some(vec![10, 10]);
     // Two identical faces both at priority 10: they route through the
     // bucket-10 merge loop (and its rollover to bucket 11).
     model.calc_bounding_cylinder();
@@ -335,7 +343,9 @@ fn world_render_priority_model_draws_via_merge_buckets() {
     {
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
         viewport(&mut pix, &mut surface);
-        model.world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 500, 0);
+        model
+            .world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 500, 0)
+            .expect("unscoped world_render stays within its render budget");
     }
 
     let rgb = Pix3D::colour_table()[SHADE as usize];

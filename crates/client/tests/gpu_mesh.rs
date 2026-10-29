@@ -60,20 +60,18 @@ fn flat_world() -> World {
 
 /// Vertical south-facing wall quad (X/Y at z=0), shaded WALL_SHADE.
 fn south_wall_model() -> client::dash3d::Model {
-    let mut model = client::dash3d::Model {
-        num_points: 4,
-        point_x: Some(vec![-60, 60, 60, -60]),
-        point_y: Some(vec![0, 0, -180, -180]),
-        point_z: Some(vec![0, 0, 0, 0]),
-        num_faces: 2,
-        face_vertex_a: Some(vec![0, 0]),
-        face_vertex_b: Some(vec![1, 2]),
-        face_vertex_c: Some(vec![2, 3]),
-        face_colour_a: Some(vec![WALL_SHADE, WALL_SHADE]),
-        face_colour_b: Some(vec![WALL_SHADE, WALL_SHADE]),
-        face_colour_c: Some(vec![WALL_SHADE, WALL_SHADE]),
-        ..Default::default()
-    };
+    let mut model = client::dash3d::Model::default();
+    model.num_points = 4;
+    model.point_x = Some(vec![-60, 60, 60, -60]);
+    model.point_y = Some(vec![0, 0, -180, -180]);
+    model.point_z = Some(vec![0, 0, 0, 0]);
+    model.num_faces = 2;
+    model.face_vertex_a = Some(vec![0, 0]);
+    model.face_vertex_b = Some(vec![1, 2]);
+    model.face_vertex_c = Some(vec![2, 3]);
+    model.face_colour_a = Some(vec![WALL_SHADE, WALL_SHADE]);
+    model.face_colour_b = Some(vec![WALL_SHADE, WALL_SHADE]);
+    model.face_colour_c = Some(vec![WALL_SHADE, WALL_SHADE]);
     model.calc_bounding_cylinder();
     model
 }
@@ -101,9 +99,7 @@ fn scene_mesh_builds_ground_and_wall_triangles() {
     assert_ne!(ground_rgb, wall_rgb, "the fixture shades must differ");
 
     let mut world = flat_world();
-    world
-        .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
-        .unwrap();
+    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
     let mut rw = RenderWorld::new();
     rw.set_wall_model(
         &world,
@@ -112,7 +108,8 @@ fn scene_mesh_builds_ground_and_wall_triangles() {
         2,
         Some(SceneModel::Model(south_wall_model())),
         None,
-    );
+    )
+    .expect("unscoped scene wall stays within its render budget");
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
         .unwrap();
 
@@ -168,17 +165,15 @@ fn scene_mesh_builds_ground_and_wall_triangles() {
 /// out-of-range texture ids (60, past the 50-texture range, and -1): the
 /// GPU emitter must clamp the ids (49 and 0) and still emit the faces.
 fn out_of_range_texture_wall_model() -> client::dash3d::Model {
-    let mut model = client::dash3d::Model {
-        num_points: 4,
-        point_x: Some(vec![-60, 60, 60, -60]),
-        point_y: Some(vec![0, 0, -180, -180]),
-        point_z: Some(vec![0, 0, 0, 0]),
-        num_faces: 2,
-        face_vertex_a: Some(vec![0, 0]),
-        face_vertex_b: Some(vec![1, 2]),
-        face_vertex_c: Some(vec![2, 3]),
-        ..Default::default()
-    };
+    let mut model = client::dash3d::Model::default();
+    model.num_points = 4;
+    model.point_x = Some(vec![-60, 60, 60, -60]);
+    model.point_y = Some(vec![0, 0, -180, -180]);
+    model.point_z = Some(vec![0, 0, 0, 0]);
+    model.num_faces = 2;
+    model.face_vertex_a = Some(vec![0, 0]);
+    model.face_vertex_b = Some(vec![1, 2]);
+    model.face_vertex_c = Some(vec![2, 3]);
     // `renderType & 0x3 == 2` = textured; `>> 2` = texture-vertex index 0.
     model.face_render_type = Some(vec![2, 2]);
     model.face_colour = Some(vec![60, -1]);
@@ -200,9 +195,7 @@ fn out_of_range_texture_wall_model() -> client::dash3d::Model {
 fn textured_face_with_out_of_range_tex_id_still_emits() {
     Pix3D::init_colour_table(0.6);
     let mut world = flat_world();
-    world
-        .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
-        .unwrap();
+    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
     let mut rw = RenderWorld::new();
     rw.set_wall_model(
         &world,
@@ -211,7 +204,8 @@ fn textured_face_with_out_of_range_tex_id_still_emits() {
         2,
         Some(SceneModel::Model(out_of_range_texture_wall_model())),
         None,
-    );
+    )
+    .expect("unscoped textured wall stays within its render budget");
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
         .unwrap();
 
@@ -616,20 +610,18 @@ fn hsl_to_rgb_matches_colour_table() {
 /// RuneLite's GPU plugin never replaces clickboxes, and the CPU path only
 /// AABB-pretests then requires the projected face to contain the mouse.
 fn angled_door_model() -> client::dash3d::Model {
-    let mut model = client::dash3d::Model {
-        num_points: 4,
-        point_x: Some(vec![-64, 64, 64, -64]),
-        point_y: Some(vec![0, 0, -180, -180]),
-        point_z: Some(vec![0, 0, 0, 0]),
-        num_faces: 2,
-        face_vertex_a: Some(vec![0, 0]),
-        face_vertex_b: Some(vec![1, 2]),
-        face_vertex_c: Some(vec![2, 3]),
-        face_colour_a: Some(vec![WALL_SHADE, WALL_SHADE]),
-        face_colour_b: Some(vec![WALL_SHADE, WALL_SHADE]),
-        face_colour_c: Some(vec![WALL_SHADE, WALL_SHADE]),
-        ..Default::default()
-    };
+    let mut model = client::dash3d::Model::default();
+    model.num_points = 4;
+    model.point_x = Some(vec![-64, 64, 64, -64]);
+    model.point_y = Some(vec![0, 0, -180, -180]);
+    model.point_z = Some(vec![0, 0, 0, 0]);
+    model.num_faces = 2;
+    model.face_vertex_a = Some(vec![0, 0]);
+    model.face_vertex_b = Some(vec![1, 2]);
+    model.face_vertex_c = Some(vec![2, 3]);
+    model.face_colour_a = Some(vec![WALL_SHADE, WALL_SHADE]);
+    model.face_colour_b = Some(vec![WALL_SHADE, WALL_SHADE]);
+    model.face_colour_c = Some(vec![WALL_SHADE, WALL_SHADE]);
     model.calc_bounding_cylinder();
     model
 }
@@ -675,7 +667,8 @@ fn gpu_loc_pick_is_per_face_not_aabb() {
             0,
             DOOR_REL_Z,
             DOOR_TYPECODE,
-        );
+        )
+        .expect("unscoped door pick render stays within its render budget");
     }
     assert_eq!(
         pix.picked_count, 0,
@@ -692,19 +685,21 @@ fn gpu_loc_pick_is_per_face_not_aabb() {
         pix.mouse_check = true;
         pix.mouse_x = DOOR_BESIDE_MOUSE_X;
         pix.mouse_y = DOOR_BESIDE_MOUSE_Y;
-        aabb_door.world_render(
-            &mut pix,
-            &mut surface,
-            0,
-            0,
-            65536,
-            0,
-            65536,
-            DOOR_REL_X,
-            0,
-            DOOR_REL_Z,
-            DOOR_TYPECODE,
-        );
+        aabb_door
+            .world_render(
+                &mut pix,
+                &mut surface,
+                0,
+                0,
+                65536,
+                0,
+                65536,
+                DOOR_REL_X,
+                0,
+                DOOR_REL_Z,
+                DOOR_TYPECODE,
+            )
+            .expect("unscoped door pick render stays within its render budget");
     }
     assert!(
         pix.picked_count >= 1,
@@ -716,9 +711,7 @@ fn gpu_loc_pick_is_per_face_not_aabb() {
     // centre is inside the inflated AABB and outside the projected faces
     // (CPU loc pick misses; GPU AABB currently hits).
     let mut world = flat_world();
-    world
-        .set_wall(0, 1, 2, 2000, 8, 0, DOOR_TYPECODE, 0, 0, 0, 0, 0)
-        .unwrap();
+    world.set_wall(0, 1, 2, 2000, 8, 0, DOOR_TYPECODE, 0, 0, 0, 0, 0);
     let mut rw = RenderWorld::new();
     rw.set_wall_model(
         &world,
@@ -727,7 +720,8 @@ fn gpu_loc_pick_is_per_face_not_aabb() {
         2,
         Some(SceneModel::Model(angled_door_model())),
         None,
-    );
+    )
+    .expect("unscoped door wall stays within its render budget");
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
         .unwrap();
 
@@ -751,7 +745,8 @@ fn gpu_loc_pick_is_per_face_not_aabb() {
             50,
             128,
             DOOR_TYPECODE,
-        );
+        )
+        .expect("unscoped door pick render stays within its render budget");
     }
     assert_eq!(
         pix.picked_count, 0,
@@ -816,9 +811,7 @@ fn nav_debug_paint_does_not_enable_aabb_loc_pick() {
     }));
 
     let mut world = flat_world();
-    world
-        .set_wall(0, 1, 2, 2000, 8, 0, DOOR_TYPECODE, 0, 0, 0, 0, 0)
-        .unwrap();
+    world.set_wall(0, 1, 2, 2000, 8, 0, DOOR_TYPECODE, 0, 0, 0, 0, 0);
     let mut rw = RenderWorld::new();
     rw.set_wall_model(
         &world,
@@ -827,7 +820,8 @@ fn nav_debug_paint_does_not_enable_aabb_loc_pick() {
         2,
         Some(SceneModel::Model(angled_door_model())),
         None,
-    );
+    )
+    .expect("unscoped hull door wall stays within its render budget");
     rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
         .unwrap();
 
@@ -873,7 +867,8 @@ fn nav_debug_paint_does_not_enable_aabb_loc_pick() {
             0,
             DOOR_REL_Z,
             DOOR_TYPECODE,
-        );
+        )
+        .expect("unscoped door pick render stays within its render budget");
     }
     assert_eq!(
         pix.picked_count, 0,
@@ -927,7 +922,8 @@ fn loc_model_at_resolves_grounded_scenery_loc() {
         &world,
         sprite_index,
         Some(SceneModel::Model(angled_door_model())),
-    );
+    )
+    .expect("unscoped hull scenery sprite stays within its render budget");
 
     let (x, y, z, _yaw, resolved) = rw
         .loc_model_at(&world, &Cache::default(), 0, 0, 1, 2, 1531)

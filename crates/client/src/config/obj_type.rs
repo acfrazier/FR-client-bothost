@@ -725,7 +725,7 @@ impl ObjType {
                 obj.xof2d,
                 var22 + model.min_y / 2 + obj.yof2d,
                 var23 + obj.yof2d,
-            );
+            )?;
 
             for y in (0..32).rev() {
                 for x in (0..32).rev() {

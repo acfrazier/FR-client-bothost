@@ -864,8 +864,10 @@ mod tests {
         world.set_wall(0, 1, 0, 0, 0, 0, 1 << 14, 0, 0, 0, 0, 0);
 
         let mut rw1 = RenderWorld::new();
-        rw1.resolve_tile(&world, &cache, 0, 0, 0, 0);
-        rw1.resolve_tile(&world, &cache, 0, 0, 1, 0);
+        rw1.resolve_tile(&world, &cache, 0, 0, 0, 0)
+            .expect("unscoped tile resolve stays within its render budget");
+        rw1.resolve_tile(&world, &cache, 0, 0, 1, 0)
+            .expect("unscoped tile resolve stays within its render budget");
         assert_eq!(
             store().model_load_count(0),
             1,
@@ -873,8 +875,10 @@ mod tests {
         );
 
         let mut rw2 = RenderWorld::new();
-        rw2.resolve_tile(&world, &cache, 0, 0, 0, 0);
-        rw2.resolve_tile(&world, &cache, 0, 0, 1, 0);
+        rw2.resolve_tile(&world, &cache, 0, 0, 0, 0)
+            .expect("unscoped tile resolve stays within its render budget");
+        rw2.resolve_tile(&world, &cache, 0, 0, 1, 0)
+            .expect("unscoped tile resolve stays within its render budget");
         assert_eq!(
             store().model_load_count(0),
             1,
@@ -991,14 +995,16 @@ mod tests {
 
         // Wall: resolve model 100, mutate to the model-101 loc, re-resolve.
         world.set_wall(0, 0, 0, 0, 0, 0, 100 << 14, 0, 0, 0, 0, 0);
-        rw.resolve_tile(&world, &cache, 0, 0, 0, 0);
+        rw.resolve_tile(&world, &cache, 0, 0, 0, 0)
+            .expect("unscoped tile resolve stays within its render budget");
         assert_eq!(
             wall_points(&mut rw, &world, &cache),
             3,
             "the first set_wall resolves the model-100 wall"
         );
         world.set_wall(0, 0, 0, 0, 0, 0, 101 << 14, 0, 0, 0, 0, 0);
-        rw.resolve_tile(&world, &cache, 0, 0, 0, 0);
+        rw.resolve_tile(&world, &cache, 0, 0, 0, 0)
+            .expect("unscoped tile re-resolve stays within its render budget");
         assert_eq!(
             wall_points(&mut rw, &world, &cache),
             4,
@@ -1007,14 +1013,16 @@ mod tests {
 
         // Decor.
         world.set_decor(0, 0, 0, 0, 0, 0, 102 << 14, 0, 0, 0, 0, 0, 0, 0);
-        rw.resolve_tile(&world, &cache, 0, 0, 0, 0);
+        rw.resolve_tile(&world, &cache, 0, 0, 0, 0)
+            .expect("unscoped tile re-resolve stays within its render budget");
         assert_eq!(
             decor_points(&mut rw, &world, &cache),
             3,
             "set_decor resolves model 100"
         );
         world.set_decor(0, 0, 0, 0, 0, 0, 103 << 14, 0, 0, 0, 0, 0, 0, 0);
-        rw.resolve_tile(&world, &cache, 0, 0, 0, 0);
+        rw.resolve_tile(&world, &cache, 0, 0, 0, 0)
+            .expect("unscoped tile re-resolve stays within its render budget");
         assert_eq!(
             decor_points(&mut rw, &world, &cache),
             4,
@@ -1023,14 +1031,16 @@ mod tests {
 
         // Ground decor.
         world.set_ground_decor(0, 0, 0, 0, 104 << 14, 0, 0, 0, 0, 0);
-        rw.resolve_tile(&world, &cache, 0, 0, 0, 0);
+        rw.resolve_tile(&world, &cache, 0, 0, 0, 0)
+            .expect("unscoped tile re-resolve stays within its render budget");
         assert_eq!(
             gd_points(&mut rw, &world, &cache),
             3,
             "set_ground_decor resolves model 100"
         );
         world.set_ground_decor(0, 0, 0, 0, 105 << 14, 0, 0, 0, 0, 0);
-        rw.resolve_tile(&world, &cache, 0, 0, 0, 0);
+        rw.resolve_tile(&world, &cache, 0, 0, 0, 0)
+            .expect("unscoped tile re-resolve stays within its render budget");
         assert_eq!(
             gd_points(&mut rw, &world, &cache),
             4,
@@ -1088,13 +1098,15 @@ mod tests {
         world.fill_base_level(0);
         world.set_wall(0, 0, 0, 0, 0, 0, 100 << 14, 0, 0, 0, 0, 0);
         let mut rw = RenderWorld::new();
-        rw.resolve_tile(&world, &cache, 0, 0, 0, 0);
+        rw.resolve_tile(&world, &cache, 0, 0, 0, 0)
+            .expect("unscoped tile resolve stays within its render budget");
 
         // Mark the resolved wall with a sentinel shade so a re-decode (which
         // rebuilds an unlit model) is observable through the wall accessor.
         let mut marked = Model::load(100).expect("model 100 decodes");
         marked.face_colour_a = Some(vec![12345]);
-        rw.set_wall_model(&world, 0, 0, 0, Some(SceneModel::Model(marked)), None);
+        rw.set_wall_model(&world, 0, 0, 0, Some(SceneModel::Model(marked)), None)
+            .expect("unscoped wall mark stays within its render budget");
 
         // A dynamic sprite steps onto the tile (the player/NPC movement path).
         let index = world.add_dynamic(0, 64, 0, 64, 0, 0, 0, false);

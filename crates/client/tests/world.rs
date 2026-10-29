@@ -19,20 +19,18 @@ use client::render::RenderWorld;
 const SHADE: i32 = 200 * 128 + 100;
 
 fn one_face_model() -> Model {
-    let mut model = Model {
-        num_points: 3,
-        point_x: Some(vec![-50, 50, 50]),
-        point_y: Some(vec![-50, -50, 50]),
-        point_z: Some(vec![0, 0, 0]),
-        num_faces: 1,
-        face_vertex_a: Some(vec![0]),
-        face_vertex_b: Some(vec![2]),
-        face_vertex_c: Some(vec![1]),
-        face_colour_a: Some(vec![SHADE]),
-        face_colour_b: Some(vec![SHADE]),
-        face_colour_c: Some(vec![SHADE]),
-        ..Default::default()
-    };
+    let mut model = Model::default();
+    model.num_points = 3;
+    model.point_x = Some(vec![-50, 50, 50]);
+    model.point_y = Some(vec![-50, -50, 50]);
+    model.point_z = Some(vec![0, 0, 0]);
+    model.num_faces = 1;
+    model.face_vertex_a = Some(vec![0]);
+    model.face_vertex_b = Some(vec![2]);
+    model.face_vertex_c = Some(vec![1]);
+    model.face_colour_a = Some(vec![SHADE]);
+    model.face_colour_b = Some(vec![SHADE]);
+    model.face_colour_c = Some(vec![SHADE]);
     model.calc_bounding_cylinder();
     model
 }
@@ -128,18 +126,16 @@ fn place_scenery(
 /// `sharelight` path): `shared_point_normal` is retained for the
 /// `World.shareLight` merge, `face_colour_a` starts zeroed.
 fn normals_model() -> Model {
-    let mut model = Model {
-        num_points: 3,
-        point_x: Some(vec![-50, 50, 50]),
-        point_y: Some(vec![-50, -50, 50]),
-        point_z: Some(vec![0, 0, 0]),
-        num_faces: 1,
-        face_vertex_a: Some(vec![0]),
-        face_vertex_b: Some(vec![2]),
-        face_vertex_c: Some(vec![1]),
-        face_colour: Some(vec![SHADE]),
-        ..Default::default()
-    };
+    let mut model = Model::default();
+    model.num_points = 3;
+    model.point_x = Some(vec![-50, 50, 50]);
+    model.point_y = Some(vec![-50, -50, 50]);
+    model.point_z = Some(vec![0, 0, 0]);
+    model.num_faces = 1;
+    model.face_vertex_a = Some(vec![0]);
+    model.face_vertex_b = Some(vec![2]);
+    model.face_vertex_c = Some(vec![1]);
+    model.face_colour = Some(vec![SHADE]);
     model.calc_bounding_cylinder();
     model.calculate_normals(64, 768, -50, -10, -50, false);
     model
@@ -582,14 +578,12 @@ fn viewport(pix: &mut Pix3DDraw, surface: &mut Pix2D) {
 const WALL_SHADE: i32 = 40 * 128 + 80;
 
 fn south_wall_model(winding_ccw_from_south: bool) -> Model {
-    let mut model = Model {
-        num_points: 4,
-        point_x: Some(vec![-60, 60, 60, -60]),
-        point_y: Some(vec![0, 0, -180, -180]),
-        point_z: Some(vec![0, 0, 0, 0]),
-        num_faces: 2,
-        ..Default::default()
-    };
+    let mut model = Model::default();
+    model.num_points = 4;
+    model.point_x = Some(vec![-60, 60, 60, -60]);
+    model.point_y = Some(vec![0, 0, -180, -180]);
+    model.point_z = Some(vec![0, 0, 0, 0]);
+    model.num_faces = 2;
     // Viewed from -Z (camera south of the wall, looking north): CCW is
     // (0,1,2)+(0,2,3); CW is the reverse. Live walls being visible from
     // inside but eaten from outside is a winding/cull split.
@@ -1633,19 +1627,21 @@ fn render_all_non_flat_diagonal_quick_ground_uses_own_corners() {
         let mut surface = Pix2D::with_pixels(&mut flat_map.pixels, flat_map.width, flat_map.height);
         flat_pix.set_render_clipping(&surface);
         flat_pix.trans = 0;
-        flat_rw.render_all(
-            &mut flat_world,
-            &mut flat_pix,
-            &mut surface,
-            &Cache::default(),
-            0,
-            192,
-            0,
-            192,
-            0,
-            0,
-            512,
-        );
+        flat_rw
+            .render_all(
+                &mut flat_world,
+                &mut flat_pix,
+                &mut surface,
+                &Cache::default(),
+                0,
+                192,
+                0,
+                192,
+                0,
+                0,
+                512,
+            )
+            .expect("unscoped flat quick-ground render stays within its render budget");
     }
 
     let mut nonflat_world = diagonal_world(true);
@@ -1660,19 +1656,21 @@ fn render_all_non_flat_diagonal_quick_ground_uses_own_corners() {
         );
         nonflat_pix.set_render_clipping(&surface);
         nonflat_pix.trans = 0;
-        nonflat_rw.render_all(
-            &mut nonflat_world,
-            &mut nonflat_pix,
-            &mut surface,
-            &Cache::default(),
-            0,
-            192,
-            0,
-            192,
-            0,
-            0,
-            512,
-        );
+        nonflat_rw
+            .render_all(
+                &mut nonflat_world,
+                &mut nonflat_pix,
+                &mut surface,
+                &Cache::default(),
+                0,
+                192,
+                0,
+                192,
+                0,
+                0,
+                512,
+            )
+            .expect("unscoped non-flat quick-ground render stays within its render budget");
     }
 
     // Both renders must actually draw the textured ground ...
@@ -1754,14 +1752,12 @@ const NORTH_SHADE: i32 = 90 * 128 + 40;
 /// uses the same CCW-from-south winding as `south_wall_model(true)`; north
 /// wall at z=+128 is the reverse so it faces +Z.
 fn ns_box_model(sharelight_cube: bool) -> Model {
-    let mut model = Model {
-        num_points: 8,
-        point_x: Some(vec![-128, 128, 128, -128, -128, 128, 128, -128]),
-        point_y: Some(vec![0, 0, -200, -200, 0, 0, -200, -200]),
-        point_z: Some(vec![-128, -128, -128, -128, 128, 128, 128, 128]),
-        num_faces: 4,
-        ..Default::default()
-    };
+    let mut model = Model::default();
+    model.num_points = 8;
+    model.point_x = Some(vec![-128, 128, 128, -128, -128, 128, 128, -128]);
+    model.point_y = Some(vec![0, 0, -200, -200, 0, 0, -200, -200]);
+    model.point_z = Some(vec![-128, -128, -128, -128, 128, 128, 128, 128]);
+    model.num_faces = 4;
     // South (z=-128): (0,1,2)+(0,2,3). North (z=+128): reversed (4,6,5)+(4,7,6).
     model.face_vertex_a = Some(vec![0, 0, 4, 4]);
     model.face_vertex_b = Some(vec![1, 2, 6, 7]);

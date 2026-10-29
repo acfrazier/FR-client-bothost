@@ -2632,7 +2632,7 @@ impl Model {
         eye_x: i32,
         eye_y: i32,
         eye_z: i32,
-    ) {
+    ) -> Result<(), RenderLimit> {
         let sin_table = Pix3D::sin_table();
         let cos_table = Pix3D::cos_table();
         let sin_pitch = sin_table.get(pitch as usize).copied().unwrap_or(0);
@@ -2652,7 +2652,7 @@ impl Model {
         let (Some(point_x), Some(point_y), Some(point_z)) =
             (&self.point_x, &self.point_y, &self.point_z)
         else {
-            return;
+            return Ok(());
         };
 
         for v in 0..self.num_points as usize {
@@ -2739,7 +2739,7 @@ impl Model {
             }
         }
 
-        self.render2(pix, surface, false, false, 0);
+        self.render2(pix, surface, false, false, 0)
     }
 
     /// `Model.worldRender(yaw, sinEyePitch, cosEyePitch, sinEyeYaw,
