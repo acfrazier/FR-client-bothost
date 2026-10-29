@@ -1366,6 +1366,10 @@ fn cpu_freeze_ship_glider_modal_minimenu_layers_are_current() {
     core.scene_state = 2;
     core.ingame = true;
     core.loop_cycle = 0;
+    std::sync::Arc::get_mut(&mut core.cache)
+        .expect("unique CPU overlay fixture cache")
+        .npcs
+        .push(crate::config::NpcType::default());
     core.npc[0] = Some(Box::new(ClientNpc {
         r#type: Some(0),
         ..Default::default()

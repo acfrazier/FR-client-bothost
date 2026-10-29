@@ -691,7 +691,7 @@ impl ObjType {
         };
         let mut var10 = Pix32::new(32, 32);
         let mut raster_state = SpriteRasterState::new(pix3d);
-        raster_state.low_detail = false;
+        raster_state.pix3d.low_detail = false;
 
         {
             let mut target = Pix2D::with_pixels(&mut var10.data, 32, 32);

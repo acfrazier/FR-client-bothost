@@ -283,7 +283,8 @@ fn draw_interface_text_writes_pixels() {
 
     let mut map = PixMap::new(100, 50);
     let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
-    r.draw_interface(&mut c, 1, 0, 0, 0, &mut surface);
+    r.draw_interface(&mut c, 1, 0, 0, 0, &mut surface)
+        .expect("unscoped fixture interface draw succeeds");
     assert!(map.pixels.iter().any(|&p| p != 0));
 }
 
@@ -355,7 +356,8 @@ fn draw_graphic_writes_pixels() {
 
     let mut map = PixMap::new(190, 261);
     let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
-    r.draw_interface(&mut c, 1, 0, 0, 0, &mut surface);
+    r.draw_interface(&mut c, 1, 0, 0, 0, &mut surface)
+        .expect("unscoped fixture interface draw succeeds");
     assert!(
         map.pixels.iter().any(|&p| p != 0),
         "the TYPE_GRAPHIC sprite should plot into the surface"
@@ -909,7 +911,8 @@ fn draw_text(c: &mut Client, r: &mut Renderer, text: &IfType, m: &IfTypeMut) -> 
     c.set_iface_mut(2, m.clone());
     let mut map = PixMap::new(100, 50);
     let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
-    r.draw_interface(c, 1, 0, 0, 0, &mut surface);
+    r.draw_interface(c, 1, 0, 0, 0, &mut surface)
+        .expect("unscoped fixture interface draw succeeds");
     map
 }
 
@@ -1612,7 +1615,8 @@ fn draw_interface_inv_text_writes_obj_name() {
     }
     let mut pixels = vec![0i32; 200 * 50];
     let mut surface = Pix2D::with_pixels(&mut pixels, 200, 50);
-    r.draw_interface(&mut c, 1, 0, 0, 0, &mut surface);
+    r.draw_interface(&mut c, 1, 0, 0, 0, &mut surface)
+        .expect("unscoped fixture interface draw succeeds");
     assert!(
         pixels.iter().any(|&p| p != 0),
         "inv-text should plot the obj name"
@@ -2068,7 +2072,8 @@ fn hidden_layer_draws_when_hovered() {
     c.set_iface_mut(2, rect_mut);
     let mut pixels = vec![0i32; 20 * 20];
     let mut surface = Pix2D::with_pixels(&mut pixels, 20, 20);
-    r.draw_interface(&mut c, 1, 0, 0, 0, &mut surface);
+    r.draw_interface(&mut c, 1, 0, 0, 0, &mut surface)
+        .expect("unscoped fixture interface draw succeeds");
     assert_eq!(pixels[0] & 0xffffff, 0x112233);
 }
 
@@ -2155,13 +2160,15 @@ fn hovered_rect_uses_colour_over() {
 
     let mut plain = vec![0i32; 20 * 20];
     let mut plain_surface = Pix2D::with_pixels(&mut plain, 20, 20);
-    r.draw_interface(&mut c, 1, 0, 0, 0, &mut plain_surface);
+    r.draw_interface(&mut c, 1, 0, 0, 0, &mut plain_surface)
+        .expect("unscoped fixture interface draw succeeds");
     assert_eq!(plain[0] & 0xffffff, 0x112233);
 
     c.over_side_com_id = 2;
     let mut hovered = vec![0i32; 20 * 20];
     let mut hovered_surface = Pix2D::with_pixels(&mut hovered, 20, 20);
-    r.draw_interface(&mut c, 1, 0, 0, 0, &mut hovered_surface);
+    r.draw_interface(&mut c, 1, 0, 0, 0, &mut hovered_surface)
+        .expect("unscoped fixture interface draw succeeds");
     assert_eq!(hovered[0] & 0xffffff, 0xff0000);
 }
 
