@@ -189,13 +189,13 @@ fn dummy_handle() -> Option<TextureHandle> {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
-    Some(TextureHandle {
+    Some(TextureHandle::untracked(
         device,
         queue,
-        view: texture.create_view(&Default::default()),
-        width: 1,
-        height: 1,
-    })
+        texture.create_view(&Default::default()),
+        1,
+        1,
+    ))
 }
 
 impl RenderBackend for TextureBackend {
