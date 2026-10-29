@@ -14,7 +14,7 @@ fn frame(backend: &mut GpuBackend, core: &mut Client, r: &mut Renderer) -> Vec<i
         backend.scene(core, r, FrameKind::Game);
     } else {
         // Hold the 3D texture constant to isolate overlay vs mesh cadence.
-        backend.draw_scene_overlays(core, r);
+        backend.draw_scene_overlays(core, r, SceneCompose::Retained);
     }
     backend.composite_scene(core, r, FrameKind::Game);
     backend.chrome(core, r, FrameKind::Game);
@@ -113,7 +113,7 @@ fn npc_hint_production_gpu_blink_move_clear_cache_and_freeze() {
     backend.scene_ready = true;
     // Warm atlas with no visible hint; subsequent frames have no chrome flags.
     core.loop_cycle = 10;
-    backend.draw_scene_overlays(&mut core, &mut r);
+    backend.draw_scene_overlays(&mut core, &mut r, SceneCompose::Rebuilt);
     backend.composite_scene(&mut core, &mut r, FrameKind::Game);
     backend.chrome(&mut core, &mut r, FrameKind::Game);
     let FrameOutput::Texture(warm) = backend.finish(&mut r) else {
@@ -300,7 +300,7 @@ fn nav_overlay_bypasses_cpu_surface_and_coverage() {
     backend.scene_ready = true;
     backend.last_kind = FrameKind::Game;
 
-    backend.draw_scene_overlays(&mut core, &mut renderer);
+    backend.draw_scene_overlays(&mut core, &mut renderer, SceneCompose::Rebuilt);
     assert!(
         !backend.nav_mesh.vertices.is_empty(),
         "retained nav facts must become GPU primitives"
@@ -316,6 +316,21 @@ fn nav_overlay_bypasses_cpu_surface_and_coverage() {
     assert!(
         scene.iter().any(|&pixel| pixel != 0x0000ff),
         "GPU nav primitives must change the scene target"
+    );
+    for _ in 0..4 {
+        backend.draw_scene_overlays(&mut core, &mut renderer, SceneCompose::Retained);
+    }
+    let retained = TextureHandle {
+        device: backend.context.device.clone(),
+        queue: backend.context.queue.clone(),
+        view: backend.scene_view.clone(),
+        width: SCENE_W,
+        height: SCENE_H,
+    }
+    .read_back();
+    assert_eq!(
+        retained, scene,
+        "Retained overlay passes must not composite nav into the scene again"
     );
 
     assert!(
@@ -339,14 +354,14 @@ fn nav_overlay_bypasses_cpu_surface_and_coverage() {
         "static loc fixture must be added"
     );
     backend.nav_mesh.vertices.clear();
-    backend.draw_scene_overlays(&mut core, &mut renderer);
+    backend.draw_scene_overlays(&mut core, &mut renderer, SceneCompose::Rebuilt);
     assert!(
         !backend.nav_mesh.vertices.is_empty(),
         "a static loc change must invalidate projected nav geometry"
     );
 
     core.set_nav_debug_paint(Some(Default::default()));
-    backend.draw_scene_overlays(&mut core, &mut renderer);
+    backend.draw_scene_overlays(&mut core, &mut renderer, SceneCompose::Rebuilt);
     assert_eq!(
         backend.nav_mesh.retained_capacity(),
         0,
@@ -358,10 +373,10 @@ fn nav_overlay_bypasses_cpu_surface_and_coverage() {
     );
 
     core.set_nav_debug_paint(Some(paint));
-    backend.draw_scene_overlays(&mut core, &mut renderer);
+    backend.draw_scene_overlays(&mut core, &mut renderer, SceneCompose::Rebuilt);
     assert!(!backend.nav_mesh.vertices.is_empty());
     core.set_nav_debug_paint(None);
-    backend.draw_scene_overlays(&mut core, &mut renderer);
+    backend.draw_scene_overlays(&mut core, &mut renderer, SceneCompose::Rebuilt);
     assert_eq!(
         backend.nav_mesh.retained_capacity(),
         0,

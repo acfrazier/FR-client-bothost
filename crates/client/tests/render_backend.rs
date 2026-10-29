@@ -22,7 +22,9 @@ use std::rc::Rc;
 
 use client::client::{Client, ClientConfig};
 use client::graphics::PixMap;
-use client::render::backend::{BackendKind, FrameKind, FrameOutput, RenderBackend, TextureHandle};
+use client::render::backend::{
+    BackendKind, FrameKind, FrameOutput, RenderBackend, SceneProgress, TextureHandle,
+};
 use client::render::Renderer;
 use std::process::Command;
 
@@ -110,14 +112,17 @@ fn renderer_backend_selection() {
     // In-game frame: `mainredraw`'s `game_draw` path.
     let log = CallLog::default();
     let mut r = Renderer::with_backend(Box::new(StubBackend { log: log.clone() }), false);
+    assert_eq!(r.scene_progress(), SceneProgress::NoScene);
+    assert!(!r.has_valid_scene());
     let mut c = client();
     c.set_draw(true);
     c.ingame = true;
     let output = r.game_draw(&mut c);
     assert_eq!(*log.0.borrow(), ["begin", "scene", "chrome", "finish"]);
+    assert_eq!(r.scene_progress(), SceneProgress::NoScene);
+    assert!(!r.has_valid_scene());
     // The stub's own (backend-owned) output comes back untouched.
     assert!(matches!(output, FrameOutput::PixMap(_)));
-
     // Title frame: `mainredraw`'s `title_screen_draw` path routes the
     // same four stages.
     let log = CallLog::default();

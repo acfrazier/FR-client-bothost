@@ -7,18 +7,45 @@
 //! became `r.x` and `client` became `core`; nothing else changed, so the
 //! composited `draw_area` is byte-identical to the pre-task renderer.
 
+use std::sync::OnceLock;
+
 use crate::client::client::Client;
 use crate::graphics::{Colour, Pix2D, Pix3D};
-use crate::render::backend::{FrameKind, FrameOutput, RenderBackend};
+use crate::render::backend::{FrameKind, FrameOutput, RenderBackend, SceneProgress};
 use crate::render::draw::get_av_h;
 use crate::render::Renderer;
 use crate::util::JString;
 
+/// Whether the current CPU scene pass belongs to a host render head.
+static CPU_HOST_OVERLAYS: OnceLock<fn() -> bool> = OnceLock::new();
+
+/// Install the host render-state query once. Without it, CPU rendering stays standalone.
+pub fn set_cpu_host_overlay_hook(host_active: fn() -> bool) {
+    let _ = CPU_HOST_OVERLAYS.set(host_active);
+}
+
+pub(crate) fn host_overlays_active() -> bool {
+    CPU_HOST_OVERLAYS
+        .get()
+        .is_some_and(|host_active| host_active())
+}
+
 /// The software backend: draws with `Pix3D`/`Pix2D` into the renderer's
-/// framebuffers. Holds no state of its own — the renderer's draw state
-/// stays on `Renderer` (the tests read `area_game`/`area_side`/`pix3d`…
-/// as renderer fields), and each stage operates on it via `r`.
-pub struct CpuBackend;
+/// framebuffers. Its scalar scene state tracks the current paint and whether
+/// its last complete live scene can be frozen.
+pub struct CpuBackend {
+    scene_progress: SceneProgress,
+    valid_scene: bool,
+}
+
+impl Default for CpuBackend {
+    fn default() -> Self {
+        Self {
+            scene_progress: SceneProgress::NoScene,
+            valid_scene: false,
+        }
+    }
+}
 
 impl RenderBackend for CpuBackend {
     /// Frame start. In-game: `game_draw`'s pre-draw setup — the
@@ -29,6 +56,11 @@ impl RenderBackend for CpuBackend {
     /// a one-shot `draw_area` cls), then `prepare_title` rebuilding all nine
     /// title regions from shared media.
     fn begin(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
+        self.scene_progress = SceneProgress::NoScene;
+        if kind == FrameKind::Title || core.scene_state == 0 {
+            self.valid_scene = false;
+        }
+
         if kind == FrameKind::Title {
             if !core.ingame && core.redraw_frame {
                 r.unload_title();
@@ -130,7 +162,16 @@ impl RenderBackend for CpuBackend {
     /// (the main overlay and modal, TS 4250) draws into `area_game` before
     /// the blit.
     fn scene(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
-        if kind != FrameKind::Game || core.scene_state != 2 {
+        self.scene_progress = SceneProgress::NoScene;
+        if kind != FrameKind::Game {
+            return;
+        }
+        if core.scene_state != 2 {
+            if core.scene_state == 1 && self.valid_scene {
+                self.scene_progress = SceneProgress::Retained;
+            } else if core.scene_state == 0 {
+                self.valid_scene = false;
+            }
             return;
         }
 
@@ -243,6 +284,7 @@ impl RenderBackend for CpuBackend {
         let cache = &core.cache;
         let loop_cycle = core.loop_cycle;
         let (pix3d, world) = (&mut r.pix3d, &mut r.world);
+        let mut rendered = false;
         if let Some(game) = r.area_game.as_mut() {
             let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
             surface.cls();
@@ -260,6 +302,7 @@ impl RenderBackend for CpuBackend {
                 cam_yaw,
                 cam_pitch,
             );
+            rendered = true;
         }
         world.remove_sprites(&mut core.world);
 
@@ -282,6 +325,10 @@ impl RenderBackend for CpuBackend {
         core.cam_z = eye_z;
         core.cam_pitch = eye_pitch;
         core.cam_yaw = eye_yaw;
+        if rendered {
+            self.valid_scene = true;
+            self.scene_progress = SceneProgress::Rebuilt;
+        }
     }
 
     /// The (4, 4) `area_game` blit — the task-7 composite seam. The 3D
@@ -846,5 +893,12 @@ impl RenderBackend for CpuBackend {
     /// `GpuBackend` (task 7) returns `FrameOutput::Texture` instead.
     fn finish(&mut self, r: &mut Renderer) -> FrameOutput {
         FrameOutput::PixMap(r.draw_area.clone())
+    }
+    fn scene_progress(&self) -> SceneProgress {
+        self.scene_progress
+    }
+
+    fn has_valid_scene(&self) -> bool {
+        self.valid_scene
     }
 }

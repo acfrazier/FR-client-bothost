@@ -14,21 +14,51 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use client::client::{Client, ClientPlayer};
+use client::client::{Client, ClientConfig, ClientPlayer, ClientRevision};
+use client::dash3d::TerrainOverlayShape;
+use client::graphics::{PixFont, PixMap};
+use client::render::backend::cpu::set_cpu_host_overlay_hook;
 use client::render::backend::gpu::{
     current_scene_submit_result, set_scene_admission_hook, set_scene_workspace_hook,
     test_hooks::{self, SceneTestPoint, ScopedSceneTestHook},
     SceneAdmission, SceneSubmit,
 };
+use client::render::backend::{FrameOutput, SceneProgress};
+use client::render::media::Media;
+use client::render::Renderer;
 
 static HOOKS: LazyLock<()> = LazyLock::new(|| {
     set_scene_admission_hook(admission_dispatcher);
     set_scene_workspace_hook(workspace_dispatcher);
+    set_cpu_host_overlay_hook(host_overlays_dispatcher);
 });
 
 thread_local! {
     static ADMISSION: Cell<SceneAdmission> = const { Cell::new(SceneAdmission::Standalone) };
     static ACTIVE_RUN: RefCell<Option<Rc<RunContext>>> = const { RefCell::new(None) };
+    static HOST_OVERLAYS: Cell<bool> = const { Cell::new(false) };
+}
+
+fn host_overlays_dispatcher() -> bool {
+    HOST_OVERLAYS.get()
+}
+
+struct HostOverlayScope {
+    previous_active: bool,
+}
+
+impl HostOverlayScope {
+    fn enter(active: bool) -> Self {
+        Self {
+            previous_active: HOST_OVERLAYS.replace(active),
+        }
+    }
+}
+
+impl Drop for HostOverlayScope {
+    fn drop(&mut self) {
+        HOST_OVERLAYS.set(self.previous_active);
+    }
 }
 
 #[derive(Default)]
@@ -206,6 +236,32 @@ fn count_outer_hook(point: SceneTestPoint) {
 
 fn ensure_hooks() {
     let _ = &*HOOKS;
+}
+
+fn empty_client() -> Client {
+    let cache_dir = format!(
+        "{}/../../target/scene-progress-absent-cache-{}",
+        env!("CARGO_MANIFEST_DIR"),
+        std::process::id()
+    );
+    assert!(!std::path::Path::new(&cache_dir).exists());
+    Client::new_with_revision(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir,
+            members: true,
+            lowmem: false,
+        },
+        ClientRevision::R289,
+    )
+}
+
+fn submit_run_context() -> Rc<RunContext> {
+    Rc::new(RunContext {
+        observation: Arc::new(Observation::default()),
+        workspace: WorkspaceMode::Submit,
+    })
 }
 
 fn drain_lock_probes(observation: &Observation) {
@@ -870,4 +926,278 @@ fn scoped_hook_guards_unwind_without_gpu() {
     // A later scope can still be installed on this thread after the unwind.
     let _hook = test_hooks::install_for_thread(count_outer_hook);
     let _failure = test_hooks::resource_failure_at(SceneTestPoint::BeforeTerminal);
+}
+fn prepare_cpu_scene(client: &mut Client) {
+    client.ingame = true;
+    client.draw = true;
+    client.scene_state = 2;
+    client.local_player = Some(ClientPlayer::at(50, 50));
+    client.cinema_cam = true;
+    client.cam_x = 50 * 128 + 64;
+    client.cam_z = 50 * 128 + 64;
+    client.cam_y = 0;
+    client.cam_pitch = 512;
+    client.cam_yaw = 0;
+    client.world = client::core::World::new(vec![vec![vec![2000; 105]; 105]; 4], 104, 4, 104);
+    client.world.fill_base_level(0);
+    for x in 49..=51 {
+        for z in 49..=51 {
+            client.world.set_ground(
+                0,
+                x,
+                z,
+                TerrainOverlayShape::PLAIN,
+                0,
+                -1,
+                2000,
+                2000,
+                2000,
+                2000,
+                25700,
+                25700,
+                25700,
+                25700,
+                25700,
+                25700,
+                25700,
+                25700,
+                0,
+                0,
+            );
+        }
+    }
+}
+
+fn output_pixel(output: FrameOutput, x: usize, y: usize) -> i32 {
+    let FrameOutput::Texture(handle) = output else {
+        panic!("the GPU scene fixture must return a texture frame");
+    };
+    let width = handle.width as usize;
+    handle.read_back()[y * width + x]
+}
+
+#[test]
+fn cpu_scene_progress_tracks_actual_scene_state() {
+    let _gpu_serial = gpu_serial::lock();
+    let mut client = empty_client();
+    prepare_cpu_scene(&mut client);
+    let mut renderer = Renderer::new(false);
+    renderer.area_game = Some(PixMap::new(512, 334));
+
+    let _ = renderer.game_draw(&mut client);
+    assert_eq!(renderer.scene_progress(), SceneProgress::Rebuilt);
+    assert!(renderer.has_valid_scene());
+
+    client.scene_state = 1;
+    let _ = renderer.game_draw(&mut client);
+    assert_eq!(renderer.scene_progress(), SceneProgress::Retained);
+    assert!(renderer.has_valid_scene());
+
+    client.scene_state = 0;
+    let _ = renderer.game_draw(&mut client);
+    assert_eq!(renderer.scene_progress(), SceneProgress::NoScene);
+    assert!(!renderer.has_valid_scene());
+
+    client.scene_state = 2;
+    let _ = renderer.game_draw(&mut client);
+    assert_eq!(renderer.scene_progress(), SceneProgress::Rebuilt);
+    renderer.title_screen_draw(&mut client);
+    assert_eq!(renderer.scene_progress(), SceneProgress::NoScene);
+    assert!(!renderer.has_valid_scene());
+}
+
+fn loading_font() -> (PixFont, usize, usize) {
+    let text = "Loading - please wait.";
+    let mut font = PixFont::new();
+    font.height = 1;
+    for byte in text.bytes() {
+        let code = byte as usize;
+        font.char_advance[code] = 2;
+        if byte != b' ' {
+            font.char_mask[code] = vec![1];
+            font.char_mask_width[code] = 1;
+            font.char_mask_height[code] = 1;
+        }
+    }
+    let x = 4 + (256 - font.string_wid(Some(text)) / 2) as usize;
+    let y = 4 + (150 - font.height) as usize;
+    (font, x, y)
+}
+
+#[test]
+fn host_loading_overlay_requires_a_valid_scene_and_coverage() {
+    let _gpu_serial = gpu_serial::lock();
+    if gpu_serial::skipped() {
+        eprintln!("SKIP_GPU=1; host loading overlay needs a GPU scene");
+        return;
+    }
+    ensure_hooks();
+    let Some((mut client, mut renderer)) = scene_fixture::gpu_scene() else {
+        eprintln!("no adapter; host loading overlay test skips");
+        return;
+    };
+    let (font, splash_x, splash_y) = loading_font();
+    let mut media = Media::empty();
+    media.p12 = Some(font);
+    renderer.media = Arc::new(media);
+
+    client.scene_state = 1;
+    let pending = {
+        let _host = HostOverlayScope::enter(true);
+        let _run = RunScope::enter(SceneAdmission::Rebuild, submit_run_context());
+        renderer.game_draw(&mut client)
+    };
+    assert_eq!(renderer.scene_progress(), SceneProgress::NoScene);
+    assert!(!renderer.has_valid_scene());
+    assert_eq!(
+        output_pixel(pending, splash_x, splash_y),
+        0x00ff_ffff,
+        "the no-scene host loading splash must remain visible"
+    );
+
+    client.scene_state = 2;
+    let rebuilt = {
+        let _host = HostOverlayScope::enter(true);
+        let _run = RunScope::enter(SceneAdmission::Rebuild, submit_run_context());
+        renderer.game_draw(&mut client)
+    };
+    assert_eq!(renderer.scene_progress(), SceneProgress::Rebuilt);
+    assert!(renderer.has_valid_scene());
+    let scene_pixel = output_pixel(rebuilt, splash_x, splash_y);
+
+    client.scene_state = 1;
+    let retained = {
+        let _host = HostOverlayScope::enter(true);
+        let _run = RunScope::enter(SceneAdmission::Retained, submit_run_context());
+        renderer.game_draw(&mut client)
+    };
+    assert_eq!(renderer.scene_progress(), SceneProgress::Retained);
+    assert!(renderer.has_valid_scene());
+    assert_eq!(
+        output_pixel(retained, splash_x, splash_y),
+        0x00ff_ffff,
+        "the loading splash must be present inside retained-scene coverage"
+    );
+
+    let standalone = {
+        let _host = HostOverlayScope::enter(false);
+        let _run = RunScope::enter(SceneAdmission::Standalone, submit_run_context());
+        renderer.game_draw(&mut client)
+    };
+    assert_eq!(renderer.scene_progress(), SceneProgress::Retained);
+    assert_eq!(
+        output_pixel(standalone, splash_x, splash_y),
+        scene_pixel,
+        "standalone state-1 rendering must preserve the FBO without host overlays"
+    );
+
+    client.scene_state = 0;
+    let _ = {
+        let _host = HostOverlayScope::enter(true);
+        let _run = RunScope::enter(SceneAdmission::Rebuild, submit_run_context());
+        renderer.game_draw(&mut client)
+    };
+    assert_eq!(renderer.scene_progress(), SceneProgress::NoScene);
+    assert!(!renderer.has_valid_scene());
+
+    client.scene_state = 2;
+    let _ = {
+        let _host = HostOverlayScope::enter(true);
+        let _run = RunScope::enter(SceneAdmission::Rebuild, submit_run_context());
+        renderer.game_draw(&mut client)
+    };
+    assert_eq!(renderer.scene_progress(), SceneProgress::Rebuilt);
+    let _ = {
+        let _host = HostOverlayScope::enter(true);
+        renderer.title_screen_draw(&mut client)
+    };
+    assert_eq!(renderer.scene_progress(), SceneProgress::NoScene);
+    assert!(!renderer.has_valid_scene());
+}
+
+#[test]
+fn busy_click_and_trace_wait_for_a_real_scene() {
+    const CHILD_MODE: &str = "R274_BUSY_HOST_TRACE_CHILD";
+
+    if std::env::var_os(CHILD_MODE).is_none() {
+        if gpu_serial::skipped() {
+            eprintln!("SKIP_GPU=1; host trace test needs a GPU scene");
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "busy_click_and_trace_wait_for_a_real_scene",
+                "--nocapture",
+            ])
+            .env(CHILD_MODE, "1")
+            .env("CLIENT_289_GROUND_TRACE", "1")
+            .output()
+            .expect("spawn the isolated trace-enabled scene test");
+        assert!(
+            output.status.success(),
+            "trace-enabled child failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let trace = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            trace.matches("stage=scene ").count(),
+            1,
+            "only the successful rebuild may consume the scene trace: {trace}"
+        );
+        assert_eq!(
+            trace.matches("stage=post_render ").count(),
+            1,
+            "busy retained paints must not emit post-render trace events: {trace}"
+        );
+        assert!(
+            !trace.contains("reason=event_cap"),
+            "busy paints must not exhaust the trace event cap: {trace}"
+        );
+        return;
+    }
+
+    let _gpu_serial = gpu_serial::lock();
+    if gpu_serial::skipped() {
+        return;
+    }
+    ensure_hooks();
+    let Some((mut client, mut renderer)) = scene_fixture::gpu_scene() else {
+        eprintln!("no adapter; host trace child skips");
+        return;
+    };
+
+    client.shell.apply_mouse_move(260, 138);
+    {
+        let _host = HostOverlayScope::enter(true);
+        let _run = RunScope::enter(SceneAdmission::Rebuild, submit_run_context());
+        let _ = renderer.game_draw(&mut client);
+    }
+    assert_eq!(renderer.scene_progress(), SceneProgress::Rebuilt);
+    client.shell.apply_mouse_down(1, 260, 138);
+    client.shell.latch_click();
+    client.game_loop();
+    assert!(client.world.click);
+    assert_eq!((client.world.click_x, client.world.click_y), (256, 134));
+    assert_eq!(client.world.ground_x, -1);
+
+    let scene_cycle = renderer.scene_cycle;
+    {
+        let _host = HostOverlayScope::enter(true);
+        for _ in 0..65 {
+            let _run = RunScope::enter(SceneAdmission::Retained, submit_run_context());
+            let _ = renderer.game_draw(&mut client);
+            assert_eq!(renderer.scene_progress(), SceneProgress::Retained);
+            assert_eq!(renderer.scene_cycle, scene_cycle);
+            assert!(client.world.click);
+            assert_eq!(client.world.ground_x, -1);
+        }
+    }
+
+    {
+        let _host = HostOverlayScope::enter(true);
+        let _run = RunScope::enter(SceneAdmission::Rebuild, submit_run_context());
+        let _ = renderer.game_draw(&mut client);
+    }
+    assert_eq!(renderer.scene_progress(), SceneProgress::Rebuilt);
 }

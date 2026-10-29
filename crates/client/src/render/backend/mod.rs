@@ -137,6 +137,17 @@ pub enum FrameKind {
     Game,
     Title,
 }
+/// Whether the current paint built a new 3D scene or reused an existing one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum SceneProgress {
+    /// This paint completed a live scene render.
+    Rebuilt,
+    /// This paint kept an existing scene without rebuilding it.
+    Retained,
+    /// No valid scene was available for this paint.
+    #[default]
+    NoScene,
+}
 
 /// The frame rasterizer behind `Renderer`.
 ///
@@ -186,6 +197,14 @@ pub trait RenderBackend {
     /// The composited frame, owned by the backend: `FrameOutput::PixMap`
     /// for `CpuBackend`, `FrameOutput::Texture` for the wgpu backend.
     fn finish(&mut self, r: &mut Renderer) -> FrameOutput;
+    /// Scene result for the current paint. Test backends default to no scene.
+    fn scene_progress(&self) -> SceneProgress {
+        SceneProgress::NoScene
+    }
+    /// Whether this backend has a valid scene available for a later freeze.
+    fn has_valid_scene(&self) -> bool {
+        false
+    }
     /// Which backend this is (the selection/fallback tests and the window
     /// driver use it); defaults to `Cpu`.
     fn kind(&self) -> BackendKind {

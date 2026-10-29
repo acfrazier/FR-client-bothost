@@ -21,7 +21,7 @@ use crate::client::client::Client;
 use crate::dash3d::BuildArea;
 use crate::graphics::{Pix32, Pix3D, Pix3DDraw, Pix8, PixMap};
 use crate::render::backend::{
-    BackendKind, CpuBackend, FrameKind, FrameOutput, GpuBackend, RenderBackend,
+    BackendKind, CpuBackend, FrameKind, FrameOutput, GpuBackend, RenderBackend, SceneProgress,
 };
 use crate::render::media::Media;
 use crate::render::world::RenderWorld;
@@ -278,10 +278,10 @@ impl Renderer {
         renderer.backend = Some(if prefer_gpu {
             match GpuBackend::try_new() {
                 Ok(backend) => Box::new(backend),
-                Err(_) => Box::new(CpuBackend),
+                Err(_) => Box::new(CpuBackend::default()),
             }
         } else {
-            Box::new(CpuBackend)
+            Box::new(CpuBackend::default())
         });
         #[cfg(feature = "render-diagnostics")]
         {
@@ -315,6 +315,19 @@ impl Renderer {
             .map(RenderBackend::kind)
             .unwrap_or(BackendKind::Cpu)
     }
+    /// Scene progress and validity from the backend for the current paint.
+    pub fn scene_progress(&self) -> SceneProgress {
+        self.backend
+            .as_deref()
+            .map(RenderBackend::scene_progress)
+            .unwrap_or(SceneProgress::NoScene)
+    }
+
+    pub fn has_valid_scene(&self) -> bool {
+        self.backend
+            .as_deref()
+            .is_some_and(RenderBackend::has_valid_scene)
+    }
 
     /// Construct a renderer that routes frames through `backend` instead
     /// of the default `CpuBackend` (the `renderer_backend_selection` test
@@ -335,27 +348,95 @@ impl Renderer {
         let backend = guard.backend.as_mut().expect("render backend present");
         let renderer = &mut *guard.renderer;
         backend.begin(client, renderer, kind);
-        if let Some(t) = client
-            .shell
-            .ground_trace
-            .as_mut()
-            .filter(|t| t.active() && t.armed && !t.rendered)
-        {
-            t.event(
-                "scene",
-                &[
-                    ("state", client.scene_state as i64),
-                    ("camera_x", client.cam_x as i64),
-                    ("camera_y", client.cam_y as i64),
-                    ("camera_z", client.cam_z as i64),
-                    ("pitch", client.cam_pitch as i64),
-                    ("yaw", client.cam_yaw as i64),
-                    ("click", client.world.click as i64),
-                ],
-            );
+        #[derive(Clone, Copy)]
+        struct SceneTraceSample {
+            state: i32,
+            camera: [i32; 5],
+            click: bool,
+        }
+
+        let host_render_active = crate::render::backend::cpu::host_overlays_active();
+        let trace_sample = if host_render_active {
+            client
+                .shell
+                .ground_trace
+                .as_ref()
+                .filter(|t| t.active() && t.armed && !t.rendered)
+                .map(|_| SceneTraceSample {
+                    state: client.scene_state,
+                    camera: [
+                        client.cam_x,
+                        client.cam_y,
+                        client.cam_z,
+                        client.cam_pitch,
+                        client.cam_yaw,
+                    ],
+                    click: client.world.click,
+                })
+        } else {
+            None
+        };
+        if !host_render_active {
+            if let Some(t) = client
+                .shell
+                .ground_trace
+                .as_mut()
+                .filter(|t| t.active() && t.armed && !t.rendered)
+            {
+                t.event(
+                    "scene",
+                    &[
+                        ("state", client.scene_state as i64),
+                        ("camera_x", client.cam_x as i64),
+                        ("camera_y", client.cam_y as i64),
+                        ("camera_z", client.cam_z as i64),
+                        ("pitch", client.cam_pitch as i64),
+                        ("yaw", client.cam_yaw as i64),
+                        ("click", client.world.click as i64),
+                    ],
+                );
+            }
         }
         backend.scene(client, renderer, kind);
-        if let Some(t) = client
+        if host_render_active {
+            if backend.scene_progress() == SceneProgress::Rebuilt {
+                if let Some(sample) = trace_sample {
+                    if let Some(t) = client
+                        .shell
+                        .ground_trace
+                        .as_mut()
+                        .filter(|t| t.active() && t.armed && !t.rendered)
+                    {
+                        let [camera_x, camera_y, camera_z, pitch, yaw] = sample.camera;
+                        t.event(
+                            "scene",
+                            &[
+                                ("state", sample.state as i64),
+                                ("camera_x", camera_x as i64),
+                                ("camera_y", camera_y as i64),
+                                ("camera_z", camera_z as i64),
+                                ("pitch", pitch as i64),
+                                ("yaw", yaw as i64),
+                                ("click", sample.click as i64),
+                            ],
+                        );
+                        t.rendered = true;
+                        t.event(
+                            "post_render",
+                            &[
+                                ("x", client.world.ground_x as i64),
+                                ("z", client.world.ground_z as i64),
+                                ("click", client.world.click as i64),
+                                ("scene", client.scene_state as i64),
+                            ],
+                        );
+                        if client.world.ground_x == -1 {
+                            t.complete("no_pick_first_render");
+                        }
+                    }
+                }
+            }
+        } else if let Some(t) = client
             .shell
             .ground_trace
             .as_mut()

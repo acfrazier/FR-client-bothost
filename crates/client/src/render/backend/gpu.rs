@@ -36,7 +36,7 @@ use crate::graphics::pix2d::coverage_guard;
 use crate::graphics::{Pix2D, Pix3D, Pix3DDraw, PixMap};
 use crate::render::backend::gpu_atlas::GpuAssets;
 use crate::render::backend::{
-    BackendKind, CpuBackend, FrameKind, FrameOutput, RenderBackend, TextureHandle,
+    BackendKind, CpuBackend, FrameKind, FrameOutput, RenderBackend, SceneProgress, TextureHandle,
 };
 use crate::render::draw::get_av_h;
 use crate::render::nav_debug::{NavMesh, NavVertex};
@@ -50,6 +50,13 @@ const SCENE_H: u32 = 334;
 /// The full-frame size: the 765×503 applet `draw_area`.
 const FRAME_W: u32 = crate::client::client::APPLET_W as u32;
 const FRAME_H: u32 = crate::client::client::APPLET_H as u32;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SceneCompose {
+    Rebuilt,
+    Retained,
+    Loading,
+}
 
 /// One 765×503 composite target (`finish` ping-pongs two of these).
 fn make_frame_target(
@@ -1174,6 +1181,7 @@ pub struct GpuBackend {
     /// clear it. `scene_state == 1` keeps it (Java `area_game` without
     /// `cls` — freeze the last 3D frame under the loading splash).
     scene_ready: bool,
+    scene_progress: SceneProgress,
     last_kind: FrameKind,
 }
 
@@ -1451,7 +1459,7 @@ impl GpuBackend {
             nav_mesh: NavMesh::default(),
             nav_target: None,
             nav_projection_key: None,
-            cpu: CpuBackend,
+            cpu: CpuBackend::default(),
             chrome_texture,
             chrome_bind_group,
             chrome_vertex_buf,
@@ -1469,6 +1477,7 @@ impl GpuBackend {
             minimap_upload_count: 0,
             overlay_coverage: vec![0; (SCENE_W * SCENE_H) as usize],
             scene_ready: false,
+            scene_progress: SceneProgress::NoScene,
             last_kind: FrameKind::Title,
         })
     }
@@ -1740,11 +1749,14 @@ impl GpuBackend {
     /// CPU entity/interface overlays into `area_game` plus coverage marks.
     /// The retained nav texture composites first; freezes keep the last
     /// scene/nav target without accumulating alpha.
-    fn draw_scene_overlays(&mut self, core: &mut Client, r: &mut Renderer) {
+    fn draw_scene_overlays(&mut self, core: &mut Client, r: &mut Renderer, compose: SceneCompose) {
         #[cfg(feature = "render-test-hooks")]
         test_hooks::at(test_hooks::SceneTestPoint::OverlayEntry);
-        self.render_nav_overlay(core, r);
-        if should_cls_scene_overlays(self.last_kind, core.scene_state) {
+        if compose == SceneCompose::Rebuilt {
+            self.render_nav_overlay(core, r);
+        }
+        let host_overlays = super::cpu::host_overlays_active();
+        if host_overlays || should_cls_scene_overlays(self.last_kind, core.scene_state) {
             if let Some(game) = r.area_game.as_mut() {
                 let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
                 surface.cls();
@@ -1752,6 +1764,9 @@ impl GpuBackend {
         }
         self.overlay_coverage.fill(0);
         let _cov_guard = coverage_guard(&mut self.overlay_coverage, SCENE_W, SCENE_H);
+        if host_overlays && compose == SceneCompose::Loading {
+            r.scene_loading_splash(core);
+        }
         if let Some(game) = r.area_game.as_ref() {
             r.pix3d.set_clipping(game.width, game.height);
         }
@@ -1879,6 +1894,7 @@ impl RenderBackend for GpuBackend {
     /// chrome-strip blits and the frozen-frame blit) works exactly like
     /// the CPU path.
     fn begin(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
+        self.scene_progress = SceneProgress::NoScene;
         self.last_kind = kind;
         if core.nav_debug_paint().is_none() {
             self.release_nav_overlay();
@@ -1899,15 +1915,17 @@ impl RenderBackend for GpuBackend {
     /// composites over it; chat bubbles, modals and the minimenu remain CPU
     /// viewport overlays composited afterward.
     fn scene(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
+        self.scene_progress = SceneProgress::NoScene;
         if kind != FrameKind::Game || core.scene_state != 2 {
-            // Loading (`scene_state == 1`): do not rebuild the mesh and do
-            // not drop the last scene texture — `finish` still copies it
-            // (Java freeze + "Loading - please wait."). Title / no-scene
-            // still punch a black 3D hole. Overlay IFs (`ship_journey`,
-            // `glidermap`) still draw: GPU 3D is a separate texture, so a
-            // freeze without this pass would show dock boats and no chart.
+            // Loading keeps the last 3D texture. Host overlays redraw over it
+            // after clearing their CPU surface. Other states invalidate it.
             if freeze_last_scene(kind, core.scene_state) {
-                self.draw_scene_overlays(core, r);
+                self.scene_progress = if self.scene_ready {
+                    SceneProgress::Retained
+                } else {
+                    SceneProgress::NoScene
+                };
+                self.draw_scene_overlays(core, r, SceneCompose::Loading);
             } else {
                 self.scene_ready = false;
             }
@@ -1918,7 +1936,12 @@ impl RenderBackend for GpuBackend {
             .get()
             .map_or(SceneAdmission::Standalone, |admit| admit());
         if admission == SceneAdmission::Retained {
-            self.draw_scene_overlays(core, r);
+            self.scene_progress = if self.scene_ready {
+                SceneProgress::Retained
+            } else {
+                SceneProgress::NoScene
+            };
+            self.draw_scene_overlays(core, r, SceneCompose::Retained);
             return;
         }
         #[cfg(feature = "render-test-hooks")]
@@ -1926,11 +1949,16 @@ impl RenderBackend for GpuBackend {
             && test_hooks::at(test_hooks::SceneTestPoint::AfterAdmission)
         {
             scene_workspace(admission, || SceneSubmit::ResourceLimited);
-            self.draw_scene_overlays(core, r);
+            self.scene_progress = if self.scene_ready {
+                SceneProgress::Retained
+            } else {
+                SceneProgress::NoScene
+            };
+            self.draw_scene_overlays(core, r, SceneCompose::Retained);
             return;
         }
 
-        {
+        let scene_submitted = {
             let mut prepared = PreparedScene::new(core, r);
             let core = &mut *prepared.core;
             let r = &mut *prepared.renderer;
@@ -2097,15 +2125,29 @@ impl RenderBackend for GpuBackend {
             });
             self.scene_mesh = mesh;
 
-            if result == SceneSubmit::Submitted {
+            let did_submit = result == SceneSubmit::Submitted && self.scene_ready;
+            if did_submit {
                 r.texture_run_anims(core, cycle);
                 core.pick_count = r.pix3d.picked_count;
                 core.pick_typecodes
                     .copy_from_slice(&r.pix3d.picked_entity_typecode);
                 prepared.mark_submitted();
             }
-        }
-        self.draw_scene_overlays(core, r);
+            did_submit
+        };
+        self.scene_progress = if scene_submitted {
+            SceneProgress::Rebuilt
+        } else if self.scene_ready {
+            SceneProgress::Retained
+        } else {
+            SceneProgress::NoScene
+        };
+        let compose = if scene_submitted {
+            SceneCompose::Rebuilt
+        } else {
+            SceneCompose::Retained
+        };
+        self.draw_scene_overlays(core, r, compose);
     }
 
     /// The composite seam: `area_game` overlay pixels blit into
@@ -2388,6 +2430,14 @@ impl RenderBackend for GpuBackend {
             width: FRAME_W,
             height: FRAME_H,
         })
+    }
+
+    fn scene_progress(&self) -> SceneProgress {
+        self.scene_progress
+    }
+
+    fn has_valid_scene(&self) -> bool {
+        self.scene_ready
     }
 
     fn kind(&self) -> BackendKind {
