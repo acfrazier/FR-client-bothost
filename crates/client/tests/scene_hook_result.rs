@@ -931,6 +931,7 @@ fn scoped_hook_guards_unwind_without_gpu() {
     let _failure = test_hooks::resource_failure_at(SceneTestPoint::BeforeTerminal);
 }
 fn prepare_cpu_scene(client: &mut Client) {
+    client::graphics::Pix3D::init_colour_table(0.6);
     client.ingame = true;
     client.draw = true;
     client.scene_state = 2;
@@ -1487,8 +1488,8 @@ fn cpu_distinct_heads_retain_independent_clean_scenes() {
     let second_clean = second.area_game.as_ref().unwrap().pixels.clone();
     assert!(first_clean.iter().any(|&pixel| pixel != 0));
     assert!(second_clean.iter().any(|&pixel| pixel != 0));
-    assert_ne!(
-        first_clean, second_clean,
+    assert!(
+        first_clean != second_clean,
         "different live terrain must produce distinct retained heads"
     );
     first.media = Arc::new(Media::empty());

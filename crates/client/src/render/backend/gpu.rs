@@ -2179,20 +2179,13 @@ impl RenderBackend for GpuBackend {
                             .unwrap_or_else(|error| error.into_inner())
                             .ensure_model_textures(&r.pix3d),
                     ),
-                    SceneAdmission::Rebuild if budgeted => match self.context.assets.try_lock() {
+                    SceneAdmission::Rebuild => match self.context.assets.try_lock() {
                         Ok(mut assets) => Some(assets.ensure_model_textures(&r.pix3d)),
                         Err(std::sync::TryLockError::Poisoned(error)) => {
                             Some(error.into_inner().ensure_model_textures(&r.pix3d))
                         }
                         Err(std::sync::TryLockError::WouldBlock) => None,
                     },
-                    SceneAdmission::Rebuild => Some(
-                        self.context
-                            .assets
-                            .lock()
-                            .unwrap_or_else(|error| error.into_inner())
-                            .ensure_model_textures(&r.pix3d),
-                    ),
                     SceneAdmission::Retained => None,
                 };
                 prep_fault = match result {
@@ -2345,7 +2338,7 @@ impl RenderBackend for GpuBackend {
                 let result = if resource_limited {
                     SceneSubmit::ResourceLimited
                 } else {
-                    let scene_guard = if admission == SceneAdmission::Standalone || !budgeted {
+                    let scene_guard = if admission == SceneAdmission::Standalone {
                         Some(
                             GPU_SCENE_LOCK
                                 .lock()
@@ -2361,7 +2354,7 @@ impl RenderBackend for GpuBackend {
                         }
                     };
                     if let Some(_scene_guard) = scene_guard {
-                        let staged = if admission == SceneAdmission::Standalone || !budgeted {
+                        let staged = if admission == SceneAdmission::Standalone {
                             Some(
                                 self.context
                                     .assets
