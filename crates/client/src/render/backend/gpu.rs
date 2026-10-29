@@ -3107,6 +3107,11 @@ mod tests {
             cam_z: 0,
             cam_pitch: 0,
             cam_yaw: 0,
+            base_x: 0,
+            base_z: 0,
+            level: 0,
+            loc_generation: 0,
+            paint_generation: 0,
         };
         let mut projection_key = Some(key);
         let error = crate::render::budget::RenderLimit::new(
