@@ -9,9 +9,11 @@
 
 use std::sync::OnceLock;
 
+use super::retained_camera::OverlayCameraScope;
 use crate::client::client::Client;
 use crate::graphics::{Colour, Pix2D, Pix3D};
-use crate::render::backend::{FrameKind, FrameOutput, RenderBackend, SceneProgress};
+use crate::render::backend::{FrameKind, FrameOutput, RenderBackend, RenderFault, SceneProgress};
+use crate::render::budget::RenderLimit;
 use crate::render::draw::get_av_h;
 use crate::render::Renderer;
 use crate::util::JString;
@@ -36,6 +38,62 @@ pub(crate) fn host_overlays_active() -> bool {
 pub struct CpuBackend {
     scene_progress: SceneProgress,
     valid_scene: bool,
+    retained_3d: Option<Box<[i32]>>,
+    allow_host_retention: bool,
+    retained_allocations: u64,
+    retained_camera: Option<[i32; 5]>,
+    render_fault: Option<RenderFault>,
+    recovered_frame: bool,
+}
+
+struct CpuSceneScope<'a> {
+    core: &'a mut Client,
+    renderer: &'a mut Renderer,
+    camera: [i32; 5],
+    ground: (i32, i32, bool),
+    completed: bool,
+}
+
+impl<'a> CpuSceneScope<'a> {
+    fn new(core: &'a mut Client, renderer: &'a mut Renderer) -> Self {
+        Self {
+            camera: [
+                core.cam_x,
+                core.cam_y,
+                core.cam_z,
+                core.cam_pitch,
+                core.cam_yaw,
+            ],
+            ground: (core.world.ground_x, core.world.ground_z, core.world.click),
+            core,
+            renderer,
+            completed: false,
+        }
+    }
+
+    fn parts(&mut self) -> (&mut Client, &mut Renderer) {
+        (self.core, self.renderer)
+    }
+}
+
+impl Drop for CpuSceneScope<'_> {
+    fn drop(&mut self) {
+        self.renderer.world.remove_sprites(&mut self.core.world);
+        if !self.completed {
+            [
+                self.core.cam_x,
+                self.core.cam_y,
+                self.core.cam_z,
+                self.core.cam_pitch,
+                self.core.cam_yaw,
+            ] = self.camera;
+            (
+                self.core.world.ground_x,
+                self.core.world.ground_z,
+                self.core.world.click,
+            ) = self.ground;
+        }
+    }
 }
 
 impl Default for CpuBackend {
@@ -43,6 +101,101 @@ impl Default for CpuBackend {
         Self {
             scene_progress: SceneProgress::NoScene,
             valid_scene: false,
+            retained_3d: None,
+            allow_host_retention: true,
+            retained_allocations: 0,
+            retained_camera: None,
+            render_fault: None,
+            recovered_frame: false,
+        }
+    }
+}
+
+impl CpuBackend {
+    /// GPU's chrome helper must never retain a second CPU scene image.
+    pub(crate) fn embedded() -> Self {
+        Self {
+            allow_host_retention: false,
+            ..Self::default()
+        }
+    }
+
+    fn host_retention_enabled(&self) -> bool {
+        self.allow_host_retention && host_overlays_active()
+    }
+
+    fn capture_clean(&mut self, pixels: &[i32], camera: [i32; 5]) {
+        const SCENE_PIXELS: usize = 512 * 334;
+        assert_eq!(
+            pixels.len(),
+            SCENE_PIXELS,
+            "CPU scene has its fixed dimensions"
+        );
+        if self.retained_3d.is_none() {
+            self.retained_3d = Some(vec![0; SCENE_PIXELS].into_boxed_slice());
+            self.retained_allocations = self.retained_allocations.saturating_add(1);
+        }
+        self.retained_3d
+            .as_mut()
+            .expect("retained scene was initialized")
+            .copy_from_slice(pixels);
+        self.retained_camera = Some(camera);
+    }
+
+    /// Exercise only the fixed clean-copy owner in the drawing-memory executable.
+    #[cfg(feature = "draw-memory-profile")]
+    #[doc(hidden)]
+    pub fn profile_clean_copy(&mut self, pixels: &[i32]) -> &[i32] {
+        self.capture_clean(pixels, [0; 5]);
+        self.retained_3d
+            .as_deref()
+            .expect("the profile copy initialized its storage")
+    }
+
+    fn restore_or_clear(&self, r: &mut Renderer) {
+        if let Some(game) = r.area_game.as_mut() {
+            if let Some(clean) = self.retained_3d.as_ref().filter(|_| self.valid_scene) {
+                game.pixels.copy_from_slice(clean);
+            } else {
+                game.pixels.fill(0);
+            }
+        }
+    }
+
+    fn draw_retained_overlays(
+        &self,
+        core: &mut Client,
+        r: &mut Renderer,
+        loading: bool,
+    ) -> Result<(), RenderLimit> {
+        let mut projection =
+            OverlayCameraScope::enter(core, self.retained_camera.filter(|_| self.valid_scene));
+        let core = projection.core();
+        self.restore_or_clear(r);
+        if loading {
+            r.scene_loading_splash(core);
+        }
+        if let Some(game) = r.area_game.as_ref() {
+            r.pix3d.set_clipping(game.width, game.height);
+        }
+        r.entity_overlays(core)?;
+        r.coord_arrow(core);
+        r.other_overlays(core)
+    }
+
+    fn recover_scene(&mut self, core: &mut Client, r: &mut Renderer, error: RenderLimit) {
+        self.render_fault = Some(RenderFault::Budget(error));
+        self.scene_progress = if self.valid_scene {
+            SceneProgress::Retained
+        } else {
+            SceneProgress::NoScene
+        };
+        self.recovered_frame = false;
+        if self.host_retention_enabled() {
+            match self.draw_retained_overlays(core, r, !self.valid_scene) {
+                Ok(()) => self.recovered_frame = true,
+                Err(error) => self.render_fault = Some(RenderFault::Budget(error)),
+            }
         }
     }
 }
@@ -56,6 +209,8 @@ impl RenderBackend for CpuBackend {
     /// a one-shot `draw_area` cls), then `prepare_title` rebuilding all nine
     /// title regions from shared media.
     fn begin(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
+        self.render_fault = None;
+        self.recovered_frame = false;
         self.scene_progress = SceneProgress::NoScene;
         if kind == FrameKind::Title || core.scene_state == 0 {
             self.valid_scene = false;
@@ -166,169 +321,203 @@ impl RenderBackend for CpuBackend {
         if kind != FrameKind::Game {
             return;
         }
+        if let Some(RenderFault::Budget(error)) = r.render_fault() {
+            self.recover_scene(core, r, error);
+            return;
+        }
         if core.scene_state != 2 {
             if core.scene_state == 1 && self.valid_scene {
                 self.scene_progress = SceneProgress::Retained;
             } else if core.scene_state == 0 {
                 self.valid_scene = false;
             }
+            if core.scene_state == 1 && self.host_retention_enabled() {
+                if let Err(error) = self.draw_retained_overlays(core, r, true) {
+                    self.render_fault = Some(RenderFault::Budget(error));
+                }
+            }
             return;
         }
 
-        r.scene_cycle += 1;
+        let mut cleanup = CpuSceneScope::new(core, r);
+        let camera_before = cleanup.camera;
+        let ground_before = cleanup.ground;
+        let (core, r) = cleanup.parts();
+        let result = (|| -> Result<(), RenderLimit> {
+            r.scene_cycle += 1;
 
-        r.add_players(core, true);
-        r.add_npcs(core, true);
-        r.add_players(core, false);
-        r.add_npcs(core, false);
-        r.add_projectiles(core);
-        r.add_map_anim(core);
+            r.add_players(core, true)?;
+            r.add_npcs(core, true)?;
+            r.add_players(core, false)?;
+            r.add_npcs(core, false)?;
+            r.add_projectiles(core)?;
+            r.add_map_anim(core)?;
 
-        // Camera (TS 4183-4195): a cutscene camera skips the orbit follow;
-        // otherwise the orbit camera follows the local player.
-        let mut pitch = core.orbit_camera_pitch;
-        if core.camera_pitch_clamp / 256 > pitch {
-            pitch = core.camera_pitch_clamp / 256;
-        }
-        if core.cam_shake[4] && core.cam_shake_ran[4] + 128 > pitch {
-            pitch = core.cam_shake_ran[4] + 128;
-        }
-        let yaw = (core.orbit_camera_yaw + core.macro_camera_angle) & 0x7ff;
-
-        if !core.cinema_cam {
-            if let Some(player) = &core.local_player {
-                let target_y = get_av_h(
-                    &core.groundh,
-                    &core.mapl,
-                    player.x,
-                    player.z,
-                    core.minusedlevel,
-                ) - 50;
-                r.cam_follow(
-                    core,
-                    pitch,
-                    yaw,
-                    core.orbit_camera_x,
-                    target_y,
-                    core.orbit_camera_z,
-                    pitch * 3 + 600,
-                );
+            // Camera (TS 4183-4195): a cutscene camera skips the orbit follow;
+            // otherwise the orbit camera follows the local player.
+            let mut pitch = core.orbit_camera_pitch;
+            if core.camera_pitch_clamp / 256 > pitch {
+                pitch = core.camera_pitch_clamp / 256;
             }
-        }
-
-        // TS 4197-4203: the cutscene camera uses roofCheck2's eye height.
-        let level = if core.cinema_cam {
-            r.roof_check2(core)
-        } else {
-            r.roof_check(core)
-        };
-
-        // TS 4205-4209: snapshot the pre-jitter eye so it can be restored
-        // after the pass (the camShake jitter is per-frame only).
-        let eye_x = core.cam_x;
-        let eye_y = core.cam_y;
-        let eye_z = core.cam_z;
-        let eye_pitch = core.cam_pitch;
-        let eye_yaw = core.cam_yaw;
-
-        // TS 4211-4235: the camShake jitter applies to the rendered eye.
-        let (cam_x, cam_y, cam_z, cam_pitch, cam_yaw) =
-            r.cam_shake_jitter(core, eye_x, eye_y, eye_z, eye_pitch, eye_yaw);
-
-        #[cfg(feature = "render-diagnostics")]
-        crate::render::diagnostics::begin_frame(crate::render::diagnostics::FrameCam {
-            cycle: core.loop_cycle,
-            eye_x: cam_x,
-            eye_y: cam_y,
-            eye_z: cam_z,
-            yaw: cam_yaw,
-            pitch: cam_pitch,
-            pre_jitter_x: eye_x,
-            pre_jitter_y: eye_y,
-            pre_jitter_z: eye_z,
-            orbit_x: core.orbit_camera_x,
-            orbit_z: core.orbit_camera_z,
-            orbit_yaw: core.orbit_camera_yaw,
-            orbit_pitch: core.orbit_camera_pitch,
-            macro_x: core.macro_camera_x,
-            macro_z: core.macro_camera_z,
-            macro_angle: core.macro_camera_angle,
-            base_x: core.map_build_base_x,
-            base_z: core.map_build_base_z,
-        });
-
-        // `World.resetVisCalc` (Client.ts loadGame 1222-1235): once per
-        // game, so `vis_backing` is populated before `render_all` binds its
-        // pitch/yaw row.
-        if !r.vis_calc_done {
-            r.vis_calc_done = true;
-            let mut distance = [0i32; 9];
-            for (x, slot) in distance.iter_mut().enumerate() {
-                let angle = x as i32 * 32 + 128 + 15;
-                let offset = angle * 3 + 600;
-                let sin = Pix3D::sin_table().get(angle as usize).copied().unwrap_or(0);
-                *slot = (offset * sin) >> 16;
+            if core.cam_shake[4] && core.cam_shake_ran[4] + 128 > pitch {
+                pitch = core.cam_shake_ran[4] + 128;
             }
-            r.world.reset_vis_calc(&distance, 500, 800, 512, 334);
+            let yaw = (core.orbit_camera_yaw + core.macro_camera_angle) & 0x7ff;
+
+            if !core.cinema_cam {
+                if let Some(player) = &core.local_player {
+                    let target_y = get_av_h(
+                        &core.groundh,
+                        &core.mapl,
+                        player.x,
+                        player.z,
+                        core.minusedlevel,
+                    ) - 50;
+                    r.cam_follow(
+                        core,
+                        pitch,
+                        yaw,
+                        core.orbit_camera_x,
+                        target_y,
+                        core.orbit_camera_z,
+                        pitch * 3 + 600,
+                    );
+                }
+            }
+
+            // TS 4197-4203: the cutscene camera uses roofCheck2's eye height.
+            let level = if core.cinema_cam {
+                r.roof_check2(core)
+            } else {
+                r.roof_check(core)
+            };
+
+            // TS 4205-4209: snapshot the pre-jitter eye so it can be restored
+            // after the pass (the camShake jitter is per-frame only).
+            let eye_x = core.cam_x;
+            let eye_y = core.cam_y;
+            let eye_z = core.cam_z;
+            let eye_pitch = core.cam_pitch;
+            let eye_yaw = core.cam_yaw;
+
+            // TS 4211-4235: the camShake jitter applies to the rendered eye.
+            let (cam_x, cam_y, cam_z, cam_pitch, cam_yaw) =
+                r.cam_shake_jitter(core, eye_x, eye_y, eye_z, eye_pitch, eye_yaw);
+
+            #[cfg(feature = "render-diagnostics")]
+            crate::render::diagnostics::begin_frame(crate::render::diagnostics::FrameCam {
+                cycle: core.loop_cycle,
+                eye_x: cam_x,
+                eye_y: cam_y,
+                eye_z: cam_z,
+                yaw: cam_yaw,
+                pitch: cam_pitch,
+                pre_jitter_x: eye_x,
+                pre_jitter_y: eye_y,
+                pre_jitter_z: eye_z,
+                orbit_x: core.orbit_camera_x,
+                orbit_z: core.orbit_camera_z,
+                orbit_yaw: core.orbit_camera_yaw,
+                orbit_pitch: core.orbit_camera_pitch,
+                macro_x: core.macro_camera_x,
+                macro_z: core.macro_camera_z,
+                macro_angle: core.macro_camera_angle,
+                base_x: core.map_build_base_x,
+                base_z: core.map_build_base_z,
+            });
+
+            // `World.resetVisCalc` (Client.ts loadGame 1222-1235): once per
+            // game, so `vis_backing` is populated before `render_all` binds its
+            // pitch/yaw row.
+            if !r.vis_calc_done {
+                let mut distance = [0i32; 9];
+                for (x, slot) in distance.iter_mut().enumerate() {
+                    let angle = x as i32 * 32 + 128 + 15;
+                    let offset = angle * 3 + 600;
+                    let sin = Pix3D::sin_table().get(angle as usize).copied().unwrap_or(0);
+                    *slot = (offset * sin) >> 16;
+                }
+                r.world.reset_vis_calc(&distance, 500, 800, 512, 334)?;
+                r.vis_calc_done = true;
+            }
+
+            // TS 4238-4242: the model picking state for this frame.
+            let cycle = r.pix3d.cycle;
+            r.pix3d.mouse_check = true;
+            r.pix3d.picked_count = 0;
+            r.pix3d.mouse_x = core.shell.mouse_x - 4;
+            r.pix3d.mouse_y = core.shell.mouse_y - 4;
+
+            // `Pix2D.cls()` on area_game, `Pix3D.setClipping(512, 334)`, then
+            // the world pass (TS 4238-4245).
+            let cache = &core.cache;
+            let loop_cycle = core.loop_cycle;
+            let (pix3d, world) = (&mut r.pix3d, &mut r.world);
+            let mut rendered = false;
+            if let Some(game) = r.area_game.as_mut() {
+                let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
+                surface.cls();
+                pix3d.set_clipping(game.width, game.height);
+                world.render_all(
+                    &mut core.world,
+                    pix3d,
+                    &mut surface,
+                    cache,
+                    loop_cycle,
+                    cam_x,
+                    cam_y,
+                    cam_z,
+                    level,
+                    cam_yaw,
+                    cam_pitch,
+                )?;
+                rendered = true;
+            }
+            world.remove_sprites(&mut core.world);
+            if rendered && self.host_retention_enabled() {
+                if let Some(game) = r.area_game.as_ref() {
+                    self.capture_clean(&game.pixels, [eye_x, eye_y, eye_z, eye_pitch, eye_yaw]);
+                }
+            }
+
+            r.entity_overlays(core)?;
+            r.coord_arrow(core);
+            r.texture_run_anims(core, cycle);
+
+            // Mirror this frame's 3D pick list onto `Client` BEFORE the menu
+            // build: `other_overlays` → `build_minimenu` → `add_world_options`
+            // consumes the picks in the same pass (task-2b fix round 1; the old
+            // end-of-frame copy was one frame stale).
+            core.pick_count = r.pix3d.picked_count;
+            core.pick_typecodes
+                .copy_from_slice(&r.pix3d.picked_entity_typecode);
+            r.other_overlays(core)?;
+
+            // TS 4252-4257: restore the pre-jitter eye.
+            core.cam_x = eye_x;
+            core.cam_y = eye_y;
+            core.cam_z = eye_z;
+            core.cam_pitch = eye_pitch;
+            core.cam_yaw = eye_yaw;
+            if rendered {
+                self.valid_scene = true;
+                self.scene_progress = SceneProgress::Rebuilt;
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            r.world.remove_sprites(&mut core.world);
+            [
+                core.cam_x,
+                core.cam_y,
+                core.cam_z,
+                core.cam_pitch,
+                core.cam_yaw,
+            ] = camera_before;
+            (core.world.ground_x, core.world.ground_z, core.world.click) = ground_before;
+            self.recover_scene(core, r, error);
         }
-
-        // TS 4238-4242: the model picking state for this frame.
-        let cycle = r.pix3d.cycle;
-        r.pix3d.mouse_check = true;
-        r.pix3d.picked_count = 0;
-        r.pix3d.mouse_x = core.shell.mouse_x - 4;
-        r.pix3d.mouse_y = core.shell.mouse_y - 4;
-
-        // `Pix2D.cls()` on area_game, `Pix3D.setClipping(512, 334)`, then
-        // the world pass (TS 4238-4245).
-        let cache = &core.cache;
-        let loop_cycle = core.loop_cycle;
-        let (pix3d, world) = (&mut r.pix3d, &mut r.world);
-        let mut rendered = false;
-        if let Some(game) = r.area_game.as_mut() {
-            let mut surface = Pix2D::with_pixels(&mut game.pixels, game.width, game.height);
-            surface.cls();
-            pix3d.set_clipping(game.width, game.height);
-            world.render_all(
-                &mut core.world,
-                pix3d,
-                &mut surface,
-                cache,
-                loop_cycle,
-                cam_x,
-                cam_y,
-                cam_z,
-                level,
-                cam_yaw,
-                cam_pitch,
-            );
-            rendered = true;
-        }
-        world.remove_sprites(&mut core.world);
-
-        r.entity_overlays(core);
-        r.coord_arrow(core);
-        r.texture_run_anims(core, cycle);
-
-        // Mirror this frame's 3D pick list onto `Client` BEFORE the menu
-        // build: `other_overlays` → `build_minimenu` → `add_world_options`
-        // consumes the picks in the same pass (task-2b fix round 1; the old
-        // end-of-frame copy was one frame stale).
-        core.pick_count = r.pix3d.picked_count;
-        core.pick_typecodes
-            .copy_from_slice(&r.pix3d.picked_entity_typecode);
-        r.other_overlays(core);
-
-        // TS 4252-4257: restore the pre-jitter eye.
-        core.cam_x = eye_x;
-        core.cam_y = eye_y;
-        core.cam_z = eye_z;
-        core.cam_pitch = eye_pitch;
-        core.cam_yaw = eye_yaw;
-        if rendered {
-            self.valid_scene = true;
-            self.scene_progress = SceneProgress::Rebuilt;
-        }
+        cleanup.completed = result.is_ok();
     }
 
     /// The (4, 4) `area_game` blit — the task-7 composite seam. The 3D
@@ -336,7 +525,9 @@ impl RenderBackend for CpuBackend {
     /// of it); this lands it in `draw_area` ahead of the 2D chrome, which
     /// is the same point the wgpu backend blits its scene texture at.
     fn composite_scene(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
-        if kind == FrameKind::Game && core.scene_state == 2 {
+        if kind == FrameKind::Game
+            && (core.scene_state == 2 || (core.scene_state == 1 && self.host_retention_enabled()))
+        {
             if let Some(game) = &r.area_game {
                 game.blit_into(&mut r.draw_area, 4, 4);
             }
@@ -365,525 +556,544 @@ impl RenderBackend for CpuBackend {
     /// (2/3/5/6/7/8 only while `redraw_frame` is set), and the torch
     /// columns over `image_title0/1`.
     fn chrome(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
-        if kind == FrameKind::Title {
-            let w = 360;
-            let h = 200;
-            if let Some(map4) = r.image_title4.as_mut() {
-                let mut surface = Pix2D::with_pixels(&mut map4.pixels, w, h);
+        if self.render_fault.is_some() && !self.recovered_frame {
+            return;
+        }
+        let result = (|| -> Result<(), RenderLimit> {
+            if kind == FrameKind::Title {
+                let w = 360;
+                let h = 200;
+                if let Some(map4) = r.image_title4.as_mut() {
+                    let mut surface = Pix2D::with_pixels(&mut map4.pixels, w, h);
 
-                if let Some(titlebox) = &r.image_titlebox {
-                    titlebox.plot_sprite(&mut surface, 0, 0);
-                }
+                    if let Some(titlebox) = &r.image_titlebox {
+                        titlebox.plot_sprite(&mut surface, 0, 0);
+                    }
 
-                if let Some(label) = core.hosted_title_label() {
-                    let x = w / 2;
-                    let welcome_y = (h / 2) - 30;
-                    let button_y = (h / 2) + 20;
-                    if let Some(b12) = r.media.b12.as_ref() {
-                        // The embedding host owns the Java message lines here:
-                        // it writes them while its login waits (queue, retry,
-                        // transfer) and clears them otherwise.
-                        if core.login_mes1.is_empty() && core.login_mes2.is_empty() {
+                    if let Some(label) = core.hosted_title_label() {
+                        let x = w / 2;
+                        let welcome_y = (h / 2) - 30;
+                        let button_y = (h / 2) + 20;
+                        if let Some(b12) = r.media.b12.as_ref() {
+                            // The embedding host owns the Java message lines here:
+                            // it writes them while its login waits (queue, retry,
+                            // transfer) and clears them otherwise.
+                            if core.login_mes1.is_empty() && core.login_mes2.is_empty() {
+                                b12.centre_string_tag(
+                                    &mut surface,
+                                    "Welcome to RuneScape",
+                                    x,
+                                    welcome_y,
+                                    Colour::YELLOW,
+                                    true,
+                                );
+                            } else if core.login_mes1.is_empty() {
+                                b12.centre_string_tag(
+                                    &mut surface,
+                                    &core.login_mes2,
+                                    x,
+                                    welcome_y,
+                                    Colour::YELLOW,
+                                    true,
+                                );
+                            } else {
+                                b12.centre_string_tag(
+                                    &mut surface,
+                                    &core.login_mes1,
+                                    x,
+                                    welcome_y - 8,
+                                    Colour::YELLOW,
+                                    true,
+                                );
+                                b12.centre_string_tag(
+                                    &mut surface,
+                                    &core.login_mes2,
+                                    x,
+                                    welcome_y + 7,
+                                    Colour::YELLOW,
+                                    true,
+                                );
+                            }
+                        }
+                        if let Some(button) = &r.image_titlebutton {
+                            button.plot_sprite(&mut surface, x - 73, button_y - 20);
+                        }
+                        if let Some(b12) = r.media.b12.as_ref() {
+                            b12.centre_string_tag(
+                                &mut surface,
+                                "Log In",
+                                x,
+                                button_y - 1,
+                                Colour::WHITE,
+                                true,
+                            );
+                            b12.centre_string_tag(
+                                &mut surface,
+                                label,
+                                x,
+                                button_y + 14,
+                                Colour::YELLOW,
+                                true,
+                            );
+                        }
+                    } else if core.loginscreen == 0 {
+                        let extra_y = (h / 2) + 80;
+                        let mut y = (h / 2) - 20;
+
+                        if let Some(od) = core.on_demand.as_ref() {
+                            let message = od.message.clone();
+                            if let Some(p11) = r.media.p11.as_ref() {
+                                p11.centre_string_tag(
+                                    &mut surface,
+                                    &message,
+                                    w / 2,
+                                    extra_y,
+                                    0x75a9a9,
+                                    true,
+                                );
+                            }
+                        }
+
+                        if let Some(b12) = r.media.b12.as_ref() {
                             b12.centre_string_tag(
                                 &mut surface,
                                 "Welcome to RuneScape",
-                                x,
-                                welcome_y,
-                                Colour::YELLOW,
-                                true,
-                            );
-                        } else if core.login_mes1.is_empty() {
-                            b12.centre_string_tag(
-                                &mut surface,
-                                &core.login_mes2,
-                                x,
-                                welcome_y,
-                                Colour::YELLOW,
-                                true,
-                            );
-                        } else {
-                            b12.centre_string_tag(
-                                &mut surface,
-                                &core.login_mes1,
-                                x,
-                                welcome_y - 8,
-                                Colour::YELLOW,
-                                true,
-                            );
-                            b12.centre_string_tag(
-                                &mut surface,
-                                &core.login_mes2,
-                                x,
-                                welcome_y + 7,
-                                Colour::YELLOW,
-                                true,
-                            );
-                        }
-                    }
-                    if let Some(button) = &r.image_titlebutton {
-                        button.plot_sprite(&mut surface, x - 73, button_y - 20);
-                    }
-                    if let Some(b12) = r.media.b12.as_ref() {
-                        b12.centre_string_tag(
-                            &mut surface,
-                            "Log In",
-                            x,
-                            button_y - 1,
-                            Colour::WHITE,
-                            true,
-                        );
-                        b12.centre_string_tag(
-                            &mut surface,
-                            label,
-                            x,
-                            button_y + 14,
-                            Colour::YELLOW,
-                            true,
-                        );
-                    }
-                } else if core.loginscreen == 0 {
-                    let extra_y = (h / 2) + 80;
-                    let mut y = (h / 2) - 20;
-
-                    if let Some(od) = core.on_demand.as_ref() {
-                        let message = od.message.clone();
-                        if let Some(p11) = r.media.p11.as_ref() {
-                            p11.centre_string_tag(
-                                &mut surface,
-                                &message,
-                                w / 2,
-                                extra_y,
-                                0x75a9a9,
-                                true,
-                            );
-                        }
-                    }
-
-                    if let Some(b12) = r.media.b12.as_ref() {
-                        b12.centre_string_tag(
-                            &mut surface,
-                            "Welcome to RuneScape",
-                            w / 2,
-                            y,
-                            Colour::YELLOW,
-                            true,
-                        );
-                    }
-
-                    let mut x = (w / 2) - 80;
-                    y = (h / 2) + 20;
-                    if let Some(button) = &r.image_titlebutton {
-                        button.plot_sprite(&mut surface, x - 73, y - 20);
-                    }
-                    if let Some(b12) = r.media.b12.as_ref() {
-                        b12.centre_string_tag(
-                            &mut surface,
-                            "New User",
-                            x,
-                            y + 5,
-                            Colour::WHITE,
-                            true,
-                        );
-                    }
-
-                    x = (w / 2) + 80;
-                    if let Some(button) = &r.image_titlebutton {
-                        button.plot_sprite(&mut surface, x - 73, y - 20);
-                    }
-                    if let Some(b12) = r.media.b12.as_ref() {
-                        b12.centre_string_tag(
-                            &mut surface,
-                            "Existing User",
-                            x,
-                            y + 5,
-                            Colour::WHITE,
-                            true,
-                        );
-                    }
-                } else if core.loginscreen == 2 {
-                    let mut y = (h / 2) - 40;
-                    if let Some(b12) = r.media.b12.as_ref() {
-                        if core.login_mes1.is_empty() {
-                            b12.centre_string_tag(
-                                &mut surface,
-                                &core.login_mes2,
-                                w / 2,
-                                y - 7,
-                                Colour::YELLOW,
-                                true,
-                            );
-                        } else {
-                            b12.centre_string_tag(
-                                &mut surface,
-                                &core.login_mes1,
-                                w / 2,
-                                y - 15,
-                                Colour::YELLOW,
-                                true,
-                            );
-                            b12.centre_string_tag(
-                                &mut surface,
-                                &core.login_mes2,
                                 w / 2,
                                 y,
                                 Colour::YELLOW,
                                 true,
                             );
                         }
-                        y += 30;
 
-                        let user_line = format!(
-                            "Username: {}{}",
-                            core.login_user,
-                            if core.login_select == 0 && core.loop_cycle % 40 < 20 {
-                                "@yel@|"
+                        let mut x = (w / 2) - 80;
+                        y = (h / 2) + 20;
+                        if let Some(button) = &r.image_titlebutton {
+                            button.plot_sprite(&mut surface, x - 73, y - 20);
+                        }
+                        if let Some(b12) = r.media.b12.as_ref() {
+                            b12.centre_string_tag(
+                                &mut surface,
+                                "New User",
+                                x,
+                                y + 5,
+                                Colour::WHITE,
+                                true,
+                            );
+                        }
+
+                        x = (w / 2) + 80;
+                        if let Some(button) = &r.image_titlebutton {
+                            button.plot_sprite(&mut surface, x - 73, y - 20);
+                        }
+                        if let Some(b12) = r.media.b12.as_ref() {
+                            b12.centre_string_tag(
+                                &mut surface,
+                                "Existing User",
+                                x,
+                                y + 5,
+                                Colour::WHITE,
+                                true,
+                            );
+                        }
+                    } else if core.loginscreen == 2 {
+                        let mut y = (h / 2) - 40;
+                        if let Some(b12) = r.media.b12.as_ref() {
+                            if core.login_mes1.is_empty() {
+                                b12.centre_string_tag(
+                                    &mut surface,
+                                    &core.login_mes2,
+                                    w / 2,
+                                    y - 7,
+                                    Colour::YELLOW,
+                                    true,
+                                );
                             } else {
-                                ""
+                                b12.centre_string_tag(
+                                    &mut surface,
+                                    &core.login_mes1,
+                                    w / 2,
+                                    y - 15,
+                                    Colour::YELLOW,
+                                    true,
+                                );
+                                b12.centre_string_tag(
+                                    &mut surface,
+                                    &core.login_mes2,
+                                    w / 2,
+                                    y,
+                                    Colour::YELLOW,
+                                    true,
+                                );
                             }
-                        );
-                        b12.draw_string_tag(
-                            &mut surface,
-                            &user_line,
-                            w / 2 - 90,
-                            y,
-                            Colour::WHITE,
-                            true,
-                        );
-                        y += 15;
+                            y += 30;
 
-                        let pass_line = format!(
-                            "Password: {}{}",
-                            JString::get_repeated_character(&core.login_pass),
-                            if core.login_select == 1 && core.loop_cycle % 40 < 20 {
-                                "@yel@|"
-                            } else {
-                                ""
-                            }
-                        );
-                        b12.draw_string_tag(
-                            &mut surface,
-                            &pass_line,
-                            w / 2 - 88,
-                            y,
-                            Colour::WHITE,
-                            true,
-                        );
-                    }
+                            let user_line = format!(
+                                "Username: {}{}",
+                                core.login_user,
+                                if core.login_select == 0 && core.loop_cycle % 40 < 20 {
+                                    "@yel@|"
+                                } else {
+                                    ""
+                                }
+                            );
+                            b12.draw_string_tag(
+                                &mut surface,
+                                &user_line,
+                                w / 2 - 90,
+                                y,
+                                Colour::WHITE,
+                                true,
+                            );
+                            y += 15;
 
-                    let x = (w / 2) - 80;
-                    let y = (h / 2) + 50;
-                    if let Some(button) = &r.image_titlebutton {
-                        button.plot_sprite(&mut surface, x - 73, y - 20);
-                    }
-                    if let Some(b12) = r.media.b12.as_ref() {
-                        b12.centre_string_tag(&mut surface, "Login", x, y + 5, Colour::WHITE, true);
-                    }
+                            let pass_line = format!(
+                                "Password: {}{}",
+                                JString::get_repeated_character(&core.login_pass),
+                                if core.login_select == 1 && core.loop_cycle % 40 < 20 {
+                                    "@yel@|"
+                                } else {
+                                    ""
+                                }
+                            );
+                            b12.draw_string_tag(
+                                &mut surface,
+                                &pass_line,
+                                w / 2 - 88,
+                                y,
+                                Colour::WHITE,
+                                true,
+                            );
+                        }
 
-                    let x = (w / 2) + 80;
-                    if let Some(button) = &r.image_titlebutton {
-                        button.plot_sprite(&mut surface, x - 73, y - 20);
-                    }
-                    if let Some(b12) = r.media.b12.as_ref() {
-                        b12.centre_string_tag(
-                            &mut surface,
-                            "Cancel",
-                            x,
-                            y + 5,
-                            Colour::WHITE,
-                            true,
-                        );
-                    }
-                } else if core.loginscreen == 3 {
-                    let x = w / 2;
-                    let mut y = (h / 2) - 60;
-                    if let Some(b12) = r.media.b12.as_ref() {
-                        b12.centre_string_tag(
-                            &mut surface,
-                            "Create a free account",
-                            x,
-                            y,
-                            Colour::YELLOW,
-                            true,
-                        );
+                        let x = (w / 2) - 80;
+                        let y = (h / 2) + 50;
+                        if let Some(button) = &r.image_titlebutton {
+                            button.plot_sprite(&mut surface, x - 73, y - 20);
+                        }
+                        if let Some(b12) = r.media.b12.as_ref() {
+                            b12.centre_string_tag(
+                                &mut surface,
+                                "Login",
+                                x,
+                                y + 5,
+                                Colour::WHITE,
+                                true,
+                            );
+                        }
 
-                        y = (h / 2) - 35;
-                        b12.centre_string_tag(
-                            &mut surface,
-                            "To create a new account you need to",
-                            x,
-                            y,
-                            Colour::WHITE,
-                            true,
-                        );
-                        y += 15;
-                        b12.centre_string_tag(
-                            &mut surface,
-                            "go back to the main RuneScape webpage",
-                            x,
-                            y,
-                            Colour::WHITE,
-                            true,
-                        );
-                        y += 15;
-                        b12.centre_string_tag(
-                            &mut surface,
-                            "and choose the red 'create account'",
-                            x,
-                            y,
-                            Colour::WHITE,
-                            true,
-                        );
-                        y += 15;
-                        b12.centre_string_tag(
-                            &mut surface,
-                            "button at the top right of that page.",
-                            x,
-                            y,
-                            Colour::WHITE,
-                            true,
-                        );
-                    }
+                        let x = (w / 2) + 80;
+                        if let Some(button) = &r.image_titlebutton {
+                            button.plot_sprite(&mut surface, x - 73, y - 20);
+                        }
+                        if let Some(b12) = r.media.b12.as_ref() {
+                            b12.centre_string_tag(
+                                &mut surface,
+                                "Cancel",
+                                x,
+                                y + 5,
+                                Colour::WHITE,
+                                true,
+                            );
+                        }
+                    } else if core.loginscreen == 3 {
+                        let x = w / 2;
+                        let mut y = (h / 2) - 60;
+                        if let Some(b12) = r.media.b12.as_ref() {
+                            b12.centre_string_tag(
+                                &mut surface,
+                                "Create a free account",
+                                x,
+                                y,
+                                Colour::YELLOW,
+                                true,
+                            );
 
-                    let x = w / 2;
-                    let y = (h / 2) + 50;
-                    if let Some(button) = &r.image_titlebutton {
-                        button.plot_sprite(&mut surface, x - 73, y - 20);
-                    }
-                    if let Some(b12) = r.media.b12.as_ref() {
-                        b12.centre_string_tag(
-                            &mut surface,
-                            "Cancel",
-                            x,
-                            y + 5,
-                            Colour::WHITE,
-                            true,
-                        );
+                            y = (h / 2) - 35;
+                            b12.centre_string_tag(
+                                &mut surface,
+                                "To create a new account you need to",
+                                x,
+                                y,
+                                Colour::WHITE,
+                                true,
+                            );
+                            y += 15;
+                            b12.centre_string_tag(
+                                &mut surface,
+                                "go back to the main RuneScape webpage",
+                                x,
+                                y,
+                                Colour::WHITE,
+                                true,
+                            );
+                            y += 15;
+                            b12.centre_string_tag(
+                                &mut surface,
+                                "and choose the red 'create account'",
+                                x,
+                                y,
+                                Colour::WHITE,
+                                true,
+                            );
+                            y += 15;
+                            b12.centre_string_tag(
+                                &mut surface,
+                                "button at the top right of that page.",
+                                x,
+                                y,
+                                Colour::WHITE,
+                                true,
+                            );
+                        }
+
+                        let x = w / 2;
+                        let y = (h / 2) + 50;
+                        if let Some(button) = &r.image_titlebutton {
+                            button.plot_sprite(&mut surface, x - 73, y - 20);
+                        }
+                        if let Some(b12) = r.media.b12.as_ref() {
+                            b12.centre_string_tag(
+                                &mut surface,
+                                "Cancel",
+                                x,
+                                y + 5,
+                                Colour::WHITE,
+                                true,
+                            );
+                        }
                     }
                 }
-            }
 
-            if let Some(t4) = &r.image_title4 {
-                t4.blit_into(&mut r.draw_area, 202, 171);
-            }
-
-            if core.redraw_frame {
-                core.redraw_frame = false;
-                if let Some(t2) = &r.image_title2 {
-                    t2.blit_into(&mut r.draw_area, 128, 0);
+                if let Some(t4) = &r.image_title4 {
+                    t4.blit_into(&mut r.draw_area, 202, 171);
                 }
-                if let Some(t3) = &r.image_title3 {
-                    t3.blit_into(&mut r.draw_area, 202, 371);
+
+                if core.redraw_frame {
+                    core.redraw_frame = false;
+                    if let Some(t2) = &r.image_title2 {
+                        t2.blit_into(&mut r.draw_area, 128, 0);
+                    }
+                    if let Some(t3) = &r.image_title3 {
+                        t3.blit_into(&mut r.draw_area, 202, 371);
+                    }
+                    if let Some(t5) = &r.image_title5 {
+                        t5.blit_into(&mut r.draw_area, 0, 265);
+                    }
+                    if let Some(t6) = &r.image_title6 {
+                        t6.blit_into(&mut r.draw_area, 562, 265);
+                    }
+                    if let Some(t7) = &r.image_title7 {
+                        t7.blit_into(&mut r.draw_area, 128, 171);
+                    }
+                    if let Some(t8) = &r.image_title8 {
+                        t8.blit_into(&mut r.draw_area, 562, 171);
+                    }
                 }
-                if let Some(t5) = &r.image_title5 {
-                    t5.blit_into(&mut r.draw_area, 0, 265);
+
+                // TitleFlames.ts drawFlames: the torch columns redraw every frame
+                // (TS PixMap.draw onto the canvas). Inactive flames still blit the
+                // JPEG background that loadTitleBackground plotted into 0/1.
+                r.tick_title_flames(core);
+                if let Some(t0) = &r.image_title0 {
+                    t0.blit_into(&mut r.draw_area, 0, 0);
                 }
-                if let Some(t6) = &r.image_title6 {
-                    t6.blit_into(&mut r.draw_area, 562, 265);
+                if let Some(t1) = &r.image_title1 {
+                    t1.blit_into(&mut r.draw_area, 637, 0);
                 }
-                if let Some(t7) = &r.image_title7 {
-                    t7.blit_into(&mut r.draw_area, 128, 171);
+            } else {
+                // TS 3924-3926: an open side minimenu redraws the side panel every
+                // frame so the hover-highlighted option rows track the pointer.
+                if core.is_menu_open && core.menu_area == 1 {
+                    core.redraw_side = true;
                 }
-                if let Some(t8) = &r.image_title8 {
-                    t8.blit_into(&mut r.draw_area, 562, 171);
-                }
-            }
 
-            // TitleFlames.ts drawFlames: the torch columns redraw every frame
-            // (TS PixMap.draw onto the canvas). Inactive flames still blit the
-            // JPEG background that loadTitleBackground plotted into 0/1.
-            r.tick_title_flames(core);
-            if let Some(t0) = &r.image_title0 {
-                t0.blit_into(&mut r.draw_area, 0, 0);
-            }
-            if let Some(t1) = &r.image_title1 {
-                t1.blit_into(&mut r.draw_area, 637, 0);
-            }
-        } else {
-            // TS 3924-3926: an open side minimenu redraws the side panel every
-            // frame so the hover-highlighted option rows track the pointer.
-            if core.is_menu_open && core.menu_area == 1 {
-                core.redraw_side = true;
-            }
-
-            // `sideModalId`/`animateInterface` redrawSide trigger (TS 3931-3937).
-            if !core.hosted_animation_cycles
-                && core.side_modal_id != -1
-                && Renderer::animate_interface(core, core.side_modal_id, core.world_update_num)
-            {
-                core.redraw_side = true;
-            }
-
-            // TS 3935-3941: the OP_HELD outline and the in-flight obj drag
-            // redraw the side panel every frame.
-            if core.selected_area == 2 {
-                core.redraw_side = true;
-            }
-            if core.obj_drag_area == 2 {
-                core.redraw_side = true;
-            }
-
-            if core.redraw_side {
-                r.draw_side(core);
-                core.redraw_side = false;
-            }
-
-            // `chatModalId`/`animateInterface` redrawChat trigger (TS 3966-3971).
-
-            // TS 3948-3967: with no chat modal the chat scrollbar is live. The
-            // held-arrow step goes through `chat_interface` (a synthetic IfType,
-            // `com_id` -1), then `chat_scroll_pos` is re-derived from it.
-            if core.chat_modal_id == -1 {
-                core.chat_interface.scroll_pos =
-                    core.chat_scroll_height - core.chat_scroll_pos - 77;
-                core.chat_interface.scroll_height = core.chat_scroll_height;
-                if core.shell.mouse_x > 448 && core.shell.mouse_x < 560 && core.shell.mouse_y > 332
+                // `sideModalId`/`animateInterface` redrawSide trigger (TS 3931-3937).
+                if !core.hosted_animation_cycles
+                    && core.side_modal_id != -1
+                    && Renderer::animate_interface(core, core.side_modal_id, core.world_update_num)
                 {
-                    core.do_scrollbar(
-                        core.shell.mouse_x - 17,
-                        core.shell.mouse_y - 357,
-                        core.chat_scroll_height,
-                        77,
-                        false,
-                        463,
-                        0,
-                        -1,
-                    );
+                    core.redraw_side = true;
                 }
-                let mut offset = core.chat_scroll_height - core.chat_interface.scroll_pos - 77;
-                if offset < 0 {
-                    offset = 0;
+
+                // TS 3935-3941: the OP_HELD outline and the in-flight obj drag
+                // redraw the side panel every frame.
+                if core.selected_area == 2 {
+                    core.redraw_side = true;
                 }
-                if offset > core.chat_scroll_height - 77 {
-                    offset = core.chat_scroll_height - 77;
+                if core.obj_drag_area == 2 {
+                    core.redraw_side = true;
                 }
-                if core.chat_scroll_pos != offset {
-                    core.chat_scroll_pos = offset;
+
+                if core.redraw_side {
+                    r.draw_side(core)?;
+                    core.redraw_side = false;
+                }
+
+                // `chatModalId`/`animateInterface` redrawChat trigger (TS 3966-3971).
+
+                // TS 3948-3967: with no chat modal the chat scrollbar is live. The
+                // held-arrow step goes through `chat_interface` (a synthetic IfType,
+                // `com_id` -1), then `chat_scroll_pos` is re-derived from it.
+                if core.chat_modal_id == -1 {
+                    core.chat_interface.scroll_pos =
+                        core.chat_scroll_height - core.chat_scroll_pos - 77;
+                    core.chat_interface.scroll_height = core.chat_scroll_height;
+                    if core.shell.mouse_x > 448
+                        && core.shell.mouse_x < 560
+                        && core.shell.mouse_y > 332
+                    {
+                        core.do_scrollbar(
+                            core.shell.mouse_x - 17,
+                            core.shell.mouse_y - 357,
+                            core.chat_scroll_height,
+                            77,
+                            false,
+                            463,
+                            0,
+                            -1,
+                        );
+                    }
+                    let mut offset = core.chat_scroll_height - core.chat_interface.scroll_pos - 77;
+                    if offset < 0 {
+                        offset = 0;
+                    }
+                    if offset > core.chat_scroll_height - 77 {
+                        offset = core.chat_scroll_height - 77;
+                    }
+                    if core.chat_scroll_pos != offset {
+                        core.chat_scroll_pos = offset;
+                        core.redraw_chat = true;
+                    }
+                }
+
+                if !core.hosted_animation_cycles
+                    && core.chat_modal_id != -1
+                    && Renderer::animate_interface(core, core.chat_modal_id, core.world_update_num)
+                {
                     core.redraw_chat = true;
                 }
-            }
 
-            if !core.hosted_animation_cycles
-                && core.chat_modal_id != -1
-                && Renderer::animate_interface(core, core.chat_modal_id, core.world_update_num)
-            {
-                core.redraw_chat = true;
-            }
-
-            // TS 3977-3982: the OP_HELD outline and the in-flight obj drag
-            // redraw the chat panel every frame.
-            if core.selected_area == 3 {
-                core.redraw_chat = true;
-            }
-            if core.obj_drag_area == 3 {
-                core.redraw_chat = true;
-            }
-
-            // TS 3989-3991: an open chat minimenu redraws the chat panel every
-            // frame so the hover-highlighted option rows track the pointer.
-            if core.is_menu_open && core.menu_area == 2 {
-                core.redraw_chat = true;
-            }
-
-            if core.redraw_chat {
-                r.draw_chat(core);
-                core.redraw_chat = false;
-            }
-
-            // `minimapDraw` (11279) into `area_map`, then the (550, 4) blit
-            // (TS 3999-4001), then the chrome re-blit guard (see the
-            // `redraw_frame` path above).
-            if core.scene_state == 2 {
-                r.minimap_draw(core);
-                if let Some(m) = &r.area_map {
-                    m.blit_into(&mut r.draw_area, 550, 4);
+                // TS 3977-3982: the OP_HELD outline and the in-flight obj drag
+                // redraw the chat panel every frame.
+                if core.selected_area == 3 {
+                    core.redraw_chat = true;
                 }
-                if let Some(b) = &r.media.area_backvmid1 {
-                    b.blit_into(&mut r.draw_area, 516, 4);
+                if core.obj_drag_area == 3 {
+                    core.redraw_chat = true;
                 }
-            }
 
-            // `tutFlashIcon !== -1` redrawIcons trigger (TS 4003-4004).
-            if core.tut_flash_icon != -1 {
-                core.redraw_icons = true;
-            }
+                // TS 3989-3991: an open chat minimenu redraws the chat panel every
+                // frame so the hover-highlighted option rows track the pointer.
+                if core.is_menu_open && core.menu_area == 2 {
+                    core.redraw_chat = true;
+                }
 
-            if core.redraw_icons {
-                r.draw_icons(core);
-                core.redraw_icons = false;
-            }
+                if core.redraw_chat {
+                    r.draw_chat(core)?;
+                    core.redraw_chat = false;
+                }
 
-            if core.redraw_chat_mode {
-                core.redraw_chat_mode = false;
-                // TS (4122): the chat mode buttons on `backbase1`, blitted at
-                // (0, 453).
-                if let Some(base) = r.area_backbase1.as_mut() {
-                    let w = base.width;
-                    let h = base.height;
-                    let mut surface = Pix2D::with_pixels(&mut base.pixels, w, h);
-                    if let Some(backbase1) = &r.media.backbase1 {
-                        backbase1.plot_sprite(&mut surface, 0, 0);
+                // `minimapDraw` (11279) into `area_map`, then the (550, 4) blit
+                // (TS 3999-4001), then the chrome re-blit guard (see the
+                // `redraw_frame` path above).
+                if core.scene_state == 2 {
+                    r.minimap_draw(core);
+                    if let Some(m) = &r.area_map {
+                        m.blit_into(&mut r.draw_area, 550, 4);
                     }
-                    if let Some(p12) = r.media.p12.as_ref() {
-                        p12.centre_string_tag(
-                            &mut surface,
-                            "Public chat",
-                            55,
-                            28,
-                            Colour::WHITE,
-                            true,
-                        );
-                        let (label, rgb) = match core.chat_public_mode {
-                            1 => ("Friends", Colour::YELLOW),
-                            2 => ("Off", Colour::RED),
-                            3 => ("Hide", Colour::CYAN),
-                            _ => ("On", Colour::GREEN),
-                        };
-                        p12.centre_string_tag(&mut surface, label, 55, 41, rgb, true);
-                        p12.centre_string_tag(
-                            &mut surface,
-                            "Private chat",
-                            184,
-                            28,
-                            Colour::WHITE,
-                            true,
-                        );
-                        let (label, rgb) = match core.chat_private_mode {
-                            1 => ("Friends", Colour::YELLOW),
-                            2 => ("Off", Colour::RED),
-                            _ => ("On", Colour::GREEN),
-                        };
-                        p12.centre_string_tag(&mut surface, label, 184, 41, rgb, true);
-                        p12.centre_string_tag(
-                            &mut surface,
-                            "Trade/duel",
-                            324,
-                            28,
-                            Colour::WHITE,
-                            true,
-                        );
-                        let (label, rgb) = match core.chat_trade_mode {
-                            1 => ("Friends", Colour::YELLOW),
-                            2 => ("Off", Colour::RED),
-                            _ => ("On", Colour::GREEN),
-                        };
-                        p12.centre_string_tag(&mut surface, label, 324, 41, rgb, true);
-                        p12.centre_string_tag(
-                            &mut surface,
-                            "Report abuse",
-                            458,
-                            33,
-                            Colour::WHITE,
-                            true,
-                        );
+                    if let Some(b) = &r.media.area_backvmid1 {
+                        b.blit_into(&mut r.draw_area, 516, 4);
                     }
                 }
-                if let Some(base) = &r.area_backbase1 {
-                    base.blit_into(&mut r.draw_area, 0, 453);
-                }
-            }
 
-            // TS 4169: `worldUpdateNum = 0` at the end of the drawn frame.
-            core.world_update_num = 0;
+                // `tutFlashIcon !== -1` redrawIcons trigger (TS 4003-4004).
+                if core.tut_flash_icon != -1 {
+                    core.redraw_icons = true;
+                }
+
+                if core.redraw_icons {
+                    r.draw_icons(core);
+                    core.redraw_icons = false;
+                }
+
+                if core.redraw_chat_mode {
+                    core.redraw_chat_mode = false;
+                    // TS (4122): the chat mode buttons on `backbase1`, blitted at
+                    // (0, 453).
+                    if let Some(base) = r.area_backbase1.as_mut() {
+                        let w = base.width;
+                        let h = base.height;
+                        let mut surface = Pix2D::with_pixels(&mut base.pixels, w, h);
+                        if let Some(backbase1) = &r.media.backbase1 {
+                            backbase1.plot_sprite(&mut surface, 0, 0);
+                        }
+                        if let Some(p12) = r.media.p12.as_ref() {
+                            p12.centre_string_tag(
+                                &mut surface,
+                                "Public chat",
+                                55,
+                                28,
+                                Colour::WHITE,
+                                true,
+                            );
+                            let (label, rgb) = match core.chat_public_mode {
+                                1 => ("Friends", Colour::YELLOW),
+                                2 => ("Off", Colour::RED),
+                                3 => ("Hide", Colour::CYAN),
+                                _ => ("On", Colour::GREEN),
+                            };
+                            p12.centre_string_tag(&mut surface, label, 55, 41, rgb, true);
+                            p12.centre_string_tag(
+                                &mut surface,
+                                "Private chat",
+                                184,
+                                28,
+                                Colour::WHITE,
+                                true,
+                            );
+                            let (label, rgb) = match core.chat_private_mode {
+                                1 => ("Friends", Colour::YELLOW),
+                                2 => ("Off", Colour::RED),
+                                _ => ("On", Colour::GREEN),
+                            };
+                            p12.centre_string_tag(&mut surface, label, 184, 41, rgb, true);
+                            p12.centre_string_tag(
+                                &mut surface,
+                                "Trade/duel",
+                                324,
+                                28,
+                                Colour::WHITE,
+                                true,
+                            );
+                            let (label, rgb) = match core.chat_trade_mode {
+                                1 => ("Friends", Colour::YELLOW),
+                                2 => ("Off", Colour::RED),
+                                _ => ("On", Colour::GREEN),
+                            };
+                            p12.centre_string_tag(&mut surface, label, 324, 41, rgb, true);
+                            p12.centre_string_tag(
+                                &mut surface,
+                                "Report abuse",
+                                458,
+                                33,
+                                Colour::WHITE,
+                                true,
+                            );
+                        }
+                    }
+                    if let Some(base) = &r.area_backbase1 {
+                        base.blit_into(&mut r.draw_area, 0, 453);
+                    }
+                }
+
+                // TS 4169: `worldUpdateNum = 0` at the end of the drawn frame.
+                core.world_update_num = 0;
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            self.render_fault = Some(RenderFault::Budget(error));
+            self.recovered_frame = false;
         }
     }
 
@@ -892,7 +1102,13 @@ impl RenderBackend for CpuBackend {
     /// `window` blit read it there) and hands back an owned copy; a
     /// `GpuBackend` (task 7) returns `FrameOutput::Texture` instead.
     fn finish(&mut self, r: &mut Renderer) -> FrameOutput {
-        FrameOutput::PixMap(r.draw_area.clone())
+        match self.render_fault {
+            Some(fault) if !self.recovered_frame => FrameOutput::Refused(fault),
+            _ => FrameOutput::PixMap(r.draw_area.clone()),
+        }
+    }
+    fn render_fault(&self) -> Option<RenderFault> {
+        self.render_fault
     }
     fn scene_progress(&self) -> SceneProgress {
         self.scene_progress
@@ -900,5 +1116,23 @@ impl RenderBackend for CpuBackend {
 
     fn has_valid_scene(&self) -> bool {
         self.valid_scene
+    }
+
+    fn retained_storage_allocations(&self) -> u64 {
+        self.retained_allocations
+    }
+
+    fn retained_storage_bytes(&self) -> usize {
+        self.retained_3d
+            .as_ref()
+            .map_or(0, |pixels| std::mem::size_of_val(pixels.as_ref()))
+    }
+
+    fn render_bytes(&self) -> crate::render::budget::RenderBytes {
+        crate::render::budget::RenderBytes {
+            cpu_retained_3d: self.retained_storage_bytes(),
+            scalar_state: std::mem::size_of::<Self>(),
+            ..Default::default()
+        }
     }
 }

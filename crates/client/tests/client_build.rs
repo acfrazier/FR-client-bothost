@@ -863,11 +863,14 @@ fn finish_build_hooks_share_light() {
     model.calc_bounding_cylinder();
     model.calculate_normals(64, 768, -50, -10, -50, false);
     let mut rw = RenderWorld::new();
-    rw.set_wall_model(&c.world, 0, 2, 2, Some(SceneModel::Model(model)), None);
-    rw.share_light(&mut c.world, 64, 768, -50, -10, -50);
+    rw.set_wall_model(&c.world, 0, 2, 2, Some(SceneModel::Model(model)), None)
+        .unwrap();
+    rw.share_light(&mut c.world, 64, 768, -50, -10, -50)
+        .unwrap();
 
     let SceneModel::Model(m) = rw
         .wall_model1(&c.world, &c.cache, 0, 0, 2, 2)
+        .unwrap()
         .expect("wall model1")
     else {
         panic!("wall model1 must be a Model")

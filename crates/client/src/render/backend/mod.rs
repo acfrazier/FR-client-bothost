@@ -4,12 +4,16 @@
 //! (task 7) overrides `scene`/`composite_scene`/`finish` (2D chrome stays
 //! CPU that slice).
 
+pub mod capture;
 pub mod cpu;
 pub mod gpu;
 pub mod gpu_atlas;
-
+pub mod present;
+pub mod readback;
+pub(crate) mod retained_camera;
 use crate::client::client::Client;
 use crate::graphics::PixMap;
+use crate::render::budget::{RenderBytes, RenderLimit};
 use crate::render::Renderer;
 
 /// Which backend rasterized the frame (the selection tests and the window
@@ -22,31 +26,140 @@ pub enum BackendKind {
     Gpu,
 }
 
-/// A real wgpu texture the GPU backend returns: the full-frame 765×503
-/// texture view (scene + chrome composited on the GPU) plus the owning
-/// device/queue, so a consumer that must read the pixels back (the
-/// `window` present path, which has no wgpu surface) can copy and map it.
-/// The host-owned `Textures` path binds the view directly.
+/// Typed failure to produce a complete fresh GPU presentation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RenderFault {
+    Budget(RenderLimit),
+    CaptureContended,
+    AssetsContended,
+    SceneLockContended,
+    PresentContended,
+    PresentIdentityExhausted,
+    MailboxSequenceExhausted,
+    PresentRetired,
+    #[cfg(feature = "render-test-hooks")]
+    InjectedResourceLimit,
+}
+
+/// A wgpu texture view returned by the renderer. Direct display binding is
+/// available through `display_view`; host readback authority is only granted
+/// by a registered [`present::ConsumerRegistration`].
 pub struct TextureHandle {
-    /// The device the view was created on (a consumer read-back needs it).
-    pub device: wgpu::Device,
-    /// The queue the backend submits on (same reason).
-    pub queue: wgpu::Queue,
-    /// The composited frame texture view.
-    pub view: wgpu::TextureView,
-    /// Texture width in pixels (the 765×503 applet frame).
-    pub width: u32,
-    /// Texture height in pixels.
-    pub height: u32,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    view: wgpu::TextureView,
+    width: u32,
+    height: u32,
+    token: Option<present::PresentToken>,
+    has_valid_scene: bool,
+    gate: Option<std::sync::Arc<present::PresentGate>>,
+    fresh: bool,
+    render_fault: Option<RenderFault>,
 }
 
 impl TextureHandle {
-    /// Copy the frame texture back to the CPU as `0x00RRGGBB` pixels (the
-    /// `window` present path and the pixel-assertion tests; the host
-    /// texture path never reads back). Synchronous: poll until the map
-    /// completes.
+    /// Construct a successfully submitted GPU presentation.
+    pub(crate) fn presented(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        view: wgpu::TextureView,
+        geometry: capture::CaptureGeometry,
+        token: present::PresentToken,
+        has_valid_scene: bool,
+        gate: std::sync::Arc<present::PresentGate>,
+        fresh: bool,
+        render_fault: Option<RenderFault>,
+    ) -> Self {
+        Self {
+            device,
+            queue,
+            view,
+            width: geometry.width(),
+            height: geometry.height(),
+            token: Some(token),
+            has_valid_scene,
+            gate: Some(gate),
+            fresh,
+            render_fault,
+        }
+    }
+
+    /// Construct a caller-owned, untracked texture. It never probes or
+    /// initializes an adapter and cannot register a retained consumer.
+    pub fn untracked(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        view: wgpu::TextureView,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        Self {
+            device,
+            queue,
+            view,
+            width,
+            height,
+            token: None,
+            has_valid_scene: false,
+            gate: None,
+            fresh: true,
+            render_fault: None,
+        }
+    }
+
+    /// An output whose final present copy was refused. Its display view is
+    /// the prior stable texture and it cannot publish a new consumer token.
+    pub(crate) fn nonfresh(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        view: wgpu::TextureView,
+        geometry: capture::CaptureGeometry,
+        token: Option<present::PresentToken>,
+        has_valid_scene: bool,
+        gate: std::sync::Arc<present::PresentGate>,
+        render_fault: Option<RenderFault>,
+    ) -> Self {
+        Self {
+            device,
+            queue,
+            view,
+            width: geometry.width(),
+            height: geometry.height(),
+            token,
+            has_valid_scene,
+            gate: Some(gate),
+            fresh: false,
+            render_fault,
+        }
+    }
+
+    pub fn display_view(&self) -> &wgpu::TextureView {
+        &self.view
+    }
+
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub fn present_token(&self) -> Option<present::PresentToken> {
+        self.token
+    }
+
+    pub fn has_valid_scene(&self) -> bool {
+        self.has_valid_scene
+    }
+    /// Typed failure to produce a complete fresh GPU presentation, if any.
+    pub fn render_fault(&self) -> Option<RenderFault> {
+        self.render_fault
+    }
+
+    /// Legacy synchronous path for standalone callers only. Production host
+    /// capture uses a held consumer frame and the shared readback permit.
     pub fn read_back(&self) -> Vec<i32> {
-        // `COPY_BYTES_PER_ROW_ALIGNMENT` 256: pad the row stride.
         let bytes_per_row = (self.width * 4).div_ceil(256) * 256;
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("r274 frame readback"),
@@ -114,6 +227,16 @@ impl TextureHandle {
     }
 }
 
+pub use capture::{CaptureGeometry, READBACK_MAX_STAGE_BYTES, RECORD_MAX_RAW_PIXELS};
+pub use present::{
+    configure_retained_present_budget, ConsumerFrame, ConsumerRegistration, PresentToken,
+    ReadbackKind, RetainedPresentBudget,
+};
+pub use readback::{
+    begin_window_readback, CompletedReadback, CompletedWindowReadback, PendingReadback,
+    PendingWindowReadback, ReadbackBudget, ReadbackError, ReadbackPermit,
+};
+
 /// The output of a rendered frame, owned by the backend that produced it.
 /// `CpuBackend` returns the composited `draw_area` as an owned `PixMap`
 /// (the pixel-faithful path); the wgpu backend returns a `Texture` (the
@@ -122,9 +245,31 @@ impl TextureHandle {
 pub enum FrameOutput {
     /// CpuBackend: the composited 765×503 frame.
     PixMap(PixMap),
-    /// GpuBackend: the full-frame wgpu texture (scene + chrome composited
-    /// on the GPU; no readback).
+    /// GpuBackend: the full-frame wgpu composite.
     Texture(TextureHandle),
+    /// The selected backend refused this frame before publishing a payload.
+    Refused(RenderFault),
+}
+
+impl FrameOutput {
+    /// Whether this output contains a newly submitted present. A nonfresh
+    /// GPU result refers to the prior stable texture and must not advance a
+    /// host mailbox generation.
+    pub fn is_fresh(&self) -> bool {
+        match self {
+            Self::PixMap(_) => true,
+            Self::Texture(handle) => handle.fresh,
+            Self::Refused(_) => false,
+        }
+    }
+    /// Typed backend failure to produce a complete fresh output, if any.
+    pub fn render_fault(&self) -> Option<RenderFault> {
+        match self {
+            Self::PixMap(_) => None,
+            Self::Texture(handle) => handle.render_fault(),
+            Self::Refused(fault) => Some(*fault),
+        }
+    }
 }
 
 /// Which frame the renderer is drawing. The old `mainredraw` in-game /
@@ -195,15 +340,37 @@ pub trait RenderBackend {
     /// the in-game redraw-frame compositing, or the title compositing.
     fn chrome(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind);
     /// The composited frame, owned by the backend: `FrameOutput::PixMap`
-    /// for `CpuBackend`, `FrameOutput::Texture` for the wgpu backend.
+    /// for `CpuBackend`, `FrameOutput::Texture` for wgpu, or `Refused` when
+    /// a bounded resource fault prevented publishing a complete frame.
     fn finish(&mut self, r: &mut Renderer) -> FrameOutput;
-    /// Scene result for the current paint. Test backends default to no scene.
+    /// Typed failure from this paint, including a recovered usable CPU frame.
+    /// `Refused` is reserved for paints with no complete usable output.
+    fn render_fault(&self) -> Option<RenderFault> {
+        None
+    }
+    /// Retained backend-owned storage objects, excluding reusable CPU
+    /// surfaces that are accounted separately by the embedding renderer.
+    fn retained_storage_allocations(&self) -> u64 {
+        0
+    }
+    /// Retained backend-owned payload bytes, excluding reusable CPU surfaces.
+    fn retained_storage_bytes(&self) -> usize {
+        0
+    }
+    /// Scene work completed during the current paint.
     fn scene_progress(&self) -> SceneProgress {
         SceneProgress::NoScene
     }
-    /// Whether this backend has a valid scene available for a later freeze.
+    /// Whether the backend currently owns a completed scene eligible for
+    /// retained presentation and scene-dependent proof.
     fn has_valid_scene(&self) -> bool {
         false
+    }
+
+    /// On-demand logical owner census. Regular paints must not enumerate
+    /// every owner; default backends contribute no additional GPU/context data.
+    fn render_bytes(&self) -> RenderBytes {
+        RenderBytes::default()
     }
     /// Which backend this is (the selection/fallback tests and the window
     /// driver use it); defaults to `Cpu`.

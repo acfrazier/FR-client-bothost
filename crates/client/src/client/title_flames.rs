@@ -40,6 +40,27 @@ pub struct TitleFlames {
 }
 
 impl TitleFlames {
+    pub(crate) fn retained_storage_bytes(&self) -> usize {
+        use crate::render::budget::vec_capacity_bytes as bytes;
+        bytes(&self.runes)
+            + self
+                .runes
+                .iter()
+                .map(|pix| bytes(&pix.data) + bytes(&pix.bpal))
+                .sum::<usize>()
+            + self.flame_left.as_ref().map_or(0, |pix| bytes(&pix.data))
+            + self.flame_right.as_ref().map_or(0, |pix| bytes(&pix.data))
+            + bytes(&self.flame_buffer1)
+            + bytes(&self.flame_buffer0)
+            + bytes(&self.flame_buffer3)
+            + bytes(&self.flame_buffer2)
+            + bytes(&self.flame_gradient)
+            + bytes(&self.flame_gradient0)
+            + bytes(&self.flame_gradient1)
+            + bytes(&self.flame_gradient2)
+            + bytes(&self.flame_line_offset)
+    }
+
     pub fn new(runes: Vec<Pix8>) -> Self {
         TitleFlames {
             runes,

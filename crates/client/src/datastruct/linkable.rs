@@ -157,6 +157,26 @@ impl<T: LinkableTrait> Arena<T> {
         self.free.push(id);
         node
     }
+    /// Heap backing capacity for the arena's node and free-slot vectors.
+    pub(crate) fn allocation_capacity_bytes(&self) -> usize {
+        self.nodes
+            .capacity()
+            .saturating_mul(std::mem::size_of::<Option<T>>())
+            .saturating_add(
+                self.free
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<usize>()),
+            )
+    }
+
+    /// Visit every occupied node, including sentinels, without allocating.
+    pub(crate) fn for_each_occupied(&self, mut visit: impl FnMut(usize, &T)) {
+        for (id, node) in self.nodes.iter().enumerate() {
+            if let Some(node) = node {
+                visit(id, node);
+            }
+        }
+    }
 }
 
 impl<T: LinkableTrait> Default for Arena<T> {

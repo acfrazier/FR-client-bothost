@@ -1,7 +1,9 @@
 pub mod backend;
+pub mod budget;
 #[cfg(feature = "render-diagnostics")]
 pub mod diagnostics;
 pub mod draw;
+pub(crate) mod graphic_sprites;
 pub mod media;
 pub mod nav_debug;
 // Frozen pre-GPU Pix2D oracle for parity tests. Never update it alongside

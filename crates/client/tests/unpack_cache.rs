@@ -217,10 +217,12 @@ fn cpu_renders_maze_wall_and_textured_door() {
         };
         let mut world = flat_world();
         let mut rw = RenderWorld::new();
-        rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+        rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+            .unwrap();
         world.set_wall(0, 1, 2, 2000, wall_type, 0, loc_id as i32, 0, 0, 0, 0, 0);
-        rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
-        rw.share_light(&mut world, 64, 768, -50, -10, -50);
+        rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None)
+            .unwrap();
+        rw.share_light(&mut world, 64, 768, -50, -10, -50).unwrap();
         let mut pix = textured_pix(&jag);
         let mut map = PixMap::new(512, 334);
         {
@@ -238,7 +240,8 @@ fn cpu_renders_maze_wall_and_textured_door() {
                 3,
                 0,
                 128,
-            );
+            )
+            .unwrap();
         }
         let ground = Pix3D::colour_table()[SHADE as usize];
         let n = map

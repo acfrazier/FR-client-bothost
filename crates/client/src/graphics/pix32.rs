@@ -10,6 +10,7 @@ use super::pix2d::Pix2D;
 use super::pix8::Pix8;
 use crate::datastruct::{LinkableTrait, Links};
 use crate::io::{JagFile, Packet};
+use crate::render::budget::{BudgetCharge, ByteBudget, RenderLimit};
 
 #[derive(Clone)]
 pub struct Pix32 {
@@ -162,6 +163,136 @@ impl Pix32 {
         Some(image)
     }
 
+    fn render_allocation_limit(budget: &ByteBudget) -> RenderLimit {
+        RenderLimit::new(budget.resource(), usize::MAX, budget.maximum())
+    }
+
+    pub(crate) fn depack_render(
+        jag: &JagFile,
+        name: &str,
+        sprite: i32,
+        scratch_budget: &ByteBudget,
+        retained_budget: &ByteBudget,
+    ) -> Result<Option<(Self, BudgetCharge)>, RenderLimit> {
+        let Some((dat_bytes, _dat_charge)) =
+            jag.read_render_suffix(name, ".dat", scratch_budget)?
+        else {
+            return Ok(None);
+        };
+        let Some((index_bytes, _index_charge)) = jag.read_render("index.dat", scratch_budget)?
+        else {
+            return Ok(None);
+        };
+        let mut dat = Packet::new(dat_bytes);
+        let mut index = Packet::new(index_bytes);
+
+        if dat.available() < 2 {
+            return Ok(None);
+        }
+        index.pos = dat.g2() as usize;
+
+        if index.available() < 5 {
+            return Ok(None);
+        }
+        let owi = index.g2();
+        let ohi = index.g2();
+        let bpal_count = index.g1();
+        if index.available() < 3 * bpal_count.saturating_sub(1) as usize {
+            return Ok(None);
+        }
+        let palette_len = bpal_count as usize;
+        let palette_bytes = palette_len
+            .checked_mul(std::mem::size_of::<i32>())
+            .ok_or_else(|| Self::render_allocation_limit(scratch_budget))?;
+        let mut palette_charge = scratch_budget.reserve(palette_bytes)?;
+        let mut bpal = Vec::new();
+        bpal.try_reserve_exact(palette_len)
+            .map_err(|_| Self::render_allocation_limit(scratch_budget))?;
+        bpal.resize(palette_len, 0i32);
+        palette_charge.resize(
+            bpal.capacity()
+                .checked_mul(std::mem::size_of::<i32>())
+                .ok_or_else(|| Self::render_allocation_limit(scratch_budget))?,
+        )?;
+        for i in 0..bpal_count - 1 {
+            bpal[i as usize + 1] = index.g3();
+            if bpal[i as usize + 1] == 0 {
+                bpal[i as usize + 1] = 1;
+            }
+        }
+
+        for _ in 0..sprite {
+            if index.available() < 6 {
+                return Ok(None);
+            }
+            index.pos += 2;
+            let a = index.g2();
+            let b = index.g2();
+            dat.pos = dat.pos.saturating_add((a as i64 * b as i64) as usize);
+            index.pos += 1;
+        }
+
+        if dat.pos > dat.length() || index.pos > index.length() {
+            return Ok(None);
+        }
+        if index.available() < 1 + 1 + 2 + 2 + 1 {
+            return Ok(None);
+        }
+        let xof = index.g1();
+        let yof = index.g1();
+        let wi = index.g2();
+        let hi = index.g2();
+        let encoding = index.g1();
+
+        let pixel_len = (wi as usize)
+            .checked_mul(hi as usize)
+            .ok_or_else(|| Self::render_allocation_limit(retained_budget))?;
+        if dat.available() < pixel_len {
+            return Ok(None);
+        }
+        let pixel_bytes = pixel_len
+            .checked_mul(std::mem::size_of::<i32>())
+            .ok_or_else(|| Self::render_allocation_limit(retained_budget))?;
+        let mut pixel_charge = retained_budget.reserve(pixel_bytes)?;
+        let mut pixels = Vec::new();
+        pixels
+            .try_reserve_exact(pixel_len)
+            .map_err(|_| Self::render_allocation_limit(retained_budget))?;
+        pixels.resize(pixel_len, 0i32);
+        pixel_charge.resize(
+            pixels
+                .capacity()
+                .checked_mul(std::mem::size_of::<i32>())
+                .ok_or_else(|| Self::render_allocation_limit(retained_budget))?,
+        )?;
+
+        if encoding == 0 {
+            for pixel in &mut pixels {
+                *pixel = bpal.get(dat.g1() as usize).copied().unwrap_or(0);
+            }
+        } else if encoding == 1 {
+            for x in 0..wi {
+                for y in 0..hi {
+                    pixels[(x + y * wi) as usize] =
+                        bpal.get(dat.g1() as usize).copied().unwrap_or(0);
+                }
+            }
+        }
+
+        Ok(Some((
+            Pix32 {
+                data: pixels,
+                wi,
+                hi,
+                xof,
+                yof,
+                owi,
+                ohi,
+                links: Links::new(0),
+            },
+            pixel_charge,
+        )))
+    }
     pub fn rgb_adjust(&mut self, r: i32, g: i32, b: i32) {
         for i in 0..self.data.len() {
             let rgb = self.data[i];

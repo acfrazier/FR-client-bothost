@@ -97,7 +97,8 @@ fn place_wall(
     world.set_wall(
         level, x, z, y, angle1, angle2, typecode, typecode2, 0, 0, 0, 0,
     );
-    rw.set_wall_model(world, level, x, z, model1, model2);
+    rw.set_wall_model(world, level, x, z, model1, model2)
+        .unwrap();
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -119,7 +120,7 @@ fn place_scenery(
         level, x, z, y, typecode, typecode2, width, length, yaw, 0, 0, 0, 0,
     );
     let index = world.last_sprite_index().expect("sprite pushed");
-    rw.set_sprite_model(world, index, Some(model));
+    rw.set_sprite_model(world, index, Some(model)).unwrap();
 }
 
 /// A one-face model with computed point normals, as a placed loc would be
@@ -158,7 +159,9 @@ fn share_light_empty_world_is_noop() {
         max_level as usize
     ];
     let mut world = World::new(groundh, max_tile_z, max_level, max_tile_x);
-    RenderWorld::new().share_light(&mut world, 64, 768, -50, -10, -50);
+    RenderWorld::new()
+        .share_light(&mut world, 64, 768, -50, -10, -50)
+        .unwrap();
 }
 
 #[test]
@@ -180,10 +183,11 @@ fn share_light_lights_wall_models_and_consumes_normals() {
         0,
     );
 
-    rw.share_light(&mut world, 64, 768, -50, -10, -50);
+    rw.share_light(&mut world, 64, 768, -50, -10, -50).unwrap();
 
     let SceneModel::Model(model) = rw
         .wall_model1(&world, &Cache::default(), 0, 0, 1, 1)
+        .unwrap()
         .expect("wall model1")
     else {
         panic!("wall model1 must be a Model")
@@ -221,11 +225,12 @@ fn ground_item_updates_preserve_shared_wall_lighting() {
         0,
         0,
     );
-    rw.share_light(&mut world, 64, 768, -50, -10, -50);
+    rw.share_light(&mut world, 64, 768, -50, -10, -50).unwrap();
     let cache = Cache::default();
     let shade = |rw: &mut RenderWorld, world: &World| {
         let SceneModel::Model(model) = rw
             .wall_model1(world, &cache, 0, 0, 1, 1)
+            .unwrap()
             .expect("ground items must not discard the lit wall")
         else {
             panic!("wall must retain its shared-light model");
@@ -260,11 +265,12 @@ fn decor_mutations_preserve_shared_wall_lighting() {
         0,
         0,
     );
-    rw.share_light(&mut world, 64, 768, -50, -10, -50);
+    rw.share_light(&mut world, 64, 768, -50, -10, -50).unwrap();
     let cache = Cache::default();
     let shade = |rw: &mut RenderWorld, world: &World| {
         let SceneModel::Model(model) = rw
             .wall_model1(world, &cache, 0, 0, 1, 1)
+            .unwrap()
             .expect("decor mutation must retain the shared-lit wall")
         else {
             panic!("expected lit wall");
@@ -303,11 +309,12 @@ fn share_light_lights_scenery_sprites() {
         0,
     );
 
-    rw.share_light(&mut world, 64, 768, -50, -10, -50);
+    rw.share_light(&mut world, 64, 768, -50, -10, -50).unwrap();
 
     let index = world.scene_sprite_index(0, 1, 1).expect("sprite index");
     let SceneModel::Model(model) = rw
         .sprite_model(&world, &Cache::default(), 0, index)
+        .unwrap()
         .expect("sprite model")
     else {
         panic!("sprite model must be a Model")
@@ -321,12 +328,14 @@ fn share_light_lights_ground_decor() {
     let mut world = flat_world();
     let mut rw = RenderWorld::new();
     world.set_ground_decor(0, 1, 1, 2000, 0, 0, 0, 0, 0, 0);
-    rw.set_gd_model(&world, 0, 1, 1, Some(SceneModel::Model(normals_model())));
+    rw.set_gd_model(&world, 0, 1, 1, Some(SceneModel::Model(normals_model())))
+        .unwrap();
 
-    rw.share_light(&mut world, 64, 768, -50, -10, -50);
+    rw.share_light(&mut world, 64, 768, -50, -10, -50).unwrap();
 
     let SceneModel::Model(model) = rw
         .gd_model(&world, &Cache::default(), 0, 0, 1, 1)
+        .unwrap()
         .expect("ground decor")
     else {
         panic!("gd model must be a Model")
@@ -387,7 +396,8 @@ fn render_all_lights_pending_sharelight_scene_sprites() {
     world.share_light_pending = true;
 
     let mut rw = RenderWorld::new();
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     let mut pix = Pix3DDraw::default();
     let mut map = PixMap::new(512, 334);
     {
@@ -405,7 +415,8 @@ fn render_all_lights_pending_sharelight_scene_sprites() {
             3,
             0,
             128,
-        );
+        )
+        .unwrap();
     }
 
     // The pending pass resolved the scene sprite and lit it: normals
@@ -413,6 +424,7 @@ fn render_all_lights_pending_sharelight_scene_sprites() {
     let index = world.scene_sprite_index(0, 1, 1).expect("sprite placed");
     let model = rw
         .sprite_model(&world, &cache, 0, index)
+        .unwrap()
         .expect("sprite model")
         .as_model()
         .expect("sprite model must be a static Model");
@@ -522,7 +534,8 @@ fn render_all_lights_animated_sharelight_loc_frames() {
     world.share_light_pending = true;
 
     let mut rw = RenderWorld::new();
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     let mut pix = Pix3DDraw::default();
     let mut map = PixMap::new(512, 334);
     {
@@ -540,12 +553,14 @@ fn render_all_lights_animated_sharelight_loc_frames() {
             3,
             0,
             128,
-        );
+        )
+        .unwrap();
     }
 
     let index = world.scene_sprite_index(0, 1, 1).expect("portal placed");
     let frame = rw
         .sprite_frame_model(&world, &cache, 0, index)
+        .unwrap()
         .expect("portal frame model materialises");
     let lit = frame.face_colour_a.as_ref().expect("lit colours");
     assert!(
@@ -598,7 +613,8 @@ fn wall_pixel_count(winding_ccw_from_south: bool) -> usize {
     let wall_rgb = Pix3D::colour_table()[WALL_SHADE as usize];
     let mut world = flat_world();
     let mut rw = RenderWorld::new();
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     // SOUTH wall (WSHAPE0[3] = 8) on tile (1,2), in front of the vis-test camera.
     place_wall(
         &mut rw,
@@ -631,7 +647,8 @@ fn wall_pixel_count(winding_ccw_from_south: bool) -> usize {
             3,
             0,
             128,
-        );
+        )
+        .unwrap();
     }
     map.pixels.iter().filter(|&&p| p == wall_rgb).count()
 }
@@ -655,7 +672,8 @@ fn wall_pixel_count_at(winding_ccw_from_south: bool, eye_x: i32, eye_y: i32, eye
     let wall_rgb = Pix3D::colour_table()[WALL_SHADE as usize];
     let mut world = flat_world();
     let mut rw = RenderWorld::new();
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     place_wall(
         &mut rw,
         &mut world,
@@ -687,7 +705,8 @@ fn wall_pixel_count_at(winding_ccw_from_south: bool, eye_x: i32, eye_y: i32, eye
             3,
             0,
             128,
-        );
+        )
+        .unwrap();
     }
     map.pixels.iter().filter(|&&p| p == wall_rgb).count()
 }
@@ -713,7 +732,8 @@ fn south_wall_not_swallowed_by_its_own_occluder() {
     let wall_rgb = Pix3D::colour_table()[WALL_SHADE as usize];
     let mut world = flat_world();
     let mut rw = RenderWorld::new();
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     place_wall(
         &mut rw,
         &mut world,
@@ -749,7 +769,8 @@ fn south_wall_not_swallowed_by_its_own_occluder() {
             3,
             0,
             128,
-        );
+        )
+        .unwrap();
     }
     let n = map.pixels.iter().filter(|&&p| p == wall_rgb).count();
     eprintln!("south wall pixels with own occluder={n}");
@@ -801,11 +822,12 @@ fn share_light_does_not_delete_adjacent_south_walls() {
         0,
         0,
     );
-    rw.share_light(&mut world, 64, 768, -50, -10, -50);
+    rw.share_light(&mut world, 64, 768, -50, -10, -50).unwrap();
 
     for x in [1, 2] {
         let SceneModel::Model(model) = rw
             .wall_model1(&world, &Cache::default(), 0, 0, x, 2)
+            .unwrap()
             .expect("wall")
         else {
             panic!("model");
@@ -879,7 +901,8 @@ fn count_non_ground_at(
             3,
             yaw,
             pitch,
-        );
+        )
+        .unwrap();
     }
     let ground = Pix3D::colour_table()[SHADE as usize];
     map.pixels
@@ -953,7 +976,8 @@ fn painted_house_wall_covers_from_outside_after_share_light() {
     Pix3D::init_colour_table(0.6);
     let mut world = flat_world();
     let mut rw = RenderWorld::new();
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     place_wall(
         &mut rw,
         &mut world,
@@ -968,7 +992,7 @@ fn painted_house_wall_covers_from_outside_after_share_light() {
         0,
         0,
     );
-    rw.share_light(&mut world, 64, 768, -50, -10, -50);
+    rw.share_light(&mut world, 64, 768, -50, -10, -50).unwrap();
     let n = count_non_ground(&mut world, &mut rw, 192, 1950, 64);
     assert!(
         n > 50,
@@ -1070,7 +1094,7 @@ fn eight_tile_south_occluder_does_not_eat_outside_walls() {
             0,
         );
     }
-    rw.share_light(&mut world, 64, 768, -50, -10, -50);
+    rw.share_light(&mut world, 64, 768, -50, -10, -50).unwrap();
     // finishBuild type-2 box for the 8-tile SOUTH run, stored on outdoor
     // max_level 3.
     world.set_occlude(
@@ -1084,7 +1108,8 @@ fn eight_tile_south_occluder_does_not_eat_outside_walls() {
         wall_z * 128,
     );
 
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     Pix3D::init_colour_table(0.6);
     let mut pix = textured_pix();
     let mut map = PixMap::new(512, 334);
@@ -1104,7 +1129,8 @@ fn eight_tile_south_occluder_does_not_eat_outside_walls() {
             3,
             0,
             128,
-        );
+        )
+        .unwrap();
     }
     let ground = Pix3D::colour_table()[SHADE as usize];
     let n = map
@@ -1201,7 +1227,8 @@ fn count_wall_shade(
 ) -> usize {
     Pix3D::init_colour_table(0.6);
     let wall_rgb = Pix3D::colour_table()[WALL_SHADE as usize];
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     let mut pix = Pix3DDraw::default();
     let mut map = PixMap::new(512, 334);
     {
@@ -1219,7 +1246,8 @@ fn count_wall_shade(
             3,
             0,
             128,
-        );
+        )
+        .unwrap();
     }
     map.pixels.iter().filter(|&&p| p == wall_rgb).count()
 }
@@ -1388,7 +1416,8 @@ fn render_all_writes_pixels_and_picks_ground_tile() {
             0,
             0,
             512,
-        );
+        )
+        .unwrap();
     }
 
     assert!(
@@ -1420,7 +1449,8 @@ fn render_all_writes_pixels_and_picks_ground_tile() {
             0,
             0,
             512,
-        );
+        )
+        .unwrap();
     }
     assert_eq!(world.ground_x, -1);
     assert_eq!(world.ground_z, -1);
@@ -1465,7 +1495,8 @@ fn render_all_renders_scenery_sprites() {
             0,
             0,
             512,
-        );
+        )
+        .unwrap();
     }
 
     // The sprite's model is rendered this cycle (cycle stamped) and the
@@ -1498,7 +1529,8 @@ fn reset_vis_calc_marks_near_tiles_visible() {
     Pix3D::init_colour_table(0.6);
     let mut world = flat_world();
     let mut rw = RenderWorld::new();
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
 
     let mut pix = Pix3DDraw::default();
     let mut map = PixMap::new(512, 334);
@@ -1517,7 +1549,8 @@ fn reset_vis_calc_marks_near_tiles_visible() {
             3,
             0,
             128,
-        );
+        )
+        .unwrap();
     }
     assert!(
         map.pixels.iter().any(|&p| p != 0),
@@ -1823,7 +1856,8 @@ fn render_box_in_world(sharelight_cube: bool, yaw: i32, pitch: i32) -> (usize, u
         0,
         0,
     );
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     let mut pix = Pix3DDraw::default();
     let mut map = PixMap::new(512, 334);
     {
@@ -1847,7 +1881,8 @@ fn render_box_in_world(sharelight_cube: bool, yaw: i32, pitch: i32) -> (usize, u
             3,
             yaw,
             pitch,
-        );
+        )
+        .unwrap();
     }
     count_shades(&map.pixels, south_rgb, north_rgb)
 }
@@ -2000,7 +2035,7 @@ fn varrock_fountain_facing_side_covers() {
         length,
         0,
     );
-    rw.share_light(&mut world, 64, 768, -50, -10, -50);
+    rw.share_light(&mut world, 64, 768, -50, -10, -50).unwrap();
 
     if let Some(l879) = cache.locs.get(879) {
         eprintln!(
@@ -2009,7 +2044,8 @@ fn varrock_fountain_facing_side_covers() {
         );
     }
 
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     let ground = Pix3D::colour_table()[SHADE as usize];
     let mut count_at = |yaw: i32, eye_x: i32, eye_y: i32, eye_z: i32| -> usize {
         let mut pix = textured_pix();
@@ -2029,7 +2065,8 @@ fn varrock_fountain_facing_side_covers() {
                 3,
                 yaw,
                 128,
-            );
+            )
+            .unwrap();
         }
         map.pixels
             .iter()
@@ -2179,8 +2216,9 @@ fn fountain_facing_side_survives_dense_neighbours() {
             );
         }
     }
-    rw.share_light(&mut world, 64, 768, -50, -10, -50);
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.share_light(&mut world, 64, 768, -50, -10, -50).unwrap();
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
 
     let pitch = 128i32;
     let (ex, ey, ez) = orbit_eye(
@@ -2208,7 +2246,8 @@ fn fountain_facing_side_survives_dense_neighbours() {
             3,
             0,
             pitch,
-        );
+        )
+        .unwrap();
     }
     let ground = Pix3D::colour_table()[SHADE as usize];
     let wall = Pix3D::colour_table()[WALL_SHADE as usize];
@@ -2311,7 +2350,8 @@ fn camera_facing_box_survives_full_vis_window() {
             );
         }
     }
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     let (ex, ey, ez) = orbit_eye(51 * 128, groundh - 50, 52 * 128, pitch, 0, pitch * 3 + 600);
     let mut pix = Pix3DDraw::default();
     let mut map = PixMap::new(512, 334);
@@ -2330,7 +2370,8 @@ fn camera_facing_box_survives_full_vis_window() {
             3,
             0,
             pitch,
-        );
+        )
+        .unwrap();
     }
     let south = map.pixels.iter().filter(|&&p| p == south_rgb).count();
     eprintln!("104-map south-face pixels={south} eye=({ex},{ey},{ez})");

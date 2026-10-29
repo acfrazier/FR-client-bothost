@@ -413,6 +413,52 @@ impl Default for Pix3DDraw {
 }
 
 impl Pix3DDraw {
+    /// Heap capacities retained by the CPU rasterizer, excluding a temporarily
+    /// lent scene capture (the capture owner is counted separately).
+    pub(crate) fn retained_storage_bytes(&self) -> usize {
+        use crate::render::budget::vec_capacity_bytes as bytes;
+        let scratch = &self.model_scratch;
+        bytes(&self.scanline)
+            + bytes(&self.textures)
+            + self
+                .textures
+                .iter()
+                .flatten()
+                .map(|pix| bytes(&pix.data) + bytes(&pix.bpal))
+                .sum::<usize>()
+            + bytes(&self.active_texels)
+            + self
+                .active_texels
+                .iter()
+                .flatten()
+                .map(bytes)
+                .sum::<usize>()
+            + bytes(&self.tex_pal)
+            + self.tex_pal.iter().flatten().map(bytes).sum::<usize>()
+            + self.texel_pool.as_ref().map_or(0, |pool| {
+                bytes(pool) + pool.iter().map(bytes).sum::<usize>()
+            })
+            + bytes(&self.picked_entity_typecode)
+            + bytes(&scratch.vertex_screen_x)
+            + bytes(&scratch.vertex_screen_y)
+            + bytes(&scratch.vertex_screen_z)
+            + bytes(&scratch.vertex_view_space_x)
+            + bytes(&scratch.vertex_view_space_y)
+            + bytes(&scratch.vertex_view_space_z)
+            + bytes(&scratch.face_near_clipped)
+            + bytes(&scratch.face_clipped_x)
+            + bytes(&scratch.tmp_depth_face_count)
+            + bytes(&scratch.tmp_depth_faces)
+            + bytes(&scratch.tmp_priority_face_count)
+            + bytes(&scratch.tmp_priority_faces)
+            + bytes(&scratch.tmp_priority10_face_depth)
+            + bytes(&scratch.tmp_priority11_face_depth)
+            + bytes(&scratch.tmp_priority_depth_sum)
+            + bytes(&scratch.clipped_x)
+            + bytes(&scratch.clipped_y)
+            + bytes(&scratch.clipped_colour)
+    }
+
     /// TS `setRenderClipping`: bind clipping to the current target surface,
     /// rebuilding `scanline` and the origin for its size.
     pub fn set_render_clipping(&mut self, surface: &Pix2D) {

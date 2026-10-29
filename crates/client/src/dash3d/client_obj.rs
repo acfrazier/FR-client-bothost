@@ -2,6 +2,7 @@
 use crate::config::Cache;
 use crate::dash3d::Model;
 use crate::datastruct::linkable::{LinkableTrait, Links};
+use crate::render::budget::{ByteBudget, RenderLimit};
 
 #[derive(Clone)]
 pub struct ClientObj {
@@ -25,6 +26,15 @@ impl ClientObj {
     /// `getTempModel()` from client-ts.
     pub fn get_temp_model(&mut self, cache: &Cache, _loop_cycle: i32) -> Option<Model> {
         cache.obj(self.id as usize).get_model_lit(cache, self.count)
+    }
+    pub fn try_get_temp_model_for_render(
+        &self,
+        cache: &Cache,
+        budget: &ByteBudget,
+    ) -> Result<Option<Model>, RenderLimit> {
+        cache
+            .obj(self.id as usize)
+            .try_get_model_lit_for_render(cache, self.count, budget)
     }
 }
 

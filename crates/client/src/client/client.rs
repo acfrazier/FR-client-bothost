@@ -1042,6 +1042,8 @@ pub struct Client {
     /// Retained nav-debug facts from the host, projected by the wgpu scene
     /// stage. `None` for a skip-paint slot or CpuPix3D renderer.
     pub nav_debug_paint: Option<NavDebugPaint>,
+    nav_debug_charge: Option<crate::render::budget::BudgetCharge>,
+    nav_debug_limit: Option<crate::render::budget::RenderLimit>,
     /// Changes whenever the host replaces or clears [`Self::nav_debug_paint`].
     /// The GPU projection cache keys on this rather than hashing the paint.
     nav_debug_paint_generation: u64,
@@ -2070,6 +2072,8 @@ impl Client {
             ingame: false,
             draw: false,
             nav_debug_paint: None,
+            nav_debug_charge: None,
+            nav_debug_limit: None,
             nav_debug_paint_generation: 0,
             nav_debug_drawable: false,
             journal_paint_hidden: false,
@@ -13412,7 +13416,37 @@ impl Client {
     /// its projection until either this view or the camera changes.
     pub fn set_nav_debug_paint(&mut self, paint: Option<NavDebugPaint>) {
         self.nav_debug_paint = paint;
+        self.nav_debug_charge = None;
+        self.nav_debug_limit = None;
         self.nav_debug_paint_generation = self.nav_debug_paint_generation.wrapping_add(1);
+    }
+
+    /// Publish a fully charged replacement, or retain the prior input and
+    /// report its producer's refusal at the next frame boundary.
+    pub fn set_budgeted_nav_debug_paint(
+        &mut self,
+        candidate: Result<
+            (NavDebugPaint, Option<crate::render::budget::BudgetCharge>),
+            crate::render::budget::RenderLimit,
+        >,
+    ) -> Result<(), crate::render::budget::RenderLimit> {
+        match candidate {
+            Ok((paint, charge)) => {
+                self.nav_debug_paint = Some(paint);
+                self.nav_debug_charge = charge;
+                self.nav_debug_limit = None;
+                self.nav_debug_paint_generation = self.nav_debug_paint_generation.wrapping_add(1);
+                Ok(())
+            }
+            Err(limit) => {
+                self.nav_debug_limit = Some(limit);
+                Err(limit)
+            }
+        }
+    }
+
+    pub(crate) fn nav_debug_render_limit(&self) -> Option<crate::render::budget::RenderLimit> {
+        self.nav_debug_limit
     }
 
     /// The currently retained nav-debug view.

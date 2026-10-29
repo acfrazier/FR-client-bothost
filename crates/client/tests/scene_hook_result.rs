@@ -975,7 +975,7 @@ fn output_pixel(output: FrameOutput, x: usize, y: usize) -> i32 {
     let FrameOutput::Texture(handle) = output else {
         panic!("the GPU scene fixture must return a texture frame");
     };
-    let width = handle.width as usize;
+    let width = handle.width() as usize;
     handle.read_back()[y * width + x]
 }
 
@@ -1207,4 +1207,439 @@ fn busy_click_and_trace_wait_for_a_real_scene() {
         let _ = renderer.game_draw(&mut client);
     }
     assert_eq!(renderer.scene_progress(), SceneProgress::Rebuilt);
+}
+
+fn cpu_frame(output: FrameOutput) -> PixMap {
+    let FrameOutput::PixMap(frame) = output else {
+        panic!("the CPU driver must return a complete pixel map");
+    };
+    frame
+}
+
+fn freeze_modal(client: &mut Client, x: i32, y: i32) {
+    use client::config::if_type::{ComponentType, IfType, IfTypeMut};
+    const ROOT: i32 = 700;
+    const RECT: i32 = 701;
+    client.set_iface(
+        ROOT as usize,
+        IfType {
+            id: ROOT,
+            r#type: ComponentType::TYPE_LAYER,
+            width: 512,
+            height: 334,
+            children: Some(vec![RECT]),
+            child_x: Some(vec![x]),
+            child_y: Some(vec![y]),
+            ..Default::default()
+        },
+    );
+    client.set_iface(
+        RECT as usize,
+        IfType {
+            id: RECT,
+            r#type: ComponentType::TYPE_RECT,
+            width: 8,
+            height: 6,
+            fill: true,
+            ..Default::default()
+        },
+    );
+    client.set_iface_mut(
+        RECT as usize,
+        IfTypeMut {
+            colour: 0x0012_3456,
+            ..Default::default()
+        },
+    );
+    client.main_modal_id = ROOT;
+}
+
+#[test]
+fn cpu_freeze_appear_move_remove_restores_clean_scene() {
+    let _serial = gpu_serial::lock();
+    ensure_hooks();
+    let _host = HostOverlayScope::enter(true);
+    let mut client = empty_client();
+    prepare_cpu_scene(&mut client);
+    client.hosted_animation_cycles = true;
+    let mut renderer = Renderer::new(false);
+    let _ = cpu_frame(renderer.mainredraw(&mut client));
+    assert!(renderer.has_valid_scene());
+    assert_eq!(renderer.retained_storage_bytes(), 512 * 334 * 4);
+    assert_eq!(renderer.retained_storage_allocations(), 1);
+
+    let (font, splash_x, splash_y) = loading_font();
+    let mut media = Media::empty();
+    media.p12 = Some(font);
+    renderer.media = Arc::new(media);
+    client.scene_state = 1;
+    let baseline = cpu_frame(renderer.mainredraw(&mut client));
+    assert_eq!(
+        baseline.pixels[splash_y * baseline.width as usize + splash_x],
+        0x00ff_ffff
+    );
+    assert_eq!(renderer.scene_progress(), SceneProgress::Retained);
+    let clean_loading = renderer.area_game.as_ref().unwrap().pixels.clone();
+    let scene_cycle = renderer.scene_cycle;
+    let camera = [121, 222, 323, 224, 525];
+    [
+        client.cam_x,
+        client.cam_y,
+        client.cam_z,
+        client.cam_pitch,
+        client.cam_yaw,
+    ] = camera;
+
+    freeze_modal(&mut client, 10, 20);
+    let visible = cpu_frame(renderer.mainredraw(&mut client));
+    assert_eq!(
+        visible.pixels[24 * visible.width as usize + 14] & 0xffffff,
+        0x0012_3456
+    );
+    freeze_modal(&mut client, 30, 20);
+    let moved = cpu_frame(renderer.mainredraw(&mut client));
+    assert_eq!(
+        moved.pixels[24 * moved.width as usize + 14],
+        baseline.pixels[24 * baseline.width as usize + 14]
+    );
+    assert_eq!(
+        moved.pixels[24 * moved.width as usize + 34] & 0xffffff,
+        0x0012_3456
+    );
+    client.main_modal_id = -1;
+    let removed = cpu_frame(renderer.mainredraw(&mut client));
+    assert_eq!(renderer.area_game.as_ref().unwrap().pixels, clean_loading);
+    assert_eq!(
+        removed.pixels[24 * removed.width as usize + 34],
+        baseline.pixels[24 * baseline.width as usize + 34]
+    );
+    assert_eq!(
+        [
+            client.cam_x,
+            client.cam_y,
+            client.cam_z,
+            client.cam_pitch,
+            client.cam_yaw
+        ],
+        camera,
+        "overlay projection must restore the current simulation camera"
+    );
+    assert_eq!(
+        renderer.scene_cycle, scene_cycle,
+        "loading must not prepare a new 3D scene"
+    );
+    assert_eq!(renderer.retained_storage_allocations(), 1);
+    assert_eq!(renderer.retained_storage_bytes(), 684_032);
+}
+
+#[test]
+fn cpu_title_invalidates_scene_without_reallocating_storage() {
+    let _serial = gpu_serial::lock();
+    ensure_hooks();
+    let _host = HostOverlayScope::enter(true);
+    let mut client = empty_client();
+    prepare_cpu_scene(&mut client);
+    client.scene_state = 0;
+    let mut renderer = Renderer::new(false);
+    let _ = cpu_frame(renderer.game_draw(&mut client));
+    renderer
+        .area_game
+        .as_mut()
+        .unwrap()
+        .pixels
+        .fill(0x0033_ff10);
+    let (font, splash_x, splash_y) = loading_font();
+    let mut media = Media::empty();
+    media.p12 = Some(font);
+    renderer.media = Arc::new(media);
+    client.scene_state = 1;
+    let pending = cpu_frame(renderer.mainredraw(&mut client));
+    assert_eq!(
+        pending.pixels[splash_y * pending.width as usize + splash_x],
+        0x00ff_ffff
+    );
+    assert_eq!(renderer.area_game.as_ref().unwrap().pixels[0], 0);
+    assert!(!renderer.has_valid_scene());
+    assert_eq!(renderer.retained_storage_allocations(), 0);
+    assert_eq!(renderer.retained_storage_bytes(), 0);
+
+    client.scene_state = 2;
+    let _ = cpu_frame(renderer.mainredraw(&mut client));
+    assert!(renderer.has_valid_scene());
+    assert_eq!(renderer.retained_storage_allocations(), 1);
+    let old_area = renderer.area_game.as_ref().unwrap().pixels.clone();
+    client.scene_state = 0;
+    let _ = cpu_frame(renderer.game_draw(&mut client));
+    assert!(!renderer.has_valid_scene());
+    assert_eq!(renderer.area_game.as_ref().unwrap().pixels, old_area);
+    assert_eq!(renderer.retained_storage_allocations(), 1);
+    let _ = renderer.title_screen_draw(&mut client);
+    assert!(!renderer.has_valid_scene());
+    assert_eq!(renderer.retained_storage_bytes(), 684_032);
+    assert_eq!(renderer.retained_storage_allocations(), 1);
+
+    client.scene_state = 0;
+    let _ = cpu_frame(renderer.game_draw(&mut client));
+    let (font, splash_x, splash_y) = loading_font();
+    let mut media = Media::empty();
+    media.p12 = Some(font);
+    renderer.media = Arc::new(media);
+    renderer
+        .area_game
+        .as_mut()
+        .unwrap()
+        .pixels
+        .fill(0x0033_ff10);
+    client.scene_state = 1;
+    let pending = cpu_frame(renderer.mainredraw(&mut client));
+    assert!(!renderer.has_valid_scene());
+    assert_eq!(renderer.area_game.as_ref().unwrap().pixels[0], 0);
+    assert_eq!(
+        pending.pixels[splash_y * pending.width as usize + splash_x],
+        0x00ff_ffff
+    );
+    assert_eq!(renderer.retained_storage_allocations(), 1);
+    client.scene_state = 2;
+    let _ = cpu_frame(renderer.mainredraw(&mut client));
+    assert!(renderer.has_valid_scene());
+    assert_eq!(renderer.retained_storage_allocations(), 1);
+}
+
+#[test]
+fn standalone_cpu_keeps_legacy_freeze_without_clean_copy() {
+    let _serial = gpu_serial::lock();
+    ensure_hooks();
+    let _standalone = HostOverlayScope::enter(false);
+    let mut client = empty_client();
+    prepare_cpu_scene(&mut client);
+    let mut renderer = Renderer::new_prefer(false, false);
+    let live = cpu_frame(renderer.mainredraw(&mut client));
+    assert!(renderer.has_valid_scene());
+    assert_eq!(renderer.retained_storage_allocations(), 0);
+    assert_eq!(renderer.retained_storage_bytes(), 0);
+    renderer
+        .area_game
+        .as_mut()
+        .unwrap()
+        .pixels
+        .fill(0x0044_6611);
+    client.scene_state = 1;
+    let frozen = cpu_frame(renderer.game_draw(&mut client));
+    assert_eq!(
+        frozen.pixels, live.pixels,
+        "standalone loading must keep the legacy last-frame blit policy"
+    );
+    assert!(renderer
+        .area_game
+        .as_ref()
+        .unwrap()
+        .pixels
+        .iter()
+        .all(|&pixel| pixel == 0x0044_6611));
+    assert_eq!(renderer.retained_storage_allocations(), 0);
+    assert_eq!(renderer.retained_storage_bytes(), 0);
+}
+
+#[test]
+fn cpu_distinct_heads_retain_independent_clean_scenes() {
+    let _serial = gpu_serial::lock();
+    ensure_hooks();
+    let _host = HostOverlayScope::enter(true);
+    let mut first_client = empty_client();
+    let mut second_client = empty_client();
+    prepare_cpu_scene(&mut first_client);
+    prepare_cpu_scene(&mut second_client);
+    for x in 49..=51 {
+        for z in 49..=51 {
+            second_client.world.set_ground(
+                0,
+                x,
+                z,
+                TerrainOverlayShape::PLAIN,
+                0,
+                -1,
+                2000,
+                2000,
+                2000,
+                2000,
+                40300,
+                40300,
+                40300,
+                40300,
+                40300,
+                40300,
+                40300,
+                40300,
+                0,
+                0,
+            );
+        }
+    }
+    let mut first = Renderer::new_prefer(false, false);
+    let mut second = Renderer::new_prefer(false, false);
+    for _ in 0..3 {
+        let _ = cpu_frame(first.mainredraw(&mut first_client));
+        let _ = cpu_frame(second.mainredraw(&mut second_client));
+        assert_eq!(first.retained_storage_allocations(), 1);
+        assert_eq!(second.retained_storage_allocations(), 1);
+    }
+    let first_clean = first.area_game.as_ref().unwrap().pixels.clone();
+    let second_clean = second.area_game.as_ref().unwrap().pixels.clone();
+    assert!(first_clean.iter().any(|&pixel| pixel != 0));
+    assert!(second_clean.iter().any(|&pixel| pixel != 0));
+    assert_ne!(
+        first_clean, second_clean,
+        "different live terrain must produce distinct retained heads"
+    );
+    first.media = Arc::new(Media::empty());
+    second.media = Arc::new(Media::empty());
+    first_client.scene_state = 1;
+    second_client.scene_state = 1;
+    let first_cycle = first.scene_cycle;
+    let second_cycle = second.scene_cycle;
+    for _ in 0..3 {
+        first.area_game.as_mut().unwrap().pixels.fill(0x0055_7711);
+        second.area_game.as_mut().unwrap().pixels.fill(0x0011_5577);
+        let _ = cpu_frame(first.mainredraw(&mut first_client));
+        let _ = cpu_frame(second.mainredraw(&mut second_client));
+        assert_eq!(first.area_game.as_ref().unwrap().pixels, first_clean);
+        assert_eq!(second.area_game.as_ref().unwrap().pixels, second_clean);
+        assert_eq!(first.retained_storage_allocations(), 1);
+        assert_eq!(second.retained_storage_allocations(), 1);
+        assert_eq!(first.scene_cycle, first_cycle);
+        assert_eq!(second.scene_cycle, second_cycle);
+    }
+}
+
+#[test]
+fn cpu_resource_failure_publishes_clean_scene_with_current_overlays_and_fault() {
+    use client::render::backend::RenderFault;
+    use client::render::budget::{RenderBudget, RenderBudgetLimits, RenderResource};
+
+    let _serial = gpu_serial::lock();
+    ensure_hooks();
+    let _host = HostOverlayScope::enter(true);
+    let mut client = empty_client();
+    prepare_cpu_scene(&mut client);
+    let mut renderer = Renderer::new_prefer(false, false);
+    let baseline = cpu_frame(renderer.mainredraw(&mut client));
+    assert!(renderer.has_valid_scene());
+    assert_eq!(renderer.render_fault(), None);
+    let retained_bytes = renderer.retained_storage_bytes();
+    let retained_allocations = renderer.retained_storage_allocations();
+
+    // Existing scene buffers must be admitted before any new head-misc work.
+    // A zero fixture ceiling rejects the next real CPU scene preparation.
+    let unlimited = usize::MAX;
+    let budget = RenderBudget::fixture(RenderBudgetLimits::new(
+        unlimited, unlimited, unlimited, unlimited, unlimited, unlimited, 0, unlimited, unlimited,
+        unlimited, unlimited, unlimited, unlimited,
+    ));
+    let _budget_scope = budget.scope();
+    for x in [10, 30] {
+        freeze_modal(&mut client, x, 20);
+        renderer.area_backbase1 = Some(PixMap::new(479, 50));
+        renderer.area_backbase1.as_mut().unwrap().pixels[0] = 0x0055_aa33;
+        client.redraw_chat_mode = true;
+        let recovered = cpu_frame(renderer.mainredraw(&mut client));
+        assert_eq!(renderer.scene_progress(), SceneProgress::Retained);
+        assert!(renderer.has_valid_scene());
+        assert!(matches!(
+            renderer.render_fault(),
+            Some(RenderFault::Budget(limit)) if limit.resource() == RenderResource::HeadMisc
+        ));
+        assert_eq!(
+            recovered.pixels[24 * recovered.width as usize + (x + 4) as usize] & 0xffffff,
+            0x0012_3456,
+            "a resource fault must not hide the current viewport overlay",
+        );
+        assert!(!client.redraw_chat_mode, "recovery must still run chrome");
+        assert_eq!(
+            recovered.pixels[453 * recovered.width as usize],
+            0x0055_aa33,
+            "chrome changes must reach the usable recovered output",
+        );
+        if x == 30 {
+            assert_eq!(
+                recovered.pixels[24 * recovered.width as usize + 14],
+                baseline.pixels[24 * baseline.width as usize + 14],
+                "recovery must erase the previous overlay with the clean scene",
+            );
+        }
+        assert_eq!(renderer.retained_storage_bytes(), retained_bytes);
+        assert_eq!(
+            renderer.retained_storage_allocations(),
+            retained_allocations
+        );
+    }
+}
+
+#[test]
+fn cpu_nav_input_refusal_keeps_current_overlays_on_the_retained_scene() {
+    use client::render::backend::RenderFault;
+    use client::render::budget::{RenderLimit, RenderResource};
+
+    let _serial = gpu_serial::lock();
+    ensure_hooks();
+    let _host = HostOverlayScope::enter(true);
+    let mut client = empty_client();
+    prepare_cpu_scene(&mut client);
+    let mut renderer = Renderer::new_prefer(false, false);
+    let _ = cpu_frame(renderer.mainredraw(&mut client));
+    let scene_cycle = renderer.scene_cycle;
+    let fault = RenderLimit::new(RenderResource::NavInput, 2, 1);
+    assert_eq!(client.set_budgeted_nav_debug_paint(Err(fault)), Err(fault));
+    freeze_modal(&mut client, 10, 20);
+    let recovered = cpu_frame(renderer.mainredraw(&mut client));
+    assert_eq!(renderer.render_fault(), Some(RenderFault::Budget(fault)));
+    assert_eq!(renderer.scene_progress(), SceneProgress::Retained);
+    assert_eq!(renderer.scene_cycle, scene_cycle);
+    assert_eq!(
+        recovered.pixels[24 * recovered.width as usize + 14] & 0xffffff,
+        0x0012_3456,
+    );
+    assert_eq!(renderer.retained_storage_allocations(), 1);
+}
+
+#[test]
+fn cpu_nav_input_refusal_without_a_scene_publishes_pending_scene_and_overlays() {
+    use client::render::backend::RenderFault;
+    use client::render::budget::{RenderLimit, RenderResource};
+
+    let _serial = gpu_serial::lock();
+    ensure_hooks();
+    let _host = HostOverlayScope::enter(true);
+    let mut client = empty_client();
+    prepare_cpu_scene(&mut client);
+    client.scene_state = 0;
+    let mut renderer = Renderer::new_prefer(false, false);
+    let _ = cpu_frame(renderer.mainredraw(&mut client));
+    let (font, splash_x, splash_y) = loading_font();
+    let mut media = Media::empty();
+    media.p12 = Some(font);
+    renderer.media = Arc::new(media);
+    renderer
+        .area_game
+        .as_mut()
+        .unwrap()
+        .pixels
+        .fill(0x0055_aa33);
+    client.scene_state = 2;
+    let fault = RenderLimit::new(RenderResource::NavInput, 2, 1);
+    assert_eq!(client.set_budgeted_nav_debug_paint(Err(fault)), Err(fault));
+    freeze_modal(&mut client, 10, 20);
+    let pending = cpu_frame(renderer.mainredraw(&mut client));
+    assert_eq!(renderer.render_fault(), Some(RenderFault::Budget(fault)));
+    assert_eq!(renderer.scene_progress(), SceneProgress::NoScene);
+    assert!(!renderer.has_valid_scene());
+    assert_eq!(renderer.area_game.as_ref().unwrap().pixels[0], 0);
+    assert_eq!(
+        pending.pixels[splash_y * pending.width as usize + splash_x],
+        0x00ff_ffff
+    );
+    assert_eq!(
+        pending.pixels[24 * pending.width as usize + 14] & 0xffffff,
+        0x0012_3456
+    );
+    assert_eq!(renderer.retained_storage_allocations(), 0);
 }

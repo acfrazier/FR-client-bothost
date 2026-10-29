@@ -7,10 +7,40 @@ use std::sync::Arc;
 
 use crate::config::Cache;
 use crate::dash3d::{
-    ClientLocAnim, ClientNpc, ClientObj, ClientPlayer, ClientProj, MapSpotAnim, Model,
+    ClientEntity, ClientLocAnim, ClientNpc, ClientObj, ClientPlayer, ClientProj, MapSpotAnim, Model,
 };
 use crate::datastruct::linkable::{LinkableTrait, Links};
 use crate::graphics::{Pix2D, Pix3DDraw};
+use crate::render::budget::{
+    reserve_vec, BudgetCharge, ByteBudget, RenderBudget, RenderLimit, RenderResource,
+};
+
+/// Load a variable model set without allocating its holder outside the
+/// caller's render budget. The returned charge must outlive the vector.
+pub(crate) fn try_load_models_for_render(
+    ids: &[i32],
+    budget: &ByteBudget,
+) -> Result<(Vec<Option<Model>>, BudgetCharge), RenderLimit> {
+    let mut models = Vec::new();
+    let mut charge = None;
+    reserve_vec(&mut models, ids.len(), &mut charge, Some(budget))?;
+    for &id in ids {
+        models.push(Model::try_load_for_render(id, budget)?);
+    }
+    Ok((
+        models,
+        charge.expect("budgeted model vector has a reservation"),
+    ))
+}
+
+fn temp_model_budget() -> Result<ByteBudget, RenderLimit> {
+    RenderBudget::current_resource(RenderResource::TempModels)
+        .ok_or_else(|| RenderLimit::new(RenderResource::TempModels, usize::MAX, 0))
+}
+
+pub(crate) fn shared_model_budget(fallback: &ByteBudget) -> ByteBudget {
+    RenderBudget::current_resource(RenderResource::SharedModels).unwrap_or_else(|| fallback.clone())
+}
 
 /// Any model that can be placed in the `World` scene graph. The `Model`
 /// variant carries the full geometry, so variants differ widely in size (the
@@ -28,7 +58,52 @@ pub enum SceneModel {
     SpotAnim(MapSpotAnim),
 }
 
+fn entity_heap_bytes(entity: &ClientEntity) -> usize {
+    let route_x_bytes = entity
+        .route_x
+        .capacity()
+        .saturating_mul(std::mem::size_of::<i32>());
+    let route_z_bytes = entity
+        .route_z
+        .capacity()
+        .saturating_mul(std::mem::size_of::<i32>());
+    let route_run_bytes = entity
+        .route_run
+        .capacity()
+        .saturating_mul(std::mem::size_of::<bool>());
+    let chat_bytes = entity
+        .chat_message
+        .as_ref()
+        .map_or(0, |message| message.capacity());
+    route_x_bytes
+        .saturating_add(route_z_bytes)
+        .saturating_add(route_run_bytes)
+        .saturating_add(chat_bytes)
+}
+
 impl SceneModel {
+    /// Retained inline storage and uniquely owned nested heap for this scene
+    /// source. Shared model Arc payloads are measured by their process owner.
+    pub fn retained_bytes(&self) -> usize {
+        let nested_bytes = match self {
+            SceneModel::Model(model) => model
+                .retained_bytes()
+                .saturating_sub(std::mem::size_of::<Model>()),
+            SceneModel::Shared(_)
+            | SceneModel::Obj(_)
+            | SceneModel::LocAnim(_)
+            | SceneModel::SpotAnim(_) => 0,
+            SceneModel::Player(player) => entity_heap_bytes(&player.entity)
+                .saturating_add(player.name.as_ref().map_or(0, |name| name.capacity()))
+                .saturating_add(player.loc_model.as_deref().map_or(0, Model::retained_bytes)),
+            SceneModel::Npc(npc) => entity_heap_bytes(&npc.entity),
+            SceneModel::Proj(proj) => proj.seq_delays.as_ref().map_or(0, |delays| {
+                delays.capacity().saturating_mul(std::mem::size_of::<i32>())
+            }),
+        };
+        std::mem::size_of::<Self>().saturating_add(nested_bytes)
+    }
+
     pub fn as_model(&self) -> Option<&Model> {
         match self {
             SceneModel::Model(model) => Some(model),
@@ -45,6 +120,32 @@ impl SceneModel {
         }
     }
 
+    /// Obtain mutable geometry for a render-time lighting pass. In an
+    /// explicit render scope, copy shared models into the head-owned budget
+    /// before changing their variant; standalone rendering keeps Arc's
+    /// original copy-on-write behavior.
+    pub fn try_as_model_mut_for_render(&mut self) -> Result<Option<&mut Model>, RenderLimit> {
+        match self {
+            SceneModel::Model(model) => Ok(Some(model)),
+            SceneModel::Shared(shared) => {
+                if Arc::strong_count(shared) == 1 && Arc::weak_count(shared) == 0 {
+                    return Ok(Arc::get_mut(shared));
+                }
+                let Some(budget) = RenderBudget::current_resource(RenderResource::HeadModels)
+                else {
+                    return Ok(Some(Arc::make_mut(shared)));
+                };
+                let owned = shared.try_clone_for_render(&budget)?;
+                *self = SceneModel::Model(owned);
+                match self {
+                    SceneModel::Model(model) => Ok(Some(model)),
+                    _ => unreachable!("shared model was replaced with an owned model"),
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// `ModelSource.getTempModel()` from client-ts, dispatched over the
     /// concrete model source held by the scene slot.
     pub fn get_temp_model(&mut self, cache: &Cache, loop_cycle: i32) -> Option<Model> {
@@ -57,6 +158,31 @@ impl SceneModel {
             SceneModel::Npc(npc) => npc.get_temp_model(cache, loop_cycle),
             SceneModel::Proj(proj) => proj.get_temp_model(cache),
             SceneModel::SpotAnim(anim) => anim.get_temp_model(cache),
+        }
+    }
+
+    pub fn try_get_temp_model_for_render(
+        &mut self,
+        cache: &Cache,
+        loop_cycle: i32,
+    ) -> Result<Option<Model>, RenderLimit> {
+        if !RenderBudget::is_scoped() {
+            return Ok(self.get_temp_model(cache, loop_cycle));
+        }
+        let budget = temp_model_budget()?;
+        match self {
+            SceneModel::Model(model) => model.try_clone_for_render(&budget).map(Some),
+            SceneModel::Shared(model) => model.try_clone_for_render(&budget).map(Some),
+            SceneModel::Obj(obj) => obj.try_get_temp_model_for_render(cache, &budget),
+            SceneModel::LocAnim(anim) => {
+                anim.try_get_temp_model_for_render(cache, loop_cycle, &budget)
+            }
+            SceneModel::Player(player) => {
+                player.try_get_temp_model_for_render(cache, loop_cycle, &budget)
+            }
+            SceneModel::Npc(npc) => npc.try_get_temp_model_for_render(cache, loop_cycle, &budget),
+            SceneModel::Proj(proj) => proj.try_get_temp_model_for_render(cache, &budget),
+            SceneModel::SpotAnim(anim) => anim.try_get_temp_model_for_render(cache, &budget),
         }
     }
 
@@ -79,7 +205,7 @@ impl SceneModel {
     /// record its `minY`, then render. The `Model` variant renders its
     /// geometry directly (TS `Model` overrides `worldRender`).
     #[allow(clippy::too_many_arguments)]
-    pub fn world_render(
+    pub fn try_world_render(
         &mut self,
         cache: &Cache,
         loop_cycle: i32,
@@ -94,7 +220,7 @@ impl SceneModel {
         relative_y: i32,
         relative_z: i32,
         typecode: i32,
-    ) {
+    ) -> Result<(), RenderLimit> {
         if let Some(model) = self.as_model() {
             model.world_render(
                 pix,
@@ -108,10 +234,10 @@ impl SceneModel {
                 relative_y,
                 relative_z,
                 typecode,
-            );
-            return;
+            )?;
+            return Ok(());
         }
-        if let Some(model) = self.get_temp_model(cache, loop_cycle) {
+        if let Some(model) = self.try_get_temp_model_for_render(cache, loop_cycle)? {
             let min_y = model.min_y;
             match self {
                 SceneModel::Obj(obj) => obj.min_y = min_y,
@@ -134,11 +260,12 @@ impl SceneModel {
                 relative_y,
                 relative_z,
                 typecode,
-            );
+            )?;
         } else {
             #[cfg(feature = "render-diagnostics")]
             crate::render::diagnostics::paint(typecode, "unresolved", 0, 0);
         }
+        Ok(())
     }
 }
 

@@ -33,6 +33,21 @@ use crate::dash3d::{
     QuickGround, SceneModel,
 };
 use crate::graphics::{Pix2D, Pix3D, Pix3DDraw};
+use crate::render::budget::{
+    reserve_deque, reserve_vec, BudgetCharge, ByteBudget, RenderBudget, RenderLimit, RenderResource,
+};
+
+struct DebugList<I>(I);
+
+impl<I> std::fmt::Debug for DebugList<I>
+where
+    I: Iterator + Clone,
+    I::Item: std::fmt::Debug,
+{
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_list().entries(self.0.clone()).finish()
+    }
+}
 
 #[cfg(feature = "render-diagnostics")]
 macro_rules! render_trace {
@@ -366,6 +381,25 @@ const MINIMAP_ROTATE: [[usize; 16]; 4] = [
     [3, 7, 11, 15, 2, 6, 10, 14, 1, 5, 9, 13, 0, 4, 8, 12],
 ];
 
+#[derive(Default)]
+struct WorldStorageCharges {
+    visibility: Option<BudgetCharge>,
+    occluders: Option<BudgetCharge>,
+    occlusion: Option<BudgetCharge>,
+    sprite_buffer: Option<BudgetCharge>,
+    tiles: Option<BudgetCharge>,
+    linked: Option<BudgetCharge>,
+    sprite_models: Option<BudgetCharge>,
+    sprite_stamps: Option<BudgetCharge>,
+    share_map: Option<BudgetCharge>,
+    share_map2: Option<BudgetCharge>,
+    fill_queue: Option<BudgetCharge>,
+    overlays: Option<BudgetCharge>,
+    dynamic_indices: Option<BudgetCharge>,
+    dynamic_free: Option<BudgetCharge>,
+    sprite_arena: Option<BudgetCharge>,
+}
+
 /// The render-pass half of the scene world: per-frame camera/fill state,
 /// the visibility backing and the occlusion/picking scratch. Owned by
 /// `Renderer`; every method takes the sim `World` for the per-tile data.
@@ -450,6 +484,8 @@ pub struct RenderWorld {
     share_map2: Vec<i32>,
     /// The sim `World.build_generation` the caches were last cleared for.
     last_build_generation: u64,
+    head_misc: Option<ByteBudget>,
+    storage_charges: WorldStorageCharges,
 }
 
 /// The lazily-resolved per-tile models (Task 3b), held by `RenderWorld`
@@ -468,10 +504,74 @@ struct TileModels {
     obj_bottom: Option<SceneModel>,
     obj_middle: Option<SceneModel>,
     obj_top: Option<SceneModel>,
+    _charge: Option<BudgetCharge>,
 }
 
 impl RenderWorld {
+    fn retained_scene_models(&self) -> impl Iterator<Item = &SceneModel> {
+        self.tile_models
+            .iter()
+            .chain(&self.linked_models)
+            .flatten()
+            .flat_map(|tile| {
+                [
+                    &tile.wall_model1,
+                    &tile.wall_model2,
+                    &tile.decor_model,
+                    &tile.gd_model,
+                    &tile.obj_bottom,
+                    &tile.obj_middle,
+                    &tile.obj_top,
+                ]
+                .into_iter()
+                .flatten()
+            })
+            .chain(self.sprite_models.iter().flatten())
+    }
+
+    /// Actual retained capacities, independent of budget reservations. Inline
+    /// model storage belongs to its container; only nested owned geometry is
+    /// added again. Shared process geometry is excluded; head-owned Arcs are
+    /// counted once by exact identity without allocating census scratch.
+    pub(crate) fn retained_render_bytes(&self) -> (usize, usize) {
+        use crate::render::budget::vec_capacity_bytes as bytes;
+        let mut models = 0;
+        let mut misc = bytes(&self.vis_backing)
+            + bytes(&self.active_occluders)
+            + bytes(&self.occlusion_cycle)
+            + bytes(&self.sprite_buffer)
+            + bytes(&self.tile_models)
+            + bytes(&self.linked_models)
+            + bytes(&self.sprite_models)
+            + bytes(&self.sprite_stamps)
+            + bytes(&self.share_map)
+            + bytes(&self.share_map2)
+            + self.fill_queue.capacity() * std::mem::size_of::<(i32, i32, i32, i32)>();
+        for (index, model) in self.retained_scene_models().enumerate() {
+            models += model.retained_bytes() - std::mem::size_of::<SceneModel>();
+            if let SceneModel::Shared(shared) = model {
+                if !crate::render::store::model_is_shared_process_owner(shared)
+                    && !self.retained_scene_models().take(index).any(|previous| {
+                        matches!(previous, SceneModel::Shared(previous) if std::sync::Arc::ptr_eq(previous, shared))
+                    })
+                {
+                    models += shared.retained_bytes() + 2 * std::mem::size_of::<usize>();
+                }
+            }
+        }
+        misc += self
+            .tile_models
+            .iter()
+            .chain(&self.linked_models)
+            .flatten()
+            .count()
+            * std::mem::size_of::<TileModels>();
+        (models, misc)
+    }
+
     pub fn new() -> Self {
+        let head_misc = RenderBudget::current_resource(RenderResource::HeadMisc);
+        let scoped = head_misc.is_some();
         RenderWorld {
             camera_sin_x: 0,
             camera_cos_x: 0,
@@ -491,7 +591,11 @@ impl RenderWorld {
             cx: 0,
             cy: 0,
             cz: 0,
-            vis_backing: vec![false; 8 * 32 * VIS_ROW_SIZE],
+            vis_backing: if scoped {
+                Vec::new()
+            } else {
+                vec![false; 8 * 32 * VIS_ROW_SIZE]
+            },
             vis_backing_dirty: None,
             x_clip: 0,
             y_clip: 0,
@@ -500,9 +604,17 @@ impl RenderWorld {
             x_orig: 0,
             y_orig: 0,
             num_active_occluders: 0,
-            active_occluders: vec![None; MAX_ACTIVE_OCCLUDERS],
+            active_occluders: if scoped {
+                Vec::new()
+            } else {
+                vec![None; MAX_ACTIVE_OCCLUDERS]
+            },
             occlusion_cycle: Vec::new(),
-            sprite_buffer: vec![None; MAX_SPRITE_BUFFER],
+            sprite_buffer: if scoped {
+                Vec::new()
+            } else {
+                vec![None; MAX_SPRITE_BUFFER]
+            },
             ground_draw_vertex_x: [0; 6],
             ground_draw_vertex_y: [0; 6],
             ground_draw_texture_vertex_x: [0; 6],
@@ -516,7 +628,100 @@ impl RenderWorld {
             share_map: Vec::new(),
             share_map2: Vec::new(),
             last_build_generation: 0,
+            head_misc,
+            storage_charges: WorldStorageCharges::default(),
         }
+    }
+
+    fn prepare_fixed_buffers(&mut self) -> Result<(), RenderLimit> {
+        self.bind_head_budget();
+        let visibility = 8 * 32 * VIS_ROW_SIZE;
+        let additional = visibility.saturating_sub(self.vis_backing.len());
+        reserve_vec(
+            &mut self.vis_backing,
+            additional,
+            &mut self.storage_charges.visibility,
+            self.head_misc.as_ref(),
+        )?;
+        self.vis_backing.resize(visibility, false);
+        let additional = MAX_ACTIVE_OCCLUDERS.saturating_sub(self.active_occluders.len());
+        reserve_vec(
+            &mut self.active_occluders,
+            additional,
+            &mut self.storage_charges.occluders,
+            self.head_misc.as_ref(),
+        )?;
+        self.active_occluders.resize(MAX_ACTIVE_OCCLUDERS, None);
+        let additional = MAX_SPRITE_BUFFER.saturating_sub(self.sprite_buffer.len());
+        reserve_vec(
+            &mut self.sprite_buffer,
+            additional,
+            &mut self.storage_charges.sprite_buffer,
+            self.head_misc.as_ref(),
+        )?;
+        self.sprite_buffer.resize(MAX_SPRITE_BUFFER, None);
+        Ok(())
+    }
+
+    pub(crate) fn materialize_overlay(&mut self, world: &mut World) -> Result<(), RenderLimit> {
+        self.bind_head_budget();
+        if let Some(budget) = self.head_misc.as_ref() {
+            let bytes = world
+                .overlay_heap_allocations(true)
+                .checked_mul(std::mem::size_of::<crate::dash3d::Ground>())
+                .ok_or_else(|| {
+                    RenderLimit::new(RenderResource::HeadMisc, usize::MAX, budget.maximum())
+                })?;
+            match self.storage_charges.overlays.as_mut() {
+                Some(charge) => charge.resize(bytes)?,
+                None => self.storage_charges.overlays = Some(budget.reserve(bytes)?),
+            }
+        }
+        world.materialize_overlay();
+        world.overlay_pending = false;
+        Ok(())
+    }
+
+    pub(crate) fn prepare_dynamic_storage(&mut self, world: &mut World) -> Result<(), RenderLimit> {
+        self.bind_head_budget();
+        let Some(budget) = self.head_misc.as_ref() else {
+            return Ok(());
+        };
+        if world.dynamic_count as usize >= crate::core::world::MAX_DYNAMIC_SPRITES {
+            return Err(RenderLimit::new(
+                RenderResource::HeadMisc,
+                (world.dynamic_count as usize + 1) * std::mem::size_of::<Option<usize>>(),
+                crate::core::world::MAX_DYNAMIC_SPRITES * std::mem::size_of::<Option<usize>>(),
+            ));
+        }
+        let additional =
+            crate::core::world::MAX_DYNAMIC_SPRITES.saturating_sub(world.dynamic_sprites.len());
+        reserve_vec(
+            &mut world.dynamic_sprites,
+            additional,
+            &mut self.storage_charges.dynamic_indices,
+            Some(budget),
+        )?;
+        world
+            .dynamic_sprites
+            .resize(crate::core::world::MAX_DYNAMIC_SPRITES, None);
+        // Cleanup of every admitted sprite must be allocation-free, including
+        // the typed-error path that removes an interrupted frame's sprites.
+        reserve_vec(
+            &mut world.free_dynamic_sprites,
+            world.dynamic_count as usize + 1,
+            &mut self.storage_charges.dynamic_free,
+            Some(budget),
+        )?;
+        if world.free_dynamic_sprites.is_empty() {
+            reserve_vec(
+                &mut world.sprites,
+                1,
+                &mut self.storage_charges.sprite_arena,
+                Some(budget),
+            )?;
+        }
+        Ok(())
     }
 
     /// `render2DGround(level, x, z, dst, offset, step)` from World.ts
@@ -630,7 +835,8 @@ impl RenderWorld {
         frustum_end: i32,
         viewport_width: i32,
         viewport_height: i32,
-    ) {
+    ) -> Result<(), RenderLimit> {
+        self.prepare_fixed_buffers()?;
         self.x_clip = 0;
         self.y_clip = 0;
         self.x_clip2 = viewport_width;
@@ -640,6 +846,11 @@ impl RenderWorld {
 
         // scratch[9][32][53][53]: the ±26-tile sample grid with a 1-tile
         // margin so the merge pass can read its 3×3 neighbourhood.
+        let _scratch_charge = self
+            .head_misc
+            .as_ref()
+            .map(|budget| budget.reserve(9 * 32 * 53 * 53))
+            .transpose()?;
         let mut scratch = vec![false; 9 * 32 * 53 * 53];
         for pitch in (128..=384).step_by(32) {
             self.camera_sin_x = Pix3D::sin_table()[pitch as usize];
@@ -705,6 +916,7 @@ impl RenderWorld {
                 }
             }
         }
+        Ok(())
     }
 
     /// `World.testPoint` from client-ts (931): project a scene point into
@@ -795,31 +1007,112 @@ impl RenderWorld {
         }
     }
 
-    fn grow_tile_models(&mut self, index: usize) {
-        while self.tile_models.len() <= index {
-            self.tile_models.push(None);
-        }
+    fn grow_tile_models(&mut self, index: usize) -> Result<(), RenderLimit> {
+        self.bind_head_budget();
+        let additional = index
+            .saturating_add(1)
+            .saturating_sub(self.tile_models.len());
+        reserve_vec(
+            &mut self.tile_models,
+            additional,
+            &mut self.storage_charges.tiles,
+            self.head_misc.as_ref(),
+        )?;
+        self.tile_models
+            .resize_with(self.tile_models.len().max(index + 1), || None);
+        Ok(())
     }
 
-    fn grow_linked_models(&mut self, index: usize) {
-        while self.linked_models.len() <= index {
-            self.linked_models.push(None);
-        }
+    fn grow_linked_models(&mut self, index: usize) -> Result<(), RenderLimit> {
+        self.bind_head_budget();
+        let additional = index
+            .saturating_add(1)
+            .saturating_sub(self.linked_models.len());
+        reserve_vec(
+            &mut self.linked_models,
+            additional,
+            &mut self.storage_charges.linked,
+            self.head_misc.as_ref(),
+        )?;
+        self.linked_models
+            .resize_with(self.linked_models.len().max(index + 1), || None);
+        Ok(())
     }
 
-    fn grow_sprite_arrays(&mut self, index: usize) {
-        while self.sprite_models.len() <= index {
-            self.sprite_models.push(None);
-        }
-        while self.sprite_stamps.len() <= index {
-            self.sprite_stamps.push(i32::MIN);
-        }
+    fn grow_sprite_arrays(&mut self, index: usize) -> Result<(), RenderLimit> {
+        self.bind_head_budget();
+        let additional = index
+            .saturating_add(1)
+            .saturating_sub(self.sprite_models.len());
+        reserve_vec(
+            &mut self.sprite_models,
+            additional,
+            &mut self.storage_charges.sprite_models,
+            self.head_misc.as_ref(),
+        )?;
+        let additional = index
+            .saturating_add(1)
+            .saturating_sub(self.sprite_stamps.len());
+        reserve_vec(
+            &mut self.sprite_stamps,
+            additional,
+            &mut self.storage_charges.sprite_stamps,
+            self.head_misc.as_ref(),
+        )?;
+        self.sprite_models
+            .resize_with(self.sprite_models.len().max(index + 1), || None);
+        self.sprite_stamps
+            .resize(self.sprite_stamps.len().max(index + 1), i32::MIN);
+        Ok(())
     }
 
-    fn slot(&mut self, world: &World, level: i32, x: i32, z: i32) -> &mut TileModels {
+    fn slot(
+        &mut self,
+        world: &World,
+        level: i32,
+        x: i32,
+        z: i32,
+    ) -> Result<&mut TileModels, RenderLimit> {
         let index = self.tile_index(world, level, x, z);
-        self.grow_tile_models(index);
-        self.tile_models[index].get_or_insert_with(Default::default)
+        self.grow_tile_models(index)?;
+        if self.tile_models[index].is_none() {
+            let charge = self
+                .head_misc
+                .as_ref()
+                .map(|budget| budget.reserve(std::mem::size_of::<TileModels>()))
+                .transpose()?;
+            self.tile_models[index] = Some(Box::new(TileModels {
+                _charge: charge,
+                ..TileModels::default()
+            }));
+        }
+        Ok(self.tile_models[index]
+            .as_deref_mut()
+            .expect("initialized tile slot"))
+    }
+
+    fn bind_head_budget(&mut self) {
+        if self.head_misc.is_none() {
+            self.head_misc = RenderBudget::current_resource(RenderResource::HeadMisc);
+        }
+    }
+
+    fn linked_slot(&mut self, index: usize) -> Result<&mut TileModels, RenderLimit> {
+        self.grow_linked_models(index)?;
+        if self.linked_models[index].is_none() {
+            let charge = self
+                .head_misc
+                .as_ref()
+                .map(|budget| budget.reserve(std::mem::size_of::<TileModels>()))
+                .transpose()?;
+            self.linked_models[index] = Some(Box::new(TileModels {
+                _charge: charge,
+                ..TileModels::default()
+            }));
+        }
+        Ok(self.linked_models[index]
+            .as_deref_mut()
+            .expect("initialized linked tile slot"))
     }
 
     fn loc_at(cache: &Cache, id: i32) -> Option<&crate::config::LocType> {
@@ -844,42 +1137,53 @@ impl RenderWorld {
         h_ne: i32,
         h_nw: i32,
         loop_cycle: i32,
-    ) -> Option<SceneModel> {
-        let loc = loc?;
-        if loc.anim == -1 {
-            let model = loc.get_model_shared(cache, shape, angle, h_sw, h_se, h_ne, h_nw, -1);
-            if crate::render_debug_enabled() {
-                if let Some(m) = &model {
-                    if let (Some(rt), Some(fc)) = (&m.face_render_type, &m.face_colour) {
-                        let mut textured = Vec::new();
-                        for (f, &t) in rt.iter().enumerate() {
-                            if t & 0x3 == 2 || t & 0x3 == 3 {
-                                textured.push((t & 0x3, fc.get(f).copied().unwrap_or(-1)));
-                            }
+    ) -> Result<Option<SceneModel>, RenderLimit> {
+        Ok({
+            let Some(loc) = loc else {
+                return Ok(None);
+            };
+            if loc.anim == -1 {
+                let model = if let Some(budget) =
+                    RenderBudget::current_resource(RenderResource::HeadModels)
+                {
+                    loc.try_get_model_shared_for_render(
+                        cache, shape, angle, h_sw, h_se, h_ne, h_nw, -1, &budget,
+                    )?
+                } else {
+                    loc.get_model_shared(cache, shape, angle, h_sw, h_se, h_ne, h_nw, -1)
+                };
+                if crate::render_debug_enabled() {
+                    if let Some(m) = &model {
+                        if let (Some(rt), Some(fc)) = (&m.face_render_type, &m.face_colour) {
+                            let textured =
+                                DebugList(rt.iter().enumerate().filter_map(|(f, &t)| {
+                                    ((t & 0x3 == 2) || (t & 0x3 == 3))
+                                        .then(|| (t & 0x3, fc.get(f).copied().unwrap_or(-1)))
+                                }));
+                            eprintln!(
+                                "[render] loc {loc_id} ({}) sharelight={} model textured={:?}",
+                                loc.name, loc.sharelight, textured
+                            );
                         }
-                        eprintln!(
-                            "[render] loc {loc_id} ({}) sharelight={} model textured={:?}",
-                            loc.name, loc.sharelight, textured
-                        );
                     }
                 }
+                model.map(SceneModel::Shared)
+            } else {
+                Some(SceneModel::LocAnim(ClientLocAnim::new(
+                    cache,
+                    loc_id,
+                    shape,
+                    angle,
+                    h_sw,
+                    h_se,
+                    h_ne,
+                    h_nw,
+                    loc.anim as usize,
+                    true,
+                    loop_cycle,
+                )))
             }
-            model.map(SceneModel::Shared)
-        } else {
-            Some(SceneModel::LocAnim(ClientLocAnim::new(
-                cache,
-                loc_id,
-                shape,
-                angle,
-                h_sw,
-                h_se,
-                h_ne,
-                h_nw,
-                loc.anim as usize,
-                true,
-                loop_cycle,
-            )))
-        }
+        })
     }
 
     /// Resolve (and cache) every model the sim tile's typecodes decode to.
@@ -892,11 +1196,12 @@ impl RenderWorld {
         level: i32,
         x: i32,
         z: i32,
-    ) {
+    ) -> Result<(), RenderLimit> {
         for layer in [LocLayer::WALL, LocLayer::WALL_DECOR, LocLayer::GROUND_DECOR] {
-            self.ensure_loc_resolved(world, cache, loop_cycle, level, x, z, layer);
+            self.ensure_loc_resolved(world, cache, loop_cycle, level, x, z, layer)?;
         }
-        self.ensure_objs_resolved(world, level, x, z);
+        self.ensure_objs_resolved(world, level, x, z)?;
+        Ok(())
     }
 
     /// Refresh only the requested loc layer, retaining its neighbours' light.
@@ -909,25 +1214,36 @@ impl RenderWorld {
         x: i32,
         z: i32,
         layer: i32,
-    ) {
+    ) -> Result<(), RenderLimit> {
         let stamp = world.loc_model_stamp(level, x, z, layer);
-        let slot = self.slot(world, level, x, z);
+        let slot = self.slot(world, level, x, z)?;
         let old = match layer {
-            LocLayer::WALL => &mut slot.wall_model_stamp,
-            LocLayer::WALL_DECOR => &mut slot.decor_model_stamp,
-            LocLayer::GROUND_DECOR => &mut slot.gd_model_stamp,
+            LocLayer::WALL => slot.wall_model_stamp,
+            LocLayer::WALL_DECOR => slot.decor_model_stamp,
+            LocLayer::GROUND_DECOR => slot.gd_model_stamp,
             _ => unreachable!("scene sprites resolve separately"),
         };
-        if *old == stamp {
-            return;
+        if old == stamp {
+            return Ok(());
         }
-        *old = stamp;
         match layer {
-            LocLayer::WALL => self.resolve_wall_models(world, cache, loop_cycle, level, x, z),
-            LocLayer::WALL_DECOR => self.resolve_decor_model(world, cache, loop_cycle, level, x, z),
-            LocLayer::GROUND_DECOR => self.resolve_gd_model(world, cache, loop_cycle, level, x, z),
+            LocLayer::WALL => self.resolve_wall_models(world, cache, loop_cycle, level, x, z)?,
+            LocLayer::WALL_DECOR => {
+                self.resolve_decor_model(world, cache, loop_cycle, level, x, z)?
+            }
+            LocLayer::GROUND_DECOR => {
+                self.resolve_gd_model(world, cache, loop_cycle, level, x, z)?
+            }
             _ => unreachable!("scene sprites resolve separately"),
         }
+        let slot = self.slot(world, level, x, z)?;
+        match layer {
+            LocLayer::WALL => slot.wall_model_stamp = stamp,
+            LocLayer::WALL_DECOR => slot.decor_model_stamp = stamp,
+            LocLayer::GROUND_DECOR => slot.gd_model_stamp = stamp,
+            _ => unreachable!("scene sprites resolve separately"),
+        }
+        Ok(())
     }
 
     fn resolve_wall_models(
@@ -938,13 +1254,13 @@ impl RenderWorld {
         level: i32,
         x: i32,
         z: i32,
-    ) {
+    ) -> Result<(), RenderLimit> {
         let Some(wall) = tile_at(&world.squares, level, x, z).and_then(|t| t.wall.as_deref())
         else {
-            let slot = self.slot(world, level, x, z);
+            let slot = self.slot(world, level, x, z)?;
             slot.wall_model1 = None;
             slot.wall_model2 = None;
-            return;
+            return Ok(());
         };
         let loc_id = (wall.typecode >> 14) & 0x7fff;
         let info = wall.typecode2 & 0xff;
@@ -1021,10 +1337,10 @@ impl RenderWorld {
                             h_ne,
                             h_nw,
                             loop_cycle,
-                        ),
+                        )?,
                         Self::decode_loc_model(
                             loc_id, loc, cache, 2, offset, h_sw, h_se, h_ne, h_nw, loop_cycle,
-                        ),
+                        )?,
                     )
                 }
                 LocShape::WALL_STRAIGHT
@@ -1032,16 +1348,17 @@ impl RenderWorld {
                 | LocShape::WALL_SQUARE_CORNER => (
                     Self::decode_loc_model(
                         loc_id, loc, cache, shape, angle, h_sw, h_se, h_ne, h_nw, loop_cycle,
-                    ),
+                    )?,
                     None,
                 ),
                 _ => (None, None),
             }
         };
 
-        let slot = self.slot(world, level, x, z);
+        let slot = self.slot(world, level, x, z)?;
         slot.wall_model1 = model1;
         slot.wall_model2 = model2;
+        Ok(())
     }
 
     fn resolve_decor_model(
@@ -1052,11 +1369,11 @@ impl RenderWorld {
         level: i32,
         x: i32,
         z: i32,
-    ) {
+    ) -> Result<(), RenderLimit> {
         let Some(decor) = tile_at(&world.squares, level, x, z).and_then(|t| t.decor.as_deref())
         else {
-            self.slot(world, level, x, z).decor_model = None;
-            return;
+            self.slot(world, level, x, z)?.decor_model = None;
+            return Ok(());
         };
         let loc_id = (decor.typecode >> 14) & 0x7fff;
         let model = if decor.anim_seq != -1 {
@@ -1080,9 +1397,10 @@ impl RenderWorld {
             Self::decode_loc_model(
                 loc_id, loc, cache, 4, 0, decor.h_sw, decor.h_se, decor.h_ne, decor.h_nw,
                 loop_cycle,
-            )
+            )?
         };
-        self.slot(world, level, x, z).decor_model = model;
+        self.slot(world, level, x, z)?.decor_model = model;
+        Ok(())
     }
 
     fn resolve_gd_model(
@@ -1093,11 +1411,11 @@ impl RenderWorld {
         level: i32,
         x: i32,
         z: i32,
-    ) {
+    ) -> Result<(), RenderLimit> {
         let Some(gd) = tile_at(&world.squares, level, x, z).and_then(|t| t.ground_decor.as_deref())
         else {
-            self.slot(world, level, x, z).gd_model = None;
-            return;
+            self.slot(world, level, x, z)?.gd_model = None;
+            return Ok(());
         };
         let loc_id = (gd.typecode >> 14) & 0x7fff;
         let info = gd.typecode2 & 0xff;
@@ -1118,7 +1436,9 @@ impl RenderWorld {
             )))
         } else if let Some(loc) = Self::loc_at(cache, loc_id) {
             if loc.anim == -1 {
-                loc.get_model_shared(
+                Self::decode_loc_model(
+                    loc_id,
+                    Some(loc),
                     cache,
                     LocShape::GROUND_DECOR,
                     angle,
@@ -1126,9 +1446,8 @@ impl RenderWorld {
                     gd.h_se,
                     gd.h_ne,
                     gd.h_nw,
-                    -1,
-                )
-                .map(SceneModel::Shared)
+                    loop_cycle,
+                )?
             } else {
                 // [sic] `addLoc` passes the shape as the `ClientLocAnim`
                 // angle for animated ground decor.
@@ -1149,16 +1468,23 @@ impl RenderWorld {
         } else {
             None
         };
-        self.slot(world, level, x, z).gd_model = model;
+        self.slot(world, level, x, z)?.gd_model = model;
+        Ok(())
     }
 
     /// Materialise the ground-object stack's `ClientObj` models from the
     /// `(id, count)` descriptors `showObject` stored on the sim tile.
-    fn ensure_objs_resolved(&mut self, world: &World, level: i32, x: i32, z: i32) {
+    fn ensure_objs_resolved(
+        &mut self,
+        world: &World,
+        level: i32,
+        x: i32,
+        z: i32,
+    ) -> Result<(), RenderLimit> {
         let tile = tile_at(&world.squares, level, x, z);
         let stamp = tile.map_or(0, |t| t.obj_model_stamp);
-        if self.slot(world, level, x, z).obj_model_stamp == stamp {
-            return;
+        if self.slot(world, level, x, z)?.obj_model_stamp == stamp {
+            return Ok(());
         }
         let go = tile.and_then(|t| t.ground_object.as_deref());
         let bottom = go
@@ -1170,22 +1496,29 @@ impl RenderWorld {
         let top = go
             .and_then(|go| go.top)
             .map(|(id, count)| SceneModel::Obj(ClientObj::new(id, count)));
-        let slot = self.slot(world, level, x, z);
+        let slot = self.slot(world, level, x, z)?;
         slot.obj_bottom = bottom;
         slot.obj_middle = middle;
         slot.obj_top = top;
         slot.obj_model_stamp = stamp;
+        Ok(())
     }
 
-    fn resolve_sprite(&mut self, world: &World, cache: &Cache, loop_cycle: i32, index: usize) {
+    fn resolve_sprite(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+        index: usize,
+    ) -> Result<(), RenderLimit> {
         // Only scene sprites (bit 30) decode from a loc typecode; dynamic
         // sprites (players/npcs/projectiles/spot-anims) get their models
         // attached by the entity passes in `render/draw.rs`.
         let Some(sprite) = world.sprites.get(index).and_then(|s| s.as_ref()) else {
-            return;
+            return Ok(());
         };
         if (sprite.typecode >> 29) & 0x3 != 2 {
-            return;
+            return Ok(());
         }
         let loc_id = (sprite.typecode >> 14) & 0x7fff;
         if crate::render_debug_enabled() {
@@ -1230,14 +1563,15 @@ impl RenderWorld {
                 sprite.h_ne,
                 sprite.h_nw,
                 loop_cycle,
-            )
+            )?
         };
-        self.grow_sprite_arrays(index);
+        self.grow_sprite_arrays(index)?;
         self.sprite_models[index] = model;
         if self.sprite_stamps.len() <= index {
             self.sprite_stamps.resize(index + 1, i32::MIN);
         }
         self.sprite_stamps[index] = sprite.model_stamp;
+        Ok(())
     }
 
     fn resolve_linked_wall(
@@ -1248,12 +1582,12 @@ impl RenderWorld {
         level: i32,
         x: i32,
         z: i32,
-    ) {
+    ) -> Result<(), RenderLimit> {
         let Some(wall) = tile_at(&world.squares, level, x, z)
             .and_then(|t| t.linked_square.as_ref())
             .and_then(|ls| ls.wall.as_deref())
         else {
-            return;
+            return Ok(());
         };
         let loc_id = (wall.typecode >> 14) & 0x7fff;
         let info = wall.typecode2 & 0xff;
@@ -1276,10 +1610,10 @@ impl RenderWorld {
                         h_ne,
                         h_nw,
                         loop_cycle,
-                    ),
+                    )?,
                     Self::decode_loc_model(
                         loc_id, loc, cache, 2, offset, h_sw, h_se, h_ne, h_nw, loop_cycle,
-                    ),
+                    )?,
                 )
             }
             LocShape::WALL_STRAIGHT
@@ -1287,17 +1621,18 @@ impl RenderWorld {
             | LocShape::WALL_SQUARE_CORNER => (
                 Self::decode_loc_model(
                     loc_id, loc, cache, shape, angle, h_sw, h_se, h_ne, h_nw, loop_cycle,
-                ),
+                )?,
                 None,
             ),
             _ => (None, None),
         };
         let index = self.tile_index(world, level, x, z);
-        self.grow_linked_models(index);
-        let slot = self.linked_models[index].get_or_insert_with(Default::default);
+        self.grow_linked_models(index)?;
+        let slot = self.linked_slot(index)?;
         slot.wall_model_stamp = 0;
         slot.wall_model1 = model1;
         slot.wall_model2 = model2;
+        Ok(())
     }
 
     /// The resolved wall models of a tile (resolving from the sim typecodes
@@ -1310,10 +1645,12 @@ impl RenderWorld {
         level: i32,
         x: i32,
         z: i32,
-    ) -> (&mut Option<SceneModel>, &mut Option<SceneModel>) {
-        self.ensure_loc_resolved(world, cache, loop_cycle, level, x, z, LocLayer::WALL);
-        let slot = self.slot(world, level, x, z);
-        (&mut slot.wall_model1, &mut slot.wall_model2)
+    ) -> Result<(&mut Option<SceneModel>, &mut Option<SceneModel>), RenderLimit> {
+        Ok({
+            self.ensure_loc_resolved(world, cache, loop_cycle, level, x, z, LocLayer::WALL)?;
+            let slot = self.slot(world, level, x, z)?;
+            (&mut slot.wall_model1, &mut slot.wall_model2)
+        })
     }
 
     fn decor_model_mut(
@@ -1324,9 +1661,11 @@ impl RenderWorld {
         level: i32,
         x: i32,
         z: i32,
-    ) -> &mut Option<SceneModel> {
-        self.ensure_loc_resolved(world, cache, loop_cycle, level, x, z, LocLayer::WALL_DECOR);
-        &mut self.slot(world, level, x, z).decor_model
+    ) -> Result<&mut Option<SceneModel>, RenderLimit> {
+        Ok({
+            self.ensure_loc_resolved(world, cache, loop_cycle, level, x, z, LocLayer::WALL_DECOR)?;
+            &mut self.slot(world, level, x, z)?.decor_model
+        })
     }
 
     fn gd_model_mut(
@@ -1337,17 +1676,19 @@ impl RenderWorld {
         level: i32,
         x: i32,
         z: i32,
-    ) -> &mut Option<SceneModel> {
-        self.ensure_loc_resolved(
-            world,
-            cache,
-            loop_cycle,
-            level,
-            x,
-            z,
-            LocLayer::GROUND_DECOR,
-        );
-        &mut self.slot(world, level, x, z).gd_model
+    ) -> Result<&mut Option<SceneModel>, RenderLimit> {
+        Ok({
+            self.ensure_loc_resolved(
+                world,
+                cache,
+                loop_cycle,
+                level,
+                x,
+                z,
+                LocLayer::GROUND_DECOR,
+            )?;
+            &mut self.slot(world, level, x, z)?.gd_model
+        })
     }
 
     /// The live loc model at scene tile (`tile_x`, `tile_z`) whose loc id
@@ -1368,15 +1709,17 @@ impl RenderWorld {
         tile_x: i32,
         tile_z: i32,
         loc_id: i32,
-    ) -> Option<(i32, i32, i32, i32, Model)> {
-        let tile = tile_at(&world.squares, level, tile_x, tile_z)?;
+    ) -> Result<Option<(i32, i32, i32, i32, Model)>, RenderLimit> {
+        let Some(tile) = tile_at(&world.squares, level, tile_x, tile_z) else {
+            return Ok(None);
+        };
         if let Some(wall) = tile.wall.as_deref() {
             if (wall.typecode >> 14) & 0x7fff == loc_id {
                 let (model1, model2) =
-                    self.wall_models_mut(world, cache, loop_cycle, level, tile_x, tile_z);
+                    self.wall_models_mut(world, cache, loop_cycle, level, tile_x, tile_z)?;
                 for model in [model1, model2].into_iter().flatten() {
-                    if let Some(model) = model.get_temp_model(cache, loop_cycle) {
-                        return Some((wall.x, wall.y, wall.z, 0, model));
+                    if let Some(model) = model.try_get_temp_model_for_render(cache, loop_cycle)? {
+                        return Ok(Some((wall.x, wall.y, wall.z, 0, model)));
                     }
                 }
             }
@@ -1384,11 +1727,11 @@ impl RenderWorld {
         if let Some(decor) = tile.decor.as_deref() {
             if (decor.typecode >> 14) & 0x7fff == loc_id {
                 if let Some(model) = self
-                    .decor_model_mut(world, cache, loop_cycle, level, tile_x, tile_z)
+                    .decor_model_mut(world, cache, loop_cycle, level, tile_x, tile_z)?
                     .as_mut()
                 {
-                    if let Some(model) = model.get_temp_model(cache, loop_cycle) {
-                        return Some((decor.x, decor.y, decor.z, decor.angle, model));
+                    if let Some(model) = model.try_get_temp_model_for_render(cache, loop_cycle)? {
+                        return Ok(Some((decor.x, decor.y, decor.z, decor.angle, model)));
                     }
                 }
             }
@@ -1396,11 +1739,11 @@ impl RenderWorld {
         if let Some(gd) = tile.ground_decor.as_deref() {
             if (gd.typecode >> 14) & 0x7fff == loc_id {
                 if let Some(model) = self
-                    .gd_model_mut(world, cache, loop_cycle, level, tile_x, tile_z)
+                    .gd_model_mut(world, cache, loop_cycle, level, tile_x, tile_z)?
                     .as_mut()
                 {
-                    if let Some(model) = model.get_temp_model(cache, loop_cycle) {
-                        return Some((gd.x, gd.y, gd.z, 0, model));
+                    if let Some(model) = model.try_get_temp_model_for_render(cache, loop_cycle)? {
+                        return Ok(Some((gd.x, gd.y, gd.z, 0, model)));
                     }
                 }
             }
@@ -1419,15 +1762,15 @@ impl RenderWorld {
             }
             let (sx, sy, sz, yaw) = (sprite.x, sprite.y, sprite.z, sprite.yaw);
             if let Some(model) = self
-                .sprite_model_mut(world, cache, loop_cycle, index)
+                .sprite_model_mut(world, cache, loop_cycle, index)?
                 .as_mut()
             {
-                if let Some(model) = model.get_temp_model(cache, loop_cycle) {
-                    return Some((sx, sy, sz, yaw, model));
+                if let Some(model) = model.try_get_temp_model_for_render(cache, loop_cycle)? {
+                    return Ok(Some((sx, sy, sz, yaw, model)));
                 }
             }
         }
-        None
+        Ok(None)
     }
 
     fn obj_models_mut(
@@ -1436,18 +1779,23 @@ impl RenderWorld {
         level: i32,
         x: i32,
         z: i32,
-    ) -> (
-        &mut Option<SceneModel>,
-        &mut Option<SceneModel>,
-        &mut Option<SceneModel>,
-    ) {
-        self.ensure_objs_resolved(world, level, x, z);
-        let slot = self.slot(world, level, x, z);
+    ) -> Result<
         (
-            &mut slot.obj_bottom,
-            &mut slot.obj_middle,
-            &mut slot.obj_top,
-        )
+            &mut Option<SceneModel>,
+            &mut Option<SceneModel>,
+            &mut Option<SceneModel>,
+        ),
+        RenderLimit,
+    > {
+        Ok({
+            self.ensure_objs_resolved(world, level, x, z)?;
+            let slot = self.slot(world, level, x, z)?;
+            (
+                &mut slot.obj_bottom,
+                &mut slot.obj_middle,
+                &mut slot.obj_top,
+            )
+        })
     }
 
     /// The linked square's wall models (resolved once — a linked square is
@@ -1460,17 +1808,19 @@ impl RenderWorld {
         level: i32,
         x: i32,
         z: i32,
-    ) -> (&mut Option<SceneModel>, &mut Option<SceneModel>) {
-        let index = self.tile_index(world, level, x, z);
-        self.grow_linked_models(index);
-        let stale = self.linked_models[index]
-            .as_ref()
-            .is_none_or(|s| s.wall_model_stamp == i32::MIN);
-        if stale {
-            self.resolve_linked_wall(world, cache, loop_cycle, level, x, z);
-        }
-        let slot = self.linked_models[index].get_or_insert_with(Default::default);
-        (&mut slot.wall_model1, &mut slot.wall_model2)
+    ) -> Result<(&mut Option<SceneModel>, &mut Option<SceneModel>), RenderLimit> {
+        Ok({
+            let index = self.tile_index(world, level, x, z);
+            self.grow_linked_models(index)?;
+            let stale = self.linked_models[index]
+                .as_ref()
+                .is_none_or(|s| s.wall_model_stamp == i32::MIN);
+            if stale {
+                self.resolve_linked_wall(world, cache, loop_cycle, level, x, z)?;
+            }
+            let slot = self.linked_slot(index)?;
+            (&mut slot.wall_model1, &mut slot.wall_model2)
+        })
     }
 
     /// The resolved model of a sprite-arena slot (scene sprites decode on
@@ -1481,18 +1831,20 @@ impl RenderWorld {
         cache: &Cache,
         loop_cycle: i32,
         index: usize,
-    ) -> &mut Option<SceneModel> {
-        self.grow_sprite_arrays(index);
-        let stamp = world
-            .sprites
-            .get(index)
-            .and_then(|s| s.as_ref())
-            .map(|s| s.model_stamp)
-            .unwrap_or(i32::MIN);
-        if self.sprite_stamps[index] != stamp {
-            self.resolve_sprite(world, cache, loop_cycle, index);
-        }
-        &mut self.sprite_models[index]
+    ) -> Result<&mut Option<SceneModel>, RenderLimit> {
+        Ok({
+            self.grow_sprite_arrays(index)?;
+            let stamp = world
+                .sprites
+                .get(index)
+                .and_then(|s| s.as_ref())
+                .map(|s| s.model_stamp)
+                .unwrap_or(i32::MIN);
+            if self.sprite_stamps[index] != stamp {
+                self.resolve_sprite(world, cache, loop_cycle, index)?;
+            }
+            &mut self.sprite_models[index]
+        })
     }
 
     /// The ground-object stack offset. The sim used to read it from the
@@ -1509,17 +1861,17 @@ impl RenderWorld {
         level: i32,
         x: i32,
         z: i32,
-    ) -> i32 {
+    ) -> Result<i32, RenderLimit> {
         let mut stack_offset = 0;
         let Some(tile) = tile_at(&world.squares, level, x, z) else {
-            return 0;
+            return Ok(0);
         };
         for i in 0..tile.sprite_count as usize {
             let Some(index) = tile.sprite(i) else {
                 continue;
             };
             if let Some(model) = self
-                .sprite_model_mut(world, cache, loop_cycle, index)
+                .sprite_model_mut(world, cache, loop_cycle, index)?
                 .as_ref()
                 .and_then(|s| s.as_model())
             {
@@ -1528,13 +1880,18 @@ impl RenderWorld {
                 }
             }
         }
-        stack_offset
+        Ok(stack_offset)
     }
 
     /// Attach a sprite model to the render-side arena (the entity passes
     /// and tests use this; scene sprites decode on first draw instead).
-    pub fn set_sprite_model(&mut self, world: &World, index: usize, model: Option<SceneModel>) {
-        self.grow_sprite_arrays(index);
+    pub fn set_sprite_model(
+        &mut self,
+        world: &World,
+        index: usize,
+        model: Option<SceneModel>,
+    ) -> Result<(), RenderLimit> {
+        self.grow_sprite_arrays(index)?;
         let stamp = world
             .sprites
             .get(index)
@@ -1543,6 +1900,7 @@ impl RenderWorld {
             .unwrap_or(i32::MIN);
         self.sprite_stamps[index] = stamp;
         self.sprite_models[index] = model;
+        Ok(())
     }
 
     /// Inject a wall's models on the render side (tests place synthetic
@@ -1555,11 +1913,12 @@ impl RenderWorld {
         z: i32,
         model1: Option<SceneModel>,
         model2: Option<SceneModel>,
-    ) {
-        let slot = self.slot(world, level, x, z);
+    ) -> Result<(), RenderLimit> {
+        let slot = self.slot(world, level, x, z)?;
         slot.wall_model_stamp = world.loc_model_stamp(level, x, z, LocLayer::WALL);
         slot.wall_model1 = model1;
         slot.wall_model2 = model2;
+        Ok(())
     }
 
     /// Inject a decor's model on the render side (tests only).
@@ -1570,10 +1929,11 @@ impl RenderWorld {
         x: i32,
         z: i32,
         model: SceneModel,
-    ) {
-        let slot = self.slot(world, level, x, z);
+    ) -> Result<(), RenderLimit> {
+        let slot = self.slot(world, level, x, z)?;
         slot.decor_model_stamp = world.loc_model_stamp(level, x, z, LocLayer::WALL_DECOR);
         slot.decor_model = Some(model);
+        Ok(())
     }
 
     /// Inject a ground-decor's model on the render side (tests only).
@@ -1584,10 +1944,11 @@ impl RenderWorld {
         x: i32,
         z: i32,
         model: Option<SceneModel>,
-    ) {
-        let slot = self.slot(world, level, x, z);
+    ) -> Result<(), RenderLimit> {
+        let slot = self.slot(world, level, x, z)?;
         slot.gd_model_stamp = world.loc_model_stamp(level, x, z, LocLayer::GROUND_DECOR);
         slot.gd_model = model;
+        Ok(())
     }
 
     /// Read accessors (the draw tests assert on the resolved models after
@@ -1600,9 +1961,11 @@ impl RenderWorld {
         level: i32,
         x: i32,
         z: i32,
-    ) -> Option<&SceneModel> {
-        self.ensure_loc_resolved(world, cache, loop_cycle, level, x, z, LocLayer::WALL);
-        self.slot(world, level, x, z).wall_model1.as_ref()
+    ) -> Result<Option<&SceneModel>, RenderLimit> {
+        Ok({
+            self.ensure_loc_resolved(world, cache, loop_cycle, level, x, z, LocLayer::WALL)?;
+            self.slot(world, level, x, z)?.wall_model1.as_ref()
+        })
     }
 
     pub fn wall_model2(
@@ -1613,9 +1976,11 @@ impl RenderWorld {
         level: i32,
         x: i32,
         z: i32,
-    ) -> Option<&SceneModel> {
-        self.ensure_loc_resolved(world, cache, loop_cycle, level, x, z, LocLayer::WALL);
-        self.slot(world, level, x, z).wall_model2.as_ref()
+    ) -> Result<Option<&SceneModel>, RenderLimit> {
+        Ok({
+            self.ensure_loc_resolved(world, cache, loop_cycle, level, x, z, LocLayer::WALL)?;
+            self.slot(world, level, x, z)?.wall_model2.as_ref()
+        })
     }
 
     pub fn gd_model(
@@ -1626,17 +1991,19 @@ impl RenderWorld {
         level: i32,
         x: i32,
         z: i32,
-    ) -> Option<&SceneModel> {
-        self.ensure_loc_resolved(
-            world,
-            cache,
-            loop_cycle,
-            level,
-            x,
-            z,
-            LocLayer::GROUND_DECOR,
-        );
-        self.slot(world, level, x, z).gd_model.as_ref()
+    ) -> Result<Option<&SceneModel>, RenderLimit> {
+        Ok({
+            self.ensure_loc_resolved(
+                world,
+                cache,
+                loop_cycle,
+                level,
+                x,
+                z,
+                LocLayer::GROUND_DECOR,
+            )?;
+            self.slot(world, level, x, z)?.gd_model.as_ref()
+        })
     }
 
     pub fn decor_model(
@@ -1647,9 +2014,11 @@ impl RenderWorld {
         level: i32,
         x: i32,
         z: i32,
-    ) -> Option<&SceneModel> {
-        self.ensure_loc_resolved(world, cache, loop_cycle, level, x, z, LocLayer::WALL_DECOR);
-        self.slot(world, level, x, z).decor_model.as_ref()
+    ) -> Result<Option<&SceneModel>, RenderLimit> {
+        Ok({
+            self.ensure_loc_resolved(world, cache, loop_cycle, level, x, z, LocLayer::WALL_DECOR)?;
+            self.slot(world, level, x, z)?.decor_model.as_ref()
+        })
     }
 
     pub fn sprite_model(
@@ -1658,9 +2027,11 @@ impl RenderWorld {
         cache: &Cache,
         loop_cycle: i32,
         index: usize,
-    ) -> Option<&SceneModel> {
-        self.sprite_model_mut(world, cache, loop_cycle, index)
-            .as_ref()
+    ) -> Result<Option<&SceneModel>, RenderLimit> {
+        Ok({
+            self.sprite_model_mut(world, cache, loop_cycle, index)?
+                .as_ref()
+        })
     }
 
     /// Materialise a sprite's current frame model exactly as the draw path
@@ -1674,13 +2045,15 @@ impl RenderWorld {
         cache: &Cache,
         loop_cycle: i32,
         index: usize,
-    ) -> Option<Model> {
+    ) -> Result<Option<Model>, RenderLimit> {
         match self
-            .sprite_model_mut(world, cache, loop_cycle, index)
-            .as_mut()?
+            .sprite_model_mut(world, cache, loop_cycle, index)?
+            .as_mut()
         {
-            SceneModel::LocAnim(anim) => anim.get_temp_model(cache, loop_cycle),
-            _ => None,
+            Some(model @ SceneModel::LocAnim(_)) => {
+                model.try_get_temp_model_for_render(cache, loop_cycle)
+            }
+            _ => Ok(None),
         }
     }
 
@@ -1699,8 +2072,8 @@ impl RenderWorld {
         light_src_x: i32,
         light_src_y: i32,
         light_src_z: i32,
-    ) {
-        self.run_share_light(world, &Cache::default(), 0);
+    ) -> Result<(), RenderLimit> {
+        self.run_share_light(world, &Cache::default(), 0)?;
         self.apply_share_light(
             world,
             ambient,
@@ -1708,7 +2081,8 @@ impl RenderWorld {
             light_src_x,
             light_src_y,
             light_src_z,
-        );
+        )?;
+        Ok(())
     }
 
     /// Resolve every tile's models and sprites (and the linked-square
@@ -1717,15 +2091,20 @@ impl RenderWorld {
     /// and are left untouched. Scene sprites must be resolved here: the
     /// merge pass below runs before the lazy per-draw resolution, and the
     /// original `finishBuild` shared light over every placed sprite.
-    fn run_share_light(&mut self, world: &World, cache: &Cache, loop_cycle: i32) {
+    fn run_share_light(
+        &mut self,
+        world: &World,
+        cache: &Cache,
+        loop_cycle: i32,
+    ) -> Result<(), RenderLimit> {
         for level in 0..world.max_tile_level {
             for x in 0..world.max_tile_x {
                 for z in 0..world.max_tile_z {
                     if let Some(t) = tile_at(&world.squares, level, x, z) {
-                        self.resolve_tile(world, cache, loop_cycle, level, x, z);
+                        self.resolve_tile(world, cache, loop_cycle, level, x, z)?;
                         for i in 0..t.sprite_count as usize {
                             if let Some(index) = t.sprite(i) {
-                                self.sprite_model_mut(world, cache, loop_cycle, index);
+                                self.sprite_model_mut(world, cache, loop_cycle, index)?;
                             }
                         }
                     }
@@ -1738,21 +2117,22 @@ impl RenderWorld {
                     tile_at(&world.squares, 0, x, z).and_then(|t| t.linked_square.as_ref())
                 {
                     let index = self.tile_index(world, 0, x, z);
-                    self.grow_linked_models(index);
+                    self.grow_linked_models(index)?;
                     if self.linked_models[index]
                         .as_ref()
                         .is_none_or(|s| s.wall_model_stamp == i32::MIN)
                     {
-                        self.resolve_linked_wall(world, cache, loop_cycle, 0, x, z);
+                        self.resolve_linked_wall(world, cache, loop_cycle, 0, x, z)?;
                     }
                     for i in 0..linked.sprite_count as usize {
                         if let Some(sprite_index) = linked.sprite(i) {
-                            self.sprite_model_mut(world, cache, loop_cycle, sprite_index);
+                            self.sprite_model_mut(world, cache, loop_cycle, sprite_index)?;
                         }
                     }
                 }
             }
         }
+        Ok(())
     }
 
     /// The merge + light pass over the resolved tile/sprite models. Each
@@ -1769,7 +2149,7 @@ impl RenderWorld {
         light_src_x: i32,
         light_src_y: i32,
         light_src_z: i32,
-    ) {
+    ) -> Result<(), RenderLimit> {
         let light_magnitude = ((light_src_x * light_src_x
             + light_src_y * light_src_y
             + light_src_z * light_src_z) as f64)
@@ -1783,19 +2163,27 @@ impl RenderWorld {
                     let mut tile = self.tile_models.get_mut(index).and_then(|t| t.take());
 
                     if let Some(tile) = tile.as_mut() {
-                        if let Some(model1) =
-                            tile.wall_model1.as_mut().and_then(|m| m.as_model_mut())
+                        if let Some(model1) = tile
+                            .wall_model1
+                            .as_mut()
+                            .map(SceneModel::try_as_model_mut_for_render)
+                            .transpose()?
+                            .flatten()
                         {
                             if model1.point_normal.is_some() {
-                                self.share_light_loc(world, level, tile_x, tile_z, 1, 1, model1);
-                                if let Some(model2) =
-                                    tile.wall_model2.as_mut().and_then(|m| m.as_model_mut())
+                                self.share_light_loc(world, level, tile_x, tile_z, 1, 1, model1)?;
+                                if let Some(model2) = tile
+                                    .wall_model2
+                                    .as_mut()
+                                    .map(SceneModel::try_as_model_mut_for_render)
+                                    .transpose()?
+                                    .flatten()
                                 {
                                     if model2.point_normal.is_some() {
                                         self.share_light_loc(
                                             world, level, tile_x, tile_z, 1, 1, model2,
-                                        );
-                                        self.model_share_light(model1, model2, 0, 0, 0, false);
+                                        )?;
+                                        self.model_share_light(model1, model2, 0, 0, 0, false)?;
                                         model2.light(
                                             ambient,
                                             attenuation,
@@ -1815,9 +2203,15 @@ impl RenderWorld {
                             }
                         }
 
-                        if let Some(model) = tile.gd_model.as_mut().and_then(|m| m.as_model_mut()) {
+                        if let Some(model) = tile
+                            .gd_model
+                            .as_mut()
+                            .map(SceneModel::try_as_model_mut_for_render)
+                            .transpose()?
+                            .flatten()
+                        {
                             if model.point_normal.is_some() {
-                                self.share_light_gd(world, level, tile_x, tile_z, model);
+                                self.share_light_gd(world, level, tile_x, tile_z, model)?;
                                 model.light(
                                     ambient,
                                     attenuation,
@@ -1857,9 +2251,9 @@ impl RenderWorld {
                                 .unwrap_or((-1, 0, 0, 0));
                             let _ = typecode;
                             eprintln!(
-                                "[share-light] tile ({tile_x},{tile_z}) wall faces={} lit={lit} hidden={hidden} unlit={unlit}",
-                                lit + hidden + unlit
-                            );
+                            "[share-light] tile ({tile_x},{tile_z}) wall faces={} lit={lit} hidden={hidden} unlit={unlit}",
+                            lit + hidden + unlit
+                        );
                         }
                     }
                     if let Some(tile) = tile {
@@ -1878,7 +2272,12 @@ impl RenderWorld {
                                 .sprite_models
                                 .get_mut(sprite_index)
                                 .and_then(|s| s.take());
-                            if let Some(model) = sprite.as_mut().and_then(|m| m.as_model_mut()) {
+                            if let Some(model) = sprite
+                                .as_mut()
+                                .map(SceneModel::try_as_model_mut_for_render)
+                                .transpose()?
+                                .flatten()
+                            {
                                 if model.point_normal.is_some() {
                                     if let Some(s) =
                                         world.sprites.get(sprite_index).and_then(|s| s.as_ref())
@@ -1887,7 +2286,7 @@ impl RenderWorld {
                                         let size_z = s.max_tile_z + 1 - s.min_tile_z;
                                         self.share_light_loc(
                                             world, level, tile_x, tile_z, size_x, size_z, model,
-                                        );
+                                        )?;
                                     }
                                     model.light(
                                         ambient,
@@ -1898,7 +2297,7 @@ impl RenderWorld {
                                     );
                                 }
                             }
-                            self.grow_sprite_arrays(sprite_index);
+                            self.grow_sprite_arrays(sprite_index)?;
                             self.sprite_models[sprite_index] = sprite;
                         }
                     }
@@ -1922,15 +2321,25 @@ impl RenderWorld {
                 let index = self.tile_index(world, 0, tile_x, tile_z);
                 let mut tile = self.linked_models.get_mut(index).and_then(|t| t.take());
                 if let Some(tile) = tile.as_mut() {
-                    if let Some(model1) = tile.wall_model1.as_mut().and_then(|m| m.as_model_mut()) {
+                    if let Some(model1) = tile
+                        .wall_model1
+                        .as_mut()
+                        .map(SceneModel::try_as_model_mut_for_render)
+                        .transpose()?
+                        .flatten()
+                    {
                         if model1.point_normal.is_some() {
-                            self.share_light_loc(world, 0, tile_x, tile_z, 1, 1, model1);
-                            if let Some(model2) =
-                                tile.wall_model2.as_mut().and_then(|m| m.as_model_mut())
+                            self.share_light_loc(world, 0, tile_x, tile_z, 1, 1, model1)?;
+                            if let Some(model2) = tile
+                                .wall_model2
+                                .as_mut()
+                                .map(SceneModel::try_as_model_mut_for_render)
+                                .transpose()?
+                                .flatten()
                             {
                                 if model2.point_normal.is_some() {
-                                    self.share_light_loc(world, 0, tile_x, tile_z, 1, 1, model2);
-                                    self.model_share_light(model1, model2, 0, 0, 0, false);
+                                    self.share_light_loc(world, 0, tile_x, tile_z, 1, 1, model2)?;
+                                    self.model_share_light(model1, model2, 0, 0, 0, false)?;
                                     model2.light(
                                         ambient,
                                         attenuation,
@@ -1962,7 +2371,12 @@ impl RenderWorld {
                         .sprite_models
                         .get_mut(sprite_index)
                         .and_then(|s| s.take());
-                    if let Some(model) = sprite.as_mut().and_then(|m| m.as_model_mut()) {
+                    if let Some(model) = sprite
+                        .as_mut()
+                        .map(SceneModel::try_as_model_mut_for_render)
+                        .transpose()?
+                        .flatten()
+                    {
                         if model.point_normal.is_some() {
                             if let Some(s) =
                                 world.sprites.get(sprite_index).and_then(|s| s.as_ref())
@@ -1971,7 +2385,7 @@ impl RenderWorld {
                                 let size_z = s.max_tile_z + 1 - s.min_tile_z;
                                 self.share_light_loc(
                                     world, 0, tile_x, tile_z, size_x, size_z, model,
-                                );
+                                )?;
                             }
                             model.light(
                                 ambient,
@@ -1982,11 +2396,12 @@ impl RenderWorld {
                             );
                         }
                     }
-                    self.grow_sprite_arrays(sprite_index);
+                    self.grow_sprite_arrays(sprite_index)?;
                     self.sprite_models[sprite_index] = sprite;
                 }
             }
         }
+        Ok(())
     }
 
     /// `shareLightGd(level, tileX, tileZ, model)` from World.ts 630-658:
@@ -2001,17 +2416,19 @@ impl RenderWorld {
         tile_x: i32,
         tile_z: i32,
         model: &mut Model,
-    ) {
+    ) -> Result<(), RenderLimit> {
         if tile_x < world.max_tile_x {
             let index = self.tile_index(world, level, tile_x + 1, tile_z);
             let mut tile = self.tile_models.get_mut(index).and_then(|t| t.take());
             if let Some(model_b) = tile
                 .as_mut()
                 .and_then(|t| t.gd_model.as_mut())
-                .and_then(|m| m.as_model_mut())
+                .map(SceneModel::try_as_model_mut_for_render)
+                .transpose()?
+                .flatten()
             {
                 if model_b.point_normal.is_some() {
-                    self.model_share_light(model, model_b, 128, 0, 0, true);
+                    self.model_share_light(model, model_b, 128, 0, 0, true)?;
                 }
             }
             if let Some(tile) = tile {
@@ -2025,10 +2442,12 @@ impl RenderWorld {
             if let Some(model_b) = tile
                 .as_mut()
                 .and_then(|t| t.gd_model.as_mut())
-                .and_then(|m| m.as_model_mut())
+                .map(SceneModel::try_as_model_mut_for_render)
+                .transpose()?
+                .flatten()
             {
                 if model_b.point_normal.is_some() {
-                    self.model_share_light(model, model_b, 0, 0, 128, true);
+                    self.model_share_light(model, model_b, 0, 0, 128, true)?;
                 }
             }
             if let Some(tile) = tile {
@@ -2042,10 +2461,12 @@ impl RenderWorld {
             if let Some(model_b) = tile
                 .as_mut()
                 .and_then(|t| t.gd_model.as_mut())
-                .and_then(|m| m.as_model_mut())
+                .map(SceneModel::try_as_model_mut_for_render)
+                .transpose()?
+                .flatten()
             {
                 if model_b.point_normal.is_some() {
-                    self.model_share_light(model, model_b, 128, 0, 128, true);
+                    self.model_share_light(model, model_b, 128, 0, 128, true)?;
                 }
             }
             if let Some(tile) = tile {
@@ -2059,16 +2480,19 @@ impl RenderWorld {
             if let Some(model_b) = tile
                 .as_mut()
                 .and_then(|t| t.gd_model.as_mut())
-                .and_then(|m| m.as_model_mut())
+                .map(SceneModel::try_as_model_mut_for_render)
+                .transpose()?
+                .flatten()
             {
                 if model_b.point_normal.is_some() {
-                    self.model_share_light(model, model_b, 128, 0, -128, true);
+                    self.model_share_light(model, model_b, 128, 0, -128, true)?;
                 }
             }
             if let Some(tile) = tile {
                 self.tile_models[index] = Some(tile);
             }
         }
+        Ok(())
     }
 
     /// `shareLightLoc(level, tileX, tileZ, tileSizeX, tileSizeZ, model)`
@@ -2087,7 +2511,7 @@ impl RenderWorld {
         tile_size_x: i32,
         tile_size_z: i32,
         model_a: &mut Model,
-    ) {
+    ) -> Result<(), RenderLimit> {
         let mut allow_face_removal = true;
 
         let mut min_tile_x = tile_x;
@@ -2139,7 +2563,9 @@ impl RenderWorld {
                         if let Some(model_b) = candidate
                             .wall_model1
                             .as_mut()
-                            .and_then(|m| m.as_model_mut())
+                            .map(SceneModel::try_as_model_mut_for_render)
+                            .transpose()?
+                            .flatten()
                         {
                             if model_b.point_normal.is_some() {
                                 self.model_share_light(
@@ -2149,13 +2575,15 @@ impl RenderWorld {
                                     offset_y,
                                     offset_z,
                                     allow_face_removal,
-                                );
+                                )?;
                             }
                         }
                         if let Some(model_b) = candidate
                             .wall_model2
                             .as_mut()
-                            .and_then(|m| m.as_model_mut())
+                            .map(SceneModel::try_as_model_mut_for_render)
+                            .transpose()?
+                            .flatten()
                         {
                             if model_b.point_normal.is_some() {
                                 self.model_share_light(
@@ -2165,7 +2593,7 @@ impl RenderWorld {
                                     offset_y,
                                     offset_z,
                                     allow_face_removal,
-                                );
+                                )?;
                             }
                         }
                     }
@@ -2182,7 +2610,12 @@ impl RenderWorld {
                                 .sprite_models
                                 .get_mut(sprite_index)
                                 .and_then(|s| s.take());
-                            if let Some(model_b) = sprite.as_mut().and_then(|m| m.as_model_mut()) {
+                            if let Some(model_b) = sprite
+                                .as_mut()
+                                .map(SceneModel::try_as_model_mut_for_render)
+                                .transpose()?
+                                .flatten()
+                            {
                                 if model_b.point_normal.is_some() {
                                     let (min_sx, min_sz, size_x, size_z) = if let Some(s) =
                                         world.sprites.get(sprite_index).and_then(|s| s.as_ref())
@@ -2205,10 +2638,10 @@ impl RenderWorld {
                                         offset_y,
                                         sz,
                                         allow_face_removal,
-                                    );
+                                    )?;
                                 }
                             }
-                            self.grow_sprite_arrays(sprite_index);
+                            self.grow_sprite_arrays(sprite_index)?;
                             self.sprite_models[sprite_index] = sprite;
                         }
                     }
@@ -2218,6 +2651,7 @@ impl RenderWorld {
             min_tile_x -= 1;
             allow_face_removal = false;
         }
+        Ok(())
     }
 
     /// `modelShareLight(modelA, modelB, offsetX, offsetY, offsetZ,
@@ -2232,17 +2666,33 @@ impl RenderWorld {
         offset_y: i32,
         offset_z: i32,
         allow_face_removal: bool,
-    ) {
+    ) -> Result<(), RenderLimit> {
         self.share_tic += 1;
 
         let mut merged = 0;
         let vertex_count_b = model_b.num_points;
 
-        if self.share_map.len() < model_a.num_points as usize {
-            self.share_map.resize(model_a.num_points as usize, 0);
+        {
+            let count = model_a.num_points as usize;
+            let additional = count.saturating_sub(self.share_map.len());
+            reserve_vec(
+                &mut self.share_map,
+                additional,
+                &mut self.storage_charges.share_map,
+                self.head_misc.as_ref(),
+            )?;
+            self.share_map.resize(self.share_map.len().max(count), 0);
         }
-        if self.share_map2.len() < vertex_count_b as usize {
-            self.share_map2.resize(vertex_count_b as usize, 0);
+        {
+            let count = vertex_count_b as usize;
+            let additional = count.saturating_sub(self.share_map2.len());
+            reserve_vec(
+                &mut self.share_map2,
+                additional,
+                &mut self.storage_charges.share_map2,
+                self.head_misc.as_ref(),
+            )?;
+            self.share_map2.resize(self.share_map2.len().max(count), 0);
         }
 
         if let (Some(point_normal_a), Some(shared_normal_a)) = (
@@ -2321,7 +2771,7 @@ impl RenderWorld {
         }
 
         if merged < 3 || !allow_face_removal {
-            return;
+            return Ok(());
         }
 
         if let Some(face_render_type) = model_a.face_render_type.as_mut() {
@@ -2351,6 +2801,7 @@ impl RenderWorld {
                 }
             }
         }
+        Ok(())
     }
 
     /// The pre-fill half of `render_all`: drop the previous build's
@@ -2374,11 +2825,22 @@ impl RenderWorld {
         max_level: i32,
         eye_yaw: i32,
         eye_pitch: i32,
-    ) {
+    ) -> Result<(), RenderLimit> {
+        self.prepare_fixed_buffers()?;
         let corners =
             (world.max_tile_level * (world.max_tile_x + 1) * (world.max_tile_z + 1)) as usize;
-        if self.occlusion_cycle.len() != corners {
-            self.occlusion_cycle = vec![0; corners];
+        {
+            let additional = corners.saturating_sub(self.occlusion_cycle.len());
+            reserve_vec(
+                &mut self.occlusion_cycle,
+                additional,
+                &mut self.storage_charges.occlusion,
+                self.head_misc.as_ref(),
+            )?;
+            if self.occlusion_cycle.len() != corners {
+                self.occlusion_cycle.resize(corners, 0);
+                self.occlusion_cycle.fill(0);
+            }
         }
         if world.build_generation != self.last_build_generation {
             self.tile_models.clear();
@@ -2387,14 +2849,19 @@ impl RenderWorld {
             self.sprite_stamps.clear();
             self.last_build_generation = world.build_generation;
         }
-        if world.take_share_light_pending() {
-            self.run_share_light(world, cache, loop_cycle);
-            self.apply_share_light(world, 64, 768, -50, -10, -50);
+        if world.share_light_pending {
+            self.tile_models.clear();
+            self.linked_models.clear();
+            self.sprite_models.clear();
+            self.sprite_stamps.clear();
+            self.run_share_light(world, cache, loop_cycle)?;
+            self.apply_share_light(world, 64, 768, -50, -10, -50)?;
+            world.share_light_pending = false;
         }
         // Task 5 rule 6: an unheaded build recorded only the tile stamps;
         // the first paint after the build materializes the overlay meshes.
-        if world.take_overlay_pending() {
-            world.materialize_overlay();
+        if world.overlay_pending {
+            self.materialize_overlay(world)?;
         }
 
         if eye_x < 0 {
@@ -2497,6 +2964,7 @@ impl RenderWorld {
                 }
             }
         }
+        Ok(())
     }
 
     /// `renderAll(eyeX, eyeY, eyeZ, maxLevel, eyeYaw, eyePitch)` from
@@ -2520,14 +2988,14 @@ impl RenderWorld {
         max_level: i32,
         eye_yaw: i32,
         eye_pitch: i32,
-    ) {
+    ) -> Result<(), RenderLimit> {
         // The pre-fill state (task 7): the build/share-light check, camera
         // fields, viewport bounds and the per-tile draw-front marking. The
         // wgpu backend runs this alone and rasterizes the marked tiles
         // itself; the CPU path runs it here ahead of the fill passes.
         self.prepare_scene(
             world, cache, loop_cycle, eye_x, eye_y, eye_z, max_level, eye_yaw, eye_pitch,
-        );
+        )?;
 
         // Two fill passes, nearest-to-farthest ring order (`true` then
         // `false` for `checkAdjacent`), aborting when every tile is drawn.
@@ -2556,7 +3024,7 @@ impl RenderWorld {
                                     loop_cycle,
                                     (level, right_tile_x, forward_tile_z),
                                     true,
-                                );
+                                )?;
                             }
                         }
 
@@ -2572,7 +3040,7 @@ impl RenderWorld {
                                     loop_cycle,
                                     (level, right_tile_x, backward_tile_z),
                                     true,
-                                );
+                                )?;
                             }
                         }
                     }
@@ -2589,7 +3057,7 @@ impl RenderWorld {
                                     loop_cycle,
                                     (level, left_tile_x, forward_tile_z),
                                     true,
-                                );
+                                )?;
                             }
                         }
 
@@ -2604,14 +3072,14 @@ impl RenderWorld {
                                     loop_cycle,
                                     (level, left_tile_x, backward_tile_z),
                                     true,
-                                );
+                                )?;
                             }
                         }
                     }
 
                     if self.fill_left == 0 {
                         world.click = false;
-                        return;
+                        return Ok(());
                     }
                 }
             }
@@ -2642,7 +3110,7 @@ impl RenderWorld {
                                     loop_cycle,
                                     (level, right_tile_x, forward_tile_z),
                                     false,
-                                );
+                                )?;
                             }
                         }
 
@@ -2658,7 +3126,7 @@ impl RenderWorld {
                                     loop_cycle,
                                     (level, right_tile_x, backward_tile_z),
                                     false,
-                                );
+                                )?;
                             }
                         }
                     }
@@ -2675,7 +3143,7 @@ impl RenderWorld {
                                     loop_cycle,
                                     (level, left_tile_x, forward_tile_z),
                                     false,
-                                );
+                                )?;
                             }
                         }
 
@@ -2690,14 +3158,14 @@ impl RenderWorld {
                                     loop_cycle,
                                     (level, left_tile_x, backward_tile_z),
                                     false,
-                                );
+                                )?;
                             }
                         }
                     }
 
                     if self.fill_left == 0 {
                         world.click = false;
-                        return;
+                        return Ok(());
                     }
                 }
             }
@@ -2711,6 +3179,7 @@ impl RenderWorld {
         if world.ground_x != -1 {
             world.click = false;
         }
+        Ok(())
     }
 
     /// The wgpu scene pass: `render_all`'s painter traversal (visibility,
@@ -2735,15 +3204,20 @@ impl RenderWorld {
         eye_yaw: i32,
         eye_pitch: i32,
         mesh: &mut SceneMesh,
-    ) {
+    ) -> Result<(), RenderLimit> {
+        let cleanup = CaptureWorldScope {
+            render: self,
+            world,
+        };
+        mesh.prepare_budget()?;
         mesh.clear();
-        pix.capture = Some(std::mem::take(mesh));
+        let mut capture = SceneCaptureScope::new(pix, mesh);
         // The scene viewport bounds `world_render` culls against. Nothing
         // is written through it while the capture is bound.
         let mut surface = Pix2D::with_pixels(&mut [], SCENE_VIEW_W, SCENE_VIEW_H);
-        self.render_all(
-            world,
-            pix,
+        cleanup.render.render_all(
+            cleanup.world,
+            capture.pix(),
             &mut surface,
             cache,
             loop_cycle,
@@ -2753,8 +3227,7 @@ impl RenderWorld {
             max_level,
             eye_yaw,
             eye_pitch,
-        );
-        *mesh = pix.capture.take().unwrap_or_default();
+        )
     }
 
     /// The captured camera (the `prepare_scene` fixed-point trig + eye) the
@@ -2979,14 +3452,13 @@ impl RenderWorld {
         }
 
         if crate::render_debug_enabled() {
-            let mut tiles = Vec::new();
-            for i in 0..self.num_active_occluders as usize {
-                if let Some(index) = self.active_occluders.get(i).copied().flatten() {
-                    if let Some(o) = world.occluders.get(index).and_then(|o| o.as_ref()) {
-                        tiles.push((o.min_tile_x, o.min_tile_z, o.max_tile_x, o.max_tile_z));
-                    }
-                }
-            }
+            let tiles = DebugList(
+                self.active_occluders[..self.num_active_occluders as usize]
+                    .iter()
+                    .flatten()
+                    .filter_map(|&index| world.occluders.get(index)?.as_ref())
+                    .map(|o| (o.min_tile_x, o.min_tile_z, o.max_tile_x, o.max_tile_z)),
+            );
             eprintln!(
                 "[occluder] active={} tiles={tiles:?}",
                 self.num_active_occluders
@@ -2997,7 +3469,19 @@ impl RenderWorld {
     /// Java/TS `LinkList.push`: if the square is already queued, unlink it
     /// and append at the tail. Stamping the square and the deque entry makes
     /// the older copy a no-op when popped.
-    fn enqueue_fill(&mut self, world: &mut World, level: i32, x: i32, z: i32) {
+    fn enqueue_fill(
+        &mut self,
+        world: &mut World,
+        level: i32,
+        x: i32,
+        z: i32,
+    ) -> Result<(), RenderLimit> {
+        reserve_deque(
+            &mut self.fill_queue,
+            1,
+            &mut self.storage_charges.fill_queue,
+            self.head_misc.as_ref(),
+        )?;
         self.fill_gen = self.fill_gen.wrapping_add(1);
         if self.fill_gen == 0 {
             self.fill_gen = 1;
@@ -3007,6 +3491,7 @@ impl RenderWorld {
             tile.fill_stamp = stamp;
         }
         self.fill_queue.push_back((level, x, z, stamp));
+        Ok(())
     }
 
     /// `fill(next, checkAdjacent)` from client-ts 1389-1923. Queue entries
@@ -3022,14 +3507,14 @@ impl RenderWorld {
         loop_cycle: i32,
         next: (i32, i32, i32),
         mut check_adjacent: bool,
-    ) {
-        self.enqueue_fill(world, next.0, next.1, next.2);
+    ) -> Result<(), RenderLimit> {
+        self.enqueue_fill(world, next.0, next.1, next.2)?;
 
         'fill: loop {
             // `do { tile = popFront(); if (!tile) return; } while (!tile.drawBack)`
             let (tile_x, tile_z, level) = loop {
                 let Some((level, x, z, stamp)) = self.fill_queue.pop_front() else {
-                    return;
+                    return Ok(());
                 };
                 let tile = tile_at(&world.squares, level, x, z);
                 if !tile.is_some_and(|t| t.draw_back && t.fill_stamp == stamp) {
@@ -3158,7 +3643,7 @@ impl RenderWorld {
                         self.render_quick_ground(
                             world, pix, surface, quick, 0, tile_x, tile_z, sin_pitch, cos_pitch,
                             sin_yaw, cos_yaw,
-                        );
+                        )?;
                     }
                 } else {
                     let linked_ground = tile_at(&world.squares, level, tile_x, tile_z)
@@ -3169,7 +3654,7 @@ impl RenderWorld {
                             self.render_ground(
                                 world, pix, surface, tile_x, tile_z, ground, sin_pitch, cos_pitch,
                                 sin_yaw, cos_yaw,
-                            );
+                            )?;
                         }
                     }
                 }
@@ -3183,14 +3668,14 @@ impl RenderWorld {
                         if let Some(model) = self
                             .linked_wall_models_mut(
                                 &*world, cache, loop_cycle, level, tile_x, tile_z,
-                            )
+                            )?
                             .0
                             .as_mut()
                         {
-                            model.world_render(
+                            model.try_world_render(
                                 cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw,
                                 cos_yaw, wall_x, wall_y, wall_z, typecode,
-                            );
+                            )?;
                         }
                     }
                 }
@@ -3208,10 +3693,10 @@ impl RenderWorld {
                         let (yaw, typecode, x, y, z) =
                             (sprite.yaw, sprite.typecode, sprite.x, sprite.y, sprite.z);
                         if let Some(model) = self
-                            .sprite_model_mut(&*world, cache, loop_cycle, index)
+                            .sprite_model_mut(&*world, cache, loop_cycle, index)?
                             .as_mut()
                         {
-                            model.world_render(
+                            model.try_world_render(
                                 cache,
                                 loop_cycle,
                                 pix,
@@ -3225,7 +3710,7 @@ impl RenderWorld {
                                 y - cy,
                                 z - cz,
                                 typecode,
-                            );
+                            )?;
                         }
                     }
                 }
@@ -3249,7 +3734,7 @@ impl RenderWorld {
                             cos_pitch,
                             sin_yaw,
                             cos_yaw,
-                        );
+                        )?;
                     }
                 } else {
                     let ground = tile_at(&world.squares, level, tile_x, tile_z)
@@ -3260,7 +3745,7 @@ impl RenderWorld {
                             self.render_ground(
                                 world, pix, surface, tile_x, tile_z, ground, sin_pitch, cos_pitch,
                                 sin_yaw, cos_yaw,
-                            );
+                            )?;
                         }
                     }
                 }
@@ -3338,17 +3823,17 @@ impl RenderWorld {
                         let mut submitted = false;
                         if !occluded {
                             if let Some(model) = self
-                                .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                                .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)?
                                 .0
                                 .as_mut()
                             {
                                 #[cfg(test)]
                                 fill_trace::record(tile_x, tile_z, FillKind::Wall, typecode);
                                 dump_loc_shades(tile_x, tile_z, typecode, "wall", model);
-                                model.world_render(
+                                model.try_world_render(
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
-                                );
+                                )?;
                                 submitted = true;
                             }
                         }
@@ -3363,17 +3848,17 @@ impl RenderWorld {
                         let mut submitted = false;
                         if !occluded {
                             if let Some(model) = self
-                                .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                                .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)?
                                 .1
                                 .as_mut()
                             {
                                 #[cfg(test)]
                                 fill_trace::record(tile_x, tile_z, FillKind::Wall, typecode);
                                 dump_loc_shades(tile_x, tile_z, typecode, "wall2", model);
-                                model.world_render(
+                                model.try_world_render(
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
-                                );
+                                )?;
                                 submitted = true;
                             }
                         }
@@ -3388,7 +3873,7 @@ impl RenderWorld {
                     .map(|d| (d.wshape, d.angle, d.typecode, d.x - cx, d.y - cy, d.z - cz));
                 if let Some((wshape, angle, typecode, decor_x, decor_y, decor_z)) = decor_data {
                     let min_y = self
-                        .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                        .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)?
                         .as_ref()
                         .map(|m| m.min_y())
                         .unwrap_or(1000);
@@ -3402,14 +3887,14 @@ impl RenderWorld {
                     } else if (wshape & front_wall_types) != 0 {
                         #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
                         let model = if let Some(decor) = self
-                            .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                            .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)?
                             .as_mut()
                         {
                             dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
-                            decor.world_render(
+                            decor.try_world_render(
                                 cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch,
                                 sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode,
-                            );
+                            )?;
                             "resolved"
                         } else {
                             "missing"
@@ -3453,11 +3938,11 @@ impl RenderWorld {
                             let draw_z =
                                 decor_z + DECORZOF.get(angle as usize).copied().unwrap_or(0);
                             if let Some(decor) = self
-                                .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                                .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)?
                                 .as_mut()
                             {
                                 dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
-                                decor.world_render(
+                                decor.try_world_render(
                                     cache,
                                     loop_cycle,
                                     pix,
@@ -3471,7 +3956,7 @@ impl RenderWorld {
                                     decor_y,
                                     draw_z,
                                     typecode,
-                                );
+                                )?;
                                 offset_submitted = true;
                             }
                         }
@@ -3482,11 +3967,11 @@ impl RenderWorld {
                             let draw_z =
                                 decor_z + DECORZOF2.get(angle as usize).copied().unwrap_or(0);
                             if let Some(decor) = self
-                                .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                                .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)?
                                 .as_mut()
                             {
                                 dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
-                                decor.world_render(
+                                decor.try_world_render(
                                     cache,
                                     loop_cycle,
                                     pix,
@@ -3500,7 +3985,7 @@ impl RenderWorld {
                                     decor_y,
                                     draw_z,
                                     typecode,
-                                );
+                                )?;
                                 offset_submitted = true;
                             }
                         }
@@ -3546,13 +4031,13 @@ impl RenderWorld {
                         .map(|gd| (gd.typecode, gd.x - cx, gd.y - cy, gd.z - cz));
                     if let Some((typecode, gd_x, gd_y, gd_z)) = ground_decor_data {
                         if let Some(model) = self
-                            .gd_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                            .gd_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)?
                             .as_mut()
                         {
-                            model.world_render(
+                            model.try_world_render(
                                 cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch, sin_yaw,
                                 cos_yaw, gd_x, gd_y, gd_z, typecode,
-                            );
+                            )?;
                         }
                     }
 
@@ -3562,29 +4047,29 @@ impl RenderWorld {
                     if let Some((typecode, ox, oy, oz)) = ground_object_data {
                         let height = self.ground_object_height(
                             &*world, cache, loop_cycle, level, tile_x, tile_z,
-                        );
+                        )?;
                         if height == 0 {
                             let (bottom, middle, top) =
-                                self.obj_models_mut(&*world, level, tile_x, tile_z);
+                                self.obj_models_mut(&*world, level, tile_x, tile_z)?;
                             if let Some(model) = bottom.as_mut() {
-                                model.world_render(
+                                model.try_world_render(
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, ox, oy, oz, typecode,
-                                );
+                                )?;
                             }
 
                             if let Some(model) = middle.as_mut() {
-                                model.world_render(
+                                model.try_world_render(
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, ox, oy, oz, typecode,
-                                );
+                                )?;
                             }
 
                             if let Some(model) = top.as_mut() {
-                                model.world_render(
+                                model.try_world_render(
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, ox, oy, oz, typecode,
-                                );
+                                )?;
                             }
                         }
                     }
@@ -3598,28 +4083,28 @@ impl RenderWorld {
                     if tile_x < gx && (spans & 0x4) != 0 {
                         let adjacent = tile_at(&world.squares, level, tile_x + 1, tile_z);
                         if adjacent.is_some_and(|t| t.draw_back) {
-                            self.enqueue_fill(world, level, tile_x + 1, tile_z);
+                            self.enqueue_fill(world, level, tile_x + 1, tile_z)?;
                         }
                     }
 
                     if tile_z < gz && (spans & 0x2) != 0 {
                         let adjacent = tile_at(&world.squares, level, tile_x, tile_z + 1);
                         if adjacent.is_some_and(|t| t.draw_back) {
-                            self.enqueue_fill(world, level, tile_x, tile_z + 1);
+                            self.enqueue_fill(world, level, tile_x, tile_z + 1)?;
                         }
                     }
 
                     if tile_x > gx && (spans & 0x1) != 0 {
                         let adjacent = tile_at(&world.squares, level, tile_x - 1, tile_z);
                         if adjacent.is_some_and(|t| t.draw_back) {
-                            self.enqueue_fill(world, level, tile_x - 1, tile_z);
+                            self.enqueue_fill(world, level, tile_x - 1, tile_z)?;
                         }
                     }
 
                     if tile_z > gz && (spans & 0x8) != 0 {
                         let adjacent = tile_at(&world.squares, level, tile_x, tile_z - 1);
                         if adjacent.is_some_and(|t| t.draw_back) {
-                            self.enqueue_fill(world, level, tile_x, tile_z - 1);
+                            self.enqueue_fill(world, level, tile_x, tile_z - 1)?;
                         }
                     }
                 }
@@ -3630,16 +4115,21 @@ impl RenderWorld {
             let (corner_sides, sprite_pairs, sides_before, sides_after) =
                 tile_at(&world.squares, level, tile_x, tile_z)
                     .map(|t| {
+                        let pairs: [(Option<usize>, i32); 5] = std::array::from_fn(|i| {
+                            if i < t.sprite_count as usize {
+                                (t.sprite(i), t.sprite_span[i])
+                            } else {
+                                (None, 0)
+                            }
+                        });
                         (
                             i32::from(t.corner_sides),
-                            (0..t.sprite_count as usize)
-                                .map(|i| (t.sprite(i), t.sprite_span[i]))
-                                .collect::<Vec<_>>(),
+                            pairs,
                             i32::from(t.sides_before_corner),
                             i32::from(t.sides_after_corner),
                         )
                     })
-                    .unwrap_or((0, Vec::new(), 0, 0));
+                    .unwrap_or((0, [(None, 0); 5], 0, 0));
             if corner_sides != 0 {
                 let mut draw = true;
                 for (sprite_index, span) in &sprite_pairs {
@@ -3664,16 +4154,16 @@ impl RenderWorld {
                     if let Some((angle1, typecode, wall_x, wall_y, wall_z)) = wall_data {
                         if !self.wall_occluded(world, original_level, tile_x, tile_z, angle1) {
                             if let Some(model) = self
-                                .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                                .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)?
                                 .0
                                 .as_mut()
                             {
                                 #[cfg(test)]
                                 fill_trace::record(tile_x, tile_z, FillKind::Wall, typecode);
-                                model.world_render(
+                                model.try_world_render(
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
-                                );
+                                )?;
                             }
                         }
                     }
@@ -3895,7 +4385,7 @@ impl RenderWorld {
                         )
                     };
                     let model_min_y = self
-                        .sprite_model_mut(&*world, cache, loop_cycle, farthest)
+                        .sprite_model_mut(&*world, cache, loop_cycle, farthest)?
                         .as_ref()
                         .map(|m| m.min_y())
                         .unwrap_or(0);
@@ -3913,12 +4403,12 @@ impl RenderWorld {
                     let mut sprite_submitted = false;
                     if !sprite_occluded {
                         if let Some(model) = self
-                            .sprite_model_mut(&*world, cache, loop_cycle, farthest)
+                            .sprite_model_mut(&*world, cache, loop_cycle, farthest)?
                             .as_mut()
                         {
                             #[cfg(test)]
                             fill_trace::record(tile_x, tile_z, FillKind::Sprite, typecode);
-                            model.world_render(
+                            model.try_world_render(
                                 cache,
                                 loop_cycle,
                                 pix,
@@ -3932,7 +4422,7 @@ impl RenderWorld {
                                 sy - cy,
                                 sz - cz,
                                 typecode,
-                            );
+                            )?;
                             sprite_submitted = true;
                         }
                     }
@@ -3963,9 +4453,9 @@ impl RenderWorld {
                             let draw_back = occupied.draw_back;
 
                             if corner_sides != 0 {
-                                self.enqueue_fill(world, level, x, z);
+                                self.enqueue_fill(world, level, x, z)?;
                             } else if (x != tile_x || z != tile_z) && draw_back {
-                                self.enqueue_fill(world, level, x, z);
+                                self.enqueue_fill(world, level, x, z)?;
                             }
                         }
                     }
@@ -4030,11 +4520,12 @@ impl RenderWorld {
                 .map(|o| (o.typecode, o.x - cx, o.y - cy, o.z - cz));
             if let Some((typecode, ox, oy, oz)) = ground_object_data {
                 let height =
-                    self.ground_object_height(&*world, cache, loop_cycle, level, tile_x, tile_z);
+                    self.ground_object_height(&*world, cache, loop_cycle, level, tile_x, tile_z)?;
                 if height != 0 {
-                    let (bottom, middle, top) = self.obj_models_mut(&*world, level, tile_x, tile_z);
+                    let (bottom, middle, top) =
+                        self.obj_models_mut(&*world, level, tile_x, tile_z)?;
                     if let Some(model) = bottom.as_mut() {
-                        model.world_render(
+                        model.try_world_render(
                             cache,
                             loop_cycle,
                             pix,
@@ -4048,11 +4539,11 @@ impl RenderWorld {
                             oy - height,
                             oz,
                             typecode,
-                        );
+                        )?;
                     }
 
                     if let Some(model) = middle.as_mut() {
-                        model.world_render(
+                        model.try_world_render(
                             cache,
                             loop_cycle,
                             pix,
@@ -4066,11 +4557,11 @@ impl RenderWorld {
                             oy - height,
                             oz,
                             typecode,
-                        );
+                        )?;
                     }
 
                     if let Some(model) = top.as_mut() {
-                        model.world_render(
+                        model.try_world_render(
                             cache,
                             loop_cycle,
                             pix,
@@ -4084,7 +4575,7 @@ impl RenderWorld {
                             oy - height,
                             oz,
                             typecode,
-                        );
+                        )?;
                     }
                 }
             }
@@ -4099,7 +4590,7 @@ impl RenderWorld {
                     .map(|d| (d.wshape, d.angle, d.typecode, d.x - cx, d.y - cy, d.z - cz));
                 if let Some((wshape, angle, typecode, decor_x, decor_y, decor_z)) = decor_data {
                     let min_y = self
-                        .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                        .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)?
                         .as_ref()
                         .map(|m| m.min_y())
                         .unwrap_or(1000);
@@ -4113,14 +4604,14 @@ impl RenderWorld {
                     } else if (wshape & back_wall_types) != 0 {
                         #[cfg_attr(not(feature = "render-diagnostics"), allow(unused_variables))]
                         let model = if let Some(decor) = self
-                            .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                            .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)?
                             .as_mut()
                         {
                             dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
-                            decor.world_render(
+                            decor.try_world_render(
                                 cache, loop_cycle, pix, surface, angle, sin_pitch, cos_pitch,
                                 sin_yaw, cos_yaw, decor_x, decor_y, decor_z, typecode,
-                            );
+                            )?;
                             "resolved"
                         } else {
                             "missing"
@@ -4164,11 +4655,11 @@ impl RenderWorld {
                             let draw_z =
                                 decor_z + DECORZOF.get(angle as usize).copied().unwrap_or(0);
                             if let Some(decor) = self
-                                .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                                .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)?
                                 .as_mut()
                             {
                                 dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
-                                decor.world_render(
+                                decor.try_world_render(
                                     cache,
                                     loop_cycle,
                                     pix,
@@ -4182,7 +4673,7 @@ impl RenderWorld {
                                     decor_y,
                                     draw_z,
                                     typecode,
-                                );
+                                )?;
                                 offset_submitted = true;
                             }
                         }
@@ -4193,11 +4684,11 @@ impl RenderWorld {
                             let draw_z =
                                 decor_z + DECORZOF2.get(angle as usize).copied().unwrap_or(0);
                             if let Some(decor) = self
-                                .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                                .decor_model_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)?
                                 .as_mut()
                             {
                                 dump_loc_shades(tile_x, tile_z, typecode, "decor", decor);
-                                decor.world_render(
+                                decor.try_world_render(
                                     cache,
                                     loop_cycle,
                                     pix,
@@ -4211,7 +4702,7 @@ impl RenderWorld {
                                     decor_y,
                                     draw_z,
                                     typecode,
-                                );
+                                )?;
                                 offset_submitted = true;
                             }
                         }
@@ -4261,17 +4752,17 @@ impl RenderWorld {
                         let mut submitted = false;
                         if !occluded {
                             if let Some(model) = self
-                                .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                                .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)?
                                 .1
                                 .as_mut()
                             {
                                 #[cfg(test)]
                                 fill_trace::record(tile_x, tile_z, FillKind::Wall, typecode);
                                 dump_loc_shades(tile_x, tile_z, typecode, "wall2", model);
-                                model.world_render(
+                                model.try_world_render(
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
-                                );
+                                )?;
                                 submitted = true;
                             }
                         }
@@ -4286,17 +4777,17 @@ impl RenderWorld {
                         let mut submitted = false;
                         if !occluded {
                             if let Some(model) = self
-                                .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)
+                                .wall_models_mut(&*world, cache, loop_cycle, level, tile_x, tile_z)?
                                 .0
                                 .as_mut()
                             {
                                 #[cfg(test)]
                                 fill_trace::record(tile_x, tile_z, FillKind::Wall, typecode);
                                 dump_loc_shades(tile_x, tile_z, typecode, "wall", model);
-                                model.world_render(
+                                model.try_world_render(
                                     cache, loop_cycle, pix, surface, 0, sin_pitch, cos_pitch,
                                     sin_yaw, cos_yaw, wall_x, wall_y, wall_z, typecode,
-                                );
+                                )?;
                                 submitted = true;
                             }
                         }
@@ -4310,35 +4801,35 @@ impl RenderWorld {
             if level < world.max_tile_level - 1 {
                 let above = tile_at(&world.squares, level + 1, tile_x, tile_z);
                 if above.is_some_and(|t| t.draw_back) {
-                    self.enqueue_fill(world, level + 1, tile_x, tile_z);
+                    self.enqueue_fill(world, level + 1, tile_x, tile_z)?;
                 }
             }
 
             if tile_x < gx {
                 let adjacent = tile_at(&world.squares, level, tile_x + 1, tile_z);
                 if adjacent.is_some_and(|t| t.draw_back) {
-                    self.enqueue_fill(world, level, tile_x + 1, tile_z);
+                    self.enqueue_fill(world, level, tile_x + 1, tile_z)?;
                 }
             }
 
             if tile_z < gz {
                 let adjacent = tile_at(&world.squares, level, tile_x, tile_z + 1);
                 if adjacent.is_some_and(|t| t.draw_back) {
-                    self.enqueue_fill(world, level, tile_x, tile_z + 1);
+                    self.enqueue_fill(world, level, tile_x, tile_z + 1)?;
                 }
             }
 
             if tile_x > gx {
                 let adjacent = tile_at(&world.squares, level, tile_x - 1, tile_z);
                 if adjacent.is_some_and(|t| t.draw_back) {
-                    self.enqueue_fill(world, level, tile_x - 1, tile_z);
+                    self.enqueue_fill(world, level, tile_x - 1, tile_z)?;
                 }
             }
 
             if tile_z > gz {
                 let adjacent = tile_at(&world.squares, level, tile_x, tile_z - 1);
                 if adjacent.is_some_and(|t| t.draw_back) {
-                    self.enqueue_fill(world, level, tile_x, tile_z - 1);
+                    self.enqueue_fill(world, level, tile_x, tile_z - 1)?;
                 }
             }
         }
@@ -4362,12 +4853,12 @@ impl RenderWorld {
         cos_eye_pitch: i32,
         sin_eye_yaw: i32,
         cos_eye_yaw: i32,
-    ) {
-        if let Some(mut mesh) = pix.capture.take() {
+    ) -> Result<(), RenderLimit> {
+        if pix.capture.is_some() {
             let cam = self.scene_cam();
-            emit_quick_ground(world, pix, &mut mesh, &cam, ground, level, tile_x, tile_z);
-            pix.capture = Some(mesh);
-            return;
+            let mut capture = TakenCapture::new(pix);
+            let (pix, mesh) = capture.parts();
+            return emit_quick_ground(world, pix, mesh, &cam, ground, level, tile_x, tile_z);
         }
         let mut x0 = (tile_x << 7) - self.cx;
         let mut x1 = x0 + 128;
@@ -4404,7 +4895,7 @@ impl RenderWorld {
         y0 = tmp;
 
         if z0 < 50 {
-            return;
+            return Ok(());
         }
 
         tmp = (z1
@@ -4428,7 +4919,7 @@ impl RenderWorld {
         y1 = tmp;
 
         if z1 < 50 {
-            return;
+            return Ok(());
         }
 
         tmp = (z2
@@ -4452,7 +4943,7 @@ impl RenderWorld {
         y2 = tmp;
 
         if z2 < 50 {
-            return;
+            return Ok(());
         }
 
         tmp = (z3
@@ -4476,7 +4967,7 @@ impl RenderWorld {
         y3 = tmp;
 
         if z3 < 50 {
-            return;
+            return Ok(());
         }
 
         let px0 = pix.origin_x + x0.wrapping_shl(9).checked_div(z0).unwrap_or(0);
@@ -4672,6 +5163,7 @@ impl RenderWorld {
                 );
             }
         }
+        Ok(())
     }
 
     /// `renderGround(tileX, tileZ, ground, ...)` from client-ts 2089-2188.
@@ -4689,13 +5181,15 @@ impl RenderWorld {
         cos_eye_pitch: i32,
         sin_eye_yaw: i32,
         cos_eye_yaw: i32,
-    ) {
-        if let Some(mut mesh) = pix.capture.take() {
+    ) -> Result<(), RenderLimit> {
+        if pix.capture.is_some() {
             let cam = self.scene_cam();
-            emit_ground(
+            let mut capture = TakenCapture::new(pix);
+            let (pix, mesh) = capture.parts();
+            return emit_ground(
                 world,
                 pix,
-                &mut mesh,
+                mesh,
                 &cam,
                 ground,
                 tile_x,
@@ -4704,8 +5198,6 @@ impl RenderWorld {
                 &mut self.ground_draw_texture_vertex_y,
                 &mut self.ground_draw_texture_vertex_z,
             );
-            pix.capture = Some(mesh);
-            return;
         }
         let mut vertex_count = ground.vertices();
 
@@ -4735,7 +5227,7 @@ impl RenderWorld {
             y = tmp;
 
             if z < 50 {
-                return;
+                return Ok(());
             }
 
             if ground.face_texture.is_some() {
@@ -4883,6 +5375,7 @@ impl RenderWorld {
                 }
             }
         }
+        Ok(())
     }
 
     /// `groundOccluded(level, x, z)` from client-ts 2189-2215.
@@ -5388,9 +5881,39 @@ impl GpuVertex {
 #[derive(Default)]
 pub struct SceneMesh {
     vertices: Vec<GpuVertex>,
+    budget: Option<ByteBudget>,
+    charge: Option<BudgetCharge>,
 }
 
 impl SceneMesh {
+    fn prepare_budget(&mut self) -> Result<(), RenderLimit> {
+        let budget = RenderBudget::current_resource(RenderResource::Capture);
+        let unchanged = match (&self.budget, &budget) {
+            (Some(old), Some(new)) => old.same_budget(new),
+            (None, None) => true,
+            _ => false,
+        };
+        if !unchanged {
+            self.vertices = Vec::new();
+            self.charge = None;
+        }
+        self.budget = budget;
+        if self.budget.is_some() {
+            reserve_vec(
+                &mut self.vertices,
+                0,
+                &mut self.charge,
+                self.budget.as_ref(),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Retained capture payload, distinct from GPU vertex storage.
+    pub fn retained_bytes(&self) -> usize {
+        self.vertices.capacity() * std::mem::size_of::<GpuVertex>()
+    }
+
     /// Texture layers referenced by the mesh submitted for this paint.
     /// This is deliberately a fixed-size set: it neither consumes/copies
     /// the mesh nor materializes CPU texels. Presence establishes submitted
@@ -5416,8 +5939,80 @@ impl SceneMesh {
         self.vertices.clear();
     }
 
-    fn push(&mut self, v0: GpuVertex, v1: GpuVertex, v2: GpuVertex) {
+    fn push(&mut self, v0: GpuVertex, v1: GpuVertex, v2: GpuVertex) -> Result<(), RenderLimit> {
+        if self.budget.is_some() && self.vertices.capacity() - self.vertices.len() < 3 {
+            reserve_vec(
+                &mut self.vertices,
+                3,
+                &mut self.charge,
+                self.budget.as_ref(),
+            )?;
+        }
         self.vertices.extend([v0, v1, v2]);
+        Ok(())
+    }
+}
+
+struct CaptureWorldScope<'a> {
+    render: &'a mut RenderWorld,
+    world: &'a mut World,
+}
+
+impl Drop for CaptureWorldScope<'_> {
+    fn drop(&mut self) {
+        self.render.remove_sprites(self.world);
+    }
+}
+
+/// Bind a caller-owned mesh only for this capture invocation.
+struct SceneCaptureScope<'a> {
+    pix: &'a mut Pix3DDraw,
+    target: &'a mut SceneMesh,
+    previous: Option<SceneMesh>,
+}
+
+impl<'a> SceneCaptureScope<'a> {
+    fn new(pix: &'a mut Pix3DDraw, target: &'a mut SceneMesh) -> Self {
+        let previous = pix.capture.replace(std::mem::take(target));
+        Self {
+            pix,
+            target,
+            previous,
+        }
+    }
+
+    fn pix(&mut self) -> &mut Pix3DDraw {
+        self.pix
+    }
+}
+
+impl Drop for SceneCaptureScope<'_> {
+    fn drop(&mut self) {
+        *self.target = self.pix.capture.take().expect("capture remains bound");
+        self.pix.capture = self.previous.take();
+    }
+}
+
+/// Temporarily separate capture storage from Pix3D's remaining draw state.
+struct TakenCapture<'a> {
+    pix: &'a mut Pix3DDraw,
+    mesh: Option<SceneMesh>,
+}
+
+impl<'a> TakenCapture<'a> {
+    fn new(pix: &'a mut Pix3DDraw) -> Self {
+        let mesh = pix.capture.take();
+        Self { pix, mesh }
+    }
+
+    fn parts(&mut self) -> (&mut Pix3DDraw, &mut SceneMesh) {
+        (self.pix, self.mesh.as_mut().expect("capture was bound"))
+    }
+}
+
+impl Drop for TakenCapture<'_> {
+    fn drop(&mut self) {
+        self.pix.capture = self.mesh.take();
     }
 }
 
@@ -5596,13 +6191,13 @@ pub(crate) fn capture_model_face(
     abc: [i32; 3],
     view: [(i32, i32, i32); 3],
     pix: &mut Pix3DDraw,
-) {
+) -> Result<(), RenderLimit> {
     let (Some(fca), Some(fcb), Some(fcc)) = (
         &model.face_colour_a,
         &model.face_colour_b,
         &model.face_colour_c,
     ) else {
-        return;
+        return Ok(());
     };
     let render_type = model
         .face_render_type
@@ -5639,7 +6234,7 @@ pub(crate) fn capture_model_face(
     // per-vertex UV is RuneLite's `computeFaceUvs` in model space.
     let textured = if r#type == 2 || r#type == 3 {
         let Some(&tex_id) = model.face_colour.as_ref().and_then(|c| c.get(face)) else {
-            return;
+            return Ok(());
         };
         // RuneLite-faithful (`ModelUploader` stores `faceTexture + 1` and
         // the shader samples the texture array with a clamped id): an
@@ -5703,7 +6298,7 @@ pub(crate) fn capture_model_face(
     };
     let clipped = &clipped[..clipped_len];
     if clipped.len() < 3 || (near_clipped && !face_winding_passes(pix, clipped)) {
-        return;
+        return Ok(());
     }
     // render3ZClip decides hclip for the entire clipped polygon, not for
     // each fan triangle. Keep that decision even if only the fourth point
@@ -5715,7 +6310,7 @@ pub(crate) fn capture_model_face(
             !(0..SCENE_VIEW_W).contains(&x)
         });
     let Some(mesh) = pix.capture.as_mut() else {
-        return;
+        return Ok(());
     };
     let vertex = |v: &ClipVertex| {
         let mut vertex = match textured {
@@ -5734,8 +6329,9 @@ pub(crate) fn capture_model_face(
             vertex(&clipped[0]),
             vertex(&clipped[i]),
             vertex(&clipped[i + 1]),
-        );
+        )?;
     }
+    Ok(())
 }
 
 /// The RuneLite projective UV: a point `p`'s (u, v) in the texture plane
@@ -5782,7 +6378,7 @@ fn emit_ground(
     cam_x: &mut [i32; 6],
     cam_y: &mut [i32; 6],
     cam_z: &mut [i32; 6],
-) {
+) -> Result<(), RenderLimit> {
     let vertex_count = ground.vertices();
     for i in 0..vertex_count {
         let mut x = ground.vertex_x[i] - cam.eye_x;
@@ -5807,7 +6403,7 @@ fn emit_ground(
             >> 16;
         y = tmp;
         if z < 50 {
-            return;
+            return Ok(());
         }
         cam_x[i] = x;
         cam_y[i] = y;
@@ -5902,7 +6498,7 @@ fn emit_ground(
                 GpuVertex::textured(x0, y0, z0, u0, v0, colour_a, 255, tex + 1),
                 GpuVertex::textured(x1, y1, z1, u1, v1, colour_b, 255, tex + 1),
                 GpuVertex::textured(x2, y2, z2, u2, v2, colour_c, 255, tex + 1),
-            );
+            )?;
         } else {
             let shade_of = |c: i32| match tex_average {
                 Some(avg) => get_table(avg, c),
@@ -5912,9 +6508,10 @@ fn emit_ground(
                 GpuVertex::new(x0, y0, z0, shade_of(colour_a), 255),
                 GpuVertex::new(x1, y1, z1, shade_of(colour_b), 255),
                 GpuVertex::new(x2, y2, z2, shade_of(colour_c), 255),
-            );
+            )?;
         }
     }
+    Ok(())
 }
 
 /// `renderQuickGround` for the GPU path: the 4-corner quad (two
@@ -5928,7 +6525,7 @@ fn emit_quick_ground(
     level: i32,
     tile_x: i32,
     tile_z: i32,
-) {
+) -> Result<(), RenderLimit> {
     let mut x = [0i32; 4];
     let mut y = [0i32; 4];
     let mut z = [0i32; 4];
@@ -5967,7 +6564,7 @@ fn emit_quick_ground(
             >> 16;
         y[i] = tmp;
         if z[i] < 50 {
-            return;
+            return Ok(());
         }
         sx[i] = pix.origin_x + x[i].wrapping_shl(9).wrapping_div(z[i]);
         sy[i] = pix.origin_y + y[i].wrapping_shl(9).wrapping_div(z[i]);
@@ -6022,13 +6619,13 @@ fn emit_quick_ground(
                     GpuVertex::textured(x[2], y[2], z[2], u2, v2, ground.colour_ne, 255, tex + 1),
                     GpuVertex::textured(x[3], y[3], z[3], u3, v3, ground.colour_nw, 255, tex + 1),
                     GpuVertex::textured(x[1], y[1], z[1], u1, v1, ground.colour_se, 255, tex + 1),
-                );
+                )?;
             } else {
                 mesh.push(
                     GpuVertex::new(x[2], y[2], z[2], shade_of(ground.colour_ne), 255),
                     GpuVertex::new(x[3], y[3], z[3], shade_of(ground.colour_nw), 255),
                     GpuVertex::new(x[1], y[1], z[1], shade_of(ground.colour_se), 255),
-                );
+                )?;
             }
         }
     }
@@ -6059,16 +6656,17 @@ fn emit_quick_ground(
                     GpuVertex::textured(x[0], y[0], z[0], u0, v0, ground.colour_sw, 255, tex + 1),
                     GpuVertex::textured(x[1], y[1], z[1], u1, v1, ground.colour_se, 255, tex + 1),
                     GpuVertex::textured(x[3], y[3], z[3], u3, v3, ground.colour_nw, 255, tex + 1),
-                );
+                )?;
             } else {
                 mesh.push(
                     GpuVertex::new(x[0], y[0], z[0], shade_of(ground.colour_sw), 255),
                     GpuVertex::new(x[1], y[1], z[1], shade_of(ground.colour_se), 255),
                     GpuVertex::new(x[3], y[3], z[3], shade_of(ground.colour_nw), 255),
-                );
+                )?;
             }
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -6155,24 +6753,29 @@ mod fill_java_order_tests {
         let cache = Cache::default();
         let mut head = RenderWorld::new();
         assert!(head.occlusion_cycle.is_empty());
-        head.prepare_scene(&mut world, &cache, 0, 64, 0, 64, 0, 0, 128);
+        head.prepare_scene(&mut world, &cache, 0, 64, 0, 64, 0, 0, 128)
+            .unwrap();
         assert_eq!(head.occlusion_cycle.len(), 25);
         let allocation = head.occlusion_cycle.as_ptr();
         let capacity = head.occlusion_cycle.capacity();
         assert!(!head.ground_occluded(&mut world, 0, 0, 0));
         assert_eq!(head.occ_cycle(&world, 0, 0, 0), -head.cycle_no);
         let mut fresh = RenderWorld::new();
-        fresh.prepare_scene(&mut world, &cache, 0, 64, 0, 64, 0, 0, 128);
+        fresh
+            .prepare_scene(&mut world, &cache, 0, 64, 0, 64, 0, 0, 128)
+            .unwrap();
         assert_eq!(fresh.occ_cycle(&world, 0, 0, 0), 0);
         assert_ne!(fresh.occlusion_cycle.as_ptr(), allocation);
         world.reset_map();
-        head.prepare_scene(&mut world, &cache, 0, 64, 0, 64, 0, 0, 128);
+        head.prepare_scene(&mut world, &cache, 0, 64, 0, 64, 0, 0, 128)
+            .unwrap();
         assert_eq!(head.occlusion_cycle.as_ptr(), allocation);
         assert_eq!(head.occlusion_cycle.capacity(), capacity);
         assert!(!head.ground_occluded(&mut world, 0, 0, 0));
         assert_eq!(head.occ_cycle(&world, 0, 0, 0), -head.cycle_no);
         let mut larger = World::new(vec![vec![vec![0; 6]; 6]; 2], 5, 2, 5);
-        head.prepare_scene(&mut larger, &cache, 0, 64, 0, 64, 0, 0, 128);
+        head.prepare_scene(&mut larger, &cache, 0, 64, 0, 64, 0, 0, 128)
+            .unwrap();
         assert_eq!(head.occlusion_cycle.len(), 72);
         assert!(head.occlusion_cycle.iter().all(|&stamp| stamp == 0));
     }
@@ -6292,7 +6895,8 @@ mod fill_java_order_tests {
     ) {
         world.add_scenery(0, x, z, 2000, typecode, 0, width, length, 0, 0, 0, 0, 0);
         let index = world.last_sprite_index().expect("sprite pushed");
-        rw.set_sprite_model(world, index, Some(SceneModel::Model(model)));
+        rw.set_sprite_model(world, index, Some(SceneModel::Model(model)))
+            .unwrap();
     }
 
     fn place_wall(
@@ -6311,7 +6915,8 @@ mod fill_java_order_tests {
             z,
             Some(SceneModel::Model(corner_wall_model())),
             None,
-        );
+        )
+        .unwrap();
     }
 
     fn render_traced(
@@ -6321,7 +6926,8 @@ mod fill_java_order_tests {
         eye_z: i32,
     ) -> Vec<FillEvent> {
         Pix3D::init_colour_table(0.6);
-        rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+        rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+            .unwrap();
         let mut pix = Pix3DDraw::default();
         let mut map = PixMap::new(512, 334);
         fill_trace::start();
@@ -6341,7 +6947,8 @@ mod fill_java_order_tests {
                 3,
                 0,
                 128,
-            );
+            )
+            .unwrap();
         }
         fill_trace::take()
     }
@@ -6363,7 +6970,8 @@ mod fill_java_order_tests {
         wall_z: i32,
     ) -> Vec<FillEvent> {
         Pix3D::init_colour_table(0.6);
-        rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+        rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+            .unwrap();
         let mut pix = Pix3DDraw::default();
         let mut map = PixMap::new(512, 334);
         fill_trace::start();
@@ -6372,7 +6980,8 @@ mod fill_java_order_tests {
             pix.set_render_clipping(&surface);
             pix.trans = 0;
             let cache = Cache::default();
-            rw.prepare_scene(world, &cache, 0, eye_x, 1950, eye_z, 3, 0, 128);
+            rw.prepare_scene(world, &cache, 0, eye_x, 1950, eye_z, 3, 0, 128)
+                .unwrap();
             if let Some(tile) =
                 world.squares[0][closer_x as usize][closer_z as usize].as_deref_mut()
             {
@@ -6465,7 +7074,8 @@ mod fill_java_order_tests {
         let index = world
             .add_dynamic(0, 7 * 128 + 120, 2000, 8 * 128 + 64, 200, 0, 60, false)
             .unwrap();
-        rw.set_sprite_model(&world, index, Some(SceneModel::Model(ns_box_model())));
+        rw.set_sprite_model(&world, index, Some(SceneModel::Model(ns_box_model())))
+            .unwrap();
         place_wall(&mut rw, &mut world, 7, 8, 100, 8);
         let events = render_traced(&mut world, &mut rw, 7 * 128, 6 * 128);
         assert!(
@@ -6513,5 +7123,295 @@ mod fill_java_order_tests {
             far,
             near
         );
+    }
+}
+
+#[cfg(test)]
+mod budget_capture_tests {
+    use super::*;
+    use crate::render::budget::RenderBudgetLimits;
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    struct AllocationCounter;
+
+    thread_local! {
+        static ALLOCATION_CALLS: Cell<Option<usize>> = const { Cell::new(None) };
+    }
+
+    // SAFETY: The wrapper forwards each pointer and layout unchanged to System.
+    // The thread-local counter does not allocate or alter allocator ownership.
+    unsafe impl GlobalAlloc for AllocationCounter {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let _ = ALLOCATION_CALLS.try_with(|count| {
+                if let Some(calls) = count.get() {
+                    count.set(Some(calls + 1));
+                }
+            });
+            // SAFETY: The caller's allocation layout is forwarded unchanged.
+            unsafe { System.alloc(layout) }
+        }
+
+        unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+            // SAFETY: Both values came from System through this wrapper and
+            // satisfy the same deallocation contract.
+            unsafe { System.dealloc(pointer, layout) }
+        }
+    }
+
+    #[global_allocator]
+    static ALLOCATOR: AllocationCounter = AllocationCounter;
+
+    fn fixture(capture: usize, misc: usize) -> RenderBudget {
+        RenderBudget::fixture(RenderBudgetLimits::new(
+            capture, 0, 0, 0, 0, 0, misc, 0, 0, 0, 0, 0, 0,
+        ))
+    }
+
+    fn triangle(mesh: &mut SceneMesh) -> Result<(), RenderLimit> {
+        let vertex = GpuVertex::new(64, 64, 128, 100, 255);
+        mesh.push(vertex, vertex, vertex)
+    }
+
+    fn stamp_ground(world: &mut World, shape: i32) {
+        world.set_ground(
+            0, 1, 1, shape, 0, -1, 0, 0, 0, 0, 100, 100, 100, 100, 100, 100, 100, 100, 0, 0,
+        );
+    }
+
+    #[test]
+    fn render_budget_rejects_before_triangle_or_model_allocation() {
+        let budget = fixture(0, 0);
+        let _scope = budget.scope();
+        let mut mesh = SceneMesh::default();
+        mesh.prepare_budget().unwrap();
+        let source = Model {
+            num_points: 3,
+            point_x: Some(vec![0, 64, 0]),
+            point_y: Some(vec![0, 0, 64]),
+            point_z: Some(vec![128, 128, 128]),
+            ..Model::default()
+        };
+        let source_storage = source.point_x.as_ref().unwrap().as_ptr();
+        let mesh_storage = mesh.vertices.as_ptr();
+        let model_budget = budget.for_resource(RenderResource::TempModels);
+        ALLOCATION_CALLS.with(|count| count.set(Some(0)));
+        let triangle_error = triangle(&mut mesh).unwrap_err();
+        let model_error = match source.try_clone_for_render(model_budget) {
+            Err(error) => error,
+            Ok(_) => panic!("the zero model budget must reject before copying"),
+        };
+        let allocations = ALLOCATION_CALLS.with(|count| count.replace(None).unwrap());
+        assert_eq!(
+            allocations, 0,
+            "both typed refusals precede allocator calls"
+        );
+        assert_eq!(triangle_error.resource(), RenderResource::Capture);
+        assert_eq!(model_error.resource(), RenderResource::TempModels);
+        assert_eq!(mesh.vertices.capacity(), 0);
+        assert_eq!(mesh.vertices.as_ptr(), mesh_storage);
+        assert_eq!(source.point_x.as_ref().unwrap().as_ptr(), source_storage);
+        assert_eq!(budget.for_resource(RenderResource::Capture).live(), 0);
+        assert_eq!(model_budget.live(), 0);
+    }
+
+    #[test]
+    fn budget_error_and_unwind_restore_capture_storage() {
+        let triangle_bytes = 3 * std::mem::size_of::<GpuVertex>();
+        let budget = fixture(triangle_bytes, 0);
+        let _scope = budget.scope();
+        let mut target = SceneMesh::default();
+        target.prepare_budget().unwrap();
+        triangle(&mut target).unwrap();
+        let target_storage = target.vertices.as_ptr();
+        let mut previous = SceneMesh::default();
+        triangle(&mut previous).unwrap();
+        let previous_storage = previous.vertices.as_ptr();
+        let mut pix = Pix3DDraw::default();
+        pix.capture = Some(previous);
+        {
+            let mut capture = SceneCaptureScope::new(&mut pix, &mut target);
+            let error = triangle(capture.pix().capture.as_mut().unwrap()).unwrap_err();
+            assert_eq!(error.resource(), RenderResource::Capture);
+        }
+        assert_eq!(target.vertices.len(), 3, "no partial triangle");
+        assert_eq!(target.vertices.as_ptr(), target_storage);
+        assert_eq!(
+            pix.capture.as_ref().unwrap().vertices.as_ptr(),
+            previous_storage
+        );
+        assert_eq!(
+            budget.for_resource(RenderResource::Capture).live(),
+            triangle_bytes
+        );
+        let unwind = catch_unwind(AssertUnwindSafe(|| {
+            let mut capture = SceneCaptureScope::new(&mut pix, &mut target);
+            let mut separated = TakenCapture::new(capture.pix());
+            let (_, mesh) = separated.parts();
+            mesh.clear();
+            triangle(mesh).unwrap();
+            panic!("exercise both capture storage guards");
+        }));
+        assert!(unwind.is_err());
+        assert_eq!(target.vertices.as_ptr(), target_storage);
+        assert_eq!(
+            pix.capture.as_ref().unwrap().vertices.as_ptr(),
+            previous_storage
+        );
+
+        let mut world = World::new(vec![vec![vec![0; 5]; 5]], 4, 1, 4);
+        let mut render = RenderWorld::new();
+        let index = world.add_dynamic(0, 192, 0, 192, 1, 0, 0, false).unwrap();
+        render.remove_sprites(&mut world);
+        assert_eq!(
+            world.add_dynamic(0, 192, 0, 192, 1, 0, 0, false),
+            Some(index)
+        );
+        let error = render
+            .capture_scene(
+                &mut world,
+                &mut pix,
+                &Cache::default(),
+                0,
+                64,
+                0,
+                64,
+                0,
+                0,
+                128,
+                &mut target,
+            )
+            .unwrap_err();
+        assert_eq!(error.resource(), RenderResource::HeadMisc);
+        assert_eq!(target.vertices.as_ptr(), target_storage);
+        assert_eq!(
+            pix.capture.as_ref().unwrap().vertices.as_ptr(),
+            previous_storage
+        );
+        assert_eq!(world.dynamic_count(), 0);
+        assert_eq!(world.square(0, 1, 1).unwrap().sprite_count, 0);
+    }
+
+    #[test]
+    fn capture_unwind_cleans_sprites_and_leaves_materialization_pending() {
+        let triangle_bytes = 3 * std::mem::size_of::<GpuVertex>();
+        let budget = fixture(triangle_bytes, usize::MAX);
+        let _scope = budget.scope();
+        let mut world = World::new(vec![vec![vec![0; 5]; 5]], 4, 1, 4);
+        // Invalid internal shape intentionally panics inside the real ground
+        // materializer, after capture storage and transient sprites are bound.
+        stamp_ground(&mut world, 13);
+        let mut render = RenderWorld::new();
+        render.prepare_dynamic_storage(&mut world).unwrap();
+        world.add_dynamic(0, 192, 0, 192, 1, 0, 0, false).unwrap();
+        let mut target = SceneMesh::default();
+        target.prepare_budget().unwrap();
+        triangle(&mut target).unwrap();
+        let storage = target.vertices.as_ptr();
+        let mut pix = Pix3DDraw::default();
+        let unwind = catch_unwind(AssertUnwindSafe(|| {
+            render
+                .capture_scene(
+                    &mut world,
+                    &mut pix,
+                    &Cache::default(),
+                    0,
+                    64,
+                    0,
+                    64,
+                    0,
+                    0,
+                    128,
+                    &mut target,
+                )
+                .unwrap();
+        }));
+        assert!(unwind.is_err());
+        assert!(pix.capture.is_none());
+        assert_eq!(target.vertices.as_ptr(), storage);
+        assert_eq!(world.dynamic_count(), 0);
+        assert_eq!(world.square(0, 1, 1).unwrap().sprite_count, 0);
+        assert!(world.overlay_pending);
+        assert!(world.square(0, 1, 1).unwrap().ground.is_none());
+    }
+
+    #[test]
+    fn overlay_and_dynamic_payloads_are_admitted_before_allocation() {
+        let budget = fixture(0, std::mem::size_of::<crate::dash3d::Ground>() - 1);
+        let _scope = budget.scope();
+        let mut world = World::new(vec![vec![vec![0; 5]; 5]], 4, 1, 4);
+        stamp_ground(&mut world, 4);
+        let mut render = RenderWorld::new();
+        let error = render.materialize_overlay(&mut world).unwrap_err();
+        assert_eq!(error.resource(), RenderResource::HeadMisc);
+        assert!(world.overlay_pending);
+        assert!(world.square(0, 1, 1).unwrap().ground.is_none());
+        assert_eq!(world.render_storage_bytes(), 0);
+        let error = render.prepare_dynamic_storage(&mut world).unwrap_err();
+        assert_eq!(error.resource(), RenderResource::HeadMisc);
+        assert!(world.dynamic_sprites.is_empty());
+        assert_eq!(world.render_storage_bytes(), 0);
+        assert_eq!(budget.for_resource(RenderResource::HeadMisc).live(), 0);
+    }
+}
+
+/// Fixed render-world capacities and element layouts used by the ignored
+/// full-content census. This is diagnostic-only and does not allocate.
+#[cfg(feature = "render-test-hooks")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RenderTestContentLayout {
+    pub scene_tiles_per_axis: usize,
+    pub scene_planes: usize,
+    pub max_tile_cache_slots: usize,
+    pub max_dynamic_sprites: usize,
+    pub max_active_occluders: usize,
+    pub max_sprite_buffer: usize,
+    pub visibility_backing_bytes: usize,
+    pub visibility_build_scratch_bytes: usize,
+    pub ground_payload_bytes: usize,
+    pub occlusion_cycle_entries: usize,
+    pub tile_cache_slot_bytes: usize,
+    pub tile_cache_payload_bytes: usize,
+    pub fill_queue_entry_bytes: usize,
+    pub scene_model_entry_bytes: usize,
+    pub sprite_stamp_bytes: usize,
+    pub dynamic_sprite_index_bytes: usize,
+    pub dynamic_sprite_element_bytes: usize,
+    pub dynamic_free_element_bytes: usize,
+    pub world_sprite_element_bytes: usize,
+    pub capture_vertex_bytes: usize,
+    pub max_model_triangles_per_face: usize,
+}
+
+/// Return source-defined fixed render storage limits and exact element sizes.
+#[cfg(feature = "render-test-hooks")]
+pub fn render_test_content_layout() -> RenderTestContentLayout {
+    let scene_tiles_per_axis = crate::dash3d::BuildArea::SIZE as usize;
+    let scene_planes = OCCLUDER_LEVELS;
+    RenderTestContentLayout {
+        scene_tiles_per_axis,
+        scene_planes,
+        max_tile_cache_slots: scene_tiles_per_axis * scene_tiles_per_axis * scene_planes,
+        max_dynamic_sprites: crate::core::world::MAX_DYNAMIC_SPRITES,
+        max_active_occluders: MAX_ACTIVE_OCCLUDERS,
+        max_sprite_buffer: MAX_SPRITE_BUFFER,
+        visibility_backing_bytes: 8 * 32 * VIS_ROW_SIZE * std::mem::size_of::<bool>(),
+        visibility_build_scratch_bytes: 9 * 32 * 53 * 53,
+        ground_payload_bytes: std::mem::size_of::<crate::dash3d::Ground>(),
+        occlusion_cycle_entries: scene_planes
+            * (scene_tiles_per_axis + 1)
+            * (scene_tiles_per_axis + 1),
+        fill_queue_entry_bytes: std::mem::size_of::<(i32, i32, i32, i32)>(),
+        tile_cache_slot_bytes: std::mem::size_of::<Option<Box<TileModels>>>(),
+        tile_cache_payload_bytes: std::mem::size_of::<TileModels>(),
+        scene_model_entry_bytes: std::mem::size_of::<Option<SceneModel>>(),
+        sprite_stamp_bytes: std::mem::size_of::<i32>(),
+        dynamic_sprite_index_bytes: std::mem::size_of::<Option<usize>>(),
+        dynamic_sprite_element_bytes: std::mem::size_of::<Option<usize>>(),
+        dynamic_free_element_bytes: std::mem::size_of::<usize>(),
+        world_sprite_element_bytes: std::mem::size_of::<Option<crate::dash3d::Sprite>>(),
+        capture_vertex_bytes: std::mem::size_of::<GpuVertex>(),
+        max_model_triangles_per_face: 4 - 2,
     }
 }

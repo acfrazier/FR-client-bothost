@@ -232,8 +232,8 @@ fn texture_backend_surfaces_owned_texture() {
     let FrameOutput::Texture(handle) = output else {
         unreachable!()
     };
-    assert_eq!(handle.width, 1);
-    assert_eq!(handle.height, 1);
+    assert_eq!(handle.width(), 1);
+    assert_eq!(handle.height(), 1);
     assert_eq!(handle.read_back(), vec![0]);
 }
 

@@ -10,6 +10,7 @@ use crate::dash3d::client_entity::ClientEntity;
 use crate::dash3d::{AnimFrame, Model};
 use crate::datastruct::LruCache;
 use crate::io::Packet;
+use crate::render::budget::{ByteBudget, RenderLimit};
 use crate::util::JString;
 
 // Process-wide by design: an LRU of decoded, immutable player models shared
@@ -19,6 +20,23 @@ use crate::util::JString;
 fn model_cache() -> &'static Mutex<LruCache<Model>> {
     static CACHE: OnceLock<Mutex<LruCache<Model>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(LruCache::new(200)))
+}
+
+#[cfg(feature = "render-test-hooks")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RenderTestPlayerLayout {
+    pub model_cache: crate::config::RenderTestCacheLayout,
+    pub appearance_slots: usize,
+    pub loc_model_box_bytes: usize,
+}
+
+#[cfg(feature = "render-test-hooks")]
+pub fn render_test_layout() -> Option<RenderTestPlayerLayout> {
+    Some(RenderTestPlayerLayout {
+        model_cache: crate::config::render_test_cache_layout::<Model>(200)?,
+        appearance_slots: std::mem::size_of::<[u16; 12]>() / std::mem::size_of::<u16>(),
+        loc_model_box_bytes: std::mem::size_of::<Option<Box<Model>>>(),
+    })
 }
 
 // `ClientPlayer.recol1d`/`recol2d` from client-ts. `pub(crate)`: the
@@ -336,7 +354,281 @@ impl ClientPlayer {
         Some(model)
     }
 
-    /// `getTempModel2()` from client-ts.
+    /// Charged counterpart to `get_temp_model`.
+    pub fn try_get_temp_model_for_render(
+        &mut self,
+        cache: &Cache,
+        loop_cycle: i32,
+        budget: &ByteBudget,
+    ) -> Result<Option<Model>, RenderLimit> {
+        if !self.ready {
+            return Ok(None);
+        }
+        let Some(mut model) = self.try_get_temp_model2_for_render(cache, budget)? else {
+            return Ok(None);
+        };
+        self.height = model.min_y;
+        model.use_aabb_mouse_check = true;
+        if self.low_memory {
+            return Ok(Some(model));
+        }
+
+        if self.spotanim_id != -1 && self.spotanim_frame != -1 {
+            let spot = cache.spot(self.spotanim_id as usize);
+            if let Some(spot_model) = spot.try_get_temp_model2_for_render(budget)? {
+                let mut temp = Model::try_copy_for_anim(
+                    &spot_model,
+                    true,
+                    AnimFrame::animate_transparencies(self.spotanim_frame),
+                    false,
+                    budget,
+                )?;
+                temp.translate(-self.spotanim_height, 0, 0);
+                temp.try_prepare_anim_for_render(budget)?;
+                if let Some(seq) = spot.seq {
+                    if let Some(frames) = &cache.seq(seq).frames {
+                        let frame = frames[self.spotanim_frame as usize];
+                        temp.animate(frame);
+                    }
+                }
+                temp.label_faces = None;
+                temp.label_vertices = None;
+                if spot.resizeh != 128 || spot.resizev != 128 {
+                    temp.resize(spot.resizev, spot.resizeh, spot.resizeh);
+                }
+                temp.try_calculate_normals_for_render(
+                    spot.ambient + 64,
+                    spot.contrast + 850,
+                    -30,
+                    -50,
+                    -30,
+                    true,
+                    budget,
+                )?;
+                model = Model::try_combine(&[model, temp], 2, budget)?;
+            }
+        }
+
+        if loop_cycle >= self.loc_stop_cycle {
+            self.loc_model = None;
+        } else if loop_cycle >= self.loc_start_cycle {
+            if let Some(loc_model) = self.loc_model.as_deref() {
+                let mut loc = loc_model.try_clone_for_render(budget)?;
+                loc.translate(
+                    self.loc_offset_y - self.y,
+                    self.loc_offset_x - self.x,
+                    self.loc_offset_z - self.z,
+                );
+                if self.dst_yaw == 512 {
+                    loc.rotate90();
+                    loc.rotate90();
+                    loc.rotate90();
+                } else if self.dst_yaw == 1024 {
+                    loc.rotate90();
+                    loc.rotate90();
+                } else if self.dst_yaw == 1536 {
+                    loc.rotate90();
+                }
+
+                let merge_loc = loc.try_clone_for_render(budget)?;
+                model = Model::try_combine(&[model, merge_loc], 2, budget)?;
+
+                if self.dst_yaw == 512 {
+                    loc.rotate90();
+                } else if self.dst_yaw == 1024 {
+                    loc.rotate90();
+                    loc.rotate90();
+                } else if self.dst_yaw == 1536 {
+                    loc.rotate90();
+                    loc.rotate90();
+                    loc.rotate90();
+                }
+                loc.translate(
+                    self.y - self.loc_offset_y,
+                    self.x - self.loc_offset_x,
+                    self.z - self.loc_offset_z,
+                );
+                self.loc_model = Some(Box::new(loc));
+            }
+        }
+        model.use_aabb_mouse_check = true;
+        Ok(Some(model))
+    }
+
+    fn try_get_temp_model2_for_render(
+        &mut self,
+        cache: &Cache,
+        budget: &ByteBudget,
+    ) -> Result<Option<Model>, RenderLimit> {
+        if let Some(npc_id) = self.transmog {
+            let mut transform_id = -1;
+            if self.primary_anim >= 0 && self.primary_anim_delay == 0 {
+                if let Some(frames) = &cache.seq(self.primary_anim as usize).frames {
+                    transform_id = frames[self.primary_anim_frame as usize];
+                }
+            } else if self.secondary_anim >= 0 {
+                if let Some(frames) = &cache.seq(self.secondary_anim as usize).frames {
+                    transform_id = frames[self.secondary_anim_frame as usize];
+                }
+            }
+            return cache
+                .npc(npc_id)
+                .try_get_temp_model_for_render(transform_id, -1, None, budget);
+        }
+
+        let mut hash = self.base_id;
+        let mut primary_transform_id = -1;
+        let mut secondary_transform_id = -1;
+        let mut left_hand_value = -1;
+        let mut right_hand_value = -1;
+        if self.primary_anim >= 0 && self.primary_anim_delay == 0 {
+            let seq = cache.seq(self.primary_anim as usize);
+            if let Some(frames) = &seq.frames {
+                primary_transform_id = frames[self.primary_anim_frame as usize];
+            }
+            if self.secondary_anim >= 0 && self.secondary_anim != self.readyanim {
+                if let Some(frames) = &cache.seq(self.secondary_anim as usize).frames {
+                    secondary_transform_id = frames[self.secondary_anim_frame as usize];
+                }
+            }
+            if seq.replaceheldleft >= 0 {
+                left_hand_value = seq.replaceheldleft;
+                hash =
+                    hash.wrapping_add((left_hand_value as i64 - self.appearance[5] as i64) << 40);
+            }
+            if seq.replaceheldright >= 0 {
+                right_hand_value = seq.replaceheldright;
+                hash =
+                    hash.wrapping_add((right_hand_value as i64 - self.appearance[3] as i64) << 48);
+            }
+        } else if self.secondary_anim >= 0 {
+            if let Some(frames) = &cache.seq(self.secondary_anim as usize).frames {
+                primary_transform_id = frames[self.secondary_anim_frame as usize];
+            }
+        }
+
+        let mut model = {
+            let mut model_cache = model_cache().lock().unwrap();
+            model_cache
+                .find(hash)
+                .map(|model| model.try_clone_for_render(budget))
+        };
+        if model.is_none() {
+            let mut needs_model = false;
+            for slot in 0..12 {
+                let mut value = self.appearance[slot] as i32;
+                if right_hand_value >= 0 && slot == 3 {
+                    value = right_hand_value;
+                }
+                if left_hand_value >= 0 && slot == 5 {
+                    value = left_hand_value;
+                }
+                if (0x100..0x200).contains(&value)
+                    && !cache.idk((value - 0x100) as usize).check_model()
+                {
+                    needs_model = true;
+                }
+                if value >= 0x200
+                    && !cache
+                        .obj((value - 0x200) as usize)
+                        .check_wear_model(self.gender)
+                {
+                    needs_model = true;
+                }
+            }
+            if needs_model {
+                if self.model_cache_key != -1 {
+                    let mut model_cache = model_cache().lock().unwrap();
+                    model = model_cache
+                        .find(self.model_cache_key)
+                        .map(|model| model.try_clone_for_render(budget));
+                }
+                if let Some(cached) = model.take() {
+                    model = Some(Ok(cached?));
+                } else {
+                    return Ok(None);
+                }
+            }
+        }
+
+        if model.is_none() {
+            let mut models: [Option<Model>; 12] = std::array::from_fn(|_| None);
+            let mut model_count = 0usize;
+            for part in 0..12 {
+                let mut value = self.appearance[part] as i32;
+                if right_hand_value >= 0 && part == 3 {
+                    value = right_hand_value;
+                }
+                if left_hand_value >= 0 && part == 5 {
+                    value = left_hand_value;
+                }
+                if (256..512).contains(&value) {
+                    if let Some(model) = cache
+                        .idk((value - 256) as usize)
+                        .try_get_model_no_check_for_render(budget)?
+                    {
+                        models[model_count] = Some(model);
+                        model_count += 1;
+                    }
+                }
+                if value >= 512 {
+                    if let Some(model) = cache
+                        .obj((value - 512) as usize)
+                        .try_get_wear_model_no_check_for_render(self.gender, budget)?
+                    {
+                        models[model_count] = Some(model);
+                        model_count += 1;
+                    }
+                }
+            }
+            let mut combined =
+                Model::try_combine_for_anim(&models[..model_count], model_count, budget)?;
+            for part in 0..5 {
+                if self.colour[part] == 0 {
+                    continue;
+                }
+                combined.recolour(
+                    recol1d()[part][0],
+                    recol1d()[part][self.colour[part] as usize],
+                );
+                if part == 1 {
+                    combined.recolour(recol2d()[0], recol2d()[self.colour[part] as usize]);
+                }
+            }
+            combined.try_prepare_anim_for_render(budget)?;
+            combined.try_calculate_normals_for_render(64, 850, -30, -50, -30, true, budget)?;
+            let cached = combined
+                .try_clone_for_render(&crate::dash3d::model_source::shared_model_budget(budget))?;
+            model_cache().lock().unwrap().put(cached, hash);
+            self.model_cache_key = hash;
+            model = Some(Ok(combined));
+        }
+        let model = match model {
+            Some(model) => model?,
+            None => return Ok(None),
+        };
+        if self.low_memory {
+            return Ok(Some(model));
+        }
+
+        let mut tmp = Model::temp_model();
+        tmp.try_set_for_render(
+            &model,
+            AnimFrame::animate_transparencies(primary_transform_id)
+                && AnimFrame::animate_transparencies(secondary_transform_id),
+            budget,
+        )?;
+        if primary_transform_id != -1 && secondary_transform_id != -1 {
+            let walkmerge = cache.seq(self.primary_anim as usize).walkmerge.as_deref();
+            tmp.mask_animate(primary_transform_id, secondary_transform_id, walkmerge);
+        } else if primary_transform_id != -1 {
+            tmp.animate(primary_transform_id);
+        }
+        tmp.calc_bounding_cylinder();
+        tmp.label_faces = None;
+        tmp.label_vertices = None;
+        Ok(Some(tmp))
+    }
     fn get_temp_model2(&mut self, cache: &Cache, _loop_cycle: i32) -> Option<Model> {
         if let Some(npc_id) = self.transmog {
             let mut transform_id = -1;
@@ -591,6 +883,70 @@ impl ClientPlayer {
         Some(tmp)
     }
 
+    pub fn try_get_head_model_for_render(
+        &self,
+        cache: &Cache,
+        budget: &ByteBudget,
+    ) -> Result<Option<Model>, RenderLimit> {
+        if !self.ready {
+            return Ok(None);
+        }
+        let mut needs_model = false;
+        for i in 0..12 {
+            let part = self.appearance[i] as i32;
+            if (0x100..0x200).contains(&part) && !cache.idk((part - 0x100) as usize).check_head() {
+                needs_model = true;
+            }
+            if part >= 0x200
+                && !cache
+                    .obj((part - 0x200) as usize)
+                    .check_head_model(self.gender)
+            {
+                needs_model = true;
+            }
+        }
+        if needs_model {
+            return Ok(None);
+        }
+
+        let mut models: [Option<Model>; 12] = std::array::from_fn(|_| None);
+        let mut model_count = 0usize;
+        for part in 0..12 {
+            let value = self.appearance[part] as i32;
+            if (256..512).contains(&value) {
+                if let Some(model) = cache
+                    .idk((value - 256) as usize)
+                    .try_get_head_no_check_for_render(budget)?
+                {
+                    models[model_count] = Some(model);
+                    model_count += 1;
+                }
+            }
+            if value >= 512 {
+                if let Some(model) = cache
+                    .obj((value - 512) as usize)
+                    .try_get_head_model_no_check_for_render(self.gender, budget)?
+                {
+                    models[model_count] = Some(model);
+                    model_count += 1;
+                }
+            }
+        }
+        let mut model = Model::try_combine_for_anim(&models[..model_count], model_count, budget)?;
+        for part in 0..5 {
+            if self.colour[part] == 0 {
+                continue;
+            }
+            model.recolour(
+                recol1d()[part][0],
+                recol1d()[part][self.colour[part] as usize],
+            );
+            if part == 1 {
+                model.recolour(recol2d()[0], recol2d()[self.colour[part] as usize]);
+            }
+        }
+        Ok(Some(model))
+    }
     /// `isReady()` from client-ts.
     pub fn is_ready(&self) -> bool {
         self.ready

@@ -10,6 +10,7 @@ use crate::dash3d::LocShape;
 use crate::dash3d::{AnimFrame, Model};
 use crate::datastruct::{LinkableTrait, Links, LruCache};
 use crate::io::{JagFile, OnDemand, Packet};
+use crate::render::budget::{ByteBudget, RenderLimit};
 
 /// LRU payload: the loc transform cache stores an `Arc` so two heads share
 /// the same decoded geometry instead of cloning `Model` on every `find`.
@@ -44,6 +45,25 @@ fn mc1() -> &'static Mutex<LruCache<CachedLoc>> {
 fn mc2() -> &'static Mutex<LruCache<CachedLoc>> {
     static CACHE: OnceLock<Mutex<LruCache<CachedLoc>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(LruCache::new(30)))
+}
+
+#[cfg(feature = "render-test-hooks")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RenderTestLocCacheLayout {
+    pub raw_cache: super::RenderTestCacheLayout,
+    pub transformed_cache: super::RenderTestCacheLayout,
+    pub arc_header_bytes: usize,
+    pub model_value_bytes: usize,
+}
+
+#[cfg(feature = "render-test-hooks")]
+pub fn render_test_cache_layout() -> Option<RenderTestLocCacheLayout> {
+    Some(RenderTestLocCacheLayout {
+        raw_cache: super::render_test_cache_layout::<CachedLoc>(500)?,
+        transformed_cache: super::render_test_cache_layout::<CachedLoc>(30)?,
+        arc_header_bytes: 2 * std::mem::size_of::<usize>(),
+        model_value_bytes: std::mem::size_of::<Model>(),
+    })
 }
 
 /// `LocShape.CENTREPIECE_STRAIGHT` from `dash3d/LocShape.ts`; the only shape
@@ -460,6 +480,163 @@ impl LocType {
         }
 
         Some(modified)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn try_get_model_for_render(
+        &self,
+        _cache: &Cache,
+        shape: i32,
+        angle: i32,
+        height_sw: i32,
+        height_se: i32,
+        height_ne: i32,
+        height_nw: i32,
+        transform_id: i32,
+        budget: &ByteBudget,
+    ) -> Result<Option<Model>, RenderLimit> {
+        let Some(model_ids) = self.model.as_deref() else {
+            return Ok(None);
+        };
+        let model_ids = if let Some(shapes) = self.shape.as_deref() {
+            let Some(index) = shapes.iter().position(|&candidate| candidate == shape) else {
+                return Ok(None);
+            };
+            let Some(&id) = model_ids.get(index) else {
+                return Ok(None);
+            };
+            if id == -1 {
+                return Ok(None);
+            }
+            &model_ids[index..index + 1]
+        } else {
+            if shape != LocShape::CENTREPIECE_STRAIGHT {
+                return Ok(None);
+            }
+            model_ids
+        };
+        if model_ids.is_empty() {
+            return Ok(None);
+        }
+
+        let flip = self.mirror != (angle > 3);
+        let (loaded, _loaded_charge) =
+            crate::dash3d::model_source::try_load_models_for_render(model_ids, budget)?;
+        let mut loaded = loaded;
+        if loaded.iter().any(Option::is_none) {
+            return Ok(None);
+        }
+        if flip {
+            for model in loaded.iter_mut().flatten() {
+                model.mirror();
+            }
+        }
+        let Some(base) = (if loaded.len() == 1 {
+            loaded.into_iter().next().flatten()
+        } else {
+            Some(Model::try_combine_for_anim(&loaded, loaded.len(), budget)?)
+        }) else {
+            return Ok(None);
+        };
+
+        let scaled = self.resizex != 128 || self.resizey != 128 || self.resizez != 128;
+        let translated = self.offsetx != 0 || self.offsety != 0 || self.offsetz != 0;
+        let mut model = Model::try_copy_for_anim(
+            &base,
+            self.recol_s.is_none(),
+            AnimFrame::animate_transparencies(transform_id),
+            angle == LocAngle::WEST && transform_id == -1 && !scaled && !translated,
+            budget,
+        )?;
+        if transform_id != -1 {
+            model.try_prepare_anim_for_render(budget)?;
+            model.animate(transform_id);
+            model.label_faces = None;
+            model.label_vertices = None;
+        }
+        for _ in 0..angle {
+            model.rotate90();
+        }
+        if let (Some(rs), Some(rd)) = (&self.recol_s, &self.recol_d) {
+            for i in 0..rs.len() {
+                model.recolour(rs[i] as i32, rd[i] as i32);
+            }
+        }
+        if scaled {
+            model.resize(self.resizex, self.resizey, self.resizez);
+        }
+        if translated {
+            model.translate(self.offsety, self.offsetx, self.offsetz);
+        }
+        model.try_calculate_normals_for_render(
+            (self.ambient & 0xff) + 64,
+            (self.contrast & 0xff) * 5 + 768,
+            -50,
+            -10,
+            -50,
+            !self.sharelight,
+            budget,
+        )?;
+        if self.raiseobject == 1 {
+            model.obj_raise = model.min_y;
+        }
+        if self.hillskew || self.sharelight {
+            model = Model::try_hill_skew_copy(&model, self.hillskew, self.sharelight, budget)?;
+        }
+        if self.hillskew {
+            let ground_y = (height_sw + height_se + height_ne + height_nw) / 4;
+            let num_points = model.num_points as usize;
+            let x = model
+                .point_x
+                .as_ref()
+                .ok_or_else(|| RenderLimit::new(budget.resource(), usize::MAX, budget.maximum()))?;
+            let z = model
+                .point_z
+                .as_ref()
+                .ok_or_else(|| RenderLimit::new(budget.resource(), usize::MAX, budget.maximum()))?;
+            let y = model
+                .point_y
+                .as_mut()
+                .ok_or_else(|| RenderLimit::new(budget.resource(), usize::MAX, budget.maximum()))?;
+            for i in 0..num_points {
+                let height_s = height_sw + (((height_se - height_sw) * (x[i] + 64)) / 128);
+                let height_n = height_nw + (((height_ne - height_nw) * (x[i] + 64)) / 128);
+                let height = height_s + (((height_n - height_s) * (z[i] + 64)) / 128);
+                y[i] += height - ground_y;
+            }
+            model.recalc_bounding_cylinder();
+        }
+        Ok(Some(model))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn try_get_model_shared_for_render(
+        &self,
+        cache: &Cache,
+        shape: i32,
+        angle: i32,
+        height_sw: i32,
+        height_se: i32,
+        height_ne: i32,
+        height_nw: i32,
+        transform_id: i32,
+        budget: &ByteBudget,
+    ) -> Result<Option<Arc<Model>>, RenderLimit> {
+        let Some(model) = self.try_get_model_for_render(
+            cache,
+            shape,
+            angle,
+            height_sw,
+            height_se,
+            height_ne,
+            height_nw,
+            transform_id,
+            budget,
+        )?
+        else {
+            return Ok(None);
+        };
+        model.try_into_arc_for_render(budget).map(Some)
     }
 
     /// `buildModel(shape, angle, transformId)` from client-ts. `typecode`

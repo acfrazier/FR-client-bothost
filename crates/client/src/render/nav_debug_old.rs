@@ -502,15 +502,19 @@ fn draw_hull(
     hull: &NavDebugHull,
     colour: i32,
 ) {
-    let Some((pos_x, pos_y, pos_z, yaw, model)) = r.world.loc_model_at(
-        &client.world,
-        &client.cache,
-        client.loop_cycle,
-        client.minusedlevel,
-        hull.scene_x,
-        hull.scene_z,
-        hull.loc_id,
-    ) else {
+    let Some((pos_x, pos_y, pos_z, yaw, model)) = r
+        .world
+        .loc_model_at(
+            &client.world,
+            &client.cache,
+            client.loop_cycle,
+            client.minusedlevel,
+            hull.scene_x,
+            hull.scene_z,
+            hull.loc_id,
+        )
+        .expect("the frozen unbudgeted reference has no render ceiling")
+    else {
         return;
     };
     let (Some(point_x), Some(point_y), Some(point_z)) =

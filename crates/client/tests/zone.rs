@@ -312,7 +312,7 @@ fn change_loc_unchecked_wall_straight_with_anim_sets_wall() {
     );
     // The animated model is materialised lazily on the render side.
     let mut rw = RenderWorld::new();
-    rw.resolve_tile(&world, &cache, 0, 0, 2, 2);
+    rw.resolve_tile(&world, &cache, 0, 0, 2, 2).unwrap();
     assert!(matches!(
         rw.wall_model1(&world, &cache, 0, 0, 2, 2),
         Some(SceneModel::LocAnim(_))
@@ -483,9 +483,11 @@ fn loc_anim_replaces_wall_model1() {
     assert_eq!(wall.h_ne, 300);
     assert_eq!(wall.h_nw, 400);
     let mut rw = RenderWorld::new();
-    rw.resolve_tile(&c.world, &c.cache, c.loop_cycle, 0, 1, 1);
+    rw.resolve_tile(&c.world, &c.cache, c.loop_cycle, 0, 1, 1)
+        .unwrap();
     let SceneModel::LocAnim(anim) = rw
         .wall_model1(&c.world, &c.cache, c.loop_cycle, 0, 1, 1)
+        .unwrap()
         .expect("model1 set")
     else {
         panic!("model1 should be LocAnim");
@@ -520,9 +522,11 @@ fn loc_anim_wall_door_animates_both_models() {
     assert_eq!(wall.anim_shape, 2);
     assert_eq!(wall.anim_angle, 0);
     let mut rw = RenderWorld::new();
-    rw.resolve_tile(&c.world, &c.cache, c.loop_cycle, 0, 1, 1);
+    rw.resolve_tile(&c.world, &c.cache, c.loop_cycle, 0, 1, 1)
+        .unwrap();
     let SceneModel::LocAnim(m1) = rw
         .wall_model1(&c.world, &c.cache, c.loop_cycle, 0, 1, 1)
+        .unwrap()
         .expect("model1 set")
     else {
         panic!("model1 should be LocAnim");
@@ -530,6 +534,7 @@ fn loc_anim_wall_door_animates_both_models() {
     let (m1_shape, m1_angle) = (m1.shape, m1.angle);
     let SceneModel::LocAnim(m2) = rw
         .wall_model2(&c.world, &c.cache, c.loop_cycle, 0, 1, 1)
+        .unwrap()
         .expect("model2 set")
     else {
         panic!("model2 should be LocAnim");
@@ -564,7 +569,8 @@ fn loc_anim_door_packet_overrides_non_door_placement() {
     let wall = c.world.get_wall(0, 1, 1).expect("wall present");
     assert_eq!(wall.anim_shape, 2);
     let mut rw = RenderWorld::new();
-    rw.resolve_tile(&c.world, &c.cache, c.loop_cycle, 0, 1, 1);
+    rw.resolve_tile(&c.world, &c.cache, c.loop_cycle, 0, 1, 1)
+        .unwrap();
     let m1_anim = matches!(
         rw.wall_model1(&c.world, &c.cache, c.loop_cycle, 0, 1, 1),
         Some(SceneModel::LocAnim(_))
@@ -603,9 +609,11 @@ fn loc_anim_wall_decor_uses_tile_xz() {
     assert_eq!(decor.anim_shape, 4);
     assert_eq!(decor.anim_angle, 0);
     let mut rw = RenderWorld::new();
-    rw.resolve_tile(&c.world, &c.cache, c.loop_cycle, 0, 2, 5);
+    rw.resolve_tile(&c.world, &c.cache, c.loop_cycle, 0, 2, 5)
+        .unwrap();
     let model = rw
         .decor_model(&c.world, &c.cache, c.loop_cycle, 0, 2, 5)
+        .unwrap()
         .expect("decor model set");
     assert!(matches!(model, SceneModel::LocAnim(_)));
 }
@@ -637,6 +645,7 @@ fn loc_anim_scene_remaps_shape_11_to_10() {
     let mut rw = RenderWorld::new();
     let SceneModel::LocAnim(anim) = rw
         .sprite_model(&c.world, &c.cache, c.loop_cycle, index)
+        .unwrap()
         .expect("sprite model set")
     else {
         panic!("sprite model should be LocAnim");
@@ -664,9 +673,11 @@ fn loc_anim_ground_decor_model() {
     assert_eq!(gd.anim_seq, 0);
     assert_eq!(gd.anim_shape, 22);
     let mut rw = RenderWorld::new();
-    rw.resolve_tile(&c.world, &c.cache, c.loop_cycle, 0, 1, 1);
+    rw.resolve_tile(&c.world, &c.cache, c.loop_cycle, 0, 1, 1)
+        .unwrap();
     let SceneModel::LocAnim(anim) = rw
         .gd_model(&c.world, &c.cache, c.loop_cycle, 0, 1, 1)
+        .unwrap()
         .expect("gd model set")
     else {
         panic!("gd model should be LocAnim");

@@ -331,6 +331,23 @@ impl Packet {
         Self::getcrc(src, offset, length) == expected
     }
 
+    fn allocation_capacity(kind: i32) -> usize {
+        match kind {
+            0 => 100,
+            1 => 5000,
+            _ => 30000,
+        }
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    pub fn render_test_capacities() -> [usize; 3] {
+        [
+            Self::allocation_capacity(0),
+            Self::allocation_capacity(1),
+            Self::allocation_capacity(2),
+        ]
+    }
+
     pub fn alloc(kind: i32) -> Packet {
         let cached = match kind {
             0 => CACHE_MIN.with(|c| c.borrow_mut().pop()),
@@ -342,11 +359,7 @@ impl Packet {
             p.role = PacketRole::General;
             return p;
         }
-        match kind {
-            0 => Packet::new(vec![0; 100]),
-            1 => Packet::new(vec![0; 5000]),
-            _ => Packet::new(vec![0; 30000]),
-        }
+        Packet::new(vec![0; Self::allocation_capacity(kind)])
     }
 
     pub(crate) fn alloc_inbound(kind: i32) -> Packet {
@@ -659,9 +672,13 @@ mod observer_memory_tests {
         }
         let packet_size = std::mem::size_of::<Packet>();
         let client_size = std::mem::size_of::<crate::client::Client>();
-        println!("S3 client memory: packet={packet_size} client={client_size}");
+        let nav_debug_fields = std::mem::size_of::<Option<crate::render::budget::BudgetCharge>>()
+            + std::mem::size_of::<Option<crate::render::budget::RenderLimit>>();
+        println!(
+            "S3 client memory: packet={packet_size} client={client_size} nav_debug_fields={nav_debug_fields}"
+        );
         #[cfg(target_os = "macos")]
-        assert_eq!(client_size, 28872);
+        assert_eq!(client_size, 28872 + nav_debug_fields);
     }
 }
 

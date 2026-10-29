@@ -1,6 +1,7 @@
 // Port of `~/experiments/Server/webclient/src/config/ObjType.ts` (decode,
 // reset and `genCert`, plus the wear/head model methods and the 2D
 // `getSprite` render).
+use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::config::Cache;
@@ -9,6 +10,7 @@ use crate::dash3d::Model;
 use crate::datastruct::LruCache;
 use crate::graphics::{Pix2D, Pix32, Pix3D, Pix3DDraw};
 use crate::io::{JagFile, Packet};
+use crate::render::budget::{BudgetCharge, ByteBudget, RenderBudget, RenderLimit, RenderResource};
 
 // Process-wide by design: an LRU of decoded, immutable models shared by
 // every client (the TS `modelCache` static). Cache bookkeeping, not
@@ -16,6 +18,11 @@ use crate::io::{JagFile, Packet};
 fn model_cache() -> &'static Mutex<LruCache<Model>> {
     static CACHE: OnceLock<Mutex<LruCache<Model>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(LruCache::new(50)))
+}
+
+#[cfg(feature = "render-test-hooks")]
+pub fn render_test_cache_layout() -> Option<super::RenderTestCacheLayout> {
+    super::render_test_cache_layout::<Model>(50)
 }
 
 #[derive(Clone)]
@@ -61,6 +68,117 @@ pub struct ObjType {
     /// Client config code 115 (team cape). It is not used by the renderer,
     /// but consuming it is required to keep the following fields aligned.
     pub team: i32,
+}
+pub(crate) struct BudgetedSprite {
+    sprite: Pix32,
+    _charge: Option<BudgetCharge>,
+}
+
+impl BudgetedSprite {
+    pub(crate) fn pix32(&self) -> &Pix32 {
+        &self.sprite
+    }
+}
+
+struct SpriteRasterState<'a> {
+    pix3d: &'a mut Pix3DDraw,
+    origin_x: i32,
+    origin_y: i32,
+    scanline: Vec<i32>,
+    low_detail: bool,
+}
+
+impl<'a> SpriteRasterState<'a> {
+    fn new(pix3d: &'a mut Pix3DDraw) -> Self {
+        let origin_x = pix3d.origin_x;
+        let origin_y = pix3d.origin_y;
+        let scanline = std::mem::take(&mut pix3d.scanline);
+        let low_detail = pix3d.low_detail;
+        Self {
+            pix3d,
+            origin_x,
+            origin_y,
+            scanline,
+            low_detail,
+        }
+    }
+}
+
+impl Deref for SpriteRasterState<'_> {
+    type Target = Pix3DDraw;
+
+    fn deref(&self) -> &Self::Target {
+        self.pix3d
+    }
+}
+
+impl DerefMut for SpriteRasterState<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.pix3d
+    }
+}
+
+impl Drop for SpriteRasterState<'_> {
+    fn drop(&mut self) {
+        self.pix3d.origin_x = self.origin_x;
+        self.pix3d.origin_y = self.origin_y;
+        self.pix3d.scanline = std::mem::take(&mut self.scanline);
+        self.pix3d.low_detail = self.low_detail;
+    }
+}
+
+fn pix32_bytes_for_pixels(pixels: usize) -> Option<usize> {
+    std::mem::size_of::<Pix32>().checked_add(pixels.checked_mul(std::mem::size_of::<i32>())?)
+}
+
+fn pix32_clone_bytes(sprite: &Pix32) -> Option<usize> {
+    pix32_bytes_for_pixels(sprite.data.len())
+}
+
+fn ensure_render_sprite_charge(
+    store: &mut ModelStore,
+    id: i32,
+    sprite: &Arc<Pix32>,
+    budget: &ByteBudget,
+) -> Result<(), RenderLimit> {
+    if crate::render::store::render_sprite_is_charged(sprite, budget) {
+        return Ok(());
+    }
+    let bytes = crate::render::store::shared_sprite_bytes(sprite)
+        .ok_or_else(|| RenderLimit::new(budget.resource(), usize::MAX, budget.maximum()))?;
+    let charge = crate::render::store::reserve_shared_sprite_bytes(store, budget, bytes)?;
+    crate::render::store::prepare_render_sprite_slot(store, budget)?;
+    let cached = store
+        .sprite(id)
+        .is_some_and(|cached| Arc::ptr_eq(&cached, sprite));
+    if !cached {
+        store.put_sprite(Arc::clone(sprite), id);
+    }
+    crate::render::store::track_render_sprite(id, sprite, charge);
+    crate::render::store::forget_dead_render_sprites();
+    Ok(())
+}
+
+fn cache_sprite_copy(
+    store: &mut ModelStore,
+    budget: &ByteBudget,
+    id: i32,
+    sprite: &Pix32,
+    owi: i32,
+    ohi: i32,
+) -> Result<(), RenderLimit> {
+    let bytes = crate::render::store::shared_sprite_copy_bytes(sprite)
+        .ok_or_else(|| RenderLimit::new(budget.resource(), usize::MAX, budget.maximum()))?;
+    let charge = crate::render::store::reserve_shared_sprite_bytes(store, budget, bytes)?;
+    crate::render::store::prepare_render_sprite_slot(store, budget)?;
+    let mut cached = sprite.clone();
+    cached.owi = owi;
+    cached.ohi = ohi;
+    let cached = Arc::new(cached);
+    store.put_sprite(Arc::clone(&cached), id);
+    crate::render::store::track_render_sprite(id, &cached, charge);
+    crate::render::store::forget_dead_render_sprites();
+    Ok(())
 }
 
 impl Default for ObjType {
@@ -113,7 +231,10 @@ impl ObjType {
     /// Java `ObjType.spriteCache.clear()` from `clientVar` brightness. The
     /// rendered sprites live in the shared `ModelStore` (Task 5).
     pub fn clear_sprite_cache() {
-        ModelStore::instance().lock().unwrap().clear_sprites();
+        {
+            ModelStore::instance().lock().unwrap().clear_sprites();
+        }
+        crate::render::store::forget_dead_render_sprites();
     }
 
     /// Eager form of the TS `init` + `list(id)`: `obj.idx` offsets the
@@ -343,16 +464,107 @@ impl ObjType {
         Some(model)
     }
 
-    /// `ObjType.getSprite(id, outlineRgb, count)` from the Java oracle
-    /// (ObjType.java 208-332; the arg order is `id, outlineRgb, count` — the
-    /// TS `getSprite(id, count, outline)` swaps outline and count, and Java
-    /// wins). Cache hit only when `outline_rgb == 0` and the cached `ohi`
-    /// matches the requested count; otherwise the lit model is rendered into
-    /// a fresh 32x32 `Pix32` (`get_model_lit(1)`, count-co walk for `count >
-    /// 1`, cert-template overlay) and cached when `outline_rgb == 0`. The
-    /// caller's `Pix2D` target is untouched (the 32x32 buffer is a private
-    /// temporary surface), so only the `Pix3DDraw` raster state (`origin`,
-    /// `scanline`, `low_detail`) needs save/restore.
+    pub fn try_get_model_unlit_for_render(
+        &self,
+        cache: &Cache,
+        count: i32,
+        budget: &ByteBudget,
+    ) -> Result<Option<Model>, RenderLimit> {
+        if count > 1 {
+            if let (Some(countobj), Some(countco)) = (&self.countobj, &self.countco) {
+                let mut id = -1;
+                for i in 0..10 {
+                    if count >= countco[i] as i32 && countco[i] != 0 {
+                        id = countobj[i] as i32;
+                    }
+                }
+                if id != -1 {
+                    return if (id as usize) < cache.objs.len() {
+                        cache
+                            .obj(id as usize)
+                            .try_get_model_unlit_for_render(cache, 1, budget)
+                    } else {
+                        Ok(None)
+                    };
+                }
+            }
+        }
+
+        let Some(mut model) = Model::try_load_for_render(self.model, budget)? else {
+            return Ok(None);
+        };
+        if let (Some(rs), Some(rd)) = (&self.recol_s, &self.recol_d) {
+            for i in 0..rs.len() {
+                model.recolour(rs[i] as i32, rd[i] as i32);
+            }
+        }
+        Ok(Some(model))
+    }
+
+    pub fn try_get_model_lit_for_render(
+        &self,
+        cache: &Cache,
+        count: i32,
+        budget: &ByteBudget,
+    ) -> Result<Option<Model>, RenderLimit> {
+        if let (Some(countobj), Some(countco)) = (&self.countobj, &self.countco) {
+            if count > 1 {
+                let mut id = -1;
+                for i in 0..10 {
+                    if count >= countco[i] as i32 && countco[i] != 0 {
+                        id = countobj[i] as i32;
+                    }
+                }
+                if id != -1 {
+                    return if (id as usize) < cache.objs.len() {
+                        cache
+                            .obj(id as usize)
+                            .try_get_model_lit_for_render(cache, 1, budget)
+                    } else {
+                        Ok(None)
+                    };
+                }
+            }
+        }
+
+        {
+            let mut cache = model_cache().lock().unwrap();
+            if let Some(model) = cache.find(self.id as i64) {
+                return model.try_clone_for_render(budget).map(Some);
+            }
+        }
+
+        let Some(mut model) = Model::try_load_for_render(self.model, budget)? else {
+            return Ok(None);
+        };
+        if self.resizex != 128 || self.resizey != 128 || self.resizez != 128 {
+            model.resize(self.resizex, self.resizey, self.resizez);
+        }
+        if let (Some(rs), Some(rd)) = (&self.recol_s, &self.recol_d) {
+            for i in 0..rs.len() {
+                model.recolour(rs[i] as i32, rd[i] as i32);
+            }
+        }
+        model.try_calculate_normals_for_render(
+            self.ambient + 64,
+            self.contrast + 768,
+            -50,
+            -10,
+            -50,
+            true,
+            budget,
+        )?;
+        model.use_aabb_mouse_check = true;
+
+        let cache_budget = crate::dash3d::model_source::shared_model_budget(budget);
+        let cached = model.try_clone_for_render(&cache_budget)?;
+        model_cache().lock().unwrap().put(cached, self.id as i64);
+        Ok(Some(model))
+    }
+
+    /// Compatibility form of Java `ObjType.getSprite(id, outlineRgb, count)`.
+    /// It preserves legacy unscoped allocations; scoped renderer callers use
+    /// `try_get_sprite_for_render` so their model and sprite charges propagate.
     pub fn get_sprite(
         cache: &Cache,
         pix3d: &mut Pix3DDraw,
@@ -360,21 +572,82 @@ impl ObjType {
         outline_rgb: i32,
         count: i32,
     ) -> Option<Pix32> {
+        Self::get_sprite_inner(cache, pix3d, id, outline_rgb, count, None)
+            .expect("unscoped sprite rendering has no budget failure")
+            .map(|sprite| sprite.sprite)
+    }
+
+    /// Budgeted sprite path used only while the explicit render fixture scope
+    /// is active. The returned wrapper keeps its HeadMisc charge alive through
+    /// the caller's draw.
+    pub(crate) fn try_get_sprite_for_render(
+        cache: &Cache,
+        pix3d: &mut Pix3DDraw,
+        id: i32,
+        outline_rgb: i32,
+        count: i32,
+    ) -> Result<Option<BudgetedSprite>, RenderLimit> {
+        let Some(shared_sprites) = RenderBudget::current_resource(RenderResource::SharedSprites)
+        else {
+            return Self::get_sprite_inner(cache, pix3d, id, outline_rgb, count, None);
+        };
+        let head_misc = RenderBudget::current_resource(RenderResource::HeadMisc)
+            .ok_or_else(|| RenderLimit::new(RenderResource::HeadMisc, usize::MAX, 0))?;
+        let temp_models = RenderBudget::current_resource(RenderResource::TempModels)
+            .ok_or_else(|| RenderLimit::new(RenderResource::TempModels, usize::MAX, 0))?;
+        Self::get_sprite_inner(
+            cache,
+            pix3d,
+            id,
+            outline_rgb,
+            count,
+            Some((&shared_sprites, &head_misc, &temp_models)),
+        )
+    }
+
+    fn get_sprite_inner(
+        cache: &Cache,
+        pix3d: &mut Pix3DDraw,
+        id: i32,
+        outline_rgb: i32,
+        count: i32,
+        budgets: Option<(&ByteBudget, &ByteBudget, &ByteBudget)>,
+    ) -> Result<Option<BudgetedSprite>, RenderLimit> {
         if outline_rgb == 0 {
             let mut store = ModelStore::instance().lock().unwrap();
             if let Some(cached) = store.sprite(id) {
                 if cached.ohi == count || cached.ohi == -1 {
-                    return Some((*cached).clone());
+                    if let Some((shared_budget, head_misc, _)) = budgets {
+                        ensure_render_sprite_charge(&mut store, id, &cached, shared_budget)?;
+                        let bytes = pix32_clone_bytes(&cached).ok_or_else(|| {
+                            RenderLimit::new(
+                                RenderResource::HeadMisc,
+                                usize::MAX,
+                                head_misc.maximum(),
+                            )
+                        })?;
+                        let charge = head_misc.reserve(bytes)?;
+                        return Ok(Some(BudgetedSprite {
+                            sprite: (*cached).clone(),
+                            _charge: Some(charge),
+                        }));
+                    }
+                    return Ok(Some(BudgetedSprite {
+                        sprite: (*cached).clone(),
+                        _charge: None,
+                    }));
                 }
-                // Java `var4.unlink()` (ObjType.java 210-212): detach the
-                // stale node from the hash-table chain so the re-put below
-                // is the only table entry for this key (it stays in the LRU
-                // history until evicted, as in Java).
-                store.unlink_sprite(id);
+                if budgets.is_some() {
+                    store.remove_sprite(id);
+                } else {
+                    store.unlink_sprite(id);
+                }
             }
         }
 
-        let mut obj = cache.objs.get(id as usize)?;
+        let Some(mut obj) = cache.objs.get(id as usize) else {
+            return Ok(None);
+        };
         let mut count = count;
         if obj.countobj.is_none() {
             count = -1;
@@ -389,24 +662,41 @@ impl ObjType {
                 }
             }
             if variant != -1 {
-                obj = cache.objs.get(variant as usize)?;
+                let Some(variant_obj) = cache.objs.get(variant as usize) else {
+                    return Ok(None);
+                };
+                obj = variant_obj;
             }
         }
 
-        let model = obj.get_model_lit(cache, 1)?;
+        let model = if let Some((_, _, temp_models)) = budgets {
+            let Some(model) = obj.try_get_model_lit_for_render(cache, 1, temp_models)? else {
+                return Ok(None);
+            };
+            model
+        } else {
+            let Some(model) = obj.get_model_lit(cache, 1) else {
+                return Ok(None);
+            };
+            model
+        };
 
+        let output_charge = if let Some((_, head_misc, _)) = budgets {
+            let bytes = pix32_bytes_for_pixels(32 * 32).ok_or_else(|| {
+                RenderLimit::new(RenderResource::HeadMisc, usize::MAX, head_misc.maximum())
+            })?;
+            Some(head_misc.reserve(bytes)?)
+        } else {
+            None
+        };
         let mut var10 = Pix32::new(32, 32);
-
-        let saved_origin_x = pix3d.origin_x;
-        let saved_origin_y = pix3d.origin_y;
-        let saved_scanline = std::mem::take(&mut pix3d.scanline);
-        let saved_low_detail = pix3d.low_detail;
-        pix3d.low_detail = false;
+        let mut raster_state = SpriteRasterState::new(pix3d);
+        raster_state.low_detail = false;
 
         {
             let mut target = Pix2D::with_pixels(&mut var10.data, 32, 32);
             target.fill_rect(0, 0, 32, 32, 0);
-            pix3d.set_render_clipping(&target);
+            raster_state.set_render_clipping(&target);
 
             let mut zoom = obj.zoom2d;
             if outline_rgb == -1 {
@@ -426,7 +716,7 @@ impl ObjType {
             let var22 = sin_xan.wrapping_mul(zoom) >> 16;
             let var23 = cos_xan.wrapping_mul(zoom) >> 16;
             model.obj_render(
-                pix3d,
+                &mut raster_state,
                 &mut target,
                 0,
                 obj.yan2d,
@@ -437,10 +727,6 @@ impl ObjType {
                 var23 + obj.yof2d,
             );
 
-            // Java 270-282: the 1-value edge pass first, then either the
-            // outline-colour or the 3153952 drop-shadow fill. The Java
-            // same-body else-if chains collapse to an OR (every branch
-            // writes the same pixel value).
             for y in (0..32).rev() {
                 for x in (0..32).rev() {
                     let index = x + y * 32;
@@ -486,29 +772,49 @@ impl ObjType {
             }
 
             if obj.certtemplate != -1 {
-                let cert = Self::get_sprite(cache, pix3d, obj.certlink, -1, 10)?;
-                cert.plot_sprite(&mut target, 0, 0);
+                let Some(cert) = Self::get_sprite_inner(
+                    cache,
+                    &mut raster_state,
+                    obj.certlink,
+                    -1,
+                    10,
+                    budgets,
+                )?
+                else {
+                    return Ok(None);
+                };
+                cert.pix32().plot_sprite(&mut target, 0, 0);
             }
         }
-
-        if outline_rgb == 0 {
-            let mut cached = var10.clone();
-            cached.owi = if obj.stackable { 33 } else { 32 };
-            cached.ohi = count;
-            ModelStore::instance()
-                .lock()
-                .unwrap()
-                .put_sprite(Arc::new(cached), id);
-        }
-
-        pix3d.origin_x = saved_origin_x;
-        pix3d.origin_y = saved_origin_y;
-        pix3d.scanline = saved_scanline;
-        pix3d.low_detail = saved_low_detail;
+        drop(raster_state);
 
         var10.owi = if obj.stackable { 33 } else { 32 };
         var10.ohi = count;
-        Some(var10)
+        if outline_rgb == 0 {
+            if let Some((shared_budget, _, _)) = budgets {
+                let mut store = ModelStore::instance().lock().unwrap();
+                // Cache retention is optional; a full shared cache does not
+                // discard or alter the complete sprite returned for this draw.
+                if let Err(limit) =
+                    cache_sprite_copy(&mut store, shared_budget, id, &var10, var10.owi, var10.ohi)
+                {
+                    debug_assert_eq!(limit.resource(), RenderResource::SharedSprites);
+                }
+            } else {
+                let mut cached = var10.clone();
+                cached.owi = var10.owi;
+                cached.ohi = var10.ohi;
+                ModelStore::instance()
+                    .lock()
+                    .unwrap()
+                    .put_sprite(Arc::new(cached), id);
+            }
+        }
+
+        Ok(Some(BudgetedSprite {
+            sprite: var10,
+            _charge: output_charge,
+        }))
     }
 
     /// `checkWearModel(gender)` from client-ts.
@@ -587,6 +893,58 @@ impl ObjType {
         Some(model)
     }
 
+    pub fn try_get_wear_model_no_check_for_render(
+        &self,
+        gender: i32,
+        budget: &ByteBudget,
+    ) -> Result<Option<Model>, RenderLimit> {
+        let id1 = if gender == 1 {
+            self.womanwear
+        } else {
+            self.manwear
+        };
+        if id1 == -1 {
+            return Ok(None);
+        }
+        let (id2, id3) = if gender == 1 {
+            (self.womanwear2, self.womanwear3)
+        } else {
+            (self.manwear2, self.manwear3)
+        };
+        let ids = [id1, id2, id3];
+        let count = if id2 == -1 {
+            1
+        } else if id3 == -1 {
+            2
+        } else {
+            3
+        };
+        let (loaded, _loaded_charge) =
+            crate::dash3d::model_source::try_load_models_for_render(&ids[..count], budget)?;
+        let model = if count == 1 {
+            loaded.into_iter().next().flatten()
+        } else {
+            Some(Model::try_combine_for_anim(&loaded, loaded.len(), budget)?)
+        };
+        let Some(mut model) = model else {
+            return Ok(None);
+        };
+        let offset = if gender == 0 {
+            self.manwear_offset
+        } else {
+            self.womanwear_offset
+        };
+        if offset != 0 {
+            model.translate(offset, 0, 0);
+        }
+        if let (Some(rs), Some(rd)) = (&self.recol_s, &self.recol_d) {
+            for i in 0..rs.len() {
+                model.recolour(rs[i] as i32, rd[i] as i32);
+            }
+        }
+        Ok(Some(model))
+    }
+
     /// `checkHeadModel(gender)` from client-ts.
     pub fn check_head_model(&self, gender: i32) -> bool {
         let mut head = self.manhead;
@@ -642,12 +1000,46 @@ impl ObjType {
 
         Some(model)
     }
+
+    pub fn try_get_head_model_no_check_for_render(
+        &self,
+        gender: i32,
+        budget: &ByteBudget,
+    ) -> Result<Option<Model>, RenderLimit> {
+        let (head1, head2) = if gender == 1 {
+            (self.womanhead, self.womanhead2)
+        } else {
+            (self.manhead, self.manhead2)
+        };
+        if head1 == -1 {
+            return Ok(None);
+        }
+        let ids = [head1, head2];
+        let count = if head2 == -1 { 1 } else { 2 };
+        let (loaded, _loaded_charge) =
+            crate::dash3d::model_source::try_load_models_for_render(&ids[..count], budget)?;
+        let model = if count == 1 {
+            loaded.into_iter().next().flatten()
+        } else {
+            Some(Model::try_combine_for_anim(&loaded, loaded.len(), budget)?)
+        };
+        let Some(mut model) = model else {
+            return Ok(None);
+        };
+        if let (Some(rs), Some(rd)) = (&self.recol_s, &self.recol_d) {
+            for i in 0..rs.len() {
+                model.recolour(rs[i] as i32, rd[i] as i32);
+            }
+        }
+        Ok(Some(model))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::dash3d::store::tests::CACHE_LOCK;
+    use crate::render::budget::RenderBudgetLimits;
     use std::sync::MutexGuard;
 
     #[test]
@@ -691,6 +1083,7 @@ mod tests {
 
     fn reset_caches() {
         ModelStore::instance().lock().unwrap().clear();
+        crate::render::store::forget_dead_render_sprites();
         model_cache().lock().unwrap().clear();
         Model::unpack(0, Some(MODEL));
     }
@@ -860,5 +1253,59 @@ mod tests {
             !s1.data.contains(&3153952),
             "outline -1 must skip the 3153952 fill"
         );
+    }
+
+    #[test]
+    fn budget_error_in_cert_sprite_restores_raster_state_and_drops_scratch_charge() {
+        let _guard = lock_caches();
+        reset_caches();
+        let mut cache = cache_of(100);
+        cache.objs[10].certtemplate = 0;
+        cache.objs[10].certlink = 11;
+
+        let sprite_bytes = pix32_bytes_for_pixels(32 * 32).expect("fixture sprite bytes");
+        let other_budget = 1 << 20;
+        let budget = RenderBudget::fixture(RenderBudgetLimits::new(
+            other_budget,
+            other_budget,
+            other_budget,
+            other_budget,
+            other_budget,
+            other_budget,
+            sprite_bytes,
+            other_budget,
+            other_budget,
+            other_budget,
+            other_budget,
+            other_budget,
+            other_budget,
+        ));
+        let scope = budget.scope();
+        let mut pix = pix3d();
+        pix.origin_x = 19;
+        pix.origin_y = 27;
+        pix.scanline = vec![3, 9, 21];
+        pix.low_detail = true;
+
+        let error = match ObjType::try_get_sprite_for_render(&cache, &mut pix, 10, 0, 1) {
+            Err(error) => error,
+            Ok(_) => panic!("the certificate sprite exceeds the one-sprite HeadMisc fixture"),
+        };
+        assert_eq!(error.resource(), RenderResource::HeadMisc);
+        assert_eq!(pix.origin_x, 19);
+        assert_eq!(pix.origin_y, 27);
+        assert_eq!(pix.scanline, vec![3, 9, 21]);
+        assert!(pix.low_detail);
+        assert_eq!(
+            budget.for_resource(RenderResource::HeadMisc).live(),
+            0,
+            "the failed nested sprite releases the outer scratch reservation"
+        );
+
+        drop(scope);
+        ModelStore::instance().lock().unwrap().clear();
+        model_cache().lock().unwrap().clear();
+        crate::render::store::reset_render_model_index();
+        crate::render::store::forget_dead_render_sprites();
     }
 }

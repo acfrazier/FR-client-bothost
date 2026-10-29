@@ -28,6 +28,13 @@ impl<T: LinkableTrait> HashTable<T> {
         }
     }
 
+    /// Heap backing capacity for the table's bucket vector.
+    pub(crate) fn allocation_capacity_bytes(&self) -> usize {
+        self.buckets
+            .capacity()
+            .saturating_mul(std::mem::size_of::<usize>())
+    }
+
     pub fn find(&self, arena: &Arena<T>, key: i64) -> Option<usize> {
         let start = self.buckets[((key as u64) & (self.bucket_count as u64 - 1)) as usize];
         let mut node = arena

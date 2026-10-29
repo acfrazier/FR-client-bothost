@@ -4,6 +4,7 @@
 use crate::config::Cache;
 use crate::dash3d::{AnimFrame, Model};
 use crate::datastruct::linkable::{LinkableTrait, Links};
+use crate::render::budget::{ByteBudget, RenderLimit};
 
 #[derive(Clone)]
 pub struct MapSpotAnim {
@@ -98,6 +99,62 @@ impl MapSpotAnim {
 
         model.calculate_normals(64 + spot.ambient, 850 + spot.contrast, -30, -50, -30, true);
         Some(model)
+    }
+    pub fn try_get_temp_model_for_render(
+        &mut self,
+        cache: &Cache,
+        budget: &ByteBudget,
+    ) -> Result<Option<Model>, RenderLimit> {
+        let spot = cache.spot(self.spotanim as usize);
+        let Some(base) = spot.try_get_temp_model2_for_render(budget)? else {
+            return Ok(None);
+        };
+
+        let mut frame = -1;
+        if let Some(seq) = spot.seq {
+            if let Some(frames) = &cache.seq(seq).frames {
+                frame = frames.get(self.anim_frame as usize).copied().unwrap_or(-1);
+            }
+        }
+        let mut model = Model::try_copy_for_anim(
+            &base,
+            true,
+            AnimFrame::animate_transparencies(frame),
+            false,
+            budget,
+        )?;
+        if !self.anim_complete {
+            model.try_prepare_anim_for_render(budget)?;
+            model.animate(frame);
+            model.label_faces = None;
+            model.label_vertices = None;
+        }
+        if spot.resizeh != 128 || spot.resizev != 128 {
+            model.resize(spot.resizeh, spot.resizev, spot.resizeh);
+        }
+        match spot.angle {
+            90 => model.rotate90(),
+            180 => {
+                model.rotate90();
+                model.rotate90();
+            }
+            270 => {
+                model.rotate90();
+                model.rotate90();
+                model.rotate90();
+            }
+            _ => {}
+        }
+        model.try_calculate_normals_for_render(
+            64 + spot.ambient,
+            850 + spot.contrast,
+            -30,
+            -50,
+            -30,
+            true,
+            budget,
+        )?;
+        Ok(Some(model))
     }
 }
 

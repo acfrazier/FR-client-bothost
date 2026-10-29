@@ -29,15 +29,20 @@
 //! coverage byte to expose the 3D/nav scene beneath it.
 
 use std::cell::Cell;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, OnceLock};
 
+use super::retained_camera::OverlayCameraScope;
 use crate::client::client::Client;
 use crate::graphics::pix2d::coverage_guard;
 use crate::graphics::{Pix2D, Pix3D, Pix3DDraw, PixMap};
 use crate::render::backend::gpu_atlas::GpuAssets;
+use crate::render::backend::present::PresentToken;
+use crate::render::backend::present::{PresentGate, PresentSubmit};
 use crate::render::backend::{
-    BackendKind, CpuBackend, FrameKind, FrameOutput, RenderBackend, SceneProgress, TextureHandle,
+    BackendKind, CaptureGeometry, CpuBackend, FrameKind, FrameOutput, RenderBackend, RenderFault,
+    SceneProgress, TextureHandle,
 };
+use crate::render::budget::{BudgetCharge, RenderBudget, RenderBytes, RenderLimit, RenderResource};
 use crate::render::draw::get_av_h;
 use crate::render::nav_debug::{NavMesh, NavVertex};
 use crate::render::world::{GpuVertex, SceneMesh};
@@ -99,7 +104,7 @@ static CONTEXT: OnceLock<Result<Arc<GpuContext>, String>> = OnceLock::new();
 /// no-op, so a slot renderer can never create its own device once the host
 /// injected. The headless host never injects and falls back to `init_gpu`.
 pub fn inject_device(device: wgpu::Device, queue: wgpu::Queue) {
-    CONTEXT.get_or_init(|| Ok(GpuContext::new(device, queue)));
+    CONTEXT.get_or_init(|| GpuContext::new(device, queue).map_err(|error| error.to_string()));
 }
 
 /// Whether the init failure has been logged (once per process).
@@ -118,6 +123,39 @@ static GPU_BACKEND_TRIED: std::sync::atomic::AtomicUsize = std::sync::atomic::At
 /// Standalone renderers wait for this lock. An admitted host rebuild tries
 /// it once and reports contention through [`SceneSubmit`].
 static GPU_SCENE_LOCK: Mutex<()> = Mutex::new(());
+struct CaptureScratch {
+    mesh: SceneMesh,
+}
+
+static HOST_CAPTURE: LazyLock<Mutex<CaptureScratch>> = LazyLock::new(|| {
+    Mutex::new(CaptureScratch {
+        mesh: SceneMesh::default(),
+    })
+});
+
+/// Return the process-wide host capture mesh capacity, including while no
+/// backend currently holds the host workspace.
+pub fn process_capture_storage_bytes() -> usize {
+    HOST_CAPTURE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .mesh
+        .retained_bytes()
+}
+fn try_host_capture() -> Result<MutexGuard<'static, CaptureScratch>, RenderLimit> {
+    let maximum = RenderBudget::current_resource(RenderResource::Capture)
+        .map(|budget| budget.maximum())
+        .unwrap_or(0);
+    match HOST_CAPTURE.try_lock() {
+        Ok(guard) => Ok(guard),
+        Err(std::sync::TryLockError::Poisoned(error)) => Ok(error.into_inner()),
+        Err(std::sync::TryLockError::WouldBlock) => Err(RenderLimit::new(
+            RenderResource::Capture,
+            maximum.saturating_add(1),
+            maximum,
+        )),
+    }
+}
 
 /// How the embedding host admits one scene submission into the shared GPU
 /// scene workspace; see [`set_scene_workspace_hook`].
@@ -277,6 +315,27 @@ pub mod test_hooks {
                 .unwrap_or_else(|e| e.into_inner()),
         }
     }
+    /// Run `f` while holding the process GPU context's actual shared-assets
+    /// mutex. The test fixture cannot retain the guard or substitute a lock.
+    pub fn with_shared_assets_locked<R>(f: impl FnOnce() -> R) -> Result<R, String> {
+        let context =
+            super::context().ok_or_else(|| "shared GPU context is unavailable".to_string())?;
+        let _assets = context
+            .assets
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        Ok(f())
+    }
+    /// Run `f` while holding the tracked frame's actual present-state mutex.
+    /// This is a test-only contention seam; production submission stays try-lock.
+    pub fn with_present_gate_locked<R>(handle: &TextureHandle, f: impl FnOnce() -> R) -> R {
+        let gate = handle
+            .gate
+            .as_ref()
+            .expect("present-gate fixture requires a tracked texture");
+        let _state = gate.state.lock().unwrap_or_else(|error| error.into_inner());
+        f()
+    }
 
     pub(super) fn at(point: SceneTestPoint) -> bool {
         if let Some(hook) = HOOK.get() {
@@ -353,39 +412,32 @@ impl Drop for PreparedScene<'_> {
 static SHADER_MODULES_CREATED: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
-/// The process-wide wgpu state (one per process): the device/queue, the
-/// shared asset store, and the immutable scene/chrome shader modules and
-/// pipelines (task 6 — `GpuBackend::try_new` must not build a pipeline per
-/// head). `GpuBackend` keeps only the per-view textures + vertex buffer.
+/// The process-wide wgpu state (one per process): the device/queue, shared
+/// asset store, immutable model binding handles, and shader pipelines.
 struct GpuContext {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    /// The shared asset store (model texture array; the chrome atlases in
-    /// the later slices). Static uploads happen once per process; animated
-    /// model layers are restaged for each scene submission.
     assets: Arc<Mutex<GpuAssets>>,
-    /// Per-backend brightness and the vertex buffer's read-only storage view.
+    render_budget: Option<RenderBudget>,
+    model_bind_group: wgpu::BindGroup,
+    model_bind_group_layout: wgpu::BindGroupLayout,
     scene_data_layout: wgpu::BindGroupLayout,
-    /// The scene pass pipeline: the captured triangles in painter order,
-    /// alpha-blended, no depth attachment. It holds the scene shader
-    /// module (created once, here), so no field keeps it.
     pipeline_scene: wgpu::RenderPipeline,
-    /// The chrome composite pipeline (the CPU `draw_area` upload draws
-    /// over the scene); holds the chrome shader module.
     chrome_layout: wgpu::BindGroupLayout,
     chrome_pipeline: wgpu::RenderPipeline,
-    /// Screen-space nav primitives replace pixels in a transparent retained
-    /// overlay; the chrome pipeline composites that overlay over each scene.
     nav_pipeline: wgpu::RenderPipeline,
 }
 
 impl GpuContext {
-    /// Build the process-wide context: the shared assets plus the scene
-    /// and chrome shader modules / pipelines, exactly once (the `CONTEXT`
-    /// `OnceLock` wins — a second `GpuBackend::try_new` reuses these).
-    fn new(device: wgpu::Device, queue: wgpu::Queue) -> Arc<GpuContext> {
+    /// Build fixed context resources once. The immutable model binding is
+    /// cloned before the mutable atlas owner is placed behind its mutex.
+    fn new(device: wgpu::Device, queue: wgpu::Queue) -> Result<Arc<GpuContext>, RenderLimit> {
         SHADER_MODULES_CREATED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let assets = Arc::new(Mutex::new(GpuAssets::new(&device, &queue)));
+        let render_budget = RenderBudget::current();
+        let assets = GpuAssets::new(&device, &queue)?;
+        let model_bind_group = assets.model_bind_group.clone();
+        let model_bind_group_layout = assets.model_bind_group_layout.clone();
+        let assets = Arc::new(Mutex::new(assets));
 
         let scene_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("r274 scene shader"),
@@ -417,15 +469,10 @@ impl GpuContext {
                 },
             ],
         });
-
-        let assets_lock = assets.lock().unwrap();
         let scene_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("r274 scene layout"),
-                bind_group_layouts: &[
-                    Some(&assets_lock.model_bind_group_layout),
-                    Some(&scene_data_layout),
-                ],
+                bind_group_layouts: &[Some(&model_bind_group_layout), Some(&scene_data_layout)],
                 immediate_size: 0,
             });
         let pipeline_scene = make_pipeline(&device, &scene_pipeline_layout, &scene_shader);
@@ -439,7 +486,6 @@ impl GpuContext {
             immediate_size: 0,
         });
         let nav_pipeline = make_nav_pipeline(&device, &nav_pipeline_layout, &nav_shader);
-        drop(assets_lock);
 
         let chrome_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("r274 chrome composite shader"),
@@ -521,16 +567,19 @@ impl GpuContext {
             cache: None,
         });
 
-        Arc::new(GpuContext {
+        Ok(Arc::new(GpuContext {
             device,
             queue,
             assets,
+            render_budget,
+            model_bind_group,
+            model_bind_group_layout,
             scene_data_layout,
             pipeline_scene,
             nav_pipeline,
             chrome_layout,
             chrome_pipeline,
-        })
+        }))
     }
 
     fn scene_bind_group(
@@ -551,6 +600,19 @@ impl GpuContext {
                     resource: vertices.as_entire_binding(),
                 },
             ],
+        })
+    }
+    fn budget_matches_current(&self) -> bool {
+        let Some(current) = RenderBudget::current() else {
+            return true;
+        };
+        self.render_budget.as_ref().is_some_and(|configured| {
+            configured
+                .for_resource(RenderResource::ContextCpu)
+                .same_budget(current.for_resource(RenderResource::ContextCpu))
+                && configured
+                    .for_resource(RenderResource::ContextGpu)
+                    .same_budget(current.for_resource(RenderResource::ContextGpu))
         })
     }
 }
@@ -648,7 +710,9 @@ fn init_gpu() -> Result<Arc<GpuContext>, String> {
     let mut last_error = String::new();
     for backends in backend_attempts() {
         match device_on(backends, power_preference) {
-            Ok((device, queue)) => return Ok(GpuContext::new(device, queue)),
+            Ok((device, queue)) => {
+                return GpuContext::new(device, queue).map_err(|error| error.to_string())
+            }
             Err(e) => last_error = e,
         }
     }
@@ -1107,6 +1171,7 @@ const MINIMAP_H: u32 = 156;
 pub struct GpuBackend {
     _gpu_storage: crate::profiling::Allocation,
     vertex_storage: crate::profiling::Allocation,
+    vertex_budget_charge: Option<BudgetCharge>,
     context: Arc<GpuContext>,
     scene_texture: wgpu::Texture,
     scene_view: wgpu::TextureView,
@@ -1121,6 +1186,9 @@ pub struct GpuBackend {
     present_view: wgpu::TextureView,
     /// Slot last written. The next `finish` writes `1 - this`.
     present_slot: usize,
+    present_gate: Arc<PresentGate>,
+    last_present_token: Option<PresentToken>,
+    last_present_valid: bool,
     /// The shared model-texture-array bind group, bound each scene pass.
     model_bind_group: wgpu::BindGroup,
     /// Per-backend scene data (group 1): the current colour-table gamma
@@ -1134,6 +1202,7 @@ pub struct GpuBackend {
     /// The captured scene triangles, reused frame to frame so the capture
     /// keeps its allocation.
     scene_mesh: SceneMesh,
+    last_rebuild_camera: Option<[i32; 5]>,
     /// Projected nav triangles and ordering/dedup scratch. The retained
     /// overlay target avoids rebuilding or uploading while camera and paint
     /// are unchanged; both allocations are released when paint disappears.
@@ -1183,6 +1252,7 @@ pub struct GpuBackend {
     scene_ready: bool,
     scene_progress: SceneProgress,
     last_kind: FrameKind,
+    last_render_fault: Option<RenderFault>,
 }
 
 impl GpuBackend {
@@ -1196,6 +1266,9 @@ impl GpuBackend {
         }
         GPU_BACKEND_TRIED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let context = context().ok_or_else(|| "no GPU context".to_string())?;
+        if !context.budget_matches_current() {
+            return Err("GPU context is not charged to the active render budget".to_string());
+        }
 
         let scene_texture = context.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("r274 scene"),
@@ -1228,7 +1301,7 @@ impl GpuBackend {
 
         // The scene shader/layout/pipelines are the shared `GpuContext`
         // (task 6): a second backend reuses them instead of rebuilding.
-        let model_bind_group = context.assets.lock().unwrap().model_bind_group.clone();
+        let model_bind_group = context.model_bind_group.clone();
 
         let vertex_buf_capacity = 1 << 20; // 1 MiB of vertices to start
         let vertex_buf = context.device.create_buffer(&wgpu::BufferDescriptor {
@@ -1442,6 +1515,7 @@ impl GpuBackend {
         Ok(GpuBackend {
             _gpu_storage: crate::profiling::Allocation::new(buffers, textures),
             vertex_storage: crate::profiling::Allocation::new(vertex_buf.size(), 0),
+            vertex_budget_charge: None,
             context,
             scene_texture,
             scene_view,
@@ -1450,16 +1524,21 @@ impl GpuBackend {
             present_texture,
             present_view,
             present_slot: 0,
+            present_gate: PresentGate::new(),
+            last_present_token: None,
+            last_present_valid: false,
+            last_render_fault: None,
             model_bind_group,
             scene_bind_group,
             brightness_buf,
             vertex_buf,
             vertex_buf_capacity,
             scene_mesh: SceneMesh::default(),
+            last_rebuild_camera: None,
             nav_mesh: NavMesh::default(),
             nav_target: None,
             nav_projection_key: None,
-            cpu: CpuBackend::default(),
+            cpu: CpuBackend::embedded(),
             chrome_texture,
             chrome_bind_group,
             chrome_vertex_buf,
@@ -1503,6 +1582,16 @@ impl GpuBackend {
         &self.context.device
     }
 
+    #[doc(hidden)]
+    pub fn embedded_cpu_retained_storage_allocations(&self) -> u64 {
+        self.cpu.retained_storage_allocations()
+    }
+
+    #[doc(hidden)]
+    pub fn embedded_cpu_retained_storage_bytes(&self) -> usize {
+        self.cpu.retained_storage_bytes()
+    }
+
     /// How many chrome-atlas `write_texture`s this backend has run.
     #[doc(hidden)]
     pub fn chrome_upload_count(&self) -> u64 {
@@ -1544,51 +1633,95 @@ impl GpuBackend {
         let _guard = GPU_SCENE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         {
             let mut assets = self.context.assets.lock().unwrap();
-            assets.ensure_model_textures(pix);
-            assets.stage_animated_model_textures(pix, &sampled_texture_ids);
+            assets
+                .ensure_model_textures(pix)
+                .expect("test model textures fit their configured fixture");
+            assets
+                .stage_animated_model_textures(pix, &sampled_texture_ids)
+                .expect("test animated textures fit their configured fixture");
         }
-        self.render_scene(mesh);
-        let handle = TextureHandle {
-            device: self.context.device.clone(),
-            queue: self.context.queue.clone(),
-            view: self.scene_view.clone(),
-            width: SCENE_W,
-            height: SCENE_H,
-        };
+        self.render_scene(mesh)
+            .expect("GPU render test mesh fits the device vertex-storage limit");
+        let handle = TextureHandle::untracked(
+            self.context.device.clone(),
+            self.context.queue.clone(),
+            self.scene_view.clone(),
+            SCENE_W,
+            SCENE_H,
+        );
         handle.read_back()
     }
 
-    fn ensure_vertex_buffer(&mut self, bytes: usize) {
-        if bytes <= self.vertex_buf_capacity {
-            return;
+    fn ensure_vertex_buffer(&mut self, bytes: usize) -> Result<(), RenderLimit> {
+        let device_maximum = self.context.device.limits().max_storage_buffer_binding_size as usize;
+        let active_budget = RenderBudget::current_resource(RenderResource::Vertex);
+        let maximum = active_budget
+            .as_ref()
+            .map_or(usize::MAX, |budget| budget.maximum());
+        if let Some(budget) = active_budget.as_ref() {
+            let already_charged = self.vertex_budget_charge.as_ref().is_some_and(|charge| {
+                charge.belongs_to(budget) && charge.bytes() == self.vertex_buf_capacity
+            });
+            if !already_charged {
+                self.vertex_budget_charge = Some(budget.reserve(self.vertex_buf_capacity)?);
+            }
         }
-        let storage = crate::profiling::Allocation::new(bytes as u64, 0);
-        self.vertex_buf_capacity = bytes;
-        self.vertex_buf = self.context.device.create_buffer(&wgpu::BufferDescriptor {
+        if bytes <= self.vertex_buf_capacity {
+            return Ok(());
+        }
+        let capacity = bytes
+            .checked_next_power_of_two()
+            .ok_or_else(|| RenderLimit::new(RenderResource::Vertex, usize::MAX, maximum))?;
+        if capacity > maximum {
+            return Err(RenderLimit::new(RenderResource::Vertex, capacity, maximum));
+        }
+        if capacity > device_maximum {
+            return Err(RenderLimit::new(
+                RenderResource::Vertex,
+                capacity,
+                device_maximum,
+            ));
+        }
+        let next_charge = active_budget
+            .as_ref()
+            .map(|budget| budget.reserve(capacity))
+            .transpose()?;
+        let storage = crate::profiling::Allocation::new(capacity as u64, 0);
+        let vertex_buf = self.context.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("r274 scene/nav vertices"),
-            size: bytes as u64,
+            size: capacity as u64,
             usage: wgpu::BufferUsages::VERTEX
                 | wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        self.scene_bind_group = self
+        let scene_bind_group = self
             .context
-            .scene_bind_group(&self.brightness_buf, &self.vertex_buf);
+            .scene_bind_group(&self.brightness_buf, &vertex_buf);
+        self.vertex_buf = vertex_buf;
+        self.scene_bind_group = scene_bind_group;
+        self.vertex_buf_capacity = capacity;
         self.vertex_storage = storage;
+        if let Some(charge) = next_charge {
+            self.vertex_budget_charge = Some(charge);
+        }
+        Ok(())
     }
 
     /// Upload the mesh and rasterize it into `scene_texture` in capture
     /// (painter) order: one alpha-blended draw, no depth test. No readback:
     /// the composite step copies the texture into the full-frame on the GPU.
-    fn render_scene(&mut self, mesh: &SceneMesh) {
+    fn render_scene(&mut self, mesh: &SceneMesh) -> Result<(), RenderLimit> {
         let vertices = mesh.vertices();
         if vertices.is_empty() {
             self.scene_ready = false;
-            return;
+            return Ok(());
         }
+        let vertex_count = u32::try_from(vertices.len()).map_err(|_| {
+            RenderLimit::new(RenderResource::Vertex, vertices.len(), u32::MAX as usize)
+        })?;
         let bytes = std::mem::size_of_val(vertices);
-        self.ensure_vertex_buffer(bytes);
+        self.ensure_vertex_buffer(bytes)?;
         self.context
             .queue
             .write_buffer(&self.vertex_buf, 0, bytemuck::cast_slice(vertices));
@@ -1626,10 +1759,11 @@ impl GpuBackend {
             pass.set_bind_group(0, &self.model_bind_group, &[]);
             pass.set_bind_group(1, &self.scene_bind_group, &[]);
             pass.set_pipeline(&self.context.pipeline_scene);
-            pass.draw(0..vertices.len() as u32, 0..1);
+            pass.draw(0..vertex_count, 0..1);
         }
         self.context.queue.submit([encoder.finish()]);
         self.scene_ready = true;
+        Ok(())
     }
 
     fn release_nav_overlay(&mut self) {
@@ -1770,9 +1904,21 @@ impl GpuBackend {
         if let Some(game) = r.area_game.as_ref() {
             r.pix3d.set_clipping(game.width, game.height);
         }
-        r.entity_overlays(core);
+        let camera = if host_overlays && self.scene_ready && compose != SceneCompose::Rebuilt {
+            self.last_rebuild_camera
+        } else {
+            None
+        };
+        let mut camera_scope = OverlayCameraScope::enter(core, camera);
+        let core = camera_scope.core();
+        if let Err(error) = r.entity_overlays(core) {
+            self.last_render_fault = Some(RenderFault::Budget(error));
+            return;
+        }
         r.coord_arrow(core);
-        r.other_overlays(core);
+        if let Err(error) = r.other_overlays(core) {
+            self.last_render_fault = Some(RenderFault::Budget(error));
+        }
         drop(_cov_guard);
     }
 }
@@ -1895,6 +2041,7 @@ impl RenderBackend for GpuBackend {
     /// the CPU path.
     fn begin(&mut self, core: &mut Client, r: &mut Renderer, kind: FrameKind) {
         self.scene_progress = SceneProgress::NoScene;
+        self.last_render_fault = None;
         self.last_kind = kind;
         if core.nav_debug_paint().is_none() {
             self.release_nav_overlay();
@@ -1906,6 +2053,7 @@ impl RenderBackend for GpuBackend {
             self.scene_ready = false;
         }
         self.cpu.begin(core, r, kind);
+        self.last_render_fault = self.cpu.render_fault();
     }
 
     /// `gameDrawMain`'s 3D pass on the GPU: the same entity/camera/prep
@@ -1935,6 +2083,7 @@ impl RenderBackend for GpuBackend {
         let admission = SCENE_ADMISSION
             .get()
             .map_or(SceneAdmission::Standalone, |admit| admit());
+        let budgeted = RenderBudget::is_scoped();
         if admission == SceneAdmission::Retained {
             self.scene_progress = if self.scene_ready {
                 SceneProgress::Retained
@@ -1948,6 +2097,7 @@ impl RenderBackend for GpuBackend {
         if admission == SceneAdmission::Rebuild
             && test_hooks::at(test_hooks::SceneTestPoint::AfterAdmission)
         {
+            self.last_render_fault = Some(RenderFault::InjectedResourceLimit);
             scene_workspace(admission, || SceneSubmit::ResourceLimited);
             self.scene_progress = if self.scene_ready {
                 SceneProgress::Retained
@@ -1958,172 +2108,307 @@ impl RenderBackend for GpuBackend {
             return;
         }
 
+        let mut host_capture = if admission == SceneAdmission::Rebuild && budgeted {
+            match try_host_capture() {
+                Ok(capture) => Some(capture),
+                Err(error) => {
+                    self.last_render_fault = Some(RenderFault::Budget(error));
+                    scene_workspace(admission, || SceneSubmit::ResourceLimited);
+                    self.scene_progress = if self.scene_ready {
+                        SceneProgress::Retained
+                    } else {
+                        SceneProgress::NoScene
+                    };
+                    self.draw_scene_overlays(core, r, SceneCompose::Retained);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+
         let scene_submitted = {
             let mut prepared = PreparedScene::new(core, r);
             let core = &mut *prepared.core;
             let r = &mut *prepared.renderer;
-            r.scene_cycle += 1;
-            r.add_players(core, true);
-            r.add_npcs(core, true);
-            r.add_players(core, false);
-            r.add_npcs(core, false);
-            r.add_projectiles(core);
-            r.add_map_anim(core);
-
-            let mut pitch = core.orbit_camera_pitch;
-            if core.camera_pitch_clamp / 256 > pitch {
-                pitch = core.camera_pitch_clamp / 256;
-            }
-            if core.cam_shake[4] && core.cam_shake_ran[4] + 128 > pitch {
-                pitch = core.cam_shake_ran[4] + 128;
-            }
-            let yaw = (core.orbit_camera_yaw + core.macro_camera_angle) & 0x7ff;
-
-            if !core.cinema_cam {
-                if let Some(player) = &core.local_player {
-                    let target_y = get_av_h(
-                        &core.groundh,
-                        &core.mapl,
-                        player.x,
-                        player.z,
-                        core.minusedlevel,
-                    ) - 50;
-                    r.cam_follow(
-                        core,
-                        pitch,
-                        yaw,
-                        core.orbit_camera_x,
-                        target_y,
-                        core.orbit_camera_z,
-                        pitch * 3 + 600,
-                    );
-                }
-            }
-
-            let level = if core.cinema_cam {
-                r.roof_check2(core)
+            let mut mesh = if let Some(capture) = host_capture.as_mut() {
+                std::mem::take(&mut capture.mesh)
             } else {
-                r.roof_check(core)
+                std::mem::take(&mut self.scene_mesh)
             };
 
-            let eye_x = core.cam_x;
-            let eye_y = core.cam_y;
-            let eye_z = core.cam_z;
-            let eye_pitch = core.cam_pitch;
-            let eye_yaw = core.cam_yaw;
+            r.scene_cycle += 1;
+            let mut prep_fault = r
+                .add_players(core, true)
+                .and_then(|_| r.add_npcs(core, true))
+                .and_then(|_| r.add_players(core, false))
+                .and_then(|_| r.add_npcs(core, false))
+                .and_then(|_| r.add_projectiles(core))
+                .and_then(|_| r.add_map_anim(core))
+                .err()
+                .map(RenderFault::Budget);
 
-            let (cam_x, cam_y, cam_z, cam_pitch, cam_yaw) =
-                r.cam_shake_jitter(core, eye_x, eye_y, eye_z, eye_pitch, eye_yaw);
-
-            #[cfg(feature = "render-diagnostics")]
-            crate::render::diagnostics::begin_frame(crate::render::diagnostics::FrameCam {
-                cycle: core.loop_cycle,
-                eye_x: cam_x,
-                eye_y: cam_y,
-                eye_z: cam_z,
-                yaw: cam_yaw,
-                pitch: cam_pitch,
-                pre_jitter_x: eye_x,
-                pre_jitter_y: eye_y,
-                pre_jitter_z: eye_z,
-                orbit_x: core.orbit_camera_x,
-                orbit_z: core.orbit_camera_z,
-                orbit_yaw: core.orbit_camera_yaw,
-                orbit_pitch: core.orbit_camera_pitch,
-                macro_x: core.macro_camera_x,
-                macro_z: core.macro_camera_z,
-                macro_angle: core.macro_camera_angle,
-                base_x: core.map_build_base_x,
-                base_z: core.map_build_base_z,
-            });
-
-            if !r.vis_calc_done {
-                r.vis_calc_done = true;
-                let mut distance = [0i32; 9];
-                for (x, slot) in distance.iter_mut().enumerate() {
-                    let angle = x as i32 * 32 + 128 + 15;
-                    let offset = angle * 3 + 600;
-                    let sin = Pix3D::sin_table().get(angle as usize).copied().unwrap_or(0);
-                    *slot = (offset * sin) >> 16;
-                }
-                r.world.reset_vis_calc(&distance, 500, 800, 512, 334);
+            // Static model textures are initialized before capture. Admitted
+            // host work never waits for another renderer holding the atlas.
+            if prep_fault.is_none() {
+                let result = match admission {
+                    SceneAdmission::Standalone => Some(
+                        self.context
+                            .assets
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner())
+                            .ensure_model_textures(&r.pix3d),
+                    ),
+                    SceneAdmission::Rebuild if budgeted => match self.context.assets.try_lock() {
+                        Ok(mut assets) => Some(assets.ensure_model_textures(&r.pix3d)),
+                        Err(std::sync::TryLockError::Poisoned(error)) => {
+                            Some(error.into_inner().ensure_model_textures(&r.pix3d))
+                        }
+                        Err(std::sync::TryLockError::WouldBlock) => None,
+                    },
+                    SceneAdmission::Rebuild => Some(
+                        self.context
+                            .assets
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner())
+                            .ensure_model_textures(&r.pix3d),
+                    ),
+                    SceneAdmission::Retained => None,
+                };
+                prep_fault = match result {
+                    Some(Ok(())) => None,
+                    Some(Err(error)) => Some(RenderFault::Budget(error)),
+                    None => Some(RenderFault::AssetsContended),
+                };
             }
+            let prep_ok = prep_fault.is_none();
 
-            let cycle = r.pix3d.cycle;
-            r.pix3d.mouse_check = true;
-            r.pix3d.picked_count = 0;
-            r.pix3d.mouse_x = core.shell.mouse_x - 4;
-            r.pix3d.mouse_y = core.shell.mouse_y - 4;
-            // The projection origin the painter pass's winding/pick tests read
-            // (the CPU scene binds it via `set_clipping` on `area_game`).
-            r.pix3d.set_clipping(512, 334);
+            let mut rebuild_camera = None;
+            let mut cycle = 0;
+            let mut sampled_texture_ids = [false; 50];
+            if prep_ok {
+                let capture_result = (|| -> Result<(), RenderLimit> {
+                    let mut pitch = core.orbit_camera_pitch;
+                    if core.camera_pitch_clamp / 256 > pitch {
+                        pitch = core.camera_pitch_clamp / 256;
+                    }
+                    if core.cam_shake[4] && core.cam_shake_ran[4] + 128 > pitch {
+                        pitch = core.cam_shake_ran[4] + 128;
+                    }
+                    let yaw = (core.orbit_camera_yaw + core.macro_camera_angle) & 0x7ff;
 
-            let cache = &core.cache;
-            let loop_cycle = core.loop_cycle;
-
-            // The GPU rasterization: the CPU painter pass captures its
-            // triangles in draw order (this also resolves the lazy model
-            // caches, appends the mouse picks and runs the ground click
-            // raycast), then they are rasterized in that order into
-            // `scene_texture`. Static model textures upload into the shared
-            // array once per id. Sampled animated ids 17/24 are staged later,
-            // immediately before this slot's scene submission.
-            self.context
-                .assets
-                .lock()
-                .unwrap()
-                .ensure_model_textures(&r.pix3d);
-            let mut mesh = std::mem::take(&mut self.scene_mesh);
-            r.world.capture_scene(
-                &mut core.world,
-                &mut r.pix3d,
-                cache,
-                loop_cycle,
-                cam_x,
-                cam_y,
-                cam_z,
-                level,
-                cam_yaw,
-                cam_pitch,
-                &mut mesh,
-            );
-            let sampled_texture_ids = mesh.sampled_texture_ids();
-            for (id, sampled) in sampled_texture_ids.iter().copied().enumerate() {
-                if sampled {
-                    r.pix3d.note_texture_used(id);
-                }
-            }
-            #[cfg(feature = "render-test-hooks")]
-            let resource_limited = admission == SceneAdmission::Rebuild
-                && test_hooks::at(test_hooks::SceneTestPoint::BeforeTerminal);
-            #[cfg(not(feature = "render-test-hooks"))]
-            let resource_limited = false;
-            // Both success and pre-submit failure reach this terminal callback.
-            // Guards stay inside its closure and drop before the host reads result.
-            let result = scene_workspace(admission, || {
-                if resource_limited {
-                    return SceneSubmit::ResourceLimited;
-                }
-                let _scene_guard = if admission == SceneAdmission::Standalone {
-                    GPU_SCENE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
-                } else {
-                    match GPU_SCENE_LOCK.try_lock() {
-                        Ok(guard) => guard,
-                        Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
-                        Err(std::sync::TryLockError::WouldBlock) => {
-                            return SceneSubmit::LockContended
+                    if !core.cinema_cam {
+                        if let Some(player) = &core.local_player {
+                            let target_y = get_av_h(
+                                &core.groundh,
+                                &core.mapl,
+                                player.x,
+                                player.z,
+                                core.minusedlevel,
+                            ) - 50;
+                            r.cam_follow(
+                                core,
+                                pitch,
+                                yaw,
+                                core.orbit_camera_x,
+                                target_y,
+                                core.orbit_camera_z,
+                                pitch * 3 + 600,
+                            );
                         }
                     }
+
+                    let level = if core.cinema_cam {
+                        r.roof_check2(core)
+                    } else {
+                        r.roof_check(core)
+                    };
+
+                    let eye_x = core.cam_x;
+                    let eye_y = core.cam_y;
+                    let eye_z = core.cam_z;
+                    let eye_pitch = core.cam_pitch;
+                    let eye_yaw = core.cam_yaw;
+                    rebuild_camera = Some([eye_x, eye_y, eye_z, eye_pitch, eye_yaw]);
+
+                    let (cam_x, cam_y, cam_z, cam_pitch, cam_yaw) =
+                        r.cam_shake_jitter(core, eye_x, eye_y, eye_z, eye_pitch, eye_yaw);
+
+                    #[cfg(feature = "render-diagnostics")]
+                    crate::render::diagnostics::begin_frame(crate::render::diagnostics::FrameCam {
+                        cycle: core.loop_cycle,
+                        eye_x: cam_x,
+                        eye_y: cam_y,
+                        eye_z: cam_z,
+                        yaw: cam_yaw,
+                        pitch: cam_pitch,
+                        pre_jitter_x: eye_x,
+                        pre_jitter_y: eye_y,
+                        pre_jitter_z: eye_z,
+                        orbit_x: core.orbit_camera_x,
+                        orbit_z: core.orbit_camera_z,
+                        orbit_yaw: core.orbit_camera_yaw,
+                        orbit_pitch: core.orbit_camera_pitch,
+                        macro_x: core.macro_camera_x,
+                        macro_z: core.macro_camera_z,
+                        macro_angle: core.macro_camera_angle,
+                        base_x: core.map_build_base_x,
+                        base_z: core.map_build_base_z,
+                    });
+
+                    if !r.vis_calc_done {
+                        let mut distance = [0i32; 9];
+                        for (x, slot) in distance.iter_mut().enumerate() {
+                            let angle = x as i32 * 32 + 128 + 15;
+                            let offset = angle * 3 + 600;
+                            let sin = Pix3D::sin_table().get(angle as usize).copied().unwrap_or(0);
+                            *slot = (offset * sin) >> 16;
+                        }
+                        r.world.reset_vis_calc(&distance, 500, 800, 512, 334)?;
+                        r.vis_calc_done = true;
+                    }
+
+                    cycle = r.pix3d.cycle;
+                    r.pix3d.mouse_check = true;
+                    r.pix3d.picked_count = 0;
+                    r.pix3d.mouse_x = core.shell.mouse_x - 4;
+                    r.pix3d.mouse_y = core.shell.mouse_y - 4;
+                    // The projection origin the painter pass's winding/pick
+                    // tests read (the CPU scene binds it via set_clipping).
+                    r.pix3d.set_clipping(512, 334);
+
+                    let cache = &core.cache;
+                    let loop_cycle = core.loop_cycle;
+                    r.world.capture_scene(
+                        &mut core.world,
+                        &mut r.pix3d,
+                        cache,
+                        loop_cycle,
+                        cam_x,
+                        cam_y,
+                        cam_z,
+                        level,
+                        cam_yaw,
+                        cam_pitch,
+                        &mut mesh,
+                    )?;
+                    sampled_texture_ids = mesh.sampled_texture_ids();
+                    for (id, sampled) in sampled_texture_ids.iter().copied().enumerate() {
+                        if sampled {
+                            r.pix3d.note_texture_used(id);
+                        }
+                    }
+                    Ok(())
+                })();
+                if let Err(error) = capture_result {
+                    prep_fault = Some(RenderFault::Budget(error));
+                }
+            }
+
+            #[cfg(feature = "render-test-hooks")]
+            let forced_resource_limit = admission == SceneAdmission::Rebuild
+                && test_hooks::at(test_hooks::SceneTestPoint::BeforeTerminal);
+            #[cfg(not(feature = "render-test-hooks"))]
+            let forced_resource_limit = false;
+            #[cfg(feature = "render-test-hooks")]
+            if forced_resource_limit && prep_fault.is_none() {
+                prep_fault = Some(RenderFault::InjectedResourceLimit);
+            }
+            let resource_limited = prep_fault.is_some() || forced_resource_limit;
+            self.last_render_fault = prep_fault;
+
+            // Both success and pre-submit failure reach this terminal callback.
+            // Host capture storage is returned before the callback releases
+            // the host's render reservation.
+            let mut mesh_returned = false;
+            let result = scene_workspace(admission, || {
+                let result = if resource_limited {
+                    SceneSubmit::ResourceLimited
+                } else {
+                    let scene_guard = if admission == SceneAdmission::Standalone || !budgeted {
+                        Some(
+                            GPU_SCENE_LOCK
+                                .lock()
+                                .unwrap_or_else(|error| error.into_inner()),
+                        )
+                    } else {
+                        match GPU_SCENE_LOCK.try_lock() {
+                            Ok(guard) => Some(guard),
+                            Err(std::sync::TryLockError::Poisoned(error)) => {
+                                Some(error.into_inner())
+                            }
+                            Err(std::sync::TryLockError::WouldBlock) => None,
+                        }
+                    };
+                    if let Some(_scene_guard) = scene_guard {
+                        let staged = if admission == SceneAdmission::Standalone || !budgeted {
+                            Some(
+                                self.context
+                                    .assets
+                                    .lock()
+                                    .unwrap_or_else(|error| error.into_inner())
+                                    .stage_animated_model_textures(&r.pix3d, &sampled_texture_ids),
+                            )
+                        } else {
+                            match self.context.assets.try_lock() {
+                                Ok(mut assets) => {
+                                    Some(assets.stage_animated_model_textures(
+                                        &r.pix3d,
+                                        &sampled_texture_ids,
+                                    ))
+                                }
+                                Err(std::sync::TryLockError::Poisoned(error)) => {
+                                    Some(error.into_inner().stage_animated_model_textures(
+                                        &r.pix3d,
+                                        &sampled_texture_ids,
+                                    ))
+                                }
+                                Err(std::sync::TryLockError::WouldBlock) => None,
+                            }
+                        };
+                        match staged {
+                            Some(Ok(())) => match self.render_scene(&mesh) {
+                                Ok(()) => SceneSubmit::Submitted,
+                                Err(error) => {
+                                    self.last_render_fault = Some(RenderFault::Budget(error));
+                                    SceneSubmit::ResourceLimited
+                                }
+                            },
+                            Some(Err(error)) => {
+                                self.last_render_fault = Some(RenderFault::Budget(error));
+                                SceneSubmit::ResourceLimited
+                            }
+                            None => {
+                                self.last_render_fault = Some(RenderFault::AssetsContended);
+                                SceneSubmit::ResourceLimited
+                            }
+                        }
+                    } else {
+                        self.last_render_fault = Some(RenderFault::SceneLockContended);
+                        SceneSubmit::LockContended
+                    }
                 };
-                self.context
-                    .assets
-                    .lock()
-                    .unwrap()
-                    .stage_animated_model_textures(&r.pix3d, &sampled_texture_ids);
-                self.render_scene(&mesh);
-                SceneSubmit::Submitted
+
+                let mesh = std::mem::take(&mut mesh);
+                if let Some(mut capture) = host_capture.take() {
+                    capture.mesh = mesh;
+                    drop(capture);
+                } else {
+                    self.scene_mesh = mesh;
+                }
+                mesh_returned = true;
+                result
             });
-            self.scene_mesh = mesh;
+            // A host hook that violates the once-call contract cannot strand
+            // either the process scratch lock or its mesh allocation.
+            if !mesh_returned {
+                if let Some(mut capture) = host_capture.take() {
+                    capture.mesh = mesh;
+                    drop(capture);
+                } else {
+                    self.scene_mesh = mesh;
+                }
+            }
 
             let did_submit = result == SceneSubmit::Submitted && self.scene_ready;
             if did_submit {
@@ -2132,6 +2417,9 @@ impl RenderBackend for GpuBackend {
                 core.pick_typecodes
                     .copy_from_slice(&r.pix3d.picked_entity_typecode);
                 prepared.mark_submitted();
+            }
+            if did_submit && admission == SceneAdmission::Rebuild {
+                self.last_rebuild_camera = rebuild_camera;
             }
             did_submit
         };
@@ -2219,6 +2507,9 @@ impl RenderBackend for GpuBackend {
         self.minimap_live = kind == FrameKind::Game && core.scene_state == 2;
         self.chrome_upload_pending = atlas_dirty || !self.chrome_uploaded;
         self.cpu.chrome(core, r, kind);
+        if self.last_render_fault.is_none() {
+            self.last_render_fault = self.cpu.render_fault();
+        }
     }
 
     /// The full-frame composite: clear the back buffer, copy the GPU scene
@@ -2229,6 +2520,18 @@ impl RenderBackend for GpuBackend {
     /// Then copy the write slot into the stable present texture the host
     /// samples.
     fn finish(&mut self, r: &mut Renderer) -> FrameOutput {
+        if let Some(fault) = self.last_render_fault {
+            return FrameOutput::Texture(TextureHandle::nonfresh(
+                self.context.device.clone(),
+                self.context.queue.clone(),
+                self.present_view.clone(),
+                CaptureGeometry::new(FRAME_W, FRAME_H),
+                self.last_present_token,
+                self.last_present_valid,
+                Arc::clone(&self.present_gate),
+                Some(fault),
+            ));
+        }
         let write = 1 - self.present_slot;
         let mut copy_encoder =
             self.context
@@ -2401,35 +2704,106 @@ impl RenderBackend for GpuBackend {
                 pass.draw(0..6, 0..1);
             }
         }
-        // Resolve write slot into the stable present texture the host binds.
-        chrome_encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.frame_textures[write],
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.present_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::Extent3d {
-                width: FRAME_W,
-                height: FRAME_H,
-                depth_or_array_layers: 1,
-            },
-        );
-        self.context.queue.submit([chrome_encoder.finish()]);
-        self.present_slot = write;
-        FrameOutput::Texture(TextureHandle {
-            device: self.context.device.clone(),
-            queue: self.context.queue.clone(),
-            view: self.present_view.clone(),
-            width: FRAME_W,
-            height: FRAME_H,
-        })
+        let submission = if PresentGate::retained_present_enabled() {
+            self.present_gate.submit_present(
+                &self.context.queue,
+                chrome_encoder,
+                &self.frame_textures[write],
+                &self.present_texture,
+                self.scene_ready,
+            )
+        } else {
+            chrome_encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.frame_textures[write],
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.present_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: FRAME_W,
+                    height: FRAME_H,
+                    depth_or_array_layers: 1,
+                },
+            );
+            self.context.queue.submit([chrome_encoder.finish()]);
+            PresentSubmit::Legacy
+        };
+        match submission {
+            PresentSubmit::Legacy => {
+                self.present_slot = write;
+                self.last_present_token = None;
+                self.last_present_valid = self.scene_ready;
+                FrameOutput::Texture(TextureHandle::untracked(
+                    self.context.device.clone(),
+                    self.context.queue.clone(),
+                    self.present_view.clone(),
+                    FRAME_W,
+                    FRAME_H,
+                ))
+            }
+            PresentSubmit::Fresh(token) => {
+                self.present_slot = write;
+                self.last_present_token = Some(token);
+                self.last_present_valid = self.scene_ready;
+                FrameOutput::Texture(TextureHandle::presented(
+                    self.context.device.clone(),
+                    self.context.queue.clone(),
+                    self.present_view.clone(),
+                    CaptureGeometry::new(FRAME_W, FRAME_H),
+                    token,
+                    self.scene_ready,
+                    Arc::clone(&self.present_gate),
+                    true,
+                    self.last_render_fault,
+                ))
+            }
+            PresentSubmit::Busy => {
+                self.last_render_fault = Some(RenderFault::PresentContended);
+                FrameOutput::Texture(TextureHandle::nonfresh(
+                    self.context.device.clone(),
+                    self.context.queue.clone(),
+                    self.present_view.clone(),
+                    CaptureGeometry::new(FRAME_W, FRAME_H),
+                    self.last_present_token,
+                    self.last_present_valid,
+                    Arc::clone(&self.present_gate),
+                    self.last_render_fault,
+                ))
+            }
+            PresentSubmit::IdentityExhausted => {
+                self.last_render_fault = Some(RenderFault::PresentIdentityExhausted);
+                FrameOutput::Texture(TextureHandle::nonfresh(
+                    self.context.device.clone(),
+                    self.context.queue.clone(),
+                    self.present_view.clone(),
+                    CaptureGeometry::new(FRAME_W, FRAME_H),
+                    self.last_present_token,
+                    self.last_present_valid,
+                    Arc::clone(&self.present_gate),
+                    self.last_render_fault,
+                ))
+            }
+            PresentSubmit::Retired => {
+                self.last_render_fault = Some(RenderFault::PresentRetired);
+                FrameOutput::Texture(TextureHandle::nonfresh(
+                    self.context.device.clone(),
+                    self.context.queue.clone(),
+                    self.present_view.clone(),
+                    CaptureGeometry::new(FRAME_W, FRAME_H),
+                    self.last_present_token,
+                    self.last_present_valid,
+                    Arc::clone(&self.present_gate),
+                    self.last_render_fault,
+                ))
+            }
+        }
     }
 
     fn scene_progress(&self) -> SceneProgress {
@@ -2440,9 +2814,109 @@ impl RenderBackend for GpuBackend {
         self.scene_ready
     }
 
+    fn retained_storage_allocations(&self) -> u64 {
+        0
+    }
+
+    fn retained_storage_bytes(&self) -> usize {
+        0
+    }
+
+    fn render_bytes(&self) -> RenderBytes {
+        let fixed_textures = [
+            &self.scene_texture,
+            &self.frame_textures[0],
+            &self.frame_textures[1],
+            &self.present_texture,
+            &self.chrome_texture,
+            &self.minimap_texture,
+        ]
+        .into_iter()
+        .map(logical_texture_bytes)
+        .fold(0usize, usize::saturating_add);
+        let fixed_buffers = [
+            self.brightness_buf.size(),
+            self.chrome_vertex_buf.size(),
+            self.minimap_vertex_buf.size(),
+        ]
+        .into_iter()
+        .map(|bytes| usize::try_from(bytes).expect("GPU buffer sizes fit usize"))
+        .fold(0usize, usize::saturating_add);
+        let nav_target = self
+            .nav_target
+            .as_ref()
+            .map(|target| logical_texture_bytes(&target._texture))
+            .unwrap_or_default();
+        let assets = self
+            .context
+            .assets
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let (context_cpu, context_gpu) = assets.render_bytes();
+        drop(assets);
+        RenderBytes {
+            capture: self.scene_mesh.retained_bytes(),
+            nav_vertices: self.nav_mesh.vertices_capacity_bytes(),
+            nav_quads: self.nav_mesh.quads_capacity_bytes(),
+            nav_edges: self.nav_mesh.edges_capacity_bytes(),
+            gpu_fixed_textures: fixed_textures,
+            gpu_fixed_buffers: fixed_buffers,
+            gpu_vertex_live: usize::try_from(self.vertex_buf.size())
+                .expect("GPU vertex buffer size fits usize"),
+            gpu_vertex_retired: 0,
+            gpu_nav_target: nav_target,
+            gpu_retained_present: self.present_gate.retained_present_bytes(),
+            gpu_upload_scratch: self
+                .chrome_rgba
+                .capacity()
+                .saturating_add(self.minimap_rgba.capacity())
+                .saturating_add(self.overlay_coverage.capacity()),
+            context_cpu,
+            context_gpu,
+            scalar_state: std::mem::size_of::<Self>(),
+            ..RenderBytes::default()
+        }
+    }
+
     fn kind(&self) -> BackendKind {
         BackendKind::Gpu
     }
+}
+
+impl Drop for GpuBackend {
+    fn drop(&mut self) {
+        self.present_gate.retire();
+    }
+}
+/// Return the logical payload of a texture, independent of whether the
+/// optional native-allocation profiler is enabled.
+pub(super) fn logical_texture_bytes(texture: &wgpu::Texture) -> usize {
+    let bytes_per_block = u64::from(
+        texture
+            .format()
+            .block_copy_size(None)
+            .expect("GPU texture format has a known block size"),
+    );
+    let (block_width, block_height) = texture.format().block_dimensions();
+    let bytes = (0..texture.mip_level_count())
+        .try_fold(0u64, |total, mip| {
+            let width = u64::from((texture.width() >> mip).max(1).div_ceil(block_width));
+            let height = u64::from((texture.height() >> mip).max(1).div_ceil(block_height));
+            let layers = if texture.dimension() == wgpu::TextureDimension::D3 {
+                u64::from((texture.depth_or_array_layers() >> mip).max(1))
+            } else {
+                u64::from(texture.depth_or_array_layers())
+            };
+            total.checked_add(
+                width
+                    .checked_mul(height)?
+                    .checked_mul(layers)?
+                    .checked_mul(bytes_per_block)?
+                    .checked_mul(u64::from(texture.sample_count()))?,
+            )
+        })
+        .expect("GPU texture logical byte size fits u64");
+    usize::try_from(bytes).expect("GPU texture logical byte size fits usize")
 }
 
 /// Keep compositing the last 3D texture (no mesh rebuild). Matches Java
@@ -2586,6 +3060,10 @@ fn fill_minimap_rgba(map: &PixMap, bytes_per_row: u32, bytes: &mut Vec<u8>) {
 #[cfg(test)]
 #[path = "gpu_overlay_tests.rs"]
 mod overlay_tests;
+
+#[cfg(all(test, feature = "render-test-hooks"))]
+#[path = "gpu_retained_tests.rs"]
+mod retained_tests;
 
 #[cfg(test)]
 mod tests {

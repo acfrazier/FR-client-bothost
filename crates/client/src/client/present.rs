@@ -94,6 +94,9 @@ impl PresentTarget for WindowTarget {
     }
 
     fn present(&mut self, _frame: FrameOutput) {
+        if !_frame.is_fresh() {
+            return;
+        }
         self.frames += 1;
         #[cfg(feature = "window")]
         if let Some(window) = self.present.as_mut() {
@@ -107,8 +110,9 @@ impl PresentTarget for WindowTarget {
                     // never reads back; this is the window consumer's own
                     // copy.
                     let pixels = handle.read_back();
-                    window.blit(&pixels, handle.width, handle.height);
+                    window.blit(&pixels, handle.width(), handle.height());
                 }
+                FrameOutput::Refused(_) => {}
             }
         }
     }
@@ -141,7 +145,9 @@ impl PresentTarget for TexturesTarget {
     }
 
     fn present(&mut self, frame: FrameOutput) {
-        self.frame = Some(frame);
+        if frame.is_fresh() {
+            self.frame = Some(frame);
+        }
     }
 }
 

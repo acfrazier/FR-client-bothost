@@ -56,7 +56,7 @@ pub struct World {
     /// of one sprite object across every tile it spans. The render pass
     /// (`fill`) reads the same arena for the scene sprites.
     pub(crate) sprites: Vec<Option<Sprite>>,
-    free_dynamic_sprites: Vec<usize>,
+    pub(crate) free_dynamic_sprites: Vec<usize>,
     last_sprite: Option<usize>,
     pub(crate) dynamic_count: i32,
     /// Temporary render entity indices. Materialized on first draw use,
@@ -300,8 +300,15 @@ impl World {
             overlay, underlay,
         );
         tile.overlay_stamp = Some(Box::new(stamp));
-        if self.overlay_mesh {
+        if self.overlay_mesh
+            && !crate::render::fair::enabled()
+            && !crate::render::budget::RenderBudget::is_scoped()
+        {
             stamp.apply_to(tile);
+        } else if self.overlay_mesh {
+            // A host build records only inputs. Its render owner admits the
+            // complete mesh payload before the first materializing paint.
+            self.overlay_pending = true;
         }
     }
 
@@ -1016,6 +1023,41 @@ impl World {
         pending
     }
 
+    pub(crate) fn overlay_heap_allocations(&self, include_pending: bool) -> usize {
+        let mut allocations = 0usize;
+        for level in &self.squares {
+            for row in level {
+                for square in row {
+                    let mut cursor = square.as_deref();
+                    while let Some(tile) = cursor {
+                        if tile.ground.is_some()
+                            || (include_pending
+                                && tile.quick_ground.is_none()
+                                && tile.overlay_stamp.as_ref().is_some_and(|stamp| {
+                                    stamp.shape != crate::dash3d::TerrainOverlayShape::PLAIN
+                                        && stamp.shape
+                                            != crate::dash3d::TerrainOverlayShape::DIAGONAL
+                                }))
+                        {
+                            allocations = allocations.saturating_add(1);
+                        }
+                        cursor = tile.linked_square.as_deref();
+                    }
+                }
+            }
+        }
+        allocations
+    }
+
+    /// Actual render-only allocations kept on the simulation world's tiles.
+    /// The inline quick-ground and square storage already belong to the sim.
+    pub fn render_storage_bytes(&self) -> usize {
+        self.overlay_heap_allocations(false) * std::mem::size_of::<crate::dash3d::Ground>()
+            + self.dynamic_sprite_storage_bytes()
+            + self.free_dynamic_sprites.capacity() * std::mem::size_of::<usize>()
+            + self.sprites.capacity() * std::mem::size_of::<Option<Sprite>>()
+    }
+
     /// Materialize the render-only overlay meshes from the tile stamps
     /// (`Square.overlay_stamp`) an unheaded `set_ground` recorded, so an
     /// attached renderer paints the same overlay a headed build wrote.
@@ -1070,6 +1112,16 @@ impl World {
         }
         self.dynamic_count = 0;
         self.dynamic_sprites = Vec::new();
+        if crate::render::fair::enabled() {
+            self.free_dynamic_sprites = Vec::new();
+            let retained = self
+                .sprites
+                .iter()
+                .rposition(Option::is_some)
+                .map_or(0, |last| last + 1);
+            self.sprites.truncate(retained);
+            self.sprites.shrink_to_fit();
+        }
         self.overlay_pending = true;
         self.share_light_pending = true;
     }

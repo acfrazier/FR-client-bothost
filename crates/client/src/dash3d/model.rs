@@ -14,6 +14,8 @@
 // `Send`.
 use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::render::budget::{BudgetCharge, ByteBudget, RenderBudget, RenderLimit, RenderResource};
+
 use crate::dash3d::store::ModelStore as GeometryStore;
 use crate::dash3d::{AnimFrame, PointNormal};
 use crate::datastruct::linkable::{LinkableTrait, Links};
@@ -44,6 +46,41 @@ pub struct ModelMeta {
     face_label_offset: i32,
     face_texture_axis_offset: i32,
 }
+struct ModelCursor<'a> {
+    data: &'a [u8],
+    position: usize,
+}
+
+impl<'a> ModelCursor<'a> {
+    fn at(data: &'a [u8], position: usize) -> Self {
+        Self { data, position }
+    }
+
+    fn g1(&mut self) -> i32 {
+        assert!(self.position < self.data.len());
+        let value = self.data[self.position] as i32;
+        self.position += 1;
+        value
+    }
+
+    fn g2(&mut self) -> i32 {
+        assert!(self
+            .position
+            .checked_add(2)
+            .is_some_and(|end| end <= self.data.len()));
+        let value = u16::from_be_bytes([self.data[self.position], self.data[self.position + 1]]);
+        self.position += 2;
+        i32::from(value)
+    }
+
+    fn gsmarts(&mut self) -> i32 {
+        if self.data[self.position] < 0x80 {
+            self.g1() - 0x40
+        } else {
+            self.g2() - 0xc000
+        }
+    }
+}
 
 pub struct ModelStore {
     pub meta: Vec<Option<ModelMeta>>,
@@ -69,7 +106,6 @@ fn store() -> &'static Mutex<ModelStore> {
     })
 }
 
-#[derive(Clone)]
 pub struct Model {
     pub links: Links,
 
@@ -118,6 +154,7 @@ pub struct Model {
     pub radius: i32,
     pub max_depth: i32,
     pub min_depth: i32,
+    render_charge: OnceLock<Mutex<BudgetCharge>>,
 }
 
 impl Default for Model {
@@ -161,6 +198,53 @@ impl Default for Model {
             radius: 0,
             max_depth: 0,
             min_depth: 0,
+            render_charge: OnceLock::new(),
+        }
+    }
+}
+
+impl Clone for Model {
+    fn clone(&self) -> Self {
+        Self {
+            links: self.links.clone(),
+            num_points: self.num_points,
+            point_x: self.point_x.clone(),
+            point_y: self.point_y.clone(),
+            point_z: self.point_z.clone(),
+            num_faces: self.num_faces,
+            face_vertex_a: self.face_vertex_a.clone(),
+            face_vertex_b: self.face_vertex_b.clone(),
+            face_vertex_c: self.face_vertex_c.clone(),
+            face_render_type: self.face_render_type.clone(),
+            face_priority: self.face_priority.clone(),
+            face_alpha: self.face_alpha.clone(),
+            face_colour: self.face_colour.clone(),
+            priority: self.priority,
+            num_t: self.num_t,
+            face_texture_p: self.face_texture_p.clone(),
+            face_texture_m: self.face_texture_m.clone(),
+            face_texture_n: self.face_texture_n.clone(),
+            vertex_label: self.vertex_label.clone(),
+            face_label: self.face_label.clone(),
+            label_vertices: self.label_vertices.clone(),
+            label_faces: self.label_faces.clone(),
+            point_normal: self.point_normal.clone(),
+            shared_point_normal: self.shared_point_normal.clone(),
+            max_y: self.max_y,
+            min_x: self.min_x,
+            max_x: self.max_x,
+            min_z: self.min_z,
+            max_z: self.max_z,
+            min_y: self.min_y,
+            obj_raise: self.obj_raise,
+            face_colour_a: self.face_colour_a.clone(),
+            face_colour_b: self.face_colour_b.clone(),
+            face_colour_c: self.face_colour_c.clone(),
+            use_aabb_mouse_check: self.use_aabb_mouse_check,
+            radius: self.radius,
+            max_depth: self.max_depth,
+            min_depth: self.min_depth,
+            render_charge: OnceLock::new(),
         }
     }
 }
@@ -178,6 +262,583 @@ impl LinkableTrait for Model {
 }
 
 impl Model {
+    fn byte_total_add(total: &mut usize, count: usize, element_size: usize) -> Option<()> {
+        *total = total.checked_add(count.checked_mul(element_size)?)?;
+        Some(())
+    }
+
+    fn add_optional_vec_bytes<T>(
+        total: &mut usize,
+        values: Option<&Vec<T>>,
+        use_capacity: bool,
+    ) -> Option<()> {
+        if let Some(values) = values {
+            let count = if use_capacity {
+                values.capacity()
+            } else {
+                values.len()
+            };
+            Self::byte_total_add(total, count, std::mem::size_of::<T>())?;
+        }
+        Some(())
+    }
+
+    fn add_nested_vec_bytes(
+        total: &mut usize,
+        values: Option<&Vec<Option<Vec<i32>>>>,
+        use_capacity: bool,
+    ) -> Option<()> {
+        let Some(values) = values else {
+            return Some(());
+        };
+        let outer_count = if use_capacity {
+            values.capacity()
+        } else {
+            values.len()
+        };
+        Self::byte_total_add(total, outer_count, std::mem::size_of::<Option<Vec<i32>>>())?;
+        for inner in values.iter().flatten() {
+            let inner_count = if use_capacity {
+                inner.capacity()
+            } else {
+                inner.len()
+            };
+            Self::byte_total_add(total, inner_count, std::mem::size_of::<i32>())?;
+        }
+        Some(())
+    }
+
+    fn checked_retained_bytes(&self, use_capacity: bool) -> Option<usize> {
+        let mut total = std::mem::size_of::<Self>();
+        Self::add_optional_vec_bytes(&mut total, self.point_x.as_ref(), use_capacity)?;
+        Self::add_optional_vec_bytes(&mut total, self.point_y.as_ref(), use_capacity)?;
+        Self::add_optional_vec_bytes(&mut total, self.point_z.as_ref(), use_capacity)?;
+        Self::add_optional_vec_bytes(&mut total, self.face_vertex_a.as_ref(), use_capacity)?;
+        Self::add_optional_vec_bytes(&mut total, self.face_vertex_b.as_ref(), use_capacity)?;
+        Self::add_optional_vec_bytes(&mut total, self.face_vertex_c.as_ref(), use_capacity)?;
+        Self::add_optional_vec_bytes(&mut total, self.face_render_type.as_ref(), use_capacity)?;
+        Self::add_optional_vec_bytes(&mut total, self.face_priority.as_ref(), use_capacity)?;
+        Self::add_optional_vec_bytes(&mut total, self.face_alpha.as_ref(), use_capacity)?;
+        Self::add_optional_vec_bytes(&mut total, self.face_colour.as_ref(), use_capacity)?;
+        Self::add_optional_vec_bytes(&mut total, self.face_texture_p.as_ref(), use_capacity)?;
+        Self::add_optional_vec_bytes(&mut total, self.face_texture_m.as_ref(), use_capacity)?;
+        Self::add_optional_vec_bytes(&mut total, self.face_texture_n.as_ref(), use_capacity)?;
+        Self::add_optional_vec_bytes(&mut total, self.vertex_label.as_ref(), use_capacity)?;
+        Self::add_optional_vec_bytes(&mut total, self.face_label.as_ref(), use_capacity)?;
+        Self::add_nested_vec_bytes(&mut total, self.label_vertices.as_ref(), use_capacity)?;
+        Self::add_nested_vec_bytes(&mut total, self.label_faces.as_ref(), use_capacity)?;
+        Self::add_optional_vec_bytes(&mut total, self.point_normal.as_ref(), use_capacity)?;
+        Self::add_optional_vec_bytes(&mut total, self.shared_point_normal.as_ref(), use_capacity)?;
+        Self::add_optional_vec_bytes(&mut total, self.face_colour_a.as_ref(), use_capacity)?;
+        Self::add_optional_vec_bytes(&mut total, self.face_colour_b.as_ref(), use_capacity)?;
+        Self::add_optional_vec_bytes(&mut total, self.face_colour_c.as_ref(), use_capacity)?;
+        Some(total)
+    }
+
+    /// Logical retained storage, including the Model value and every nested
+    /// vector capacity. Overflow saturates so a subsequent budget request
+    /// fails closed.
+    pub fn retained_bytes(&self) -> usize {
+        self.checked_retained_bytes(true).unwrap_or(usize::MAX)
+    }
+
+    fn shared_allocation_bytes(model_bytes: usize) -> Option<usize> {
+        model_bytes.checked_add(2usize.checked_mul(std::mem::size_of::<usize>())?)
+    }
+
+    pub(crate) fn shared_bytes_for_model(model: &Self) -> Option<usize> {
+        Self::shared_allocation_bytes(model.checked_retained_bytes(true)?)
+    }
+
+    fn checked_decoded_bytes(meta: &ModelMeta) -> Option<usize> {
+        let points = usize::try_from(meta.num_points).ok()?;
+        let faces = usize::try_from(meta.num_faces).ok()?;
+        let textures = usize::try_from(meta.num_t).ok()?;
+        let mut total = std::mem::size_of::<Self>();
+        Self::byte_total_add(&mut total, points, 3 * std::mem::size_of::<i32>())?;
+        Self::byte_total_add(&mut total, faces, 4 * std::mem::size_of::<i32>())?;
+        Self::byte_total_add(&mut total, textures, 3 * std::mem::size_of::<i32>())?;
+        if meta.vertex_label_offset >= 0 {
+            Self::byte_total_add(&mut total, points, std::mem::size_of::<i32>())?;
+        }
+        if meta.face_render_type_offset >= 0 {
+            Self::byte_total_add(&mut total, faces, std::mem::size_of::<i32>())?;
+        }
+        if meta.face_priority_offset >= 0 {
+            Self::byte_total_add(&mut total, faces, std::mem::size_of::<i32>())?;
+        }
+        if meta.face_alpha_offset >= 0 {
+            Self::byte_total_add(&mut total, faces, std::mem::size_of::<i32>())?;
+        }
+        if meta.face_label_offset >= 0 {
+            Self::byte_total_add(&mut total, faces, std::mem::size_of::<i32>())?;
+        }
+        Self::shared_allocation_bytes(total)
+    }
+
+    fn render_error_for_overflow(budget: &ByteBudget) -> RenderLimit {
+        RenderLimit::new(budget.resource(), usize::MAX, budget.maximum())
+    }
+
+    fn set_render_charge(&self, charge: BudgetCharge) -> Result<(), BudgetCharge> {
+        self.render_charge
+            .set(Mutex::new(charge))
+            .map_err(|charge| {
+                charge
+                    .into_inner()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+            })
+    }
+
+    pub(crate) fn has_render_charge_for(&self, budget: &ByteBudget) -> bool {
+        self.render_charge.get().is_some_and(|charge| {
+            charge
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .belongs_to(budget)
+        })
+    }
+
+    fn has_render_charge(&self) -> bool {
+        self.render_charge.get().is_some()
+    }
+
+    fn resize_render_charge(&self, budget: &ByteBudget, bytes: usize) -> Result<(), RenderLimit> {
+        if let Some(charge) = self.render_charge.get() {
+            let mut charge = charge
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !charge.belongs_to(budget) {
+                return Err(Self::render_error_for_overflow(budget));
+            }
+            charge.resize(bytes)
+        } else {
+            self.set_render_charge(budget.reserve(bytes)?)
+                .unwrap_or_else(|_| panic!("fresh model already had a render charge"));
+            Ok(())
+        }
+    }
+
+    /// Clone this complete model only after its nested payload has been
+    /// admitted. The clone owns an independent charge.
+    pub fn try_clone_for_render(&self, budget: &ByteBudget) -> Result<Model, RenderLimit> {
+        let bytes = self
+            .checked_retained_bytes(false)
+            .ok_or_else(|| Self::render_error_for_overflow(budget))?;
+        let charge = budget.reserve(bytes)?;
+        let cloned = self.clone();
+        cloned
+            .set_render_charge(charge)
+            .unwrap_or_else(|_| panic!("fresh render clone already had a charge"));
+        Ok(cloned)
+    }
+    fn add_default_vec_bytes<T>(
+        bytes: &mut usize,
+        values: Option<&Vec<T>>,
+        default_len: usize,
+    ) -> Option<()> {
+        let len = values.map_or(default_len, Vec::len);
+        Self::byte_total_add(bytes, len, std::mem::size_of::<T>())
+    }
+
+    fn checked_copy_for_anim_bytes(src: &Self) -> Option<usize> {
+        let mut bytes = std::mem::size_of::<Self>();
+        for values in [&src.point_x, &src.point_y, &src.point_z, &src.face_colour] {
+            Self::add_default_vec_bytes(&mut bytes, values.as_ref(), 0)?;
+        }
+        Self::add_default_vec_bytes(
+            &mut bytes,
+            src.face_alpha.as_ref(),
+            usize::try_from(src.num_faces).ok()?,
+        )?;
+        for values in [
+            &src.vertex_label,
+            &src.face_label,
+            &src.face_render_type,
+            &src.face_vertex_a,
+            &src.face_vertex_b,
+            &src.face_vertex_c,
+            &src.face_priority,
+            &src.face_texture_p,
+            &src.face_texture_m,
+            &src.face_texture_n,
+        ] {
+            Self::add_optional_vec_bytes(&mut bytes, values.as_ref(), false)?;
+        }
+        Some(bytes)
+    }
+
+    pub fn try_copy_for_anim(
+        src: &Model,
+        share_colours: bool,
+        share_alpha: bool,
+        share_vertices: bool,
+        budget: &ByteBudget,
+    ) -> Result<Model, RenderLimit> {
+        let bytes = Self::checked_copy_for_anim_bytes(src)
+            .ok_or_else(|| Self::render_error_for_overflow(budget))?;
+        let charge = budget.reserve(bytes)?;
+        let copied = Self::copy_for_anim(src, share_colours, share_alpha, share_vertices);
+        copied
+            .set_render_charge(charge)
+            .unwrap_or_else(|_| panic!("fresh animation copy already had a charge"));
+        Ok(copied)
+    }
+
+    fn checked_hill_skew_copy_bytes(
+        src: &Self,
+        _copy_vertex_y: bool,
+        copy_faces: bool,
+    ) -> Option<usize> {
+        let mut bytes = std::mem::size_of::<Self>();
+        Self::add_optional_vec_bytes(&mut bytes, src.point_y.as_ref(), false)?;
+        for values in [&src.point_x, &src.point_z] {
+            Self::add_optional_vec_bytes(&mut bytes, values.as_ref(), false)?;
+        }
+        if copy_faces {
+            for values in [&src.face_colour_a, &src.face_colour_b, &src.face_colour_c] {
+                Self::add_default_vec_bytes(&mut bytes, values.as_ref(), 0)?;
+            }
+            Self::add_default_vec_bytes(
+                &mut bytes,
+                src.face_render_type.as_ref(),
+                usize::try_from(src.num_faces).ok()?,
+            )?;
+            Self::add_default_vec_bytes(
+                &mut bytes,
+                src.point_normal.as_ref(),
+                usize::try_from(src.num_points).ok()?,
+            )?;
+            Self::add_optional_vec_bytes(&mut bytes, src.shared_point_normal.as_ref(), false)?;
+        } else {
+            for values in [
+                &src.face_colour_a,
+                &src.face_colour_b,
+                &src.face_colour_c,
+                &src.face_render_type,
+            ] {
+                Self::add_optional_vec_bytes(&mut bytes, values.as_ref(), false)?;
+            }
+        }
+        for values in [
+            &src.face_colour,
+            &src.face_alpha,
+            &src.face_priority,
+            &src.face_vertex_a,
+            &src.face_vertex_b,
+            &src.face_vertex_c,
+            &src.face_texture_p,
+            &src.face_texture_m,
+            &src.face_texture_n,
+        ] {
+            Self::add_optional_vec_bytes(&mut bytes, values.as_ref(), false)?;
+        }
+        Some(bytes)
+    }
+
+    pub fn try_hill_skew_copy(
+        src: &Model,
+        copy_vertex_y: bool,
+        copy_faces: bool,
+        budget: &ByteBudget,
+    ) -> Result<Model, RenderLimit> {
+        let bytes = Self::checked_hill_skew_copy_bytes(src, copy_vertex_y, copy_faces)
+            .ok_or_else(|| Self::render_error_for_overflow(budget))?;
+        let charge = budget.reserve(bytes)?;
+        let copied = Self::hill_skew_copy(src, copy_vertex_y, copy_faces);
+        copied
+            .set_render_charge(charge)
+            .unwrap_or_else(|_| panic!("fresh hill-skew copy already had a charge"));
+        Ok(copied)
+    }
+
+    fn checked_set_bytes(src: &Self) -> Option<usize> {
+        let mut bytes = std::mem::size_of::<Self>();
+        for values in [
+            &src.point_x,
+            &src.point_y,
+            &src.point_z,
+            &src.face_render_type,
+            &src.face_colour,
+            &src.face_priority,
+            &src.face_vertex_a,
+            &src.face_vertex_b,
+            &src.face_vertex_c,
+            &src.face_colour_a,
+            &src.face_colour_b,
+            &src.face_colour_c,
+            &src.face_texture_p,
+            &src.face_texture_m,
+            &src.face_texture_n,
+        ] {
+            Self::add_optional_vec_bytes(&mut bytes, values.as_ref(), false)?;
+        }
+        Self::add_default_vec_bytes(
+            &mut bytes,
+            src.face_alpha.as_ref(),
+            usize::try_from(src.num_faces).ok()?,
+        )?;
+        Self::add_nested_vec_bytes(&mut bytes, src.label_faces.as_ref(), false)?;
+        Self::add_nested_vec_bytes(&mut bytes, src.label_vertices.as_ref(), false)?;
+        Some(bytes)
+    }
+
+    /// Set a fresh temporary model after charging its copied geometry and
+    /// nested animation labels before allocation.
+    pub fn try_set_for_render(
+        &mut self,
+        src: &Model,
+        share_alpha: bool,
+        budget: &ByteBudget,
+    ) -> Result<(), RenderLimit> {
+        let new_bytes =
+            Self::checked_set_bytes(src).ok_or_else(|| Self::render_error_for_overflow(budget))?;
+        let model_size = std::mem::size_of::<Self>();
+        let old_bytes = self
+            .checked_retained_bytes(true)
+            .ok_or_else(|| Self::render_error_for_overflow(budget))?;
+        let old_payload = old_bytes
+            .checked_sub(model_size)
+            .ok_or_else(|| Self::render_error_for_overflow(budget))?;
+        let new_payload = new_bytes
+            .checked_sub(model_size)
+            .ok_or_else(|| Self::render_error_for_overflow(budget))?;
+        let peak = model_size
+            .checked_add(old_payload)
+            .and_then(|bytes| bytes.checked_add(new_payload))
+            .ok_or_else(|| Self::render_error_for_overflow(budget))?;
+        self.resize_render_charge(budget, peak)?;
+        self.set(src, share_alpha);
+        self.resize_render_charge(budget, self.retained_bytes())
+    }
+
+    /// Load a shared decoded model under a byte ceiling. Decoding is charged
+    /// from metadata before any geometry allocation; only store-only entries
+    /// are eligible for LRU eviction.
+    pub fn try_load_shared_for_render(
+        id: i32,
+        budget: &ByteBudget,
+    ) -> Result<Option<Arc<Model>>, RenderLimit> {
+        let mut shared_store = GeometryStore::instance()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(model) = shared_store.find_model(id) {
+            crate::render::store::prepare_render_model_slot(
+                &mut shared_store,
+                budget,
+                id,
+                Some(&model),
+            )?;
+            if model.has_render_charge_for(budget) {
+                crate::render::store::track_render_model(id, &model);
+                return Ok(Some(model));
+            }
+            if model.has_render_charge() {
+                return Err(Self::render_error_for_overflow(budget));
+            }
+            let bytes = Self::shared_bytes_for_model(&model)
+                .ok_or_else(|| Self::render_error_for_overflow(budget))?;
+            let charge =
+                crate::render::store::reserve_shared_bytes(&mut shared_store, budget, bytes)?;
+            model
+                .set_render_charge(charge)
+                .unwrap_or_else(|_| panic!("cached model charge raced while store is locked"));
+            crate::render::store::track_render_model(id, &model);
+            return Ok(Some(model));
+        }
+
+        let estimated = {
+            let metadata = store().lock().unwrap_or_else(|error| error.into_inner());
+            let Some(meta) = metadata.meta.get(id as usize).and_then(Option::as_ref) else {
+                return Ok(None);
+            };
+            if meta.src.is_none() {
+                return Ok(None);
+            }
+            Self::checked_decoded_bytes(meta)
+                .ok_or_else(|| Self::render_error_for_overflow(budget))?
+        };
+        crate::render::store::prepare_render_model_slot(&mut shared_store, budget, id, None)?;
+        let charge =
+            crate::render::store::reserve_shared_bytes(&mut shared_store, budget, estimated)?;
+        let Some(model) = Self::load_raw_with_charge(id, charge) else {
+            return Ok(None);
+        };
+        let shared = shared_store.publish_model(id, model);
+        crate::render::store::track_render_model(id, &shared);
+        Ok(Some(shared))
+    }
+
+    /// Load an independently owned render model, charging both the process
+    /// shared decode and this caller's clone. A scoped budget separates the
+    /// two owners; an unscoped explicit call uses the supplied budget for both.
+    pub fn try_load_for_render(id: i32, budget: &ByteBudget) -> Result<Option<Model>, RenderLimit> {
+        let shared_budget = RenderBudget::current_resource(RenderResource::SharedModels)
+            .unwrap_or_else(|| budget.clone());
+        let Some(shared) = Self::try_load_shared_for_render(id, &shared_budget)? else {
+            return Ok(None);
+        };
+        Self::try_clone_for_render(&shared, budget).map(Some)
+    }
+
+    /// Move a charged model into shared Arc ownership, including the Arc
+    /// allocation header in the same resource charge.
+    pub fn try_into_arc_for_render(
+        mut self,
+        budget: &ByteBudget,
+    ) -> Result<Arc<Model>, RenderLimit> {
+        let arc_header = 2usize
+            .checked_mul(std::mem::size_of::<usize>())
+            .ok_or_else(|| Self::render_error_for_overflow(budget))?;
+        let bytes = self
+            .checked_retained_bytes(true)
+            .and_then(|bytes| bytes.checked_add(arc_header))
+            .ok_or_else(|| Self::render_error_for_overflow(budget))?;
+        self.resize_render_charge(budget, bytes)?;
+        Ok(Arc::new(self))
+    }
+
+    fn load_raw_with_charge(id: i32, charge: BudgetCharge) -> Option<Model> {
+        let mut state = store().lock().unwrap_or_else(|error| error.into_inner());
+        let has_source = state
+            .meta
+            .get(id as usize)
+            .and_then(Option::as_ref)
+            .and_then(|meta| meta.src.as_ref())
+            .is_some();
+        if !has_source {
+            return None;
+        }
+        state.loaded += 1;
+        let meta = state.meta.get(id as usize)?.as_ref()?;
+        let model = Self::decode(meta);
+        model
+            .set_render_charge(charge)
+            .unwrap_or_else(|_| panic!("fresh decoded model already had a charge"));
+        Some(model)
+    }
+
+    fn checked_combine_for_anim_bytes(
+        models: &[Option<Model>],
+        count: usize,
+    ) -> Option<(usize, i32, i32, i32)> {
+        let mut points = 0usize;
+        let mut faces = 0usize;
+        let mut textures = 0usize;
+        let mut copy_render_type = false;
+        let mut copy_priority = false;
+        let mut copy_alpha = false;
+        let mut copy_labels = false;
+        let mut priority = -1;
+        for model in models.iter().take(count).flatten() {
+            points = points.checked_add(usize::try_from(model.num_points).ok()?)?;
+            faces = faces.checked_add(usize::try_from(model.num_faces).ok()?)?;
+            textures = textures.checked_add(usize::try_from(model.num_t).ok()?)?;
+            copy_render_type |= model.face_render_type.is_some();
+            if model.face_priority.is_none() {
+                if priority == -1 {
+                    priority = model.priority;
+                }
+                copy_priority |= priority != model.priority;
+            } else {
+                copy_priority = true;
+            }
+            copy_alpha |= model.face_alpha.is_some();
+            copy_labels |= model.face_label.is_some();
+        }
+        if points > i32::MAX as usize || faces > i32::MAX as usize || textures > i32::MAX as usize {
+            return None;
+        }
+        let mut bytes = std::mem::size_of::<Self>();
+        Self::byte_total_add(&mut bytes, points, 4 * std::mem::size_of::<i32>())?;
+        Self::byte_total_add(&mut bytes, faces, 4 * std::mem::size_of::<i32>())?;
+        Self::byte_total_add(&mut bytes, textures, 3 * std::mem::size_of::<i32>())?;
+        if copy_render_type {
+            Self::byte_total_add(&mut bytes, faces, std::mem::size_of::<i32>())?;
+        }
+        if copy_priority {
+            Self::byte_total_add(&mut bytes, faces, std::mem::size_of::<i32>())?;
+        }
+        if copy_alpha {
+            Self::byte_total_add(&mut bytes, faces, std::mem::size_of::<i32>())?;
+        }
+        if copy_labels {
+            Self::byte_total_add(&mut bytes, faces, std::mem::size_of::<i32>())?;
+        }
+        Some((bytes, points as i32, faces as i32, textures as i32))
+    }
+
+    /// Merge animation parts only after checking the full output geometry.
+    pub fn try_combine_for_anim(
+        models: &[Option<Model>],
+        count: usize,
+        budget: &ByteBudget,
+    ) -> Result<Model, RenderLimit> {
+        let (bytes, _, _, _) = Self::checked_combine_for_anim_bytes(models, count)
+            .ok_or_else(|| Self::render_error_for_overflow(budget))?;
+        let charge = budget.reserve(bytes)?;
+        let combined = Self::combine_for_anim(models, count);
+        combined
+            .set_render_charge(charge)
+            .unwrap_or_else(|_| panic!("fresh combined model already had a charge"));
+        Ok(combined)
+    }
+    fn checked_combine_bytes(models: &[Model], count: usize) -> Option<usize> {
+        let mut points = 0usize;
+        let mut faces = 0usize;
+        let mut textures = 0usize;
+        let mut copy_render_type = false;
+        let mut copy_priority = false;
+        let mut copy_alpha = false;
+        let mut copy_colour = false;
+        let mut priority = -1;
+        for model in models.iter().take(count) {
+            points = points.checked_add(usize::try_from(model.num_points).ok()?)?;
+            faces = faces.checked_add(usize::try_from(model.num_faces).ok()?)?;
+            textures = textures.checked_add(usize::try_from(model.num_t).ok()?)?;
+            copy_render_type |= model.face_render_type.is_some();
+            if model.face_priority.is_none() {
+                if priority == -1 {
+                    priority = model.priority;
+                }
+                copy_priority |= priority != model.priority;
+            } else {
+                copy_priority = true;
+            }
+            copy_alpha |= model.face_alpha.is_some();
+            copy_colour |= model.face_colour.is_some();
+        }
+        if points > i32::MAX as usize || faces > i32::MAX as usize || textures > i32::MAX as usize {
+            return None;
+        }
+        let mut bytes = std::mem::size_of::<Self>();
+        Self::byte_total_add(&mut bytes, points, 3 * std::mem::size_of::<i32>())?;
+        Self::byte_total_add(&mut bytes, faces, 6 * std::mem::size_of::<i32>())?;
+        Self::byte_total_add(&mut bytes, textures, 3 * std::mem::size_of::<i32>())?;
+        for include in [copy_render_type, copy_priority, copy_alpha, copy_colour] {
+            if include {
+                Self::byte_total_add(&mut bytes, faces, std::mem::size_of::<i32>())?;
+            }
+        }
+        Some(bytes)
+    }
+
+    /// Merge lit geometry only after admitting the full output allocation.
+    pub fn try_combine(
+        models: &[Model],
+        count: usize,
+        budget: &ByteBudget,
+    ) -> Result<Model, RenderLimit> {
+        let bytes = Self::checked_combine_bytes(models, count)
+            .ok_or_else(|| Self::render_error_for_overflow(budget))?;
+        let charge = budget.reserve(bytes)?;
+        let combined = Self::combine(models, count);
+        combined
+            .set_render_charge(charge)
+            .unwrap_or_else(|_| panic!("fresh combined model already had a charge"));
+        Ok(combined)
+    }
+
     /// `Model.init(total, provider)` from client-ts.
     ///
     /// Grow-only: a second client must not throw away unpacked `meta` (the
@@ -204,6 +865,7 @@ impl Model {
             s.loaded = 0;
         }
         GeometryStore::instance().lock().unwrap().clear();
+        crate::render::store::reset_render_model_index();
     }
 
     /// `Model.unpack(id, src)` from client-ts; parses the 18-byte trailer and
@@ -351,7 +1013,8 @@ impl Model {
                 s.meta[id as usize] = None;
             }
         }
-        GeometryStore::instance().lock().unwrap().remove_model(id);
+        let mut geometry = GeometryStore::instance().lock().unwrap();
+        geometry.remove_model(id);
     }
 
     /// `Model.load(id)` from client-ts; decodes the model once its metadata
@@ -447,16 +1110,11 @@ impl Model {
         }
         model.face_colour = Some(vec![0; meta.num_faces as usize]);
 
-        let mut point1 = Packet::new(src.to_vec());
-        point1.pos = meta.vertex_order_offset as usize;
-        let mut point2 = Packet::new(src.to_vec());
-        point2.pos = meta.vertex_x_offset as usize;
-        let mut point3 = Packet::new(src.to_vec());
-        point3.pos = meta.vertex_y_offset as usize;
-        let mut point4 = Packet::new(src.to_vec());
-        point4.pos = meta.vertex_z_offset as usize;
-        let mut point5 = Packet::new(src.to_vec());
-        point5.pos = meta.vertex_label_offset.max(0) as usize;
+        let mut point1 = ModelCursor::at(src, meta.vertex_order_offset as usize);
+        let mut point2 = ModelCursor::at(src, meta.vertex_x_offset as usize);
+        let mut point3 = ModelCursor::at(src, meta.vertex_y_offset as usize);
+        let mut point4 = ModelCursor::at(src, meta.vertex_z_offset as usize);
+        let mut point5 = ModelCursor::at(src, meta.vertex_label_offset.max(0) as usize);
 
         let mut dx = 0;
         let mut dy = 0;
@@ -495,16 +1153,11 @@ impl Model {
             }
         }
 
-        let mut face1 = Packet::new(src.to_vec());
-        face1.pos = meta.face_colour_offset as usize;
-        let mut face2 = Packet::new(src.to_vec());
-        face2.pos = meta.face_render_type_offset.max(0) as usize;
-        let mut face3 = Packet::new(src.to_vec());
-        face3.pos = meta.face_priority_offset.max(0) as usize;
-        let mut face4 = Packet::new(src.to_vec());
-        face4.pos = meta.face_alpha_offset.max(0) as usize;
-        let mut face5 = Packet::new(src.to_vec());
-        face5.pos = meta.face_label_offset.max(0) as usize;
+        let mut face1 = ModelCursor::at(src, meta.face_colour_offset as usize);
+        let mut face2 = ModelCursor::at(src, meta.face_render_type_offset.max(0) as usize);
+        let mut face3 = ModelCursor::at(src, meta.face_priority_offset.max(0) as usize);
+        let mut face4 = ModelCursor::at(src, meta.face_alpha_offset.max(0) as usize);
+        let mut face5 = ModelCursor::at(src, meta.face_label_offset.max(0) as usize);
 
         for f in 0..meta.num_faces as usize {
             model.face_colour.as_mut().unwrap()[f] = face1.g2();
@@ -522,10 +1175,8 @@ impl Model {
             }
         }
 
-        let mut vertex1 = Packet::new(src.to_vec());
-        vertex1.pos = meta.face_index_offset as usize;
-        let mut vertex2 = Packet::new(src.to_vec());
-        vertex2.pos = meta.face_index_order_offset as usize;
+        let mut vertex1 = ModelCursor::at(src, meta.face_index_offset as usize);
+        let mut vertex2 = ModelCursor::at(src, meta.face_index_order_offset as usize);
 
         let mut a = 0;
         let mut b = 0;
@@ -560,8 +1211,7 @@ impl Model {
         }
 
         if meta.num_t > 0 {
-            let mut axis = Packet::new(src.to_vec());
-            axis.pos = meta.face_texture_axis_offset as usize;
+            let mut axis = ModelCursor::at(src, meta.face_texture_axis_offset as usize);
             for f in 0..meta.num_t as usize {
                 model.face_texture_p.as_mut().unwrap()[f] = axis.g2();
                 model.face_texture_m.as_mut().unwrap()[f] = axis.g2();
@@ -1136,6 +1786,39 @@ impl Model {
 
     /// `prepareAnim()` from client-ts; builds the label tables used by
     /// `animate`/`maskAnimate`.
+    fn checked_label_table_bytes(labels: Option<&Vec<i32>>) -> Option<usize> {
+        let Some(labels) = labels else {
+            return Some(0);
+        };
+        let max_label = labels.iter().copied().max().unwrap_or(0);
+        let outer_count = usize::try_from(max_label).ok()?.checked_add(1)?;
+        let mut bytes = 0usize;
+        Self::byte_total_add(
+            &mut bytes,
+            outer_count,
+            std::mem::size_of::<Option<Vec<i32>>>(),
+        )?;
+        Self::byte_total_add(&mut bytes, labels.len(), std::mem::size_of::<i32>())?;
+        Some(bytes)
+    }
+
+    pub fn try_prepare_anim_for_render(&mut self, budget: &ByteBudget) -> Result<(), RenderLimit> {
+        let vertex_bytes = Self::checked_label_table_bytes(self.vertex_label.as_ref())
+            .ok_or_else(|| Self::render_error_for_overflow(budget))?;
+        let face_bytes = Self::checked_label_table_bytes(self.face_label.as_ref())
+            .ok_or_else(|| Self::render_error_for_overflow(budget))?;
+        let current_bytes = self
+            .checked_retained_bytes(true)
+            .ok_or_else(|| Self::render_error_for_overflow(budget))?;
+        let peak = current_bytes
+            .checked_add(vertex_bytes)
+            .and_then(|bytes| bytes.checked_add(face_bytes))
+            .ok_or_else(|| Self::render_error_for_overflow(budget))?;
+        self.resize_render_charge(budget, peak)?;
+        self.prepare_anim();
+        self.resize_render_charge(budget, self.retained_bytes())
+    }
+
     pub fn prepare_anim(&mut self) {
         if let Some(vl) = self.vertex_label.take() {
             let mut label_vertex_count = [0i32; 256];
@@ -1586,6 +2269,72 @@ impl Model {
 
     /// `calculateNormals(ambient, contrast, x, y, z, doNotShareLight)` from
     /// client-ts.
+    fn checked_calculate_normals_peak_bytes(&self, do_not_share_light: bool) -> Option<usize> {
+        let mut running = self.checked_retained_bytes(true)?;
+        let mut peak = running;
+        let faces = usize::try_from(self.num_faces).ok()?;
+        let points = usize::try_from(self.num_points).ok()?;
+        let colour_bytes = faces.checked_mul(std::mem::size_of::<i32>())?;
+        if self.face_colour_a.is_none()
+            || self.face_colour_b.is_none()
+            || self.face_colour_c.is_none()
+        {
+            for old in [
+                self.face_colour_a.as_ref(),
+                self.face_colour_b.as_ref(),
+                self.face_colour_c.as_ref(),
+            ] {
+                let old_bytes = if let Some(values) = old {
+                    values.capacity().checked_mul(std::mem::size_of::<i32>())?
+                } else {
+                    0
+                };
+                let allocated = running.checked_add(colour_bytes)?;
+                peak = peak.max(allocated);
+                running = allocated.checked_sub(old_bytes)?;
+            }
+        }
+        let new_normal_bytes = points.checked_mul(std::mem::size_of::<Option<PointNormal>>())?;
+        if self.point_normal.is_none() {
+            running = running.checked_add(new_normal_bytes)?;
+            peak = peak.max(running);
+        }
+        if !do_not_share_light {
+            let old_shared_bytes = if let Some(values) = &self.shared_point_normal {
+                values
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<Option<PointNormal>>())?
+            } else {
+                0
+            };
+            let cloned_normal_count = self.point_normal.as_ref().map_or(points, Vec::len);
+            let cloned_normal_bytes =
+                cloned_normal_count.checked_mul(std::mem::size_of::<Option<PointNormal>>())?;
+            let allocated = running.checked_add(cloned_normal_bytes)?;
+            peak = peak.max(allocated);
+            let _final_running = allocated.checked_sub(old_shared_bytes)?;
+        }
+        Some(peak)
+    }
+
+    pub fn try_calculate_normals_for_render(
+        &mut self,
+        ambient: i32,
+        contrast: i32,
+        x: i32,
+        y: i32,
+        z: i32,
+        do_not_share_light: bool,
+        budget: &ByteBudget,
+    ) -> Result<(), RenderLimit> {
+        let peak = self
+            .checked_calculate_normals_peak_bytes(do_not_share_light)
+            .ok_or_else(|| Self::render_error_for_overflow(budget))?;
+        self.resize_render_charge(budget, peak)?;
+        self.calculate_normals(ambient, contrast, x, y, z, do_not_share_light);
+        self.resize_render_charge(budget, self.retained_bytes())
+    }
+
     pub fn calculate_normals(
         &mut self,
         ambient: i32,
@@ -2018,7 +2767,7 @@ impl Model {
         relative_y: i32,
         relative_z: i32,
         typecode: i32,
-    ) {
+    ) -> Result<(), RenderLimit> {
         let z_prime = (relative_z
             .wrapping_mul(cos_eye_yaw)
             .wrapping_sub(relative_x.wrapping_mul(sin_eye_yaw)))
@@ -2033,7 +2782,7 @@ impl Model {
         if max_z <= 50 || mid_z >= 3500 {
             #[cfg(feature = "render-diagnostics")]
             crate::render::diagnostics::paint(typecode, "near-plane", mid_z, max_z);
-            return;
+            return Ok(());
         }
 
         let mid_x = (relative_z
@@ -2044,14 +2793,14 @@ impl Model {
         if left_x.wrapping_div(max_z) >= surface.max_x {
             #[cfg(feature = "render-diagnostics")]
             crate::render::diagnostics::paint(typecode, "frustum-left", mid_z, max_z);
-            return;
+            return Ok(());
         }
 
         let mut right_x = (mid_x + self.radius) << 9;
         if right_x.wrapping_div(max_z) <= -surface.max_x {
             #[cfg(feature = "render-diagnostics")]
             crate::render::diagnostics::paint(typecode, "frustum-right", mid_z, max_z);
-            return;
+            return Ok(());
         }
 
         let mid_y = relative_y
@@ -2064,7 +2813,7 @@ impl Model {
         if bottom_y.wrapping_div(max_z) <= -surface.max_y {
             #[cfg(feature = "render-diagnostics")]
             crate::render::diagnostics::paint(typecode, "frustum-bottom", mid_z, max_z);
-            return;
+            return Ok(());
         }
 
         let y_prime = radius_sin_eye_pitch + ((self.min_y.wrapping_mul(cos_eye_pitch)) >> 16);
@@ -2072,7 +2821,7 @@ impl Model {
         if top_y.wrapping_div(max_z) >= surface.max_y {
             #[cfg(feature = "render-diagnostics")]
             crate::render::diagnostics::paint(typecode, "frustum-top", mid_z, max_z);
-            return;
+            return Ok(());
         }
 
         let radius_z = radius_cos_eye_pitch + ((self.min_y.wrapping_mul(sin_eye_pitch)) >> 16);
@@ -2129,7 +2878,7 @@ impl Model {
         let (Some(point_x), Some(point_y), Some(point_z)) =
             (&self.point_x, &self.point_y, &self.point_z)
         else {
-            return;
+            return Ok(());
         };
 
         for v in 0..self.num_points as usize {
@@ -2207,7 +2956,8 @@ impl Model {
             }
         }
 
-        self.render2(pix, surface, clipped, picking, typecode);
+        self.render2(pix, surface, clipped, picking, typecode)?;
+        Ok(())
     }
 
     /// `Model.render2(clipped, picking, typecode)` from client-ts: bucket the
@@ -2221,7 +2971,7 @@ impl Model {
         clipped: bool,
         mut picking: bool,
         typecode: i32,
-    ) {
+    ) -> Result<(), RenderLimit> {
         for depth in 0..self.max_depth as usize {
             if let Some(count) = pix.model_scratch.tmp_depth_face_count.get_mut(depth) {
                 *count = 0;
@@ -2233,7 +2983,7 @@ impl Model {
             &self.face_vertex_b,
             &self.face_vertex_c,
         ) else {
-            return;
+            return Ok(());
         };
 
         for f in 0..self.num_faces as usize {
@@ -2370,11 +3120,11 @@ impl Model {
                         .get(base + i)
                         .copied()
                         .unwrap_or(0) as usize;
-                    self.render3(pix, surface, face);
+                    self.render3(pix, surface, face)?;
                 }
             }
 
-            return;
+            return Ok(());
         }
 
         for priority in 0..12 {
@@ -2563,7 +3313,7 @@ impl Model {
                     &mut priority_face_count,
                     &mut on_11,
                     &mut priority_depth,
-                );
+                )?;
             }
 
             while priority == 3 && priority_depth > average_priority_depth_sum3_4 {
@@ -2574,7 +3324,7 @@ impl Model {
                     &mut priority_face_count,
                     &mut on_11,
                     &mut priority_depth,
-                );
+                )?;
             }
 
             while priority == 5 && priority_depth > average_priority_depth_sum6_8 {
@@ -2585,7 +3335,7 @@ impl Model {
                     &mut priority_face_count,
                     &mut on_11,
                     &mut priority_depth,
-                );
+                )?;
             }
 
             let count = pix
@@ -2603,7 +3353,7 @@ impl Model {
                         .get(base + i)
                         .copied()
                         .unwrap_or(0) as usize;
-                    self.render3(pix, surface, face);
+                    self.render3(pix, surface, face)?;
                 }
             }
         }
@@ -2616,8 +3366,9 @@ impl Model {
                 &mut priority_face_count,
                 &mut on_11,
                 &mut priority_depth,
-            );
+            )?;
         }
+        Ok(())
     }
 
     /// One `render3` step of the render2 priority merge: draw
@@ -2635,7 +3386,7 @@ impl Model {
         priority_face_count: &mut i32,
         on_11: &mut bool,
         priority_depth: &mut i32,
-    ) {
+    ) -> Result<(), RenderLimit> {
         let index = *priority_face;
         *priority_face += 1;
         // Past the 2000-slot row the TS read is `undefined` and render3
@@ -2648,7 +3399,7 @@ impl Model {
                 .get((if *on_11 { 11 } else { 10 }) * 2000 + index)
                 .copied()
                 .unwrap_or(0) as usize;
-            self.render3(pix, surface, face);
+            self.render3(pix, surface, face)?;
         }
 
         let (new_face, new_count, new_on_11, new_depth) =
@@ -2657,6 +3408,7 @@ impl Model {
         *priority_face_count = new_count;
         *on_11 = new_on_11;
         *priority_depth = new_depth;
+        Ok(())
     }
 
     /// TS `Model.tmpPriorityFaceCount[10|11]` rollover + the
@@ -2710,10 +3462,15 @@ impl Model {
     /// `faceRenderType & 0x3` to gouraud/flat/texture. Missing colour or
     /// texture arrays skip the face (the TS `!` asserts would throw and be
     /// swallowed by `render2`'s try/catch).
-    fn render3(&self, pix: &mut Pix3DDraw, surface: &mut Pix2D, face: usize) {
+    fn render3(
+        &self,
+        pix: &mut Pix3DDraw,
+        surface: &mut Pix2D,
+        face: usize,
+    ) -> Result<(), RenderLimit> {
         if pix.capture.is_some() {
-            self.capture_face(pix, face);
-            return;
+            self.capture_face(pix, face)?;
+            return Ok(());
         }
         if pix
             .model_scratch
@@ -2723,7 +3480,7 @@ impl Model {
             .unwrap_or(false)
         {
             self.render3_z_clip(pix, surface, face);
-            return;
+            return Ok(());
         }
 
         let (Some(face_vertex_a), Some(face_vertex_b), Some(face_vertex_c)) = (
@@ -2731,14 +3488,14 @@ impl Model {
             &self.face_vertex_b,
             &self.face_vertex_c,
         ) else {
-            return;
+            return Ok(());
         };
         let (Some(&a), Some(&b), Some(&c)) = (
             face_vertex_a.get(face),
             face_vertex_b.get(face),
             face_vertex_c.get(face),
         ) else {
-            return;
+            return Ok(());
         };
         let (a, b, c) = (a as usize, b as usize, c as usize);
 
@@ -2772,14 +3529,14 @@ impl Model {
                 &self.face_colour_b,
                 &self.face_colour_c,
             ) else {
-                return;
+                return Ok(());
             };
             let (Some(&shade_a), Some(&shade_b), Some(&shade_c)) = (
                 face_colour_a.get(face),
                 face_colour_b.get(face),
                 face_colour_c.get(face),
             ) else {
-                return;
+                return Ok(());
             };
             self.render_triangle(
                 pix,
@@ -2820,14 +3577,14 @@ impl Model {
                 &self.face_colour_b,
                 &self.face_colour_c,
             ) else {
-                return;
+                return Ok(());
             };
             let (Some(&shade_a), Some(&shade_b), Some(&shade_c)) = (
                 face_colour_a.get(face),
                 face_colour_b.get(face),
                 face_colour_c.get(face),
             ) else {
-                return;
+                return Ok(());
             };
             self.render_triangle(
                 pix,
@@ -2846,6 +3603,7 @@ impl Model {
                 shade_c,
             );
         }
+        Ok(())
     }
 
     /// The wgpu capture of one `render3` face: the face's view-space
@@ -2853,27 +3611,28 @@ impl Model {
     /// go to the scene mesh at this point of the painter order. The
     /// near-plane clip and its winding test happen in the capture, the
     /// way `render3ZClip` does them for the rasterizer.
-    fn capture_face(&self, pix: &mut Pix3DDraw, face: usize) {
+    fn capture_face(&self, pix: &mut Pix3DDraw, face: usize) -> Result<(), RenderLimit> {
         let (Some(face_vertex_a), Some(face_vertex_b), Some(face_vertex_c)) = (
             &self.face_vertex_a,
             &self.face_vertex_b,
             &self.face_vertex_c,
         ) else {
-            return;
+            return Ok(());
         };
         let (Some(&a), Some(&b), Some(&c)) = (
             face_vertex_a.get(face),
             face_vertex_b.get(face),
             face_vertex_c.get(face),
         ) else {
-            return;
+            return Ok(());
         };
         let view = [
             Self::vertex_view_space(pix, a as usize),
             Self::vertex_view_space(pix, b as usize),
             Self::vertex_view_space(pix, c as usize),
         ];
-        crate::render::world::capture_model_face(self, face, [a, b, c], view, pix);
+        crate::render::world::capture_model_face(self, face, [a, b, c], view, pix)?;
+        Ok(())
     }
 
     /// Shared face raster used by `render3` and `render3ZClip`: dispatch on
@@ -3387,5 +4146,135 @@ impl Model {
         } else {
             true
         }
+    }
+}
+#[cfg(test)]
+mod render_budget_tests {
+    use super::*;
+    use crate::dash3d::store::tests::CACHE_LOCK;
+    use crate::render::budget::{ByteBudget, RenderResource};
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    const MODEL_BYTES: &[u8] = &[
+        7, 7, 7, 1, 0x40, 0x41, 0x41, 0x00, 0xFF, 0x40, 0x68, 0x18, 0x68, 0x40, 0x18, 0x40, 0x40,
+        0x40, 0, 3, 0, 1, 0, 0, 0, 0, 0, 0, 0, 3, 0, 3, 0, 3, 0, 3,
+    ];
+
+    fn expect_limit<T>(result: Result<T, RenderLimit>) -> RenderLimit {
+        match result {
+            Err(error) => error,
+            Ok(_) => panic!("expected the render byte budget to reject the operation"),
+        }
+    }
+
+    #[test]
+    fn render_budget_rejects_before_model_decode_clone_or_merge_allocation() {
+        let _guard = CACHE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        Model::reset_for_tests();
+        Model::unpack(0, Some(MODEL_BYTES));
+
+        let measurement_budget = ByteBudget::new(RenderResource::SharedModels, usize::MAX);
+        let measured = Model::try_load_shared_for_render(0, &measurement_budget)
+            .unwrap()
+            .unwrap();
+        let shared_bytes = measured
+            .retained_bytes()
+            .checked_add(2 * std::mem::size_of::<usize>())
+            .unwrap();
+        let index_bytes = measurement_budget
+            .live()
+            .checked_sub(shared_bytes)
+            .expect("shared model and LRU index are both charged");
+        assert!(index_bytes > 0);
+        drop(measured);
+        Model::reset_for_tests();
+        assert_eq!(measurement_budget.live(), 0);
+
+        Model::unpack(0, Some(MODEL_BYTES));
+        let limit = index_bytes.checked_add(shared_bytes).unwrap() - 1;
+        let decode_budget = ByteBudget::new(RenderResource::SharedModels, limit);
+        let error = expect_limit(Model::try_load_shared_for_render(0, &decode_budget));
+        assert_eq!(error.resource(), RenderResource::SharedModels);
+        assert_eq!(decode_budget.live(), index_bytes);
+        assert_eq!(store().lock().unwrap().loaded, 0);
+        assert_eq!(
+            GeometryStore::instance()
+                .lock()
+                .unwrap()
+                .model_load_count(0),
+            0
+        );
+        Model::reset_for_tests();
+        assert_eq!(decode_budget.live(), 0);
+
+        Model::unpack(1, Some(MODEL_BYTES));
+        let source = Model::load(1).unwrap();
+        let loaded_before = store().lock().unwrap().loaded;
+        let clone_budget = ByteBudget::new(RenderResource::TempModels, 0);
+        let error = expect_limit(source.try_clone_for_render(&clone_budget));
+        assert_eq!(error.resource(), RenderResource::TempModels);
+        assert_eq!(clone_budget.live(), 0);
+
+        let models = [Some(source.clone())];
+        let merge_budget = ByteBudget::new(RenderResource::TempModels, 0);
+        let error = expect_limit(Model::try_combine_for_anim(&models, 1, &merge_budget));
+        assert_eq!(error.resource(), RenderResource::TempModels);
+        assert_eq!(merge_budget.live(), 0);
+        assert_eq!(store().lock().unwrap().loaded, loaded_before);
+        Model::reset_for_tests();
+    }
+
+    #[test]
+    fn model_render_charge_recovers_on_drop_and_unwind() {
+        let _guard = CACHE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        Model::reset_for_tests();
+        Model::unpack(0, Some(MODEL_BYTES));
+        let source = Model::load(0).unwrap();
+        let limit = source.retained_bytes().checked_mul(2).unwrap();
+        let budget = ByteBudget::new(RenderResource::TempModels, limit);
+
+        let cloned = source.try_clone_for_render(&budget).unwrap();
+        assert!(budget.live() > 0);
+        drop(cloned);
+        assert_eq!(budget.live(), 0);
+
+        let unwind = catch_unwind(AssertUnwindSafe(|| {
+            let _cloned = source.try_clone_for_render(&budget).unwrap();
+            panic!("release the model charge during unwind");
+        }));
+        assert!(unwind.is_err());
+        assert_eq!(budget.live(), 0);
+        Model::reset_for_tests();
+    }
+
+    #[test]
+    fn model_retained_bytes_include_nested_label_capacities() {
+        let mut vertices = Vec::with_capacity(3);
+        vertices.push(Some(Vec::with_capacity(5)));
+        vertices.push(None);
+        vertices[0].as_mut().unwrap().extend([1, 2, 3]);
+
+        let mut faces = Vec::with_capacity(2);
+        faces.push(Some(Vec::with_capacity(4)));
+        faces[0].as_mut().unwrap().extend([4, 5]);
+
+        let vertex_bytes = vertices.capacity() * std::mem::size_of::<Option<Vec<i32>>>()
+            + vertices
+                .iter()
+                .flatten()
+                .map(|label| label.capacity() * std::mem::size_of::<i32>())
+                .sum::<usize>();
+        let face_bytes = faces.capacity() * std::mem::size_of::<Option<Vec<i32>>>()
+            + faces
+                .iter()
+                .flatten()
+                .map(|label| label.capacity() * std::mem::size_of::<i32>())
+                .sum::<usize>();
+        let mut model = Model::default();
+        model.label_vertices = Some(vertices);
+        model.label_faces = Some(faces);
+
+        let expected = std::mem::size_of::<Model>() + vertex_bytes + face_bytes;
+        assert_eq!(model.retained_bytes(), expected);
     }
 }

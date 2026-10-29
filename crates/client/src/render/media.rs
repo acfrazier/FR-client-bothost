@@ -11,6 +11,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use crate::graphics::{Pix2D, Pix32, Pix8, PixFont, PixMap};
 use crate::io::JagFile;
 
+type MediaCell = Mutex<Option<(String, Arc<Media>)>>;
+// Census must inspect these cells without forcing a first media allocation.
+static PROCESS_MEDIA: OnceLock<MediaCell> = OnceLock::new();
+static EMPTY_MEDIA: OnceLock<Arc<Media>> = OnceLock::new();
+
 /// The process-wide fonts + static media sprites, depacked once from the
 /// first cache dir that drew a frame. Everything here is immutable after
 /// `depack`; the per-head mutable render state (`area_game`, `minimap`,
@@ -100,6 +105,123 @@ pub struct Media {
 }
 
 impl Media {
+    /// Actual immutable payload capacities. The Arc allocation is a process
+    /// owner; a renderer only holds a pointer to it.
+    pub(crate) fn retained_storage_bytes(&self) -> usize {
+        use crate::render::budget::vec_capacity_bytes as bytes;
+        let pixels32 = [
+            &self.title_dat,
+            &self.title_dat_flipped,
+            &self.logo,
+            &self.compass,
+            &self.mapedge,
+            &self.mapmarker1,
+            &self.mapmarker2,
+            &self.mapdots1,
+            &self.mapdots2,
+            &self.mapdots3,
+            &self.mapdots4,
+        ]
+        .into_iter()
+        .chain(&self.cross)
+        .chain(&self.hitmarks)
+        .chain(&self.headicons)
+        .chain(&self.mapfunction)
+        .flatten()
+        .map(|pix| bytes(&pix.data))
+        .sum::<usize>();
+        let pixels8 = [
+            &self.titlebox,
+            &self.titlebutton,
+            &self.invback,
+            &self.chatback,
+            &self.backbase1,
+            &self.backbase2,
+            &self.backhmid1,
+            &self.scrollbar1,
+            &self.scrollbar2,
+            &self.redstone1,
+            &self.redstone2,
+            &self.redstone3,
+            &self.redstone1h,
+            &self.redstone2h,
+            &self.redstone1v,
+            &self.redstone2v,
+            &self.redstone3v,
+            &self.redstone1hv,
+            &self.redstone2hv,
+            &self.mapback,
+        ]
+        .into_iter()
+        .chain(&self.sideicons)
+        .chain(&self.mod_icons)
+        .chain(&self.mapscene)
+        .flatten()
+        .chain(&self.runes)
+        .map(|pix| bytes(&pix.data) + bytes(&pix.bpal))
+        .sum::<usize>();
+        let surfaces = [
+            &self.area_backleft1,
+            &self.area_backleft2,
+            &self.area_backright1,
+            &self.area_backright2,
+            &self.area_backtop1,
+            &self.area_backvmid1,
+            &self.area_backvmid2,
+            &self.area_backvmid3,
+            &self.area_backhmid2,
+        ]
+        .into_iter()
+        .flatten()
+        .map(|pix| bytes(&pix.pixels))
+        .sum::<usize>();
+        let fonts = [&self.p11, &self.p12, &self.b12, &self.q8]
+            .into_iter()
+            .flatten()
+            .map(|font| bytes(&font.char_mask) + font.char_mask.iter().map(bytes).sum::<usize>())
+            .sum::<usize>();
+        std::mem::size_of::<Self>()
+            + 2 * std::mem::size_of::<usize>()
+            + pixels32
+            + pixels8
+            + surfaces
+            + fonts
+            + bytes(&self.runes)
+            + bytes(&self.mapscene)
+            + bytes(&self.mapfunction)
+    }
+
+    /// Process retention can outlive every head. This accessor does not
+    /// initialize or decode media, and remains usable after detach.
+    pub fn process_storage_bytes() -> usize {
+        Self::process_storage_bytes_with(None)
+    }
+
+    pub(crate) fn retained_process_storage_bytes(&self) -> usize {
+        Self::process_storage_bytes_with(Some(self))
+    }
+
+    fn process_storage_bytes_with(extra: Option<&Self>) -> usize {
+        let empty = EMPTY_MEDIA.get();
+        let mut counted_extra = extra
+            .is_some_and(|extra| empty.is_some_and(|media| std::ptr::eq(media.as_ref(), extra)));
+        let mut total = empty.map_or(0, |media| media.retained_storage_bytes());
+        if let Some(cell) = PROCESS_MEDIA.get() {
+            let guard = cell.lock().unwrap_or_else(|error| error.into_inner());
+            if let Some((dir, media)) = guard.as_ref() {
+                total += dir.capacity();
+                counted_extra |= extra.is_some_and(|extra| std::ptr::eq(media.as_ref(), extra));
+                if empty.is_none_or(|empty| !Arc::ptr_eq(empty, media)) {
+                    total += media.retained_storage_bytes();
+                }
+            }
+        }
+        if let Some(extra) = extra.filter(|_| !counted_extra) {
+            total += extra.retained_storage_bytes();
+        }
+        total
+    }
+
     /// All `None`/empty: the placeholder renderers hold before the first
     /// frame depacked the real copy (a never-drawn renderer must not hold
     /// a per-head heap copy).
@@ -163,8 +285,7 @@ impl Media {
     /// The shared empty placeholder (process-wide): a renderer that never
     /// drew shares it instead of owning a private copy.
     pub fn shared_empty() -> Arc<Media> {
-        static EMPTY: OnceLock<Arc<Media>> = OnceLock::new();
-        EMPTY.get_or_init(|| Arc::new(Media::empty())).clone()
+        EMPTY_MEDIA.get_or_init(|| Arc::new(Media::empty())).clone()
     }
 
     /// The process copy, keyed by cache dir: the first head to draw on a
@@ -174,9 +295,7 @@ impl Media {
     /// temp dirs) gets its own copy per dir instead of poisoning the
     /// shared cell with the first dir's decode.
     pub fn process(cache_dir: &str) -> Arc<Media> {
-        type MediaCell = Mutex<Option<(String, Arc<Media>)>>;
-        static MEDIA: OnceLock<MediaCell> = OnceLock::new();
-        let cell = MEDIA.get_or_init(|| Mutex::new(None));
+        let cell = PROCESS_MEDIA.get_or_init(|| Mutex::new(None));
         let mut guard = cell.lock().unwrap();
         if let Some((dir, media)) = &*guard {
             if dir == cache_dir {

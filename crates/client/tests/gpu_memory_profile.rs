@@ -12,12 +12,12 @@ fn atlas_payload_growth_and_drop_are_counted_once() {
     };
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
     let before = client::profiling::gpu_bytes();
-    let mut atlas = GpuAtlas::new(&device, "profile test", (16, 16), 64, 0);
+    let mut atlas = GpuAtlas::new(&device, "profile test", (16, 16), 64, 0).unwrap();
     assert_eq!(
         client::profiling::gpu_bytes().textures - before.textures,
         16 * 16 * 4
     );
-    assert!(atlas.alloc(&device, &queue, 16, 32).is_some());
+    assert!(atlas.alloc(&device, &queue, 16, 32).unwrap().is_some());
     assert_eq!(
         client::profiling::gpu_bytes().textures - before.textures,
         16 * 32 * 4

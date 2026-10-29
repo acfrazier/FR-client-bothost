@@ -1,8 +1,28 @@
 // Port of `~/experiments/Server/webclient/src/config/IdkType.ts` plus the
 // model methods (Task 15; they consume the `dash3d` `Model` loader).
 use crate::dash3d::Model;
+use crate::render::budget::{ByteBudget, RenderLimit};
+
 use crate::io::{JagFile, Packet};
 
+#[cfg(feature = "render-test-hooks")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RenderTestIdkLayout {
+    pub type_bytes: usize,
+    pub model_ids_field_bytes: usize,
+    pub head_slots: usize,
+    pub model_value_bytes: usize,
+}
+
+#[cfg(feature = "render-test-hooks")]
+pub fn render_test_layout() -> RenderTestIdkLayout {
+    RenderTestIdkLayout {
+        type_bytes: std::mem::size_of::<IdkType>(),
+        model_ids_field_bytes: std::mem::size_of::<Option<Vec<i32>>>(),
+        head_slots: std::mem::size_of::<[i32; 5]>() / std::mem::size_of::<i32>(),
+        model_value_bytes: std::mem::size_of::<Model>(),
+    }
+}
 pub struct IdkType {
     pub part: i32,
     pub model: Option<Vec<i32>>,
@@ -103,6 +123,53 @@ impl IdkType {
             }
         }
         Some(model)
+    }
+
+    pub fn try_get_model_no_check_for_render(
+        &self,
+        budget: &ByteBudget,
+    ) -> Result<Option<Model>, RenderLimit> {
+        let Some(ids) = self.model.as_deref() else {
+            return Ok(None);
+        };
+        let (loaded, _loaded_charge) =
+            crate::dash3d::model_source::try_load_models_for_render(ids, budget)?;
+        let mut model = if ids.len() == 1 {
+            loaded.into_iter().next().flatten()
+        } else {
+            Some(Model::try_combine_for_anim(&loaded, loaded.len(), budget)?)
+        };
+        if let Some(model) = model.as_mut() {
+            for i in 0..6 {
+                if self.recol_s[i] != 0 {
+                    model.recolour(self.recol_s[i], self.recol_d[i]);
+                }
+            }
+        }
+        Ok(model)
+    }
+
+    pub fn try_get_head_no_check_for_render(
+        &self,
+        budget: &ByteBudget,
+    ) -> Result<Option<Model>, RenderLimit> {
+        let mut ids = [0i32; 5];
+        let mut count = 0;
+        for &id in &self.head {
+            if id != -1 {
+                ids[count] = id;
+                count += 1;
+            }
+        }
+        let (loaded, _loaded_charge) =
+            crate::dash3d::model_source::try_load_models_for_render(&ids[..count], budget)?;
+        let mut model = Model::try_combine_for_anim(&loaded, loaded.len(), budget)?;
+        for i in 0..6 {
+            if self.recol_s[i] != 0 {
+                model.recolour(self.recol_s[i], self.recol_d[i]);
+            }
+        }
+        Ok(Some(model))
     }
 
     /// `checkHead()` from client-ts.

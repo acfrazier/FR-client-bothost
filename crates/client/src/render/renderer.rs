@@ -13,7 +13,6 @@
 //! state it draws into, and `game_draw`/`title_screen_draw` delegate to
 //! the `backend` field.
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -21,8 +20,10 @@ use crate::client::client::Client;
 use crate::dash3d::BuildArea;
 use crate::graphics::{Pix32, Pix3D, Pix3DDraw, Pix8, PixMap};
 use crate::render::backend::{
-    BackendKind, CpuBackend, FrameKind, FrameOutput, GpuBackend, RenderBackend, SceneProgress,
+    BackendKind, CpuBackend, FrameKind, FrameOutput, GpuBackend, RenderBackend, RenderFault,
+    SceneProgress,
 };
+use crate::render::budget::{BudgetCharge, RenderBudget, RenderBytes, RenderLimit, RenderResource};
 use crate::render::media::Media;
 use crate::render::world::RenderWorld;
 use crate::util::JavaRandom;
@@ -133,7 +134,7 @@ pub struct Renderer {
     /// `graphic2_name`. Filled lazily from `{cache_dir}/media` by
     /// `draw_interface`; a failed depack caches as `None` so a missing
     /// sprite does not re-read the jag every draw.
-    pub graphic_sprites: HashMap<(String, i32), Option<Pix32>>,
+    pub(crate) graphic_sprites: crate::render::graphic_sprites::GraphicSpriteCache,
     /// Minimap state (`Client.ts` `minimapDraw` 11279): the composed map
     /// buffer (the compass/mapedge/mapdot/mapmarker sprites and `mapback`
     /// ring are the shared `Media::*`) and the per-row scanline masks
@@ -167,6 +168,200 @@ pub struct Renderer {
     /// which a live borrow of `self.backend` would conflict with. The
     /// guard puts it back on drop, so a stage panic cannot leave it `None`.
     backend: Option<Box<dyn RenderBackend>>,
+    last_frame_fault: Option<RenderFault>,
+    chat_charge: Option<BudgetCharge>,
+}
+
+#[cfg(feature = "render-test-hooks")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RenderTestRendererLayout {
+    pub scalar_state_bytes: usize,
+    pub cpu_surface_bytes: usize,
+    pub game_surface_bytes: usize,
+    pub title_surface_bytes: usize,
+    pub pix3d_game_bytes: usize,
+    pub texture_buffer_bytes: usize,
+    pub tile_occupancy_bytes: usize,
+    pub minimap_bytes: usize,
+    pub minimap_mask_bytes: usize,
+    pub active_map_function_slots: usize,
+    pub active_map_function_bytes: usize,
+    pub active_map_function_payload_bytes: usize,
+    pub image_runes_bytes: usize,
+    pub title_icon_bytes: usize,
+    pub title_flames_bytes: usize,
+    pub chat_slots: usize,
+    pub chat_text_capacity_bytes: usize,
+    pub max_chat_message_bytes: usize,
+}
+
+#[cfg(feature = "render-test-hooks")]
+pub fn render_test_content_layout(
+    media: &Media,
+    textures: Option<&crate::io::JagFile>,
+) -> Option<RenderTestRendererLayout> {
+    use crate::render::budget::vec_capacity_bytes;
+
+    fn pixmap_bytes(width: i32, height: i32) -> Option<usize> {
+        let map = PixMap::new(width, height);
+        map.pixels
+            .capacity()
+            .checked_mul(std::mem::size_of::<i32>())
+    }
+
+    fn pix8_bytes(sprite: &Pix8) -> Option<usize> {
+        sprite.data.capacity().checked_add(
+            sprite
+                .bpal
+                .capacity()
+                .checked_mul(std::mem::size_of::<i32>())?,
+        )
+    }
+
+    let applet_bytes = pixmap_bytes(
+        crate::client::client::APPLET_W,
+        crate::client::client::APPLET_H,
+    )?;
+    let game_dimensions = [
+        (512, 334),
+        (172, 156),
+        (190, 261),
+        (479, 96),
+        (496, 50),
+        (269, 37),
+        (249, 45),
+    ];
+    let game_surface_bytes = game_dimensions
+        .into_iter()
+        .map(|(width, height)| pixmap_bytes(width, height))
+        .try_fold(0usize, |total, bytes| total.checked_add(bytes?))?;
+    let title_dimensions = [
+        (128, 265),
+        (128, 265),
+        (509, 171),
+        (360, 132),
+        (360, 200),
+        (202, 238),
+        (203, 238),
+        (74, 94),
+        (75, 94),
+    ];
+    let title_surface_bytes = title_dimensions
+        .into_iter()
+        .map(|(width, height)| pixmap_bytes(width, height))
+        .try_fold(0usize, |total, bytes| total.checked_add(bytes?))?;
+
+    let mut pix3d = Pix3DDraw::default();
+    if let Some(textures) = textures {
+        pix3d.unpack_textures(textures);
+    }
+    pix3d.set_clipping(512, 334);
+    pix3d.init_pool(20);
+    pix3d.init_texture_palettes(0.8);
+    let pix3d_game_bytes = pix3d.retained_storage_bytes();
+
+    let texture_buffer_bytes = vec_capacity_bytes(&vec![0i8; 128 * 128]);
+    let tile_occupancy_bytes =
+        vec_capacity_bytes(&vec![0i32; (BuildArea::SIZE * BuildArea::SIZE) as usize]);
+    let minimap_bytes = vec_capacity_bytes(&Pix32::new(512, 512).data);
+    let minimap_mask_bytes = [
+        vec_capacity_bytes(&vec![0i32; 33]),
+        vec_capacity_bytes(&vec![0i32; 33]),
+        vec_capacity_bytes(&vec![0i32; 151]),
+        vec_capacity_bytes(&vec![0i32; 151]),
+    ]
+    .into_iter()
+    .try_fold(0usize, usize::checked_add)?;
+    let active_map_function_slots = 1000;
+    let active_map_function_bytes = active_map_function_slots
+        .checked_mul(std::mem::size_of::<Option<Pix32>>())?
+        .checked_add(
+            active_map_function_slots
+                .checked_mul(std::mem::size_of::<i32>())?
+                .checked_mul(2)?,
+        )?;
+    let active_map_function_payload_bytes = active_map_function_slots.checked_mul(
+        media
+            .mapfunction
+            .iter()
+            .flatten()
+            .map(|sprite| vec_capacity_bytes(&sprite.data))
+            .max()
+            .unwrap_or(0),
+    )?;
+
+    let image_runes_bytes = vec_capacity_bytes(&media.runes).checked_add(
+        media
+            .runes
+            .iter()
+            .map(pix8_bytes)
+            .try_fold(0usize, |total, bytes| total.checked_add(bytes?))?,
+    )?;
+    let title_icon_bytes = [&media.titlebox, &media.titlebutton]
+        .into_iter()
+        .flatten()
+        .map(pix8_bytes)
+        .try_fold(0usize, |total, bytes| total.checked_add(bytes?))?;
+    let title_left = PixMap::new(128, 265);
+    let title_right = PixMap::new(128, 265);
+    let mut title_flames = crate::client::title_flames::TitleFlames::new(media.runes.clone());
+    title_flames.setup_fire(&title_left, &title_right);
+    let title_flames_bytes = title_flames.retained_storage_bytes();
+    let max_chat_message_bytes = crate::io::Packet::render_test_capacities()
+        .into_iter()
+        .max()?;
+    let mut chat = String::new();
+    chat.try_reserve_exact(max_chat_message_bytes).ok()?;
+    let chat_text_capacity_bytes = 50usize.checked_mul(chat.capacity())?;
+
+    Some(RenderTestRendererLayout {
+        scalar_state_bytes: std::mem::size_of::<Renderer>() + std::mem::size_of::<CpuBackend>(),
+        cpu_surface_bytes: applet_bytes.checked_add(game_surface_bytes.max(title_surface_bytes))?,
+        game_surface_bytes,
+        title_surface_bytes,
+        pix3d_game_bytes,
+        texture_buffer_bytes,
+        tile_occupancy_bytes,
+        minimap_bytes,
+        minimap_mask_bytes,
+        active_map_function_slots,
+        active_map_function_bytes,
+        active_map_function_payload_bytes,
+        image_runes_bytes,
+        title_icon_bytes,
+        title_flames_bytes,
+        chat_slots: 50,
+        chat_text_capacity_bytes,
+        max_chat_message_bytes,
+    })
+}
+
+#[cfg(feature = "render-test-hooks")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RenderTestGraphicSpriteLayout {
+    pub unique_keys: usize,
+    pub entry_bytes: usize,
+    pub key_bytes: usize,
+    pub sprite_pixel_bytes: usize,
+    pub retained_bytes: usize,
+    pub temp_models_peak_bytes: usize,
+}
+
+#[cfg(feature = "render-test-hooks")]
+pub fn render_test_graphic_sprite_layout(
+    cache_dir: &str,
+    keys: &[(String, i32)],
+) -> Option<RenderTestGraphicSpriteLayout> {
+    let layout =
+        crate::render::graphic_sprites::render_test_scoped_content_layout(cache_dir, keys)?;
+    Some(RenderTestGraphicSpriteLayout {
+        unique_keys: layout.unique_keys,
+        entry_bytes: layout.entry_bytes,
+        key_bytes: layout.key_bytes,
+        sprite_pixel_bytes: layout.sprite_pixel_bytes,
+        retained_bytes: layout.retained_bytes,
+        temp_models_peak_bytes: layout.temp_models_peak_bytes,
+    })
 }
 
 /// Takes `Renderer::backend` out of the struct for the duration of a frame
@@ -257,7 +452,7 @@ impl Renderer {
             area_backbase1: None,
             area_backbase2: None,
             area_backhmid1: None,
-            graphic_sprites: HashMap::new(),
+            graphic_sprites: crate::render::graphic_sprites::GraphicSpriteCache::new(),
             minimap: Some(Pix32::new(512, 512)),
             compass_mask_line_offsets: Vec::new(),
             compass_mask_line_lengths: Vec::new(),
@@ -272,6 +467,8 @@ impl Renderer {
             cyclelogic3: 0,
             media: Media::shared_empty(),
             backend: None,
+            last_frame_fault: None,
+            chat_charge: None,
         };
         Pix3D::init_colour_table(0.8);
         renderer.pix3d.low_mem = lowmem;
@@ -317,6 +514,13 @@ impl Renderer {
     }
     /// Scene progress and validity from the backend for the current paint.
     pub fn scene_progress(&self) -> SceneProgress {
+        if self.last_frame_fault.is_some() {
+            return if self.has_valid_scene() {
+                SceneProgress::Retained
+            } else {
+                SceneProgress::NoScene
+            };
+        }
         self.backend
             .as_deref()
             .map(RenderBackend::scene_progress)
@@ -327,6 +531,142 @@ impl Renderer {
         self.backend
             .as_deref()
             .is_some_and(RenderBackend::has_valid_scene)
+    }
+
+    /// Fault from the last paint, even when a recovered CPU frame is usable.
+    pub fn render_fault(&self) -> Option<RenderFault> {
+        self.last_frame_fault
+    }
+
+    /// Allocations owned only by the CPU clean-scene retention buffer.
+    pub fn retained_storage_allocations(&self) -> u64 {
+        self.backend
+            .as_deref()
+            .map_or(0, RenderBackend::retained_storage_allocations)
+    }
+
+    pub fn retained_storage_bytes(&self) -> usize {
+        self.backend
+            .as_deref()
+            .map_or(0, RenderBackend::retained_storage_bytes)
+    }
+
+    /// Traverse actual capacities only when a diagnostic requests a census.
+    /// Shared process rows must be deduplicated by the caller, not summed for
+    /// every head. The slot adds its mailbox and retained nav input separately.
+    pub fn render_bytes(&self) -> RenderBytes {
+        use crate::render::budget::vec_capacity_bytes as bytes;
+        let mut sample = self
+            .backend
+            .as_deref()
+            .map_or_else(RenderBytes::default, RenderBackend::render_bytes);
+        let maps = [
+            &self.image_title0,
+            &self.image_title1,
+            &self.image_title2,
+            &self.image_title3,
+            &self.image_title4,
+            &self.image_title5,
+            &self.image_title6,
+            &self.image_title7,
+            &self.image_title8,
+            &self.area_game,
+            &self.area_map,
+            &self.area_side,
+            &self.area_chat,
+            &self.area_backbase1,
+            &self.area_backbase2,
+            &self.area_backhmid1,
+        ];
+        sample.cpu_surfaces = bytes(&self.draw_area.pixels)
+            + maps
+                .into_iter()
+                .flatten()
+                .map(|map| bytes(&map.pixels))
+                .sum::<usize>();
+        let (head_models, world_misc) = self.world.retained_render_bytes();
+        sample.head_models += head_models;
+        sample.head_misc += world_misc
+            + self.pix3d.retained_storage_bytes()
+            + bytes(&self.texture_buffer)
+            + bytes(&self.tile_last_occupied_cycle)
+            + bytes(&self.compass_mask_line_offsets)
+            + bytes(&self.compass_mask_line_lengths)
+            + bytes(&self.minimap_mask_line_offsets)
+            + bytes(&self.minimap_mask_line_lengths)
+            + bytes(&self.active_map_function_x)
+            + bytes(&self.active_map_function_z)
+            + bytes(&self.active_map_functions)
+            + self
+                .active_map_functions
+                .iter()
+                .flatten()
+                .map(|pix| bytes(&pix.data))
+                .sum::<usize>()
+            + self.minimap.as_ref().map_or(0, |pix| bytes(&pix.data))
+            + self.chats.iter().map(String::capacity).sum::<usize>()
+            + self.graphic_sprites.retained_bytes()
+            + bytes(&self.image_runes)
+            + self
+                .image_runes
+                .iter()
+                .map(|pix| bytes(&pix.data) + bytes(&pix.bpal))
+                .sum::<usize>()
+            + [&self.image_titlebox, &self.image_titlebutton]
+                .into_iter()
+                .flatten()
+                .map(|pix| bytes(&pix.data) + bytes(&pix.bpal))
+                .sum::<usize>()
+            + self
+                .title_flames
+                .as_ref()
+                .map_or(0, |flames| flames.retained_storage_bytes());
+        sample.capture += self
+            .pix3d
+            .capture
+            .as_ref()
+            .map_or(0, |capture| capture.retained_bytes());
+        let (shared_models, shared_sprites) = crate::render::store::shared_render_bytes();
+        sample.shared_models = shared_models;
+        sample.shared_sprites = shared_sprites;
+        sample.context_cpu += self.media.retained_process_storage_bytes();
+        sample.scalar_state += std::mem::size_of::<Self>();
+        sample
+    }
+
+    pub(crate) fn set_chat_message(
+        &mut self,
+        index: usize,
+        message: &str,
+    ) -> Result<(), RenderLimit> {
+        if let Some(budget) = RenderBudget::current_resource(RenderResource::HeadMisc) {
+            let old_total = self.chats.iter().map(String::capacity).sum::<usize>();
+            let charge = match self.chat_charge.as_mut() {
+                Some(charge) => {
+                    charge.resize(old_total)?;
+                    charge
+                }
+                None => self.chat_charge.insert(budget.reserve(old_total)?),
+            };
+            if message.len() > self.chats[index].capacity() {
+                let peak = old_total.checked_add(message.len()).ok_or_else(|| {
+                    RenderLimit::new(RenderResource::HeadMisc, usize::MAX, budget.maximum())
+                })?;
+                charge.resize(peak)?;
+                let mut replacement = String::with_capacity(message.len());
+                replacement.push_str(message);
+                let old = std::mem::replace(&mut self.chats[index], replacement);
+                let final_total = old_total - old.capacity() + self.chats[index].capacity();
+                drop(old);
+                charge
+                    .resize(final_total)
+                    .expect("chat replacement only releases reserved bytes");
+                return Ok(());
+            }
+        }
+        self.chats[index].clear();
+        self.chats[index].push_str(message);
+        Ok(())
     }
 
     /// Construct a renderer that routes frames through `backend` instead
@@ -343,7 +683,20 @@ impl Renderer {
     /// backend-owned output. `FrameBackend` holds the renderer's own state
     /// for the stage calls and re-installs the backend on drop (normal or
     /// unwinding).
-    fn render_frame(&mut self, client: &mut Client, kind: FrameKind) -> FrameOutput {
+    pub(super) fn render_frame(
+        &mut self,
+        client: &mut Client,
+        kind: FrameKind,
+        recovery_fault: Option<RenderLimit>,
+    ) -> FrameOutput {
+        self.last_frame_fault = recovery_fault
+            .or_else(|| client.nav_debug_render_limit())
+            .map(RenderFault::Budget);
+        if self.backend_kind() == BackendKind::Gpu {
+            if let Some(fault) = self.last_frame_fault {
+                return FrameOutput::Refused(fault);
+            }
+        }
         let mut guard = FrameBackend::new(self);
         let backend = guard.backend.as_mut().expect("render backend present");
         let renderer = &mut *guard.renderer;
@@ -459,7 +812,9 @@ impl Renderer {
         backend.composite_scene(client, renderer, kind);
         backend.chrome(client, renderer, kind);
         let output = backend.finish(renderer);
+        let frame_fault = backend.render_fault().or_else(|| output.render_fault());
         drop(guard);
+        self.last_frame_fault = frame_fault;
         output
     }
 
@@ -467,12 +822,155 @@ impl Renderer {
     /// frame stages to the render backend (task 4); the bodies live in
     /// `render/backend/cpu.rs`.
     pub fn game_draw(&mut self, client: &mut Client) -> FrameOutput {
-        self.render_frame(client, FrameKind::Game)
+        self.render_frame(client, FrameKind::Game, None)
     }
 
     /// `titleScreenDraw` from client-ts (1489): the login frame. Delegates
     /// to the render backend (task 4).
     pub fn title_screen_draw(&mut self, client: &mut Client) -> FrameOutput {
-        self.render_frame(client, FrameKind::Title)
+        self.render_frame(client, FrameKind::Title, None)
+    }
+}
+
+#[cfg(test)]
+mod owner_bytes_tests {
+    use super::*;
+    use crate::render::budget::RenderBudgetLimits;
+
+    fn head_misc_budget(maximum: usize) -> RenderBudget {
+        RenderBudget::fixture(RenderBudgetLimits::new(
+            0, 0, 0, 0, 0, 0, maximum, 0, 0, 0, 0, 0, 0,
+        ))
+    }
+
+    #[test]
+    fn chat_growth_checks_old_plus_new_and_reuses_warmed_storage() {
+        let mut renderer = Renderer::new_prefer(false, false);
+        let budget = head_misc_budget(63);
+        let baseline = renderer.render_bytes().head_misc();
+        let _scope = budget.scope();
+        renderer.set_chat_message(0, "abcdefghijklmnop").unwrap();
+        renderer
+            .set_chat_message(1, "abcdefghijklmnopqrstuvwx")
+            .unwrap();
+        let first = renderer.chats[0].as_ptr();
+        let second = renderer.chats[1].as_ptr();
+        assert_eq!(budget.for_resource(RenderResource::HeadMisc).live(), 40);
+        assert_eq!(renderer.render_bytes().head_misc() - baseline, 40);
+
+        let error = renderer
+            .set_chat_message(0, "abcdefghijklmnopqrstuvwxyz012345")
+            .unwrap_err();
+        assert_eq!(error.resource(), RenderResource::HeadMisc);
+        assert_eq!(
+            error.requested(),
+            72,
+            "growth admits old plus replacement, not only final capacity"
+        );
+        assert_eq!(renderer.chats[0], "abcdefghijklmnop");
+        assert_eq!(renderer.chats[0].as_ptr(), first);
+        assert_eq!(renderer.chats[1].as_ptr(), second);
+        assert_eq!(budget.for_resource(RenderResource::HeadMisc).live(), 40);
+        for _ in 0..100 {
+            renderer.set_chat_message(0, "ponmlkjihgfedcba").unwrap();
+            renderer
+                .set_chat_message(1, "xwvutsrqponmlkjihgfedcba")
+                .unwrap();
+            assert_eq!(renderer.chats[0].as_ptr(), first);
+            assert_eq!(renderer.chats[1].as_ptr(), second);
+        }
+        assert_eq!(budget.for_resource(RenderResource::HeadMisc).peak(), 40);
+        assert_eq!(renderer.render_bytes().head_misc() - baseline, 40);
+        drop(renderer);
+        assert_eq!(budget.for_resource(RenderResource::HeadMisc).live(), 0);
+    }
+
+    #[test]
+    fn renderer_owner_census_reconciles_live_allocations() {
+        const CHILD: &str = "T44_ISOLATED_OWNER_CENSUS";
+        if std::env::var_os(CHILD).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "render::renderer::owner_bytes_tests::renderer_owner_census_reconciles_live_allocations",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        let mut renderer = Renderer::new_prefer(false, false);
+        renderer.active_map_functions = Vec::new();
+        renderer.image_runes = Vec::new();
+        renderer.pix3d.texel_pool = None;
+        let baseline = renderer.render_bytes();
+        let budget = head_misc_budget(65_536);
+        let _scope = budget.scope();
+        let _unbacked_charge = budget
+            .for_resource(RenderResource::HeadMisc)
+            .reserve(65_536)
+            .unwrap();
+        assert_eq!(renderer.render_bytes().head_misc(), baseline.head_misc());
+        assert_eq!(renderer.render_bytes().total(), baseline.total());
+
+        let mut sprite = Pix32::new(1, 1);
+        sprite.data = Vec::with_capacity(11);
+        renderer.active_map_functions = Vec::with_capacity(7);
+        renderer.active_map_functions.push(Some(sprite));
+        let map_bytes = renderer.active_map_functions.capacity()
+            * std::mem::size_of::<Option<Pix32>>()
+            + renderer.active_map_functions[0]
+                .as_ref()
+                .unwrap()
+                .data
+                .capacity()
+                * std::mem::size_of::<i32>();
+
+        let mut rune = Pix8::new(1, 1, Vec::with_capacity(13));
+        rune.data = Vec::with_capacity(17);
+        renderer.image_runes = Vec::with_capacity(3);
+        renderer.image_runes.push(rune);
+        let rune_bytes = renderer.image_runes.capacity() * std::mem::size_of::<Pix8>()
+            + renderer.image_runes[0].data.capacity()
+            + renderer.image_runes[0].bpal.capacity() * std::mem::size_of::<i32>();
+
+        let mut pool = Vec::with_capacity(5);
+        pool.push(Vec::<i32>::with_capacity(19));
+        let pool_bytes = pool.capacity() * std::mem::size_of::<Vec<i32>>()
+            + pool[0].capacity() * std::mem::size_of::<i32>();
+        renderer.pix3d.texel_pool = Some(pool);
+        let sample = renderer.render_bytes();
+        assert_eq!(
+            sample.head_misc() - baseline.head_misc(),
+            map_bytes + rune_bytes + pool_bytes
+        );
+        assert_eq!(
+            sample.total() - baseline.total(),
+            map_bytes + rune_bytes + pool_bytes
+        );
+        assert_eq!(
+            sample.scalar_state(),
+            std::mem::size_of::<Renderer>() + std::mem::size_of::<CpuBackend>()
+        );
+
+        let mut surface = PixMap::new(1, 1);
+        surface.pixels = Vec::with_capacity(23);
+        let surface_bytes = surface.pixels.capacity() * std::mem::size_of::<i32>();
+        renderer.area_game = Some(surface);
+        assert_eq!(
+            renderer.render_bytes().cpu_surfaces() - baseline.cpu_surfaces(),
+            surface_bytes
+        );
+        assert_eq!(
+            renderer.render_bytes().total() - baseline.total(),
+            map_bytes + rune_bytes + pool_bytes + surface_bytes
+        );
+        renderer.active_map_functions = Vec::new();
+        renderer.image_runes = Vec::new();
+        renderer.pix3d.texel_pool = None;
+        renderer.area_game = None;
+        assert_eq!(renderer.render_bytes(), baseline);
     }
 }

@@ -4,6 +4,8 @@
 use crate::config::Cache;
 use crate::dash3d::Model;
 
+use crate::render::budget::{ByteBudget, RenderLimit};
+
 pub struct ClientLocAnim {
     pub index: i32,
     pub shape: i32,
@@ -119,6 +121,63 @@ impl ClientLocAnim {
             model.light(64, attenuation, -50, -10, -50);
         }
         Some(model)
+    }
+    pub fn try_get_temp_model_for_render(
+        &mut self,
+        cache: &Cache,
+        loop_cycle: i32,
+        budget: &ByteBudget,
+    ) -> Result<Option<Model>, RenderLimit> {
+        if let Some(seq_id) = self.anim {
+            let seq = cache.seq(seq_id);
+            let mut delta = loop_cycle - self.anim_cycle;
+            if delta > 100 && seq.loops > 0 {
+                delta = 100;
+            }
+            while delta > seq.get_delay(self.anim_frame) {
+                delta -= seq.get_delay(self.anim_frame);
+                self.anim_frame += 1;
+                if self.anim_frame < seq.num_frames {
+                    continue;
+                }
+                self.anim_frame -= seq.loops;
+                if self.anim_frame < 0 || self.anim_frame >= seq.num_frames {
+                    self.anim = None;
+                    break;
+                }
+            }
+            self.anim_cycle = loop_cycle - delta;
+        }
+
+        let mut frame = -1;
+        if let Some(seq_id) = self.anim {
+            if let Some(frames) = &cache.seq(seq_id).frames {
+                if let Some(&frame_id) = frames.get(self.anim_frame as usize) {
+                    frame = frame_id;
+                }
+            }
+        }
+
+        let model = cache.loc(self.index as usize).try_get_model_for_render(
+            cache,
+            self.shape,
+            self.angle,
+            self.height_sw,
+            self.height_se,
+            self.height_ne,
+            self.height_nw,
+            frame,
+            budget,
+        )?;
+        let Some(mut model) = model else {
+            return Ok(None);
+        };
+        if model.point_normal.is_some() {
+            let light_magnitude = ((50 * 50 + 10 * 10 + 50 * 50) as f64).sqrt() as i32;
+            let attenuation = (768 * light_magnitude) >> 8;
+            model.light(64, attenuation, -50, -10, -50);
+        }
+        Ok(Some(model))
     }
 }
 

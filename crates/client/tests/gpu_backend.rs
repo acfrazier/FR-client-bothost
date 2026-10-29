@@ -28,14 +28,14 @@ fn gpu_backend_selected_when_adapter_available() {
     let FrameOutput::Texture(title_handle) = title else {
         panic!("the GPU title frame must be a full-frame texture");
     };
-    assert_eq!((title_handle.width, title_handle.height), (765, 503));
+    assert_eq!((title_handle.width(), title_handle.height()), (765, 503));
 
     c.ingame = true;
     let game = r.game_draw(&mut c);
     let FrameOutput::Texture(game_handle) = game else {
         panic!("the GPU in-game frame must be a full-frame texture (no scene readback)");
     };
-    assert_eq!((game_handle.width, game_handle.height), (765, 503));
+    assert_eq!((game_handle.width(), game_handle.height()), (765, 503));
 
     Renderer::set_prefer_gpu(false);
 }
@@ -206,7 +206,7 @@ fn finish_returns_stable_present_texture_identity() {
     let FrameOutput::Texture(first) = backend.finish(&mut r) else {
         panic!("finish must return the full-frame texture");
     };
-    let first_tex = first.view.texture().clone();
+    let first_tex = first.display_view().texture().clone();
 
     for pixel in r.draw_area.pixels.iter_mut() {
         *pixel = 0;
@@ -221,7 +221,7 @@ fn finish_returns_stable_present_texture_identity() {
     let FrameOutput::Texture(second) = backend.finish(&mut r) else {
         panic!("finish must return the full-frame texture");
     };
-    let second_tex = second.view.texture().clone();
+    let second_tex = second.display_view().texture().clone();
 
     assert_eq!(
         first_tex, second_tex,
@@ -276,8 +276,8 @@ fn finish_does_not_clobber_the_last_presented_frame() {
     };
 
     assert_eq!(
-        first.view.texture(),
-        second.view.texture(),
+        first.display_view().texture(),
+        second.display_view().texture(),
         "stable present: host keeps one texture identity across finishes"
     );
     let second_pixels = second.read_back();
@@ -308,11 +308,11 @@ fn composite_produces_one_full_frame_texture() {
     let FrameOutput::Texture(handle) = game else {
         panic!("the GPU in-game frame must be a texture");
     };
-    assert_eq!((handle.width, handle.height), (765, 503));
+    assert_eq!((handle.width(), handle.height()), (765, 503));
     // The frame texture is a single full-frame composite (one 765×503
     // resource, no pixmap half).
-    assert_eq!(handle.view.texture().width(), 765);
-    assert_eq!(handle.view.texture().height(), 503);
+    assert_eq!(handle.display_view().texture().width(), 765);
+    assert_eq!(handle.display_view().texture().height(), 503);
     Renderer::set_prefer_gpu(false);
 }
 

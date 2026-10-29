@@ -52,3 +52,21 @@ fn present_target_enum_dispatch() {
     // by the surface-less blit.
     assert_eq!(window.frames(), 1);
 }
+
+#[test]
+fn refused_present_preserves_previous_pixels_and_window_count() {
+    let mut window = WindowTarget::headless();
+    let mut textures = TexturesTarget::new();
+    let mut frame = PixMap::new(1, 1);
+    frame.pixels[0] = 0x123456;
+    window.present(FrameOutput::PixMap(frame.clone()));
+    textures.present(FrameOutput::PixMap(frame));
+    let fault = client::render::backend::RenderFault::CaptureContended;
+    window.present(FrameOutput::Refused(fault));
+    textures.present(FrameOutput::Refused(fault));
+    assert_eq!(window.frames(), 1);
+    let Some(FrameOutput::PixMap(retained)) = textures.take_frame() else {
+        panic!("a refused present must retain the previous complete pixels");
+    };
+    assert_eq!(retained.pixels, [0x123456]);
+}

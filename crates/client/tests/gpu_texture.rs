@@ -245,10 +245,13 @@ fn probe_mesh(
     let mut world = flat_world();
     let mut rw = RenderWorld::new();
     if let Some(model) = model {
-        world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+        world
+            .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
+            .unwrap();
         rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
     }
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     let mut mesh = SceneMesh::default();
     rw.capture_scene(
         &mut world,
@@ -262,7 +265,8 @@ fn probe_mesh(
         0,
         128,
         &mut mesh,
-    );
+    )
+    .unwrap();
     mesh
 }
 
@@ -309,7 +313,9 @@ fn filter_probe_mesh(
     let mut world = flat_world();
     let mut rw = RenderWorld::new();
     if let Some(texture) = texture {
-        world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+        world
+            .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
+            .unwrap();
         rw.set_wall_model(
             &world,
             0,
@@ -319,7 +325,8 @@ fn filter_probe_mesh(
             None,
         );
     }
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     let mut mesh = SceneMesh::default();
     rw.capture_scene(
         &mut world,
@@ -333,7 +340,8 @@ fn filter_probe_mesh(
         0,
         128,
         &mut mesh,
-    );
+    )
+    .unwrap();
     mesh
 }
 
@@ -372,7 +380,10 @@ fn animated_frame(
     client.cam_z = 192;
     client.cam_pitch = 128;
     client.world = flat_world();
-    client.world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+    client
+        .world
+        .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
+        .unwrap();
     renderer.world.set_wall_model(
         &client.world,
         0,
@@ -414,7 +425,9 @@ fn textured_wall_mesh(
     pix: &mut Pix3DDraw,
 ) -> (RenderWorld, World, client::render::world::SceneMesh) {
     let mut world = flat_world();
-    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+    world
+        .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
+        .unwrap();
     let mut rw = RenderWorld::new();
     rw.set_wall_model(
         &world,
@@ -424,7 +437,8 @@ fn textured_wall_mesh(
         Some(SceneModel::Model(textured_wall_model())),
         None,
     );
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     let mut mesh = SceneMesh::default();
     rw.capture_scene(
         &mut world,
@@ -438,7 +452,8 @@ fn textured_wall_mesh(
         0,
         128,
         &mut mesh,
-    );
+    )
+    .unwrap();
     (rw, world, mesh)
 }
 
@@ -513,13 +528,16 @@ fn textured_type3_face_carries_tex_id_and_uv() {
     Pix3D::init_colour_table(0.6);
     let mut pix = textured_pix();
     let mut world = flat_world();
-    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+    world
+        .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
+        .unwrap();
     let mut rw = RenderWorld::new();
     let mut model = textured_wall_model();
     // Both faces textured with a flat shade (renderType = 3 | 0<<2).
     model.face_render_type = Some(vec![3, 3]);
     rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     let mut mesh = SceneMesh::default();
     rw.capture_scene(
         &mut world,
@@ -533,7 +551,8 @@ fn textured_type3_face_carries_tex_id_and_uv() {
         0,
         128,
         &mut mesh,
-    );
+    )
+    .unwrap();
 
     let mut textured = 0usize;
     for v in mesh.vertices() {
@@ -563,7 +582,9 @@ fn wall_face_crossing_the_near_plane_still_emits() {
     pix.set_clipping(512, 334);
 
     let mut world = flat_world();
-    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+    world
+        .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
+        .unwrap();
     let mut rw = RenderWorld::new();
     let mut model = client::dash3d::Model {
         num_points: 4,
@@ -581,7 +602,8 @@ fn wall_face_crossing_the_near_plane_still_emits() {
     };
     model.calc_bounding_cylinder();
     rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     // Camera 40 units in front of the wall (z=320): the base is in front
     // of the near plane, the top vertices behind it.
     let mut mesh = SceneMesh::default();
@@ -597,7 +619,8 @@ fn wall_face_crossing_the_near_plane_still_emits() {
         0,
         128,
         &mut mesh,
-    );
+    )
+    .unwrap();
 
     let mut wall_verts = 0usize;
     for v in mesh.vertices() {
@@ -643,10 +666,13 @@ fn gpu_gouraud_face_shades_like_the_colour_table() {
     model.calc_bounding_cylinder();
 
     let mut world = flat_world();
-    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+    world
+        .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
+        .unwrap();
     let mut rw = RenderWorld::new();
     rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     let mut pix = Pix3DDraw::default();
     pix.set_clipping(512, 334);
     let mut mesh = SceneMesh::default();
@@ -662,7 +688,8 @@ fn gpu_gouraud_face_shades_like_the_colour_table() {
         0,
         128,
         &mut mesh,
-    );
+    )
+    .unwrap();
     let scene = backend.render_scene_for_test(&mesh, &pix);
 
     let expected = Pix3D::colour_table()[SHADE as usize];
@@ -761,7 +788,9 @@ fn gpu_textured_shade_scales_texel_brightness() {
     for (shade, expected) in cases {
         let mut pix = textured_pix();
         let mut world = flat_world();
-        world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+        world
+            .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
+            .unwrap();
         let mut rw = RenderWorld::new();
         let mut model = textured_wall_model();
         // Both faces red, the requested 0..127 texel brightness.
@@ -770,7 +799,8 @@ fn gpu_textured_shade_scales_texel_brightness() {
         model.face_colour_b = Some(vec![shade, shade]);
         model.face_colour_c = Some(vec![shade, shade]);
         rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
-        rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+        rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+            .unwrap();
         let mut mesh = SceneMesh::default();
         rw.capture_scene(
             &mut world,
@@ -784,7 +814,8 @@ fn gpu_textured_shade_scales_texel_brightness() {
             0,
             128,
             &mut mesh,
-        );
+        )
+        .unwrap();
         let scene = backend.render_scene_for_test(&mesh, &pix);
 
         // The red-dominant pixels are the textured wall (the ground shades
@@ -819,12 +850,15 @@ fn gpu_render_clamps_out_of_range_tex_id() {
     pix.tex_pal[49] = Some(vec![0, 0x00ff00]);
 
     let mut world = flat_world();
-    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+    world
+        .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
+        .unwrap();
     let mut rw = RenderWorld::new();
     let mut model = textured_wall_model();
     model.face_colour = Some(vec![60, 60]); // both faces past the 50-texture range
     rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     let mut mesh = SceneMesh::default();
     rw.capture_scene(
         &mut world,
@@ -838,7 +872,8 @@ fn gpu_render_clamps_out_of_range_tex_id() {
         0,
         128,
         &mut mesh,
-    );
+    )
+    .unwrap();
 
     let Ok(mut backend) = GpuBackend::try_new() else {
         eprintln!("no adapter on this machine; the clamped-tex-id render check skips");
@@ -878,12 +913,15 @@ fn gpu_lowmem_texture_samples_the_full_128px_layer() {
     pix.tex_pal[TEXTURE_QUAD as usize] = Some(vec![0, 0xff0000, 0x00ff00, 0x0000ff, 0xffff00]);
 
     let mut world = flat_world();
-    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+    world
+        .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
+        .unwrap();
     let mut rw = RenderWorld::new();
     let mut model = textured_wall_model();
     model.face_colour = Some(vec![TEXTURE_QUAD, TEXTURE_QUAD]);
     rw.set_wall_model(&world, 0, 1, 2, Some(SceneModel::Model(model)), None);
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     let mut mesh = SceneMesh::default();
     rw.capture_scene(
         &mut world,
@@ -897,7 +935,8 @@ fn gpu_lowmem_texture_samples_the_full_128px_layer() {
         0,
         128,
         &mut mesh,
-    );
+    )
+    .unwrap();
 
     // Mesh-level: the textured vertices' fixed-point UV must span the full
     // 128px layer in both axes even on the low-mem path (a scale-64 bug caps
@@ -1357,7 +1396,9 @@ fn composite_lands_the_scene_in_the_full_frame() {
     c.menu_width = 100;
     c.menu_height = 120;
     c.world = flat_world();
-    c.world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+    c.world
+        .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
+        .unwrap();
     r.world.set_wall_model(
         &c.world,
         0,
@@ -1374,7 +1415,7 @@ fn composite_lands_the_scene_in_the_full_frame() {
     let FrameOutput::Texture(handle) = r.game_draw(&mut c) else {
         panic!("finish must return the full-frame texture");
     };
-    assert_eq!((handle.width, handle.height), (765, 503));
+    assert_eq!((handle.width(), handle.height()), (765, 503));
     let pixels = handle.read_back();
     // Nothing outside the frame's own bounds.
     assert_eq!(pixels.len(), 765 * 503);

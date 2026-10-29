@@ -8,6 +8,7 @@ use crate::config::Cache;
 use crate::dash3d::{AnimFrame, Model};
 use crate::datastruct::LruCache;
 use crate::io::{JagFile, Packet};
+use crate::render::budget::{ByteBudget, RenderLimit};
 
 // Process-wide by design: an LRU of decoded, immutable models shared by
 // every client (the TS `modelCache` static). Cache bookkeeping, not
@@ -15,6 +16,11 @@ use crate::io::{JagFile, Packet};
 fn model_cache() -> &'static Mutex<LruCache<Model>> {
     static CACHE: OnceLock<Mutex<LruCache<Model>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(LruCache::new(30)))
+}
+
+#[cfg(feature = "render-test-hooks")]
+pub fn render_test_cache_layout() -> Option<super::RenderTestCacheLayout> {
+    super::render_test_cache_layout::<Model>(30)
 }
 
 pub struct NpcType {
@@ -259,6 +265,118 @@ impl NpcType {
         }
 
         Some(tmp)
+    }
+
+    pub fn try_get_temp_model_for_render(
+        &self,
+        primary_transform_id: i32,
+        secondary_transform_id: i32,
+        seq_mask: Option<&[i32]>,
+        budget: &ByteBudget,
+    ) -> Result<Option<Model>, RenderLimit> {
+        let base = {
+            let mut model_cache = model_cache().lock().unwrap();
+            model_cache
+                .find(self.id as i64)
+                .map(|model| model.try_clone_for_render(budget))
+        };
+        let base = match base {
+            Some(model) => Some(model?),
+            None => {
+                let Some(ids) = self.model.as_deref() else {
+                    return Ok(None);
+                };
+                let mut not_ready = false;
+                for &id in ids {
+                    if !Model::request_download(id) {
+                        not_ready = true;
+                    }
+                }
+                if not_ready {
+                    return Ok(None);
+                }
+                let (loaded, _loaded_charge) =
+                    crate::dash3d::model_source::try_load_models_for_render(ids, budget)?;
+                let mut model = if ids.len() == 1 {
+                    loaded.into_iter().next().flatten()
+                } else {
+                    Some(Model::try_combine_for_anim(&loaded, loaded.len(), budget)?)
+                };
+                if let Some(model) = model.as_mut() {
+                    if let (Some(rs), Some(rd)) = (&self.recol_s, &self.recol_d) {
+                        for i in 0..rs.len() {
+                            model.recolour(rs[i] as i32, rd[i] as i32);
+                        }
+                    }
+                    model.try_prepare_anim_for_render(budget)?;
+                    model.try_calculate_normals_for_render(64, 850, -30, -50, -30, true, budget)?;
+                    let cached = model.try_clone_for_render(
+                        &crate::dash3d::model_source::shared_model_budget(budget),
+                    )?;
+                    model_cache().lock().unwrap().put(cached, self.id as i64);
+                }
+                model
+            }
+        };
+        let Some(base) = base else {
+            return Ok(None);
+        };
+
+        let mut tmp = Model::temp_model();
+        tmp.try_set_for_render(
+            &base,
+            AnimFrame::animate_transparencies(primary_transform_id)
+                && AnimFrame::animate_transparencies(secondary_transform_id),
+            budget,
+        )?;
+        if primary_transform_id != -1 && secondary_transform_id != -1 {
+            tmp.mask_animate(primary_transform_id, secondary_transform_id, seq_mask);
+        } else if primary_transform_id != -1 {
+            tmp.animate(primary_transform_id);
+        }
+        if self.resizeh != 128 || self.resizev != 128 {
+            tmp.resize(self.resizeh, self.resizev, self.resizeh);
+        }
+        tmp.calc_bounding_cylinder();
+        tmp.label_faces = None;
+        tmp.label_vertices = None;
+        if self.size == 1 {
+            tmp.use_aabb_mouse_check = true;
+        }
+        Ok(Some(tmp))
+    }
+
+    pub fn try_get_head_for_render(
+        &self,
+        budget: &ByteBudget,
+    ) -> Result<Option<Model>, RenderLimit> {
+        let Some(heads) = self.head.as_deref() else {
+            return Ok(None);
+        };
+        let mut not_ready = false;
+        for &id in heads {
+            if !Model::request_download(id) {
+                not_ready = true;
+            }
+        }
+        if not_ready {
+            return Ok(None);
+        }
+        let (loaded, _loaded_charge) =
+            crate::dash3d::model_source::try_load_models_for_render(heads, budget)?;
+        let mut model = if heads.len() == 1 {
+            loaded.into_iter().next().flatten()
+        } else {
+            Some(Model::try_combine_for_anim(&loaded, loaded.len(), budget)?)
+        };
+        if let Some(model) = model.as_mut() {
+            if let (Some(rs), Some(rd)) = (&self.recol_s, &self.recol_d) {
+                for i in 0..rs.len() {
+                    model.recolour(rs[i] as i32, rd[i] as i32);
+                }
+            }
+        }
+        Ok(model)
     }
 
     /// `getHead()` from client-ts (NpcType.ts 233-267): the NPC's head

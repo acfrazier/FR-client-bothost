@@ -9,6 +9,7 @@ use crate::config::Cache;
 use crate::dash3d::{AnimFrame, ClientPlayer, Model};
 use crate::datastruct::LruCache;
 use crate::io::{JagFile, Packet};
+use crate::render::budget::{ByteBudget, RenderLimit};
 
 // Process-wide by design: an LRU of decoded, immutable models shared by
 // every client (the TS `IfType.modelCache` static). Cache bookkeeping, not
@@ -16,6 +17,11 @@ use crate::io::{JagFile, Packet};
 fn model_cache() -> &'static Mutex<LruCache<Model>> {
     static CACHE: OnceLock<Mutex<LruCache<Model>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(LruCache::new(30)))
+}
+
+#[cfg(feature = "render-test-hooks")]
+pub fn render_test_cache_layout() -> Option<super::RenderTestCacheLayout> {
+    super::render_test_cache_layout::<Model>(30)
 }
 
 /// `ComponentType` const enum from client-ts.
@@ -616,6 +622,54 @@ impl IfType {
         model
     }
 
+    pub fn try_get_model_for_render(
+        cache: &Cache,
+        local_player: Option<&ClientPlayer>,
+        r#type: i32,
+        id: i32,
+        budget: &ByteBudget,
+    ) -> Result<Option<Model>, RenderLimit> {
+        let key = ((r#type as i64) << 16) + id as i64;
+        {
+            let mut model_cache = model_cache().lock().unwrap();
+            if let Some(model) = model_cache.find(key) {
+                return model.try_clone_for_render(budget).map(Some);
+            }
+        }
+
+        let model = match r#type {
+            1 => Model::try_load_for_render(id, budget)?,
+            2 => {
+                if (id as usize) < cache.npcs.len() {
+                    cache.npc(id as usize).try_get_head_for_render(budget)?
+                } else {
+                    None
+                }
+            }
+            3 => match local_player {
+                Some(player) => player.try_get_head_model_for_render(cache, budget)?,
+                None => None,
+            },
+            4 => {
+                if (id as usize) < cache.objs.len() {
+                    cache
+                        .obj(id as usize)
+                        .try_get_model_unlit_for_render(cache, 50, budget)?
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+
+        if let Some(model) = &model {
+            let cache_budget = crate::dash3d::model_source::shared_model_budget(budget);
+            let cached = model.try_clone_for_render(&cache_budget)?;
+            model_cache().lock().unwrap().put(cached, key);
+        }
+        Ok(model)
+    }
+
     /// `cacheModel(model, type, id)` from IfType.ts 424-430: clear the whole
     /// model cache, then put the temp model under `(type << 16) + id` (type 4
     /// is skipped). The design-preview arm caches under `(5 << 16) + 0`,
@@ -674,6 +728,59 @@ impl IfTypeView<'_> {
         }
         tmp.calculate_normals(64, 768, -50, -10, -50, true);
         Some(tmp)
+    }
+
+    pub fn try_get_temp_model_for_render(
+        &self,
+        cache: &Cache,
+        local_player: Option<&ClientPlayer>,
+        primary: i32,
+        secondary: i32,
+        active: bool,
+        budget: &ByteBudget,
+    ) -> Result<Option<Model>, RenderLimit> {
+        let Some(base) = IfType::try_get_model_for_render(
+            cache,
+            local_player,
+            if active {
+                self.model2_type
+            } else {
+                self.model1_type
+            },
+            if active {
+                self.model2_id
+            } else {
+                self.model1_id
+            },
+            budget,
+        )?
+        else {
+            return Ok(None);
+        };
+
+        if primary == -1 && secondary == -1 && base.face_colour.is_none() {
+            return Ok(Some(base));
+        }
+
+        let mut tmp = Model::try_copy_for_anim(
+            &base,
+            true,
+            AnimFrame::animate_transparencies(primary)
+                && AnimFrame::animate_transparencies(secondary),
+            false,
+            budget,
+        )?;
+        if primary != -1 || secondary != -1 {
+            tmp.try_prepare_anim_for_render(budget)?;
+        }
+        if primary != -1 {
+            tmp.animate(primary);
+        }
+        if secondary != -1 {
+            tmp.animate(secondary);
+        }
+        tmp.try_calculate_normals_for_render(64, 768, -50, -10, -50, true, budget)?;
+        Ok(Some(tmp))
     }
 }
 

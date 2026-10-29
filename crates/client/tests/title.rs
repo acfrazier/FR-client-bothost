@@ -28,6 +28,7 @@ fn frame_pixels(frame: FrameOutput) -> Vec<i32> {
     match frame {
         FrameOutput::PixMap(map) => map.pixels,
         FrameOutput::Texture(texture) => texture.read_back(),
+        FrameOutput::Refused(fault) => panic!("unscoped title fixture refused: {fault:?}"),
     }
 }
 

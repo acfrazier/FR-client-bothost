@@ -29,6 +29,19 @@ impl<T: LinkableTrait> LruCache<T> {
         }
     }
 
+    /// Heap backing capacities only; the containing store owns `Self`.
+    pub(crate) fn allocation_capacity_bytes(&self) -> usize {
+        self.arena
+            .allocation_capacity_bytes()
+            .saturating_add(self.table.allocation_capacity_bytes())
+    }
+
+    /// Visit every occupied arena node, including table/history sentinels,
+    /// without changing LRU order or allocating.
+    pub(crate) fn for_each_allocated_node(&self, visit: impl FnMut(usize, &T)) {
+        self.arena.for_each_occupied(visit);
+    }
+
     /// Look up a key and move the node to the most-recently-used end.
     pub fn find(&mut self, key: i64) -> Option<&mut T> {
         let id = self.table.find(&self.arena, key);

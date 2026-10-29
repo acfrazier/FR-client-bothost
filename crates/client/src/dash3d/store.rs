@@ -27,12 +27,89 @@ use crate::graphics::Pix32;
 /// scene mesh is ever decoded.
 static MODEL_DECODES: AtomicUsize = AtomicUsize::new(0);
 
+static STORE: OnceLock<Mutex<ModelStore>> = OnceLock::new();
+
 /// The model side holds up to `MODEL_CAPACITY` decoded models — the largest
 /// per-process model LRU today (`LocType.mc1`) is 500.
 const MODEL_CAPACITY: usize = 500;
 /// The sprite side keeps the same 100 entries the `ObjType.spriteCache`
 /// held.
 const SPRITE_CAPACITY: usize = 100;
+
+/// Shared raw-model and item-sprite owner layouts for the ignored full-content
+/// census. The query fills and clears bounded fixture LRUs before measuring
+/// their retained capacity, while simulating only raw-model load metadata.
+#[cfg(feature = "render-test-hooks")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RenderTestSharedStoreLayout {
+    pub model_capacity: usize,
+    pub sprite_capacity: usize,
+    pub model_store_metadata_bytes: usize,
+    pub model_lru_capacity_bytes: usize,
+    pub sprite_lru_capacity_bytes: usize,
+    pub model_node_bytes: usize,
+    pub sprite_node_bytes: usize,
+    pub model_sentinel_count: usize,
+    pub sprite_sentinel_count: usize,
+    pub model_arc_header_bytes: usize,
+    pub sprite_arc_header_bytes: usize,
+    pub pix32_bytes: usize,
+    pub pix32_pixel_bytes: usize,
+    pub item_sprite_pixels: usize,
+}
+
+#[cfg(feature = "render-test-hooks")]
+pub fn render_test_shared_store_layout(
+    raw_model_count: usize,
+) -> Option<RenderTestSharedStoreLayout> {
+    let mut store = ModelStore::new();
+    for id in 0..raw_model_count {
+        store.load_counts.insert(i64::try_from(id).ok()?, 1);
+    }
+    for id in 0..MODEL_CAPACITY {
+        store.models.put(
+            SharedModel::new(Arc::new(Model::default())),
+            i64::try_from(id).ok()?,
+        );
+    }
+    store.models.clear();
+    for id in 0..SPRITE_CAPACITY {
+        store.sprites.put(
+            SharedSprite::new(Arc::new(Pix32::new(0, 0))),
+            i64::try_from(id).ok()?,
+        );
+    }
+    store.sprites.clear();
+    let (model_lru_capacity_bytes, sprite_lru_capacity_bytes) = store.allocation_capacity_bytes();
+    let mut model_sentinel_count = 0;
+    let mut sprite_sentinel_count = 0;
+    store.for_each_model_node(|_, _, sentinel| {
+        if sentinel {
+            model_sentinel_count += 1;
+        }
+    });
+    store.for_each_sprite_node(|_, _, sentinel| {
+        if sentinel {
+            sprite_sentinel_count += 1;
+        }
+    });
+    Some(RenderTestSharedStoreLayout {
+        model_capacity: MODEL_CAPACITY,
+        sprite_capacity: SPRITE_CAPACITY,
+        model_store_metadata_bytes: store.metadata_capacity_bytes(),
+        model_lru_capacity_bytes,
+        sprite_lru_capacity_bytes,
+        model_node_bytes: std::mem::size_of::<SharedModel>(),
+        sprite_node_bytes: std::mem::size_of::<SharedSprite>(),
+        model_sentinel_count,
+        sprite_sentinel_count,
+        model_arc_header_bytes: 2 * std::mem::size_of::<usize>(),
+        sprite_arc_header_bytes: 2 * std::mem::size_of::<usize>(),
+        pix32_bytes: std::mem::size_of::<Pix32>(),
+        pix32_pixel_bytes: std::mem::size_of::<i32>(),
+        item_sprite_pixels: 32 * 32,
+    })
+}
 
 /// LRU node for a shared model: the `Arc` plus the link state the cache
 /// bookkeeping needs (the payload inside the `Arc` is immutable, so the
@@ -96,6 +173,11 @@ impl LinkableTrait for SharedSprite {
     }
 }
 
+fn is_sentinel(id: usize, links: &Links) -> bool {
+    (links.next == Some(id) && links.prev == Some(id))
+        || (links.next2 == Some(id) && links.prev2 == Some(id))
+}
+
 /// The canonical store. Access is through `ModelStore::instance()`
 /// (process-wide by design: decoded geometry is shared by every renderer).
 pub struct ModelStore {
@@ -120,8 +202,11 @@ impl ModelStore {
     /// The process-wide canonical store (the TS `modelCache`/`spriteCache`
     /// statics generalised to Arc-shared decoded geometry).
     pub fn instance() -> &'static Mutex<ModelStore> {
-        static STORE: OnceLock<Mutex<ModelStore>> = OnceLock::new();
         STORE.get_or_init(|| Mutex::new(ModelStore::new()))
+    }
+
+    pub(crate) fn existing_instance() -> Option<&'static Mutex<ModelStore>> {
+        STORE.get()
     }
 
     /// Models decoded from the packed source in this process (the task-8
@@ -129,6 +214,40 @@ impl ModelStore {
     /// through `publish_model`).
     pub fn decode_count() -> usize {
         MODEL_DECODES.load(Ordering::Relaxed)
+    }
+
+    /// Heap backing capacities for the model and sprite LRUs.
+    pub(crate) fn allocation_capacity_bytes(&self) -> (usize, usize) {
+        (
+            self.models.allocation_capacity_bytes(),
+            self.sprites.allocation_capacity_bytes(),
+        )
+    }
+
+    /// ModelStore and HashMap wrapper storage plus the load-count table's
+    /// logical entry capacity.
+    pub(crate) fn metadata_capacity_bytes(&self) -> usize {
+        std::mem::size_of::<Mutex<Self>>().saturating_add(
+            self.load_counts
+                .capacity()
+                .saturating_mul(std::mem::size_of::<(i64, usize)>()),
+        )
+    }
+
+    /// Visit allocated model nodes, including sentinels, without mutating the
+    /// LRU order or allocating.
+    pub(crate) fn for_each_model_node(&self, mut visit: impl FnMut(usize, &Arc<Model>, bool)) {
+        self.models.for_each_allocated_node(|id, node| {
+            visit(id, &node.model, is_sentinel(id, node.links()))
+        });
+    }
+
+    /// Visit allocated sprite nodes, including sentinels, without mutating the
+    /// LRU order or allocating.
+    pub(crate) fn for_each_sprite_node(&self, mut visit: impl FnMut(usize, &Arc<Pix32>, bool)) {
+        self.sprites.for_each_allocated_node(|id, node| {
+            visit(id, &node.sprite, is_sentinel(id, node.links()))
+        });
     }
 
     /// The decoded model for `id` as the store's shared `Arc`. The model is
@@ -187,6 +306,11 @@ impl ModelStore {
     /// `Linkable.unlink()`; `getSprite` re-puts after an ohi mismatch).
     pub fn unlink_sprite(&mut self, id: i32) {
         self.sprites.unlink_key(id as i64);
+    }
+
+    /// Remove a sprite key from both the lookup table and LRU history.
+    pub(crate) fn remove_sprite(&mut self, id: i32) {
+        self.sprites.remove(id as i64);
     }
 
     /// Forget every cached sprite (the `ObjType.spriteCache.clear()` a

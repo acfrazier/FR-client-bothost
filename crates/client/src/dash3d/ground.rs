@@ -462,3 +462,11 @@ impl GroundStamp {
         }
     }
 }
+/// Face count for one decoded overlay-shape value, used by the ignored full-content
+/// render census to size terrain capture without constructing scene state.
+#[cfg(feature = "render-test-hooks")]
+pub fn render_test_face_count(shape: u8) -> Option<usize> {
+    DEF_SHAPE_F
+        .get(usize::from(shape))
+        .map(|faces| faces.len() / 4)
+}

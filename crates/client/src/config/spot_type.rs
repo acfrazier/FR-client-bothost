@@ -6,6 +6,7 @@ use std::sync::{Mutex, OnceLock};
 use crate::dash3d::Model;
 use crate::datastruct::LruCache;
 use crate::io::{JagFile, Packet};
+use crate::render::budget::{ByteBudget, RenderLimit};
 
 // Process-wide by design: an LRU of decoded, immutable models shared by
 // every client (the TS `modelCache` static). Cache bookkeeping, not
@@ -13,6 +14,11 @@ use crate::io::{JagFile, Packet};
 fn model_cache() -> &'static Mutex<LruCache<Model>> {
     static CACHE: OnceLock<Mutex<LruCache<Model>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(LruCache::new(30)))
+}
+
+#[cfg(feature = "render-test-hooks")]
+pub fn render_test_cache_layout() -> Option<crate::config::RenderTestCacheLayout> {
+    crate::config::render_test_cache_layout::<Model>(30)
 }
 
 pub struct SpotType {
@@ -113,5 +119,32 @@ impl SpotType {
             .unwrap()
             .put(model.clone(), self.id as i64);
         Some(model)
+    }
+
+    pub fn try_get_temp_model2_for_render(
+        &self,
+        budget: &ByteBudget,
+    ) -> Result<Option<Model>, RenderLimit> {
+        {
+            let mut cache = model_cache().lock().unwrap();
+            if let Some(model) = cache.find(self.id as i64) {
+                return model.try_clone_for_render(budget).map(Some);
+            }
+        }
+
+        let Some(mut model) = Model::try_load_for_render(self.model, budget)? else {
+            return Ok(None);
+        };
+
+        for i in 0..6 {
+            if self.recol_s[0] != 0 {
+                model.recolour(self.recol_s[i] as i32, self.recol_d[i] as i32);
+            }
+        }
+
+        let cached = model
+            .try_clone_for_render(&crate::dash3d::model_source::shared_model_budget(budget))?;
+        model_cache().lock().unwrap().put(cached, self.id as i64);
+        Ok(Some(model))
     }
 }

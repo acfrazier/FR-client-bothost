@@ -101,7 +101,9 @@ fn scene_mesh_builds_ground_and_wall_triangles() {
     assert_ne!(ground_rgb, wall_rgb, "the fixture shades must differ");
 
     let mut world = flat_world();
-    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+    world
+        .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
+        .unwrap();
     let mut rw = RenderWorld::new();
     rw.set_wall_model(
         &world,
@@ -111,7 +113,8 @@ fn scene_mesh_builds_ground_and_wall_triangles() {
         Some(SceneModel::Model(south_wall_model())),
         None,
     );
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
 
     let mut pix = Pix3DDraw::default();
     pix.set_clipping(512, 334);
@@ -129,7 +132,8 @@ fn scene_mesh_builds_ground_and_wall_triangles() {
         0,
         128,
         &mut mesh,
-    );
+    )
+    .unwrap();
     let vertices = mesh.vertices();
 
     assert!(
@@ -196,7 +200,9 @@ fn out_of_range_texture_wall_model() -> client::dash3d::Model {
 fn textured_face_with_out_of_range_tex_id_still_emits() {
     Pix3D::init_colour_table(0.6);
     let mut world = flat_world();
-    world.set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0);
+    world
+        .set_wall(0, 1, 2, 2000, 8, 0, 0, 0, 0, 0, 0, 0)
+        .unwrap();
     let mut rw = RenderWorld::new();
     rw.set_wall_model(
         &world,
@@ -206,7 +212,8 @@ fn textured_face_with_out_of_range_tex_id_still_emits() {
         Some(SceneModel::Model(out_of_range_texture_wall_model())),
         None,
     );
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
 
     let mut pix = Pix3DDraw::default();
     pix.set_clipping(512, 334);
@@ -223,7 +230,8 @@ fn textured_face_with_out_of_range_tex_id_still_emits() {
         0,
         128,
         &mut mesh,
-    );
+    )
+    .unwrap();
 
     let mut found_clamped_high = false;
     let mut found_clamped_low = false;
@@ -309,7 +317,8 @@ fn lowmem_textured_quick_ground_shades_with_the_texture_average() {
     }
 
     let mut rw = RenderWorld::new();
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     let mut pix = Pix3DDraw::default();
     pix.set_clipping(512, 334);
     pix.low_mem = true;
@@ -326,7 +335,8 @@ fn lowmem_textured_quick_ground_shades_with_the_texture_average() {
         0,
         128,
         &mut mesh,
-    );
+    )
+    .unwrap();
 
     let expected_shade = get_table(39248, SHADE);
     assert_ne!(
@@ -395,7 +405,8 @@ fn highmem_textured_quick_ground_samples_the_atlas() {
     }
 
     let mut rw = RenderWorld::new();
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     let mut pix = Pix3DDraw::default();
     pix.set_clipping(512, 334);
     pix.low_mem = false;
@@ -412,7 +423,8 @@ fn highmem_textured_quick_ground_samples_the_atlas() {
         0,
         128,
         &mut mesh,
-    );
+    )
+    .unwrap();
 
     let mut textured = 0usize;
     for v in mesh.vertices() {
@@ -469,7 +481,8 @@ fn lowmem_textured_ground_face_shades_with_the_texture_average() {
     );
 
     let mut rw = RenderWorld::new();
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     let mut pix = Pix3DDraw::default();
     pix.set_clipping(512, 334);
     pix.low_mem = true;
@@ -486,7 +499,8 @@ fn lowmem_textured_ground_face_shades_with_the_texture_average() {
         0,
         128,
         &mut mesh,
-    );
+    )
+    .unwrap();
 
     let expected_average = get_table(39248, SHADE);
     let mut found_average = false;
@@ -702,7 +716,9 @@ fn gpu_loc_pick_is_per_face_not_aabb() {
     // centre is inside the inflated AABB and outside the projected faces
     // (CPU loc pick misses; GPU AABB currently hits).
     let mut world = flat_world();
-    world.set_wall(0, 1, 2, 2000, 8, 0, DOOR_TYPECODE, 0, 0, 0, 0, 0);
+    world
+        .set_wall(0, 1, 2, 2000, 8, 0, DOOR_TYPECODE, 0, 0, 0, 0, 0)
+        .unwrap();
     let mut rw = RenderWorld::new();
     rw.set_wall_model(
         &world,
@@ -712,7 +728,8 @@ fn gpu_loc_pick_is_per_face_not_aabb() {
         Some(SceneModel::Model(angled_door_model())),
         None,
     );
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
 
     pix.picked_count = 0;
     {
@@ -759,7 +776,8 @@ fn gpu_loc_pick_is_per_face_not_aabb() {
         0,
         128,
         &mut mesh,
-    );
+    )
+    .unwrap();
     assert!(
         mesh.vertices()
             .iter()
@@ -798,7 +816,9 @@ fn nav_debug_paint_does_not_enable_aabb_loc_pick() {
     }));
 
     let mut world = flat_world();
-    world.set_wall(0, 1, 2, 2000, 8, 0, DOOR_TYPECODE, 0, 0, 0, 0, 0);
+    world
+        .set_wall(0, 1, 2, 2000, 8, 0, DOOR_TYPECODE, 0, 0, 0, 0, 0)
+        .unwrap();
     let mut rw = RenderWorld::new();
     rw.set_wall_model(
         &world,
@@ -808,12 +828,14 @@ fn nav_debug_paint_does_not_enable_aabb_loc_pick() {
         Some(SceneModel::Model(angled_door_model())),
         None,
     );
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
 
     // The hull paint's model resolution (the draw's hull path) must not
     // set the AABB pick flag on the loc.
     let (x, y, z, _yaw, model) = rw
         .loc_model_at(&world, &Cache::default(), 0, 0, 1, 2, 1530)
+        .expect("fixture loc lookup stays within its render budget")
         .expect("the door hull must resolve to the live loc model");
     assert!(
         !model.use_aabb_mouse_check,
@@ -876,7 +898,8 @@ fn nav_debug_paint_does_not_enable_aabb_loc_pick() {
         0,
         128,
         &mut mesh,
-    );
+    )
+    .unwrap();
     assert!(
         mesh.vertices()
             .iter()
@@ -908,6 +931,7 @@ fn loc_model_at_resolves_grounded_scenery_loc() {
 
     let (x, y, z, _yaw, resolved) = rw
         .loc_model_at(&world, &Cache::default(), 0, 0, 1, 2, 1531)
+        .expect("fixture loc lookup stays within its render budget")
         .expect("a grounded scenery loc must resolve for the hull paint");
     assert!(
         !resolved.use_aabb_mouse_check,

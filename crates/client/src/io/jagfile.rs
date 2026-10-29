@@ -5,6 +5,7 @@ use std::cell::RefCell;
 
 use super::bzip2::bunzip2_sized;
 use super::packet::Packet;
+use crate::render::budget::{BudgetCharge, ByteBudget, RenderLimit};
 
 pub struct JagFile {
     data: Vec<u8>,
@@ -16,13 +17,17 @@ pub struct JagFile {
     file_unpacked_size: Vec<i32>,
     file_packed_size: Vec<i32>,
     file_offset: Vec<i32>,
-    file_unpacked: RefCell<Vec<Option<Vec<u8>>>>,
+    _render_charge: Option<BudgetCharge>,
 }
 
 impl JagFile {
     pub fn gen_hash(name: &str) -> i32 {
+        Self::gen_hash_parts(name, "")
+    }
+
+    fn gen_hash_parts(name: &str, suffix: &str) -> i32 {
         let mut hash: i32 = 0;
-        for c in name.chars() {
+        for c in name.chars().chain(suffix.chars()) {
             let c = c.to_ascii_uppercase();
             hash = hash
                 .wrapping_mul(61)
@@ -30,6 +35,140 @@ impl JagFile {
                 .wrapping_sub(32);
         }
         hash
+    }
+
+    fn render_allocation_limit(budget: &ByteBudget) -> RenderLimit {
+        RenderLimit::new(budget.resource(), usize::MAX, budget.maximum())
+    }
+
+    pub(crate) fn new_render(src: Vec<u8>, budget: &ByteBudget) -> Result<Self, RenderLimit> {
+        let unpacked_size = ((src[0] as usize) << 16) | ((src[1] as usize) << 8) | src[2] as usize;
+        let packed_size = ((src[3] as usize) << 16) | ((src[4] as usize) << 8) | src[5] as usize;
+        let unpacked = unpacked_size != packed_size;
+        let mut render_charge = budget.reserve(0)?;
+        let data = if unpacked {
+            render_charge.resize(unpacked_size)?;
+            bunzip2_sized(&src[6..], unpacked_size)
+        } else {
+            src
+        };
+        let header = if unpacked { 0 } else { 6 };
+        let file_count = u16::from_be_bytes([data[header], data[header + 1]]) as i32;
+        let count = file_count as usize;
+        let metadata_bytes = count
+            .checked_mul(4)
+            .and_then(|bytes| bytes.checked_mul(std::mem::size_of::<i32>()))
+            .ok_or_else(|| Self::render_allocation_limit(budget))?;
+        let data_bytes = if unpacked { data.capacity() } else { 0 };
+        let expected_bytes = data_bytes
+            .checked_add(metadata_bytes)
+            .ok_or_else(|| Self::render_allocation_limit(budget))?;
+        render_charge.resize(expected_bytes)?;
+
+        let mut file_hash = Vec::new();
+        let mut file_unpacked_size = Vec::new();
+        let mut file_packed_size = Vec::new();
+        let mut file_offset = Vec::new();
+        for values in [
+            &mut file_hash,
+            &mut file_unpacked_size,
+            &mut file_packed_size,
+            &mut file_offset,
+        ] {
+            values
+                .try_reserve_exact(count)
+                .map_err(|_| Self::render_allocation_limit(budget))?;
+        }
+
+        let mut position = header + 2;
+        let mut offset = (position as i32) + file_count * 10;
+        for _ in 0..count {
+            file_hash.push(i32::from_be_bytes(
+                data[position..position + 4].try_into().unwrap(),
+            ));
+            position += 4;
+            file_unpacked_size.push(
+                ((data[position] as i32) << 16)
+                    | ((data[position + 1] as i32) << 8)
+                    | data[position + 2] as i32,
+            );
+            position += 3;
+            file_packed_size.push(
+                ((data[position] as i32) << 16)
+                    | ((data[position + 1] as i32) << 8)
+                    | data[position + 2] as i32,
+            );
+            position += 3;
+            file_offset.push(offset);
+            offset += *file_packed_size.last().unwrap();
+        }
+
+        let data_bytes = if unpacked { data.capacity() } else { 0 };
+        let metadata_capacity = file_hash
+            .capacity()
+            .checked_add(file_unpacked_size.capacity())
+            .and_then(|capacity| capacity.checked_add(file_packed_size.capacity()))
+            .and_then(|capacity| capacity.checked_add(file_offset.capacity()))
+            .and_then(|capacity| capacity.checked_mul(std::mem::size_of::<i32>()))
+            .ok_or_else(|| Self::render_allocation_limit(budget))?;
+        let actual_bytes = data_bytes
+            .checked_add(metadata_capacity)
+            .ok_or_else(|| Self::render_allocation_limit(budget))?;
+        render_charge.resize(actual_bytes)?;
+
+        Ok(JagFile {
+            data,
+            unpacked,
+            file_count,
+            file_hash,
+            file_unpacked_size,
+            file_packed_size,
+            file_offset,
+            file_unpacked: RefCell::new(Vec::new()),
+            _render_charge: Some(render_charge),
+        })
+    }
+
+    pub(crate) fn read_render(
+        &self,
+        name: &str,
+        budget: &ByteBudget,
+    ) -> Result<Option<(Vec<u8>, BudgetCharge)>, RenderLimit> {
+        self.read_render_hash(Self::gen_hash(name), budget)
+    }
+
+    pub(crate) fn read_render_suffix(
+        &self,
+        name: &str,
+        suffix: &str,
+        budget: &ByteBudget,
+    ) -> Result<Option<(Vec<u8>, BudgetCharge)>, RenderLimit> {
+        self.read_render_hash(Self::gen_hash_parts(name, suffix), budget)
+    }
+
+    fn read_render_hash(
+        &self,
+        hash: i32,
+        budget: &ByteBudget,
+    ) -> Result<Option<(Vec<u8>, BudgetCharge)>, RenderLimit> {
+        let Some(index) = self.file_hash.iter().position(|&value| value == hash) else {
+            return Ok(None);
+        };
+        let packed_size = self.file_packed_size[index] as usize;
+        let unpacked_size = self.file_unpacked_size[index] as usize;
+        let mut charge = budget.reserve(if self.unpacked {
+            packed_size
+        } else {
+            unpacked_size
+        })?;
+        let offset = self.file_offset[index] as usize;
+        let data = if self.unpacked {
+            self.data[offset..offset + packed_size].to_vec()
+        } else {
+            bunzip2_sized(&self.data[offset..], unpacked_size)
+        };
+        charge.resize(data.capacity())?;
+        Ok(Some((data, charge)))
     }
 
     pub fn new(src: Vec<u8>) -> Self {
@@ -72,6 +211,7 @@ impl JagFile {
             file_packed_size,
             file_offset,
             file_unpacked: RefCell::new(vec![None; file_count as usize]),
+            _render_charge: None,
         }
     }
 

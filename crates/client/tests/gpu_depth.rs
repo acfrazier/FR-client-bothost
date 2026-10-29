@@ -343,20 +343,22 @@ fn make_scene(booth_tile_x: i32, include_wall: bool, include_booth: bool) -> Sce
     let z_tile = 2i32;
     let mut world = flat_world(6);
     if include_wall {
-        world.set_wall(
-            0,
-            wall_tile,
-            z_tile,
-            2000,
-            4,
-            0,
-            scene_typecode(1602),
-            0,
-            2000,
-            2000,
-            2000,
-            2000,
-        );
+        world
+            .set_wall(
+                0,
+                wall_tile,
+                z_tile,
+                2000,
+                4,
+                0,
+                scene_typecode(1602),
+                0,
+                2000,
+                2000,
+                2000,
+                2000,
+            )
+            .unwrap();
     }
     if include_booth {
         assert!(world.add_scenery(
@@ -394,7 +396,8 @@ fn make_scene(booth_tile_x: i32, include_wall: bool, include_booth: bool) -> Sce
         paint_flat(&mut booth, BOOTH_RED);
         rw.set_sprite_model(&world, sprite_index, Some(SceneModel::Model(booth)));
     }
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     Scene { world, rw }
 }
 
@@ -412,19 +415,22 @@ fn gpu_render(
     let mut pix = Pix3DDraw::default();
     pix.set_clipping(512, 334);
     let mut mesh = SceneMesh::default();
-    scene.rw.capture_scene(
-        &mut scene.world,
-        &mut pix,
-        &Cache::default(),
-        0,
-        eye_x,
-        eye_y,
-        eye_z,
-        3,
-        yaw,
-        pitch,
-        &mut mesh,
-    );
+    scene
+        .rw
+        .capture_scene(
+            &mut scene.world,
+            &mut pix,
+            &Cache::default(),
+            0,
+            eye_x,
+            eye_y,
+            eye_z,
+            3,
+            yaw,
+            pitch,
+            &mut mesh,
+        )
+        .unwrap();
     let (wmin, wmax, wn) = shade_z_range(&mesh, WALL_GREEN);
     let (bmin, bmax, bn) = shade_z_range(&mesh, BOOTH_RED);
     eprintln!("{label} mesh wall verts={wn} z=[{wmin},{wmax}] booth verts={bn} z=[{bmin},{bmax}]");
@@ -580,19 +586,22 @@ fn render_pixels(
     let mut pix = Pix3DDraw::default();
     pix.set_clipping(512, 334);
     let mut mesh = SceneMesh::default();
-    scene.rw.capture_scene(
-        &mut scene.world,
-        &mut pix,
-        &Cache::default(),
-        0,
-        eye_x,
-        eye_y,
-        eye_z,
-        3,
-        yaw,
-        pitch,
-        &mut mesh,
-    );
+    scene
+        .rw
+        .capture_scene(
+            &mut scene.world,
+            &mut pix,
+            &Cache::default(),
+            0,
+            eye_x,
+            eye_y,
+            eye_z,
+            3,
+            yaw,
+            pitch,
+            &mut mesh,
+        )
+        .unwrap();
     backend.render_scene_for_test(&mesh, &pix)
 }
 
@@ -660,20 +669,22 @@ fn booth_typecode2() -> i32 {
 
 fn place_wall_run(world: &mut World, z_tiles: std::ops::RangeInclusive<i32>, booth: bool) {
     for z in z_tiles {
-        world.set_wall(
-            0,
-            2,
-            z,
-            2000,
-            4,
-            0,
-            scene_typecode(1602),
-            wall_typecode2(),
-            2000,
-            2000,
-            2000,
-            2000,
-        );
+        world
+            .set_wall(
+                0,
+                2,
+                z,
+                2000,
+                4,
+                0,
+                scene_typecode(1602),
+                wall_typecode2(),
+                2000,
+                2000,
+                2000,
+                2000,
+            )
+            .unwrap();
     }
     if booth {
         assert!(world.add_scenery(
@@ -763,19 +774,22 @@ fn cpu_render(
     {
         let mut surface = Pix2D::with_pixels(&mut map.pixels, map.width, map.height);
         pix.set_render_clipping(&surface);
-        scene.rw.render_all(
-            &mut scene.world,
-            pix,
-            &mut surface,
-            cache,
-            0,
-            eye_x,
-            eye_y,
-            eye_z,
-            3,
-            yaw,
-            pitch,
-        );
+        scene
+            .rw
+            .render_all(
+                &mut scene.world,
+                pix,
+                &mut surface,
+                cache,
+                0,
+                eye_x,
+                eye_y,
+                eye_z,
+                3,
+                yaw,
+                pitch,
+            )
+            .unwrap();
     }
     save_ppm(&map.pixels, &format!("/tmp/gpu_depth_cpu_{label}.ppm"));
     map.pixels
@@ -795,19 +809,22 @@ fn gpu_render_cache(
     label: &str,
 ) -> Vec<i32> {
     let mut mesh = SceneMesh::default();
-    scene.rw.capture_scene(
-        &mut scene.world,
-        pix,
-        cache,
-        0,
-        eye_x,
-        eye_y,
-        eye_z,
-        3,
-        yaw,
-        pitch,
-        &mut mesh,
-    );
+    scene
+        .rw
+        .capture_scene(
+            &mut scene.world,
+            pix,
+            cache,
+            0,
+            eye_x,
+            eye_y,
+            eye_z,
+            3,
+            yaw,
+            pitch,
+            &mut mesh,
+        )
+        .unwrap();
     let pixels = backend.render_scene_for_test(&mesh, pix);
     save_ppm(&pixels, &format!("/tmp/gpu_depth_gpu_{label}.ppm"));
     pixels
@@ -853,7 +870,8 @@ fn sharelight_wall_run_cpu_vs_gpu() {
         let mut world = flat_world(8);
         place_wall_run(&mut world, z_lo..=z_hi, booth);
         let mut rw = RenderWorld::new();
-        rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+        rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+            .unwrap();
         let mut pix = textured_pix(&pack);
         let mut scene = Scene { world, rw };
         let gpu = gpu_render_cache(
@@ -870,8 +888,10 @@ fn sharelight_wall_run_cpu_vs_gpu() {
         );
         // The capture ran the share-light pass; dump the lit walls.
         for z in z_lo..=z_hi {
-            if let Some(SceneModel::Model(model)) =
-                scene.rw.wall_model1(&scene.world, &cache, 0, 0, 2, z)
+            if let Some(SceneModel::Model(model)) = scene
+                .rw
+                .wall_model1(&scene.world, &cache, 0, 0, 2, z)
+                .expect("fixture wall lookup stays within its render budget")
             {
                 dump_hidden(&format!("{tag} wall z={z}"), model);
             } else {
@@ -883,7 +903,8 @@ fn sharelight_wall_run_cpu_vs_gpu() {
         let mut world = flat_world(8);
         place_wall_run(&mut world, z_lo..=z_hi, booth);
         let mut rw = RenderWorld::new();
-        rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+        rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+            .unwrap();
         let mut scene = Scene { world, rw };
         let cpu = cpu_render(&mut scene, &cache, &mut pix, 192, 1950, 320, 1536, 128, tag);
 
@@ -931,7 +952,8 @@ fn sharelight_wall_run_cpu_vs_gpu() {
         let mut world = flat_world(8);
         place_wall_run(&mut world, 2..=6, true);
         let mut rw = RenderWorld::new();
-        rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+        rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+            .unwrap();
         let mut pix = textured_pix(&pack);
         let mut scene = Scene { world, rw };
         let gpu = gpu_render_cache(
@@ -949,7 +971,8 @@ fn sharelight_wall_run_cpu_vs_gpu() {
         let mut world = flat_world(8);
         place_wall_run(&mut world, 2..=6, true);
         let mut rw = RenderWorld::new();
-        rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+        rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+            .unwrap();
         let mut scene = Scene { world, rw };
         let cpu = cpu_render(
             &mut scene, &cache, &mut pix, eye_x, eye_y, eye_z, yaw, pitch, tag,
@@ -975,20 +998,22 @@ fn sharelight_wall_run_cpu_vs_gpu() {
     // south-edge wall's inner 8 units (wall z[-64,-48] after SOUTH rotate).
     eprintln!("--- same-tile SOUTH wall + booth ---");
     let mut world = flat_world(8);
-    world.set_wall(
-        0,
-        2,
-        2,
-        2000,
-        8, // WSHAPE0[SOUTH]
-        0,
-        scene_typecode(1602),
-        (LocAngle::SOUTH << 6) + LocShape::WALL_STRAIGHT,
-        2000,
-        2000,
-        2000,
-        2000,
-    );
+    world
+        .set_wall(
+            0,
+            2,
+            2,
+            2000,
+            8, // WSHAPE0[SOUTH]
+            0,
+            scene_typecode(1602),
+            (LocAngle::SOUTH << 6) + LocShape::WALL_STRAIGHT,
+            2000,
+            2000,
+            2000,
+            2000,
+        )
+        .unwrap();
     assert!(world.add_scenery(
         0,
         2,
@@ -1040,7 +1065,8 @@ fn sharelight_wall_run_cpu_vs_gpu() {
         wz1.max(bz0) - wz0.min(bz1)
     );
     let mut rw = RenderWorld::new();
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     let mut pix = textured_pix(&pack);
     let mut scene = Scene { world, rw };
     // South of the tile, looking north (yaw 0).
@@ -1057,20 +1083,22 @@ fn sharelight_wall_run_cpu_vs_gpu() {
         "south_same",
     );
     let mut world = flat_world(8);
-    world.set_wall(
-        0,
-        2,
-        2,
-        2000,
-        8,
-        0,
-        scene_typecode(1602),
-        (LocAngle::SOUTH << 6) + LocShape::WALL_STRAIGHT,
-        2000,
-        2000,
-        2000,
-        2000,
-    );
+    world
+        .set_wall(
+            0,
+            2,
+            2,
+            2000,
+            8,
+            0,
+            scene_typecode(1602),
+            (LocAngle::SOUTH << 6) + LocShape::WALL_STRAIGHT,
+            2000,
+            2000,
+            2000,
+            2000,
+        )
+        .unwrap();
     assert!(world.add_scenery(
         0,
         2,
@@ -1088,7 +1116,8 @@ fn sharelight_wall_run_cpu_vs_gpu() {
     ));
     world.share_light_pending = true;
     let mut rw = RenderWorld::new();
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     let mut scene = Scene { world, rw };
     let cpu = cpu_render(
         &mut scene,
@@ -1118,23 +1147,26 @@ fn sharelight_wall_run_cpu_vs_gpu() {
     // Control: same camera, wall only. If the gray bands remain, they are
     // wall self-z-fight, not the booth.
     let mut world = flat_world(8);
-    world.set_wall(
-        0,
-        2,
-        2,
-        2000,
-        8,
-        0,
-        scene_typecode(1602),
-        (LocAngle::SOUTH << 6) + LocShape::WALL_STRAIGHT,
-        2000,
-        2000,
-        2000,
-        2000,
-    );
+    world
+        .set_wall(
+            0,
+            2,
+            2,
+            2000,
+            8,
+            0,
+            scene_typecode(1602),
+            (LocAngle::SOUTH << 6) + LocShape::WALL_STRAIGHT,
+            2000,
+            2000,
+            2000,
+            2000,
+        )
+        .unwrap();
     world.share_light_pending = true;
     let mut rw = RenderWorld::new();
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     let mut pix = textured_pix(&pack);
     let mut scene = Scene { world, rw };
     let gpu_w = gpu_render_cache(
@@ -1150,23 +1182,26 @@ fn sharelight_wall_run_cpu_vs_gpu() {
         "south_nobooth",
     );
     let mut world = flat_world(8);
-    world.set_wall(
-        0,
-        2,
-        2,
-        2000,
-        8,
-        0,
-        scene_typecode(1602),
-        (LocAngle::SOUTH << 6) + LocShape::WALL_STRAIGHT,
-        2000,
-        2000,
-        2000,
-        2000,
-    );
+    world
+        .set_wall(
+            0,
+            2,
+            2,
+            2000,
+            8,
+            0,
+            scene_typecode(1602),
+            (LocAngle::SOUTH << 6) + LocShape::WALL_STRAIGHT,
+            2000,
+            2000,
+            2000,
+            2000,
+        )
+        .unwrap();
     world.share_light_pending = true;
     let mut rw = RenderWorld::new();
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     let mut scene = Scene { world, rw };
     let cpu_w = cpu_render(
         &mut scene,
@@ -1194,20 +1229,22 @@ fn sharelight_wall_run_cpu_vs_gpu() {
 
     // Recolor the booth red so poke-through is a pixel count, not a vibe.
     let mut world = flat_world(8);
-    world.set_wall(
-        0,
-        2,
-        2,
-        2000,
-        8,
-        0,
-        scene_typecode(1602),
-        (LocAngle::SOUTH << 6) + LocShape::WALL_STRAIGHT,
-        2000,
-        2000,
-        2000,
-        2000,
-    );
+    world
+        .set_wall(
+            0,
+            2,
+            2,
+            2000,
+            8,
+            0,
+            scene_typecode(1602),
+            (LocAngle::SOUTH << 6) + LocShape::WALL_STRAIGHT,
+            2000,
+            2000,
+            2000,
+            2000,
+        )
+        .unwrap();
     assert!(world.add_scenery(
         0,
         2,
@@ -1254,7 +1291,8 @@ fn sharelight_wall_run_cpu_vs_gpu() {
     let mut rw = RenderWorld::new();
     rw.set_wall_model(&world, 0, 2, 2, Some(SceneModel::Model(wall)), None);
     rw.set_sprite_model(&world, sprite_index, Some(SceneModel::Model(booth)));
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     let mut pix = Pix3DDraw::default();
     pix.set_clipping(512, 334);
     let mut mesh = SceneMesh::default();
@@ -1270,7 +1308,8 @@ fn sharelight_wall_run_cpu_vs_gpu() {
         0,
         160,
         &mut mesh,
-    );
+    )
+    .unwrap();
     let gpu_red = backend.render_scene_for_test(&mesh, &pix);
     save_ppm(&gpu_red, "/tmp/gpu_depth_gpu_south_red.ppm");
     let (red, green, other) = count_rgb(&gpu_red);
@@ -1286,20 +1325,22 @@ fn make_same_tile_west(include_wall: bool, include_booth: bool) -> Scene {
     let tile_z = 2i32;
     let mut world = flat_world(6);
     if include_wall {
-        world.set_wall(
-            0,
-            tile_x,
-            tile_z,
-            2000,
-            1, // WSHAPE0[WEST]
-            0,
-            scene_typecode(1602),
-            LocAngle::WEST,
-            2000,
-            2000,
-            2000,
-            2000,
-        );
+        world
+            .set_wall(
+                0,
+                tile_x,
+                tile_z,
+                2000,
+                1, // WSHAPE0[WEST]
+                0,
+                scene_typecode(1602),
+                LocAngle::WEST,
+                2000,
+                2000,
+                2000,
+                2000,
+            )
+            .unwrap();
     }
     if include_booth {
         assert!(world.add_scenery(
@@ -1337,7 +1378,8 @@ fn make_same_tile_west(include_wall: bool, include_booth: bool) -> Scene {
         paint_flat(&mut booth, BOOTH_RED);
         rw.set_sprite_model(&world, sprite_index, Some(SceneModel::Model(booth)));
     }
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     Scene { world, rw }
 }
 
@@ -1472,20 +1514,22 @@ fn embedded_decor_scene() -> Scene {
     let (tile_x, tile_z) = (2, 2);
     let mut world = World::new(vec![vec![vec![2000i32; 7]; 7]], 6, 1, 6);
     world.fill_base_level(0);
-    world.set_wall(
-        0,
-        tile_x,
-        tile_z,
-        2000,
-        1,
-        0,
-        scene_typecode(1911),
-        0,
-        2000,
-        2000,
-        2000,
-        2000,
-    );
+    world
+        .set_wall(
+            0,
+            tile_x,
+            tile_z,
+            2000,
+            1,
+            0,
+            scene_typecode(1911),
+            0,
+            2000,
+            2000,
+            2000,
+            2000,
+        )
+        .unwrap();
     {
         world.set_decor(
             0,
@@ -1522,7 +1566,8 @@ fn embedded_decor_scene() -> Scene {
             SceneModel::Model(flat_quad(48, -10, -230, 16, BOOTH_RED)),
         );
     }
-    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334);
+    rw.reset_vis_calc(&game_distance_table(), 500, 800, 512, 334)
+        .unwrap();
     Scene { world, rw }
 }
 
@@ -1538,19 +1583,22 @@ fn wall_decor_composes_like_the_cpu_painter() {
     let mut depth_pix = Pix3DDraw::default();
     depth_pix.set_clipping(SCENE_W as i32, SCENE_H as i32);
     let mut depth_mesh = SceneMesh::default();
-    depth_scene.rw.capture_scene(
-        &mut depth_scene.world,
-        &mut depth_pix,
-        &Cache::default(),
-        0,
-        eye_x,
-        eye_y,
-        eye_z,
-        3,
-        yaw,
-        pitch,
-        &mut depth_mesh,
-    );
+    depth_scene
+        .rw
+        .capture_scene(
+            &mut depth_scene.world,
+            &mut depth_pix,
+            &Cache::default(),
+            0,
+            eye_x,
+            eye_y,
+            eye_z,
+            3,
+            yaw,
+            pitch,
+            &mut depth_mesh,
+        )
+        .unwrap();
     let (wall_min_z, wall_max_z, wall_vertices) = shade_z_range(&depth_mesh, WALL_GREEN);
     let (decor_min_z, decor_max_z, decor_vertices) = shade_z_range(&depth_mesh, BOOTH_RED);
     assert_eq!((wall_vertices, decor_vertices), (6, 6));

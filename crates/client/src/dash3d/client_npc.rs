@@ -2,6 +2,7 @@
 use crate::config::Cache;
 use crate::dash3d::client_entity::ClientEntity;
 use crate::dash3d::{AnimFrame, Model};
+use crate::render::budget::{ByteBudget, RenderLimit};
 
 #[derive(Clone)]
 pub struct ClientNpc {
@@ -89,6 +90,98 @@ impl ClientNpc {
         }
 
         Some(model)
+    }
+    pub fn try_get_temp_model_for_render(
+        &mut self,
+        cache: &Cache,
+        _loop_cycle: i32,
+        budget: &ByteBudget,
+    ) -> Result<Option<Model>, RenderLimit> {
+        let Some(npc_id) = self.r#type else {
+            return Ok(None);
+        };
+        let Some(mut model) = self.try_get_temp_model2_for_render(cache, budget)? else {
+            return Ok(None);
+        };
+        self.height = model.min_y;
+
+        if self.spotanim_id != -1 && self.spotanim_frame != -1 {
+            let spot = cache.spot(self.spotanim_id as usize);
+            if let Some(spot_model) = spot.try_get_temp_model2_for_render(budget)? {
+                let mut temp = Model::try_copy_for_anim(
+                    &spot_model,
+                    true,
+                    AnimFrame::animate_transparencies(self.spotanim_frame),
+                    false,
+                    budget,
+                )?;
+                temp.translate(-self.spotanim_height, 0, 0);
+                temp.try_prepare_anim_for_render(budget)?;
+                if let Some(seq) = spot.seq {
+                    if let Some(frames) = &cache.seq(seq).frames {
+                        temp.animate(frames[self.spotanim_frame as usize]);
+                    }
+                }
+                temp.label_faces = None;
+                temp.label_vertices = None;
+                if spot.resizeh != 128 || spot.resizev != 128 {
+                    temp.resize(spot.resizev, spot.resizeh, spot.resizeh);
+                }
+                temp.try_calculate_normals_for_render(
+                    spot.ambient + 64,
+                    spot.contrast + 850,
+                    -30,
+                    -50,
+                    -30,
+                    true,
+                    budget,
+                )?;
+                model = Model::try_combine(&[model, temp], 2, budget)?;
+            }
+        }
+        if cache.npc(npc_id).size == 1 {
+            model.use_aabb_mouse_check = true;
+        }
+        Ok(Some(model))
+    }
+
+    fn try_get_temp_model2_for_render(
+        &mut self,
+        cache: &Cache,
+        budget: &ByteBudget,
+    ) -> Result<Option<Model>, RenderLimit> {
+        let Some(npc_id) = self.r#type else {
+            return Ok(None);
+        };
+        if self.primary_anim < 0 || self.primary_anim_delay != 0 {
+            let mut secondary_transform = -1;
+            if self.secondary_anim >= 0 {
+                if let Some(frames) = &cache.seq(self.secondary_anim as usize).frames {
+                    secondary_transform = frames[self.secondary_anim_frame as usize];
+                }
+            }
+            cache
+                .npc(npc_id)
+                .try_get_temp_model_for_render(secondary_transform, -1, None, budget)
+        } else {
+            let primary_seq = cache.seq(self.primary_anim as usize);
+            let mut primary_transform = -1;
+            if let Some(frames) = &primary_seq.frames {
+                primary_transform = frames[self.primary_anim_frame as usize];
+            }
+            let mut secondary_transform = -1;
+            if self.secondary_anim >= 0 && self.secondary_anim != self.readyanim {
+                if let Some(frames) = &cache.seq(self.secondary_anim as usize).frames {
+                    secondary_transform = frames[self.secondary_anim_frame as usize];
+                }
+            }
+            cache.npc(npc_id).try_get_temp_model_for_render(
+                primary_transform,
+                secondary_transform,
+                primary_seq.walkmerge.as_deref(),
+                budget,
+            )
+        }
     }
 
     /// `getTempModel2()` from client-ts.

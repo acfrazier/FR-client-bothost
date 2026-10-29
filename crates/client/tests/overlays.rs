@@ -148,10 +148,10 @@ fn entity_overlays_plots_prayer_headicon() {
     player.entity.z = 1280;
     player.entity.height = 100;
     c.local_player = Some(player);
-    r.entity_overlays(&mut c);
+    r.entity_overlays(&mut c).unwrap();
     let control = r.area_game.as_ref().unwrap().pixels.clone();
     c.local_player.as_mut().unwrap().headicons = 1 << 3; // protect-melee bit
-    r.entity_overlays(&mut c);
+    r.entity_overlays(&mut c).unwrap();
     let rendered = r.area_game.as_ref().unwrap().pixels.clone();
     let n_control = control.iter().filter(|&&p| p == melee).count();
     let n_rendered = rendered.iter().filter(|&&p| p == melee).count();
@@ -180,7 +180,7 @@ fn entity_overlays_collects_chat_bubble() {
     player.entity.height = 100;
     player.entity.chat_message = Some("hi".into());
     c.local_player = Some(player);
-    r.entity_overlays(&mut c);
+    r.entity_overlays(&mut c).unwrap();
     assert!(r.chat_count >= 1, "the chat bubble must be collected");
     assert_eq!(r.chats[0], "hi");
     // The bubble draws centred black-then-yellow text in area_game.
@@ -213,11 +213,11 @@ fn entity_overlays_npc_hint_changes_for_blink_and_movement() {
 
     c.loop_cycle = 0;
     r.area_game.as_mut().unwrap().pixels.fill(0);
-    r.entity_overlays(&mut c);
+    r.entity_overlays(&mut c).unwrap();
     let visible = r.area_game.as_ref().unwrap().pixels.clone();
     c.loop_cycle = 10;
     r.area_game.as_mut().unwrap().pixels.fill(0);
-    r.entity_overlays(&mut c);
+    r.entity_overlays(&mut c).unwrap();
     let hidden = r.area_game.as_ref().unwrap().pixels.clone();
     assert_ne!(
         visible, hidden,
@@ -227,7 +227,7 @@ fn entity_overlays_npc_hint_changes_for_blink_and_movement() {
     c.loop_cycle = 0;
     c.npc[0].as_mut().unwrap().entity.x = 640;
     r.area_game.as_mut().unwrap().pixels.fill(0);
-    r.entity_overlays(&mut c);
+    r.entity_overlays(&mut c).unwrap();
     let moved = r.area_game.as_ref().unwrap().pixels.clone();
     assert_ne!(visible, moved, "NPC hint crown must follow NPC movement");
 }

@@ -27,6 +27,33 @@ pub use spot_type::SpotType;
 pub use varbit_type::VarBitType;
 pub use varp_type::VarpType;
 
+#[cfg(feature = "render-test-hooks")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RenderTestCacheLayout {
+    pub capacity: usize,
+    pub allocation_bytes: usize,
+    pub node_bytes: usize,
+    pub sentinel_count: usize,
+}
+
+#[cfg(feature = "render-test-hooks")]
+pub(crate) fn render_test_cache_layout<T: crate::datastruct::LinkableTrait>(
+    capacity: usize,
+) -> Option<RenderTestCacheLayout> {
+    let mut cache = crate::datastruct::LruCache::<T>::new(capacity);
+    for key in 0..capacity {
+        cache.put(T::sentinel(), i64::try_from(key).ok()?);
+    }
+    cache.clear();
+    let mut sentinel_count = 0usize;
+    cache.for_each_allocated_node(|_, _| sentinel_count += 1);
+    Some(RenderTestCacheLayout {
+        capacity,
+        allocation_bytes: cache.allocation_capacity_bytes(),
+        node_bytes: std::mem::size_of::<Option<T>>(),
+        sentinel_count,
+    })
+}
 use crate::io::JagFile;
 
 /// All config tables for one `Client`, replacing the TS class statics.
