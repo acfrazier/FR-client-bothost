@@ -694,6 +694,9 @@ fn make_ready_local_player(client: &mut Client) {
     let mut player = ClientPlayer::at(50, 50);
     player.ready = true;
     player.entity.teleport(&client.cache, true, 50, 50);
+    client.orbit_camera_x = player.x;
+    client.orbit_camera_z = player.z;
+    client.orbit_camera_pitch = 512;
     client.local_player = Some(player);
 }
 
@@ -1036,6 +1039,10 @@ fn host_loading_overlay_requires_a_valid_scene_and_coverage() {
         eprintln!("no adapter; host loading overlay test skips");
         return;
     };
+    // First-game preparation reloads the shared media. Install the synthetic
+    // font only after that setup, without creating a valid scene.
+    client.scene_state = 0;
+    let _ = renderer.game_draw(&mut client);
     let (font, splash_x, splash_y) = loading_font();
     let mut media = Media::empty();
     media.p12 = Some(font);
