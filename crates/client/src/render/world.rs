@@ -5811,11 +5811,10 @@ struct SceneCam {
 
 /// One lossless 16-byte scene vertex, in the capture's painter order.
 ///
-/// Camera-space transforms use wrapping `i32` fixed-point values followed by
-/// arithmetic `>> 16`, which bounds those transformed coordinates to
-/// `[-32768, 32767]`. That bound does not apply to decoded model-space
-/// positions used for texture mapping. Captured and clipped camera-space
-/// coordinates are still checked before narrowing to signed 16 bits.
+/// Captured camera-space coordinates must fit `[-32768, 32767]`.
+/// Construction checks that range in every build before narrowing. An
+/// out-of-range coordinate returns a typed render fault, not a wrapped vertex.
+/// Decoded model-space coordinates and texture coordinates have separate domains.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuVertex {
