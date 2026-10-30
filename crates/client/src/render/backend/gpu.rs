@@ -463,7 +463,9 @@ impl GpuContext {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(3 * 24),
+                        min_binding_size: wgpu::BufferSize::new(
+                            3 * std::mem::size_of::<GpuVertex>() as u64,
+                        ),
                     },
                     count: None,
                 },
@@ -718,10 +720,9 @@ fn init_gpu() -> Result<Arc<GpuContext>, String> {
     Err(last_error)
 }
 
-/// The scene pipeline: a passthrough projection (camera-space vertices,
-/// perspective divide in the shader) plus the packed RuneLite-GPU-plugin
-/// vertex (`abhsl`, `uv_tex`, `v`). Flat faces convert the raw 16-bit
-/// shade to RGB via `hslToRgb` in the vertex shader (so gouraud faces
+/// The scene pipeline: the unchanged camera-space projection plus lossless
+/// 16-byte integer vertices. Flat faces convert the raw 16-bit shade to RGB
+/// via `hslToRgb` in the vertex shader (so gouraud faces
 /// interpolate RGB, not the packed shade); textured faces sample the
 /// shared `texture_2d_array`. Their integer screen vertices retain the
 /// CPU's scanline/eight-pixel lighting bands rather than interpolating a
@@ -739,23 +740,20 @@ struct SceneUniforms {
 };
 @group(1) @binding(0) var<uniform> scene: SceneUniforms;
 
-// Six scalars preserve the CPU's 24-byte stride. vec3<f32> would align the
-// record to 16 bytes and incorrectly advance storage reads by 32 bytes.
+// Four scalar words have the same 16-byte stride in storage and vertex input.
 struct SceneVertex {
-    x: f32,
-    y: f32,
-    z: f32,
-    abhsl: u32,
-    uv_tex: u32,
-    v: u32,
+    xy: u32,
+    z_shade: u32,
+    uv: u32,
+    attributes: u32,
 };
 @group(1) @binding(1) var<storage, read> vertices: array<SceneVertex>;
 
 struct VsIn {
-    @location(0) pos: vec3<f32>,
-    @location(1) abhsl: u32,
-    @location(2) uv_tex: u32,
-    @location(3) v: u32,
+    @location(0) xy: u32,
+    @location(1) z_shade: u32,
+    @location(2) uv: u32,
+    @location(3) attributes: u32,
 };
 
 struct VsOut {
@@ -831,35 +829,44 @@ fn hslToRgb(hsl: u32) -> vec3<f32> {
     return vec3<f32>(pow(r0, scene.brightness), pow(g0, scene.brightness), pow(b0, scene.brightness));
 }
 
+fn signedLow(word: u32) -> i32 {
+    return bitcast<i32>(word << 16u) >> 16u;
+}
+
+fn signedHigh(word: u32) -> i32 {
+    return bitcast<i32>(word) >> 16u;
+}
+
 fn shadeVertex(index: u32) -> vec3<i32> {
     let v = vertices[index];
+    let x = signedLow(v.xy);
+    let y = signedHigh(v.xy);
+    let z = signedLow(v.z_shade);
     return vec3<i32>(
-        256 + (i32(v.x) << 9u) / i32(v.z),
-        167 + (i32(v.y) << 9u) / i32(v.z),
-        i32(v.abhsl & 0xffffu),
+        256 + (x << 9u) / z,
+        167 + (y << 9u) / z,
+        i32(v.z_shade >> 16u),
     );
 }
 
 @vertex
 fn vs_main(in: VsIn, @builtin(vertex_index) index: u32) -> VsOut {
     var out: VsOut;
-    let z = in.pos.z;
-    let alpha = f32((in.abhsl >> 24) & 0xffu) / 255.0;
-    let hsl = in.abhsl & 0xffffu;
-    let tex_id = in.uv_tex & 0xffffu;
-    // The packed u/v are signed 16-bit (texture units × 256). Sign-extend
-    // so a face whose coordinates cross zero interpolates across the few
-    // texels between its vertices; the sampler then clamps U and wraps V
-    // per fragment like Java's per-pixel `0..16256` clamp / `& 0x3f80` mask.
-    let u = bitcast<i32>(in.uv_tex) >> 16u;
-    let v = bitcast<i32>(in.v << 16u) >> 16u;
+    let pos = vec3<f32>(f32(signedLow(in.xy)), f32(signedHigh(in.xy)), f32(signedLow(in.z_shade)));
+    let z = pos.z;
+    let alpha = f32(in.attributes & 0xffu) / 255.0;
+    let hsl = in.z_shade >> 16u;
+    let tex_id = (in.attributes >> 8u) & 0x3fu;
+    // Sign-extend the same wrapped 16-bit texture coordinates as before.
+    let u = signedLow(in.uv);
+    let v = signedHigh(in.uv);
 
     // The projection mirrors the CPU `origin + (x << 9) / z` (origin = the
     // 512×334 area_game centre); w = z gives perspective-correct
     // interpolation. There is no depth attachment — the capture's painter
     // order resolves overlap — so clip.z only has to stay inside the clip
     // volume, which it does for every z >= 50 (the CPU near plane).
-    out.position = vec4<f32>(in.pos.x * SCALE_X, in.pos.y * SCALE_Y, z - NEAR, z);
+    out.position = vec4<f32>(pos.x * SCALE_X, pos.y * SCALE_Y, z - NEAR, z);
     out.color = hslToRgb(hsl);
     out.u = f32(u);
     out.v = f32(v);
@@ -880,7 +887,7 @@ fn vs_main(in: VsIn, @builtin(vertex_index) index: u32) -> VsOut {
         out.shade_ab = shadeStep(a, b);
         out.shade_bc = shadeStep(b, c);
         out.shade_ac = shadeStep(a, c);
-        out.hclip = (in.abhsl >> 16u) & 1u;
+        out.hclip = (in.attributes >> 14u) & 1u;
     }
     return out;
 }
@@ -1651,12 +1658,14 @@ impl GpuBackend {
         handle.read_back()
     }
 
+    // Retained per-head cap. Budget admission below separately charges both
+    // old and replacement storage (64 + 128 MiB at the largest growth).
+    const MAX_VERTEX_RETAINED_BYTES: usize = 128 * 1024 * 1024;
+
     fn ensure_vertex_buffer(&mut self, bytes: usize) -> Result<(), RenderLimit> {
         let device_maximum = self.context.device.limits().max_storage_buffer_binding_size as usize;
         let active_budget = RenderBudget::current_resource(RenderResource::Vertex);
-        let maximum = active_budget
-            .as_ref()
-            .map_or(usize::MAX, |budget| budget.maximum());
+        let maximum = Self::MAX_VERTEX_RETAINED_BYTES.min(device_maximum);
         if let Some(budget) = active_budget.as_ref() {
             let already_charged = self.vertex_budget_charge.as_ref().is_some_and(|charge| {
                 charge.belongs_to(budget) && charge.bytes() == self.vertex_buf_capacity
@@ -1673,13 +1682,6 @@ impl GpuBackend {
             .ok_or_else(|| RenderLimit::new(RenderResource::Vertex, usize::MAX, maximum))?;
         if capacity > maximum {
             return Err(RenderLimit::new(RenderResource::Vertex, capacity, maximum));
-        }
-        if capacity > device_maximum {
-            return Err(RenderLimit::new(
-                RenderResource::Vertex,
-                capacity,
-                device_maximum,
-            ));
         }
         let next_charge = active_budget
             .as_ref()
@@ -1958,7 +1960,7 @@ fn make_pipeline(
             array_stride: std::mem::size_of::<GpuVertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &wgpu::vertex_attr_array![
-                0 => Float32x3,
+                0 => Uint32,
                 1 => Uint32,
                 2 => Uint32,
                 3 => Uint32,
@@ -3077,6 +3079,10 @@ mod overlay_tests;
 #[cfg(all(test, feature = "render-test-hooks"))]
 #[path = "gpu_retained_tests.rs"]
 mod retained_tests;
+
+#[cfg(all(test, feature = "render-test-hooks"))]
+#[path = "gpu_compact_vertex_tests.rs"]
+mod compact_vertex_tests;
 
 #[cfg(test)]
 mod tests {

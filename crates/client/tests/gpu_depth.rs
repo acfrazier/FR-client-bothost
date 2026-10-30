@@ -319,12 +319,12 @@ fn shade_z_range(mesh: &SceneMesh, shade: i32) -> (f32, f32, usize) {
     let mut max_z = f32::MIN;
     let mut n = 0usize;
     for v in mesh.vertices() {
-        if (v.abhsl & 0xffff) as i32 != shade {
+        if i32::from(v.shade()) != shade {
             continue;
         }
         n += 1;
-        min_z = min_z.min(v.z);
-        max_z = max_z.max(v.z);
+        min_z = min_z.min(v.position()[2] as f32);
+        max_z = max_z.max(v.position()[2] as f32);
     }
     (min_z, max_z, n)
 }

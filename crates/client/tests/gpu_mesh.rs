@@ -141,15 +141,15 @@ fn scene_mesh_builds_ground_and_wall_triangles() {
     let mut found_ground = false;
     let mut found_wall = false;
     for v in vertices.iter() {
-        let shade = (v.abhsl & 0xffff) as i32;
+        let shade = i32::from(v.shade());
         found_ground |= shade == SHADE;
         found_wall |= shade == WALL_SHADE;
         assert!(
-            v.z.is_finite() && v.x.is_finite() && v.y.is_finite(),
-            "every mesh vertex is a finite camera-space position"
+            v.position().into_iter().all(|c| i16::try_from(c).is_ok()),
+            "every mesh vertex preserves its integral camera-space position"
         );
-        assert_eq!(v.uv_tex, 0, "flat faces carry no texture");
-        assert_eq!(v.v, 0, "flat faces carry no v");
+        assert_eq!(v.texture_id_plus_one(), 0, "flat faces carry no texture");
+        assert_eq!(v.texture_uv(), [0, 0], "flat faces carry no UV");
     }
     assert!(
         found_ground,
@@ -231,7 +231,7 @@ fn textured_face_with_out_of_range_tex_id_still_emits() {
     let mut found_clamped_low = false;
     let mut found_unclamped = false;
     for v in mesh.vertices() {
-        let tex_plus = v.uv_tex & 0xffff;
+        let tex_plus = v.texture_id_plus_one();
         // tex_id 60 → clamped 49 → packs 50; tex_id -1 → clamped 0 → packs 1.
         if tex_plus == 50 {
             found_clamped_high = true;
@@ -341,7 +341,7 @@ fn lowmem_textured_quick_ground_shades_with_the_texture_average() {
 
     let mut found_average = false;
     for v in mesh.vertices() {
-        let shade = (v.abhsl & 0xffff) as i32;
+        let shade = i32::from(v.shade());
         assert_ne!(
             shade, SHADE,
             "a low-mem textured quick ground must not use the raw ground shade"
@@ -422,7 +422,7 @@ fn highmem_textured_quick_ground_samples_the_atlas() {
 
     let mut textured = 0usize;
     for v in mesh.vertices() {
-        if v.uv_tex & 0xffff != 0 {
+        if v.texture_id_plus_one() != 0 {
             textured += 1;
         }
     }
@@ -501,10 +501,10 @@ fn lowmem_textured_ground_face_shades_with_the_texture_average() {
     let mut found_raw = false;
     for v in mesh.vertices() {
         assert_eq!(
-            v.uv_tex, 0,
+            v.texture_id_plus_one(), 0,
             "a low-mem textured ground face must stay flat (no atlas sample)"
         );
-        let shade = (v.abhsl & 0xffff) as i32;
+        let shade = i32::from(v.shade());
         if shade == expected_average {
             found_average = true;
         }
@@ -776,7 +776,7 @@ fn gpu_loc_pick_is_per_face_not_aabb() {
     assert!(
         mesh.vertices()
             .iter()
-            .any(|v| (v.abhsl & 0xffff) as i32 == WALL_SHADE),
+            .any(|v| i32::from(v.shade()) == WALL_SHADE),
         "the door loc must actually be in the GPU mesh or the pick miss is a vis false-pass"
     );
     assert_eq!(
@@ -898,7 +898,7 @@ fn nav_debug_paint_does_not_enable_aabb_loc_pick() {
     assert!(
         mesh.vertices()
             .iter()
-            .any(|v| (v.abhsl & 0xffff) as i32 == WALL_SHADE),
+            .any(|v| i32::from(v.shade()) == WALL_SHADE),
         "the door loc must actually be in the GPU mesh or the pick miss is a vis false-pass"
     );
     assert_eq!(

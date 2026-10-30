@@ -5809,51 +5809,73 @@ struct SceneCam {
     cos_yaw: i32,
 }
 
-/// One triangle vertex of the GPU scene mesh: a camera-space position plus
-/// the packed RuneLite-GPU-plugin attributes — `abhsl` (alpha << 24 |
-/// polygon hclip << 16 | raw 16-bit face shade) and, for textured faces,
-/// the signed 16-bit texture `u`/`v` (texture units × 256) and the
-/// `texture id + 1` (`0` means flat, i.e. untextured). `bytemuck::Pod` lets
-/// the backend upload the reused 24-byte vertices as one raw byte stream.
+/// One lossless 16-byte scene vertex, in the capture's painter order.
+///
+/// Camera transforms end in an arithmetic `i32 >> 16`, so their integral
+/// coordinates fit signed 16 bits. CPU near clipping interpolates those
+/// coordinates and retains that range. Texture coordinates already use
+/// signed 16-bit wrapping. The shader decodes these same integers before
+/// applying the unchanged projection, lighting, texture and blend rules.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuVertex {
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
-    pub abhsl: u32,
-    pub uv_tex: u32,
-    pub v: u32,
+    xy: u32,
+    z_shade: u32,
+    uv: u32,
+    attributes: u32,
 }
+
+const _: [(); 16] = [(); std::mem::size_of::<GpuVertex>()];
 
 impl GpuVertex {
     /// A near-clipped polygon shares hclip across both emitted triangles.
-    const POLYGON_HCLIP: u32 = 1 << 16;
+    const POLYGON_HCLIP: u32 = 1 << 14;
 
-    /// Pack `alpha` (0..255, 255 = opaque) and the raw 16-bit `shade` into
-    /// one word (the RuneLite `alphaBias | color` layout with no bias:
-    /// draw order, not depth, resolves overlapping faces).
-    fn pack(alpha: u8, shade: i32) -> u32 {
-        ((alpha as u32) << 24) | (shade as u32 & 0xffff)
+    fn coordinates(low: i32, high: i32) -> u32 {
+        debug_assert!(i16::try_from(low).is_ok() && i16::try_from(high).is_ok());
+        u32::from(low as u16) | (u32::from(high as u16) << 16)
     }
 
-    /// A flat (untextured) camera-space vertex. `shade` is the raw 16-bit
-    /// colour-table index — the shader converts it via `hslToRgb`.
+    /// Integral camera-space position, before the shader's exact f32 conversion.
+    pub fn position(&self) -> [i32; 3] {
+        [
+            i32::from(self.xy as i16),
+            i32::from((self.xy >> 16) as i16),
+            i32::from(self.z_shade as i16),
+        ]
+    }
+
+    /// Raw colour-table index or textured-face brightness.
+    pub fn shade(&self) -> u16 {
+        (self.z_shade >> 16) as u16
+    }
+
+    /// Opacity: 255 is opaque.
+    pub fn alpha(&self) -> u8 {
+        self.attributes as u8
+    }
+
+    /// Signed texture coordinates in the capture's existing ×256 units.
+    pub fn texture_uv(&self) -> [i16; 2] {
+        [self.uv as i16, (self.uv >> 16) as i16]
+    }
+
+    /// Texture layer plus one; zero denotes an untextured face.
+    pub fn texture_id_plus_one(&self) -> u8 {
+        ((self.attributes >> 8) & 0x3f) as u8
+    }
+
+    /// The CPU clipper's horizontal-clip decision for the entire polygon.
+    pub fn polygon_hclip(&self) -> bool {
+        self.attributes & Self::POLYGON_HCLIP != 0
+    }
+
+    /// A flat face keeps the same low 16 shade bits as the CPU colour table.
     fn new(x: i32, y: i32, z: i32, shade: i32, alpha: u8) -> GpuVertex {
-        GpuVertex {
-            x: x as f32,
-            y: y as f32,
-            z: z as f32,
-            abhsl: Self::pack(alpha, shade),
-            uv_tex: 0,
-            v: 0,
-        }
+        Self::textured(x, y, z, 0, 0, shade, alpha, 0)
     }
 
-    /// A textured-face vertex: signed 16-bit `u`/`v` (texture units × 256,
-    /// two's complement in the low half-word; the shader sign-extends) on
-    /// the model texture, the raw 16-bit `shade` for the texel brightness,
-    /// and `tex_id_plus_1` (texture id + 1; `0` would read as flat).
+    /// Texture coordinates retain their existing low-16-bit wrapping.
     #[allow(clippy::too_many_arguments)]
     fn textured(
         x: i32,
@@ -5865,13 +5887,12 @@ impl GpuVertex {
         alpha: u8,
         tex_id_plus_1: u32,
     ) -> GpuVertex {
+        debug_assert!(tex_id_plus_1 <= 50);
         GpuVertex {
-            x: x as f32,
-            y: y as f32,
-            z: z as f32,
-            abhsl: Self::pack(alpha, shade),
-            uv_tex: ((u & 0xffff) << 16) | (tex_id_plus_1 & 0xffff),
-            v: v & 0xffff,
+            xy: Self::coordinates(x, y),
+            z_shade: Self::coordinates(z, shade as i16 as i32),
+            uv: (u & 0xffff) | ((v & 0xffff) << 16),
+            attributes: u32::from(alpha) | (tex_id_plus_1 << 8),
         }
     }
 }
@@ -5922,7 +5943,7 @@ impl SceneMesh {
     pub(crate) fn sampled_texture_ids(&self) -> [bool; 50] {
         let mut sampled = [false; 50];
         for vertex in &self.vertices {
-            let id_plus_one = (vertex.uv_tex & 0xffff) as usize;
+            let id_plus_one = usize::from(vertex.texture_id_plus_one());
             if (1..=50).contains(&id_plus_one) {
                 sampled[id_plus_one - 1] = true;
             }
@@ -6321,7 +6342,7 @@ pub(crate) fn capture_model_face(
             None => GpuVertex::new(v.x, v.y, v.z, v.shade, alpha),
         };
         if polygon_hclip {
-            vertex.abhsl |= GpuVertex::POLYGON_HCLIP;
+            vertex.attributes |= GpuVertex::POLYGON_HCLIP;
         }
         vertex
     };
@@ -6668,6 +6689,98 @@ fn emit_quick_ground(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod compact_vertex_tests {
+    use super::GpuVertex;
+
+    #[test]
+    fn every_coordinate_uv_and_shade_halfword_round_trips_losslessly() {
+        for bits in 0..=u16::MAX {
+            let signed = i32::from(bits as i16);
+            let opposite = i32::from(!bits as i16);
+            let vertex = GpuVertex::textured(
+                signed,
+                opposite,
+                signed,
+                u32::from(bits) | 0xabcd_0000,
+                u32::from(!bits) | 0x1234_0000,
+                i32::from(bits) | 0x7654_0000,
+                0x95,
+                50,
+            );
+            assert_eq!(vertex.position(), [signed, opposite, signed]);
+            assert_eq!(vertex.texture_uv(), [bits as i16, !bits as i16]);
+            assert_eq!(vertex.shade(), bits);
+            assert_eq!(vertex.alpha(), 0x95);
+            assert_eq!(vertex.texture_id_plus_one(), 50);
+            assert!(!vertex.polygon_hclip());
+            // These are the four words and signed shifts used by WGSL.
+            let words: &[u32] = bytemuck::cast_slice(std::slice::from_ref(&vertex));
+            let low = |word: u32| (word << 16) as i32 >> 16;
+            let high = |word: u32| word as i32 >> 16;
+            assert_eq!([low(words[0]), high(words[0]), low(words[1])], vertex.position());
+            assert_eq!(words[1] >> 16, u32::from(bits));
+            assert_eq!([low(words[2]), high(words[2])], [signed, opposite]);
+            assert_eq!(words[3], 0x3295);
+        }
+    }
+
+    #[test]
+    fn every_alpha_texture_and_polygon_flag_combination_is_independent() {
+        for alpha in 0..=u8::MAX {
+            for texture in 0..=50 {
+                for hclip in [false, true] {
+                    let mut vertex = GpuVertex::textured(
+                        -32768, 32767, -1, 0x8000, 0x7fff, 0xbeef, alpha, texture,
+                    );
+                    if hclip {
+                        vertex.attributes |= GpuVertex::POLYGON_HCLIP;
+                    }
+                    assert_eq!(vertex.position(), [-32768, 32767, -1]);
+                    assert_eq!(vertex.texture_uv(), [-32768, 32767]);
+                    assert_eq!(vertex.shade(), 0xbeef);
+                    assert_eq!(vertex.alpha(), alpha);
+                    assert_eq!(u32::from(vertex.texture_id_plus_one()), texture);
+                    assert_eq!(vertex.polygon_hclip(), hclip);
+                    assert_eq!(vertex.attributes & !0x7fff, 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn flat_vertices_keep_shade_wrapping_without_texture_or_clip_bits() {
+        for shade in [i32::MIN, -65537, -1, 0, 65535, 65536, i32::MAX] {
+            let vertex = GpuVertex::new(-32768, 0, 32767, shade, 255);
+            assert_eq!(vertex.position(), [-32768, 0, 32767]);
+            assert_eq!(vertex.shade(), shade as u16);
+            assert_eq!(vertex.alpha(), 255);
+            assert_eq!(vertex.texture_id_plus_one(), 0);
+            assert_eq!(vertex.texture_uv(), [0, 0]);
+            assert!(!vertex.polygon_hclip());
+        }
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn out_of_contract_coordinates_or_texture_ids_fail_at_the_constructor() {
+        for [x, y, z] in [
+            [-32769, 0, 50],
+            [32768, 0, 50],
+            [0, -32769, 50],
+            [0, 32768, 50],
+            [0, 0, -32769],
+            [0, 0, 32768],
+        ] {
+            assert!(std::panic::catch_unwind(|| GpuVertex::new(x, y, z, 0, 255)).is_err());
+        }
+        assert!(std::panic::catch_unwind(|| {
+            GpuVertex::textured(0, 0, 50, 0, 0, 0, 255, 51)
+        })
+        .is_err());
+    }
 }
 
 #[cfg(test)]

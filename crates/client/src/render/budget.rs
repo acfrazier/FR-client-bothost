@@ -461,6 +461,10 @@ pub(crate) fn reserve_deque<T>(
 }
 
 /// Explicit ceilings for the resources participating in one render fixture.
+/// Each ceiling bounds simultaneously live bytes, including old-plus-new
+/// replacement. In particular `vertex` is a growth-peak budget, not the
+/// backend's separate 128 MiB retained-buffer cap: admitting the largest
+/// power-of-two replacement needs 64 + 128 = 192 MiB.
 #[cfg(any(test, feature = "render-test-hooks"))]
 pub struct RenderBudgetLimits {
     capture: usize,

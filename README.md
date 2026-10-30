@@ -28,15 +28,22 @@ loop. The host's `journal-paint-proof` feature enables it; panel-play and
 tui-play do not. Normal event-loop initialization is unchanged.
 
 Textured GPU lighting follows CpuPix3D's integer scanlines, eight-pixel
-brightness bands, and packed texture-palette arithmetic. The scene vertex
-stays 24 bytes: the vertex shader reads each textured triangle from a
-read-only storage view of the same reused vertex buffer. There is one
-vertex upload per rendered scene frame, with no extra stream or upload.
+brightness bands, and packed texture-palette arithmetic. Each scene vertex
+uses a lossless 16-byte record: integral camera coordinates, signed texture
+coordinates, shade, opacity, texture layer and the CPU's polygon clip flag.
+The vertex shader reads each textured triangle from a read-only storage
+view of the same reused buffer. There is one vertex upload per rendered
+scene frame, with no extra stream, indexing or upload.
 GPU fringe scanlines and blocks are bounded, and near-clipped polygon fans
 share the CPU's horizontal-clipping decision. Transparent mips that shade
 to zero preserve the background; opaque black still draws. Untextured
 shading, texture filtering/UVs, and the scene-state-1 last-frame freeze are
 unchanged.
+Per-head vertex storage grows in powers of two up to 128 MiB (or the device
+binding limit, if smaller). The largest replacement owns 64 + 128 MiB
+briefly; an active render budget charges both buffers before allocation.
+A frame above the retained cap reports a resource fault and preserves the
+last completed image rather than splitting the mesh or hiding geometry.
 GPU triangle coverage and projective texture sampling still differ from
 the CPU's integer rasterizer; this is not a pixel-identical GPU backend.
 

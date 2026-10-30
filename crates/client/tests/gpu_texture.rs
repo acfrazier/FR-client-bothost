@@ -465,7 +465,7 @@ fn textured_model_mesh_carries_tex_id_and_uv() {
     let mut saw_nonzero_u = false;
     let mut saw_nonzero_v = false;
     for v in vertices.iter() {
-        let tex_plus = v.uv_tex & 0xffff;
+        let tex_plus = u32::from(v.texture_id_plus_one());
         if tex_plus == TEXTURE_RED as u32 + 1 {
             found_red = true;
         }
@@ -473,18 +473,18 @@ fn textured_model_mesh_carries_tex_id_and_uv() {
             found_blue = true;
         }
         if tex_plus != 0 {
-            // A textured vertex packs texture id + 1 in the low 16 bits and
-            // the fixed-point u in the high 16 bits, plus the raw shade.
+            // The compact vertex preserves the texture layer, signed
+            // fixed-point UV and raw shade independently.
             assert_eq!(
-                (v.abhsl & 0xffff) as i32,
+                i32::from(v.shade()),
                 TEX_SHADE,
                 "a textured vertex carries the raw shade"
             );
-            saw_nonzero_u |= (v.uv_tex >> 16) != 0;
-            saw_nonzero_v |= v.v != 0;
+            saw_nonzero_u |= v.texture_uv()[0] != 0;
+            saw_nonzero_v |= v.texture_uv()[1] != 0;
         } else {
-            assert_eq!(v.uv_tex, 0, "untextured vertices carry no texture");
-            assert_eq!(v.v, 0, "untextured vertices carry no v");
+            assert_eq!(v.texture_id_plus_one(), 0, "untextured vertices carry no texture");
+            assert_eq!(v.texture_uv(), [0, 0], "untextured vertices carry no UV");
         }
     }
     assert!(found_red, "the red-textured face must be in the mesh");
@@ -548,10 +548,10 @@ fn textured_type3_face_carries_tex_id_and_uv() {
 
     let mut textured = 0usize;
     for v in mesh.vertices() {
-        if v.uv_tex & 0xffff != 0 {
+        if v.texture_id_plus_one() != 0 {
             textured += 1;
             assert_eq!(
-                (v.abhsl & 0xffff) as i32,
+                i32::from(v.shade()),
                 TEX_SHADE,
                 "a type-3 textured vertex carries the flat shade"
             );
@@ -613,10 +613,10 @@ fn wall_face_crossing_the_near_plane_still_emits() {
 
     let mut wall_verts = 0usize;
     for v in mesh.vertices() {
-        if (v.abhsl & 0xffff) as i32 == SHADE {
+        if i32::from(v.shade()) == SHADE {
             wall_verts += 1;
             assert!(
-                v.z >= 50.0,
+                v.position()[2] >= 50,
                 "clipped wall vertices must stay on the near plane or in front"
             );
         }
@@ -929,10 +929,10 @@ fn gpu_lowmem_texture_samples_the_full_128px_layer() {
     for v in mesh
         .vertices()
         .iter()
-        .filter(|v| (v.uv_tex & 0xffff) == (TEXTURE_QUAD as u32 + 1))
+        .filter(|v| u32::from(v.texture_id_plus_one()) == TEXTURE_QUAD as u32 + 1)
     {
-        max_u = max_u.max(v.uv_tex >> 16);
-        max_v = max_v.max(v.v);
+        max_u = max_u.max(u32::from(v.texture_uv()[0] as u16));
+        max_v = max_v.max(u32::from(v.texture_uv()[1] as u16));
     }
     assert!(
         max_u > 220 && max_v > 220,
@@ -1685,10 +1685,11 @@ fn client(cache_dir: &std::path::Path) -> client::client::Client {
     })
 }
 
-/// The `GpuVertex` layout stays `bytemuck`-clean for the raw upload (the
-/// extra UV/shade/tex-id fields must not break the Pod contract).
+/// The compact `GpuVertex` stays `bytemuck`-clean with its exact upload stride.
 #[test]
 fn gpu_vertex_stays_pod() {
     fn assert_pod<T: bytemuck::Pod + bytemuck::Zeroable>() {}
     assert_pod::<GpuVertex>();
+    assert_eq!(std::mem::size_of::<GpuVertex>(), 16);
+    assert_eq!(std::mem::align_of::<GpuVertex>(), 4);
 }
