@@ -392,6 +392,10 @@ pub trait RenderBackend {
         false
     }
 
+    /// Release optional GPU nav storage without requiring a paint or lease.
+    /// CPU backends do not retain this separate GPU overlay.
+    fn release_nav_debug_overlay(&mut self) {}
+
     /// On-demand logical owner census. Regular paints must not enumerate
     /// every owner; default backends contribute no additional GPU/context data.
     fn render_bytes(&self) -> RenderBytes {

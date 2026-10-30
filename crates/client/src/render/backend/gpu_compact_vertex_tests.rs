@@ -1052,7 +1052,7 @@ fn compare_case(
     }
 
     let sampled_texture_ids = mesh.sampled_texture_ids();
-    let _scene_lock = GPU_SCENE_LOCK
+    let mut scene_lock = GPU_SCENE_LOCK
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     {
@@ -1068,9 +1068,16 @@ fn compare_case(
             .stage_animated_model_textures(pix, &sampled_texture_ids)
             .map_err(ProofFailure::Render)?;
     }
-    backend.render_scene(mesh).map_err(ProofFailure::Render)?;
+    backend
+        .render_scene(mesh, &mut scene_lock)
+        .map_err(ProofFailure::Render)?;
     let compact = read_scene(backend);
-    render_legacy24(backend, oracle, &old_vertices);
+    render_legacy24(
+        backend,
+        scene_lock.as_ref().expect("scene storage initialized"),
+        oracle,
+        &old_vertices,
+    );
     let legacy = read_scene(backend);
     let compact_coverage = compact.iter().filter(|&&pixel| pixel != 0).count();
     let legacy_coverage = legacy.iter().filter(|&&pixel| pixel != 0).count();
@@ -1083,8 +1090,9 @@ fn compare_case(
         }
     }
     let metrics = mesh_metrics(mesh);
-    let backend_capacity = backend.vertex_buf_capacity;
-    let backend_buffer_bytes = backend.vertex_buf.size() as usize;
+    let shared = scene_lock.as_ref().expect("scene storage initialized");
+    let backend_capacity = shared.vertex_buf_capacity;
+    let backend_buffer_bytes = shared.vertex_buf.size() as usize;
     let retained_capture_bytes = mesh.retained_bytes();
     let backend_memory = crate::render::backend::RenderBackend::render_bytes(backend);
     if backend_capacity > RETAINED_VERTEX_CAP
@@ -1293,7 +1301,12 @@ impl Legacy24Pipeline {
     }
 }
 
-fn render_legacy24(backend: &GpuBackend, oracle: &Legacy24Pipeline, vertices: &[Legacy24Vertex]) {
+fn render_legacy24(
+    backend: &GpuBackend,
+    shared: &SceneVertices,
+    oracle: &Legacy24Pipeline,
+    vertices: &[Legacy24Vertex],
+) {
     assert!(!vertices.is_empty());
     let device = &backend.context.device;
     let queue = &backend.context.queue;
@@ -1307,18 +1320,14 @@ fn render_legacy24(backend: &GpuBackend, oracle: &Legacy24Pipeline, vertices: &[
     });
     queue.write_buffer(&buffer, 0, bytemuck::cast_slice(vertices));
     let brightness = [Pix3D::colour_brightness() as f32, 0.0f32, 0.0f32, 0.0f32];
-    queue.write_buffer(
-        &backend.brightness_buf,
-        0,
-        bytemuck::cast_slice(&brightness),
-    );
+    queue.write_buffer(&shared.brightness_buf, 0, bytemuck::cast_slice(&brightness));
     let scene_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("T4.4 baseline legacy24 scene group"),
         layout: &oracle.scene_layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: backend.brightness_buf.as_entire_binding(),
+                resource: shared.brightness_buf.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
@@ -1370,26 +1379,32 @@ fn read_scene(backend: &GpuBackend) -> Vec<i32> {
 }
 
 fn check_vertex_preflight(backend: &mut GpuBackend) -> Result<(), ProofFailure> {
-    let old_capacity = backend.vertex_buf_capacity;
-    let old_buffer_size = backend.vertex_buf.size() as usize;
+    let mut scene_lock = GPU_SCENE_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let shared = scene_lock
+        .as_mut()
+        .expect("pixel proof initialized scene storage");
+    let old_capacity = shared.vertex_buf_capacity;
+    let old_buffer_size = shared.vertex_buf.size() as usize;
     let last_image = read_scene(backend);
     let max_plus_one = GpuBackend::MAX_VERTEX_RETAINED_BYTES
         .checked_add(1)
         .ok_or_else(|| ProofFailure::VertexPreflight("128 MiB cap overflow".into()))?;
-    let error = backend
-        .ensure_vertex_buffer(max_plus_one)
+    let error = shared
+        .ensure_vertex_buffer(&backend.context, max_plus_one)
         .expect_err("MAX_VERTEX_RETAINED_BYTES + 1 must be refused before allocation");
     if error.resource() != RenderResource::Vertex
-        || backend.vertex_buf_capacity != old_capacity
-        || backend.vertex_buf.size() as usize != old_buffer_size
+        || shared.vertex_buf_capacity != old_capacity
+        || shared.vertex_buf.size() as usize != old_buffer_size
         || read_scene(backend) != last_image
     {
         return Err(ProofFailure::VertexPreflight(format!(
             "MAX+1 did not fail closed: error={error}, capacity {}->{}, buffer {}->{}, image_unchanged={}",
             old_capacity,
-            backend.vertex_buf_capacity,
+            shared.vertex_buf_capacity,
             old_buffer_size,
-            backend.vertex_buf.size(),
+            shared.vertex_buf.size(),
             read_scene(backend) == last_image
         )));
     }
@@ -1413,11 +1428,11 @@ fn check_vertex_preflight(backend: &mut GpuBackend) -> Result<(), ProofFailure> 
         error.resource(),
         error.requested(),
         error.maximum(),
-        backend.vertex_buf_capacity,
-        backend.vertex_buf.size(),
+        shared.vertex_buf_capacity,
+        shared.vertex_buf.size(),
     );
 
-    let capacity = backend.vertex_buf_capacity;
+    let capacity = shared.vertex_buf_capacity;
     if capacity == 0 || !capacity.is_power_of_two() {
         return Err(ProofFailure::VertexPreflight(format!(
             "current backend capacity {capacity} is not a nonzero power of two"
@@ -1434,7 +1449,7 @@ fn check_vertex_preflight(backend: &mut GpuBackend) -> Result<(), ProofFailure> 
             "C={capacity} is too large for bounded growth proof (2*C={doubled}, 3*C={three})"
         )));
     }
-    let buffer_before = backend.vertex_buf.size() as usize;
+    let buffer_before = shared.vertex_buf.size() as usize;
 
     let rejected_budget = fixture_budget(three - 1);
     let rejected_vertex = rejected_budget
@@ -1442,21 +1457,21 @@ fn check_vertex_preflight(backend: &mut GpuBackend) -> Result<(), ProofFailure> 
         .expect("Vertex is a byte-budget resource")
         .clone();
     let rejected_scope = rejected_budget.scope();
-    let rejected = backend.ensure_vertex_buffer(capacity + 1);
+    let rejected = shared.ensure_vertex_buffer(&backend.context, capacity + 1);
     drop(rejected_scope);
     let rejected_error = rejected.expect_err("peak 3*C-1 must refuse C+1 growth");
     if rejected_error.resource() != RenderResource::Vertex
         || rejected_error.requested() != three
         || rejected_error.maximum() != three - 1
-        || backend.vertex_buf_capacity != capacity
-        || backend.vertex_buf.size() as usize != buffer_before
+        || shared.vertex_buf_capacity != capacity
+        || shared.vertex_buf.size() as usize != buffer_before
         || rejected_vertex.live() != capacity
         || rejected_vertex.peak() != capacity
     {
         return Err(ProofFailure::VertexPreflight(format!(
             "3*C-1 growth rejection mismatched: error={rejected_error}, capacity={}, buffer={}, charge_live={}, charge_peak={}, C={capacity}",
-            backend.vertex_buf_capacity,
-            backend.vertex_buf.size(),
+            shared.vertex_buf_capacity,
+            shared.vertex_buf.size(),
             rejected_vertex.live(),
             rejected_vertex.peak()
         )));
@@ -1468,8 +1483,8 @@ fn check_vertex_preflight(backend: &mut GpuBackend) -> Result<(), ProofFailure> 
         rejected_error.resource(),
         rejected_error.requested(),
         rejected_error.maximum(),
-        backend.vertex_buf_capacity,
-        backend.vertex_buf.size(),
+        shared.vertex_buf_capacity,
+        shared.vertex_buf.size(),
         rejected_vertex.live(),
         rejected_vertex.peak(),
     );
@@ -1480,21 +1495,21 @@ fn check_vertex_preflight(backend: &mut GpuBackend) -> Result<(), ProofFailure> 
         .expect("Vertex is a byte-budget resource")
         .clone();
     let admitted_scope = admitted_budget.scope();
-    backend
-        .ensure_vertex_buffer(capacity + 1)
+    shared
+        .ensure_vertex_buffer(&backend.context, capacity + 1)
         .map_err(|error| {
             ProofFailure::VertexPreflight(format!("3*C growth was not admitted: {error}"))
         })?;
     drop(admitted_scope);
-    if backend.vertex_buf_capacity != doubled
-        || backend.vertex_buf.size() as usize != doubled
+    if shared.vertex_buf_capacity != doubled
+        || shared.vertex_buf.size() as usize != doubled
         || admitted_vertex.live() != doubled
         || admitted_vertex.peak() != three
     {
         return Err(ProofFailure::VertexPreflight(format!(
             "3*C growth receipt mismatched: capacity={}, buffer={}, charge_live={}, charge_peak={}, expected_capacity={doubled}, expected_peak={three}",
-            backend.vertex_buf_capacity,
-            backend.vertex_buf.size(),
+            shared.vertex_buf_capacity,
+            shared.vertex_buf.size(),
             admitted_vertex.live(),
             admitted_vertex.peak(),
         )));
@@ -1502,8 +1517,8 @@ fn check_vertex_preflight(backend: &mut GpuBackend) -> Result<(), ProofFailure> 
     println!(
         "T44_VERTEX_GROWTH mode=peak-3C C={capacity} request={} new_capacity={} buffer_bytes={} charge_live={} charge_peak={} retained_cap={}MiB",
         capacity + 1,
-        backend.vertex_buf_capacity,
-        backend.vertex_buf.size(),
+        shared.vertex_buf_capacity,
+        shared.vertex_buf.size(),
         admitted_vertex.live(),
         admitted_vertex.peak(),
         RETAINED_VERTEX_CAP / MIB,

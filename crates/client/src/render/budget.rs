@@ -140,16 +140,17 @@ const RENDER_BUDGET_RESOURCES: [RenderResource; 13] = [
 ];
 
 #[cfg(any(test, feature = "render-test-hooks"))]
-const PROCESS_RENDER_BUDGET_RESOURCES: [RenderResource; 5] = [
+const PROCESS_RENDER_BUDGET_RESOURCES: [RenderResource; 6] = [
     RenderResource::Capture,
     RenderResource::SharedModels,
     RenderResource::SharedSprites,
+    RenderResource::Vertex,
     RenderResource::ContextCpu,
     RenderResource::ContextGpu,
 ];
 
 #[cfg(any(test, feature = "render-test-hooks"))]
-const HEAD_RENDER_BUDGET_RESOURCES: [RenderResource; 8] = [
+const HEAD_RENDER_BUDGET_RESOURCES: [RenderResource; 7] = [
     RenderResource::NavVertices,
     RenderResource::NavQuads,
     RenderResource::NavEdges,
@@ -157,7 +158,6 @@ const HEAD_RENDER_BUDGET_RESOURCES: [RenderResource; 8] = [
     RenderResource::HeadModels,
     RenderResource::HeadMisc,
     RenderResource::TempModels,
-    RenderResource::Vertex,
 ];
 
 /// Scalar allocation totals for one render-budget owner.
@@ -472,9 +472,9 @@ pub(crate) fn reserve_deque<T>(
 
 /// Explicit ceilings for the resources participating in one render fixture.
 /// Each ceiling bounds simultaneously live bytes, including old-plus-new
-/// replacement. In particular `vertex` is a growth-peak budget, not the
-/// backend's separate 128 MiB retained-buffer cap: admitting the largest
-/// power-of-two replacement needs 64 + 128 = 192 MiB.
+/// replacement. In particular `vertex` is one process-wide growth-peak budget,
+/// not a per-head budget. Its separate retained-buffer cap is 128 MiB:
+/// admitting the largest replacement needs 64 + 128 = 192 MiB once.
 #[cfg(any(test, feature = "render-test-hooks"))]
 pub struct RenderBudgetLimits {
     capture: usize,
@@ -584,7 +584,7 @@ impl RenderBudget {
             temp_models: ByteBudget::new(RenderResource::TempModels, self.temp_models.maximum()),
             shared_models: self.shared_models.clone(),
             shared_sprites: self.shared_sprites.clone(),
-            vertex: ByteBudget::new(RenderResource::Vertex, self.vertex.maximum()),
+            vertex: self.vertex.clone(),
             context_cpu: self.context_cpu.clone(),
             context_gpu: self.context_gpu.clone(),
         }
@@ -593,10 +593,10 @@ impl RenderBudget {
     /// Reconcile this budget's scalar owner allocations without consulting its
     /// logical reservation counters.
     ///
-    /// Pass the process template when measuring a head: its five process-wide
-    /// handles are reported as shared, while only this head's eight distinct
+    /// Pass the process template when measuring a head: its six process-wide
+    /// handles are reported as shared, while only this head's seven distinct
     /// local Arc allocations contribute new bytes. With `None`, all distinct
-    /// states held by this value are reported, including the eight local-state
+    /// states held by this value are reported, including the seven local-state
     /// prototypes retained by the process template.
     #[cfg(any(test, feature = "render-test-hooks"))]
     pub fn scalar_allocation_receipt(
@@ -657,7 +657,7 @@ impl RenderBudget {
         RENDER_BUDGET_RESOURCES.len()
     }
 
-    /// Arc allocation bytes created for the eight head-local budget states.
+    /// Arc allocation bytes created for the seven head-local budget states.
     #[cfg(any(test, feature = "render-test-hooks"))]
     pub fn head_local_state_allocation_bytes() -> usize {
         HEAD_RENDER_BUDGET_RESOURCES.len() * arc_allocation_bytes::<ByteBudgetState>()
@@ -787,6 +787,7 @@ pub struct RenderBytes {
     pub(crate) gpu_vertex_live: usize,
     pub(crate) gpu_vertex_retired: usize,
     pub(crate) gpu_nav_target: usize,
+    pub(crate) gpu_nav_vertices: usize,
     pub(crate) gpu_retained_present: usize,
     pub(crate) gpu_upload_scratch: usize,
     pub(crate) context_cpu: usize,
@@ -840,6 +841,8 @@ impl RenderBytes {
     pub const fn gpu_fixed_buffers(self) -> usize {
         self.gpu_fixed_buffers
     }
+    /// Process-wide scene vertex storage. Count this snapshot once per process,
+    /// like the shared context/store rows, never once per GPU head.
     pub const fn gpu_vertex_live(self) -> usize {
         self.gpu_vertex_live
     }
@@ -848,6 +851,9 @@ impl RenderBytes {
     }
     pub const fn gpu_nav_target(self) -> usize {
         self.gpu_nav_target
+    }
+    pub const fn gpu_nav_vertices(self) -> usize {
+        self.gpu_nav_vertices
     }
     pub const fn gpu_retained_present(self) -> usize {
         self.gpu_retained_present
@@ -898,6 +904,7 @@ impl RenderBytes {
             .saturating_add(self.gpu_vertex_live)
             .saturating_add(self.gpu_vertex_retired)
             .saturating_add(self.gpu_nav_target)
+            .saturating_add(self.gpu_nav_vertices)
             .saturating_add(self.gpu_retained_present)
             .saturating_add(self.gpu_upload_scratch)
             .saturating_add(self.context_cpu)
@@ -949,6 +956,19 @@ mod tests {
                 .expect("Capture is a byte-budget resource")
                 .live(),
             7
+        );
+        let _scene_vertices = first
+            .for_resource(RenderResource::Vertex)
+            .expect("Vertex is a byte-budget resource")
+            .reserve(13)
+            .unwrap();
+        assert_eq!(
+            second
+                .for_resource(RenderResource::Vertex)
+                .expect("Vertex is a byte-budget resource")
+                .live(),
+            13,
+            "scene vertex storage belongs to the process, not a head"
         );
 
         let _vertices = first
@@ -1033,8 +1053,8 @@ mod tests {
         }
 
         assert_eq!(RenderBudget::resource_count(), 13);
-        assert_eq!(RenderBudget::head_local_state_count(), 8);
-        assert_eq!(RenderBudget::process_shared_state_count(), 5);
+        assert_eq!(RenderBudget::head_local_state_count(), 7);
+        assert_eq!(RenderBudget::process_shared_state_count(), 6);
 
         let process = fixture(101);
         let head = process.for_head();
@@ -1073,15 +1093,15 @@ mod tests {
             head_receipt.inline_bytes,
             std::mem::size_of::<RenderBudget>()
         );
-        assert_eq!(head_receipt.state_allocation_count, 8);
+        assert_eq!(head_receipt.state_allocation_count, 7);
         assert_eq!(
             head_receipt.state_allocation_bytes,
-            8 * arc_allocation_bytes::<ByteBudgetState>()
+            7 * arc_allocation_bytes::<ByteBudgetState>()
         );
-        assert_eq!(head_receipt.shared_state_handle_count, 5);
+        assert_eq!(head_receipt.shared_state_handle_count, 6);
         assert_eq!(
             RenderBudget::head_local_state_allocation_bytes(),
-            8 * arc_allocation_bytes::<ByteBudgetState>()
+            7 * arc_allocation_bytes::<ByteBudgetState>()
         );
         assert_eq!(
             RenderBudget::thread_local_storage_bytes(),

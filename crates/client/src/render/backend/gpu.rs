@@ -124,7 +124,37 @@ static GPU_BACKEND_TRIED: std::sync::atomic::AtomicUsize = std::sync::atomic::At
 ///
 /// Standalone renderers wait for this lock. An admitted host rebuild tries
 /// it once and reports contention through [`SceneSubmit`].
-static GPU_SCENE_LOCK: Mutex<()> = Mutex::new(());
+static GPU_SCENE_LOCK: Mutex<Option<SceneVertices>> = Mutex::new(None);
+static SCENE_VERTEX_BYTES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+// Focus handoff is asynchronous across slot owners. This nonblocking claim
+// prevents a second GPU nav allocation before the old owner releases its
+// scratch and target. It never protects scene storage or waits for a peer.
+static NAV_STORAGE_CLAIMED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+struct NavStorageClaim;
+
+impl NavStorageClaim {
+    fn try_claim() -> Option<Self> {
+        NAV_STORAGE_CLAIMED
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            )
+            .ok()
+            .map(|_| Self)
+    }
+}
+
+impl Drop for NavStorageClaim {
+    fn drop(&mut self) {
+        NAV_STORAGE_CLAIMED.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
 struct CaptureScratch {
     mesh: SceneMesh,
 }
@@ -309,7 +339,7 @@ pub mod test_hooks {
     }
 
     pub struct SceneLockHolder {
-        _guard: MutexGuard<'static, ()>,
+        _guard: MutexGuard<'static, Option<super::SceneVertices>>,
     }
 
     pub fn hold_scene_lock() -> SceneLockHolder {
@@ -1123,6 +1153,8 @@ struct NavOverlayTarget {
     _texture: wgpu::Texture,
     view: wgpu::TextureView,
     bind_group: wgpu::BindGroup,
+    vertex_buf: wgpu::Buffer,
+    vertex_capacity: usize,
 }
 
 impl NavOverlayTarget {
@@ -1141,8 +1173,19 @@ impl NavOverlayTarget {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let storage =
-            crate::profiling::Allocation::new(0, crate::profiling::texture_bytes(&texture));
+        // Nav never borrows the scene workspace. Its bounded streaming buffer
+        // preserves painter order by submitting whole-triangle chunks.
+        let vertex_capacity = 1 << 20;
+        let vertex_buf = context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("r274 focused nav vertices"),
+            size: vertex_capacity as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let storage = crate::profiling::Allocation::new(
+            vertex_buf.size(),
+            crate::profiling::texture_bytes(&texture),
+        );
         let view = texture.create_view(&Default::default());
         let sampler = context.device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("r274 retained nav sampler"),
@@ -1175,6 +1218,8 @@ impl NavOverlayTarget {
             _texture: texture,
             view,
             bind_group,
+            vertex_buf,
+            vertex_capacity,
         }
     }
 }
@@ -1185,14 +1230,110 @@ const MINIMAP_Y: u32 = 4;
 const MINIMAP_W: u32 = 172;
 const MINIMAP_H: u32 = 156;
 
+/// One process-wide scene buffer and matching binding, accessible only through
+/// the GPU scene lock inside the scene-workspace callback. No head retains a
+/// binding to an old buffer. Nav and chrome never access this owner.
+struct SceneVertices {
+    vertex_storage: crate::profiling::Allocation,
+    _uniform_storage: crate::profiling::Allocation,
+    vertex_budget_charge: Option<BudgetCharge>,
+    vertex_buf: wgpu::Buffer,
+    vertex_buf_capacity: usize,
+    brightness_buf: wgpu::Buffer,
+    scene_bind_group: wgpu::BindGroup,
+}
+
+impl SceneVertices {
+    fn new(context: &GpuContext) -> Result<Self, RenderLimit> {
+        let capacity = 1 << 20;
+        let charge = RenderBudget::current_resource(RenderResource::Vertex)
+            .map(|budget| budget.reserve(capacity))
+            .transpose()?;
+        let brightness_buf = context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("r274 shared scene uniforms"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let vertex_buf = context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("r274 shared scene vertices"),
+            size: capacity as u64,
+            usage: wgpu::BufferUsages::VERTEX
+                | wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let scene_bind_group = context.scene_bind_group(&brightness_buf, &vertex_buf);
+        Ok(Self {
+            vertex_storage: crate::profiling::Allocation::new(vertex_buf.size(), 0),
+            _uniform_storage: crate::profiling::Allocation::new(16, 0),
+            vertex_budget_charge: charge,
+            vertex_buf,
+            vertex_buf_capacity: capacity,
+            brightness_buf,
+            scene_bind_group,
+        })
+    }
+
+    fn ensure_vertex_buffer(
+        &mut self,
+        context: &GpuContext,
+        bytes: usize,
+    ) -> Result<(), RenderLimit> {
+        let device_maximum = context.device.limits().max_storage_buffer_binding_size as usize;
+        let active_budget = RenderBudget::current_resource(RenderResource::Vertex);
+        let maximum = GpuBackend::MAX_VERTEX_RETAINED_BYTES.min(device_maximum);
+        if let Some(budget) = active_budget.as_ref() {
+            let already_charged = self.vertex_budget_charge.as_ref().is_some_and(|charge| {
+                charge.belongs_to(budget) && charge.bytes() == self.vertex_buf_capacity
+            });
+            if !already_charged {
+                self.vertex_budget_charge = Some(budget.reserve(self.vertex_buf_capacity)?);
+            }
+        }
+        if bytes <= self.vertex_buf_capacity {
+            return Ok(());
+        }
+        let capacity = bytes
+            .checked_next_power_of_two()
+            .ok_or_else(|| RenderLimit::new(RenderResource::Vertex, usize::MAX, maximum))?;
+        if capacity > maximum {
+            return Err(RenderLimit::new(RenderResource::Vertex, capacity, maximum));
+        }
+        // Reserve old plus new before allocating. At the largest growth the
+        // single process owner charges 64 + 128 MiB, never that sum per head.
+        let next_charge = active_budget
+            .as_ref()
+            .map(|budget| budget.reserve(capacity))
+            .transpose()?;
+        let storage = crate::profiling::Allocation::new(capacity as u64, 0);
+        let vertex_buf = context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("r274 shared scene vertices"),
+            size: capacity as u64,
+            usage: wgpu::BufferUsages::VERTEX
+                | wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let scene_bind_group = context.scene_bind_group(&self.brightness_buf, &vertex_buf);
+        self.vertex_buf = vertex_buf;
+        self.scene_bind_group = scene_bind_group;
+        self.vertex_buf_capacity = capacity;
+        SCENE_VERTEX_BYTES.store(capacity, std::sync::atomic::Ordering::Release);
+        self.vertex_storage = storage;
+        if let Some(charge) = next_charge {
+            self.vertex_budget_charge = Some(charge);
+        }
+        Ok(())
+    }
+}
+
 /// The wgpu scene backend (see the module docs). `begin`/`scene`/`chrome`
 /// delegate to the inner `CpuBackend` for UI fidelity; the 3D world and nav
 /// overlay are GPU primitives, while the remaining CPU chrome is uploaded
 /// lazily and composited with the live minimap into the stable frame target.
 pub struct GpuBackend {
     _gpu_storage: crate::profiling::Allocation,
-    vertex_storage: crate::profiling::Allocation,
-    vertex_budget_charge: Option<BudgetCharge>,
     context: Arc<GpuContext>,
     scene_texture: wgpu::Texture,
     scene_view: wgpu::TextureView,
@@ -1212,14 +1353,6 @@ pub struct GpuBackend {
     last_present_valid: bool,
     /// The shared model-texture-array bind group, bound each scene pass.
     model_bind_group: wgpu::BindGroup,
-    /// Per-backend scene data (group 1): the current colour-table gamma
-    /// and a read-only storage view of `vertex_buf`. Rebound only on growth.
-    scene_bind_group: wgpu::BindGroup,
-    brightness_buf: wgpu::Buffer,
-    /// Streaming vertex buffer (grows on demand; the mesh is re-uploaded
-    /// every frame, the RuneLite plugin shape).
-    vertex_buf: wgpu::Buffer,
-    vertex_buf_capacity: usize,
     /// The captured scene triangles, reused frame to frame so the capture
     /// keeps its allocation.
     scene_mesh: SceneMesh,
@@ -1229,6 +1362,7 @@ pub struct GpuBackend {
     /// are unchanged; both allocations are released when paint disappears.
     nav_mesh: NavMesh,
     nav_target: Option<NavOverlayTarget>,
+    nav_claim: Option<NavStorageClaim>,
     nav_projection_key: Option<NavProjectionKey>,
     /// The 2D chrome/title half: the CPU fidelity path the frame stages
     /// delegate to. The chrome draws into the persistent `draw_area`.
@@ -1278,7 +1412,7 @@ pub struct GpuBackend {
 
 impl GpuBackend {
     /// Initialise the process-wide device/queue + shared pipelines (once)
-    /// and build the per-backend view textures + vertex buffer. Returns
+    /// and build the per-backend view textures. Returns
     /// `Err` on any init failure (or a cached one); the renderer logs and
     /// falls back to `CpuBackend`.
     pub fn try_new() -> Result<GpuBackend, String> {
@@ -1313,27 +1447,9 @@ impl GpuBackend {
         let (present_texture, present_view) =
             make_frame_target(&context.device, "r274 present stable");
 
-        let brightness_buf = context.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("r274 scene uniforms"),
-            size: 16,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         // The scene shader/layout/pipelines are the shared `GpuContext`
         // (task 6): a second backend reuses them instead of rebuilding.
         let model_bind_group = context.model_bind_group.clone();
-
-        let vertex_buf_capacity = 1 << 20; // 1 MiB of vertices to start
-        let vertex_buf = context.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("r274 scene vertices"),
-            size: vertex_buf_capacity as u64,
-            usage: wgpu::BufferUsages::VERTEX
-                | wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let scene_bind_group = context.scene_bind_group(&brightness_buf, &vertex_buf);
 
         // The chrome composite (the RuneLite canvas-upload pattern): the
         // CPU `draw_area` uploads as one RGBA8 texture each frame and the
@@ -1532,11 +1648,9 @@ impl GpuBackend {
         .into_iter()
         .map(crate::profiling::texture_bytes)
         .sum();
-        let buffers = brightness_buf.size() + chrome_vertex_buf.size() + minimap_vertex_buf.size();
+        let buffers = chrome_vertex_buf.size() + minimap_vertex_buf.size();
         Ok(GpuBackend {
             _gpu_storage: crate::profiling::Allocation::new(buffers, textures),
-            vertex_storage: crate::profiling::Allocation::new(vertex_buf.size(), 0),
-            vertex_budget_charge: None,
             context,
             scene_texture,
             scene_view,
@@ -1550,14 +1664,11 @@ impl GpuBackend {
             last_present_valid: false,
             last_render_fault: None,
             model_bind_group,
-            scene_bind_group,
-            brightness_buf,
-            vertex_buf,
-            vertex_buf_capacity,
             scene_mesh: SceneMesh::default(),
             last_rebuild_camera: None,
             nav_mesh: NavMesh::default(),
             nav_target: None,
+            nav_claim: None,
             nav_projection_key: None,
             cpu: CpuBackend::embedded(),
             chrome_texture,
@@ -1651,7 +1762,7 @@ impl GpuBackend {
     #[doc(hidden)]
     pub fn render_scene_for_test(&mut self, mesh: &SceneMesh, pix: &Pix3DDraw) -> Vec<i32> {
         let sampled_texture_ids = mesh.sampled_texture_ids();
-        let _guard = GPU_SCENE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut workspace = GPU_SCENE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         {
             let mut assets = self.context.assets.lock().unwrap();
             assets
@@ -1661,7 +1772,7 @@ impl GpuBackend {
                 .stage_animated_model_textures(pix, &sampled_texture_ids)
                 .expect("test animated textures fit their configured fixture");
         }
-        self.render_scene(mesh)
+        self.render_scene(mesh, &mut workspace)
             .expect("GPU render test mesh fits the device vertex-storage limit");
         let handle = TextureHandle::untracked(
             self.context.device.clone(),
@@ -1673,61 +1784,18 @@ impl GpuBackend {
         handle.read_back()
     }
 
-    // Retained per-head cap. Budget admission below separately charges both
+    // Retained process-wide cap. Budget admission separately charges both
     // old and replacement storage (64 + 128 MiB at the largest growth).
     const MAX_VERTEX_RETAINED_BYTES: usize = 128 * 1024 * 1024;
-
-    fn ensure_vertex_buffer(&mut self, bytes: usize) -> Result<(), RenderLimit> {
-        let device_maximum = self.context.device.limits().max_storage_buffer_binding_size as usize;
-        let active_budget = RenderBudget::current_resource(RenderResource::Vertex);
-        let maximum = Self::MAX_VERTEX_RETAINED_BYTES.min(device_maximum);
-        if let Some(budget) = active_budget.as_ref() {
-            let already_charged = self.vertex_budget_charge.as_ref().is_some_and(|charge| {
-                charge.belongs_to(budget) && charge.bytes() == self.vertex_buf_capacity
-            });
-            if !already_charged {
-                self.vertex_budget_charge = Some(budget.reserve(self.vertex_buf_capacity)?);
-            }
-        }
-        if bytes <= self.vertex_buf_capacity {
-            return Ok(());
-        }
-        let capacity = bytes
-            .checked_next_power_of_two()
-            .ok_or_else(|| RenderLimit::new(RenderResource::Vertex, usize::MAX, maximum))?;
-        if capacity > maximum {
-            return Err(RenderLimit::new(RenderResource::Vertex, capacity, maximum));
-        }
-        let next_charge = active_budget
-            .as_ref()
-            .map(|budget| budget.reserve(capacity))
-            .transpose()?;
-        let storage = crate::profiling::Allocation::new(capacity as u64, 0);
-        let vertex_buf = self.context.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("r274 scene/nav vertices"),
-            size: capacity as u64,
-            usage: wgpu::BufferUsages::VERTEX
-                | wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let scene_bind_group = self
-            .context
-            .scene_bind_group(&self.brightness_buf, &vertex_buf);
-        self.vertex_buf = vertex_buf;
-        self.scene_bind_group = scene_bind_group;
-        self.vertex_buf_capacity = capacity;
-        self.vertex_storage = storage;
-        if let Some(charge) = next_charge {
-            self.vertex_budget_charge = Some(charge);
-        }
-        Ok(())
-    }
 
     /// Upload the mesh and rasterize it into `scene_texture` in capture
     /// (painter) order: one alpha-blended draw, no depth test. No readback:
     /// the composite step copies the texture into the full-frame on the GPU.
-    fn render_scene(&mut self, mesh: &SceneMesh) -> Result<(), RenderLimit> {
+    fn render_scene(
+        &mut self,
+        mesh: &SceneMesh,
+        workspace: &mut Option<SceneVertices>,
+    ) -> Result<(), RenderLimit> {
         let vertices = mesh.vertices();
         if vertices.is_empty() {
             self.scene_ready = false;
@@ -1737,16 +1805,29 @@ impl GpuBackend {
             RenderLimit::new(RenderResource::Vertex, vertices.len(), u32::MAX as usize)
         })?;
         let bytes = std::mem::size_of_val(vertices);
-        self.ensure_vertex_buffer(bytes)?;
+        if workspace.is_none() {
+            *workspace = Some(SceneVertices::new(&self.context)?);
+            SCENE_VERTEX_BYTES.store(
+                workspace
+                    .as_ref()
+                    .expect("scene storage was initialized")
+                    .vertex_buf_capacity,
+                std::sync::atomic::Ordering::Release,
+            );
+        }
+        let shared = workspace.as_mut().expect("scene storage was initialized");
+        shared.ensure_vertex_buffer(&self.context, bytes)?;
         self.context
             .queue
-            .write_buffer(&self.vertex_buf, 0, bytemuck::cast_slice(vertices));
+            .write_buffer(&shared.vertex_buf, 0, bytemuck::cast_slice(vertices));
         // The scene shader's `hslToRgb` gamma must match the CPU colour
         // table the flat-face shades were built with (process-wide).
         let brightness = [Pix3D::colour_brightness() as f32, 0.0f32, 0.0f32, 0.0f32];
-        self.context
-            .queue
-            .write_buffer(&self.brightness_buf, 0, bytemuck::cast_slice(&brightness));
+        self.context.queue.write_buffer(
+            &shared.brightness_buf,
+            0,
+            bytemuck::cast_slice(&brightness),
+        );
 
         let mut encoder =
             self.context
@@ -1771,9 +1852,9 @@ impl GpuBackend {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_vertex_buffer(0, self.vertex_buf.slice(..));
+            pass.set_vertex_buffer(0, shared.vertex_buf.slice(..));
             pass.set_bind_group(0, &self.model_bind_group, &[]);
-            pass.set_bind_group(1, &self.scene_bind_group, &[]);
+            pass.set_bind_group(1, &shared.scene_bind_group, &[]);
             pass.set_pipeline(&self.context.pipeline_scene);
             pass.draw(0..vertex_count, 0..1);
         }
@@ -1786,6 +1867,7 @@ impl GpuBackend {
         self.nav_mesh.release();
         self.nav_target = None;
         self.nav_projection_key = None;
+        self.nav_claim = None;
     }
 
     fn render_nav_overlay(&mut self, core: &mut Client, r: &mut Renderer) {
@@ -1799,6 +1881,12 @@ impl GpuBackend {
 
         let key = NavProjectionKey::from_client(core);
         if self.nav_projection_key != Some(key) {
+            if self.nav_claim.is_none() {
+                let Some(claim) = NavStorageClaim::try_claim() else {
+                    return;
+                };
+                self.nav_claim = Some(claim);
+            }
             if let Err(error) =
                 crate::render::nav_debug::build_gpu_mesh(core, r, &mut self.nav_mesh)
             {
@@ -1807,21 +1895,23 @@ impl GpuBackend {
                     &mut self.nav_projection_key,
                     error,
                 ));
+                if self.nav_target.is_none() {
+                    self.nav_claim = None;
+                }
                 return;
             }
             self.nav_projection_key = Some(key);
             if self.nav_mesh.vertices.is_empty() {
                 self.nav_mesh.release();
                 self.nav_target = None;
+                self.nav_claim = None;
             } else {
                 let target = self
                     .nav_target
                     .get_or_insert_with(|| NavOverlayTarget::new(&self.context));
-                // The scene owns the streaming vertex buffer. Rebuilds split
-                // large overlays at triangle boundaries and replace pixels in
-                // painter order in the retained transparent target.
+                // Nav owns this bounded buffer outside the scene lease.
                 let vertex_size = std::mem::size_of::<crate::render::nav_debug::NavVertex>();
-                let vertices_per_chunk = (self.vertex_buf_capacity / vertex_size / 3) * 3;
+                let vertices_per_chunk = (target.vertex_capacity / vertex_size / 3) * 3;
                 debug_assert!(vertices_per_chunk >= 3);
                 for (chunk, vertices) in self
                     .nav_mesh
@@ -1831,7 +1921,7 @@ impl GpuBackend {
                 {
                     let bytes = std::mem::size_of_val(vertices);
                     self.context.queue.write_buffer(
-                        &self.vertex_buf,
+                        &target.vertex_buf,
                         0,
                         bytemuck::cast_slice(vertices),
                     );
@@ -1863,28 +1953,31 @@ impl GpuBackend {
                             multiview_mask: None,
                         });
                         pass.set_pipeline(&self.context.nav_pipeline);
-                        pass.set_vertex_buffer(0, self.vertex_buf.slice(..bytes as u64));
+                        pass.set_vertex_buffer(0, target.vertex_buf.slice(..bytes as u64));
                         pass.draw(0..vertices.len() as u32, 0..1);
                     }
                     self.context.queue.submit([encoder.finish()]);
                 }
             }
         }
+    }
 
+    /// Composite nav separately from the clean retained scene. Losing focus
+    /// can then remove it even while the scene is frozen or resource-limited.
+    fn composite_nav_overlay(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        viewport: (f32, f32, f32, f32),
+    ) {
         let Some(target) = self.nav_target.as_ref() else {
             return;
         };
-        let mut encoder =
-            self.context
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("r274 nav composite encoder"),
-                });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("r274 nav composite pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.scene_view,
+                    view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -1897,12 +1990,12 @@ impl GpuBackend {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            pass.set_viewport(viewport.0, viewport.1, viewport.2, viewport.3, 0.0, 1.0);
             pass.set_pipeline(&self.context.chrome_pipeline);
             pass.set_bind_group(0, &target.bind_group, &[]);
             pass.set_vertex_buffer(0, self.chrome_vertex_buf.slice(..));
             pass.draw(0..6, 0..1);
         }
-        self.context.queue.submit([encoder.finish()]);
     }
 
     /// CPU entity/interface overlays into `area_game` plus coverage marks.
@@ -2379,7 +2472,7 @@ impl RenderBackend for GpuBackend {
                             Err(std::sync::TryLockError::WouldBlock) => None,
                         }
                     };
-                    if let Some(_scene_guard) = scene_guard {
+                    if let Some(mut scene_guard) = scene_guard {
                         let staged = if admission == SceneAdmission::Standalone {
                             Some(
                                 self.context
@@ -2406,7 +2499,7 @@ impl RenderBackend for GpuBackend {
                             }
                         };
                         match staged {
-                            Some(Ok(())) => match self.render_scene(&mesh) {
+                            Some(Ok(())) => match self.render_scene(&mesh, &mut scene_guard) {
                                 Ok(()) => SceneSubmit::Submitted,
                                 Err(error) => {
                                     self.last_render_fault = Some(RenderFault::Budget(error));
@@ -2716,6 +2809,13 @@ impl RenderBackend for GpuBackend {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("r274 chrome encoder"),
                 });
+        if self.scene_ready {
+            self.composite_nav_overlay(
+                &mut chrome_encoder,
+                &self.frame_views[write],
+                (4.0, 4.0, SCENE_W as f32, SCENE_H as f32),
+            );
+        }
         {
             let mut pass = chrome_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("r274 chrome composite pass"),
@@ -2845,6 +2945,10 @@ impl RenderBackend for GpuBackend {
         }
     }
 
+    fn release_nav_debug_overlay(&mut self) {
+        self.release_nav_overlay();
+    }
+
     fn scene_progress(&self) -> SceneProgress {
         self.scene_progress
     }
@@ -2874,7 +2978,6 @@ impl RenderBackend for GpuBackend {
         .map(logical_texture_bytes)
         .fold(0usize, usize::saturating_add);
         let fixed_buffers = [
-            self.brightness_buf.size(),
             self.chrome_vertex_buf.size(),
             self.minimap_vertex_buf.size(),
         ]
@@ -2893,6 +2996,10 @@ impl RenderBackend for GpuBackend {
             .unwrap_or_else(|error| error.into_inner());
         let (context_cpu, context_gpu) = assets.render_bytes();
         drop(assets);
+        // Process snapshot: callers count this row once, not once per head.
+        // Never wait for a peer's leased scene merely to sample its bytes.
+        let scene_vertices = SCENE_VERTEX_BYTES.load(std::sync::atomic::Ordering::Acquire);
+        let scene_uniforms = usize::from(scene_vertices != 0) * 16;
         RenderBytes {
             capture: self.scene_mesh.retained_bytes(),
             nav_vertices: self.nav_mesh.vertices_capacity_bytes(),
@@ -2900,18 +3007,23 @@ impl RenderBackend for GpuBackend {
             nav_edges: self.nav_mesh.edges_capacity_bytes(),
             gpu_fixed_textures: fixed_textures,
             gpu_fixed_buffers: fixed_buffers,
-            gpu_vertex_live: usize::try_from(self.vertex_buf.size())
-                .expect("GPU vertex buffer size fits usize"),
+            gpu_vertex_live: scene_vertices,
             gpu_vertex_retired: 0,
             gpu_nav_target: nav_target,
+            gpu_nav_vertices: self
+                .nav_target
+                .as_ref()
+                .map_or(0, |target| target.vertex_capacity),
             gpu_retained_present: self.present_gate.retained_present_bytes(),
             gpu_upload_scratch: self
                 .chrome_rgba
                 .capacity()
                 .saturating_add(self.minimap_rgba.capacity())
                 .saturating_add(self.overlay_coverage.capacity()),
-            context_cpu,
-            context_gpu,
+            // The workspace's Rust descriptors also moved out of each head.
+            // Its static mutex/Option storage exists even before first use.
+            context_cpu: context_cpu + std::mem::size_of_val(&GPU_SCENE_LOCK),
+            context_gpu: context_gpu + scene_uniforms,
             scalar_state: std::mem::size_of::<Self>(),
             ..RenderBytes::default()
         }

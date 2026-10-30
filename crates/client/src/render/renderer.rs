@@ -512,6 +512,15 @@ impl Renderer {
             .map(RenderBackend::kind)
             .unwrap_or(BackendKind::Cpu)
     }
+    /// Release GPU nav scratch and its target without painting a frame.
+    /// Hosts call this on focus loss, including when the head is parked.
+    /// CPU rendering keeps its existing behaviour.
+    pub fn release_nav_debug_overlay(&mut self) {
+        if let Some(backend) = self.backend.as_deref_mut() {
+            backend.release_nav_debug_overlay();
+        }
+    }
+
     /// Scene progress and validity from the backend for the current paint.
     pub fn scene_progress(&self) -> SceneProgress {
         if self.last_frame_fault.is_some() {

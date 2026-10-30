@@ -306,29 +306,15 @@ fn busy_nav_does_not_accumulate_into_retained_scene() {
         !backend.nav_mesh.vertices.is_empty(),
         "retained nav facts must become GPU primitives"
     );
-    let scene = TextureHandle::untracked(
-        backend.context.device.clone(),
-        backend.context.queue.clone(),
-        backend.scene_view.clone(),
-        SCENE_W,
-        SCENE_H,
-    )
-    .read_back();
+    let scene = parity_read(&backend);
     assert!(
         scene.iter().any(|&pixel| pixel != 0x0000ff),
-        "GPU nav primitives must change the scene target"
+        "GPU nav primitives must change the composited scene"
     );
     for _ in 0..4 {
         backend.draw_scene_overlays(&mut core, &mut renderer, SceneCompose::Retained);
     }
-    let retained = TextureHandle::untracked(
-        backend.context.device.clone(),
-        backend.context.queue.clone(),
-        backend.scene_view.clone(),
-        SCENE_W,
-        SCENE_H,
-    )
-    .read_back();
+    let retained = parity_read(&backend);
     assert_eq!(
         retained, scene,
         "Retained overlay passes must not composite nav into the scene again"
@@ -358,15 +344,8 @@ fn busy_nav_does_not_accumulate_into_retained_scene() {
     let scene_cycle = renderer.scene_cycle;
     let a_nav_vertices = backend.nav_mesh.vertices.as_ptr();
     let a_nav_bytes = backend.nav_mesh.retained_capacity();
-    let vertex_capacity = backend.vertex_buf_capacity;
-    let a_busy_nav = TextureHandle::untracked(
-        backend.context.device.clone(),
-        backend.context.queue.clone(),
-        backend.scene_view.clone(),
-        SCENE_W,
-        SCENE_H,
-    )
-    .read_back();
+    let vertex_capacity = backend.render_bytes().gpu_vertex_live();
+    let a_busy_nav = parity_read(&backend);
     {
         let _busy = SceneAdmissionScope::enter(SceneAdmission::Retained);
         let _host = HostOverlayScope::enter();
@@ -380,20 +359,13 @@ fn busy_nav_does_not_accumulate_into_retained_scene() {
             );
         }
     }
-    let a_busy_nav_after = TextureHandle::untracked(
-        backend.context.device.clone(),
-        backend.context.queue.clone(),
-        backend.scene_view.clone(),
-        SCENE_W,
-        SCENE_H,
-    )
-    .read_back();
+    let a_busy_nav_after = parity_read(&backend);
     assert_eq!(
         a_busy_nav_after, a_busy_nav,
         "repeated Busy paints retain the last Rebuild's nav/scene pixels"
     );
     assert_eq!(backend.nav_mesh.vertices.as_ptr(), a_nav_vertices);
-    assert_eq!(backend.vertex_buf_capacity, vertex_capacity);
+    assert_eq!(backend.render_bytes().gpu_vertex_live(), vertex_capacity);
     assert_eq!(backend.nav_mesh.retained_capacity(), a_nav_bytes);
 
     assert!(
@@ -489,14 +461,7 @@ fn render_live_scene(
         backend.scene_ready,
         "the ground fixture produces a real scene"
     );
-    TextureHandle::untracked(
-        backend.context.device.clone(),
-        backend.context.queue.clone(),
-        backend.scene_view.clone(),
-        SCENE_W,
-        SCENE_H,
-    )
-    .read_back()
+    parity_read(backend)
 }
 
 #[cfg(feature = "render-test-hooks")]
@@ -580,130 +545,168 @@ fn coordinate_capture_fault_retains_last_completed_scene() {
 }
 
 #[test]
-#[ignore = "requires a GPU adapter; invoke explicitly for two-head nav storage proof"]
-fn two_heads_nav_upload_and_growth_never_share_storage() {
+#[ignore = "requires a real GPU; verifies shared scene growth, pixels and post-lease nav isolation"]
+fn two_heads_share_scene_vertices_across_growth() {
     let _admission = SceneAdmissionScope::enter(SceneAdmission::Standalone);
     let mut backend_a = GpuBackend::try_new().expect("GPU required for head A");
+    let mut backend_b = GpuBackend::try_new().expect("GPU required for head B");
     let mut renderer_a = Renderer::new(false);
+    let mut renderer_b = Renderer::new(false);
     renderer_a.area_game = Some(PixMap::new(SCENE_W as i32, SCENE_H as i32));
-    let mut core_a = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: std::env::temp_dir()
-            .join(format!("nav-growth-head-a-{}", std::process::id()))
-            .display()
-            .to_string(),
-        members: true,
-        lowmem: false,
-    });
+    renderer_b.area_game = Some(PixMap::new(SCENE_W as i32, SCENE_H as i32));
+    let make_core = |suffix| {
+        Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: std::env::temp_dir()
+                .join(format!("shared-scene-{suffix}-{}", std::process::id()))
+                .display()
+                .to_string(),
+            members: true,
+            lowmem: false,
+        })
+    };
+    let mut core_a = make_core("a");
+    let mut core_b = make_core("b");
     install_nav_scene_world(&mut core_a);
-    core_a.set_nav_debug_paint(Some(crate::render::nav_debug::NavDebugPaint {
+    install_nav_scene_world(&mut core_b);
+    let paint = crate::render::nav_debug::NavDebugPaint {
         path: vec![(3, 10, false)],
         show_path: true,
         ..Default::default()
-    }));
-    seed_retained_scene(&mut backend_a, [0, -500, 0, 96, 0]);
-    backend_a.draw_scene_overlays(&mut core_a, &mut renderer_a, SceneCompose::Rebuilt);
-    let a_nav_upload = TextureHandle::untracked(
-        backend_a.context.device.clone(),
-        backend_a.context.queue.clone(),
-        backend_a.scene_view.clone(),
-        SCENE_W,
-        SCENE_H,
-    )
-    .read_back();
-    assert!(
-        a_nav_upload.iter().any(|&pixel| pixel != 0x0000ff),
-        "A's nav upload changes its actual GPU scene target"
-    );
-    let a_nav_vertices = backend_a.nav_mesh.vertices.as_ptr();
-    let a_nav_capacity = backend_a.nav_mesh.retained_capacity();
-    assert!(a_nav_capacity > 0);
-
-    let mut backend_b = GpuBackend::try_new().expect("GPU required for head B");
-    let mut renderer_b = Renderer::new(false);
-    renderer_b.area_game = Some(PixMap::new(SCENE_W as i32, SCENE_H as i32));
-    let mut core_b = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: std::env::temp_dir()
-            .join(format!("nav-growth-head-b-{}", std::process::id()))
-            .display()
-            .to_string(),
-        members: true,
-        lowmem: false,
-    });
-    install_nav_scene_world(&mut core_b);
-    let mut paint_b = crate::render::nav_debug::NavDebugPaint {
-        path: vec![(4, 10, false)],
-        show_path: true,
-        ..Default::default()
     };
-    paint_b.colors.path = [0, 255, 0];
-    core_b.set_nav_debug_paint(Some(paint_b));
-
-    // B's real scene consumes only its own nav mesh while A's upload stays live.
-    let b_pixels_before = render_live_scene(&mut backend_b, &mut core_b, &mut renderer_b);
-    let b_nav_vertices = backend_b.nav_mesh.vertices.as_ptr();
-    let b_nav_capacity = backend_b.nav_mesh.retained_capacity();
-    assert!(!backend_b.nav_mesh.vertices.is_empty());
-    assert_ne!(backend_b.nav_mesh.vertices.as_ptr(), a_nav_vertices);
-    assert_eq!(backend_a.nav_mesh.vertices.as_ptr(), a_nav_vertices);
-    assert_eq!(backend_a.nav_mesh.retained_capacity(), a_nav_capacity);
-
-    let a_pixels_before = render_live_scene(&mut backend_a, &mut core_a, &mut renderer_a);
-    assert_eq!(backend_a.scene_progress, SceneProgress::Rebuilt);
-    let a_capacity_before = backend_a.vertex_buf_capacity;
-    let b_capacity_before = backend_b.vertex_buf_capacity;
-    let a_buffer_before = backend_a.vertex_buf.size();
-    let b_buffer_before = backend_b.vertex_buf.size();
-    assert_eq!(a_buffer_before, a_capacity_before as u64);
-    assert_eq!(b_buffer_before, b_capacity_before as u64);
-    backend_a
-        .ensure_vertex_buffer(a_capacity_before + 1)
-        .expect("A's production vertex-buffer growth succeeds");
-    assert!(backend_a.vertex_buf_capacity > a_capacity_before);
-    assert_ne!(
-        backend_a.vertex_buf_capacity, backend_b.vertex_buf_capacity,
-        "A and B retain distinct GPU vertex storage"
-    );
-    assert_eq!(backend_b.vertex_buf_capacity, b_capacity_before);
+    core_a.set_nav_debug_paint(Some(paint.clone()));
+    let a_before = render_live_scene(&mut backend_a, &mut core_a, &mut renderer_a);
+    let b_before = render_live_scene(&mut backend_b, &mut core_b, &mut renderer_b);
+    assert_ne!(a_before, b_before, "only the focused head has nav pixels");
     assert_eq!(
-        backend_a.vertex_buf.size(),
-        backend_a.vertex_buf_capacity as u64
+        present_scene(&mut backend_a, &mut renderer_a),
+        a_before,
+        "finish composites the focused nav target at the scene viewport"
     );
-    assert_ne!(
-        backend_a.vertex_buf.size(),
-        b_buffer_before,
-        "A's growth changes its GPU allocation, not B's"
-    );
-    assert_eq!(backend_b.vertex_buf.size(), b_buffer_before);
+    let capacity = backend_a.render_bytes().gpu_vertex_live();
+    assert_eq!(backend_b.render_bytes().gpu_vertex_live(), capacity);
+    assert!(backend_a.render_bytes().gpu_nav_vertices() > 0);
+    assert_eq!(backend_b.render_bytes().gpu_nav_vertices(), 0);
 
-    let a_pixels_after = render_live_scene(&mut backend_a, &mut core_a, &mut renderer_a);
-    let b_pixels_after = TextureHandle::untracked(
-        backend_b.context.device.clone(),
-        backend_b.context.queue.clone(),
-        backend_b.scene_view.clone(),
+    // The growth runs inside the same workspace callback and GPU scene lock
+    // as a frame submission. Neither head owns a bind group to the old buffer.
+    let result = scene_workspace(SceneAdmission::Standalone, || {
+        let mut workspace = GPU_SCENE_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        workspace
+            .as_mut()
+            .expect("heads initialized shared storage")
+            .ensure_vertex_buffer(&backend_a.context, capacity + 1)
+            .unwrap();
+        SceneSubmit::Submitted
+    });
+    assert_eq!(result, SceneSubmit::Submitted);
+    assert_eq!(backend_a.render_bytes().gpu_vertex_live(), capacity * 2);
+    assert_eq!(backend_b.render_bytes().gpu_vertex_live(), capacity * 2);
+    assert_eq!(
+        render_live_scene(&mut backend_b, &mut core_b, &mut renderer_b),
+        b_before,
+        "B draws correct pixels after A's turn grew the shared buffer"
+    );
+    assert_eq!(
+        render_live_scene(&mut backend_a, &mut core_a, &mut renderer_a),
+        a_before,
+        "A also uses the replacement scene binding"
+    );
+
+    // New focus can run before the old slot observes its loss. The atomic
+    // claim bounds nav scratch and GPU storage to one owner without waiting.
+    core_b.set_nav_debug_paint(Some(paint.clone()));
+    assert_eq!(
+        render_live_scene(&mut backend_b, &mut core_b, &mut renderer_b),
+        b_before
+    );
+    assert!(backend_b.nav_target.is_none());
+    assert_eq!(backend_b.nav_mesh.retained_capacity(), 0);
+
+    // Focus moves while A's scene is frozen. Its clean scene has no baked
+    // nav, and begin releases every nav allocation without a scene rebuild.
+    core_a.set_nav_debug_paint(None);
+    core_a.scene_state = 1;
+    backend_a.begin(&mut core_a, &mut renderer_a, FrameKind::Game);
+    assert_eq!(backend_a.nav_mesh.retained_capacity(), 0);
+    assert!(backend_a.nav_target.is_none());
+    assert_eq!(parity_read(&backend_a), b_before);
+    assert_eq!(
+        present_scene(&mut backend_a, &mut renderer_a),
+        b_before,
+        "focus loss removes nav from the presented frozen scene without a rebuild"
+    );
+    core_b.set_nav_debug_paint(Some(paint));
+    let b_focused = render_live_scene(&mut backend_b, &mut core_b, &mut renderer_b);
+    assert_eq!(b_focused, a_before);
+
+    // Replay the uploaded scene without another write. Rebuild nav only after
+    // the scene callback released its turn. Any nav write to shared scene
+    // vertices changes the replay, even if every ordinary frame reuploads.
+    let clean_before = raw_scene(&backend_b);
+    backend_b.nav_projection_key = None;
+    backend_b.render_nav_overlay(&mut core_b, &mut renderer_b);
+    let workspace = GPU_SCENE_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let shared = workspace.as_ref().expect("shared scene exists");
+    let mut encoder = backend_b
+        .context
+        .device
+        .create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &backend_b.scene_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..Default::default()
+        });
+        pass.set_pipeline(&backend_b.context.pipeline_scene);
+        pass.set_vertex_buffer(0, shared.vertex_buf.slice(..));
+        pass.set_bind_group(0, &backend_b.model_bind_group, &[]);
+        pass.set_bind_group(1, &shared.scene_bind_group, &[]);
+        pass.draw(0..backend_b.scene_mesh.vertices().len() as u32, 0..1);
+    }
+    backend_b.context.queue.submit([encoder.finish()]);
+    assert_eq!(
+        raw_scene(&backend_b),
+        clean_before,
+        "nav after scene-lease release must not write shared scene vertices"
+    );
+    println!("T44_SHARED_VERTEX capacity_before={capacity} capacity_after={} two_heads_correct=true nav_moves=true nav_released=true post_lease_nav_preserves_scene=true",
+        backend_b.render_bytes().gpu_vertex_live());
+}
+
+fn raw_scene(backend: &GpuBackend) -> Vec<i32> {
+    TextureHandle::untracked(
+        backend.context.device.clone(),
+        backend.context.queue.clone(),
+        backend.scene_view.clone(),
         SCENE_W,
         SCENE_H,
     )
-    .read_back();
-    assert_eq!(
-        a_pixels_after, a_pixels_before,
-        "A's matching scene bind group renders identical pixels after growth"
-    );
-    assert_eq!(
-        b_pixels_after, b_pixels_before,
-        "A's growth cannot change B's already submitted scene"
-    );
-    assert_ne!(
-        a_pixels_after, b_pixels_after,
-        "each head paints its own nav payload"
-    );
-    assert_eq!(backend_b.vertex_buf_capacity, b_capacity_before);
-    assert_eq!(backend_a.nav_mesh.vertices.as_ptr(), a_nav_vertices);
-    assert_eq!(backend_b.nav_mesh.vertices.as_ptr(), b_nav_vertices);
-    assert_eq!(backend_b.nav_mesh.retained_capacity(), b_nav_capacity);
+    .read_back()
+}
+fn present_scene(backend: &mut GpuBackend, renderer: &mut Renderer) -> Vec<i32> {
+    let FrameOutput::Texture(handle) = backend.finish(renderer) else {
+        panic!("GPU finish returns a texture");
+    };
+    let frame = handle.read_back();
+    frame
+        .chunks_exact(FRAME_W as usize)
+        .skip(4)
+        .take(SCENE_H as usize)
+        .flat_map(|row| row[4..4 + SCENE_W as usize].iter().copied())
+        .collect()
 }
 
 fn install_loading_splash_font(renderer: &mut Renderer) {
@@ -886,14 +889,40 @@ fn parity_clear(backend: &GpuBackend, rgb: (f64, f64, f64)) {
 }
 
 fn parity_read(backend: &GpuBackend) -> Vec<i32> {
-    TextureHandle::untracked(
+    // Exercise the production nav composite without CPU chrome. The clean
+    // scene remains untouched, including on repeated retained/frozen paints.
+    let mut encoder = backend
+        .context
+        .device
+        .create_command_encoder(&Default::default());
+    encoder.copy_texture_to_texture(
+        backend.scene_texture.as_image_copy(),
+        backend.frame_textures[0].as_image_copy(),
+        wgpu::Extent3d {
+            width: SCENE_W,
+            height: SCENE_H,
+            depth_or_array_layers: 1,
+        },
+    );
+    backend.composite_nav_overlay(
+        &mut encoder,
+        &backend.frame_views[0],
+        (0.0, 0.0, SCENE_W as f32, SCENE_H as f32),
+    );
+    backend.context.queue.submit([encoder.finish()]);
+    let frame = TextureHandle::untracked(
         backend.context.device.clone(),
         backend.context.queue.clone(),
-        backend.scene_view.clone(),
-        SCENE_W,
-        SCENE_H,
+        backend.frame_views[0].clone(),
+        FRAME_W,
+        FRAME_H,
     )
-    .read_back()
+    .read_back();
+    frame
+        .chunks_exact(FRAME_W as usize)
+        .take(SCENE_H as usize)
+        .flat_map(|row| row[..SCENE_W as usize].iter().copied())
+        .collect()
 }
 
 fn parity_close(a: i32, b: i32, tol: i32) -> bool {
@@ -1029,7 +1058,7 @@ fn nav_overlay_matches_pix2d_reference() {
             // Old path: Pix2D raster + coverage, composited with the chrome
             // blend (src*a + dst*(1-a)) over the same background.
             parity_clear(&backend, bg);
-            let bgpx = parity_read(&backend);
+            let bgpx = raw_scene(&backend);
             let mut old_rgb = vec![0i32; (SCENE_W * SCENE_H) as usize];
             let mut cov = vec![0u8; (SCENE_W * SCENE_H) as usize];
             {
@@ -1128,13 +1157,18 @@ fn nav_overlay_matches_pix2d_reference() {
 
             // Chunk equivalence: force tiny chunks through the same buffer.
             if ci == 0 {
-                let saved = backend.vertex_buf_capacity;
-                backend.vertex_buf_capacity = 12 * 3 * 5;
+                let target = backend.nav_target.as_mut().expect("nav target exists");
+                let saved = target.vertex_capacity;
+                target.vertex_capacity = 12 * 3 * 5;
                 backend.nav_projection_key = None;
                 parity_clear(&backend, bg);
                 backend.render_nav_overlay(&mut core, &mut r);
                 let chunked = parity_read(&backend);
-                backend.vertex_buf_capacity = saved;
+                backend
+                    .nav_target
+                    .as_mut()
+                    .expect("nav target exists")
+                    .vertex_capacity = saved;
                 let differing = (0..new.len()).filter(|&i| chunked[i] != new[i]).count();
                 assert_eq!(
                     differing, 0,
