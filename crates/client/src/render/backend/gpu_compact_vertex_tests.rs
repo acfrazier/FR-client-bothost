@@ -6,6 +6,7 @@ use crate::io::JagFile;
 use crate::render::backend::TextureHandle;
 use crate::render::budget::{RenderBudget, RenderBudgetLimits, RenderLimit, RenderResource};
 use crate::render::world::{GpuVertex, SceneMesh};
+use sha2::{Digest, Sha256};
 use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
