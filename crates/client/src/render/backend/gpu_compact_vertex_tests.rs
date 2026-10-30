@@ -437,7 +437,7 @@ fn case_from_mesh(
             vertices: mesh.vertices().len(),
         });
     }
-    if mesh.vertices().len() % 3 != 0 {
+    if !mesh.vertices().len().is_multiple_of(3) {
         return Err(ProofFailure::BudgetMode(format!(
             "{} capture is not a triangle list ({} vertices)",
             descriptor.label,
@@ -686,12 +686,12 @@ fn camera_for_target_face(model: &Model, face: usize, yaw: i32) -> Option<([i32;
     let mut max_x = i32::MIN;
     let mut min_y = i32::MAX;
     let mut max_y = i32::MIN;
-    for point in 0..xs.len().min(ys.len()).min(zs.len()) {
+    for (point, &y) in ys.iter().take(xs.len().min(zs.len())).enumerate() {
         let (x, _) = rotate(point);
         min_x = min_x.min(x);
         max_x = max_x.max(x);
-        min_y = min_y.min(ys[point]);
-        max_y = max_y.max(ys[point]);
+        min_y = min_y.min(y);
+        max_y = max_y.max(y);
     }
     if min_x == i32::MAX || min_y == i32::MAX {
         return None;
@@ -798,7 +798,7 @@ fn mesh_metrics(mesh: &SceneMesh) -> MeshMetrics {
         triangles: vertices.len() / 3,
         ..MeshMetrics::default()
     };
-    for triangle in vertices.chunks_exact(3) {
+    for triangle in vertices.as_chunks::<3>().0 {
         let alpha = (1..=254).contains(&triangle[0].alpha());
         let textured = triangle[0].texture_id_plus_one() != 0;
         if textured {
@@ -839,14 +839,14 @@ fn compare_case(
             vertices: vertex_count,
         });
     }
-    if vertex_count == 0 || vertex_count % 3 != 0 {
+    if vertex_count == 0 || !vertex_count.is_multiple_of(3) {
         return Err(ProofFailure::BudgetMode(format!(
             "{} has invalid captured triangle-list length {vertex_count}",
             case.label
         )));
     }
     let old_vertices = expand_legacy24(mesh, &case.label)?;
-    let compact_live_bytes = vertex_count * std::mem::size_of::<GpuVertex>();
+    let compact_live_bytes = std::mem::size_of_val(mesh.vertices());
     let old_live_bytes = old_vertices.len() * std::mem::size_of::<Legacy24Vertex>();
     let old_capacity_bytes = old_vertices.capacity() * std::mem::size_of::<Legacy24Vertex>();
     if old_capacity_bytes > PEAK_VERTEX_LIMIT {
@@ -1104,7 +1104,7 @@ fn render_legacy24(backend: &GpuBackend, oracle: &Legacy24Pipeline, vertices: &[
     let queue = &backend.context.queue;
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("T4.4 fixture-only baseline 24-byte vertices"),
-        size: (vertices.len() * std::mem::size_of::<Legacy24Vertex>()) as u64,
+        size: std::mem::size_of_val(vertices) as u64,
         usage: wgpu::BufferUsages::VERTEX
             | wgpu::BufferUsages::STORAGE
             | wgpu::BufferUsages::COPY_DST,
