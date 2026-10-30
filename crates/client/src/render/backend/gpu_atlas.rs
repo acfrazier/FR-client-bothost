@@ -1241,8 +1241,10 @@ impl GpuAssets {
         }
         let (w, h) = (map.width as u32, map.height as u32);
         let (pixel_count, expected_len) = self.rgba_len(w, h)?;
-        if self.context_cpu_budget.is_some() && map.pixels.len() != pixel_count {
-            return Err(budget_error(self.context_cpu_budget.as_ref().unwrap()));
+        if let Some(budget) = &self.context_cpu_budget {
+            if map.pixels.len() != pixel_count {
+                return Err(budget_error(budget));
+            }
         }
         let rgba_len = map
             .pixels
@@ -1313,8 +1315,10 @@ impl GpuAssets {
     ) -> Result<Option<Region>, RenderLimit> {
         let (w, h) = (map.width as u32, map.height as u32);
         let (pixel_count, expected_len) = self.rgba_len(w, h)?;
-        if self.context_cpu_budget.is_some() && map.pixels.len() != pixel_count {
-            return Err(budget_error(self.context_cpu_budget.as_ref().unwrap()));
+        if let Some(budget) = &self.context_cpu_budget {
+            if map.pixels.len() != pixel_count {
+                return Err(budget_error(budget));
+            }
         }
         let rgba_len = map
             .pixels

@@ -315,8 +315,7 @@ fn reserve_replacement(
     let affordable_capacity = available_bytes / element_size;
     let geometric_capacity = current_capacity
         .max(1)
-        .checked_mul(2)
-        .unwrap_or(usize::MAX)
+        .saturating_mul(2)
         .max(required_len);
     let candidate_capacity = geometric_capacity
         .min(affordable_capacity)

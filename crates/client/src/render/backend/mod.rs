@@ -76,6 +76,10 @@ pub struct TextureHandle {
 
 impl TextureHandle {
     /// Construct a successfully submitted GPU presentation.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Sealed constructor transfers the GPU resource and all publication evidence together"
+    )]
     fn presented(
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -126,6 +130,10 @@ impl TextureHandle {
 
     /// An output whose final present copy was refused. Its display view is
     /// the prior stable texture and it cannot publish a new consumer token.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Sealed constructor preserves the prior GPU resource and its refusal evidence together"
+    )]
     fn nonfresh(
         device: wgpu::Device,
         queue: wgpu::Queue,

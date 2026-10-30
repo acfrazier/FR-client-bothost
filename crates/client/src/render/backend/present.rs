@@ -395,7 +395,7 @@ impl super::TextureHandle {
             return Err(ReadbackError::Busy);
         }
         let geometry = CaptureGeometry::new(self.width, self.height);
-        geometry.checked_layout()?;
+        let (raw_bytes, _, _) = geometry.checked_layout()?;
         gate.registering
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| ReadbackError::Busy)?;
@@ -437,11 +437,7 @@ impl super::TextureHandle {
             device: self.device.clone(),
             queue: self.queue.clone(),
             geometry,
-            _storage: crate::profiling::Allocation::new(
-                0,
-                u64::try_from(geometry.width() as u64 * geometry.height() as u64 * 4)
-                    .unwrap_or(u64::MAX),
-            ),
+            _storage: crate::profiling::Allocation::new(0, raw_bytes as u64),
             texture,
             view,
             state: Mutex::new(RetainedState {
@@ -614,7 +610,7 @@ impl ConsumerFrame {
                 .retained
                 .gate
                 .upgrade()
-                .map_or(true, |gate| gate.retire_requested.load(Ordering::Acquire));
+                .is_none_or(|gate| gate.retire_requested.load(Ordering::Acquire));
             if state.key == self.key && state.held && state.token == Some(self.token) {
                 state.held = false;
                 state.available = false;

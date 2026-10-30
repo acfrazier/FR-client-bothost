@@ -507,6 +507,13 @@ struct TileModels {
     _charge: Option<BudgetCharge>,
 }
 
+type PlacedLocModel = (i32, i32, i32, i32, Model);
+type ObjModelSlots<'a> = (
+    &'a mut Option<SceneModel>,
+    &'a mut Option<SceneModel>,
+    &'a mut Option<SceneModel>,
+);
+
 impl RenderWorld {
     fn retained_scene_models(&self) -> impl Iterator<Item = &SceneModel> {
         self.tile_models
@@ -1155,11 +1162,12 @@ impl RenderWorld {
                 if crate::render_debug_enabled() {
                     if let Some(m) = &model {
                         if let (Some(rt), Some(fc)) = (&m.face_render_type, &m.face_colour) {
-                            let textured =
-                                DebugList(rt.iter().enumerate().filter_map(|(f, &t)| {
-                                    ((t & 0x3 == 2) || (t & 0x3 == 3))
-                                        .then(|| (t & 0x3, fc.get(f).copied().unwrap_or(-1)))
-                                }));
+                            let textured = DebugList(
+                                rt.iter()
+                                    .enumerate()
+                                    .filter(|&(_, &t)| (t & 0x3 == 2) || (t & 0x3 == 3))
+                                    .map(|(f, &t)| (t & 0x3, fc.get(f).copied().unwrap_or(-1))),
+                            );
                             eprintln!(
                                 "[render] loc {loc_id} ({}) sharelight={} model textured={:?}",
                                 loc.name, loc.sharelight, textured
@@ -1709,7 +1717,7 @@ impl RenderWorld {
         tile_x: i32,
         tile_z: i32,
         loc_id: i32,
-    ) -> Result<Option<(i32, i32, i32, i32, Model)>, RenderLimit> {
+    ) -> Result<Option<PlacedLocModel>, RenderLimit> {
         let Some(tile) = tile_at(&world.squares, level, tile_x, tile_z) else {
             return Ok(None);
         };
@@ -1779,14 +1787,7 @@ impl RenderWorld {
         level: i32,
         x: i32,
         z: i32,
-    ) -> Result<
-        (
-            &mut Option<SceneModel>,
-            &mut Option<SceneModel>,
-            &mut Option<SceneModel>,
-        ),
-        RenderLimit,
-    > {
+    ) -> Result<ObjModelSlots<'_>, RenderLimit> {
         Ok({
             self.ensure_objs_resolved(world, level, x, z)?;
             let slot = self.slot(world, level, x, z)?;

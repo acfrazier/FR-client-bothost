@@ -110,7 +110,7 @@ pub(crate) fn prepare_render_model_slot(
                 budget.maximum(),
             ));
         }
-        let old_models = std::mem::replace(&mut index.models, VecDeque::new());
+        let old_models = std::mem::take(&mut index.models);
         drop(old_models);
         index.capacity_charge = None;
         index.budget = None;
@@ -126,8 +126,7 @@ pub(crate) fn prepare_render_model_slot(
             .models
             .capacity()
             .max(1)
-            .checked_mul(2)
-            .unwrap_or(usize::MAX)
+            .saturating_mul(2)
             .max(minimum_capacity);
         let new_capacity_bytes = new_capacity
             .checked_mul(std::mem::size_of::<TrackedModel>())
@@ -184,7 +183,7 @@ pub(crate) fn reset_render_model_index() {
     let mut index = render_model_index()
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let old_models = std::mem::replace(&mut index.models, VecDeque::new());
+    let old_models = std::mem::take(&mut index.models);
     drop(old_models);
     index.capacity_charge = None;
     index.budget = None;
@@ -555,8 +554,7 @@ pub(crate) fn prepare_render_sprite_slot(
             .sprites
             .capacity()
             .max(1)
-            .checked_mul(2)
-            .unwrap_or(usize::MAX)
+            .saturating_mul(2)
             .max(minimum_capacity);
         let new_capacity_bytes = new_capacity
             .checked_mul(std::mem::size_of::<TrackedSprite>())
@@ -729,7 +727,7 @@ fn prune_dead_sprites(index: &mut RenderSpriteIndex) {
 
 fn reset_empty_sprite_index(index: &mut RenderSpriteIndex) {
     if index.sprites.is_empty() {
-        let old_sprites = std::mem::replace(&mut index.sprites, VecDeque::new());
+        let old_sprites = std::mem::take(&mut index.sprites);
         drop(old_sprites);
         index.capacity_charge = None;
         index.budget = None;

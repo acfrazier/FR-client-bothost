@@ -2550,7 +2550,7 @@ impl Renderer {
                                     let sprite = budgeted_sprite
                                         .as_ref()
                                         .map(|sprite| sprite.pix32())
-                                        .or_else(|| legacy_sprite.as_ref());
+                                        .or(legacy_sprite.as_ref());
                                     if let Some(sprite) = sprite {
                                         if dragging {
                                             // TS 9975-9989: the grab offset,
