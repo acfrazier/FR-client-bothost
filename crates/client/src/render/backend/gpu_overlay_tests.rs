@@ -674,8 +674,8 @@ fn host_overlay_state_matrix_preserves_splash_and_empty_scene() {
     });
     gpu_core.scene_state = 1;
     let poison = 0x123456;
-    gpu_renderer.area_game.as_mut().unwrap().pixels.fill(poison);
     gpu.begin(&mut gpu_core, &mut gpu_renderer, FrameKind::Game);
+    gpu_renderer.area_game.as_mut().unwrap().pixels.fill(poison);
     gpu.scene(&mut gpu_core, &mut gpu_renderer, FrameKind::Game);
     assert!(gpu_renderer
         .area_game
@@ -702,8 +702,8 @@ fn host_overlay_state_matrix_preserves_splash_and_empty_scene() {
         lowmem: false,
     });
     cpu_core.scene_state = 1;
-    cpu_renderer.area_game.as_mut().unwrap().pixels.fill(poison);
     cpu.begin(&mut cpu_core, &mut cpu_renderer, FrameKind::Game);
+    cpu_renderer.area_game.as_mut().unwrap().pixels.fill(poison);
     cpu.scene(&mut cpu_core, &mut cpu_renderer, FrameKind::Game);
     assert!(cpu_renderer
         .area_game
