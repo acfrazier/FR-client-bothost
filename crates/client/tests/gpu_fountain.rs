@@ -347,10 +347,8 @@ fn near_clipped_polygon_shares_scanline_clipping() {
         let screen: Vec<(i32, i32)> = mesh.vertices()[..3]
             .iter()
             .map(|v| {
-                (
-                    256 + ((v.x as i32) << 9) / v.z as i32,
-                    167 + ((v.y as i32) << 9) / v.z as i32,
-                )
+                let [x, y, z] = v.position();
+                (256 + (x << 9) / z, 167 + (y << 9) / z)
             })
             .collect();
         let mut interior = 0;
