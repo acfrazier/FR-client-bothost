@@ -1044,7 +1044,7 @@ mod tests {
             );
             assert_eq!(
                 std::mem::size_of::<RenderBytes>(),
-                23 * std::mem::size_of::<usize>()
+                24 * std::mem::size_of::<usize>()
             );
             assert_eq!(
                 std::mem::size_of::<RenderBudget>(),

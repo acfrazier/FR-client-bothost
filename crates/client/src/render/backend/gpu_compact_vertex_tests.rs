@@ -1,4 +1,4 @@
-use super::{GpuBackend, GpuContext, GPU_SCENE_LOCK, SCENE_H, SCENE_W};
+use super::{GpuBackend, GpuContext, SceneVertices, GPU_SCENE_LOCK, SCENE_H, SCENE_W};
 use crate::config::Cache;
 use crate::dash3d::Model;
 use crate::graphics::{Pix2D, Pix3D, Pix3DDraw};

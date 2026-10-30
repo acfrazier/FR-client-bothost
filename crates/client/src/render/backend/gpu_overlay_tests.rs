@@ -702,7 +702,9 @@ fn present_scene(backend: &mut GpuBackend, renderer: &mut Renderer) -> Vec<i32> 
     };
     let frame = handle.read_back();
     frame
-        .chunks_exact(FRAME_W as usize)
+        .as_chunks::<{ FRAME_W as usize }>()
+        .0
+        .iter()
         .skip(4)
         .take(SCENE_H as usize)
         .flat_map(|row| row[4..4 + SCENE_W as usize].iter().copied())
@@ -919,7 +921,9 @@ fn parity_read(backend: &GpuBackend) -> Vec<i32> {
     )
     .read_back();
     frame
-        .chunks_exact(FRAME_W as usize)
+        .as_chunks::<{ FRAME_W as usize }>()
+        .0
+        .iter()
         .take(SCENE_H as usize)
         .flat_map(|row| row[..SCENE_W as usize].iter().copied())
         .collect()
