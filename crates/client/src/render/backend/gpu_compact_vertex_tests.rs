@@ -23,15 +23,15 @@ const TARGET_FACE_TRIES_PER_YAW: usize = 4;
 const MODEL_YAWS: [i32; 8] = [0, 256, 512, 768, 1024, 1280, 1536, 1792];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum AlphaKind {
-    Untextured,
+enum FaceKind {
+    UntexturedAlpha,
     Textured,
 }
 
-impl fmt::Display for AlphaKind {
+impl fmt::Display for FaceKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::Untextured => "untextured",
+            Self::UntexturedAlpha => "untextured-alpha",
             Self::Textured => "textured",
         })
     }
@@ -52,7 +52,7 @@ enum ProofFailure {
     InvalidModelArchive(String),
     MissingModel(i32),
     MissingLocationModel,
-    MissingAlphaModel(AlphaKind),
+    MissingNearCase(FaceKind),
     GpuUnavailable(String),
     Capture(RenderLimit),
     Render(RenderLimit),
@@ -83,7 +83,7 @@ impl fmt::Display for ProofFailure {
             Self::InvalidModelArchive(reason) => write!(f, "invalid models.bin fixture: {reason}"),
             Self::MissingModel(id) => write!(f, "models.bin has no decodable model {id}"),
             Self::MissingLocationModel => f.write_str("config cache does not contain location 879's model"),
-            Self::MissingAlphaModel(kind) => write!(f, "models.bin contains no renderable near-clipped {kind} face with source alpha in 2..=254"),
+            Self::MissingNearCase(kind) => write!(f, "models.bin contains no renderable near-clipped {kind} face"),
             Self::GpuUnavailable(reason) => write!(f, "the real-cache pixel proof requires a usable GPU: {reason}"),
             Self::Capture(error) => write!(f, "CPU model capture failed: {error}"),
             Self::Render(error) => write!(f, "compact production scene render failed: {error}"),
@@ -153,6 +153,7 @@ struct ProofCase {
 #[derive(Default)]
 struct MeshMetrics {
     triangles: usize,
+    textured_triangles: usize,
     alpha_triangles: usize,
     alpha_untextured_triangles: usize,
     alpha_textured_triangles: usize,
@@ -296,16 +297,14 @@ fn run_proof(mode: &str) -> Result<(), ProofFailure> {
             target_face_view_z: None,
         },
     )?);
-    cases.push(find_translucent_case(
+    // Partial-alpha faces and textured near clips are separate real-content
+    // requirements. The cache need not combine both properties on one face.
+    cases.push(find_near_case(
         &models,
         &mut pix,
-        AlphaKind::Untextured,
+        FaceKind::UntexturedAlpha,
     )?);
-    cases.push(find_translucent_case(
-        &models,
-        &mut pix,
-        AlphaKind::Textured,
-    )?);
+    cases.push(find_near_case(&models, &mut pix, FaceKind::Textured)?);
 
     if std::mem::size_of::<GpuVertex>() != 16 || std::mem::size_of::<Legacy24Vertex>() != 24 {
         return Err(ProofFailure::BudgetMode(
@@ -522,15 +521,14 @@ fn source_alpha_counts(model: &Model) -> (usize, usize, usize) {
     (total, untextured, textured)
 }
 
-fn source_face_has_kind(model: &Model, face: usize, kind: AlphaKind, pix: &Pix3DDraw) -> bool {
-    if !(2..=254).contains(
-        &model
-            .face_alpha
-            .as_ref()
-            .and_then(|alpha| alpha.get(face))
-            .copied()
-            .unwrap_or(0),
-    ) {
+fn source_face_has_kind(model: &Model, face: usize, kind: FaceKind, pix: &Pix3DDraw) -> bool {
+    let alpha = model
+        .face_alpha
+        .as_ref()
+        .and_then(|alpha| alpha.get(face))
+        .copied()
+        .unwrap_or(0);
+    if kind == FaceKind::UntexturedAlpha && !(2..=254).contains(&alpha) {
         return false;
     }
     let render_type = model
@@ -544,8 +542,8 @@ fn source_face_has_kind(model: &Model, face: usize, kind: AlphaKind, pix: &Pix3D
     }
     let textured = (render_type & 0x3) >= 2;
     match kind {
-        AlphaKind::Untextured => !textured,
-        AlphaKind::Textured => {
+        FaceKind::UntexturedAlpha => !textured,
+        FaceKind::Textured => {
             if !textured {
                 return false;
             }
@@ -723,10 +721,10 @@ fn camera_fits_i16(model: &Model, camera: Camera) -> bool {
     })
 }
 
-fn find_translucent_case(
+fn find_near_case(
     archive: &[u8],
     pix: &mut Pix3DDraw,
-    kind: AlphaKind,
+    kind: FaceKind,
 ) -> Result<ProofCase, ProofFailure> {
     let mut offset = 0usize;
     while offset < archive.len() {
@@ -739,7 +737,9 @@ fn find_translucent_case(
         };
         Model::unload(id);
         let face_count = usize::try_from(model.num_faces).unwrap_or(0);
-        if face_count == 0 || source_alpha_counts(&model).0 == 0 {
+        if face_count == 0
+            || (kind == FaceKind::UntexturedAlpha && source_alpha_counts(&model).1 == 0)
+        {
             continue;
         }
         model.calculate_normals(64, 768, -50, -10, -50, true);
@@ -761,11 +761,10 @@ fn find_translucent_case(
                 }
                 let metrics = mesh_metrics(&mesh);
                 let emitted_target_kind = match kind {
-                    AlphaKind::Untextured => metrics.alpha_untextured_triangles > 0,
-                    AlphaKind::Textured => metrics.alpha_textured_triangles > 0,
+                    FaceKind::UntexturedAlpha => metrics.alpha_untextured_triangles > 0,
+                    FaceKind::Textured => metrics.textured_triangles > 0,
                 };
                 if metrics.near_boundary_vertices > 0
-                    && metrics.alpha_triangles > 0
                     && emitted_target_kind
                     && metrics.triangles >= 100
                     && mesh.retained_bytes() <= RETAINED_VERTEX_CAP
@@ -773,7 +772,7 @@ fn find_translucent_case(
                     return case_from_mesh(
                         &model,
                         CaseDescriptor {
-                            label: format!("model-{id}-near-alpha-{kind}"),
+                            label: format!("model-{id}-near-{kind}"),
                             model_id: id,
                             model_record_sha256: sha256_hex(record),
                             camera,
@@ -790,7 +789,7 @@ fn find_translucent_case(
             }
         }
     }
-    Err(ProofFailure::MissingAlphaModel(kind))
+    Err(ProofFailure::MissingNearCase(kind))
 }
 
 fn mesh_metrics(mesh: &SceneMesh) -> MeshMetrics {
@@ -802,6 +801,9 @@ fn mesh_metrics(mesh: &SceneMesh) -> MeshMetrics {
     for triangle in vertices.chunks_exact(3) {
         let alpha = (1..=254).contains(&triangle[0].alpha());
         let textured = triangle[0].texture_id_plus_one() != 0;
+        if textured {
+            metrics.textured_triangles += 1;
+        }
         if alpha {
             metrics.alpha_triangles += 1;
             if textured {
@@ -906,7 +908,7 @@ fn compare_case(
         )));
     }
     println!(
-        "T44_COMPACT_PIXEL_CASE mode={mode} budget_receipt=backend-budget-scope-{mode} label={} model_id={} model_record_sha256={} camera={{model_yaw:{},eye_pitch_sin:{},eye_pitch_cos:{},eye_yaw_sin:{},eye_yaw_cos:{},relative_x:{},relative_y:{},relative_z:{}}} source_points={} source_faces={} source_alpha_faces={} source_alpha_untextured={} source_alpha_textured={} source_near_faces={} target_face={:?} target_face_view_z={:?} emitted_triangles={} emitted_alpha_triangles={} emitted_alpha_untextured={} emitted_alpha_textured={} near_boundary_faces={} near_boundary_vertices={} pixels={{compact:{},legacy24:{},differing:{}}} vertex_count={} render_bytes={{gpu_vertex_live:{},gpu_fixed_buffers:{},gpu_fixed_textures:{},backend_capture:{},total:{}}} bytes={{compact_payload16:{compact_live_bytes},legacy24_payload24:{old_live_bytes},compact_retained_capture:{retained_capture_bytes},compact_backend_capacity:{backend_capacity},compact_backend_buffer:{backend_buffer_bytes},legacy24_vec_capacity:{old_capacity_bytes},legacy24_reference_buffer_bytes:{old_live_bytes}}}",
+        "T44_COMPACT_PIXEL_CASE mode={mode} budget_receipt=backend-budget-scope-{mode} label={} model_id={} model_record_sha256={} camera={{model_yaw:{},eye_pitch_sin:{},eye_pitch_cos:{},eye_yaw_sin:{},eye_yaw_cos:{},relative_x:{},relative_y:{},relative_z:{}}} source_points={} source_faces={} source_alpha_faces={} source_alpha_untextured={} source_alpha_textured={} source_near_faces={} target_face={:?} target_face_view_z={:?} emitted_triangles={} emitted_textured_triangles={} emitted_alpha_triangles={} emitted_alpha_untextured={} emitted_alpha_textured={} near_boundary_faces={} near_boundary_vertices={} pixels={{compact:{},legacy24:{},differing:{}}} vertex_count={} render_bytes={{gpu_vertex_live:{},gpu_fixed_buffers:{},gpu_fixed_textures:{},backend_capture:{},total:{}}} bytes={{compact_payload16:{compact_live_bytes},legacy24_payload24:{old_live_bytes},compact_retained_capture:{retained_capture_bytes},compact_backend_capacity:{backend_capacity},compact_backend_buffer:{backend_buffer_bytes},legacy24_vec_capacity:{old_capacity_bytes},legacy24_reference_buffer_bytes:{old_live_bytes}}}",
         case.label,
         case.model_id,
         case.model_record_sha256,
@@ -927,6 +929,7 @@ fn compare_case(
         case.target_face,
         case.target_face_view_z,
         metrics.triangles,
+        metrics.textured_triangles,
         metrics.alpha_triangles,
         metrics.alpha_untextured_triangles,
         metrics.alpha_textured_triangles,
