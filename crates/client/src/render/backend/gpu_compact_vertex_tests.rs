@@ -41,8 +41,14 @@ impl fmt::Display for AlphaKind {
 enum ProofFailure {
     MissingEnvironment(&'static str),
     InvalidMode(String),
-    SnapshotPath { path: PathBuf, reason: String },
-    ReadFile { path: PathBuf, reason: String },
+    SnapshotPath {
+        path: PathBuf,
+        reason: String,
+    },
+    ReadFile {
+        path: PathBuf,
+        reason: String,
+    },
     InvalidModelArchive(String),
     MissingModel(i32),
     MissingLocationModel,
@@ -176,18 +182,23 @@ struct Legacy24Pipeline {
 #[test]
 #[ignore = "requires FR_CLIENT_SNAPSHOT and a usable GPU; run once with each T44_COMPACT_VERTEX_MODE"]
 fn real_cache_compact_vertex_pixels_match_pinned_legacy24() {
-    let mode = std::env::var(MODE_ENV).unwrap_or_else(|_| panic!("{MODE_ENV} is required; run isolated 'off' and 'on' cells"));
+    let mode = std::env::var(MODE_ENV)
+        .unwrap_or_else(|_| panic!("{MODE_ENV} is required; run isolated 'off' and 'on' cells"));
     let result = match mode.as_str() {
         MODE_OFF => {
             if RenderBudget::current().is_some() {
-                Err(ProofFailure::BudgetMode("off mode must begin with no active RenderBudget".into()))
+                Err(ProofFailure::BudgetMode(
+                    "off mode must begin with no active RenderBudget".into(),
+                ))
             } else {
                 run_proof(MODE_OFF)
             }
         }
         MODE_ON => {
             if RenderBudget::current().is_some() {
-                Err(ProofFailure::BudgetMode("on mode must install its explicit fixture before GPU context creation".into()))
+                Err(ProofFailure::BudgetMode(
+                    "on mode must install its explicit fixture before GPU context creation".into(),
+                ))
             } else {
                 let budget = fixture_budget(PEAK_VERTEX_LIMIT);
                 let scope = budget.scope();
@@ -246,8 +257,7 @@ fn run_proof(mode: &str) -> Result<(), ProofFailure> {
     let model_archive_hash = sha256_hex(&models);
     let config_hash = sha256_hex(&config_bytes);
     let texture_archive_hash = sha256_hex(&texture_bytes);
-    let model_1497 = find_model_record(&models, 1497)?
-        .ok_or(ProofFailure::MissingModel(1497))?;
+    let model_1497 = find_model_record(&models, 1497)?.ok_or(ProofFailure::MissingModel(1497))?;
 
     Pix3D::init_colour_table(0.8);
     Model::reset_for_tests();
@@ -298,7 +308,9 @@ fn run_proof(mode: &str) -> Result<(), ProofFailure> {
     )?);
 
     if std::mem::size_of::<GpuVertex>() != 16 || std::mem::size_of::<Legacy24Vertex>() != 24 {
-        return Err(ProofFailure::BudgetMode("pixel oracle is not using the 16-byte/24-byte record pair".into()));
+        return Err(ProofFailure::BudgetMode(
+            "pixel oracle is not using the 16-byte/24-byte record pair".into(),
+        ));
     }
 
     let mut backend = GpuBackend::try_new().map_err(ProofFailure::GpuUnavailable)?;
@@ -360,18 +372,21 @@ fn model_record_count(bytes: &[u8]) -> Result<usize, ProofFailure> {
 }
 
 fn parse_model_record(bytes: &[u8], offset: usize) -> Result<(i32, &[u8], usize), ProofFailure> {
-    let header_end = offset.checked_add(8).ok_or_else(|| {
-        ProofFailure::InvalidModelArchive("record header offset overflow".into())
-    })?;
+    let header_end = offset
+        .checked_add(8)
+        .ok_or_else(|| ProofFailure::InvalidModelArchive("record header offset overflow".into()))?;
     let header = bytes.get(offset..header_end).ok_or_else(|| {
         ProofFailure::InvalidModelArchive(format!("truncated record header at byte {offset}"))
     })?;
     let id = i32::try_from(u32::from_le_bytes(header[0..4].try_into().unwrap())).map_err(|_| {
         ProofFailure::InvalidModelArchive(format!("model id exceeds i32 at byte {offset}"))
     })?;
-    let length = usize::try_from(u32::from_le_bytes(header[4..8].try_into().unwrap())).map_err(|_| {
-        ProofFailure::InvalidModelArchive(format!("record length exceeds usize at byte {offset}"))
-    })?;
+    let length =
+        usize::try_from(u32::from_le_bytes(header[4..8].try_into().unwrap())).map_err(|_| {
+            ProofFailure::InvalidModelArchive(format!(
+                "record length exceeds usize at byte {offset}"
+            ))
+        })?;
     let end = header_end.checked_add(length).ok_or_else(|| {
         ProofFailure::InvalidModelArchive(format!("model {id} length overflows at byte {offset}"))
     })?;
@@ -508,13 +523,14 @@ fn source_alpha_counts(model: &Model) -> (usize, usize, usize) {
 }
 
 fn source_face_has_kind(model: &Model, face: usize, kind: AlphaKind, pix: &Pix3DDraw) -> bool {
-    if !(2..=254).contains(&model
-        .face_alpha
-        .as_ref()
-        .and_then(|alpha| alpha.get(face))
-        .copied()
-        .unwrap_or(0))
-    {
+    if !(2..=254).contains(
+        &model
+            .face_alpha
+            .as_ref()
+            .and_then(|alpha| alpha.get(face))
+            .copied()
+            .unwrap_or(0),
+    ) {
         return false;
     }
     let render_type = model
@@ -604,14 +620,8 @@ fn view_point(model: &Model, point: usize, camera: Camera) -> [i32; 3] {
     if camera.model_yaw != 0 {
         let sin = Pix3D::sin_table()[camera.model_yaw as usize];
         let cos = Pix3D::cos_table()[camera.model_yaw as usize];
-        let temp = z
-            .wrapping_mul(sin)
-            .wrapping_add(x.wrapping_mul(cos))
-            >> 16;
-        z = z
-            .wrapping_mul(cos)
-            .wrapping_sub(x.wrapping_mul(sin))
-            >> 16;
+        let temp = z.wrapping_mul(sin).wrapping_add(x.wrapping_mul(cos)) >> 16;
+        z = z.wrapping_mul(cos).wrapping_sub(x.wrapping_mul(sin)) >> 16;
         x = temp;
     }
     x = x.wrapping_add(camera.relative_x);
@@ -845,9 +855,15 @@ fn compare_case(
     }
 
     let sampled_texture_ids = mesh.sampled_texture_ids();
-    let _scene_lock = GPU_SCENE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let _scene_lock = GPU_SCENE_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     {
-        let mut assets = backend.context.assets.lock().unwrap_or_else(|error| error.into_inner());
+        let mut assets = backend
+            .context
+            .assets
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         assets
             .ensure_model_textures(pix)
             .map_err(ProofFailure::Render)?;
@@ -951,9 +967,9 @@ fn expand_legacy24(mesh: &SceneMesh, label: &str) -> Result<Vec<Legacy24Vertex>,
         });
     }
     let mut result = Vec::new();
-    result
-        .try_reserve_exact(source.len())
-        .map_err(|error| ProofFailure::BudgetMode(format!("legacy24 fixture allocation failed: {error}")))?;
+    result.try_reserve_exact(source.len()).map_err(|error| {
+        ProofFailure::BudgetMode(format!("legacy24 fixture allocation failed: {error}"))
+    })?;
     for vertex in source {
         let [x, y, z] = vertex.position();
         let [u, v] = vertex.texture_uv();
@@ -974,7 +990,10 @@ fn expand_legacy24(mesh: &SceneMesh, label: &str) -> Result<Vec<Legacy24Vertex>,
 impl Legacy24Pipeline {
     fn new(context: &GpuContext) -> Self {
         let device = &context.device;
-        let assets = context.assets.lock().unwrap_or_else(|error| error.into_inner());
+        let assets = context
+            .assets
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let model_layout = assets.model_bind_group_layout.clone();
         drop(assets);
         let scene_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1017,7 +1036,10 @@ impl Legacy24Pipeline {
             2 => Uint32,
             3 => Uint32,
         ];
-        assert_eq!(attributes.map(|attribute| attribute.offset), [0, 12, 16, 20]);
+        assert_eq!(
+            attributes.map(|attribute| attribute.offset),
+            [0, 12, 16, 20]
+        );
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("T4.4 baseline 23ba29e legacy24 reference"),
             layout: Some(&layout),
@@ -1087,7 +1109,11 @@ fn render_legacy24(backend: &GpuBackend, oracle: &Legacy24Pipeline, vertices: &[
     });
     queue.write_buffer(&buffer, 0, bytemuck::cast_slice(vertices));
     let brightness = [Pix3D::colour_brightness() as f32, 0.0f32, 0.0f32, 0.0f32];
-    queue.write_buffer(&backend.brightness_buf, 0, bytemuck::cast_slice(&brightness));
+    queue.write_buffer(
+        &backend.brightness_buf,
+        0,
+        bytemuck::cast_slice(&brightness),
+    );
     let scene_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("T4.4 baseline legacy24 scene group"),
         layout: &oracle.scene_layout,
@@ -1126,7 +1152,10 @@ fn render_legacy24(backend: &GpuBackend, oracle: &Legacy24Pipeline, vertices: &[
         pass.set_vertex_buffer(0, buffer.slice(..));
         pass.set_bind_group(0, &backend.model_bind_group, &[]);
         pass.set_bind_group(1, &scene_group, &[]);
-        pass.draw(0..u32::try_from(vertices.len()).expect("bounded legacy24 vertex count"), 0..1);
+        pass.draw(
+            0..u32::try_from(vertices.len()).expect("bounded legacy24 vertex count"),
+            0..1,
+        );
     }
     queue.submit(Some(encoder.finish()));
 }
@@ -1167,7 +1196,11 @@ fn check_vertex_preflight(backend: &mut GpuBackend) -> Result<(), ProofFailure> 
         )));
     }
     let effective_maximum = GpuBackend::MAX_VERTEX_RETAINED_BYTES.min(
-        backend.context.device.limits().max_storage_buffer_binding_size as usize,
+        backend
+            .context
+            .device
+            .limits()
+            .max_storage_buffer_binding_size as usize,
     );
     if error.maximum() != effective_maximum {
         return Err(ProofFailure::VertexPreflight(format!(
@@ -1245,7 +1278,9 @@ fn check_vertex_preflight(backend: &mut GpuBackend) -> Result<(), ProofFailure> 
     let admitted_scope = admitted_budget.scope();
     backend
         .ensure_vertex_buffer(capacity + 1)
-        .map_err(|error| ProofFailure::VertexPreflight(format!("3*C growth was not admitted: {error}")))?;
+        .map_err(|error| {
+            ProofFailure::VertexPreflight(format!("3*C growth was not admitted: {error}"))
+        })?;
     drop(admitted_scope);
     if backend.vertex_buf_capacity != doubled
         || backend.vertex_buf.size() as usize != doubled

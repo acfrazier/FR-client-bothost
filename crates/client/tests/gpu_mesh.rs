@@ -501,7 +501,8 @@ fn lowmem_textured_ground_face_shades_with_the_texture_average() {
     let mut found_raw = false;
     for v in mesh.vertices() {
         assert_eq!(
-            v.texture_id_plus_one(), 0,
+            v.texture_id_plus_one(),
+            0,
             "a low-mem textured ground face must stay flat (no atlas sample)"
         );
         let shade = i32::from(v.shade());

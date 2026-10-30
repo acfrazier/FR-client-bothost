@@ -483,7 +483,11 @@ fn textured_model_mesh_carries_tex_id_and_uv() {
             saw_nonzero_u |= v.texture_uv()[0] != 0;
             saw_nonzero_v |= v.texture_uv()[1] != 0;
         } else {
-            assert_eq!(v.texture_id_plus_one(), 0, "untextured vertices carry no texture");
+            assert_eq!(
+                v.texture_id_plus_one(),
+                0,
+                "untextured vertices carry no texture"
+            );
             assert_eq!(v.texture_uv(), [0, 0], "untextured vertices carry no UV");
         }
     }

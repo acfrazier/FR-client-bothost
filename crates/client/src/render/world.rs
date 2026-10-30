@@ -6720,7 +6720,10 @@ mod compact_vertex_tests {
             let words: &[u32] = bytemuck::cast_slice(std::slice::from_ref(&vertex));
             let low = |word: u32| (word << 16) as i32 >> 16;
             let high = |word: u32| word as i32 >> 16;
-            assert_eq!([low(words[0]), high(words[0]), low(words[1])], vertex.position());
+            assert_eq!(
+                [low(words[0]), high(words[0]), low(words[1])],
+                vertex.position()
+            );
             assert_eq!(words[1] >> 16, u32::from(bits));
             assert_eq!([low(words[2]), high(words[2])], [signed, opposite]);
             assert_eq!(words[3], 0x3295);
@@ -6776,10 +6779,10 @@ mod compact_vertex_tests {
         ] {
             assert!(std::panic::catch_unwind(|| GpuVertex::new(x, y, z, 0, 255)).is_err());
         }
-        assert!(std::panic::catch_unwind(|| {
-            GpuVertex::textured(0, 0, 50, 0, 0, 0, 255, 51)
-        })
-        .is_err());
+        assert!(
+            std::panic::catch_unwind(|| { GpuVertex::textured(0, 0, 50, 0, 0, 0, 255, 51) })
+                .is_err()
+        );
     }
 }
 
