@@ -95,6 +95,8 @@ fn make_frame_target(
 /// failed init is cached: the fallback log fires once and later renderers
 /// do not retry (and cannot take the bot down).
 static CONTEXT: OnceLock<Result<Arc<GpuContext>, String>> = OnceLock::new();
+#[cfg(test)]
+static TEST_ADAPTER_INFO: OnceLock<wgpu::AdapterInfo> = OnceLock::new();
 
 /// Shared-device seam (campaign task 3): hand the host's wgpu device/queue
 /// to the process-wide GPU context so the client renders on the host's
@@ -690,7 +692,7 @@ fn device_on(
         adapter.get_downlevel_capabilities().flags,
         adapter.limits().max_storage_buffers_per_shader_stage,
     )?;
-    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+    let device_and_queue = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("r274 client"),
         required_features: wgpu::Features::empty(),
         required_limits: wgpu::Limits::default(),
@@ -698,7 +700,10 @@ fn device_on(
         memory_hints: wgpu::MemoryHints::default(),
         trace: wgpu::Trace::default(),
     }))
-    .map_err(|e| format!("device: {e}"))
+    .map_err(|e| format!("device: {e}"))?;
+    #[cfg(test)]
+    TEST_ADAPTER_INFO.get_or_init(|| adapter.get_info());
+    Ok(device_and_queue)
 }
 
 fn init_gpu() -> Result<Arc<GpuContext>, String> {

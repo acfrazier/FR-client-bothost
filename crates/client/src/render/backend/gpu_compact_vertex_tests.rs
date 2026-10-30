@@ -313,6 +313,15 @@ fn run_proof(mode: &str) -> Result<(), ProofFailure> {
     }
 
     let mut backend = GpuBackend::try_new().map_err(ProofFailure::GpuUnavailable)?;
+    let adapter = super::TEST_ADAPTER_INFO
+        .get()
+        .expect("isolated pixel proof must select its own GPU adapter");
+    println!("T44_COMPACT_ADAPTER mode={mode} {adapter:?}");
+    assert_ne!(
+        adapter.device_type,
+        wgpu::DeviceType::Cpu,
+        "real-GPU pixel proof must not use a software adapter"
+    );
     let oracle = Legacy24Pipeline::new(&backend.context);
     for case in &cases {
         compare_case(&mut backend, &oracle, &mut pix, case, mode)?;
