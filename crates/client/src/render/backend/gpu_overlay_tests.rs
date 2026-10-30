@@ -409,6 +409,10 @@ fn busy_nav_does_not_accumulate_into_retained_scene() {
 }
 
 fn install_nav_scene_world(core: &mut Client) {
+    install_nav_scene_world_with_colour(core, 25_700);
+}
+
+fn install_nav_scene_world_with_colour(core: &mut Client, ground_colour: i32) {
     use crate::dash3d::TerrainOverlayShape;
 
     core.ingame = true;
@@ -435,14 +439,14 @@ fn install_nav_scene_world(core: &mut Client) {
                 2000,
                 2000,
                 2000,
-                25_700,
-                25_700,
-                25_700,
-                25_700,
-                25_700,
-                25_700,
-                25_700,
-                25_700,
+                ground_colour,
+                ground_colour,
+                ground_colour,
+                ground_colour,
+                ground_colour,
+                ground_colour,
+                ground_colour,
+                ground_colour,
                 0,
                 0,
             );
@@ -462,6 +466,27 @@ fn render_live_scene(
         "the ground fixture produces a real scene"
     );
     parity_read(backend)
+}
+fn assert_scene_pixels_eq(actual: &[i32], expected: &[i32], context: &str) {
+    assert_eq!(
+        actual.len(),
+        expected.len(),
+        "{context}: scene image dimensions differ"
+    );
+    if let Some(index) = actual
+        .iter()
+        .zip(expected)
+        .position(|(actual, expected)| actual != expected)
+    {
+        let width = SCENE_W as usize;
+        panic!(
+            "{context}: pixel ({}, {}) was {:#08x}, expected {:#08x}",
+            index % width,
+            index / width,
+            actual[index],
+            expected[index]
+        );
+    }
 }
 
 #[cfg(feature = "render-test-hooks")]
@@ -546,7 +571,7 @@ fn coordinate_capture_fault_retains_last_completed_scene() {
 
 #[test]
 #[ignore = "requires a real GPU; verifies shared scene growth, pixels and post-lease nav isolation"]
-fn two_heads_share_scene_vertices_across_growth() {
+fn two_heads_draw_in_turn_from_one_scene_buffer() {
     let _admission = SceneAdmissionScope::enter(SceneAdmission::Standalone);
     let mut backend_a = GpuBackend::try_new().expect("GPU required for head A");
     let mut backend_b = GpuBackend::try_new().expect("GPU required for head B");
@@ -569,20 +594,36 @@ fn two_heads_share_scene_vertices_across_growth() {
     let mut core_a = make_core("a");
     let mut core_b = make_core("b");
     install_nav_scene_world(&mut core_a);
-    install_nav_scene_world(&mut core_b);
+    install_nav_scene_world_with_colour(&mut core_b, 42_000);
     let paint = crate::render::nav_debug::NavDebugPaint {
         path: vec![(3, 10, false)],
         show_path: true,
         ..Default::default()
     };
+
+    // Save clean references before either head claims the nav overlay.
+    let a_clean = render_live_scene(&mut backend_a, &mut core_a, &mut renderer_a);
+    let b_clean = render_live_scene(&mut backend_b, &mut core_b, &mut renderer_b);
+    assert!(
+        a_clean != b_clean,
+        "different ground colours must produce distinct clean head images"
+    );
+    assert_scene_pixels_eq(
+        &present_scene(&mut backend_a, &mut renderer_a),
+        &a_clean,
+        "A finish composites A's clean scene",
+    );
+
     core_a.set_nav_debug_paint(Some(paint.clone()));
-    let a_before = render_live_scene(&mut backend_a, &mut core_a, &mut renderer_a);
-    let b_before = render_live_scene(&mut backend_b, &mut core_b, &mut renderer_b);
-    assert_ne!(a_before, b_before, "only the focused head has nav pixels");
-    assert_eq!(
-        present_scene(&mut backend_a, &mut renderer_a),
-        a_before,
-        "finish composites the focused nav target at the scene viewport"
+    let a_focused = render_live_scene(&mut backend_a, &mut core_a, &mut renderer_a);
+    assert!(
+        a_focused != a_clean,
+        "A's focused nav overlay must differ from A's clean scene"
+    );
+    assert_scene_pixels_eq(
+        &present_scene(&mut backend_a, &mut renderer_a),
+        &a_focused,
+        "finish composites A's focused nav target",
     );
     let capacity = backend_a.render_bytes().gpu_vertex_live();
     assert_eq!(backend_b.render_bytes().gpu_vertex_live(), capacity);
@@ -605,23 +646,19 @@ fn two_heads_share_scene_vertices_across_growth() {
     assert_eq!(result, SceneSubmit::Submitted);
     assert_eq!(backend_a.render_bytes().gpu_vertex_live(), capacity * 2);
     assert_eq!(backend_b.render_bytes().gpu_vertex_live(), capacity * 2);
-    assert_eq!(
-        render_live_scene(&mut backend_b, &mut core_b, &mut renderer_b),
-        b_before,
-        "B draws correct pixels after A's turn grew the shared buffer"
-    );
-    assert_eq!(
-        render_live_scene(&mut backend_a, &mut core_a, &mut renderer_a),
-        a_before,
-        "A also uses the replacement scene binding"
+    assert_scene_pixels_eq(
+        &render_live_scene(&mut backend_b, &mut core_b, &mut renderer_b),
+        &b_clean,
+        "B draws its clean scene after A's turn grew the shared buffer",
     );
 
     // New focus can run before the old slot observes its loss. The atomic
     // claim bounds nav scratch and GPU storage to one owner without waiting.
     core_b.set_nav_debug_paint(Some(paint.clone()));
-    assert_eq!(
-        render_live_scene(&mut backend_b, &mut core_b, &mut renderer_b),
-        b_before
+    assert_scene_pixels_eq(
+        &render_live_scene(&mut backend_b, &mut core_b, &mut renderer_b),
+        &b_clean,
+        "B stays clean while A still owns the nav overlay",
     );
     assert!(backend_b.nav_target.is_none());
     assert_eq!(backend_b.nav_mesh.retained_capacity(), 0);
@@ -633,20 +670,44 @@ fn two_heads_share_scene_vertices_across_growth() {
     backend_a.begin(&mut core_a, &mut renderer_a, FrameKind::Game);
     assert_eq!(backend_a.nav_mesh.retained_capacity(), 0);
     assert!(backend_a.nav_target.is_none());
-    assert_eq!(parity_read(&backend_a), b_before);
-    assert_eq!(
-        present_scene(&mut backend_a, &mut renderer_a),
-        b_before,
-        "focus loss removes nav from the presented frozen scene without a rebuild"
+    assert_scene_pixels_eq(
+        &parity_read(&backend_a),
+        &a_clean,
+        "A's frozen scene returns to A's own clean image",
     );
-    core_b.set_nav_debug_paint(Some(paint));
+    assert_scene_pixels_eq(
+        &present_scene(&mut backend_a, &mut renderer_a),
+        &a_clean,
+        "focus loss removes nav from A's frozen scene without a rebuild",
+    );
+
+    core_a.scene_state = 2;
+    assert_scene_pixels_eq(
+        &render_live_scene(&mut backend_a, &mut core_a, &mut renderer_a),
+        &a_clean,
+        "A also uses the replacement scene binding",
+    );
+    core_b.set_nav_debug_paint(Some(paint.clone()));
     let b_focused = render_live_scene(&mut backend_b, &mut core_b, &mut renderer_b);
-    assert_eq!(b_focused, a_before);
+    assert!(
+        b_focused != b_clean,
+        "B's focused nav overlay must differ from B's clean scene"
+    );
+    assert_scene_pixels_eq(
+        &present_scene(&mut backend_b, &mut renderer_b),
+        &b_focused,
+        "finish composites B's own focused nav target",
+    );
 
     // Replay the uploaded scene without another write. Rebuild nav only after
     // the scene callback released its turn. Any nav write to shared scene
     // vertices changes the replay, even if every ordinary frame reuploads.
     let clean_before = raw_scene(&backend_b);
+    assert_scene_pixels_eq(
+        &clean_before,
+        &b_clean,
+        "B's scene texture remains its own clean ground image",
+    );
     backend_b.nav_projection_key = None;
     backend_b.render_nav_overlay(&mut core_b, &mut renderer_b);
     let workspace = GPU_SCENE_LOCK
@@ -677,10 +738,10 @@ fn two_heads_share_scene_vertices_across_growth() {
         pass.draw(0..backend_b.scene_mesh.vertices().len() as u32, 0..1);
     }
     backend_b.context.queue.submit([encoder.finish()]);
-    assert_eq!(
-        raw_scene(&backend_b),
-        clean_before,
-        "nav after scene-lease release must not write shared scene vertices"
+    assert_scene_pixels_eq(
+        &raw_scene(&backend_b),
+        &clean_before,
+        "nav after scene-lease release must not write shared scene vertices",
     );
     println!("T44_SHARED_VERTEX capacity_before={capacity} capacity_after={} two_heads_correct=true nav_moves=true nav_released=true post_lease_nav_preserves_scene=true",
         backend_b.render_bytes().gpu_vertex_live());
