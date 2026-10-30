@@ -740,7 +740,7 @@ struct SceneUniforms {
 };
 @group(1) @binding(0) var<uniform> scene: SceneUniforms;
 
-// Four scalar words have the same 16-byte stride in storage and vertex input.
+// Raw storage words view the same 16-byte input, without a second representation.
 struct SceneVertex {
     xy: u32,
     z_shade: u32,
@@ -750,10 +750,9 @@ struct SceneVertex {
 @group(1) @binding(1) var<storage, read> vertices: array<SceneVertex>;
 
 struct VsIn {
-    @location(0) xy: u32,
-    @location(1) z_shade: u32,
-    @location(2) uv: u32,
-    @location(3) attributes: u32,
+    @location(0) xyz_shade: vec4<i32>,
+    @location(1) uv: vec2<i32>,
+    @location(2) attributes: u32,
 };
 
 struct VsOut {
@@ -852,14 +851,14 @@ fn shadeVertex(index: u32) -> vec3<i32> {
 @vertex
 fn vs_main(in: VsIn, @builtin(vertex_index) index: u32) -> VsOut {
     var out: VsOut;
-    let pos = vec3<f32>(f32(signedLow(in.xy)), f32(signedHigh(in.xy)), f32(signedLow(in.z_shade)));
+    let pos = vec3<f32>(in.xyz_shade.xyz);
     let z = pos.z;
     let alpha = f32(in.attributes & 0xffu) / 255.0;
-    let hsl = in.z_shade >> 16u;
+    let hsl = bitcast<u32>(in.xyz_shade.w) & 0xffffu;
     let tex_id = (in.attributes >> 8u) & 0x3fu;
-    // Sign-extend the same wrapped 16-bit texture coordinates as before.
-    let u = signedLow(in.uv);
-    let v = signedHigh(in.uv);
+    // Hardware fetch sign-extends the same wrapped 16-bit texture coordinates.
+    let u = in.uv.x;
+    let v = in.uv.y;
 
     // The projection mirrors the CPU `origin + (x << 9) / z` (origin = the
     // 512×334 area_game centre); w = z gives perspective-correct
@@ -1960,10 +1959,9 @@ fn make_pipeline(
             array_stride: std::mem::size_of::<GpuVertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &wgpu::vertex_attr_array![
-                0 => Uint32,
-                1 => Uint32,
+                0 => Sint16x4,
+                1 => Sint16x2,
                 2 => Uint32,
-                3 => Uint32,
             ],
         }],
     };

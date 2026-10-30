@@ -31,6 +31,8 @@ Textured GPU lighting follows CpuPix3D's integer scanlines, eight-pixel
 brightness bands, and packed texture-palette arithmetic. Each scene vertex
 uses a lossless 16-byte record: integral camera coordinates, signed texture
 coordinates, shade, opacity, texture layer and the CPU's polygon clip flag.
+The vertex fetch hardware sign-extends the integral coordinates directly;
+the CPU does not pack them into words or expand them into another stream.
 The vertex shader reads each textured triangle from a read-only storage
 view of the same reused buffer. There is one vertex upload per rendered
 scene frame, with no extra stream, indexing or upload.

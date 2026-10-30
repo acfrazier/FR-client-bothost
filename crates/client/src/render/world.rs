@@ -5814,40 +5814,39 @@ struct SceneCam {
 /// Camera transforms end in an arithmetic `i32 >> 16`, so their integral
 /// coordinates fit signed 16 bits. CPU near clipping interpolates those
 /// coordinates and retains that range. Texture coordinates already use
-/// signed 16-bit wrapping. The shader decodes these same integers before
-/// applying the unchanged projection, lighting, texture and blend rules.
+/// signed 16-bit wrapping. Hardware vertex fetch sign-extends those same
+/// integers before the unchanged projection, lighting, texture and blend rules.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuVertex {
-    xy: u32,
-    z_shade: u32,
-    uv: u32,
+    xyz: [i16; 3],
+    shade: u16,
+    uv: [i16; 2],
     attributes: u32,
 }
 
 const _: [(); 16] = [(); std::mem::size_of::<GpuVertex>()];
+const _: [(); 0] = [(); std::mem::offset_of!(GpuVertex, xyz)];
+const _: [(); 6] = [(); std::mem::offset_of!(GpuVertex, shade)];
+const _: [(); 8] = [(); std::mem::offset_of!(GpuVertex, uv)];
+const _: [(); 12] = [(); std::mem::offset_of!(GpuVertex, attributes)];
 
 impl GpuVertex {
     /// A near-clipped polygon shares hclip across both emitted triangles.
     const POLYGON_HCLIP: u32 = 1 << 14;
 
-    fn coordinates(low: i32, high: i32) -> u32 {
-        debug_assert!(i16::try_from(low).is_ok() && i16::try_from(high).is_ok());
-        u32::from(low as u16) | (u32::from(high as u16) << 16)
-    }
-
     /// Integral camera-space position, before the shader's exact f32 conversion.
     pub fn position(&self) -> [i32; 3] {
         [
-            i32::from(self.xy as i16),
-            i32::from((self.xy >> 16) as i16),
-            i32::from(self.z_shade as i16),
+            i32::from(self.xyz[0]),
+            i32::from(self.xyz[1]),
+            i32::from(self.xyz[2]),
         ]
     }
 
     /// Raw colour-table index or textured-face brightness.
     pub fn shade(&self) -> u16 {
-        (self.z_shade >> 16) as u16
+        self.shade
     }
 
     /// Opacity: 255 is opaque.
@@ -5857,7 +5856,7 @@ impl GpuVertex {
 
     /// Signed texture coordinates in the capture's existing ×256 units.
     pub fn texture_uv(&self) -> [i16; 2] {
-        [self.uv as i16, (self.uv >> 16) as i16]
+        self.uv
     }
 
     /// Texture layer plus one; zero denotes an untextured face.
@@ -5887,11 +5886,14 @@ impl GpuVertex {
         alpha: u8,
         tex_id_plus_1: u32,
     ) -> GpuVertex {
+        debug_assert!(i16::try_from(x).is_ok());
+        debug_assert!(i16::try_from(y).is_ok());
+        debug_assert!(i16::try_from(z).is_ok());
         debug_assert!(tex_id_plus_1 <= 50);
         GpuVertex {
-            xy: Self::coordinates(x, y),
-            z_shade: Self::coordinates(z, shade as i16 as i32),
-            uv: (u & 0xffff) | ((v & 0xffff) << 16),
+            xyz: [x as i16, y as i16, z as i16],
+            shade: shade as u16,
+            uv: [u as i16, v as i16],
             attributes: u32::from(alpha) | (tex_id_plus_1 << 8),
         }
     }
