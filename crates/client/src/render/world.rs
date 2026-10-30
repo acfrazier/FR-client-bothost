@@ -6656,36 +6656,9 @@ fn emit_quick_ground(
                 let (u3, v3) = projective_uv(corner(ba), corner(bb), corner(bc), corner(3));
                 let (u1, v1) = projective_uv(corner(ba), corner(bb), corner(bc), corner(1));
                 mesh.push(
-                    GpuVertex::textured(
-                        x[2],
-                        y[2],
-                        z[2],
-                        u2,
-                        v2,
-                        ground.colour_ne,
-                        255,
-                        tex + 1,
-                    )?,
-                    GpuVertex::textured(
-                        x[3],
-                        y[3],
-                        z[3],
-                        u3,
-                        v3,
-                        ground.colour_nw,
-                        255,
-                        tex + 1,
-                    )?,
-                    GpuVertex::textured(
-                        x[1],
-                        y[1],
-                        z[1],
-                        u1,
-                        v1,
-                        ground.colour_se,
-                        255,
-                        tex + 1,
-                    )?,
+                    GpuVertex::textured(x[2], y[2], z[2], u2, v2, ground.colour_ne, 255, tex + 1)?,
+                    GpuVertex::textured(x[3], y[3], z[3], u3, v3, ground.colour_nw, 255, tex + 1)?,
+                    GpuVertex::textured(x[1], y[1], z[1], u1, v1, ground.colour_se, 255, tex + 1)?,
                 )?;
             } else {
                 mesh.push(
@@ -6720,36 +6693,9 @@ fn emit_quick_ground(
                 let (u1, v1) = projective_uv(corner(0), corner(1), corner(3), corner(1));
                 let (u3, v3) = projective_uv(corner(0), corner(1), corner(3), corner(3));
                 mesh.push(
-                    GpuVertex::textured(
-                        x[0],
-                        y[0],
-                        z[0],
-                        u0,
-                        v0,
-                        ground.colour_sw,
-                        255,
-                        tex + 1,
-                    )?,
-                    GpuVertex::textured(
-                        x[1],
-                        y[1],
-                        z[1],
-                        u1,
-                        v1,
-                        ground.colour_se,
-                        255,
-                        tex + 1,
-                    )?,
-                    GpuVertex::textured(
-                        x[3],
-                        y[3],
-                        z[3],
-                        u3,
-                        v3,
-                        ground.colour_nw,
-                        255,
-                        tex + 1,
-                    )?,
+                    GpuVertex::textured(x[0], y[0], z[0], u0, v0, ground.colour_sw, 255, tex + 1)?,
+                    GpuVertex::textured(x[1], y[1], z[1], u1, v1, ground.colour_se, 255, tex + 1)?,
+                    GpuVertex::textured(x[3], y[3], z[3], u3, v3, ground.colour_nw, 255, tex + 1)?,
                 )?;
             } else {
                 mesh.push(
@@ -6845,30 +6791,13 @@ mod compact_vertex_tests {
 
     #[test]
     fn out_of_range_coordinates_return_bounded_faults_on_every_axis() {
-        let values = [
-            i32::MIN,
-            -32769,
-            -32768,
-            -1,
-            0,
-            32767,
-            32768,
-            i32::MAX,
-        ];
+        let values = [i32::MIN, -32769, -32768, -1, 0, 32767, 32768, i32::MAX];
         for (axis, axis_name) in ["x", "y", "z"].into_iter().enumerate() {
             for value in values {
                 let mut position = [0, 0, 50];
                 position[axis] = value;
-                let result = GpuVertex::textured(
-                    position[0],
-                    position[1],
-                    position[2],
-                    0,
-                    0,
-                    0,
-                    255,
-                    0,
-                );
+                let result =
+                    GpuVertex::textured(position[0], position[1], position[2], 0, 0, 0, 255, 0);
                 if i16::try_from(value).is_ok() {
                     assert_eq!(
                         result.unwrap().position(),
@@ -6948,8 +6877,7 @@ mod compact_vertex_tests {
     #[cfg(debug_assertions)]
     fn out_of_range_texture_ids_keep_the_existing_debug_assertion() {
         assert!(
-            std::panic::catch_unwind(|| GpuVertex::textured(0, 0, 50, 0, 0, 0, 255, 51))
-                .is_err()
+            std::panic::catch_unwind(|| GpuVertex::textured(0, 0, 50, 0, 0, 0, 255, 51)).is_err()
         );
     }
 }

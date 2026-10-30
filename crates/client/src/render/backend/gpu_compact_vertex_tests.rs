@@ -242,8 +242,7 @@ fn real_cache_source_model_coordinate_census() {
     }
     let models = read_model_archive_for_coordinate_census(&snapshot)
         .unwrap_or_else(|error| panic!("{error}"));
-    let census =
-        source_model_coordinate_census(&models).unwrap_or_else(|error| panic!("{error}"));
+    let census = source_model_coordinate_census(&models).unwrap_or_else(|error| panic!("{error}"));
     println!(
         "Decoded source model coordinates before camera/entity transforms: {} records, {} decoded models, {} skipped models, {} model points; x min/max {}/{}, y {}/{}, z {}/{}",
         census.records,
@@ -514,8 +513,7 @@ fn source_model_coordinate_census(
             )));
         }
         if model_points != 0 {
-            let (Some(xs), Some(ys), Some(zs)) =
-                (&model.point_x, &model.point_y, &model.point_z)
+            let (Some(xs), Some(ys), Some(zs)) = (&model.point_x, &model.point_y, &model.point_z)
             else {
                 return Err(ProofFailure::CoordinateCensus(format!(
                     "model {id} has no complete coordinate arrays for {model_points} points"
@@ -550,9 +548,11 @@ fn declared_model_point_count(record: &[u8]) -> Result<usize, ProofFailure> {
     let trailer_start = record.len().checked_sub(18).ok_or_else(|| {
         ProofFailure::CoordinateCensus("model record is shorter than its 18-byte trailer".into())
     })?;
-    let points = record.get(trailer_start..trailer_start + 2).ok_or_else(|| {
-        ProofFailure::CoordinateCensus("model point count is missing from its trailer".into())
-    })?;
+    let points = record
+        .get(trailer_start..trailer_start + 2)
+        .ok_or_else(|| {
+            ProofFailure::CoordinateCensus("model point count is missing from its trailer".into())
+        })?;
     Ok(usize::from(u16::from_be_bytes([points[0], points[1]])))
 }
 
