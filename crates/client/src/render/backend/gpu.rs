@@ -2319,17 +2319,13 @@ impl RenderBackend for GpuBackend {
                     }
                     Ok(())
                 })();
-                // Model GpuVertex rejection at the capture boundary for the
-                // retained-scene regression; no partial scene may publish.
+                // Exercise checked construction at the capture boundary for
+                // the retained-scene regression; no partial scene may publish.
                 #[cfg(feature = "render-test-hooks")]
                 let capture_result = if capture_result.is_ok()
                     && test_hooks::at(test_hooks::SceneTestPoint::VertexCoordinateOverflow)
                 {
-                    Err(RenderLimit::new(
-                        RenderResource::VertexCoordinates,
-                        i16::MAX as usize + 1,
-                        i16::MAX as usize,
-                    ))
+                    GpuVertex::new(i32::from(i16::MAX) + 1, 0, 50, 0, 255).map(|_| ())
                 } else {
                     capture_result
                 };

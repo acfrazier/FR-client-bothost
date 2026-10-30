@@ -5869,7 +5869,13 @@ impl GpuVertex {
     }
 
     /// A flat face keeps the same low 16 shade bits as the CPU colour table.
-    fn new(x: i32, y: i32, z: i32, shade: i32, alpha: u8) -> Result<GpuVertex, RenderLimit> {
+    pub(super) fn new(
+        x: i32,
+        y: i32,
+        z: i32,
+        shade: i32,
+        alpha: u8,
+    ) -> Result<GpuVertex, RenderLimit> {
         Self::textured(x, y, z, 0, 0, shade, alpha, 0)
     }
 
