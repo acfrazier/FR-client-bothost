@@ -5,7 +5,7 @@ use client::dash3d::Model;
 use client::graphics::{Pix2D, Pix3D, Pix3DDraw};
 use client::io::JagFile;
 use client::render::backend::GpuBackend;
-use client::render::world::SceneMesh;
+use client::render::world::{GpuVertex, SceneMesh};
 use std::path::Path;
 
 fn load_model(snapshot: &Path) -> (Cache, JagFile) {
@@ -457,8 +457,9 @@ fn textured_lighting_survives_vertex_buffer_growth() {
     pix.capture = Some(SceneMesh::default());
     // More than 1 MiB of vertices forces replacement of the streaming
     // buffer. The final lit triangle covers the tiny padding primitives.
-    for i in 0..=15_000 {
-        let face = if i == 15_000 { &model } else { &padding };
+    let padding_faces = (1 << 20) / (3 * std::mem::size_of::<GpuVertex>()) + 1;
+    for i in 0..=padding_faces {
+        let face = if i == padding_faces { &model } else { &padding };
         face.world_render(&mut pix, &mut surface, 0, 0, 65536, 0, 65536, 0, 0, 768, 0)
             .expect("unscoped world_render stays within its render budget");
     }
