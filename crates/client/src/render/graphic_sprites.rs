@@ -253,7 +253,10 @@ pub fn render_test_scoped_content_layout(
         key_bytes,
         sprite_pixel_bytes,
         retained_bytes: cache.retained_bytes(),
-        temp_models_peak_bytes: budget.for_resource(RenderResource::TempModels).peak(),
+        temp_models_peak_bytes: budget
+            .for_resource(RenderResource::TempModels)
+            .expect("TempModels is a byte-budget resource")
+            .peak(),
     })
 }
 
@@ -388,9 +391,18 @@ mod tests {
         assert_eq!(cache.retained_bytes(), retained);
         assert_eq!(
             cache.retained_bytes(),
-            budget.for_resource(RenderResource::HeadMisc).live()
+            budget
+                .for_resource(RenderResource::HeadMisc)
+                .expect("HeadMisc is a byte-budget resource")
+                .live()
         );
-        assert_eq!(budget.for_resource(RenderResource::TempModels).live(), 0);
+        assert_eq!(
+            budget
+                .for_resource(RenderResource::TempModels)
+                .expect("TempModels is a byte-budget resource")
+                .live(),
+            0
+        );
     }
 
     #[test]
@@ -404,7 +416,10 @@ mod tests {
         assert!(cache.get(fixture.path(), "sprite", 0).unwrap().is_some());
         let entries_before = cache.entries.len();
         let retained_before = cache.retained_bytes();
-        let live_before = budget.for_resource(RenderResource::HeadMisc).live();
+        let live_before = budget
+            .for_resource(RenderResource::HeadMisc)
+            .expect("HeadMisc is a byte-budget resource")
+            .live();
         let error = match cache.get(fixture.path(), "sprite", 1) {
             Ok(_) => panic!("large sprite unexpectedly fit the retained budget"),
             Err(error) => error,
@@ -414,9 +429,18 @@ mod tests {
         assert_eq!(cache.entries.len(), entries_before);
         assert_eq!(cache.retained_bytes(), retained_before);
         assert_eq!(
-            budget.for_resource(RenderResource::HeadMisc).live(),
+            budget
+                .for_resource(RenderResource::HeadMisc)
+                .expect("HeadMisc is a byte-budget resource")
+                .live(),
             live_before
         );
-        assert_eq!(budget.for_resource(RenderResource::TempModels).live(), 0);
+        assert_eq!(
+            budget
+                .for_resource(RenderResource::TempModels)
+                .expect("TempModels is a byte-budget resource")
+                .live(),
+            0
+        );
     }
 }

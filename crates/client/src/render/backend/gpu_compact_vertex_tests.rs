@@ -212,10 +212,18 @@ fn real_cache_compact_vertex_pixels_match_pinned_legacy24() {
                 let scope = budget.scope();
                 let run = run_proof(MODE_ON);
                 drop(scope);
-                if budget.for_resource(RenderResource::Vertex).live() != 0 {
+                if budget
+                    .for_resource(RenderResource::Vertex)
+                    .expect("Vertex is a byte-budget resource")
+                    .live()
+                    != 0
+                {
                     Err(ProofFailure::BudgetMode(format!(
                         "backend drop left {} bytes charged to the outer Vertex fixture",
-                        budget.for_resource(RenderResource::Vertex).live()
+                        budget
+                            .for_resource(RenderResource::Vertex)
+                            .expect("Vertex is a byte-budget resource")
+                            .live()
                     )))
                 } else {
                     run
@@ -1429,7 +1437,10 @@ fn check_vertex_preflight(backend: &mut GpuBackend) -> Result<(), ProofFailure> 
     let buffer_before = backend.vertex_buf.size() as usize;
 
     let rejected_budget = fixture_budget(three - 1);
-    let rejected_vertex = rejected_budget.for_resource(RenderResource::Vertex).clone();
+    let rejected_vertex = rejected_budget
+        .for_resource(RenderResource::Vertex)
+        .expect("Vertex is a byte-budget resource")
+        .clone();
     let rejected_scope = rejected_budget.scope();
     let rejected = backend.ensure_vertex_buffer(capacity + 1);
     drop(rejected_scope);
@@ -1464,7 +1475,10 @@ fn check_vertex_preflight(backend: &mut GpuBackend) -> Result<(), ProofFailure> 
     );
 
     let admitted_budget = fixture_budget(three);
-    let admitted_vertex = admitted_budget.for_resource(RenderResource::Vertex).clone();
+    let admitted_vertex = admitted_budget
+        .for_resource(RenderResource::Vertex)
+        .expect("Vertex is a byte-budget resource")
+        .clone();
     let admitted_scope = admitted_budget.scope();
     backend
         .ensure_vertex_buffer(capacity + 1)

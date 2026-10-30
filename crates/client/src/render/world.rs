@@ -7413,7 +7413,9 @@ mod budget_capture_tests {
         };
         let source_storage = source.point_x.as_ref().unwrap().as_ptr();
         let mesh_storage = mesh.vertices.as_ptr();
-        let model_budget = budget.for_resource(RenderResource::TempModels);
+        let model_budget = budget
+            .for_resource(RenderResource::TempModels)
+            .expect("TempModels is a byte-budget resource");
         ALLOCATION_CALLS.with(|count| count.set(Some(0)));
         let triangle_error = triangle(&mut mesh).unwrap_err();
         let model_error = match source.try_clone_for_render(model_budget) {
@@ -7430,7 +7432,13 @@ mod budget_capture_tests {
         assert_eq!(mesh.vertices.capacity(), 0);
         assert_eq!(mesh.vertices.as_ptr(), mesh_storage);
         assert_eq!(source.point_x.as_ref().unwrap().as_ptr(), source_storage);
-        assert_eq!(budget.for_resource(RenderResource::Capture).live(), 0);
+        assert_eq!(
+            budget
+                .for_resource(RenderResource::Capture)
+                .expect("Capture is a byte-budget resource")
+                .live(),
+            0
+        );
         assert_eq!(model_budget.live(), 0);
     }
 
@@ -7460,7 +7468,10 @@ mod budget_capture_tests {
             previous_storage
         );
         assert_eq!(
-            budget.for_resource(RenderResource::Capture).live(),
+            budget
+                .for_resource(RenderResource::Capture)
+                .expect("Capture is a byte-budget resource")
+                .live(),
             triangle_bytes
         );
         let unwind = catch_unwind(AssertUnwindSafe(|| {
@@ -7570,7 +7581,13 @@ mod budget_capture_tests {
         assert_eq!(error.resource(), RenderResource::HeadMisc);
         assert!(world.dynamic_sprites.is_empty());
         assert_eq!(world.render_storage_bytes(), 0);
-        assert_eq!(budget.for_resource(RenderResource::HeadMisc).live(), 0);
+        assert_eq!(
+            budget
+                .for_resource(RenderResource::HeadMisc)
+                .expect("HeadMisc is a byte-budget resource")
+                .live(),
+            0
+        );
     }
 
     #[test]
@@ -7608,7 +7625,10 @@ mod budget_capture_tests {
             .expect_err("zero capture budget must reject the obj_render face");
         assert_eq!(error.resource(), RenderResource::Capture);
         assert_eq!(
-            budget.for_resource(RenderResource::Capture).live(),
+            budget
+                .for_resource(RenderResource::Capture)
+                .expect("Capture is a byte-budget resource")
+                .live(),
             0,
             "the rejected capture must retain no bytes"
         );

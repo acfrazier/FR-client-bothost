@@ -414,7 +414,13 @@ mod nav_input_builder_tests {
                 Ok(_) => panic!("fixture budget must refuse this input capacity"),
             };
             assert_eq!(error.resource(), RenderResource::NavInput);
-            assert_eq!(budget.for_resource(RenderResource::NavInput).live(), 0);
+            assert_eq!(
+                budget
+                    .for_resource(RenderResource::NavInput)
+                    .expect("NavInput is a byte-budget resource")
+                    .live(),
+                0
+            );
         }
     }
 

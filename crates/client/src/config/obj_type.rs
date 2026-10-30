@@ -1297,7 +1297,10 @@ mod tests {
         assert_eq!(pix.scanline, vec![3, 9, 21]);
         assert!(pix.low_detail);
         assert_eq!(
-            budget.for_resource(RenderResource::HeadMisc).live(),
+            budget
+                .for_resource(RenderResource::HeadMisc)
+                .expect("HeadMisc is a byte-budget resource")
+                .live(),
             0,
             "the failed nested sprite releases the outer scratch reservation"
         );

@@ -603,9 +603,17 @@ impl RenderBudget {
         &self,
         shared_with: Option<&Self>,
     ) -> RenderBudgetScalarReceipt {
-        let budgets = RENDER_BUDGET_RESOURCES.map(|resource| self.for_resource(resource));
-        let shared_budgets = shared_with
-            .map(|shared| RENDER_BUDGET_RESOURCES.map(|resource| shared.for_resource(resource)));
+        let budgets = RENDER_BUDGET_RESOURCES.map(|resource| {
+            self.for_resource(resource)
+                .expect("render budget resource list contains only byte resources")
+        });
+        let shared_budgets = shared_with.map(|shared| {
+            RENDER_BUDGET_RESOURCES.map(|resource| {
+                shared
+                    .for_resource(resource)
+                    .expect("render budget resource list contains only byte resources")
+            })
+        });
         let mut state_allocation_count = 0;
         let mut shared_state_handle_count = 0;
         for (index, budget) in budgets.iter().enumerate() {
@@ -661,23 +669,26 @@ impl RenderBudget {
         std::mem::size_of::<RefCell<Option<Self>>>()
     }
 
-    pub fn for_resource(&self, resource: RenderResource) -> &ByteBudget {
+    /// Return the byte budget for a byte-backed render resource.
+    ///
+    /// Representation limits such as compact vertex coordinates do not own a
+    /// byte budget and return `None`.
+    pub fn for_resource(&self, resource: RenderResource) -> Option<&ByteBudget> {
         match resource {
-            RenderResource::Capture => &self.capture,
-            RenderResource::NavVertices => &self.nav_vertices,
-            RenderResource::NavQuads => &self.nav_quads,
-            RenderResource::NavEdges => &self.nav_edges,
-            RenderResource::NavInput => &self.nav_input,
-            RenderResource::HeadModels => &self.head_models,
-            RenderResource::HeadMisc => &self.head_misc,
-            RenderResource::TempModels => &self.temp_models,
-            RenderResource::SharedModels => &self.shared_models,
-            RenderResource::SharedSprites => &self.shared_sprites,
-            RenderResource::Vertex => &self.vertex,
-            // Coordinate faults are a representation limit, not a byte charge.
-            RenderResource::VertexCoordinates => &self.vertex,
-            RenderResource::ContextCpu => &self.context_cpu,
-            RenderResource::ContextGpu => &self.context_gpu,
+            RenderResource::Capture => Some(&self.capture),
+            RenderResource::NavVertices => Some(&self.nav_vertices),
+            RenderResource::NavQuads => Some(&self.nav_quads),
+            RenderResource::NavEdges => Some(&self.nav_edges),
+            RenderResource::NavInput => Some(&self.nav_input),
+            RenderResource::HeadModels => Some(&self.head_models),
+            RenderResource::HeadMisc => Some(&self.head_misc),
+            RenderResource::TempModels => Some(&self.temp_models),
+            RenderResource::SharedModels => Some(&self.shared_models),
+            RenderResource::SharedSprites => Some(&self.shared_sprites),
+            RenderResource::Vertex => Some(&self.vertex),
+            RenderResource::VertexCoordinates => None,
+            RenderResource::ContextCpu => Some(&self.context_cpu),
+            RenderResource::ContextGpu => Some(&self.context_gpu),
         }
     }
 
@@ -711,7 +722,7 @@ impl RenderBudget {
                 active
                     .borrow()
                     .as_ref()
-                    .map(|budget| budget.for_resource(resource).clone())
+                    .and_then(|budget| budget.for_resource(resource).cloned())
             })
         }
         #[cfg(not(any(test, feature = "render-test-hooks")))]
@@ -929,19 +940,57 @@ mod tests {
 
         let _capture = first
             .for_resource(RenderResource::Capture)
+            .expect("Capture is a byte-budget resource")
             .reserve(7)
             .unwrap();
-        assert_eq!(second.for_resource(RenderResource::Capture).live(), 7);
+        assert_eq!(
+            second
+                .for_resource(RenderResource::Capture)
+                .expect("Capture is a byte-budget resource")
+                .live(),
+            7
+        );
 
         let _vertices = first
             .for_resource(RenderResource::NavVertices)
+            .expect("NavVertices is a byte-budget resource")
             .reserve(11)
             .unwrap();
-        assert_eq!(second.for_resource(RenderResource::NavVertices).live(), 0);
         assert_eq!(
-            second.for_resource(RenderResource::NavVertices).maximum(),
+            second
+                .for_resource(RenderResource::NavVertices)
+                .expect("NavVertices is a byte-budget resource")
+                .live(),
+            0
+        );
+        assert_eq!(
+            second
+                .for_resource(RenderResource::NavVertices)
+                .expect("NavVertices is a byte-budget resource")
+                .maximum(),
             102
         );
+    }
+
+    #[test]
+    fn coordinate_resource_has_no_byte_budget() {
+        let budget = fixture(101);
+        assert!(budget
+            .for_resource(RenderResource::VertexCoordinates)
+            .is_none());
+
+        let vertex = budget
+            .for_resource(RenderResource::Vertex)
+            .expect("Vertex is a byte-budget resource")
+            .clone();
+        let _scope = budget.scope();
+        assert!(RenderBudget::current_resource(RenderResource::VertexCoordinates).is_none());
+
+        let current_vertex = RenderBudget::current_resource(RenderResource::Vertex)
+            .expect("Vertex is a byte-budget resource in the active scope");
+        assert!(vertex.same_budget(&current_vertex));
+        assert_eq!(current_vertex.maximum(), vertex.maximum());
+        assert_eq!(current_vertex.maximum(), 111);
     }
 
     #[test]
@@ -990,14 +1039,22 @@ mod tests {
         let process = fixture(101);
         let head = process.for_head();
         for resource in PROCESS_RENDER_BUDGET_RESOURCES {
-            assert!(process
+            let process_budget = process
                 .for_resource(resource)
-                .same_budget(head.for_resource(resource)));
+                .expect("process resource list contains only byte resources");
+            let head_budget = head
+                .for_resource(resource)
+                .expect("process resource list contains only byte resources");
+            assert!(process_budget.same_budget(head_budget));
         }
         for resource in HEAD_RENDER_BUDGET_RESOURCES {
-            assert!(!process
+            let process_budget = process
                 .for_resource(resource)
-                .same_budget(head.for_resource(resource)));
+                .expect("head resource list contains only byte resources");
+            let head_budget = head
+                .for_resource(resource)
+                .expect("head resource list contains only byte resources");
+            assert!(!process_budget.same_budget(head_budget));
         }
 
         let process_receipt = process.scalar_allocation_receipt(None);
@@ -1060,8 +1117,8 @@ mod tests {
                 RenderBudget::current()
                     .unwrap()
                     .for_resource(RenderResource::TempModels)
-                    .maximum(),
-                108
+                    .expect("TempModels is a byte-budget resource")
+                    .maximum()
             );
             {
                 let _inner_scope = inner.scope();
@@ -1069,16 +1126,16 @@ mod tests {
                     RenderBudget::current()
                         .unwrap()
                         .for_resource(RenderResource::TempModels)
-                        .maximum(),
-                    208
+                        .expect("TempModels is a byte-budget resource")
+                        .maximum()
                 );
             }
             assert_eq!(
                 RenderBudget::current()
                     .unwrap()
                     .for_resource(RenderResource::ContextGpu)
-                    .maximum(),
-                113
+                    .expect("ContextGpu is a byte-budget resource")
+                    .maximum()
             );
         }
         assert!(RenderBudget::current().is_none());

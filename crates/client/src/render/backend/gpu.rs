@@ -613,10 +613,20 @@ impl GpuContext {
         self.render_budget.as_ref().is_some_and(|configured| {
             configured
                 .for_resource(RenderResource::ContextCpu)
-                .same_budget(current.for_resource(RenderResource::ContextCpu))
+                .expect("ContextCpu is a byte-budget resource")
+                .same_budget(
+                    current
+                        .for_resource(RenderResource::ContextCpu)
+                        .expect("ContextCpu is a byte-budget resource"),
+                )
                 && configured
                     .for_resource(RenderResource::ContextGpu)
-                    .same_budget(current.for_resource(RenderResource::ContextGpu))
+                    .expect("ContextGpu is a byte-budget resource")
+                    .same_budget(
+                        current
+                            .for_resource(RenderResource::ContextGpu)
+                            .expect("ContextGpu is a byte-budget resource"),
+                    )
         })
     }
 }

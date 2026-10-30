@@ -855,7 +855,13 @@ mod owner_bytes_tests {
             .unwrap();
         let first = renderer.chats[0].as_ptr();
         let second = renderer.chats[1].as_ptr();
-        assert_eq!(budget.for_resource(RenderResource::HeadMisc).live(), 40);
+        assert_eq!(
+            budget
+                .for_resource(RenderResource::HeadMisc)
+                .expect("HeadMisc is a byte-budget resource")
+                .live(),
+            40
+        );
         assert_eq!(renderer.render_bytes().head_misc() - baseline, 40);
 
         let error = renderer
@@ -870,7 +876,13 @@ mod owner_bytes_tests {
         assert_eq!(renderer.chats[0], "abcdefghijklmnop");
         assert_eq!(renderer.chats[0].as_ptr(), first);
         assert_eq!(renderer.chats[1].as_ptr(), second);
-        assert_eq!(budget.for_resource(RenderResource::HeadMisc).live(), 40);
+        assert_eq!(
+            budget
+                .for_resource(RenderResource::HeadMisc)
+                .expect("HeadMisc is a byte-budget resource")
+                .live(),
+            40
+        );
         for _ in 0..100 {
             renderer.set_chat_message(0, "ponmlkjihgfedcba").unwrap();
             renderer
@@ -879,10 +891,22 @@ mod owner_bytes_tests {
             assert_eq!(renderer.chats[0].as_ptr(), first);
             assert_eq!(renderer.chats[1].as_ptr(), second);
         }
-        assert_eq!(budget.for_resource(RenderResource::HeadMisc).peak(), 40);
+        assert_eq!(
+            budget
+                .for_resource(RenderResource::HeadMisc)
+                .expect("HeadMisc is a byte-budget resource")
+                .peak(),
+            40
+        );
         assert_eq!(renderer.render_bytes().head_misc() - baseline, 40);
         drop(renderer);
-        assert_eq!(budget.for_resource(RenderResource::HeadMisc).live(), 0);
+        assert_eq!(
+            budget
+                .for_resource(RenderResource::HeadMisc)
+                .expect("HeadMisc is a byte-budget resource")
+                .live(),
+            0
+        );
     }
 
     #[test]
@@ -910,6 +934,7 @@ mod owner_bytes_tests {
         let _scope = budget.scope();
         let _unbacked_charge = budget
             .for_resource(RenderResource::HeadMisc)
+            .expect("HeadMisc is a byte-budget resource")
             .reserve(65_536)
             .unwrap();
         assert_eq!(renderer.render_bytes().head_misc(), baseline.head_misc());
