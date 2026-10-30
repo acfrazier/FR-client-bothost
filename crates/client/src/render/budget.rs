@@ -885,7 +885,9 @@ impl RenderBytes {
         self
     }
 
-    pub const fn total(self) -> usize {
+    /// Head-owned bytes only. These totals can be summed across heads.
+    /// Add one deduplicated process snapshot separately with [`Self::process_total`].
+    pub const fn head_total(self) -> usize {
         self.cpu_surfaces
             .saturating_add(self.cpu_retained_3d)
             .saturating_add(self.output_pixels)
@@ -897,19 +899,24 @@ impl RenderBytes {
             .saturating_add(self.head_models)
             .saturating_add(self.head_misc)
             .saturating_add(self.temp_models)
-            .saturating_add(self.shared_models)
-            .saturating_add(self.shared_sprites)
             .saturating_add(self.gpu_fixed_textures)
             .saturating_add(self.gpu_fixed_buffers)
-            .saturating_add(self.gpu_vertex_live)
-            .saturating_add(self.gpu_vertex_retired)
             .saturating_add(self.gpu_nav_target)
             .saturating_add(self.gpu_nav_vertices)
             .saturating_add(self.gpu_retained_present)
             .saturating_add(self.gpu_upload_scratch)
+            .saturating_add(self.scalar_state)
+    }
+
+    /// Shared process bytes, repeated in each head's census for observation.
+    /// Count these rows once per process, never once per head.
+    pub const fn process_total(self) -> usize {
+        self.shared_models
+            .saturating_add(self.shared_sprites)
+            .saturating_add(self.gpu_vertex_live)
+            .saturating_add(self.gpu_vertex_retired)
             .saturating_add(self.context_cpu)
             .saturating_add(self.context_gpu)
-            .saturating_add(self.scalar_state)
     }
 }
 
@@ -937,6 +944,61 @@ mod tests {
             base + 11,
             base + 12,
         ))
+    }
+
+    #[test]
+    fn fleet_totals_count_process_storage_once() {
+        let first = RenderBytes {
+            cpu_surfaces: 1,
+            cpu_retained_3d: 2,
+            output_pixels: 3,
+            capture: 4,
+            nav_vertices: 5,
+            nav_quads: 6,
+            nav_edges: 7,
+            nav_input: 8,
+            head_models: 9,
+            head_misc: 10,
+            temp_models: 11,
+            shared_models: 12,
+            shared_sprites: 13,
+            gpu_fixed_textures: 14,
+            gpu_fixed_buffers: 15,
+            gpu_vertex_live: 16,
+            gpu_vertex_retired: 17,
+            gpu_nav_target: 18,
+            gpu_nav_vertices: 19,
+            gpu_retained_present: 20,
+            gpu_upload_scratch: 21,
+            context_cpu: 22,
+            context_gpu: 23,
+            scalar_state: 24,
+        };
+        let second = RenderBytes {
+            cpu_surfaces: 101,
+            ..first
+        };
+        let process = 12 + 13 + 16 + 17 + 22 + 23;
+        let first_head = 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10 + 11 + 14 + 15 + 18 + 19
+            + 20
+            + 21
+            + 24;
+        assert_eq!(first.head_total(), first_head);
+        assert_eq!(second.head_total(), first_head + 100);
+        assert_eq!(first.process_total(), process);
+        assert_eq!(second.process_total(), process);
+        assert_eq!(
+            first.head_total() + second.head_total() + first.process_total(),
+            2 * first_head + 100 + process,
+            "the shared scene buffer and context are counted once for two heads"
+        );
+        let saturated = RenderBytes {
+            cpu_surfaces: usize::MAX,
+            shared_models: usize::MAX,
+            ..first
+        };
+        assert_eq!(saturated.head_total(), usize::MAX);
+        assert_eq!(saturated.process_total(), usize::MAX);
     }
 
     #[test]

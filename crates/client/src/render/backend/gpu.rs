@@ -126,6 +126,11 @@ static GPU_BACKEND_TRIED: std::sync::atomic::AtomicUsize = std::sync::atomic::At
 /// it once and reports contention through [`SceneSubmit`].
 static GPU_SCENE_LOCK: Mutex<Option<SceneVertices>> = Mutex::new(None);
 static SCENE_VERTEX_BYTES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+// Registration covers each successfully constructed head, including heads
+// that have not rendered a scene yet. The last drop clears the shared owner
+// under the same mutex as submissions, so a concurrent attach can safely
+// reuse the owner or initialize a new one on its first scene.
+static GPU_HEADS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 // Focus handoff is asynchronous across slot owners. This nonblocking claim
 // prevents a second GPU nav allocation before the old owner releases its
@@ -1649,7 +1654,7 @@ impl GpuBackend {
         .map(crate::profiling::texture_bytes)
         .sum();
         let buffers = chrome_vertex_buf.size() + minimap_vertex_buf.size();
-        Ok(GpuBackend {
+        let backend = GpuBackend {
             _gpu_storage: crate::profiling::Allocation::new(buffers, textures),
             context,
             scene_texture,
@@ -1690,7 +1695,9 @@ impl GpuBackend {
             scene_ready: false,
             scene_progress: SceneProgress::NoScene,
             last_kind: FrameKind::Title,
-        })
+        };
+        GPU_HEADS.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        Ok(backend)
     }
 
     /// wgpu device initialisations attempted in this process (the task-8
@@ -1999,8 +2006,8 @@ impl GpuBackend {
     }
 
     /// CPU entity/interface overlays into `area_game` plus coverage marks.
-    /// The retained nav texture composites first; freezes keep the last
-    /// scene/nav target without accumulating alpha.
+    /// Nav has a separate retained target, composited at `finish`. Freezes
+    /// keep the clean scene and nav target without accumulating alpha.
     fn draw_scene_overlays(&mut self, core: &mut Client, r: &mut Renderer, compose: SceneCompose) {
         #[cfg(feature = "render-test-hooks")]
         test_hooks::at(test_hooks::SceneTestPoint::OverlayEntry);
@@ -3022,7 +3029,9 @@ impl RenderBackend for GpuBackend {
                 .saturating_add(self.overlay_coverage.capacity()),
             // The workspace's Rust descriptors also moved out of each head.
             // Its static mutex/Option storage exists even before first use.
-            context_cpu: context_cpu + std::mem::size_of_val(&GPU_SCENE_LOCK),
+            context_cpu: context_cpu
+                + std::mem::size_of_val(&GPU_SCENE_LOCK)
+                + std::mem::size_of_val(&GPU_HEADS),
             context_gpu: context_gpu + scene_uniforms,
             scalar_state: std::mem::size_of::<Self>(),
             ..RenderBytes::default()
@@ -3037,6 +3046,16 @@ impl RenderBackend for GpuBackend {
 impl Drop for GpuBackend {
     fn drop(&mut self) {
         self.present_gate.retire();
+        if GPU_HEADS.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) == 1 {
+            let mut workspace = GPU_SCENE_LOCK
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            // A new head can register while this drop waits for the lock.
+            if GPU_HEADS.load(std::sync::atomic::Ordering::Acquire) == 0 {
+                *workspace = None;
+                SCENE_VERTEX_BYTES.store(0, std::sync::atomic::Ordering::Release);
+            }
+        }
     }
 }
 /// Return the logical payload of a texture, independent of whether the
@@ -3229,6 +3248,75 @@ mod tests {
     use crate::graphics::PixMap;
     use crate::render::backend::{FrameKind, RenderBackend};
     use crate::render::Renderer;
+
+    #[test]
+    #[ignore = "requires a real GPU; verifies final-head scene storage and budget release"]
+    fn last_gpu_head_releases_scene_storage_and_budget() {
+        const CHILD: &str = "T44_LAST_GPU_HEAD_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "render::backend::gpu::tests::last_gpu_head_releases_scene_storage_and_budget",
+                    "--ignored",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env(CHILD, "1")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        use crate::render::budget::{RenderBudget, RenderBudgetLimits, RenderResource};
+        use std::sync::atomic::Ordering;
+
+        assert_eq!(super::GPU_HEADS.load(Ordering::Acquire), 0);
+        let first = super::GpuBackend::try_new().expect("GPU required for first head");
+        let second = super::GpuBackend::try_new().expect("GPU required for second head");
+        let budget = RenderBudget::fixture(RenderBudgetLimits::new(
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3 << 20, 0, 0,
+        ));
+        let vertex_budget = budget.for_resource(RenderResource::Vertex).unwrap();
+        {
+            let _scope = budget.scope();
+            let mut workspace = super::GPU_SCENE_LOCK.lock().unwrap();
+            assert!(workspace.is_none());
+            let mut vertices = super::SceneVertices::new(&first.context).unwrap();
+            vertices
+                .ensure_vertex_buffer(&first.context, (1 << 20) + 1)
+                .unwrap();
+            *workspace = Some(vertices);
+        }
+        assert_eq!(first.render_bytes().gpu_vertex_live(), 2 << 20);
+        assert_eq!(vertex_budget.live(), 2 << 20);
+        drop(first);
+        assert_eq!(super::GPU_HEADS.load(Ordering::Acquire), 1);
+        assert_eq!(second.render_bytes().gpu_vertex_live(), 2 << 20);
+        assert_eq!(vertex_budget.live(), 2 << 20);
+        assert!(super::GPU_SCENE_LOCK.lock().unwrap().is_some());
+        drop(second);
+        assert_eq!(super::GPU_HEADS.load(Ordering::Acquire), 0);
+        assert!(super::GPU_SCENE_LOCK.lock().unwrap().is_none());
+        assert_eq!(super::SCENE_VERTEX_BYTES.load(Ordering::Acquire), 0);
+        assert_eq!(vertex_budget.live(), 0);
+
+        let next = super::GpuBackend::try_new().expect("GPU required after final-head release");
+        assert_eq!(next.render_bytes().gpu_vertex_live(), 0);
+        {
+            let _scope = budget.scope();
+            let mut workspace = super::GPU_SCENE_LOCK.lock().unwrap();
+            let vertices = super::SceneVertices::new(&next.context).unwrap();
+            assert_eq!(vertices.vertex_buf_capacity, 1 << 20);
+            *workspace = Some(vertices);
+        }
+        assert_eq!(vertex_budget.live(), 1 << 20);
+        drop(next);
+        assert_eq!(vertex_budget.live(), 0);
+        assert!(super::GPU_SCENE_LOCK.lock().unwrap().is_none());
+        println!("T44_LAST_GPU_HEAD first_drop_keeps_shared=true last_drop_releases_storage=true vertex_budget_after_last_drop=0 reattach_starts_at_floor=true");
+    }
+
     #[test]
     fn failed_nav_projection_discards_partial_mesh_and_retries_projection() {
         let mut mesh = crate::render::nav_debug::NavMesh::default();

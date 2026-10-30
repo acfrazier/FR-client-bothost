@@ -1111,7 +1111,7 @@ fn compare_case(
         )));
     }
     println!(
-        "T44_COMPACT_PIXEL_CASE mode={mode} budget_receipt=backend-budget-scope-{mode} label={} model_id={} model_record_sha256={} camera={{model_yaw:{},eye_pitch_sin:{},eye_pitch_cos:{},eye_yaw_sin:{},eye_yaw_cos:{},relative_x:{},relative_y:{},relative_z:{}}} source_points={} source_faces={} source_alpha_faces={} source_alpha_untextured={} source_alpha_textured={} source_near_faces={} target_face={:?} target_face_view_z={:?} emitted_triangles={} emitted_textured_triangles={} emitted_alpha_triangles={} emitted_alpha_untextured={} emitted_alpha_textured={} near_boundary_faces={} near_boundary_vertices={} pixels={{compact:{},legacy24:{},differing:{}}} vertex_count={} render_bytes={{gpu_vertex_live:{},gpu_fixed_buffers:{},gpu_fixed_textures:{},backend_capture:{},total:{}}} bytes={{compact_payload16:{compact_live_bytes},legacy24_payload24:{old_live_bytes},compact_retained_capture:{retained_capture_bytes},compact_backend_capacity:{backend_capacity},compact_backend_buffer:{backend_buffer_bytes},legacy24_vec_capacity:{old_capacity_bytes},legacy24_reference_buffer_bytes:{old_live_bytes}}}",
+        "T44_COMPACT_PIXEL_CASE mode={mode} budget_receipt=backend-budget-scope-{mode} label={} model_id={} model_record_sha256={} camera={{model_yaw:{},eye_pitch_sin:{},eye_pitch_cos:{},eye_yaw_sin:{},eye_yaw_cos:{},relative_x:{},relative_y:{},relative_z:{}}} source_points={} source_faces={} source_alpha_faces={} source_alpha_untextured={} source_alpha_textured={} source_near_faces={} target_face={:?} target_face_view_z={:?} emitted_triangles={} emitted_textured_triangles={} emitted_alpha_triangles={} emitted_alpha_untextured={} emitted_alpha_textured={} near_boundary_faces={} near_boundary_vertices={} pixels={{compact:{},legacy24:{},differing:{}}} vertex_count={} render_bytes={{gpu_vertex_live:{},gpu_fixed_buffers:{},gpu_fixed_textures:{},backend_capture:{},head_total:{},process_total:{}}} bytes={{compact_payload16:{compact_live_bytes},legacy24_payload24:{old_live_bytes},compact_retained_capture:{retained_capture_bytes},compact_backend_capacity:{backend_capacity},compact_backend_buffer:{backend_buffer_bytes},legacy24_vec_capacity:{old_capacity_bytes},legacy24_reference_buffer_bytes:{old_live_bytes}}}",
         case.label,
         case.model_id,
         case.model_record_sha256,
@@ -1146,7 +1146,8 @@ fn compare_case(
         backend_memory.gpu_fixed_buffers(),
         backend_memory.gpu_fixed_textures(),
         backend_memory.capture(),
-        backend_memory.total(),
+        backend_memory.head_total(),
+        backend_memory.process_total(),
     );
     if compact_coverage < MIN_NON_BACKGROUND_PIXELS || legacy_coverage < MIN_NON_BACKGROUND_PIXELS {
         return Err(ProofFailure::InsufficientCoverage {

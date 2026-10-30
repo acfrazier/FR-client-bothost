@@ -947,7 +947,7 @@ mod owner_bytes_tests {
             .reserve(65_536)
             .unwrap();
         assert_eq!(renderer.render_bytes().head_misc(), baseline.head_misc());
-        assert_eq!(renderer.render_bytes().total(), baseline.total());
+        assert_eq!(renderer.render_bytes().head_total(), baseline.head_total());
 
         let mut sprite = Pix32::new(1, 1);
         sprite.data = Vec::with_capacity(11);
@@ -981,7 +981,7 @@ mod owner_bytes_tests {
             map_bytes + rune_bytes + pool_bytes
         );
         assert_eq!(
-            sample.total() - baseline.total(),
+            sample.head_total() - baseline.head_total(),
             map_bytes + rune_bytes + pool_bytes
         );
         assert_eq!(
@@ -998,7 +998,7 @@ mod owner_bytes_tests {
             surface_bytes
         );
         assert_eq!(
-            renderer.render_bytes().total() - baseline.total(),
+            renderer.render_bytes().head_total() - baseline.head_total(),
             map_bytes + rune_bytes + pool_bytes + surface_bytes
         );
         renderer.active_map_functions = Vec::new();
