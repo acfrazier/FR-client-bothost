@@ -313,10 +313,7 @@ fn reserve_replacement(
         .ok_or_else(unrepresentable)?;
     let available_bytes = budget.maximum().saturating_sub(budget.live());
     let affordable_capacity = available_bytes / element_size;
-    let geometric_capacity = current_capacity
-        .max(1)
-        .saturating_mul(2)
-        .max(required_len);
+    let geometric_capacity = current_capacity.max(1).saturating_mul(2).max(required_len);
     let candidate_capacity = geometric_capacity
         .min(affordable_capacity)
         .max(required_len);
