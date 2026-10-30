@@ -675,6 +675,7 @@ fn host_overlay_state_matrix_preserves_splash_and_empty_scene() {
     gpu_core.scene_state = 1;
     let poison = 0x123456;
     gpu_renderer.area_game.as_mut().unwrap().pixels.fill(poison);
+    gpu.begin(&mut gpu_core, &mut gpu_renderer, FrameKind::Game);
     gpu.scene(&mut gpu_core, &mut gpu_renderer, FrameKind::Game);
     assert!(gpu_renderer
         .area_game
@@ -702,6 +703,7 @@ fn host_overlay_state_matrix_preserves_splash_and_empty_scene() {
     });
     cpu_core.scene_state = 1;
     cpu_renderer.area_game.as_mut().unwrap().pixels.fill(poison);
+    cpu.begin(&mut cpu_core, &mut cpu_renderer, FrameKind::Game);
     cpu.scene(&mut cpu_core, &mut cpu_renderer, FrameKind::Game);
     assert!(cpu_renderer
         .area_game
@@ -713,6 +715,7 @@ fn host_overlay_state_matrix_preserves_splash_and_empty_scene() {
 
     let _host = HostOverlayScope::enter();
     gpu_renderer.area_game.as_mut().unwrap().pixels.fill(poison);
+    gpu.begin(&mut gpu_core, &mut gpu_renderer, FrameKind::Game);
     gpu.scene(&mut gpu_core, &mut gpu_renderer, FrameKind::Game);
     assert_splash_cleared_poison(&gpu_renderer, poison);
     assert!(
@@ -721,11 +724,13 @@ fn host_overlay_state_matrix_preserves_splash_and_empty_scene() {
     );
 
     cpu_renderer.area_game.as_mut().unwrap().pixels.fill(poison);
+    cpu.begin(&mut cpu_core, &mut cpu_renderer, FrameKind::Game);
     cpu.scene(&mut cpu_core, &mut cpu_renderer, FrameKind::Game);
     assert_splash_cleared_poison(&cpu_renderer, poison);
 
     gpu_core.scene_state = 2;
     gpu_renderer.area_game.as_mut().unwrap().pixels.fill(poison);
+    gpu.begin(&mut gpu_core, &mut gpu_renderer, FrameKind::Game);
     gpu.scene(&mut gpu_core, &mut gpu_renderer, FrameKind::Game);
     assert!(
         !gpu_renderer
@@ -743,6 +748,7 @@ fn host_overlay_state_matrix_preserves_splash_and_empty_scene() {
 
     gpu_core.scene_state = 0;
     gpu_renderer.area_game.as_mut().unwrap().pixels.fill(poison);
+    gpu.begin(&mut gpu_core, &mut gpu_renderer, FrameKind::Game);
     gpu.scene(&mut gpu_core, &mut gpu_renderer, FrameKind::Game);
     assert!(
         !gpu.scene_ready,
@@ -758,6 +764,7 @@ fn host_overlay_state_matrix_preserves_splash_and_empty_scene() {
 
     cpu_core.scene_state = 0;
     cpu_renderer.area_game.as_mut().unwrap().pixels.fill(poison);
+    cpu.begin(&mut cpu_core, &mut cpu_renderer, FrameKind::Game);
     cpu.scene(&mut cpu_core, &mut cpu_renderer, FrameKind::Game);
     assert!(
         !cpu.has_valid_scene(),
