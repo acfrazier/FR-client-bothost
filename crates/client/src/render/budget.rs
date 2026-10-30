@@ -1118,7 +1118,8 @@ mod tests {
                     .unwrap()
                     .for_resource(RenderResource::TempModels)
                     .expect("TempModels is a byte-budget resource")
-                    .maximum()
+                    .maximum(),
+                108
             );
             {
                 let _inner_scope = inner.scope();
@@ -1127,7 +1128,8 @@ mod tests {
                         .unwrap()
                         .for_resource(RenderResource::TempModels)
                         .expect("TempModels is a byte-budget resource")
-                        .maximum()
+                        .maximum(),
+                    208
                 );
             }
             assert_eq!(
@@ -1135,7 +1137,8 @@ mod tests {
                     .unwrap()
                     .for_resource(RenderResource::ContextGpu)
                     .expect("ContextGpu is a byte-budget resource")
-                    .maximum()
+                    .maximum(),
+                113
             );
         }
         assert!(RenderBudget::current().is_none());
