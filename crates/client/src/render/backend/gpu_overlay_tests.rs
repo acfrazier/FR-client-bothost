@@ -528,7 +528,13 @@ fn coordinate_capture_fault_retains_last_completed_scene() {
 
     let last_completed = render_live_scene(&mut backend, &mut core, &mut renderer);
     assert_eq!(backend.scene_progress, SceneProgress::Rebuilt);
-    let completed_frame = frame(&mut backend, &mut core, &mut renderer);
+    // Complete the first game frame, including the initial chrome upload.
+    backend.composite_scene(&mut core, &mut renderer, FrameKind::Game);
+    backend.chrome(&mut core, &mut renderer, FrameKind::Game);
+    let FrameOutput::Texture(completed) = backend.finish(&mut renderer) else {
+        panic!("GPU finish must return the completed frame");
+    };
+    let completed_frame = completed.read_back();
     let expected = crate::render::budget::RenderLimit::new(
         crate::render::budget::RenderResource::VertexCoordinates,
         i16::MAX as usize + 1,
@@ -561,7 +567,12 @@ fn coordinate_capture_fault_retains_last_completed_scene() {
         "a coordinate capture fault must not publish a partial scene"
     );
 
-    let retained_frame = frame(&mut backend, &mut core, &mut renderer);
+    backend.composite_scene(&mut core, &mut renderer, FrameKind::Game);
+    backend.chrome(&mut core, &mut renderer, FrameKind::Game);
+    let FrameOutput::Texture(retained) = backend.finish(&mut renderer) else {
+        panic!("GPU finish must return the retained frame");
+    };
+    let retained_frame = retained.read_back();
     assert_eq!(
         retained_frame, completed_frame,
         "the coordinate fault must leave the last complete frame published"
