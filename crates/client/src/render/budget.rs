@@ -16,7 +16,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-/// A separately bounded render-memory owner.
+/// A bounded render-memory owner or fixed representation limit.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum RenderResource {
     Capture,
@@ -30,6 +30,8 @@ pub enum RenderResource {
     SharedModels,
     SharedSprites,
     Vertex,
+    /// Fixed compact-position range; this identity has no separate byte budget.
+    VertexCoordinates,
     ContextCpu,
     ContextGpu,
 }
@@ -48,13 +50,14 @@ impl fmt::Display for RenderResource {
             Self::SharedModels => "shared models",
             Self::SharedSprites => "shared sprites",
             Self::Vertex => "vertex storage",
+            Self::VertexCoordinates => "compact vertex coordinates",
             Self::ContextCpu => "CPU context",
             Self::ContextGpu => "GPU context",
         })
     }
 }
 
-/// A failed request for a finite render-memory resource.
+/// A failed request against a finite render resource or representation limit.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RenderLimit {
     resource: RenderResource,
@@ -86,6 +89,13 @@ impl RenderLimit {
 
 impl fmt::Display for RenderLimit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.resource == RenderResource::VertexCoordinates {
+            return write!(
+                f,
+                "compact vertex coordinate magnitude {} exceeds signed 16-bit bound {}",
+                self.requested, self.maximum
+            );
+        }
         write!(
             f,
             "{} budget exceeded: requested {} bytes, maximum {} bytes",
@@ -664,6 +674,8 @@ impl RenderBudget {
             RenderResource::SharedModels => &self.shared_models,
             RenderResource::SharedSprites => &self.shared_sprites,
             RenderResource::Vertex => &self.vertex,
+            // Coordinate faults are a representation limit, not a byte charge.
+            RenderResource::VertexCoordinates => &self.vertex,
             RenderResource::ContextCpu => &self.context_cpu,
             RenderResource::ContextGpu => &self.context_gpu,
         }

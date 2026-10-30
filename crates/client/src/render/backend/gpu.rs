@@ -262,6 +262,7 @@ pub mod test_hooks {
     pub enum SceneTestPoint {
         AfterAdmission,
         BeforeTerminal,
+        VertexCoordinateOverflow,
         OverlayEntry,
     }
 
@@ -2318,6 +2319,20 @@ impl RenderBackend for GpuBackend {
                     }
                     Ok(())
                 })();
+                // Model GpuVertex rejection at the capture boundary for the
+                // retained-scene regression; no partial scene may publish.
+                #[cfg(feature = "render-test-hooks")]
+                let capture_result = if capture_result.is_ok()
+                    && test_hooks::at(test_hooks::SceneTestPoint::VertexCoordinateOverflow)
+                {
+                    Err(RenderLimit::new(
+                        RenderResource::VertexCoordinates,
+                        i16::MAX as usize + 1,
+                        i16::MAX as usize,
+                    ))
+                } else {
+                    capture_result
+                };
                 if let Err(error) = capture_result {
                     prep_fault = Some(RenderFault::Budget(error));
                 }

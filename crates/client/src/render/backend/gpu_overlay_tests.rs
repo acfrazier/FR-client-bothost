@@ -499,6 +499,75 @@ fn render_live_scene(
     .read_back()
 }
 
+#[cfg(feature = "render-test-hooks")]
+#[test]
+#[ignore = "requires a GPU adapter; invoke explicitly to verify coordinate-fault retention"]
+fn coordinate_capture_fault_retains_last_completed_scene() {
+    let mut backend = GpuBackend::try_new().expect("GPU required for coordinate-fault retention");
+    let mut renderer = Renderer::new(false);
+    renderer.area_game = Some(PixMap::new(SCENE_W as i32, SCENE_H as i32));
+    let mut core = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: std::env::temp_dir()
+            .join(format!("coordinate-fault-retention-{}", std::process::id()))
+            .display()
+            .to_string(),
+        members: true,
+        lowmem: false,
+    });
+    install_nav_scene_world(&mut core);
+    core.scene_state = 2;
+    core.redraw_frame = false;
+    core.redraw_side = false;
+    core.redraw_chat = false;
+    core.redraw_icons = false;
+    core.redraw_chat_mode = false;
+    core.main_modal_id = -1;
+    core.main_overlay_id = -1;
+
+    let last_completed = render_live_scene(&mut backend, &mut core, &mut renderer);
+    assert_eq!(backend.scene_progress, SceneProgress::Rebuilt);
+    let completed_frame = frame(&mut backend, &mut core, &mut renderer);
+    let expected = crate::render::budget::RenderLimit::new(
+        crate::render::budget::RenderResource::VertexCoordinates,
+        i16::MAX as usize + 1,
+        i16::MAX as usize,
+    );
+    {
+        let _fault = super::test_hooks::resource_failure_at(
+            super::test_hooks::SceneTestPoint::VertexCoordinateOverflow,
+        );
+        backend.begin(&mut core, &mut renderer, FrameKind::Game);
+        backend.scene(&mut core, &mut renderer, FrameKind::Game);
+    }
+
+    assert_eq!(backend.scene_progress, SceneProgress::Retained);
+    assert!(backend.scene_ready, "the last scene remains available");
+    assert!(matches!(
+        backend.last_render_fault,
+        Some(RenderFault::Budget(error)) if error == expected
+    ));
+    let retained = TextureHandle::untracked(
+        backend.context.device.clone(),
+        backend.context.queue.clone(),
+        backend.scene_view.clone(),
+        SCENE_W,
+        SCENE_H,
+    )
+    .read_back();
+    assert_eq!(
+        retained, last_completed,
+        "a coordinate capture fault must not publish a partial scene"
+    );
+
+    let retained_frame = frame(&mut backend, &mut core, &mut renderer);
+    assert_eq!(
+        retained_frame, completed_frame,
+        "the coordinate fault must leave the last complete frame published"
+    );
+}
+
 #[test]
 #[ignore = "requires a GPU adapter; invoke explicitly for two-head nav storage proof"]
 fn two_heads_nav_upload_and_growth_never_share_storage() {

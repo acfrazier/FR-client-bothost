@@ -6,8 +6,8 @@ use crate::io::JagFile;
 use crate::render::backend::TextureHandle;
 use crate::render::budget::{RenderBudget, RenderBudgetLimits, RenderLimit, RenderResource};
 use crate::render::world::{GpuVertex, SceneMesh};
-use sha2::{Digest, Sha256};
 use std::fmt;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 const SNAPSHOT_ENV: &str = "FR_CLIENT_SNAPSHOT";
@@ -18,6 +18,10 @@ const MIB: usize = 1024 * 1024;
 const RETAINED_VERTEX_CAP: usize = 128 * MIB;
 const PEAK_VERTEX_LIMIT: usize = 192 * MIB;
 const MAX_FIXTURE_VERTICES: usize = 500_000;
+const MAX_SOURCE_COORDINATE_ARCHIVE_BYTES: usize = 128 * MIB;
+const MAX_SOURCE_COORDINATE_RECORDS: usize = 100_000;
+const MAX_SOURCE_COORDINATE_POINTS: usize = 20_000_000;
+const MAX_SOURCE_COORDINATE_MODEL_ID: i32 = 250_000;
 const MIN_NON_BACKGROUND_PIXELS: usize = 500;
 const TARGET_FACE_TRIES_PER_YAW: usize = 4;
 const MODEL_YAWS: [i32; 8] = [0, 256, 512, 768, 1024, 1280, 1536, 1792];
@@ -70,6 +74,7 @@ enum ProofFailure {
         label: String,
         vertices: usize,
     },
+    CoordinateCensus(String),
     BudgetMode(String),
 }
 
@@ -91,6 +96,7 @@ impl fmt::Display for ProofFailure {
             Self::PixelMismatch { label, differing_pixels, first } => write!(f, "{label}: compact/legacy24 images differ at {differing_pixels} pixels; first (index, compact, legacy)={first:?}"),
             Self::InsufficientCoverage { label, pixels } => write!(f, "{label}: only {pixels} non-background pixels; expected at least {MIN_NON_BACKGROUND_PIXELS}"),
             Self::FixtureTooLarge { label, vertices } => write!(f, "{label}: {vertices} captured vertices exceeds the bounded real-cache proof limit {MAX_FIXTURE_VERTICES}"),
+            Self::CoordinateCensus(reason) => write!(f, "source model coordinate census failed: {reason}"),
             Self::BudgetMode(reason) => write!(f, "render-budget scope contract failed: {reason}"),
         }
     }
@@ -220,6 +226,37 @@ fn real_cache_compact_vertex_pixels_match_pinned_legacy24() {
     if let Err(error) = result {
         panic!("{error}");
     }
+}
+
+#[test]
+#[ignore = "requires FR_CLIENT_SNAPSHOT; decodes bounded models.bin without a GPU"]
+fn real_cache_source_model_coordinate_census() {
+    let snapshot = std::env::var_os(SNAPSHOT_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| panic!("{SNAPSHOT_ENV} is required"));
+    if !snapshot.is_dir() {
+        panic!(
+            "invalid {SNAPSHOT_ENV} snapshot {}: expected a directory",
+            snapshot.display()
+        );
+    }
+    let models = read_model_archive_for_coordinate_census(&snapshot)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let census =
+        source_model_coordinate_census(&models).unwrap_or_else(|error| panic!("{error}"));
+    println!(
+        "Decoded source model coordinates before camera/entity transforms: {} records, {} decoded models, {} skipped models, {} model points; x min/max {}/{}, y {}/{}, z {}/{}",
+        census.records,
+        census.decoded_models,
+        census.skipped_models,
+        census.points,
+        census.minimum[0],
+        census.maximum[0],
+        census.minimum[1],
+        census.maximum[1],
+        census.minimum[2],
+        census.maximum[2],
+    );
 }
 
 fn fixture_budget(vertex_peak: usize) -> RenderBudget {
@@ -377,6 +414,146 @@ fn model_record_count(bytes: &[u8]) -> Result<usize, ProofFailure> {
         count += 1;
     }
     Ok(count)
+}
+
+struct SourceModelCoordinateCensus {
+    records: usize,
+    decoded_models: usize,
+    skipped_models: usize,
+    points: usize,
+    minimum: [i32; 3],
+    maximum: [i32; 3],
+}
+
+struct ResetModelStore;
+
+impl Drop for ResetModelStore {
+    fn drop(&mut self) {
+        Model::reset_for_tests();
+    }
+}
+
+fn read_model_archive_for_coordinate_census(snapshot: &Path) -> Result<Vec<u8>, ProofFailure> {
+    let path = snapshot.join("models.bin");
+    let file = std::fs::File::open(&path).map_err(|error| ProofFailure::ReadFile {
+        path: path.clone(),
+        reason: error.to_string(),
+    })?;
+    let mut bytes = Vec::new();
+    file.take((MAX_SOURCE_COORDINATE_ARCHIVE_BYTES as u64) + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| ProofFailure::ReadFile {
+            path,
+            reason: error.to_string(),
+        })?;
+    if bytes.len() > MAX_SOURCE_COORDINATE_ARCHIVE_BYTES {
+        return Err(ProofFailure::CoordinateCensus(format!(
+            "models.bin exceeds the {} MiB scan bound",
+            MAX_SOURCE_COORDINATE_ARCHIVE_BYTES / MIB
+        )));
+    }
+    Ok(bytes)
+}
+
+fn source_model_coordinate_census(
+    archive: &[u8],
+) -> Result<SourceModelCoordinateCensus, ProofFailure> {
+    if archive.len() > MAX_SOURCE_COORDINATE_ARCHIVE_BYTES {
+        return Err(ProofFailure::CoordinateCensus(format!(
+            "models.bin is {} bytes; the scan bound is {} bytes",
+            archive.len(),
+            MAX_SOURCE_COORDINATE_ARCHIVE_BYTES
+        )));
+    }
+    Model::reset_for_tests();
+    let _reset_model_store = ResetModelStore;
+    let mut census = SourceModelCoordinateCensus {
+        records: 0,
+        decoded_models: 0,
+        skipped_models: 0,
+        points: 0,
+        minimum: [i32::MAX; 3],
+        maximum: [i32::MIN; 3],
+    };
+    let mut declared_points = 0usize;
+    let mut offset = 0usize;
+    while offset < archive.len() {
+        if census.records >= MAX_SOURCE_COORDINATE_RECORDS {
+            return Err(ProofFailure::CoordinateCensus(format!(
+                "models.bin exceeds the {MAX_SOURCE_COORDINATE_RECORDS}-record scan bound"
+            )));
+        }
+        let (id, record, next) = parse_model_record(archive, offset)?;
+        offset = next;
+        census.records += 1;
+        if id > MAX_SOURCE_COORDINATE_MODEL_ID {
+            return Err(ProofFailure::CoordinateCensus(format!(
+                "model {id} exceeds the bounded model-id limit {MAX_SOURCE_COORDINATE_MODEL_ID}"
+            )));
+        }
+        let model_points = declared_model_point_count(record)?;
+        declared_points = declared_points
+            .checked_add(model_points)
+            .filter(|&points| points <= MAX_SOURCE_COORDINATE_POINTS)
+            .ok_or_else(|| {
+                ProofFailure::CoordinateCensus(format!(
+                    "models.bin exceeds the {MAX_SOURCE_COORDINATE_POINTS}-point scan bound"
+                ))
+            })?;
+
+        Model::unpack(id, Some(record));
+        let Some(model) = Model::load(id) else {
+            census.skipped_models += 1;
+            Model::reset_for_tests();
+            continue;
+        };
+        if usize::try_from(model.num_points).ok() != Some(model_points) {
+            return Err(ProofFailure::CoordinateCensus(format!(
+                "model {id} decoded {} points but its record declares {model_points}",
+                model.num_points
+            )));
+        }
+        if model_points != 0 {
+            let (Some(xs), Some(ys), Some(zs)) =
+                (&model.point_x, &model.point_y, &model.point_z)
+            else {
+                return Err(ProofFailure::CoordinateCensus(format!(
+                    "model {id} has no complete coordinate arrays for {model_points} points"
+                )));
+            };
+            if xs.len() != model_points || ys.len() != model_points || zs.len() != model_points {
+                return Err(ProofFailure::CoordinateCensus(format!(
+                    "model {id} coordinate arrays do not match its {model_points} points"
+                )));
+            }
+            for ((&x, &y), &z) in xs.iter().zip(ys).zip(zs) {
+                for (axis, value) in [x, y, z].into_iter().enumerate() {
+                    census.minimum[axis] = census.minimum[axis].min(value);
+                    census.maximum[axis] = census.maximum[axis].max(value);
+                }
+                census.points += 1;
+            }
+        }
+        census.decoded_models += 1;
+        drop(model);
+        Model::reset_for_tests();
+    }
+    if census.points == 0 {
+        return Err(ProofFailure::CoordinateCensus(
+            "models.bin contained no decoded model points".into(),
+        ));
+    }
+    Ok(census)
+}
+
+fn declared_model_point_count(record: &[u8]) -> Result<usize, ProofFailure> {
+    let trailer_start = record.len().checked_sub(18).ok_or_else(|| {
+        ProofFailure::CoordinateCensus("model record is shorter than its 18-byte trailer".into())
+    })?;
+    let points = record.get(trailer_start..trailer_start + 2).ok_or_else(|| {
+        ProofFailure::CoordinateCensus("model point count is missing from its trailer".into())
+    })?;
+    Ok(usize::from(u16::from_be_bytes([points[0], points[1]])))
 }
 
 fn parse_model_record(bytes: &[u8], offset: usize) -> Result<(i32, &[u8], usize), ProofFailure> {

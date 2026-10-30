@@ -5811,11 +5811,11 @@ struct SceneCam {
 
 /// One lossless 16-byte scene vertex, in the capture's painter order.
 ///
-/// Camera transforms end in an arithmetic `i32 >> 16`, so their integral
-/// coordinates fit signed 16 bits. CPU near clipping interpolates those
-/// coordinates and retains that range. Texture coordinates already use
-/// signed 16-bit wrapping. Hardware vertex fetch sign-extends those same
-/// integers before the unchanged projection, lighting, texture and blend rules.
+/// Camera-space transforms use wrapping `i32` fixed-point values followed by
+/// arithmetic `>> 16`, which bounds those transformed coordinates to
+/// `[-32768, 32767]`. That bound does not apply to decoded model-space
+/// positions used for texture mapping. Captured and clipped camera-space
+/// coordinates are still checked before narrowing to signed 16 bits.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuVertex {
@@ -5870,11 +5870,12 @@ impl GpuVertex {
     }
 
     /// A flat face keeps the same low 16 shade bits as the CPU colour table.
-    fn new(x: i32, y: i32, z: i32, shade: i32, alpha: u8) -> GpuVertex {
+    fn new(x: i32, y: i32, z: i32, shade: i32, alpha: u8) -> Result<GpuVertex, RenderLimit> {
         Self::textured(x, y, z, 0, 0, shade, alpha, 0)
     }
 
     /// Texture coordinates retain their existing low-16-bit wrapping.
+    /// Camera-space positions must fit the compact signed-16-bit fields.
     #[allow(clippy::too_many_arguments)]
     fn textured(
         x: i32,
@@ -5885,18 +5886,35 @@ impl GpuVertex {
         shade: i32,
         alpha: u8,
         tex_id_plus_1: u32,
-    ) -> GpuVertex {
-        debug_assert!(i16::try_from(x).is_ok());
-        debug_assert!(i16::try_from(y).is_ok());
-        debug_assert!(i16::try_from(z).is_ok());
+    ) -> Result<GpuVertex, RenderLimit> {
+        let xyz = [
+            checked_vertex_coordinate(x)?,
+            checked_vertex_coordinate(y)?,
+            checked_vertex_coordinate(z)?,
+        ];
         debug_assert!(tex_id_plus_1 <= 50);
-        GpuVertex {
-            xyz: [x as i16, y as i16, z as i16],
+        Ok(GpuVertex {
+            xyz,
             shade: shade as u16,
             uv: [u as i16, v as i16],
             attributes: u32::from(alpha) | (tex_id_plus_1 << 8),
-        }
+        })
     }
+}
+
+fn checked_vertex_coordinate(value: i32) -> Result<i16, RenderLimit> {
+    i16::try_from(value).map_err(|_| {
+        let maximum = if value < 0 {
+            i16::MIN.unsigned_abs() as usize
+        } else {
+            i16::MAX as usize
+        };
+        RenderLimit::new(
+            RenderResource::VertexCoordinates,
+            value.unsigned_abs() as usize,
+            maximum,
+        )
+    })
 }
 
 /// The GPU scene mesh: every captured triangle in the painter's draw order
@@ -6336,24 +6354,23 @@ pub(crate) fn capture_model_face(
     let Some(mesh) = pix.capture.as_mut() else {
         return Ok(());
     };
-    let vertex = |v: &ClipVertex| {
+    let vertex = |v: &ClipVertex| -> Result<GpuVertex, RenderLimit> {
         let mut vertex = match textured {
             Some((tex_id_plus_1, _, _)) => {
-                GpuVertex::textured(v.x, v.y, v.z, v.u, v.v, v.shade, alpha, tex_id_plus_1)
+                GpuVertex::textured(v.x, v.y, v.z, v.u, v.v, v.shade, alpha, tex_id_plus_1)?
             }
-            None => GpuVertex::new(v.x, v.y, v.z, v.shade, alpha),
+            None => GpuVertex::new(v.x, v.y, v.z, v.shade, alpha)?,
         };
         if polygon_hclip {
             vertex.attributes |= GpuVertex::POLYGON_HCLIP;
         }
-        vertex
+        Ok(vertex)
     };
     for i in 1..clipped.len() - 1 {
-        mesh.push(
-            vertex(&clipped[0]),
-            vertex(&clipped[i]),
-            vertex(&clipped[i + 1]),
-        )?;
+        let v0 = vertex(&clipped[0])?;
+        let v1 = vertex(&clipped[i])?;
+        let v2 = vertex(&clipped[i + 1])?;
+        mesh.push(v0, v1, v2)?;
     }
     Ok(())
 }
@@ -6519,9 +6536,9 @@ fn emit_ground(
             let (u1, v1) = uv(x1 as f32, y1 as f32, z1 as f32);
             let (u2, v2) = uv(x2 as f32, y2 as f32, z2 as f32);
             mesh.push(
-                GpuVertex::textured(x0, y0, z0, u0, v0, colour_a, 255, tex + 1),
-                GpuVertex::textured(x1, y1, z1, u1, v1, colour_b, 255, tex + 1),
-                GpuVertex::textured(x2, y2, z2, u2, v2, colour_c, 255, tex + 1),
+                GpuVertex::textured(x0, y0, z0, u0, v0, colour_a, 255, tex + 1)?,
+                GpuVertex::textured(x1, y1, z1, u1, v1, colour_b, 255, tex + 1)?,
+                GpuVertex::textured(x2, y2, z2, u2, v2, colour_c, 255, tex + 1)?,
             )?;
         } else {
             let shade_of = |c: i32| match tex_average {
@@ -6529,9 +6546,9 @@ fn emit_ground(
                 None => c,
             };
             mesh.push(
-                GpuVertex::new(x0, y0, z0, shade_of(colour_a), 255),
-                GpuVertex::new(x1, y1, z1, shade_of(colour_b), 255),
-                GpuVertex::new(x2, y2, z2, shade_of(colour_c), 255),
+                GpuVertex::new(x0, y0, z0, shade_of(colour_a), 255)?,
+                GpuVertex::new(x1, y1, z1, shade_of(colour_b), 255)?,
+                GpuVertex::new(x2, y2, z2, shade_of(colour_c), 255)?,
             )?;
         }
     }
@@ -6640,15 +6657,42 @@ fn emit_quick_ground(
                 let (u3, v3) = projective_uv(corner(ba), corner(bb), corner(bc), corner(3));
                 let (u1, v1) = projective_uv(corner(ba), corner(bb), corner(bc), corner(1));
                 mesh.push(
-                    GpuVertex::textured(x[2], y[2], z[2], u2, v2, ground.colour_ne, 255, tex + 1),
-                    GpuVertex::textured(x[3], y[3], z[3], u3, v3, ground.colour_nw, 255, tex + 1),
-                    GpuVertex::textured(x[1], y[1], z[1], u1, v1, ground.colour_se, 255, tex + 1),
+                    GpuVertex::textured(
+                        x[2],
+                        y[2],
+                        z[2],
+                        u2,
+                        v2,
+                        ground.colour_ne,
+                        255,
+                        tex + 1,
+                    )?,
+                    GpuVertex::textured(
+                        x[3],
+                        y[3],
+                        z[3],
+                        u3,
+                        v3,
+                        ground.colour_nw,
+                        255,
+                        tex + 1,
+                    )?,
+                    GpuVertex::textured(
+                        x[1],
+                        y[1],
+                        z[1],
+                        u1,
+                        v1,
+                        ground.colour_se,
+                        255,
+                        tex + 1,
+                    )?,
                 )?;
             } else {
                 mesh.push(
-                    GpuVertex::new(x[2], y[2], z[2], shade_of(ground.colour_ne), 255),
-                    GpuVertex::new(x[3], y[3], z[3], shade_of(ground.colour_nw), 255),
-                    GpuVertex::new(x[1], y[1], z[1], shade_of(ground.colour_se), 255),
+                    GpuVertex::new(x[2], y[2], z[2], shade_of(ground.colour_ne), 255)?,
+                    GpuVertex::new(x[3], y[3], z[3], shade_of(ground.colour_nw), 255)?,
+                    GpuVertex::new(x[1], y[1], z[1], shade_of(ground.colour_se), 255)?,
                 )?;
             }
         }
@@ -6677,15 +6721,42 @@ fn emit_quick_ground(
                 let (u1, v1) = projective_uv(corner(0), corner(1), corner(3), corner(1));
                 let (u3, v3) = projective_uv(corner(0), corner(1), corner(3), corner(3));
                 mesh.push(
-                    GpuVertex::textured(x[0], y[0], z[0], u0, v0, ground.colour_sw, 255, tex + 1),
-                    GpuVertex::textured(x[1], y[1], z[1], u1, v1, ground.colour_se, 255, tex + 1),
-                    GpuVertex::textured(x[3], y[3], z[3], u3, v3, ground.colour_nw, 255, tex + 1),
+                    GpuVertex::textured(
+                        x[0],
+                        y[0],
+                        z[0],
+                        u0,
+                        v0,
+                        ground.colour_sw,
+                        255,
+                        tex + 1,
+                    )?,
+                    GpuVertex::textured(
+                        x[1],
+                        y[1],
+                        z[1],
+                        u1,
+                        v1,
+                        ground.colour_se,
+                        255,
+                        tex + 1,
+                    )?,
+                    GpuVertex::textured(
+                        x[3],
+                        y[3],
+                        z[3],
+                        u3,
+                        v3,
+                        ground.colour_nw,
+                        255,
+                        tex + 1,
+                    )?,
                 )?;
             } else {
                 mesh.push(
-                    GpuVertex::new(x[0], y[0], z[0], shade_of(ground.colour_sw), 255),
-                    GpuVertex::new(x[1], y[1], z[1], shade_of(ground.colour_se), 255),
-                    GpuVertex::new(x[3], y[3], z[3], shade_of(ground.colour_nw), 255),
+                    GpuVertex::new(x[0], y[0], z[0], shade_of(ground.colour_sw), 255)?,
+                    GpuVertex::new(x[1], y[1], z[1], shade_of(ground.colour_se), 255)?,
+                    GpuVertex::new(x[3], y[3], z[3], shade_of(ground.colour_nw), 255)?,
                 )?;
             }
         }
@@ -6695,7 +6766,10 @@ fn emit_quick_ground(
 
 #[cfg(test)]
 mod compact_vertex_tests {
-    use super::GpuVertex;
+    use super::{capture_model_face, GpuVertex, SceneMesh};
+    use crate::dash3d::Model;
+    use crate::graphics::Pix3DDraw;
+    use crate::render::budget::{RenderLimit, RenderResource};
 
     #[test]
     fn every_coordinate_uv_and_shade_halfword_round_trips_losslessly() {
@@ -6711,7 +6785,8 @@ mod compact_vertex_tests {
                 i32::from(bits) | 0x7654_0000,
                 0x95,
                 50,
-            );
+            )
+            .unwrap();
             assert_eq!(vertex.position(), [signed, opposite, signed]);
             assert_eq!(vertex.texture_uv(), [bits as i16, !bits as i16]);
             assert_eq!(vertex.shade(), bits);
@@ -6739,7 +6814,8 @@ mod compact_vertex_tests {
                 for hclip in [false, true] {
                     let mut vertex = GpuVertex::textured(
                         -32768, 32767, -1, 0x8000, 0x7fff, 0xbeef, alpha, texture,
-                    );
+                    )
+                    .unwrap();
                     if hclip {
                         vertex.attributes |= GpuVertex::POLYGON_HCLIP;
                     }
@@ -6758,7 +6834,7 @@ mod compact_vertex_tests {
     #[test]
     fn flat_vertices_keep_shade_wrapping_without_texture_or_clip_bits() {
         for shade in [i32::MIN, -65537, -1, 0, 65535, 65536, i32::MAX] {
-            let vertex = GpuVertex::new(-32768, 0, 32767, shade, 255);
+            let vertex = GpuVertex::new(-32768, 0, 32767, shade, 255).unwrap();
             assert_eq!(vertex.position(), [-32768, 0, 32767]);
             assert_eq!(vertex.shade(), shade as u16);
             assert_eq!(vertex.alpha(), 255);
@@ -6769,20 +6845,111 @@ mod compact_vertex_tests {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    fn out_of_contract_coordinates_or_texture_ids_fail_at_the_constructor() {
-        for [x, y, z] in [
-            [-32769, 0, 50],
-            [32768, 0, 50],
-            [0, -32769, 50],
-            [0, 32768, 50],
-            [0, 0, -32769],
-            [0, 0, 32768],
-        ] {
-            assert!(std::panic::catch_unwind(|| GpuVertex::new(x, y, z, 0, 255)).is_err());
+    fn out_of_range_coordinates_return_bounded_faults_on_every_axis() {
+        let values = [
+            i32::MIN,
+            -32769,
+            -32768,
+            -1,
+            0,
+            32767,
+            32768,
+            i32::MAX,
+        ];
+        for (axis, axis_name) in ["x", "y", "z"].into_iter().enumerate() {
+            for value in values {
+                let mut position = [0, 0, 50];
+                position[axis] = value;
+                let result = GpuVertex::textured(
+                    position[0],
+                    position[1],
+                    position[2],
+                    0,
+                    0,
+                    0,
+                    255,
+                    0,
+                );
+                if i16::try_from(value).is_ok() {
+                    assert_eq!(
+                        result.unwrap().position(),
+                        position,
+                        "{axis_name}={value} should fit"
+                    );
+                } else {
+                    let error = match result {
+                        Err(error) => error,
+                        Ok(_) => panic!("{axis_name}={value} must not wrap into a vertex"),
+                    };
+                    let maximum = if value < 0 {
+                        i16::MIN.unsigned_abs() as usize
+                    } else {
+                        i16::MAX as usize
+                    };
+                    assert_eq!(
+                        error,
+                        RenderLimit::new(
+                            RenderResource::VertexCoordinates,
+                            value.unsigned_abs() as usize,
+                            maximum,
+                        ),
+                        "{axis_name}={value}"
+                    );
+                }
+            }
         }
+    }
+
+    #[test]
+    fn rejected_textured_face_does_not_append_a_partial_triangle() {
+        let mut model = Model::default();
+        model.num_faces = 1;
+        model.face_colour_a = Some(vec![1]);
+        model.face_colour_b = Some(vec![2]);
+        model.face_colour_c = Some(vec![3]);
+        model.face_render_type = Some(vec![2]);
+        model.face_colour = Some(vec![7]);
+
+        let original = [
+            GpuVertex::new(1, 2, 100, 11, 255).unwrap(),
+            GpuVertex::new(3, 4, 100, 12, 255).unwrap(),
+            GpuVertex::new(5, 6, 100, 13, 255).unwrap(),
+        ];
+        let mut mesh = SceneMesh::default();
+        mesh.push(original[0], original[1], original[2]).unwrap();
+        let mut pix = Pix3DDraw::default();
+        pix.capture = Some(mesh);
+
+        let error = capture_model_face(
+            &model,
+            0,
+            [0, 1, 2],
+            [(32768, 0, 100), (0, 1, 100), (1, 0, 100)],
+            &mut pix,
+        )
+        .expect_err("unrepresentable camera-space position must refuse the face");
+        assert_eq!(
+            error,
+            RenderLimit::new(RenderResource::VertexCoordinates, 32768, 32767)
+        );
+        let fault = crate::render::backend::RenderFault::Budget(error);
+        assert_eq!(
+            fault.to_string(),
+            "compact vertex coordinate magnitude 32768 exceeds signed 16-bit bound 32767"
+        );
+
+        let captured = pix.capture.as_ref().expect("capture mesh remains bound");
+        assert_eq!(captured.vertices().len(), original.len());
+        for (vertex, expected) in captured.vertices().iter().zip(original) {
+            assert_eq!(vertex.position(), expected.position());
+        }
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn out_of_range_texture_ids_keep_the_existing_debug_assertion() {
         assert!(
-            std::panic::catch_unwind(|| { GpuVertex::textured(0, 0, 50, 0, 0, 0, 255, 51) })
+            std::panic::catch_unwind(|| GpuVertex::textured(0, 0, 50, 0, 0, 0, 255, 51))
                 .is_err()
         );
     }
@@ -7287,7 +7454,7 @@ mod budget_capture_tests {
     }
 
     fn triangle(mesh: &mut SceneMesh) -> Result<(), RenderLimit> {
-        let vertex = GpuVertex::new(64, 64, 128, 100, 255);
+        let vertex = GpuVertex::new(64, 64, 128, 100, 255)?;
         mesh.push(vertex, vertex, vertex)
     }
 
