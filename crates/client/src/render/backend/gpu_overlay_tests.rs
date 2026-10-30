@@ -626,9 +626,7 @@ fn two_heads_nav_upload_and_growth_never_share_storage() {
     assert_eq!(backend_b.nav_mesh.retained_capacity(), b_nav_capacity);
 }
 
-fn loading_splash_renderer() -> Renderer {
-    let mut renderer = Renderer::new(false);
-    renderer.area_game = Some(PixMap::new(SCENE_W as i32, SCENE_H as i32));
+fn install_loading_splash_font(renderer: &mut Renderer) {
     let mut font = crate::graphics::PixFont::new();
     for byte in b"Loading - please wait." {
         let index = *byte as usize;
@@ -641,7 +639,6 @@ fn loading_splash_renderer() -> Renderer {
     let mut media = crate::render::media::Media::empty();
     media.p12 = Some(font);
     renderer.media = std::sync::Arc::new(media);
-    renderer
 }
 
 fn assert_splash_cleared_poison(renderer: &Renderer, poison: i32) {
@@ -661,7 +658,7 @@ fn assert_splash_cleared_poison(renderer: &Renderer, poison: i32) {
 fn host_overlay_state_matrix_preserves_splash_and_empty_scene() {
     let _admission = SceneAdmissionScope::enter(SceneAdmission::Retained);
     let mut gpu = GpuBackend::try_new().expect("GPU required for the overlay state matrix");
-    let mut gpu_renderer = loading_splash_renderer();
+    let mut gpu_renderer = Renderer::new(false);
     let mut gpu_core = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
@@ -675,6 +672,7 @@ fn host_overlay_state_matrix_preserves_splash_and_empty_scene() {
     gpu_core.scene_state = 1;
     let poison = 0x123456;
     gpu.begin(&mut gpu_core, &mut gpu_renderer, FrameKind::Game);
+    install_loading_splash_font(&mut gpu_renderer);
     gpu_renderer.area_game.as_mut().unwrap().pixels.fill(poison);
     gpu.scene(&mut gpu_core, &mut gpu_renderer, FrameKind::Game);
     assert!(gpu_renderer
@@ -690,7 +688,7 @@ fn host_overlay_state_matrix_preserves_splash_and_empty_scene() {
     );
 
     let mut cpu = super::super::cpu::CpuBackend::default();
-    let mut cpu_renderer = loading_splash_renderer();
+    let mut cpu_renderer = Renderer::new(false);
     let mut cpu_core = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
@@ -703,6 +701,7 @@ fn host_overlay_state_matrix_preserves_splash_and_empty_scene() {
     });
     cpu_core.scene_state = 1;
     cpu.begin(&mut cpu_core, &mut cpu_renderer, FrameKind::Game);
+    install_loading_splash_font(&mut cpu_renderer);
     cpu_renderer.area_game.as_mut().unwrap().pixels.fill(poison);
     cpu.scene(&mut cpu_core, &mut cpu_renderer, FrameKind::Game);
     assert!(cpu_renderer
