@@ -1,17 +1,17 @@
 //! Explicit byte budgets for render-owned memory.
 //!
-//! Production owners install a scope only after the render test-hook process
-//! fixture has explicitly enabled it. In the absence of a scope, callers keep
-//! the legacy allocation path unchanged.
+//! Explicitly configured process owners install a scope at each opted-in
+//! paint. Calibration uses the same byte budgets without compiling test
+//! controls. In the absence of a scope, allocation follows the legacy path.
 
-#[cfg(any(test, feature = "render-test-hooks"))]
+#[cfg(any(test, feature = "render-test-hooks", feature = "render-diagnostics"))]
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
-#[cfg(any(test, feature = "render-test-hooks"))]
+#[cfg(any(test, feature = "render-test-hooks", feature = "render-diagnostics"))]
 use std::marker::PhantomData;
-#[cfg(any(test, feature = "render-test-hooks"))]
+#[cfg(any(test, feature = "render-test-hooks", feature = "render-diagnostics"))]
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -475,7 +475,7 @@ pub(crate) fn reserve_deque<T>(
 /// replacement. In particular `vertex` is one process-wide growth-peak budget,
 /// not a per-head budget. Its separate retained-buffer cap is 128 MiB:
 /// admitting the largest replacement needs 64 + 128 = 192 MiB once.
-#[cfg(any(test, feature = "render-test-hooks"))]
+#[cfg(any(test, feature = "render-test-hooks", feature = "render-diagnostics"))]
 pub struct RenderBudgetLimits {
     capture: usize,
     nav_vertices: usize,
@@ -492,10 +492,9 @@ pub struct RenderBudgetLimits {
     context_gpu: usize,
 }
 
-#[cfg(any(test, feature = "render-test-hooks"))]
+#[cfg(any(test, feature = "render-test-hooks", feature = "render-diagnostics"))]
 impl RenderBudgetLimits {
     #[allow(clippy::too_many_arguments)]
-    #[cfg(any(test, feature = "render-test-hooks"))]
     pub const fn new(
         capture: usize,
         nav_vertices: usize,
@@ -550,7 +549,7 @@ pub struct RenderBudget {
 impl RenderBudget {
     /// Construct fixture/process budgets only from explicit limits. This does
     /// not activate them; activation requires `scope()` at the opted-in paint.
-    #[cfg(any(test, feature = "render-test-hooks"))]
+    #[cfg(any(test, feature = "render-test-hooks", feature = "render-diagnostics"))]
     pub fn fixture(limits: RenderBudgetLimits) -> Self {
         Self {
             capture: ByteBudget::new(RenderResource::Capture, limits.capture),
@@ -694,7 +693,7 @@ impl RenderBudget {
 
     /// Install this explicitly configured budget for the current thread and
     /// restore any enclosing scope when the returned guard is dropped.
-    #[cfg(any(test, feature = "render-test-hooks"))]
+    #[cfg(any(test, feature = "render-test-hooks", feature = "render-diagnostics"))]
     pub fn scope(&self) -> RenderBudgetScope {
         let previous = ACTIVE_RENDER_BUDGET.with(|active| active.replace(Some(self.clone())));
         RenderBudgetScope {
@@ -705,18 +704,18 @@ impl RenderBudget {
 
     /// Snapshot the current thread's explicit budget handles, if any.
     pub fn current() -> Option<Self> {
-        #[cfg(any(test, feature = "render-test-hooks"))]
+        #[cfg(any(test, feature = "render-test-hooks", feature = "render-diagnostics"))]
         {
             ACTIVE_RENDER_BUDGET.with(|active| active.borrow().clone())
         }
-        #[cfg(not(any(test, feature = "render-test-hooks")))]
+        #[cfg(not(any(test, feature = "render-test-hooks", feature = "render-diagnostics")))]
         {
             None
         }
     }
 
     pub(crate) fn current_resource(resource: RenderResource) -> Option<ByteBudget> {
-        #[cfg(any(test, feature = "render-test-hooks"))]
+        #[cfg(any(test, feature = "render-test-hooks", feature = "render-diagnostics"))]
         {
             ACTIVE_RENDER_BUDGET.with(|active| {
                 active
@@ -725,7 +724,7 @@ impl RenderBudget {
                     .and_then(|budget| budget.for_resource(resource).cloned())
             })
         }
-        #[cfg(not(any(test, feature = "render-test-hooks")))]
+        #[cfg(not(any(test, feature = "render-test-hooks", feature = "render-diagnostics")))]
         {
             let _ = resource;
             None
@@ -733,30 +732,30 @@ impl RenderBudget {
     }
 
     pub(crate) fn is_scoped() -> bool {
-        #[cfg(any(test, feature = "render-test-hooks"))]
+        #[cfg(any(test, feature = "render-test-hooks", feature = "render-diagnostics"))]
         {
             ACTIVE_RENDER_BUDGET.with(|active| active.borrow().is_some())
         }
-        #[cfg(not(any(test, feature = "render-test-hooks")))]
+        #[cfg(not(any(test, feature = "render-test-hooks", feature = "render-diagnostics")))]
         {
             false
         }
     }
 }
 
-#[cfg(any(test, feature = "render-test-hooks"))]
+#[cfg(any(test, feature = "render-test-hooks", feature = "render-diagnostics"))]
 thread_local! {
     static ACTIVE_RENDER_BUDGET: RefCell<Option<RenderBudget>> = const { RefCell::new(None) };
 }
 
 /// Thread-bound RAII render budget scope. It restores nested state on unwind.
-#[cfg(any(test, feature = "render-test-hooks"))]
+#[cfg(any(test, feature = "render-test-hooks", feature = "render-diagnostics"))]
 pub struct RenderBudgetScope {
     previous: Option<RenderBudget>,
     _thread_bound: PhantomData<Rc<()>>,
 }
 
-#[cfg(any(test, feature = "render-test-hooks"))]
+#[cfg(any(test, feature = "render-test-hooks", feature = "render-diagnostics"))]
 impl Drop for RenderBudgetScope {
     fn drop(&mut self) {
         let previous = self.previous.take();

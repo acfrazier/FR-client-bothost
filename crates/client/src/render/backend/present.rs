@@ -5,6 +5,10 @@ use super::readback::ReadbackError;
 use std::num::{NonZeroU64, NonZeroUsize};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock, Weak};
+#[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+use std::sync::atomic::AtomicU64;
+#[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+use std::time::{Duration, Instant};
 
 static NEXT_PRESENT_TOKEN: AtomicUsize = AtomicUsize::new(1);
 static NEXT_CONSUMER_KEY: AtomicUsize = AtomicUsize::new(1);
@@ -72,7 +76,13 @@ impl RetainedPresentBudget {
                 Ordering::AcqRel,
                 Ordering::Relaxed,
             ) {
-                Ok(_) => return Ok(RetainedPresentPermit { budget: self }),
+                Ok(_) => {
+                    return Ok(RetainedPresentPermit {
+                        budget: self,
+                        #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+                        logical_bytes: 0,
+                    });
+                }
                 Err(observed) => live = observed,
             }
         }
@@ -92,6 +102,91 @@ pub fn process_retained_present_resource_count() -> usize {
         .load(Ordering::Acquire)
 }
 
+#[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+#[derive(Default)]
+struct RetainedPresentCounters {
+    logical_bytes: AtomicUsize,
+    allocations: AtomicU64,
+    copies: AtomicU64,
+    copied_bytes: AtomicU64,
+    copy_encode_ns: AtomicU64,
+    present_submit_ns: AtomicU64,
+}
+
+#[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+static PRESENT_COUNTERS: LazyLock<RetainedPresentCounters> =
+    LazyLock::new(RetainedPresentCounters::default);
+
+/// Measurement-only process counters for actual retained-present resources.
+/// Durations measure CPU command encoding and submission, not GPU execution.
+#[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RetainedPresentStats {
+    live_resources: usize,
+    logical_bytes: usize,
+    allocations: u64,
+    copies: u64,
+    copied_bytes: u64,
+    copy_encode_time: Duration,
+    present_submit_time: Duration,
+}
+
+#[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+impl RetainedPresentStats {
+    pub const fn live_resources(self) -> usize {
+        self.live_resources
+    }
+
+    pub const fn logical_bytes(self) -> usize {
+        self.logical_bytes
+    }
+
+    pub const fn allocations(self) -> u64 {
+        self.allocations
+    }
+
+    pub const fn copies(self) -> u64 {
+        self.copies
+    }
+
+    pub const fn copied_bytes(self) -> u64 {
+        self.copied_bytes
+    }
+
+    pub const fn copy_encode_time(self) -> Duration {
+        self.copy_encode_time
+    }
+
+    pub const fn present_submit_time(self) -> Duration {
+        self.present_submit_time
+    }
+}
+
+/// Read cumulative allocation/copy totals and current live resource totals.
+/// Concurrent changes can appear between fields; phase-boundary memory
+/// receipts must quiesce their producers before comparing live totals.
+#[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+pub fn retained_present_stats() -> RetainedPresentStats {
+    RetainedPresentStats {
+        live_resources: process_retained_present_resource_count(),
+        logical_bytes: PRESENT_COUNTERS.logical_bytes.load(Ordering::Acquire),
+        allocations: PRESENT_COUNTERS.allocations.load(Ordering::Acquire),
+        copies: PRESENT_COUNTERS.copies.load(Ordering::Acquire),
+        copied_bytes: PRESENT_COUNTERS.copied_bytes.load(Ordering::Acquire),
+        copy_encode_time: Duration::from_nanos(
+            PRESENT_COUNTERS.copy_encode_ns.load(Ordering::Acquire),
+        ),
+        present_submit_time: Duration::from_nanos(
+            PRESENT_COUNTERS.present_submit_ns.load(Ordering::Acquire),
+        ),
+    }
+}
+
+#[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+fn elapsed_ns(start: Instant) -> u64 {
+    u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX)
+}
+
 /// Configure the sole process retained-present cap before the first consumer
 /// registration. A second configuration is rejected, including an identical
 /// one, so tests cannot silently replace process state.
@@ -104,10 +199,26 @@ pub fn configure_retained_present_budget(cap: NonZeroUsize) -> Result<(), Readba
 
 struct RetainedPresentPermit {
     budget: &'static RetainedPresentBudget,
+    #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+    logical_bytes: usize,
+}
+
+#[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+impl RetainedPresentPermit {
+    fn record_allocation(mut self, bytes: usize) -> Self {
+        self.logical_bytes = bytes;
+        PRESENT_COUNTERS.logical_bytes.fetch_add(bytes, Ordering::AcqRel);
+        PRESENT_COUNTERS.allocations.fetch_add(1, Ordering::Relaxed);
+        self
+    }
 }
 
 impl Drop for RetainedPresentPermit {
     fn drop(&mut self) {
+        #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+        PRESENT_COUNTERS
+            .logical_bytes
+            .fetch_sub(self.logical_bytes, Ordering::AcqRel);
         self.budget.live_resources.fetch_sub(1, Ordering::AcqRel);
     }
 }
@@ -141,6 +252,40 @@ pub(super) struct RetainedPresent {
     _storage: crate::profiling::Allocation,
     _permit: RetainedPresentPermit,
     gate: Weak<PresentGate>,
+}
+
+impl RetainedPresent {
+    fn encode_copy(&self, encoder: &mut wgpu::CommandEncoder, present: &wgpu::Texture) {
+        #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+        let started = Instant::now();
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: present,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width: self.geometry.width(),
+                height: self.geometry.height(),
+                depth_or_array_layers: 1,
+            },
+        );
+        #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+        {
+            PRESENT_COUNTERS.copy_encode_ns.fetch_add(elapsed_ns(started), Ordering::Relaxed);
+            PRESENT_COUNTERS.copies.fetch_add(1, Ordering::Relaxed);
+            let bytes = self.geometry.checked_layout()
+                .expect("retained present geometry was checked before allocation").0;
+            PRESENT_COUNTERS.copied_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+        }
+    }
 }
 
 pub(super) struct RetainedState {
@@ -266,25 +411,7 @@ impl PresentGate {
                         retained_state.available = false;
                     }
                     if retained_state.registered && !retained_state.held {
-                        encoder.copy_texture_to_texture(
-                            wgpu::TexelCopyTextureInfo {
-                                texture: present,
-                                mip_level: 0,
-                                origin: wgpu::Origin3d::ZERO,
-                                aspect: wgpu::TextureAspect::All,
-                            },
-                            wgpu::TexelCopyTextureInfo {
-                                texture: &retained.texture,
-                                mip_level: 0,
-                                origin: wgpu::Origin3d::ZERO,
-                                aspect: wgpu::TextureAspect::All,
-                            },
-                            wgpu::Extent3d {
-                                width: retained.geometry.width(),
-                                height: retained.geometry.height(),
-                                depth_or_array_layers: 1,
-                            },
-                        );
+                        retained.encode_copy(&mut encoder, present);
                         retained_state.token = Some(token);
                         retained_state.has_valid_scene = valid_scene;
                         retained_state.available = true;
@@ -298,25 +425,7 @@ impl PresentGate {
                         retained_state.available = false;
                     }
                     if retained_state.registered && !retained_state.held {
-                        encoder.copy_texture_to_texture(
-                            wgpu::TexelCopyTextureInfo {
-                                texture: present,
-                                mip_level: 0,
-                                origin: wgpu::Origin3d::ZERO,
-                                aspect: wgpu::TextureAspect::All,
-                            },
-                            wgpu::TexelCopyTextureInfo {
-                                texture: &retained.texture,
-                                mip_level: 0,
-                                origin: wgpu::Origin3d::ZERO,
-                                aspect: wgpu::TextureAspect::All,
-                            },
-                            wgpu::Extent3d {
-                                width: retained.geometry.width(),
-                                height: retained.geometry.height(),
-                                depth_or_array_layers: 1,
-                            },
-                        );
+                        retained.encode_copy(&mut encoder, present);
                         retained_state.token = Some(token);
                         retained_state.has_valid_scene = valid_scene;
                         retained_state.available = true;
@@ -326,7 +435,13 @@ impl PresentGate {
                 Err(std::sync::TryLockError::WouldBlock) => {}
             }
         }
+        #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+        let submit_started = Instant::now();
         queue.submit([encoder.finish()]);
+        #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+        PRESENT_COUNTERS
+            .present_submit_ns
+            .fetch_add(elapsed_ns(submit_started), Ordering::Relaxed);
         state.token = Some(token);
         state.has_valid_scene = valid_scene;
         drop(retained_guard);
@@ -431,6 +546,8 @@ impl super::TextureHandle {
                 | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
+        #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+        let permit = permit.record_allocation(raw_bytes);
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let key = ConsumerKey(next_identity(&NEXT_CONSUMER_KEY)?);
         let retained = Arc::new(RetainedPresent {
@@ -721,13 +838,18 @@ pub mod test_hooks {
     }
 
     pub fn scalar_receipt() -> ScalarReceipt {
+        #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+        let diagnostic_bytes = std::mem::size_of::<LazyLock<RetainedPresentCounters>>();
+        #[cfg(not(any(feature = "render-diagnostics", feature = "draw-memory-profile")))]
+        let diagnostic_bytes = 0;
         ScalarReceipt {
             gate_allocation_bytes: arc_allocation_bytes::<PresentGate>(),
             retained_present_allocation_bytes: arc_allocation_bytes::<RetainedPresent>(),
             registration_descriptor_bytes: std::mem::size_of::<ConsumerRegistration>(),
             held_frame_descriptor_bytes: std::mem::size_of::<ConsumerFrame>(),
             process_service_bytes: std::mem::size_of::<LazyLock<RetainedPresentBudget>>()
-                + 2 * std::mem::size_of::<AtomicUsize>(),
+                + 2 * std::mem::size_of::<AtomicUsize>()
+                + diagnostic_bytes,
         }
     }
 

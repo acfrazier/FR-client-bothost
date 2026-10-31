@@ -16,6 +16,18 @@ use crate::graphics::PixMap;
 use crate::render::budget::{RenderBytes, RenderLimit};
 use crate::render::Renderer;
 
+/// Report the client's actual feature build, including dependency feature
+/// unification. Timing receipts must not infer this from a caller's features.
+#[cfg(feature = "render-diagnostics")]
+pub const fn render_test_hooks_compiled() -> bool {
+    cfg!(feature = "render-test-hooks")
+}
+
+#[cfg(feature = "render-diagnostics")]
+pub const fn draw_memory_profile_compiled() -> bool {
+    cfg!(feature = "draw-memory-profile")
+}
+
 /// Which backend rasterized the frame (the selection tests and the window
 /// driver log it; `CpuBackend` is the default and the fallback).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
