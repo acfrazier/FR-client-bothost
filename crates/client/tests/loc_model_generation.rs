@@ -12,7 +12,8 @@ fn legacy_loc_hash(world: &World, level: i32) -> u64 {
     for x in 0..104 {
         for z in 0..104 {
             let stamp = if world.square(level, x, z).is_some() {
-                world.loc_model_stamp(level, x, z, LocLayer::WALL)
+                world
+                    .loc_model_stamp(level, x, z, LocLayer::WALL)
                     .wrapping_add(world.loc_model_stamp(level, x, z, LocLayer::WALL_DECOR))
                     .wrapping_add(world.loc_model_stamp(level, x, z, LocLayer::GROUND_DECOR))
             } else {
@@ -48,7 +49,10 @@ fn assert_transition(world: &World, old: ObservationKey, level: i32, label: &str
     let new_dirty = old.world_generation != world.loc_model_generation()
         || old.static_generation != world.static_loc_generation()
         || old.level != level;
-    assert_eq!(new_dirty, old_dirty, "{label}: old hash and generation key disagree");
+    assert_eq!(
+        new_dirty, old_dirty,
+        "{label}: old hash and generation key disagree"
+    );
 }
 
 #[test]
@@ -120,7 +124,10 @@ fn loc_generation_matches_legacy_oracle_across_stamp_and_scene_transitions() {
     assert_transition(&world, old, 1, "map reset");
 
     let replaced = small_world();
-    assert_ne!(world.loc_model_generation(), replaced.loc_model_generation());
+    assert_ne!(
+        world.loc_model_generation(),
+        replaced.loc_model_generation()
+    );
     assert_eq!(legacy_loc_hash(&world, 0), legacy_loc_hash(&replaced, 0));
 }
 

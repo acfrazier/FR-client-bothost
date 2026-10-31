@@ -543,11 +543,11 @@ impl World {
         let scene_x = tile_x * 128 + width * 64;
         let scene_z = tile_z * 128 + length * 64;
         self.set_sprite(
-            scene_x, scene_z, y, level, tile_x, tile_z, width, length, typecode, info, yaw,
-            false, h_sw, h_se, h_ne, h_nw,
+            scene_x, scene_z, y, level, tile_x, tile_z, width, length, typecode, info, yaw, false,
+            h_sw, h_se, h_ne, h_nw,
         )
         .is_some()
-        }
+    }
 
     /// `addDynamic` from client-ts: place a dynamic sprite (players/npcs/
     /// projectiles/spot-anims) and return its arena index so the render
