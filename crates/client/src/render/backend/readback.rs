@@ -2,8 +2,12 @@
 
 use super::capture::CaptureGeometry;
 use super::present::{ConsumerFrame, PresentToken};
+#[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, LazyLock, Mutex};
+#[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+use std::time::Duration;
 use std::time::Instant;
 
 /// Fail-closed outcomes for retained-frame and generic texture readback.
@@ -18,6 +22,75 @@ pub enum ReadbackError {
     Timeout,
     Device,
     IdentityExhausted,
+}
+
+#[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+#[derive(Default)]
+struct ReadbackCounters {
+    submitted: AtomicU64,
+    completed: AtomicU64,
+    max_completion_ns: AtomicU64,
+}
+
+#[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+static READBACK_COUNTERS: ReadbackCounters = ReadbackCounters {
+    submitted: AtomicU64::new(0),
+    completed: AtomicU64::new(0),
+    max_completion_ns: AtomicU64::new(0),
+};
+
+#[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+impl ReadbackCounters {
+    fn complete(&self, elapsed_ns: u64) {
+        self.max_completion_ns.fetch_max(elapsed_ns, Ordering::AcqRel);
+        self.completed.fetch_add(1, Ordering::Release);
+    }
+}
+
+/// Real retained-frame and whole-window readback observations.
+///
+/// Completion includes submission, asynchronous mapping, and checked row copy
+/// into the handed-off RGBA allocation. Refusals and failed maps are not
+/// successful completion samples. The maximum covers this process lifetime.
+#[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReadbackStats {
+    submitted: u64,
+    completed: u64,
+    max_submit_to_completion: Duration,
+}
+
+#[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+impl ReadbackStats {
+    pub const fn submitted(self) -> u64 {
+        self.submitted
+    }
+
+    pub const fn completed(self) -> u64 {
+        self.completed
+    }
+
+    pub const fn max_submit_to_completion(self) -> Duration {
+        self.max_submit_to_completion
+    }
+}
+
+/// Cumulative diagnostics. Quiesce the producer for phase-boundary comparisons.
+#[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+pub fn readback_stats() -> ReadbackStats {
+    ReadbackStats {
+        submitted: READBACK_COUNTERS.submitted.load(Ordering::Acquire),
+        completed: READBACK_COUNTERS.completed.load(Ordering::Acquire),
+        max_submit_to_completion: Duration::from_nanos(
+            READBACK_COUNTERS.max_completion_ns.load(Ordering::Acquire),
+        ),
+    }
+}
+
+/// Fixed diagnostic storage; no per-readback allocation is added.
+#[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+pub const fn diagnostic_storage_bytes() -> usize {
+    std::mem::size_of::<ReadbackCounters>()
 }
 
 /// The one process-wide staging allocation permit. Timed-out mappings keep
@@ -218,12 +291,19 @@ pub fn begin_window_readback(
         Ok(prepared) => prepared,
         Err(error) => return Err((error, permit)),
     };
+    #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+    let submitted_at = {
+        READBACK_COUNTERS.submitted.fetch_add(1, Ordering::Relaxed);
+        Instant::now()
+    };
     queue.submit([encoder.finish()]);
     let storage = begin_map(device, buffer, permit);
     Ok(PendingWindowReadback {
         core: PendingCore {
             geometry: storage.permit.geometry,
             storage: Some(storage),
+            #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+            submitted_at,
         },
     })
 }
@@ -231,6 +311,8 @@ pub fn begin_window_readback(
 struct PendingCore {
     geometry: CaptureGeometry,
     storage: Option<ReadbackStorage>,
+    #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+    submitted_at: Instant,
 }
 
 impl PendingCore {
@@ -306,7 +388,14 @@ impl PendingCore {
                 drop(data);
                 buffer.unmap();
                 match copied {
-                    Ok(()) => Ok(Some(CompletedPixels { rgba, permit })),
+                    Ok(()) => {
+                        #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+                        READBACK_COUNTERS.complete(
+                            u64::try_from(self.submitted_at.elapsed().as_nanos())
+                                .unwrap_or(u64::MAX),
+                        );
+                        Ok(Some(CompletedPixels { rgba, permit }))
+                    }
                     Err(error) => {
                         drop(permit);
                         Err(error)
@@ -469,6 +558,11 @@ impl ConsumerFrame {
             drop(buffer);
             return Err((ReadbackError::StalePresent, self, permit));
         }
+        #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+        let submitted_at = {
+            READBACK_COUNTERS.submitted.fetch_add(1, Ordering::Relaxed);
+            Instant::now()
+        };
         self.retained.queue.submit([encoder.finish()]);
         let storage = begin_map(&self.retained.device, buffer, permit);
         drop(state);
@@ -477,6 +571,8 @@ impl ConsumerFrame {
             core: PendingCore {
                 geometry: self.retained.geometry,
                 storage: Some(storage),
+                #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+                submitted_at,
             },
             token: self.present_token(),
             has_valid_scene: self.has_valid_scene(),
@@ -557,5 +653,24 @@ pub(crate) mod test_hooks {
         } else {
             Err((sender, result))
         }
+    }
+}
+
+#[cfg(all(
+    test,
+    any(feature = "render-diagnostics", feature = "draw-memory-profile")
+))]
+mod diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn completion_maximum_is_independent_of_the_last_sample() {
+        let counters = ReadbackCounters::default();
+        for nanos in [30, 10, 20] {
+            counters.complete(nanos);
+        }
+        assert_eq!(counters.completed.load(Ordering::Acquire), 3);
+        assert_eq!(counters.max_completion_ns.load(Ordering::Acquire), 30);
+        assert_eq!(diagnostic_storage_bytes(), 3 * std::mem::size_of::<AtomicU64>());
     }
 }

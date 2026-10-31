@@ -3271,9 +3271,12 @@ mod tests {
         use crate::render::budget::{RenderBudget, RenderBudgetLimits, RenderResource};
         use std::sync::atomic::Ordering;
 
+        crate::profiling::enable();
         assert_eq!(super::GPU_HEADS.load(Ordering::Acquire), 0);
         let first = super::GpuBackend::try_new().expect("GPU required for first head");
         let second = super::GpuBackend::try_new().expect("GPU required for second head");
+        assert!(std::sync::Arc::ptr_eq(&first.context, &second.context));
+        let buffers_before_workspace = crate::profiling::gpu_bytes().buffers;
         let budget = RenderBudget::fixture(RenderBudgetLimits::new(
             0,
             0,
@@ -3295,6 +3298,12 @@ mod tests {
             let mut workspace = super::GPU_SCENE_LOCK.lock().unwrap();
             assert!(workspace.is_none());
             let mut vertices = super::SceneVertices::new(&first.context).unwrap();
+            assert_eq!(vertices.brightness_buf.size(), 16);
+            assert_eq!(
+                crate::profiling::gpu_bytes().buffers - buffers_before_workspace,
+                (1 << 20) + 16,
+                "two GPU heads allocate one vertex floor and one brightness uniform"
+            );
             vertices
                 .ensure_vertex_buffer(&first.context, (1 << 20) + 1)
                 .unwrap();
@@ -3302,6 +3311,11 @@ mod tests {
         }
         assert_eq!(first.render_bytes().gpu_vertex_live(), 2 << 20);
         assert_eq!(vertex_budget.live(), 2 << 20);
+        assert_eq!(
+            crate::profiling::gpu_bytes().buffers - buffers_before_workspace,
+            (2 << 20) + 16,
+            "vertex replacement keeps the uniform once, not once per GPU head"
+        );
         drop(first);
         assert_eq!(super::GPU_HEADS.load(Ordering::Acquire), 1);
         assert_eq!(second.render_bytes().gpu_vertex_live(), 2 << 20);

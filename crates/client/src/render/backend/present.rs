@@ -851,7 +851,8 @@ pub mod test_hooks {
 
     pub fn scalar_receipt() -> ScalarReceipt {
         #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
-        let diagnostic_bytes = std::mem::size_of::<LazyLock<RetainedPresentCounters>>();
+        let diagnostic_bytes = std::mem::size_of::<LazyLock<RetainedPresentCounters>>()
+            + super::super::readback::diagnostic_storage_bytes();
         #[cfg(not(any(feature = "render-diagnostics", feature = "draw-memory-profile")))]
         let diagnostic_bytes = 0;
         ScalarReceipt {
