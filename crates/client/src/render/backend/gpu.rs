@@ -3275,7 +3275,19 @@ mod tests {
         let first = super::GpuBackend::try_new().expect("GPU required for first head");
         let second = super::GpuBackend::try_new().expect("GPU required for second head");
         let budget = RenderBudget::fixture(RenderBudgetLimits::new(
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3 << 20, 0, 0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3 << 20,
+            0,
+            0,
         ));
         let vertex_budget = budget.for_resource(RenderResource::Vertex).unwrap();
         {

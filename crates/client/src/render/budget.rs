@@ -979,10 +979,8 @@ mod tests {
             ..first
         };
         let process = 12 + 13 + 16 + 17 + 22 + 23;
-        let first_head = 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10 + 11 + 14 + 15 + 18 + 19
-            + 20
-            + 21
-            + 24;
+        let first_head =
+            1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10 + 11 + 14 + 15 + 18 + 19 + 20 + 21 + 24;
         assert_eq!(first.head_total(), first_head);
         assert_eq!(second.head_total(), first_head + 100);
         assert_eq!(first.process_total(), process);

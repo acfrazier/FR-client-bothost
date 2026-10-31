@@ -595,10 +595,17 @@ fn two_heads_draw_in_turn_from_one_scene_buffer() {
     let mut core_b = make_core("b");
     install_nav_scene_world(&mut core_a);
     install_nav_scene_world_with_colour(&mut core_b, 42_000);
-    // The nav fixture's high camera leaves its ground outside the viewport.
-    // Aim both cameras at the ground so the clean-scene oracle sees geometry.
-    core_a.cam_y = 1600;
-    core_b.cam_y = 1600;
+    // Keep the high-ground visibility gate, but aim down at that ground.
+    // Both clean references must contain visible geometry, not empty pixels.
+    for core in [&mut core_a, &mut core_b] {
+        core.cam_pitch = 352;
+        // Nav samples Client heights. Scene capture samples World heights.
+        for level in &mut core.groundh {
+            for row in level {
+                row.fill(2000);
+            }
+        }
+    }
     let paint = crate::render::nav_debug::NavDebugPaint {
         path: vec![(3, 10, false)],
         show_path: true,
