@@ -3,10 +3,10 @@
 use super::capture::CaptureGeometry;
 use super::readback::ReadbackError;
 use std::num::{NonZeroU64, NonZeroUsize};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, OnceLock, Weak};
 #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
 use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, Weak};
 #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
 use std::time::{Duration, Instant};
 
@@ -79,7 +79,10 @@ impl RetainedPresentBudget {
                 Ok(_) => {
                     return Ok(RetainedPresentPermit {
                         budget: self,
-                        #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+                        #[cfg(any(
+                            feature = "render-diagnostics",
+                            feature = "draw-memory-profile"
+                        ))]
                         logical_bytes: 0,
                     });
                 }
@@ -207,7 +210,9 @@ struct RetainedPresentPermit {
 impl RetainedPresentPermit {
     fn record_allocation(mut self, bytes: usize) -> Self {
         self.logical_bytes = bytes;
-        PRESENT_COUNTERS.logical_bytes.fetch_add(bytes, Ordering::AcqRel);
+        PRESENT_COUNTERS
+            .logical_bytes
+            .fetch_add(bytes, Ordering::AcqRel);
         PRESENT_COUNTERS.allocations.fetch_add(1, Ordering::Relaxed);
         self
     }
@@ -279,11 +284,18 @@ impl RetainedPresent {
         );
         #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
         {
-            PRESENT_COUNTERS.copy_encode_ns.fetch_add(elapsed_ns(started), Ordering::Relaxed);
+            PRESENT_COUNTERS
+                .copy_encode_ns
+                .fetch_add(elapsed_ns(started), Ordering::Relaxed);
             PRESENT_COUNTERS.copies.fetch_add(1, Ordering::Relaxed);
-            let bytes = self.geometry.checked_layout()
-                .expect("retained present geometry was checked before allocation").0;
-            PRESENT_COUNTERS.copied_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+            let bytes = self
+                .geometry
+                .checked_layout()
+                .expect("retained present geometry was checked before allocation")
+                .0;
+            PRESENT_COUNTERS
+                .copied_bytes
+                .fetch_add(bytes as u64, Ordering::Relaxed);
         }
     }
 }
