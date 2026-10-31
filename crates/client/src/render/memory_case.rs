@@ -128,15 +128,42 @@ pub(crate) fn census(
             .map(pixmap_pixel_capacity_bytes),
     ];
     let title_area_pixel_capacity_bytes = [
-        renderer.image_title0.as_ref().map(pixmap_pixel_capacity_bytes),
-        renderer.image_title1.as_ref().map(pixmap_pixel_capacity_bytes),
-        renderer.image_title2.as_ref().map(pixmap_pixel_capacity_bytes),
-        renderer.image_title3.as_ref().map(pixmap_pixel_capacity_bytes),
-        renderer.image_title4.as_ref().map(pixmap_pixel_capacity_bytes),
-        renderer.image_title5.as_ref().map(pixmap_pixel_capacity_bytes),
-        renderer.image_title6.as_ref().map(pixmap_pixel_capacity_bytes),
-        renderer.image_title7.as_ref().map(pixmap_pixel_capacity_bytes),
-        renderer.image_title8.as_ref().map(pixmap_pixel_capacity_bytes),
+        renderer
+            .image_title0
+            .as_ref()
+            .map(pixmap_pixel_capacity_bytes),
+        renderer
+            .image_title1
+            .as_ref()
+            .map(pixmap_pixel_capacity_bytes),
+        renderer
+            .image_title2
+            .as_ref()
+            .map(pixmap_pixel_capacity_bytes),
+        renderer
+            .image_title3
+            .as_ref()
+            .map(pixmap_pixel_capacity_bytes),
+        renderer
+            .image_title4
+            .as_ref()
+            .map(pixmap_pixel_capacity_bytes),
+        renderer
+            .image_title5
+            .as_ref()
+            .map(pixmap_pixel_capacity_bytes),
+        renderer
+            .image_title6
+            .as_ref()
+            .map(pixmap_pixel_capacity_bytes),
+        renderer
+            .image_title7
+            .as_ref()
+            .map(pixmap_pixel_capacity_bytes),
+        renderer
+            .image_title8
+            .as_ref()
+            .map(pixmap_pixel_capacity_bytes),
     ];
     let cpu_output = match output {
         FrameOutput::PixMap(pixmap) => Some((
@@ -268,7 +295,9 @@ mod tests {
         );
         assert_eq!(
             sample.minimap_pixel_capacity_bytes,
-            Some(capacity_bytes::<i32>(renderer.minimap.as_ref().unwrap().data.capacity()))
+            Some(capacity_bytes::<i32>(
+                renderer.minimap.as_ref().unwrap().data.capacity()
+            ))
         );
         assert_eq!(
             sample.texture_buffer_capacity_bytes,
@@ -278,12 +307,10 @@ mod tests {
         assert_eq!(sample.cpu_output_height, Some(10));
         assert_eq!(
             sample.cpu_output_pixel_capacity_bytes,
-            Some(capacity_bytes::<i32>(
-                match &output {
-                    FrameOutput::PixMap(pixmap) => pixmap.pixels.capacity(),
-                    _ => unreachable!(),
-                }
-            ))
+            Some(capacity_bytes::<i32>(match &output {
+                FrameOutput::PixMap(pixmap) => pixmap.pixels.capacity(),
+                _ => unreachable!(),
+            }))
         );
     }
 }
