@@ -595,6 +595,10 @@ fn two_heads_draw_in_turn_from_one_scene_buffer() {
     let mut core_b = make_core("b");
     install_nav_scene_world(&mut core_a);
     install_nav_scene_world_with_colour(&mut core_b, 42_000);
+    // The nav fixture's high camera leaves its ground outside the viewport.
+    // Aim both cameras at the ground so the clean-scene oracle sees geometry.
+    core_a.cam_y = 1600;
+    core_b.cam_y = 1600;
     let paint = crate::render::nav_debug::NavDebugPaint {
         path: vec![(3, 10, false)],
         show_path: true,
@@ -604,6 +608,10 @@ fn two_heads_draw_in_turn_from_one_scene_buffer() {
     // Save clean references before either head claims the nav overlay.
     let a_clean = render_live_scene(&mut backend_a, &mut core_a, &mut renderer_a);
     let b_clean = render_live_scene(&mut backend_b, &mut core_b, &mut renderer_b);
+    assert!(
+        a_clean.iter().any(|&pixel| pixel != 0) && b_clean.iter().any(|&pixel| pixel != 0),
+        "both clean head images must contain visible ground"
+    );
     assert!(
         a_clean != b_clean,
         "different ground colours must produce distinct clean head images"
