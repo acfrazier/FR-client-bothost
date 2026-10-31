@@ -467,12 +467,11 @@ pub(crate) fn reserve_deque<T>(
     Ok(())
 }
 
-/// Explicit ceilings for the resources participating in one render fixture.
+/// Explicit ceilings for the resources participating in one render process.
 /// Each ceiling bounds simultaneously live bytes, including old-plus-new
 /// replacement. In particular `vertex` is one process-wide growth-peak budget,
 /// not a per-head budget. Its separate retained-buffer cap is 128 MiB:
 /// admitting the largest replacement needs 64 + 128 = 192 MiB once.
-#[cfg(any(test, feature = "render-test-hooks", feature = "render-diagnostics"))]
 pub struct RenderBudgetLimits {
     capture: usize,
     nav_vertices: usize,
@@ -489,7 +488,6 @@ pub struct RenderBudgetLimits {
     context_gpu: usize,
 }
 
-#[cfg(any(test, feature = "render-test-hooks", feature = "render-diagnostics"))]
 impl RenderBudgetLimits {
     #[allow(clippy::too_many_arguments)]
     pub const fn new(
