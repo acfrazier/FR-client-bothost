@@ -2,7 +2,7 @@ use client::core::World;
 use client::dash3d::LocLayer;
 
 fn small_world() -> World {
-    World::new(vec![vec![vec![0; 9]; 9]; 4], 8, 4, 8)
+    World::new(vec![vec![vec![0; 105]; 105]; 4], 104, 4, 104)
 }
 
 /// The previous API oracle mixed the three tile loc-layer stamps, using the
@@ -150,6 +150,7 @@ fn stamp_writes_are_owned_by_world_mutators() {
             }
             let source = std::fs::read_to_string(&path).expect("read Rust source");
             for (line_number, line) in source.lines().enumerate() {
+                let target = line.split_once('=').map_or("", |(left, _)| left);
                 let stamp_field = [
                     ".wall_model_stamp",
                     ".decor_model_stamp",
@@ -157,7 +158,7 @@ fn stamp_writes_are_owned_by_world_mutators() {
                     ".obj_model_stamp",
                 ]
                 .iter()
-                .any(|field| line.contains(field));
+                .any(|field| target.contains(field));
                 let assignment = [" = ", "+=", "-=", "*=", "/=", "%="]
                     .iter()
                     .any(|operator| line.contains(operator));
