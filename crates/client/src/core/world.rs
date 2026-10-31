@@ -25,9 +25,18 @@
 #![allow(clippy::manual_range_contains)]
 #![allow(clippy::too_many_arguments)]
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::dash3d::{
     Decor, GroundDecor, GroundObject, GroundStamp, LocLayer, Occlude, Sprite, Square, Wall,
 };
+
+/// Unique observation tokens avoid rescanning a world's tile grid.
+static NEXT_LOC_MODEL_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+fn next_loc_model_generation() -> u64 {
+    NEXT_LOC_MODEL_GENERATION.fetch_add(1, Ordering::Relaxed)
+}
 
 pub const OCCLUDER_LEVELS: usize = 4;
 pub const MAX_OCCLUDERS: usize = 500;
@@ -81,11 +90,10 @@ pub struct World {
     /// Bumped by `reset_map`; the render side clears its lazy model cache
     /// when it changes (Task 3b).
     pub(crate) build_generation: u64,
-    /// Bumped when static scenery is actually added or removed, and when
-    /// the map is reset. Snapshot loc rebuilds consume this so a queued
-    /// LOC_DEL/add that does not bump tile `model_stamp` still dirties the
-    /// API loc cache after the packet's scene gen was already consumed.
-    /// Dynamic sprites never touch it.
+    /// O(1) process-unique token for this world's loc-layer model state.
+    /// Recreated worlds receive a distinct token; each loc-layer mutation
+    /// receives another token. Static scenery keeps its separate counter.
+    loc_model_generation: u64,
     static_loc_generation: u64,
     /// Set by `ClientBuild::finish_build` in place of the old sim-side
     /// `share_light` call; the render side runs the share-light pass over
@@ -142,6 +150,7 @@ impl World {
             // bumps it and invalidates the render-side cache. The
             // constructor needs no reset (all grids are already empty).
             build_generation: 0,
+            loc_model_generation: next_loc_model_generation(),
             static_loc_generation: 0,
             share_light_pending: false,
             overlay_mesh: true,
@@ -151,6 +160,7 @@ impl World {
 
     pub fn reset_map(&mut self) {
         self.build_generation = self.build_generation.wrapping_add(1);
+        self.bump_loc_model_generation();
         self.bump_static_loc_generation();
 
         for level in 0..self.max_tile_level {
@@ -217,6 +227,7 @@ impl World {
         }
 
         self.squares[3][stx as usize][stz as usize] = None;
+        self.bump_loc_model_generation();
     }
 
     pub fn set_occlude(
@@ -281,11 +292,16 @@ impl World {
         overlay: i32,
         underlay: i32,
     ) {
+        let mut created = false;
         for l in (0..=level).rev() {
             if self.squares[l as usize][x as usize][z as usize].is_none() {
                 self.squares[l as usize][x as usize][z as usize] =
                     Some(Box::new(Square::new(l, x, z)));
+                created = true;
             }
+        }
+        if created {
+            self.bump_loc_model_generation();
         }
 
         let tile = &mut self.squares[level as usize][x as usize][z as usize];
@@ -337,6 +353,7 @@ impl World {
                 h_nw,
             )));
             tile.gd_model_stamp = tile.gd_model_stamp.wrapping_add(1);
+            self.bump_loc_model_generation();
         }
     }
 
@@ -345,6 +362,7 @@ impl World {
         let Some(tile) = tile else { return };
         tile.ground_decor = None;
         tile.gd_model_stamp = tile.gd_model_stamp.wrapping_add(1);
+        self.bump_loc_model_generation();
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -359,9 +377,11 @@ impl World {
         middle: Option<(i32, i32)>,
         bottom: Option<(i32, i32)>,
     ) {
-        if self.squares[level as usize][stx as usize][stz as usize].is_none() {
+        let created = self.squares[level as usize][stx as usize][stz as usize].is_none();
+        if created {
             self.squares[level as usize][stx as usize][stz as usize] =
                 Some(Box::new(Square::new(level, stx, stz)));
+            self.bump_loc_model_generation();
         }
 
         let tile = &mut self.squares[level as usize][stx as usize][stz as usize];
@@ -425,6 +445,7 @@ impl World {
                 h_nw,
             )));
             tile.wall_model_stamp = tile.wall_model_stamp.wrapping_add(1);
+            self.bump_loc_model_generation();
         }
     }
 
@@ -433,6 +454,7 @@ impl World {
         let Some(tile) = tile else { return };
         tile.wall = None;
         tile.wall_model_stamp = tile.wall_model_stamp.wrapping_add(1);
+        self.bump_loc_model_generation();
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -476,6 +498,7 @@ impl World {
                 h_nw,
             )));
             tile.decor_model_stamp = tile.decor_model_stamp.wrapping_add(1);
+            self.bump_loc_model_generation();
         }
     }
 
@@ -484,6 +507,7 @@ impl World {
         let Some(tile) = tile else { return };
         tile.decor = None;
         tile.decor_model_stamp = tile.decor_model_stamp.wrapping_add(1);
+        self.bump_loc_model_generation();
     }
 
     pub fn move_decor(&mut self, level: i32, x: i32, z: i32, offset: i32) {
@@ -518,17 +542,12 @@ impl World {
     ) -> bool {
         let scene_x = tile_x * 128 + width * 64;
         let scene_z = tile_z * 128 + length * 64;
-        let added = self
-            .set_sprite(
-                scene_x, scene_z, y, level, tile_x, tile_z, width, length, typecode, info, yaw,
-                false, h_sw, h_se, h_ne, h_nw,
-            )
-            .is_some();
-        if added {
-            self.bump_static_loc_generation();
+        self.set_sprite(
+            scene_x, scene_z, y, level, tile_x, tile_z, width, length, typecode, info, yaw,
+            false, h_sw, h_se, h_ne, h_nw,
+        )
+        .is_some()
         }
-        added
-    }
 
     /// `addDynamic` from client-ts: place a dynamic sprite (players/npcs/
     /// projectiles/spot-anims) and return its arena index so the render
@@ -651,10 +670,18 @@ impl World {
         }
     }
 
-    /// Observation generation for static scenery add/remove/reset. Render
-    /// stamps and dynamic sprite reuse do not use this counter.
+    /// Observation generation for static scenery add/remove/reset.
     pub fn static_loc_generation(&self) -> u64 {
         self.static_loc_generation
+    }
+
+    /// O(1), process-unique generation for this world's loc model state.
+    pub fn loc_model_generation(&self) -> u64 {
+        self.loc_model_generation
+    }
+
+    fn bump_loc_model_generation(&mut self) {
+        self.loc_model_generation = next_loc_model_generation();
     }
 
     fn bump_static_loc_generation(&mut self) {
@@ -892,6 +919,7 @@ impl World {
         h_ne: i32,
         h_nw: i32,
     ) -> Option<usize> {
+        let mut created_square = false;
         for tx in tile_x..tile_x + tile_size_x {
             for tz in tile_z..tile_z + tile_size_z {
                 if tx < 0 || tz < 0 || tx >= self.max_tile_x || tz >= self.max_tile_z {
@@ -954,6 +982,7 @@ impl World {
                     if self.squares[l as usize][tx as usize][tz as usize].is_none() {
                         self.squares[l as usize][tx as usize][tz as usize] =
                             Some(Box::new(Square::new(l, tx, tz)));
+                        created_square = true;
                     }
                 }
 
@@ -982,7 +1011,13 @@ impl World {
             self.dynamic_sprites[self.dynamic_count as usize] = Some(index);
             self.dynamic_count += 1;
         }
+        if created_square {
+            self.bump_loc_model_generation();
+        }
 
+        if !dynamic && (typecode >> 29) & 0x3 == 2 {
+            self.bump_static_loc_generation();
+        }
         Some(index)
     }
 
@@ -996,6 +1031,7 @@ impl World {
                 _ => unreachable!("scene sprite stamps live on the sprite"),
             };
             *stamp = stamp.wrapping_add(1);
+            self.bump_loc_model_generation();
         }
     }
 

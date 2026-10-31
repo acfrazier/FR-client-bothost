@@ -51,11 +51,11 @@ pub struct Square {
     pub fill_stamp: i32,
     /// Independent wall, wall-decoration and ground-decoration generations.
     /// Changing one layer must retain the other layers' baked shared light.
-    pub wall_model_stamp: i32,
-    pub decor_model_stamp: i32,
-    pub gd_model_stamp: i32,
+    pub(crate) wall_model_stamp: i32,
+    pub(crate) decor_model_stamp: i32,
+    pub(crate) gd_model_stamp: i32,
     /// Ground-item stack generation; item updates never invalidate locs.
-    pub obj_model_stamp: i32,
+    pub(crate) obj_model_stamp: i32,
 }
 
 impl Square {
