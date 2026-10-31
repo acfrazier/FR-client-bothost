@@ -3277,7 +3277,7 @@ mod tests {
         let second = super::GpuBackend::try_new().expect("GPU required for second head");
         assert!(std::sync::Arc::ptr_eq(&first.context, &second.context));
         let buffers_before_workspace = crate::profiling::gpu_bytes().buffers;
-        let budget = RenderBudget::fixture(RenderBudgetLimits::new(
+        let budget = RenderBudget::new(RenderBudgetLimits::new(
             0,
             0,
             0,

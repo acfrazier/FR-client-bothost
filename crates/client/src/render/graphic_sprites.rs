@@ -226,7 +226,7 @@ pub fn render_test_scoped_content_layout(
     keys: &[(String, i32)],
 ) -> Option<RenderTestGraphicSpriteLayout> {
     let unlimited = usize::MAX;
-    let budget = RenderBudget::fixture(crate::render::budget::RenderBudgetLimits::new(
+    let budget = RenderBudget::new(crate::render::budget::RenderBudgetLimits::new(
         unlimited, unlimited, unlimited, unlimited, unlimited, unlimited, unlimited, unlimited,
         unlimited, unlimited, unlimited, unlimited, unlimited,
     ));
@@ -353,7 +353,7 @@ mod tests {
     }
 
     fn budget(head_misc: usize, temp_models: usize) -> RenderBudget {
-        RenderBudget::fixture(super::super::budget::RenderBudgetLimits::new(
+        RenderBudget::new(super::super::budget::RenderBudgetLimits::new(
             0,
             0,
             0,

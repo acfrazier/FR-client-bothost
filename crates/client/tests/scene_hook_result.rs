@@ -1510,7 +1510,7 @@ fn cpu_resource_failure_publishes_clean_scene_with_current_overlays_and_fault() 
     // Existing scene buffers must be admitted before any new head-misc work.
     // A zero fixture ceiling rejects the next real CPU scene preparation.
     let unlimited = usize::MAX;
-    let budget = RenderBudget::fixture(RenderBudgetLimits::new(
+    let budget = RenderBudget::new(RenderBudgetLimits::new(
         unlimited, unlimited, unlimited, unlimited, unlimited, unlimited, 0, unlimited, unlimited,
         unlimited, unlimited, unlimited, unlimited,
     ));

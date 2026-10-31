@@ -1265,7 +1265,7 @@ mod tests {
 
         let sprite_bytes = pix32_bytes_for_pixels(32 * 32).expect("fixture sprite bytes");
         let other_budget = 1 << 20;
-        let budget = RenderBudget::fixture(RenderBudgetLimits::new(
+        let budget = RenderBudget::new(RenderBudgetLimits::new(
             other_budget,
             other_budget,
             other_budget,

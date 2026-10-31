@@ -1483,7 +1483,7 @@ mod overlay_scope_tests {
 
     #[test]
     fn set_ground_under_scope_records_inputs_without_materializing_mesh() {
-        let budget = RenderBudget::fixture(RenderBudgetLimits::new(
+        let budget = RenderBudget::new(RenderBudgetLimits::new(
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         ));
         let _scope = budget.scope();

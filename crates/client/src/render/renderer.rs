@@ -847,7 +847,7 @@ mod owner_bytes_tests {
     use crate::render::budget::RenderBudgetLimits;
 
     fn head_misc_budget(maximum: usize) -> RenderBudget {
-        RenderBudget::fixture(RenderBudgetLimits::new(
+        RenderBudget::new(RenderBudgetLimits::new(
             0, 0, 0, 0, 0, 0, maximum, 0, 0, 0, 0, 0, 0,
         ))
     }

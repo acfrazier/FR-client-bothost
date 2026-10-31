@@ -269,7 +269,7 @@ fn real_cache_source_model_coordinate_census() {
 
 fn fixture_budget(vertex_peak: usize) -> RenderBudget {
     let finite = 256 * MIB;
-    RenderBudget::fixture(RenderBudgetLimits::new(
+    RenderBudget::new(RenderBudgetLimits::new(
         finite,
         finite,
         finite,

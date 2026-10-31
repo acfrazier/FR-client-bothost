@@ -378,7 +378,7 @@ mod nav_input_builder_tests {
     use super::*;
 
     fn fixture(nav_input: usize) -> RenderBudget {
-        RenderBudget::fixture(crate::render::budget::RenderBudgetLimits::new(
+        RenderBudget::new(crate::render::budget::RenderBudgetLimits::new(
             0, 0, 0, 0, nav_input, 0, 0, 0, 0, 0, 0, 0, 0,
         ))
     }

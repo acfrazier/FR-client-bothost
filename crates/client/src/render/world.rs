@@ -7381,7 +7381,7 @@ mod budget_capture_tests {
     static ALLOCATOR: AllocationCounter = AllocationCounter;
 
     fn fixture(capture: usize, misc: usize) -> RenderBudget {
-        RenderBudget::fixture(RenderBudgetLimits::new(
+        RenderBudget::new(RenderBudgetLimits::new(
             capture, 0, 0, 0, 0, 0, misc, 0, 0, 0, 0, 0, 0,
         ))
     }
