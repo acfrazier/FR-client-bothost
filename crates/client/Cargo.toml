@@ -14,6 +14,7 @@ render-diagnostics = []
 render-test-hooks = []
 # Allocation instrumentation for the dedicated drawing-memory test target only.
 draw-memory-profile = ["render-test-hooks"]
+draw-memory-case = []
 # Failure injection for independent-process snapshot publication tests only.
 # Product frontends never enable this feature.
 snapshot-test-hooks = []

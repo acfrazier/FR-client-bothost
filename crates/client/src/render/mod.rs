@@ -2,6 +2,8 @@ pub mod backend;
 pub mod budget;
 #[cfg(feature = "render-diagnostics")]
 pub mod diagnostics;
+#[cfg(feature = "draw-memory-case")]
+pub mod memory_case;
 pub mod draw;
 pub(crate) mod graphic_sprites;
 pub mod media;

@@ -512,6 +512,18 @@ impl Renderer {
             .map(RenderBackend::kind)
             .unwrap_or(BackendKind::Cpu)
     }
+    /// Inspect comparable drawing-owner capacities without altering paint.
+    #[cfg(feature = "draw-memory-case")]
+    pub fn memory_case_census(
+        &self,
+        output: &FrameOutput,
+    ) -> crate::render::memory_case::Census {
+        let backend_inline_bytes = self
+            .backend
+            .as_ref()
+            .map_or(0, |backend| std::mem::size_of_val(backend.as_ref()));
+        crate::render::memory_case::census(self, output, backend_inline_bytes)
+    }
     /// Release GPU nav scratch and its target without painting a frame.
     /// Hosts call this on focus loss, including when the head is parked.
     /// CPU rendering keeps its existing behaviour.
