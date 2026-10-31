@@ -182,9 +182,6 @@ fn stamp_writes_are_owned_by_world_mutators() {
 
 #[test]
 fn reports_world_and_square_layout() {
-    println!(
-        "size_of::<World>()={} size_of::<Square>()={}",
-        std::mem::size_of::<World>(),
-        std::mem::size_of::<client::dash3d::Square>()
-    );
+    assert_eq!(std::mem::size_of::<World>(), 240);
+    assert_eq!(std::mem::size_of::<client::dash3d::Square>(), 184);
 }

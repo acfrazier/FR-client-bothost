@@ -1015,6 +1015,7 @@ impl World {
             self.bump_loc_model_generation();
         }
 
+        // Production add_scenery callers use kind-2 map-build typecodes (see core/build.rs).
         if !dynamic && (typecode >> 29) & 0x3 == 2 {
             self.bump_static_loc_generation();
         }
