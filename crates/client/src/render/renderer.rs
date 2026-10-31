@@ -514,10 +514,7 @@ impl Renderer {
     }
     /// Inspect comparable drawing-owner capacities without altering paint.
     #[cfg(feature = "draw-memory-case")]
-    pub fn memory_case_census(
-        &self,
-        output: &FrameOutput,
-    ) -> crate::render::memory_case::Census {
+    pub fn memory_case_census(&self, output: &FrameOutput) -> crate::render::memory_case::Census {
         let backend_inline_bytes = self
             .backend
             .as_ref()

@@ -2,11 +2,11 @@ pub mod backend;
 pub mod budget;
 #[cfg(feature = "render-diagnostics")]
 pub mod diagnostics;
-#[cfg(feature = "draw-memory-case")]
-pub mod memory_case;
 pub mod draw;
 pub(crate) mod graphic_sprites;
 pub mod media;
+#[cfg(feature = "draw-memory-case")]
+pub mod memory_case;
 pub mod nav_debug;
 // Frozen pre-GPU Pix2D oracle for parity tests. Never update it alongside
 // production nav rendering; intentional behavior changes need independent

@@ -18,7 +18,10 @@ fn explicit_budget_scope_is_real_and_thread_local_in_every_build() {
         let capture = active.for_resource(RenderResource::Capture).unwrap();
         let charge = capture.reserve(32).unwrap();
         assert_eq!(capture.live(), 32);
-        assert_eq!(owner.for_resource(RenderResource::Capture).unwrap().live(), 32);
+        assert_eq!(
+            owner.for_resource(RenderResource::Capture).unwrap().live(),
+            32
+        );
         std::thread::spawn(|| assert!(RenderBudget::current().is_none()))
             .join()
             .unwrap();
@@ -26,7 +29,10 @@ fn explicit_budget_scope_is_real_and_thread_local_in_every_build() {
         assert_eq!(capture.live(), 0);
     }
     assert!(RenderBudget::current().is_none());
-    assert_eq!(owner.for_resource(RenderResource::Capture).unwrap().peak(), 32);
+    assert_eq!(
+        owner.for_resource(RenderResource::Capture).unwrap().peak(),
+        32
+    );
 }
 
 #[test]
@@ -42,7 +48,13 @@ fn nested_budget_scope_restores_the_owner_after_unwind() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _scope = inner.scope();
         let active = RenderBudget::current().unwrap();
-        assert_eq!(active.for_resource(RenderResource::Capture).unwrap().maximum(), 8);
+        assert_eq!(
+            active
+                .for_resource(RenderResource::Capture)
+                .unwrap()
+                .maximum(),
+            8
+        );
         let _charge = active
             .for_resource(RenderResource::Capture)
             .unwrap()
@@ -55,7 +67,10 @@ fn nested_budget_scope_restores_the_owner_after_unwind() {
     let restored = restored.for_resource(RenderResource::Capture).unwrap();
     assert_eq!(restored.maximum(), 64);
     assert_eq!(restored.live(), 32);
-    assert_eq!(inner.for_resource(RenderResource::Capture).unwrap().live(), 0);
+    assert_eq!(
+        inner.for_resource(RenderResource::Capture).unwrap().live(),
+        0
+    );
     drop(charge);
     assert_eq!(restored.live(), 0);
 }

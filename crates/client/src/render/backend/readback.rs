@@ -42,7 +42,8 @@ static READBACK_COUNTERS: ReadbackCounters = ReadbackCounters {
 #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
 impl ReadbackCounters {
     fn complete(&self, elapsed_ns: u64) {
-        self.max_completion_ns.fetch_max(elapsed_ns, Ordering::AcqRel);
+        self.max_completion_ns
+            .fetch_max(elapsed_ns, Ordering::AcqRel);
         self.completed.fetch_add(1, Ordering::Release);
     }
 }
@@ -389,7 +390,10 @@ impl PendingCore {
                 buffer.unmap();
                 match copied {
                     Ok(()) => {
-                        #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
+                        #[cfg(any(
+                            feature = "render-diagnostics",
+                            feature = "draw-memory-profile"
+                        ))]
                         READBACK_COUNTERS.complete(
                             u64::try_from(self.submitted_at.elapsed().as_nanos())
                                 .unwrap_or(u64::MAX),
@@ -671,6 +675,9 @@ mod diagnostic_tests {
         }
         assert_eq!(counters.completed.load(Ordering::Acquire), 3);
         assert_eq!(counters.max_completion_ns.load(Ordering::Acquire), 30);
-        assert_eq!(diagnostic_storage_bytes(), 3 * std::mem::size_of::<AtomicU64>());
+        assert_eq!(
+            diagnostic_storage_bytes(),
+            3 * std::mem::size_of::<AtomicU64>()
+        );
     }
 }
