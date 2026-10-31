@@ -488,6 +488,10 @@ pub struct RenderTestNavLayout {
     pub vertex_bytes: usize,
     pub quad_bytes: usize,
     pub edge_bytes: usize,
+    pub input_alignment: usize,
+    pub vertex_alignment: usize,
+    pub quad_alignment: usize,
+    pub edge_alignment: usize,
     pub max_edges_per_collision_cell: usize,
     pub max_corner_lines_per_collision_cell: usize,
     pub nsew_glyph_pixels_per_collision_cell: usize,
@@ -516,6 +520,18 @@ pub fn render_test_nav_layout() -> RenderTestNavLayout {
         vertex_bytes: std::mem::size_of::<NavVertex>(),
         quad_bytes: std::mem::size_of::<Quad>(),
         edge_bytes: std::mem::size_of::<(i32, i32, i32, i32)>(),
+        input_alignment: [
+            std::mem::align_of::<NavDebugCell>(),
+            std::mem::align_of::<(i32, i32, bool)>(),
+            std::mem::align_of::<NavDebugHull>(),
+            std::mem::align_of::<(i32, i32, String)>(),
+        ]
+        .into_iter()
+        .max()
+        .expect("nav input has fixed element types"),
+        vertex_alignment: std::mem::align_of::<NavVertex>(),
+        quad_alignment: std::mem::align_of::<Quad>(),
+        edge_alignment: std::mem::align_of::<(i32, i32, i32, i32)>(),
         max_edges_per_collision_cell: 4,
         max_corner_lines_per_collision_cell: 4,
         nsew_glyph_pixels_per_collision_cell,
