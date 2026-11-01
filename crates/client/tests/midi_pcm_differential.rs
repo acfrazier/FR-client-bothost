@@ -1526,10 +1526,11 @@ fn build_sf2_with_options(
     append_u16(if looping_enabled { 2 } else { 1 }, &mut instrument_bags);
     append_u16(0, &mut instrument_bags);
     let mut instrument_generators = Vec::new();
-    append_generator(53, 0, &mut instrument_generators);
     if looping_enabled {
         append_generator(54, 1, &mut instrument_generators);
     }
+    // sampleID terminates a local instrument zone in SF2.
+    append_generator(53, 0, &mut instrument_generators);
     append_generator(0, 0, &mut instrument_generators);
 
     let mut sample_headers = Vec::new();
