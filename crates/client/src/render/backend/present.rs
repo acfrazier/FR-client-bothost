@@ -643,7 +643,14 @@ impl super::TextureHandle {
         drop(state);
         drop(_registering);
         #[cfg(feature = "render-diagnostics")]
-        diagnostics::emit("registered", key.0.get(), None, None, Some(false), Some(true));
+        diagnostics::emit(
+            "registered",
+            key.0.get(),
+            None,
+            None,
+            Some(false),
+            Some(true),
+        );
         Ok(ConsumerRegistration {
             gate,
             retained,
@@ -728,7 +735,14 @@ impl ConsumerRegistration {
 impl Drop for ConsumerRegistration {
     fn drop(&mut self) {
         #[cfg(feature = "render-diagnostics")]
-        diagnostics::emit("unregister_requested", self.key.0.get(), None, None, None, None);
+        diagnostics::emit(
+            "unregister_requested",
+            self.key.0.get(),
+            None,
+            None,
+            None,
+            None,
+        );
         let mut gate_state = match self.gate.state.try_lock() {
             Ok(state) => state,
             Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),

@@ -96,7 +96,9 @@ pub(super) fn emit(
         live_resources: process_retained_present_resource_count(),
         // Zero is an explicit unusable order if diagnostic identity exhausts.
         event_order: ORDER
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                value.checked_add(1)
+            })
             .unwrap_or(0),
         elapsed_ns: clock.0.elapsed().as_nanos(),
         clock_origin_unix_ns: clock.1,
@@ -114,7 +116,6 @@ pub(super) const fn static_storage_bytes() -> usize {
     std::mem::size_of::<LazyLock<(Instant, u128)>>() + std::mem::size_of::<AtomicU64>()
 }
 
-
 pub(super) fn released(state: &super::RetainedState) {
     emit(
         "released",
@@ -130,10 +131,12 @@ pub(super) fn released(state: &super::RetainedState) {
 mod tests {
     use super::*;
 
-
     #[test]
     fn lifetime_storage_is_fixed_and_only_contains_identity() {
         assert_eq!(std::mem::size_of::<Lifetime>(), std::mem::size_of::<u64>());
-        assert_eq!(static_storage_bytes(), std::mem::size_of_val(&CLOCK) + std::mem::size_of_val(&ORDER));
+        assert_eq!(
+            static_storage_bytes(),
+            std::mem::size_of_val(&CLOCK) + std::mem::size_of_val(&ORDER)
+        );
     }
 }

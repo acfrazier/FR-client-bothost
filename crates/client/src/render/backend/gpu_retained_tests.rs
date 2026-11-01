@@ -176,7 +176,10 @@ fn diagnostic_events() -> Vec<serde_json::Value> {
         .into_iter()
         .map(|row| serde_json::from_str(&row).expect("actual emitted event is valid JSON"))
         .collect();
-    assert!(!events.is_empty(), "real lifecycle operations must emit observations");
+    assert!(
+        !events.is_empty(),
+        "real lifecycle operations must emit observations"
+    );
     let origin = events[0]["clock_origin_unix_ns"].as_u64().unwrap();
     assert!(origin > 0);
     for event in &events {
@@ -206,9 +209,15 @@ fn diagnostics_keep_unregistered_held_resource_live_until_real_release() {
     let token = held.present_token();
     drop(registration);
     producer.gate.retire();
-    assert_eq!(super::present::process_retained_present_resource_count(), baseline + 1);
+    assert_eq!(
+        super::present::process_retained_present_resource_count(),
+        baseline + 1
+    );
     drop(held);
-    assert_eq!(super::present::process_retained_present_resource_count(), baseline);
+    assert_eq!(
+        super::present::process_retained_present_resource_count(),
+        baseline
+    );
     let events = diagnostic_events();
     let unregistered = events
         .iter()
@@ -223,11 +232,17 @@ fn diagnostics_keep_unregistered_held_resource_live_until_real_release() {
         .iter()
         .position(|event| event["kind"] == "producer_retired")
         .unwrap();
-    let release = events.iter().position(|event| event["kind"] == "released").unwrap();
+    let release = events
+        .iter()
+        .position(|event| event["kind"] == "released")
+        .unwrap();
     assert!(retirement < release);
     assert_eq!(events[release]["held"], false);
     assert_eq!(events[release]["registered"], false);
-    assert_eq!(events[release]["token"], next.present_token().unwrap().get());
+    assert_eq!(
+        events[release]["token"],
+        next.present_token().unwrap().get()
+    );
     let final_event = events.last().unwrap();
     assert_eq!(final_event["kind"], "resource_released");
     assert_eq!(final_event["registration"], key);
@@ -331,13 +346,19 @@ fn registered_delayed_consumer_keeps_n_across_next_paint() {
         assert_eq!(later["registration"], diagnostic_key);
         assert_eq!(held["token"], token_n.get());
         assert_eq!(later["token"], token_n.get());
-        assert_eq!(later["producer_token"], frame_n1.present_token().unwrap().get());
+        assert_eq!(
+            later["producer_token"],
+            frame_n1.present_token().unwrap().get()
+        );
         assert_eq!(held["held"], true);
         assert_eq!(held["registered"], true);
         assert_eq!(later["held"], true);
         assert_eq!(later["registered"], true);
         assert_eq!(held["live_resources"], diagnostic_baseline + 1);
-        let released = events.iter().find(|event| event["kind"] == "released").unwrap();
+        let released = events
+            .iter()
+            .find(|event| event["kind"] == "released")
+            .unwrap();
         assert_eq!(released["token"], token_n.get());
         assert_eq!(released["held"], false);
         let final_event = events.last().unwrap();

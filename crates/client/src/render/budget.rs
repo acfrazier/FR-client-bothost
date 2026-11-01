@@ -285,7 +285,9 @@ impl ByteBudget {
                 peak: AtomicUsize::new(0),
                 #[cfg(feature = "render-diagnostics")]
                 diagnostic_id: NEXT_DIAGNOSTIC_BUDGET
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                        value.checked_add(1)
+                    })
                     .unwrap_or(0),
                 #[cfg(feature = "render-diagnostics")]
                 limit_actions: AtomicUsize::new(0),
@@ -326,7 +328,9 @@ impl ByteBudget {
             limit_actions: self.state.limit_actions.load(Ordering::Acquire),
             maximum_failed_request: self.state.maximum_failed_request.load(Ordering::Acquire),
             event_order: NEXT_DIAGNOSTIC_OBSERVATION
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                    value.checked_add(1)
+                })
                 .unwrap_or(0),
             elapsed_ns: clock.0.elapsed().as_nanos(),
             clock_origin_unix_ns: clock.1,
@@ -336,12 +340,15 @@ impl ByteBudget {
     #[cfg(feature = "render-diagnostics")]
     fn note_limit(&self, requested: usize, observed_live_at_refusal: usize) {
         let before = self.diagnostic_snapshot();
-        let _ = self.state.limit_actions.fetch_update(
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-            |value| Some(value.saturating_add(1)),
-        );
-        self.state.maximum_failed_request.fetch_max(requested, Ordering::Relaxed);
+        let _ =
+            self.state
+                .limit_actions
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                    Some(value.saturating_add(1))
+                });
+        self.state
+            .maximum_failed_request
+            .fetch_max(requested, Ordering::Relaxed);
         let after = self.diagnostic_snapshot();
         let event = format_args!(
             "{{\"schema\":\"render-budget-limit-v1\",\"requested\":{requested},\"observed_live_at_refusal\":{observed_live_at_refusal},\"before\":{before},\"after\":{after}}}"
@@ -1117,7 +1124,10 @@ mod tests {
             assert_eq!(after["live"], before["live"]);
             assert_eq!(event["observed_live_at_refusal"], full.live);
             assert!(event["requested"].as_u64() > before["maximum"].as_u64());
-            assert_eq!(after["limit_actions"].as_u64().unwrap(), before["limit_actions"].as_u64().unwrap() + 1);
+            assert_eq!(
+                after["limit_actions"].as_u64().unwrap(),
+                before["limit_actions"].as_u64().unwrap() + 1
+            );
             assert!(after["event_order"].as_u64() > before["event_order"].as_u64());
             assert!(after["elapsed_ns"].as_u64() >= before["elapsed_ns"].as_u64());
         }
@@ -1142,8 +1152,14 @@ mod tests {
             assert_eq!(observed.budget_id, sample.budget_id);
             assert_eq!(observed.live, index + 1);
             let shared = PROCESS_RENDER_BUDGET_RESOURCES.contains(&sample.resource);
-            let process_observed = process.for_resource(sample.resource).unwrap().diagnostic_snapshot();
-            let second_observed = second_head.for_resource(sample.resource).unwrap().diagnostic_snapshot();
+            let process_observed = process
+                .for_resource(sample.resource)
+                .unwrap()
+                .diagnostic_snapshot();
+            let second_observed = second_head
+                .for_resource(sample.resource)
+                .unwrap()
+                .diagnostic_snapshot();
             assert_eq!(process_observed.budget_id == sample.budget_id, shared);
             assert_eq!(second_observed.budget_id == sample.budget_id, shared);
             assert_eq!(process_observed.live, if shared { index + 1 } else { 0 });
