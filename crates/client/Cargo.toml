@@ -19,7 +19,7 @@ snapshot-test-hooks = []
 test-support = []
 
 [dependencies]
-bzip2 = "0.4"
+bzip2 = "0.6.1"
 bytemuck = { version = "1", features = ["derive"] }
 cpal = { version = "0.18", optional = true }
 flate2 = "1"
