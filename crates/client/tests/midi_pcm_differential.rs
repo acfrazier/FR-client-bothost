@@ -1543,7 +1543,14 @@ fn odd_smpl_signature(outcome: &Value) -> Value {
         "exit_success": outcome["exit_success"],
         "exit_code": outcome["exit_code"],
         "signal": outcome["signal"],
-        "child_result": outcome["child_result"],
+        // Error text is diagnostic, not a changed rejection or process outcome.
+        "child_result": {
+            "fixture_byte_len": outcome["child_result"]["fixture_byte_len"],
+            "fixture_sha256": outcome["child_result"]["fixture_sha256"],
+            "status": outcome["child_result"]["status"],
+            "parse_status": outcome["child_result"]["parse_status"],
+            "pcm_generated": outcome["child_result"]["pcm_generated"],
+        },
     })
 }
 
