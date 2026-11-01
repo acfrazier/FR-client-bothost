@@ -13,6 +13,28 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+#[cfg(feature = "render-diagnostics")]
+static NEXT_DIAGNOSTIC_BUDGET: AtomicUsize = AtomicUsize::new(1);
+#[cfg(feature = "render-diagnostics")]
+static NEXT_DIAGNOSTIC_OBSERVATION: AtomicUsize = AtomicUsize::new(1);
+#[cfg(feature = "render-diagnostics")]
+static DIAGNOSTIC_CLOCK: std::sync::LazyLock<(std::time::Instant, u128)> =
+    std::sync::LazyLock::new(|| {
+        (
+            std::time::Instant::now(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos(),
+        )
+    });
+
+#[cfg(all(test, feature = "render-diagnostics"))]
+thread_local! {
+    static TEST_LIMIT_EVENTS: std::cell::RefCell<Option<Vec<String>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// A bounded render-memory owner or fixed representation limit.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum RenderResource {
@@ -107,7 +129,14 @@ struct ByteBudgetState {
     limit: usize,
     live: AtomicUsize,
     peak: AtomicUsize,
+    #[cfg(feature = "render-diagnostics")]
+    diagnostic_id: usize,
+    #[cfg(feature = "render-diagnostics")]
+    limit_actions: AtomicUsize,
+    #[cfg(feature = "render-diagnostics")]
+    maximum_failed_request: AtomicUsize,
 }
+
 #[cfg(any(test, feature = "render-test-hooks"))]
 fn arc_allocation_bytes<T>() -> usize {
     // `ArcInner<T>` stores its strong and weak counters before `T`. The
@@ -119,7 +148,7 @@ fn arc_allocation_bytes<T>() -> usize {
     layout.pad_to_align().size()
 }
 
-#[cfg(any(test, feature = "render-test-hooks"))]
+#[cfg(any(test, feature = "render-test-hooks", feature = "render-diagnostics"))]
 const RENDER_BUDGET_RESOURCES: [RenderResource; 13] = [
     RenderResource::Capture,
     RenderResource::NavVertices,
@@ -176,6 +205,66 @@ pub struct RenderBudgetScalarReceipt {
     pub shared_state_handle_count: usize,
 }
 
+/// Independent atomic observations of one real budget owner, not an allocation census.
+#[cfg(feature = "render-diagnostics")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RenderBudgetSnapshot {
+    pub budget_id: usize,
+    pub resource: RenderResource,
+    pub live: usize,
+    pub peak: usize,
+    pub maximum: usize,
+    pub limit_actions: usize,
+    pub maximum_failed_request: usize,
+    pub event_order: usize,
+    pub elapsed_ns: u128,
+    pub clock_origin_unix_ns: u128,
+}
+
+#[cfg(feature = "render-diagnostics")]
+impl RenderBudgetSnapshot {
+    pub fn emit(self, stage: &'static str, slot: u64, head_generation: u64) {
+        eprintln!(
+            "render_budget_sample={{\"schema\":\"render-budget-sample-v1\",\"stage\":\"{stage}\",\"slot\":{slot},\"head_generation\":{head_generation},\"budget\":{self}}}"
+        );
+    }
+}
+
+#[cfg(feature = "render-diagnostics")]
+impl fmt::Display for RenderBudgetSnapshot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let resource = match self.resource {
+            RenderResource::Capture => "capture",
+            RenderResource::NavVertices => "nav_vertices",
+            RenderResource::NavQuads => "nav_quads",
+            RenderResource::NavEdges => "nav_edges",
+            RenderResource::NavInput => "nav_input",
+            RenderResource::HeadModels => "head_models",
+            RenderResource::HeadMisc => "head_misc",
+            RenderResource::TempModels => "temp_models",
+            RenderResource::SharedModels => "shared_models",
+            RenderResource::SharedSprites => "shared_sprites",
+            RenderResource::Vertex => "vertex",
+            RenderResource::VertexCoordinates => "vertex_coordinates",
+            RenderResource::ContextCpu => "context_cpu",
+            RenderResource::ContextGpu => "context_gpu",
+        };
+        write!(
+            f,
+            "{{\"budget_id\":{},\"resource\":\"{resource}\",\"live\":{},\"peak\":{},\"maximum\":{},\"limit_actions\":{},\"maximum_failed_request\":{},\"event_order\":{},\"elapsed_ns\":{},\"clock_origin_unix_ns\":{}}}",
+            self.budget_id, self.live, self.peak, self.maximum,
+            self.limit_actions, self.maximum_failed_request,
+            self.event_order, self.elapsed_ns, self.clock_origin_unix_ns,
+        )
+    }
+}
+
+#[cfg(feature = "render-diagnostics")]
+pub const fn diagnostic_static_storage_bytes() -> usize {
+    2 * std::mem::size_of::<AtomicUsize>()
+        + std::mem::size_of::<std::sync::LazyLock<(std::time::Instant, u128)>>()
+}
+
 /// A cheap, cloneable handle to one byte ceiling. Clones reserve against the
 /// same atomics.
 #[derive(Clone)]
@@ -194,6 +283,14 @@ impl ByteBudget {
                 limit,
                 live: AtomicUsize::new(0),
                 peak: AtomicUsize::new(0),
+                #[cfg(feature = "render-diagnostics")]
+                diagnostic_id: NEXT_DIAGNOSTIC_BUDGET
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
+                    .unwrap_or(0),
+                #[cfg(feature = "render-diagnostics")]
+                limit_actions: AtomicUsize::new(0),
+                #[cfg(feature = "render-diagnostics")]
+                maximum_failed_request: AtomicUsize::new(0),
             }),
         }
     }
@@ -217,12 +314,55 @@ impl ByteBudget {
         self.state.peak.load(Ordering::Acquire)
     }
 
+    #[cfg(feature = "render-diagnostics")]
+    pub fn diagnostic_snapshot(&self) -> RenderBudgetSnapshot {
+        let clock = &*DIAGNOSTIC_CLOCK;
+        RenderBudgetSnapshot {
+            budget_id: self.state.diagnostic_id,
+            resource: self.resource,
+            live: self.live(),
+            peak: self.peak(),
+            maximum: self.maximum(),
+            limit_actions: self.state.limit_actions.load(Ordering::Acquire),
+            maximum_failed_request: self.state.maximum_failed_request.load(Ordering::Acquire),
+            event_order: NEXT_DIAGNOSTIC_OBSERVATION
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
+                .unwrap_or(0),
+            elapsed_ns: clock.0.elapsed().as_nanos(),
+            clock_origin_unix_ns: clock.1,
+        }
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    fn note_limit(&self, requested: usize, observed_live_at_refusal: usize) {
+        let before = self.diagnostic_snapshot();
+        let _ = self.state.limit_actions.fetch_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |value| Some(value.saturating_add(1)),
+        );
+        self.state.maximum_failed_request.fetch_max(requested, Ordering::Relaxed);
+        let after = self.diagnostic_snapshot();
+        let event = format_args!(
+            "{{\"schema\":\"render-budget-limit-v1\",\"requested\":{requested},\"observed_live_at_refusal\":{observed_live_at_refusal},\"before\":{before},\"after\":{after}}}"
+        );
+        eprintln!("render_budget_limit={event}");
+        #[cfg(test)]
+        TEST_LIMIT_EVENTS.with_borrow_mut(|events| {
+            if let Some(events) = events {
+                events.push(event.to_string());
+            }
+        });
+    }
+
     /// Reserve before allocating. The returned owner releases these bytes on
     /// drop, including during unwinding.
     pub fn reserve(&self, bytes: usize) -> Result<BudgetCharge, RenderLimit> {
         let mut live = self.state.live.load(Ordering::Relaxed);
         loop {
             let Some(next) = live.checked_add(bytes) else {
+                #[cfg(feature = "render-diagnostics")]
+                self.note_limit(usize::MAX, live);
                 return Err(RenderLimit::new(
                     self.resource,
                     usize::MAX,
@@ -230,6 +370,8 @@ impl ByteBudget {
                 ));
             };
             if next > self.state.limit {
+                #[cfg(feature = "render-diagnostics")]
+                self.note_limit(next, live);
                 return Err(RenderLimit::new(self.resource, next, self.state.limit));
             }
             match self.state.live.compare_exchange_weak(
@@ -685,6 +827,15 @@ impl RenderBudget {
         }
     }
 
+    #[cfg(feature = "render-diagnostics")]
+    pub fn diagnostic_snapshots(&self) -> [RenderBudgetSnapshot; 13] {
+        RENDER_BUDGET_RESOURCES.map(|resource| {
+            self.for_resource(resource)
+                .expect("the enumerated byte resource has a real owner")
+                .diagnostic_snapshot()
+        })
+    }
+
     /// Install this explicitly configured budget for the current thread and
     /// restore any enclosing scope when the returned guard is dropped.
     pub fn scope(&self) -> RenderBudgetScope {
@@ -913,6 +1064,100 @@ mod tests {
         ))
     }
 
+    #[cfg(feature = "render-diagnostics")]
+    #[test]
+    fn diagnostics_observe_reservation_resize_refusal_and_drop() {
+        let budget = ByteBudget::new(RenderResource::Capture, 10);
+        let clone = budget.clone();
+        let initial = budget.diagnostic_snapshot();
+        TEST_LIMIT_EVENTS.with_borrow_mut(|events| *events = Some(Vec::new()));
+        let mut charge = clone.reserve(6).unwrap();
+        charge.resize(10).unwrap();
+        assert!(charge.resize(11).is_err());
+        assert!(budget.reserve(usize::MAX).is_err());
+        let full = budget.diagnostic_snapshot();
+        assert_ne!(full.budget_id, 0);
+        assert_eq!(full.budget_id, initial.budget_id);
+        let cloned = clone.diagnostic_snapshot();
+        assert_eq!(cloned.budget_id, full.budget_id);
+        assert_eq!(cloned.live, full.live);
+        assert_eq!(cloned.peak, full.peak);
+        assert!(cloned.event_order > full.event_order);
+        assert!(cloned.elapsed_ns >= full.elapsed_ns);
+        assert_eq!(cloned.clock_origin_unix_ns, initial.clock_origin_unix_ns);
+        assert_eq!((full.live, full.peak, full.maximum), (10, 10, 10));
+        assert_eq!(full.limit_actions, 2);
+        assert_eq!(full.maximum_failed_request, usize::MAX);
+        charge.resize(3).unwrap();
+        assert_eq!(budget.diagnostic_snapshot().live, 3);
+        drop(charge);
+        let drained = budget.diagnostic_snapshot();
+        assert_eq!(drained.live, 0);
+        assert_eq!(drained.peak, full.peak);
+        assert_eq!(drained.limit_actions, full.limit_actions);
+        let row: serde_json::Value = serde_json::from_str(&drained.to_string()).unwrap();
+        assert_eq!(row["budget_id"], initial.budget_id);
+        assert_eq!(row["live"], budget.live());
+        assert_eq!(row["peak"], budget.peak());
+        assert_eq!(row["maximum"], budget.maximum());
+        assert_eq!(row["limit_actions"], 2);
+        assert_eq!(row["maximum_failed_request"], usize::MAX);
+        assert!(drained.event_order > full.event_order);
+        assert!(drained.elapsed_ns >= full.elapsed_ns);
+        assert!(drained.clock_origin_unix_ns > 0);
+        let failures = TEST_LIMIT_EVENTS.with_borrow_mut(|events| events.take().unwrap());
+        assert_eq!(failures.len(), full.limit_actions);
+        for raw in failures {
+            let event: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            let before = &event["before"];
+            let after = &event["after"];
+            assert_eq!(before["budget_id"], initial.budget_id);
+            assert_eq!(after["budget_id"], initial.budget_id);
+            assert_eq!(before["live"], full.live);
+            assert_eq!(after["live"], before["live"]);
+            assert_eq!(event["observed_live_at_refusal"], full.live);
+            assert!(event["requested"].as_u64() > before["maximum"].as_u64());
+            assert_eq!(after["limit_actions"].as_u64().unwrap(), before["limit_actions"].as_u64().unwrap() + 1);
+            assert!(after["event_order"].as_u64() > before["event_order"].as_u64());
+            assert!(after["elapsed_ns"].as_u64() >= before["elapsed_ns"].as_u64());
+        }
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    #[test]
+    fn diagnostics_distinguish_real_head_owners_and_deduplicate_shared_pools() {
+        let process = fixture(64);
+        let head = process.for_head();
+        let second_head = process.for_head();
+        let mut charges = Vec::new();
+        let initial = head.diagnostic_snapshots();
+        let ids: std::collections::HashSet<_> =
+            initial.iter().map(|sample| sample.budget_id).collect();
+        assert_eq!(ids.len(), initial.len());
+        for (index, sample) in initial.into_iter().enumerate() {
+            let owner = head.for_resource(sample.resource).unwrap();
+            charges.push(owner.reserve(index + 1).unwrap());
+            let observed = owner.diagnostic_snapshot();
+            assert_eq!(observed.resource, sample.resource);
+            assert_eq!(observed.budget_id, sample.budget_id);
+            assert_eq!(observed.live, index + 1);
+            let shared = PROCESS_RENDER_BUDGET_RESOURCES.contains(&sample.resource);
+            let process_observed = process.for_resource(sample.resource).unwrap().diagnostic_snapshot();
+            let second_observed = second_head.for_resource(sample.resource).unwrap().diagnostic_snapshot();
+            assert_eq!(process_observed.budget_id == sample.budget_id, shared);
+            assert_eq!(second_observed.budget_id == sample.budget_id, shared);
+            assert_eq!(process_observed.live, if shared { index + 1 } else { 0 });
+            assert_eq!(second_observed.live, if shared { index + 1 } else { 0 });
+        }
+        drop(charges);
+        for sample in head.diagnostic_snapshots() {
+            assert_eq!(sample.live, 0);
+            assert!(sample.peak > 0);
+            assert_eq!(sample.limit_actions, 0);
+            assert_eq!(sample.maximum_failed_request, 0);
+        }
+    }
+
     #[test]
     fn fleet_totals_count_process_storage_once() {
         let first = RenderBytes {
@@ -1045,6 +1290,7 @@ mod tests {
         #[cfg(target_pointer_width = "64")]
         {
             assert_eq!(std::mem::size_of::<RenderResource>(), 1);
+            #[cfg(not(feature = "render-diagnostics"))]
             assert_eq!(
                 std::mem::size_of::<ByteBudgetState>(),
                 3 * std::mem::size_of::<usize>()

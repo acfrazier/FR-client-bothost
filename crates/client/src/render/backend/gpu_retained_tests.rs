@@ -170,6 +170,70 @@ fn assert_pixel(bytes: &[u8], expected: [u8; 4]) {
     );
 }
 
+#[cfg(feature = "render-diagnostics")]
+fn diagnostic_events() -> Vec<serde_json::Value> {
+    let events: Vec<serde_json::Value> = super::present::diagnostics::take_test_events()
+        .into_iter()
+        .map(|row| serde_json::from_str(&row).expect("actual emitted event is valid JSON"))
+        .collect();
+    assert!(!events.is_empty(), "real lifecycle operations must emit observations");
+    let origin = events[0]["clock_origin_unix_ns"].as_u64().unwrap();
+    assert!(origin > 0);
+    for event in &events {
+        assert_eq!(event["clock_origin_unix_ns"], origin);
+        assert!(event["event_order"].as_u64().unwrap() > 0);
+    }
+    for pair in events.windows(2) {
+        assert!(pair[0]["event_order"].as_u64() < pair[1]["event_order"].as_u64());
+        assert!(pair[0]["elapsed_ns"].as_u64() <= pair[1]["elapsed_ns"].as_u64());
+    }
+    events
+}
+
+#[cfg(feature = "render-diagnostics")]
+#[test]
+#[ignore = "requires an explicitly configured headless GPU adapter"]
+fn diagnostics_keep_unregistered_held_resource_live_until_real_release() {
+    let (_serial, context) = fixture();
+    let baseline = super::present::process_retained_present_resource_count();
+    super::present::diagnostics::begin_test_capture();
+    let producer = Producer::new(context);
+    let first = producer.paint([0, 0, 0, 255], true);
+    let registration = first.try_register_consumer().unwrap();
+    let key = registration.diagnostic_key();
+    let next = producer.paint([255, 0, 0, 255], true);
+    let held = take_frame(&registration);
+    let token = held.present_token();
+    drop(registration);
+    producer.gate.retire();
+    assert_eq!(super::present::process_retained_present_resource_count(), baseline + 1);
+    drop(held);
+    assert_eq!(super::present::process_retained_present_resource_count(), baseline);
+    let events = diagnostic_events();
+    let unregistered = events
+        .iter()
+        .find(|event| event["kind"] == "unregistered")
+        .unwrap();
+    assert_eq!(unregistered["registration"], key);
+    assert_eq!(unregistered["token"], token.get());
+    assert_eq!(unregistered["held"], true);
+    assert_eq!(unregistered["registered"], false);
+    assert_eq!(unregistered["live_resources"], baseline + 1);
+    let retirement = events
+        .iter()
+        .position(|event| event["kind"] == "producer_retired")
+        .unwrap();
+    let release = events.iter().position(|event| event["kind"] == "released").unwrap();
+    assert!(retirement < release);
+    assert_eq!(events[release]["held"], false);
+    assert_eq!(events[release]["registered"], false);
+    assert_eq!(events[release]["token"], next.present_token().unwrap().get());
+    let final_event = events.last().unwrap();
+    assert_eq!(final_event["kind"], "resource_released");
+    assert_eq!(final_event["registration"], key);
+    assert_eq!(final_event["live_resources"], baseline);
+}
+
 #[test]
 #[ignore = "requires an explicitly configured headless GPU adapter"]
 fn untracked_texture_cannot_register_a_scene_consumer() {
@@ -214,11 +278,18 @@ fn untracked_texture_cannot_register_a_scene_consumer() {
 #[ignore = "requires an explicitly configured headless GPU adapter"]
 fn registered_delayed_consumer_keeps_n_across_next_paint() {
     let (_serial, context) = fixture();
+    #[cfg(feature = "render-diagnostics")]
+    let diagnostic_baseline = {
+        super::present::diagnostics::begin_test_capture();
+        super::present::process_retained_present_resource_count()
+    };
     let producer = Producer::new(context);
     let first = producer.paint([0, 0, 0, 255], true);
     let registration = first
         .try_register_consumer()
         .expect("tracked producer registers one retained texture");
+    #[cfg(feature = "render-diagnostics")]
+    let diagnostic_key = registration.diagnostic_key();
     let frame_n = producer.paint([255, 0, 0, 255], true);
     let token_n = frame_n
         .present_token()
@@ -248,6 +319,34 @@ fn registered_delayed_consumer_keeps_n_across_next_paint() {
     assert!(valid);
     drop(registration);
     assert_eq!(producer.gate.retained_present_bytes(), 0);
+    #[cfg(feature = "render-diagnostics")]
+    {
+        let events = diagnostic_events();
+        let held = events.iter().find(|event| event["kind"] == "held").unwrap();
+        let later = events
+            .iter()
+            .find(|event| event["kind"] == "presented_while_held")
+            .unwrap();
+        assert_eq!(held["registration"], diagnostic_key);
+        assert_eq!(later["registration"], diagnostic_key);
+        assert_eq!(held["token"], token_n.get());
+        assert_eq!(later["token"], token_n.get());
+        assert_eq!(later["producer_token"], frame_n1.present_token().unwrap().get());
+        assert_eq!(held["held"], true);
+        assert_eq!(held["registered"], true);
+        assert_eq!(later["held"], true);
+        assert_eq!(later["registered"], true);
+        assert_eq!(held["live_resources"], diagnostic_baseline + 1);
+        let released = events.iter().find(|event| event["kind"] == "released").unwrap();
+        assert_eq!(released["token"], token_n.get());
+        assert_eq!(released["held"], false);
+        let final_event = events.last().unwrap();
+        assert_eq!(final_event["kind"], "resource_released");
+        assert_eq!(final_event["registration"], diagnostic_key);
+        assert_eq!(final_event["live_resources"], diagnostic_baseline);
+        assert!(final_event["held"].is_null());
+        assert!(final_event["registered"].is_null());
+    }
 }
 
 #[test]

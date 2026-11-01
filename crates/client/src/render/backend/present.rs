@@ -10,6 +10,10 @@ use std::sync::{Arc, LazyLock, Mutex, OnceLock, Weak};
 #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "render-diagnostics")]
+#[path = "present_diagnostics.rs"]
+pub(super) mod diagnostics;
+
 static NEXT_PRESENT_TOKEN: AtomicUsize = AtomicUsize::new(1);
 static NEXT_CONSUMER_KEY: AtomicUsize = AtomicUsize::new(1);
 
@@ -257,6 +261,9 @@ pub(super) struct RetainedPresent {
     _storage: crate::profiling::Allocation,
     _permit: RetainedPresentPermit,
     gate: Weak<PresentGate>,
+    // Last: observe release only after the actual process permit has dropped.
+    #[cfg(feature = "render-diagnostics")]
+    diagnostics: diagnostics::Lifetime,
 }
 
 impl RetainedPresent {
@@ -421,6 +428,8 @@ impl PresentGate {
                     if retained.release_pending.swap(false, Ordering::AcqRel) {
                         retained_state.held = false;
                         retained_state.available = false;
+                        #[cfg(feature = "render-diagnostics")]
+                        diagnostics::released(&retained_state);
                     }
                     if retained_state.registered && !retained_state.held {
                         retained.encode_copy(&mut encoder, present);
@@ -435,6 +444,8 @@ impl PresentGate {
                     if retained.release_pending.swap(false, Ordering::AcqRel) {
                         retained_state.held = false;
                         retained_state.available = false;
+                        #[cfg(feature = "render-diagnostics")]
+                        diagnostics::released(&retained_state);
                     }
                     if retained_state.registered && !retained_state.held {
                         retained.encode_copy(&mut encoder, present);
@@ -456,12 +467,36 @@ impl PresentGate {
             .fetch_add(elapsed_ns(submit_started), Ordering::Relaxed);
         state.token = Some(token);
         state.has_valid_scene = valid_scene;
+        #[cfg(feature = "render-diagnostics")]
+        if let Some(held) = retained_guard.as_ref().filter(|held| held.held) {
+            diagnostics::emit(
+                "presented_while_held",
+                held.key.0.get(),
+                held.token.map(PresentToken::get),
+                Some(token.get()),
+                Some(held.held),
+                Some(held.registered),
+            );
+        }
         drop(retained_guard);
         PresentSubmit::Fresh(token)
     }
 
     fn apply_lifecycle(state: &mut PresentState, gate: &PresentGate) {
         if gate.retire_requested.load(Ordering::Acquire) {
+            #[cfg(feature = "render-diagnostics")]
+            if state.alive {
+                if let Some(retained) = state.consumer.as_ref() {
+                    diagnostics::emit(
+                        "producer_retired",
+                        retained.diagnostics.key,
+                        None,
+                        None,
+                        None,
+                        None,
+                    );
+                }
+            }
             state.alive = false;
             gate.unregister_requested.store(true, Ordering::Release);
         }
@@ -484,6 +519,15 @@ impl PresentGate {
         };
         retained_state.registered = false;
         retained_state.available = false;
+        #[cfg(feature = "render-diagnostics")]
+        diagnostics::emit(
+            "unregistered",
+            retained_state.key.0.get(),
+            retained_state.token.map(PresentToken::get),
+            None,
+            Some(retained_state.held),
+            Some(retained_state.registered),
+        );
         if !retained_state.held {
             state.consumer = None;
         }
@@ -580,6 +624,8 @@ impl super::TextureHandle {
             release_pending: AtomicBool::new(false),
             _permit: permit,
             gate: Arc::downgrade(&gate),
+            #[cfg(feature = "render-diagnostics")]
+            diagnostics: diagnostics::Lifetime { key: key.0.get() },
         });
         let mut state = match gate.state.try_lock() {
             Ok(state) => state,
@@ -596,6 +642,8 @@ impl super::TextureHandle {
         state.consumer = Some(Arc::clone(&retained));
         drop(state);
         drop(_registering);
+        #[cfg(feature = "render-diagnostics")]
+        diagnostics::emit("registered", key.0.get(), None, None, Some(false), Some(true));
         Ok(ConsumerRegistration {
             gate,
             retained,
@@ -613,6 +661,12 @@ impl Drop for RegisteringGuard<'_> {
 }
 
 impl ConsumerRegistration {
+    /// The actual registration identity, for binding observation to a host head.
+    #[cfg(feature = "render-diagnostics")]
+    pub fn diagnostic_key(&self) -> u64 {
+        self.key.0.get()
+    }
+
     /// Take the newest unheld offer, if one exists. A frame already held by
     /// this consumer remains immutable until its explicit release.
     pub fn try_take_frame(&self) -> Result<Option<ConsumerFrame>, ReadbackError> {
@@ -639,6 +693,8 @@ impl ConsumerRegistration {
         if self.retained.release_pending.swap(false, Ordering::AcqRel) {
             retained_state.held = false;
             retained_state.available = false;
+            #[cfg(feature = "render-diagnostics")]
+            diagnostics::released(&retained_state);
         }
         if !retained_state.registered || retained_state.key != self.key {
             return Err(ReadbackError::Retired);
@@ -651,6 +707,15 @@ impl ConsumerRegistration {
         };
         retained_state.held = true;
         retained_state.available = false;
+        #[cfg(feature = "render-diagnostics")]
+        diagnostics::emit(
+            "held",
+            self.key.0.get(),
+            Some(token.get()),
+            None,
+            Some(retained_state.held),
+            Some(retained_state.registered),
+        );
         Ok(Some(ConsumerFrame {
             retained: Arc::clone(&self.retained),
             key: self.key,
@@ -662,6 +727,8 @@ impl ConsumerRegistration {
 
 impl Drop for ConsumerRegistration {
     fn drop(&mut self) {
+        #[cfg(feature = "render-diagnostics")]
+        diagnostics::emit("unregister_requested", self.key.0.get(), None, None, None, None);
         let mut gate_state = match self.gate.state.try_lock() {
             Ok(state) => state,
             Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
@@ -684,6 +751,15 @@ impl Drop for ConsumerRegistration {
                 if retained_state.key == self.key {
                     retained_state.registered = false;
                     retained_state.available = false;
+                    #[cfg(feature = "render-diagnostics")]
+                    diagnostics::emit(
+                        "unregistered",
+                        self.key.0.get(),
+                        retained_state.token.map(PresentToken::get),
+                        None,
+                        Some(retained_state.held),
+                        Some(retained_state.registered),
+                    );
                     if !retained_state.held {
                         gate_state.consumer = None;
                     }
@@ -694,6 +770,15 @@ impl Drop for ConsumerRegistration {
                 if retained_state.key == self.key {
                     retained_state.registered = false;
                     retained_state.available = false;
+                    #[cfg(feature = "render-diagnostics")]
+                    diagnostics::emit(
+                        "unregistered",
+                        self.key.0.get(),
+                        retained_state.token.map(PresentToken::get),
+                        None,
+                        Some(retained_state.held),
+                        Some(retained_state.registered),
+                    );
                     if !retained_state.held {
                         gate_state.consumer = None;
                     }
@@ -726,12 +811,30 @@ impl ConsumerFrame {
     }
 
     pub(super) fn release_gate_resource_if_unregistered(&self) {
+        #[cfg(feature = "render-diagnostics")]
+        diagnostics::emit(
+            "release_requested",
+            self.key.0.get(),
+            Some(self.token.get()),
+            None,
+            None,
+            None,
+        );
         let released = {
             let mut state = match self.retained.state.try_lock() {
                 Ok(state) => state,
                 Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
                 Err(std::sync::TryLockError::WouldBlock) => {
                     self.retained.release_pending.store(true, Ordering::Release);
+                    #[cfg(feature = "render-diagnostics")]
+                    diagnostics::emit(
+                        "release_deferred",
+                        self.key.0.get(),
+                        Some(self.token.get()),
+                        None,
+                        None,
+                        None,
+                    );
                     return;
                 }
             };
@@ -743,6 +846,15 @@ impl ConsumerFrame {
             if state.key == self.key && state.held && state.token == Some(self.token) {
                 state.held = false;
                 state.available = false;
+                #[cfg(feature = "render-diagnostics")]
+                diagnostics::emit(
+                    "released",
+                    self.key.0.get(),
+                    Some(self.token.get()),
+                    None,
+                    Some(state.held),
+                    Some(state.registered),
+                );
             }
             if retired {
                 state.registered = false;
@@ -852,7 +964,17 @@ pub mod test_hooks {
     pub fn scalar_receipt() -> ScalarReceipt {
         #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
         let diagnostic_bytes = std::mem::size_of::<LazyLock<RetainedPresentCounters>>()
-            + super::super::readback::diagnostic_storage_bytes();
+            + super::super::readback::diagnostic_storage_bytes()
+            + {
+                #[cfg(feature = "render-diagnostics")]
+                {
+                    diagnostics::static_storage_bytes()
+                }
+                #[cfg(not(feature = "render-diagnostics"))]
+                {
+                    0
+                }
+            };
         #[cfg(not(any(feature = "render-diagnostics", feature = "draw-memory-profile")))]
         let diagnostic_bytes = 0;
         ScalarReceipt {
@@ -869,6 +991,33 @@ pub mod test_hooks {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        #[cfg(not(feature = "render-diagnostics"))]
+        fn production_retained_owner_keeps_the_frozen_layout() {
+            // This is the complete owner layout before lifetime observation.
+            #[expect(dead_code, reason = "layout-only pre-diagnostics regression witness")]
+            struct ProductionOwner {
+                device: wgpu::Device,
+                queue: wgpu::Queue,
+                geometry: CaptureGeometry,
+                texture: wgpu::Texture,
+                view: wgpu::TextureView,
+                state: Mutex<RetainedState>,
+                release_pending: AtomicBool,
+                storage: crate::profiling::Allocation,
+                permit: RetainedPresentPermit,
+                gate: Weak<PresentGate>,
+            }
+            assert_eq!(
+                std::mem::size_of::<RetainedPresent>(),
+                std::mem::size_of::<ProductionOwner>(),
+            );
+            assert_eq!(
+                std::mem::align_of::<RetainedPresent>(),
+                std::mem::align_of::<ProductionOwner>(),
+            );
+        }
 
         #[test]
         fn retained_present_scalar_size_tripwires() {
