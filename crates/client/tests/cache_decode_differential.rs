@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -28,7 +28,7 @@ use client::io::jagfile::JagFile;
 use client::io::ondemand::OnDemand;
 use client::io::{bunzip2, try_bunzip2, ClientRevision, Packet};
 use client::unpack::{
-    snapshot_state, unpack_cache_from_store, version_hash, ArchiveStats, Manifest, SnapshotState,
+    snapshot_state, unpack_cache_from_store, ArchiveStats, Manifest, SnapshotState,
 };
 
 const CORPUS_ENV: &str = "CACHE_DECODE_CORPUS_ROOT";
@@ -857,6 +857,7 @@ fn check_snapshot_stats(
             stats.total,
             archive.versions.len(),
             stats.unpacked,
+            stats.skipped,
             archive.zero_versions,
             stats.bytes,
             snapshot_bytes
@@ -1145,7 +1146,7 @@ fn run_corpus_revision(revision: &str, revision_kind: ClientRevision) -> Result<
     Ok(())
 }
 
-fn manifest_stats(manifest: &Manifest, name: &str) -> Option<&ArchiveStats> {
+fn manifest_stats<'a>(manifest: &'a Manifest, name: &str) -> Option<&'a ArchiveStats> {
     match name {
         "models" => Some(&manifest.models),
         "anims" => Some(&manifest.anims),
@@ -1562,6 +1563,7 @@ fn run_fixed_bzip() -> Result<(), String> {
     crc_bad[6] ^= 0x80;
     let mut block_bad = original.clone();
     block_bad[0] ^= 0x01;
+    let panic_result = std::panic::catch_unwind(|| bunzip2(&crc_bad));
     let mut malformed = vec![
         ("corrupt-crc".to_string(), crc_bad),
         ("corrupt-block-magic".to_string(), block_bad),
@@ -1582,7 +1584,6 @@ fn run_fixed_bzip() -> Result<(), String> {
         }
         outcome.push_str(&format!("{name}=fallible-error\n"));
     }
-    let panic_result = std::panic::catch_unwind(|| bunzip2(&crc_bad));
     if panic_result.is_ok() {
         return Err("bunzip2 panic wrapper returned on corrupt CRC".into());
     }
@@ -1616,9 +1617,9 @@ fn strict_snapshot_outcome(
                 &format!("snapshot-strict/{label}.txt"),
                 b"unexpected-success\n",
             )?;
-            Err(format!(
+            return Err(format!(
                 "snapshot unexpectedly accepted malformed gzip {label}"
-            ))
+            ));
         }
         Err(error) => {
             let message = error.to_string();
