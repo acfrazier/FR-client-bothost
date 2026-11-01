@@ -331,6 +331,15 @@ fn append_u24(bytes: &mut Vec<u8>, value: usize) {
     ]);
 }
 
+fn frozen_outer_jag(packed_hex: &str, unpacked_size: usize) -> Vec<u8> {
+    let packed = frozen_hex(packed_hex);
+    let mut jag = Vec::with_capacity(6 + packed.len());
+    append_u24(&mut jag, unpacked_size);
+    append_u24(&mut jag, packed.len());
+    jag.extend_from_slice(&packed);
+    jag
+}
+
 fn first_difference(current: &[u8], expected: &[u8]) -> Option<usize> {
     let shared = current.len().min(expected.len());
     current
@@ -1264,7 +1273,7 @@ fn write_cache_bundle(
         .map_err(|error| format!("write synthetic versionlist: {error}"))?;
     for name in JAGS {
         if name != "versionlist" {
-            fs::write(client_dir.join(name), b"\0\0\x06\0\0\x06\0\0")
+            fs::write(client_dir.join(name), b"\0\0\x02\0\0\x02\0\0")
                 .map_err(|error| format!("write synthetic {name} JAG: {error}"))?;
         }
     }
@@ -1652,7 +1661,9 @@ fn run_fixed_gzip() -> Result<(), String> {
     let capture_root = capture_root()?;
     let baseline_root = baseline_root()?.map(|root| root.join("fixed/gzip"));
     let mut capture = CaptureSet::new(group_path(&capture_root, "fixed/gzip"))?;
-    let versionlist = frozen_hex(GZIP_CASES_VERSIONLIST);
+    // The frozen constants contain headerless bzip payloads. Their decoded
+    // JAG body lengths are 130 bytes here and 106 bytes in the two cases below.
+    let versionlist = frozen_outer_jag(GZIP_CASES_VERSIONLIST, 130);
     let (versionlist_jag, versionlist_coverage) =
         capture_jag_bytes(&mut capture, "gzip-cases-versionlist", &versionlist)?;
     if versionlist_coverage.layout != "outer-compressed" {
@@ -1722,7 +1733,7 @@ fn run_fixed_gzip() -> Result<(), String> {
         ("corrupt-deflate", BAD_DEFLATE_VERSIONLIST, 3usize),
         ("corrupt-gzip-crc", BAD_GZIP_CRC_VERSIONLIST, 4usize),
     ] {
-        let malformed_versionlist = frozen_hex(fixture_hex);
+        let malformed_versionlist = frozen_outer_jag(fixture_hex, 106);
         let (malformed_jag, coverage) = capture_jag_bytes(
             &mut capture,
             &format!("{label}-versionlist"),
