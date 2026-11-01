@@ -216,10 +216,7 @@ fn diagnostics_keep_unregistered_held_resource_live_until_real_release() {
         baseline + 1
     );
     drop(held);
-    assert_eq!(
-        present::process_retained_present_resource_count(),
-        baseline
-    );
+    assert_eq!(present::process_retained_present_resource_count(), baseline);
     let events = diagnostic_events();
     let unregistered = events
         .iter()
