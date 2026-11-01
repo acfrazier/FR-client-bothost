@@ -1,4 +1,6 @@
 use super::{context, GpuContext, PresentGate, PresentSubmit};
+#[cfg(feature = "render-diagnostics")]
+use crate::render::backend::present;
 use crate::render::backend::{
     configure_retained_present_budget, CaptureGeometry, ConsumerFrame, PendingReadback,
     PresentToken, ReadbackBudget, ReadbackError, ReadbackKind, TextureHandle,
@@ -172,7 +174,7 @@ fn assert_pixel(bytes: &[u8], expected: [u8; 4]) {
 
 #[cfg(feature = "render-diagnostics")]
 fn diagnostic_events() -> Vec<serde_json::Value> {
-    let events: Vec<serde_json::Value> = super::present::diagnostics::take_test_events()
+    let events: Vec<serde_json::Value> = present::diagnostics::take_test_events()
         .into_iter()
         .map(|row| serde_json::from_str(&row).expect("actual emitted event is valid JSON"))
         .collect();
@@ -198,8 +200,8 @@ fn diagnostic_events() -> Vec<serde_json::Value> {
 #[ignore = "requires an explicitly configured headless GPU adapter"]
 fn diagnostics_keep_unregistered_held_resource_live_until_real_release() {
     let (_serial, context) = fixture();
-    let baseline = super::present::process_retained_present_resource_count();
-    super::present::diagnostics::begin_test_capture();
+    let baseline = present::process_retained_present_resource_count();
+    present::diagnostics::begin_test_capture();
     let producer = Producer::new(context);
     let first = producer.paint([0, 0, 0, 255], true);
     let registration = first.try_register_consumer().unwrap();
@@ -210,12 +212,12 @@ fn diagnostics_keep_unregistered_held_resource_live_until_real_release() {
     drop(registration);
     producer.gate.retire();
     assert_eq!(
-        super::present::process_retained_present_resource_count(),
+        present::process_retained_present_resource_count(),
         baseline + 1
     );
     drop(held);
     assert_eq!(
-        super::present::process_retained_present_resource_count(),
+        present::process_retained_present_resource_count(),
         baseline
     );
     let events = diagnostic_events();
@@ -295,8 +297,8 @@ fn registered_delayed_consumer_keeps_n_across_next_paint() {
     let (_serial, context) = fixture();
     #[cfg(feature = "render-diagnostics")]
     let diagnostic_baseline = {
-        super::present::diagnostics::begin_test_capture();
-        super::present::process_retained_present_resource_count()
+        present::diagnostics::begin_test_capture();
+        present::process_retained_present_resource_count()
     };
     let producer = Producer::new(context);
     let first = producer.paint([0, 0, 0, 255], true);
