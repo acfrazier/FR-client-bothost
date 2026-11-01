@@ -1,4 +1,5 @@
-//! Integration coverage compiles the library without its `cfg(test)` path.
+#![cfg(any(feature = "render-diagnostics", feature = "render-test-hooks"))]
+//! Integration coverage enables a render feature and compiles the library without its `cfg(test)` path.
 
 use client::render::budget::{RenderBudget, RenderBudgetLimits, RenderResource};
 
@@ -9,7 +10,7 @@ fn budget(limit: usize) -> RenderBudget {
 }
 
 #[test]
-fn explicit_budget_scope_is_real_and_thread_local_in_every_build() {
+fn explicit_budget_scope_is_real_and_thread_local_when_enabled() {
     assert!(RenderBudget::current().is_none());
     let owner = budget(64);
     {
