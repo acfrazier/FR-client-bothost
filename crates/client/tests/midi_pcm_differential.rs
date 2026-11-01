@@ -51,6 +51,21 @@ const PROGRAM: u16 = 34;
 const BANK: u16 = 0;
 const PITCH: u8 = 45;
 const VELOCITY: u8 = 100;
+const ACCEPTED_LOUD_FONT_SHA256: &str =
+    "b12f6c5d183fa351c50c209c0960badae79f49dc760ad1ff87a2fdcf76a66545";
+const ACCEPTED_INVALID_LOOP_SHA256: &str =
+    "7be33e97ffbf28fa2578ddbb429ad60777c2be5c1e963e075079fb246e2616dc";
+const OPERATOR_RULING: &str = "2026-11-01: PR 59 gain cap and PR 60/61 malformed-loop tolerance; DEPS-BATCH-025/impl/matrix-linux/pcm-197/pcm-197/midi-pcm-differential.json";
+const PCM_CASES: [&str; 8] = [
+    "scape-main",
+    "scape-cave",
+    "scape-wild",
+    "midi-controls",
+    "rpgmaker-loop-marked-one-shot",
+    "rpgmaker-loop-two-passes",
+    "loud-negative-attenuation",
+    "zero-attenuation-control",
+];
 
 #[derive(Clone)]
 struct InputAsset {
@@ -107,6 +122,85 @@ struct Capture {
     pcm: Vec<u8>,
 }
 
+struct FixtureCorrections<'a> {
+    candidate_version: &'a str,
+    gain_cap_reference: &'a [u8],
+    control_pcm: &'a [u8],
+}
+
+impl FixtureCorrections<'_> {
+    fn accepts_transition(&self, baseline_version: &str) -> bool {
+        baseline_version == "1.3.6" && matches!(self.candidate_version, "1.3.7" | "1.3.8")
+    }
+
+    fn accepts_gain_cap(
+        &self,
+        baseline_version: &str,
+        case: &str,
+        candidate: &[u8],
+        comparison: &Value,
+    ) -> bool {
+        self.accepts_transition(baseline_version)
+            && case == "loud-negative-attenuation"
+            && candidate == self.gain_cap_reference
+            && candidate.len() == 88_200 * CHANNELS * BYTES_PER_SAMPLE
+            && comparison["frame_count_matches"] == Value::Bool(true)
+            && comparison["finite_comparison"] == Value::Bool(true)
+            && comparison["changed_sample_count"] == json!(8_192)
+    }
+
+    fn accepts_sample_loop(
+        &self,
+        baseline_version: &str,
+        baseline: &Value,
+        candidate: &Value,
+        candidate_dir: &Path,
+    ) -> bool {
+        if !self.accepts_transition(baseline_version)
+            || baseline["parser_status"] != "rejected"
+            || baseline.get("render_capture").is_some()
+            || candidate["parser_status"] != "accepted"
+            || candidate["production_load_status"] != "accepted"
+            || candidate["production_render_status"] != "completed"
+            || candidate["fixture_loop_parameters_match"] != Value::Bool(true)
+        {
+            return false;
+        }
+        let Some(filename) = candidate["render_capture"]["pcm_file"].as_str() else {
+            return false;
+        };
+        let pcm =
+            fs::read(candidate_dir.join(filename)).expect("read accepted invalid-loop fixture PCM");
+        pcm.len() == 66_150 * CHANNELS * BYTES_PER_SAMPLE
+            && self.control_pcm.get(..pcm.len()) == Some(pcm.as_slice())
+    }
+}
+
+fn validate_accepted_fixture_identity(fixtures: &Fixtures) {
+    assert_eq!(fixtures.loud_font.sha256, ACCEPTED_LOUD_FONT_SHA256);
+    assert_eq!(
+        fixtures.invalid_sample_loop_font.sha256,
+        ACCEPTED_INVALID_LOOP_SHA256
+    );
+}
+
+fn render_gain_cap_reference(fixtures: &Fixtures) -> Vec<u8> {
+    // This one-region SF2 has no velocity-dependent generators. Zero attenuation
+    // and velocity 127 produce exactly the accepted 0 dB note gain.
+    let mut midi = RustyMidi::with_sound_font(&fixtures.control_font.path.display().to_string())
+        .expect("load zero-attenuation gain-cap reference");
+    let reference = render_case(
+        &mut midi,
+        "gain-cap-reference",
+        &loud_fixture_midi(127),
+        4 * SAMPLE_RATE,
+        &[64],
+        false,
+    );
+    assert!(reference.finite && reference.nonzero_sample_count > 0);
+    reference.pcm
+}
+
 #[test]
 fn captures_production_pcm_and_compares_optional_baseline() {
     if std::env::var_os("DEPS_BATCH_025_PCM_ODD_SMPL_CHILD").is_some() {
@@ -126,6 +220,7 @@ fn captures_production_pcm_and_compares_optional_baseline() {
 
     let assets = load_corpus(&corpus_root);
     let fixtures = freeze_fixtures(&fixture_dir);
+    validate_accepted_fixture_identity(&fixtures);
     let rustysynth_version = locked_rustysynth_version();
     assert!(
         matches!(rustysynth_version.as_str(), "1.3.6" | "1.3.7" | "1.3.8"),
@@ -191,7 +286,7 @@ fn captures_production_pcm_and_compares_optional_baseline() {
         "explicit production SoundFont loaded"
     );
 
-    let mut captures = Vec::with_capacity(10);
+    let mut captures = Vec::with_capacity(PCM_CASES.len());
     for song in [
         (&assets[2], "scape-main"),
         (&assets[3], "scape-cave"),
@@ -279,6 +374,25 @@ fn captures_production_pcm_and_compares_optional_baseline() {
     );
     captures.push(control_capture);
 
+    let corrected_version = matches!(rustysynth_version.as_str(), "1.3.7" | "1.3.8");
+    let gain_cap_reference = if corrected_version {
+        render_gain_cap_reference(&fixtures)
+    } else {
+        Vec::new()
+    };
+    let gain_cap_matches_reference = !corrected_version
+        || captures
+            .iter()
+            .find(|capture| capture.id == "loud-negative-attenuation")
+            .expect("loud fixture was captured")
+            .pcm
+            == gain_cap_reference;
+    let corrections = FixtureCorrections {
+        candidate_version: &rustysynth_version,
+        gain_cap_reference: &gain_cap_reference,
+        control_pcm: &captures.last().expect("control fixture was captured").pcm,
+    };
+
     let mut comparison_failures = Vec::new();
     let baseline_dir = optional_env_path("DEPS_BATCH_025_PCM_BASELINE_DIR");
     let (baseline_version, comparisons, baseline_receipt) =
@@ -307,8 +421,15 @@ fn captures_production_pcm_and_compares_optional_baseline() {
                         baseline_pcm_path.display()
                     )
                 });
-                let comparison = compare_pcm(&capture.pcm, &baseline_pcm);
-                if comparison["exact_bit_match"] != Value::Bool(true) {
+                let mut comparison = compare_pcm(&capture.pcm, &baseline_pcm);
+                let accepted_gain_cap =
+                    corrections.accepts_gain_cap(&version, capture.id, &capture.pcm, &comparison);
+                if accepted_gain_cap {
+                    comparison["operator_acceptance"] = json!("accepted-PR59-gain-cap");
+                    comparison["operator_ruling"] = json!(OPERATOR_RULING);
+                    comparison["matches_zero_db_reference"] = json!(true);
+                }
+                if comparison["exact_bit_match"] != Value::Bool(true) && !accepted_gain_cap {
                     comparison_failures.push(format!(
                         "{}: {}",
                         capture.id,
@@ -334,6 +455,7 @@ fn captures_production_pcm_and_compares_optional_baseline() {
             &capture_dir,
             &odd_smpl_outcome,
             &sample_loop_outcome,
+            &corrections,
             &mut comparison_failures,
         ),
         _ => Vec::new(),
@@ -362,6 +484,17 @@ fn captures_production_pcm_and_compares_optional_baseline() {
 
     let mut capture_receipts = Vec::with_capacity(captures.len());
     let mut render_failures = edge_case_failures;
+    if !gain_cap_matches_reference {
+        render_failures
+            .push("loud fixture does not match the exact 0 dB gain-cap reference".into());
+    }
+    if corrected_version {
+        fs::write(
+            capture_dir.join("gain-cap-reference.f32le"),
+            &gain_cap_reference,
+        )
+        .expect("write exact gain-cap expectation reference");
+    }
     for capture in &captures {
         let filename = format!("{}.f32le", capture.id);
         let path = capture_dir.join(&filename);
@@ -541,6 +674,14 @@ fn captures_production_pcm_and_compares_optional_baseline() {
             "direct_rustysynth_loop_substitute_used": false,
         },
         "captures": capture_receipts,
+        "accepted_fixture_expectations": {
+            "operator_ruling": OPERATOR_RULING,
+            "loud_font_sha256": ACCEPTED_LOUD_FONT_SHA256,
+            "invalid_loop_font_sha256": ACCEPTED_INVALID_LOOP_SHA256,
+            "gain_cap_reference_velocity": 127,
+            "gain_cap_reference_applied": corrected_version,
+            "gain_cap_matches_exact_reference": gain_cap_matches_reference,
+        },
         "comparison": {
             "baseline_version": baseline_version,
             "exact_bit_comparison_only": true,
@@ -570,6 +711,122 @@ fn captures_production_pcm_and_compares_optional_baseline() {
         "PCM or SF2 parser/load outcome differs from baseline; differences require operator ruling and are not accepted: see {}: {}",
         receipt_path.display(),
         comparison_failures.join("; ")
+    );
+}
+
+#[test]
+#[ignore = "compare retained PCM without replaying the unchanged game-song renderer"]
+fn retained_pcm_comparison_uses_operator_ruling() {
+    let candidate_dir = required_env_path("DEPS_BATCH_025_PCM_EXISTING_CAPTURE_DIR");
+    let baseline_dir = required_env_path("DEPS_BATCH_025_PCM_BASELINE_DIR");
+    let assets = load_corpus(&required_env_path("DEPS_BATCH_025_PCM_CORPUS"));
+    let fixtures = freeze_fixtures(&required_env_path("DEPS_BATCH_025_PCM_FIXTURE_DIR"));
+    validate_accepted_fixture_identity(&fixtures);
+    let read_receipt = |root: &Path| -> Value {
+        serde_json::from_slice(
+            &fs::read(root.join("midi-pcm-differential.json")).expect("read retained PCM receipt"),
+        )
+        .expect("parse retained PCM receipt")
+    };
+    let candidate_receipt = read_receipt(&candidate_dir);
+    let baseline_receipt = read_receipt(&baseline_dir);
+    validate_baseline_identity(&candidate_receipt, &assets, &fixtures);
+    validate_baseline_identity(&baseline_receipt, &assets, &fixtures);
+    let candidate_version = locked_rustysynth_version();
+    assert_eq!(candidate_receipt["rustysynth_version"], candidate_version);
+    let baseline_version = baseline_receipt["rustysynth_version"]
+        .as_str()
+        .expect("retained baseline version");
+    let control_pcm = fs::read(candidate_dir.join("zero-attenuation-control.f32le"))
+        .expect("read retained control PCM");
+    let gain_cap_reference = render_gain_cap_reference(&fixtures);
+    let corrections = FixtureCorrections {
+        candidate_version: &candidate_version,
+        gain_cap_reference: &gain_cap_reference,
+        control_pcm: &control_pcm,
+    };
+    assert_eq!(
+        candidate_receipt["captures"]
+            .as_array()
+            .expect("candidate cases")
+            .len(),
+        PCM_CASES.len()
+    );
+    assert_eq!(
+        baseline_receipt["captures"]
+            .as_array()
+            .expect("baseline cases")
+            .len(),
+        PCM_CASES.len()
+    );
+    let mut failures = Vec::new();
+    let mut comparisons = Vec::with_capacity(PCM_CASES.len());
+    for case in PCM_CASES {
+        let filename = format!("{case}.f32le");
+        let candidate_storage = if case == "zero-attenuation-control" {
+            None
+        } else {
+            Some(fs::read(candidate_dir.join(&filename)).expect("read retained candidate PCM"))
+        };
+        let candidate = candidate_storage.as_deref().unwrap_or(&control_pcm);
+        let baseline = fs::read(baseline_dir.join(&filename)).expect("read retained baseline PCM");
+        for (receipt, bytes) in [
+            (&candidate_receipt, candidate),
+            (&baseline_receipt, baseline.as_slice()),
+        ] {
+            let row = receipt["captures"]
+                .as_array()
+                .expect("retained case list")
+                .iter()
+                .find(|row| row["case"] == case)
+                .expect("each retained case is present");
+            assert_eq!(row["pcm_file"], filename);
+            assert_eq!(row["pcm_sha256"], sha256(bytes));
+        }
+        let mut comparison = compare_pcm(candidate, &baseline);
+        let accepted_gain_cap =
+            corrections.accepts_gain_cap(baseline_version, case, candidate, &comparison);
+        if accepted_gain_cap {
+            comparison["operator_acceptance"] = json!("accepted-PR59-gain-cap");
+            comparison["operator_ruling"] = json!(OPERATOR_RULING);
+            comparison["matches_zero_db_reference"] = json!(true);
+        } else if comparison["exact_bit_match"] != Value::Bool(true) {
+            failures.push(format!("{case}: unapproved PCM difference"));
+        }
+        comparisons.push(json!({"case": case, "result": comparison}));
+    }
+    let special_cases = compare_sf2_edge_cases(
+        &baseline_receipt,
+        &baseline_dir,
+        &candidate_dir,
+        &candidate_receipt["sf2_edge_cases"]["odd_smpl_chunk"]["outcome"],
+        &candidate_receipt["sf2_edge_cases"]["invalid_sample_loop"]["outcome"],
+        &corrections,
+        &mut failures,
+    );
+    let result = json!({
+        "result": if failures.is_empty() { "PASS" } else { "FAIL" },
+        "operator_ruling": OPERATOR_RULING,
+        "baseline_version": baseline_version,
+        "candidate_version": candidate_version,
+        "loud_fixture_sha256": ACCEPTED_LOUD_FONT_SHA256,
+        "invalid_loop_fixture_sha256": ACCEPTED_INVALID_LOOP_SHA256,
+        "gain_cap_reference_sha256": sha256(&gain_cap_reference),
+        "comparison": comparisons,
+        "sf2_edge_cases": special_cases,
+        "failures": failures,
+        "tolerance_applied": false,
+    });
+    let path = candidate_dir.join("operator-ruling-comparison.json");
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&result).expect("serialize ruling comparison"),
+    )
+    .expect("write ruling comparison");
+    println!("Retained PCM ruling comparison: {}", path.display());
+    assert!(
+        failures.is_empty(),
+        "unapproved retained PCM differences: {failures:?}"
     );
 }
 
@@ -634,7 +891,7 @@ fn freeze_fixtures(root: &Path) -> Fixtures {
     let control_font_bytes = build_sf2(0);
     let invalid_sample_loop_font_bytes = build_invalid_sample_loop_sf2();
     let odd_smpl_font_bytes = build_odd_smpl_sf2();
-    let loud_midi_bytes = loud_fixture_midi();
+    let loud_midi_bytes = loud_fixture_midi(VELOCITY);
     let controls_midi_bytes = controls_midi();
     let loop_midi_bytes = rpgmaker_loop_midi();
     let sample_loop_midi_bytes = sample_loop_midi();
@@ -1162,6 +1419,7 @@ fn compare_sf2_edge_cases(
     candidate_dir: &Path,
     odd_smpl_candidate: &Value,
     sample_loop_candidate: &Value,
+    corrections: &FixtureCorrections<'_>,
     failures: &mut Vec<String>,
 ) -> Vec<Value> {
     let baseline_edges = &baseline_receipt["sf2_edge_cases"];
@@ -1176,10 +1434,18 @@ fn compare_sf2_edge_cases(
     }
 
     let baseline_sample_loop = &baseline_edges["invalid_sample_loop"]["outcome"];
+    let accepted_loop = corrections.accepts_sample_loop(
+        baseline_receipt["rustysynth_version"]
+            .as_str()
+            .expect("baseline version"),
+        baseline_sample_loop,
+        sample_loop_candidate,
+        candidate_dir,
+    );
     let candidate_loop_signature = sample_loop_signature(sample_loop_candidate);
     let baseline_loop_signature = sample_loop_signature(baseline_sample_loop);
     let loop_outcome_match = candidate_loop_signature == baseline_loop_signature;
-    if !loop_outcome_match {
+    if !loop_outcome_match && !accepted_loop {
         failures.push("invalid-sample-loop: parser/load outcome differs from baseline".to_owned());
     }
 
@@ -1206,9 +1472,12 @@ fn compare_sf2_edge_cases(
         }
         (None, None) => None,
         _ => {
-            failures.push(
-                "invalid-sample-loop: one version rendered PCM and the other did not".to_owned(),
-            );
+            if !accepted_loop {
+                failures.push(
+                    "invalid-sample-loop: one version rendered PCM and the other did not"
+                        .to_owned(),
+                );
+            }
             None
         }
     };
@@ -1226,7 +1495,8 @@ fn compare_sf2_edge_cases(
             "baseline_signature": baseline_loop_signature,
             "same_outcome": loop_outcome_match,
             "pcm_comparison": pcm_comparison,
-            "operator_acceptance": "not-decided",
+            "operator_acceptance": if accepted_loop { "accepted-PR60-61-malformed-loop" } else { "not-decided" },
+            "operator_ruling": if accepted_loop { Some(OPERATOR_RULING) } else { None },
         }),
     ]
 }
@@ -1330,13 +1600,13 @@ fn rpgmaker_two_pass_frames(midi_bytes: &[u8]) -> usize {
     loop_marker_block + blocks_to_second_eof * SEQUENCER_BLOCK_FRAMES
 }
 
-fn loud_fixture_midi() -> Vec<u8> {
+fn loud_fixture_midi(velocity: u8) -> Vec<u8> {
     build_midi(
         vec![
             (0, vec![0xff, 0x51, 0x03, 0x07, 0xa1, 0x20]),
             (0, vec![0xc0, PROGRAM as u8]),
             (0, vec![0xb0, 7, 100]),
-            (0, vec![0x90, PITCH, VELOCITY]),
+            (0, vec![0x90, PITCH, velocity]),
             (1_920, vec![0x80, PITCH, 0]),
         ],
         3_840,
