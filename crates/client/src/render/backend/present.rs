@@ -267,6 +267,9 @@ pub(super) struct RetainedPresent {
 }
 
 impl RetainedPresent {
+    // Inlined into the frame-submit path so production builds keep the exact
+    // code that two inline copies produced before the retained present existed.
+    #[inline(always)]
     fn encode_copy(&self, encoder: &mut wgpu::CommandEncoder, present: &wgpu::Texture) {
         #[cfg(any(feature = "render-diagnostics", feature = "draw-memory-profile"))]
         let started = Instant::now();
