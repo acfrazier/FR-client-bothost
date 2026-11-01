@@ -1463,7 +1463,8 @@ fn build_sf2_with_options(
     let mut info = Vec::new();
     append_chunk(b"ifil", &[2, 0, 1, 0], &mut info);
     append_chunk(b"isng", b"EMU8000\0", &mut info);
-    append_chunk(b"INAM", b"DEPS-BATCH-025\0", &mut info);
+    // SF2 INFO strings include their even-sized NUL padding in the chunk length.
+    append_chunk(b"INAM", b"DEPS-BATCH-025\0\0", &mut info);
     let standard_sample_bytes = (SF2_SAMPLE_FRAMES + SF2_GUARD_FRAMES) * 2;
 
     let odd_smpl_extra_bytes = if odd_smpl_chunk { 1 } else { 0 };
