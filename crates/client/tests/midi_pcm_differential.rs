@@ -10,7 +10,7 @@
 //! DEPS_BATCH_025_PCM_CORPUS=/Volumes/dev-scratch/274bot-evidence/DEPS-BATCH-025/impl/corpus/audio/289 \
 //! DEPS_BATCH_025_PCM_CAPTURE_DIR=/Volumes/dev-scratch/274bot-evidence/DEPS-BATCH-025/impl/pcm/1.3.6 \
 //! DEPS_BATCH_025_PCM_FIXTURE_DIR=/Volumes/dev-scratch/274bot-evidence/DEPS-BATCH-025/impl/pcm-fixtures \
-//! cargo test -p client --features audio,test-support --test midi_pcm_differential -- --nocapture
+//! cargo test -p client --features audio,test-support --test midi_pcm_differential captures_production_pcm_and_compares_optional_baseline -- --ignored --nocapture
 //! ```
 //!
 //! To compare against an earlier capture, also set
@@ -202,6 +202,7 @@ fn render_gain_cap_reference(fixtures: &Fixtures) -> Vec<u8> {
 }
 
 #[test]
+#[ignore = "explicit DEPS-BATCH-025 evidence-corpus job; see module documentation"]
 fn captures_production_pcm_and_compares_optional_baseline() {
     if std::env::var_os("DEPS_BATCH_025_PCM_ODD_SMPL_CHILD").is_some() {
         let path = required_env_path("DEPS_BATCH_025_PCM_ODD_SMPL_PATH");
@@ -1295,6 +1296,7 @@ fn run_odd_smpl_isolated(font: &FrozenFixture, capture_dir: &Path) -> Value {
         "--exact",
         "captures_production_pcm_and_compares_optional_baseline",
         "--nocapture",
+        "--ignored",
     ])
     .env("DEPS_BATCH_025_PCM_ODD_SMPL_CHILD", "1")
     .env("DEPS_BATCH_025_PCM_ODD_SMPL_PATH", &font.path)
