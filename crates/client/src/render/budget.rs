@@ -8,6 +8,8 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
+#[cfg(feature = "render-diagnostics")]
+use std::io::Write as _;
 use std::marker::PhantomData;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -224,9 +226,11 @@ pub struct RenderBudgetSnapshot {
 #[cfg(feature = "render-diagnostics")]
 impl RenderBudgetSnapshot {
     pub fn emit(self, stage: &'static str, slot: u64, head_generation: u64) {
-        eprintln!(
+        writeln!(
+            std::io::stderr().lock(),
             "render_budget_sample={{\"schema\":\"render-budget-sample-v1\",\"stage\":\"{stage}\",\"slot\":{slot},\"head_generation\":{head_generation},\"budget\":{self}}}"
-        );
+        )
+        .expect("write render budget sample");
     }
 }
 
@@ -353,7 +357,10 @@ impl ByteBudget {
         let event = format_args!(
             "{{\"schema\":\"render-budget-limit-v1\",\"requested\":{requested},\"observed_live_at_refusal\":{observed_live_at_refusal},\"before\":{before},\"after\":{after}}}"
         );
-        eprintln!("render_budget_limit={event}");
+        // Write to the real diagnostic stream without libtest's allocating
+        // thread-local output capture on an otherwise allocation-free refusal.
+        writeln!(std::io::stderr().lock(), "render_budget_limit={event}")
+            .expect("write render budget limit");
         #[cfg(test)]
         TEST_LIMIT_EVENTS.with_borrow_mut(|events| {
             if let Some(events) = events {
