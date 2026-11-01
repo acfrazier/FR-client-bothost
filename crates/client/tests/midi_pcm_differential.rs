@@ -1601,7 +1601,7 @@ fn chunk(id: &[u8; 4], payload: &[u8]) -> Vec<u8> {
     out.extend_from_slice(id);
     out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
     out.extend_from_slice(payload);
-    if payload.len() % 2 != 0 {
+    if !payload.len().is_multiple_of(2) {
         out.push(0);
     }
     out
@@ -1720,11 +1720,16 @@ fn validate_baseline_identity(receipt: &Value, assets: &[InputAsset], fixtures: 
     );
     assert_eq!(invalid_loop_case["sample_loop_start"], 4_032);
     assert_eq!(invalid_loop_case["sample_loop_end"], 64);
-    assert!(
-        invalid_loop_case["rendered_only_after_production_load_acceptance"]
-            .as_bool()
-            .expect("invalid-loop load gate is present")
-    );
+    if invalid_loop_case["pcm_generated"] == Value::Bool(true) {
+        assert_eq!(
+            invalid_loop_case["outcome"]["production_load_status"],
+            "accepted"
+        );
+        assert_eq!(
+            invalid_loop_case["outcome"]["production_render_status"],
+            "completed"
+        );
+    }
     assert_eq!(
         invalid_loop_case["pcm_generated"].as_bool(),
         Some(invalid_loop_case["outcome"]["render_capture"].is_object())
@@ -1760,8 +1765,8 @@ fn validate_baseline_identity(receipt: &Value, assets: &[InputAsset], fixtures: 
 }
 
 fn compare_pcm(candidate: &[u8], baseline: &[u8]) -> Value {
-    let candidate_well_formed = candidate.len() % (CHANNELS * BYTES_PER_SAMPLE) == 0;
-    let baseline_well_formed = baseline.len() % (CHANNELS * BYTES_PER_SAMPLE) == 0;
+    let candidate_well_formed = candidate.len().is_multiple_of(CHANNELS * BYTES_PER_SAMPLE);
+    let baseline_well_formed = baseline.len().is_multiple_of(CHANNELS * BYTES_PER_SAMPLE);
     let candidate_samples = candidate.len() / BYTES_PER_SAMPLE;
     let baseline_samples = baseline.len() / BYTES_PER_SAMPLE;
     let comparable_samples = candidate_samples.min(baseline_samples);
@@ -1789,7 +1794,7 @@ fn compare_pcm(candidate: &[u8], baseline: &[u8]) -> Value {
                 first_changed = Some(json!({
                     "frame": sample_index / CHANNELS,
                     "channel_index": sample_index % CHANNELS,
-                    "channel": if sample_index % CHANNELS == 0 { "left" } else { "right" },
+                    "channel": if sample_index.is_multiple_of(CHANNELS) { "left" } else { "right" },
                     "candidate_f32_bits_le_hex": format!("{candidate_bits:08x}"),
                     "baseline_f32_bits_le_hex": format!("{baseline_bits:08x}"),
                 }));
@@ -1807,7 +1812,7 @@ fn compare_pcm(candidate: &[u8], baseline: &[u8]) -> Value {
         first_changed = Some(json!({
             "frame": first_unmatched / CHANNELS,
             "channel_index": first_unmatched % CHANNELS,
-            "channel": if first_unmatched % CHANNELS == 0 { "left" } else { "right" },
+            "channel": if first_unmatched.is_multiple_of(CHANNELS) { "left" } else { "right" },
             "candidate_f32_bits_le_hex": Value::Null,
             "baseline_f32_bits_le_hex": Value::Null,
         }));
