@@ -14,7 +14,7 @@
 //! malformed fixtures are fixed bytes; gzip boundary streams are assembled by
 //! this test's deterministic stored-DEFLATE writer, not by flate2 encoders.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{btree_map::Entry, BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -308,7 +308,9 @@ fn frozen_hex(value: &str) -> Vec<u8> {
     assert_eq!(value.len() % 2, 0, "frozen hex fixture has an odd length");
     value
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let digits = std::str::from_utf8(pair).expect("fixture hex is ASCII");
             u8::from_str_radix(digits, 16).expect("fixture hex is valid")
@@ -609,12 +611,16 @@ fn parse_version_table(jag: &JagFile, spec: ArchiveSpec) -> Result<(Vec<i32>, Ve
         return Err(format!("{} has a partial 32-bit CRC entry", spec.crc_table));
     }
     let versions = version_bytes
-        .chunks_exact(2)
-        .map(|entry| u16::from_be_bytes([entry[0], entry[1]]) as i32)
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|entry| i32::from(u16::from_be_bytes(*entry)))
         .collect::<Vec<_>>();
     let crcs = crc_bytes
-        .chunks_exact(4)
-        .map(|entry| i32::from_be_bytes([entry[0], entry[1], entry[2], entry[3]]))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|entry| i32::from_be_bytes(*entry))
         .collect::<Vec<_>>();
     if crcs.len() < versions.len() {
         return Err(format!(
@@ -646,7 +652,9 @@ fn read_store_index(store_root: &Path, index: i32) -> Result<Vec<StoreEntry>, St
         ));
     }
     bytes
-        .chunks_exact(6)
+        .as_chunks::<6>()
+        .0
+        .iter()
         .map(|entry| {
             Ok(StoreEntry {
                 size: read_u24(entry, 0, &path.display().to_string())?,
@@ -679,10 +687,10 @@ fn fetch_archive(
                 let Some(bytes) = request.data.take() else {
                     continue;
                 };
-                if records.contains_key(&request.file) {
-                    duplicates += 1;
+                if let Entry::Vacant(entry) = records.entry(request.file) {
+                    entry.insert(bytes);
                 } else {
-                    records.insert(request.file, bytes);
+                    duplicates += 1;
                 }
             }
             if source.remaining() == 0 {
@@ -1416,11 +1424,13 @@ fn empty_network_response(
     result.ok_or_else(|| "OnDemand fallback completed without data".to_string())
 }
 
+type ResponseWorker = thread::JoinHandle<Result<(i32, i32), String>>;
+
 fn serve_one_entry(
     payload: Vec<u8>,
     expected_archive: i32,
     expected_file: i32,
-) -> Result<(u16, thread::JoinHandle<Result<(i32, i32), String>>), String> {
+) -> Result<(u16, ResponseWorker), String> {
     let listener = TcpListener::bind("127.0.0.1:0")
         .map_err(|error| format!("bind local fallback server: {error}"))?;
     listener
