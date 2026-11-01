@@ -907,13 +907,14 @@ fn submit_result_restores_after_workspace_unwind() {
     }));
     assert!(unwind.is_err());
     assert_eq!(current_scene_submit_result(), SceneSubmit::NotRun);
-    assert!(
+    assert_eq!(
         observation
             .points
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .is_empty(),
-        "unwind must not enter overlays"
+            .as_slice(),
+        &[SceneTestPoint::VertexCoordinateOverflow],
+        "capture must complete before workspace unwind, without entering overlays"
     );
 }
 
