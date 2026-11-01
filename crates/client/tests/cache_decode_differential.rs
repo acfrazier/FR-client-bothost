@@ -1456,6 +1456,10 @@ fn serve_one_entry(
                 Err(error) => return Err(format!("accept OnDemand fallback: {error}")),
             }
         };
+        // The accept loop is nonblocking; the handshake below uses blocking I/O.
+        socket
+            .set_nonblocking(false)
+            .map_err(|error| format!("set fallback socket blocking mode: {error}"))?;
         socket
             .set_read_timeout(Some(Duration::from_secs(5)))
             .map_err(|error| format!("set fallback socket timeout: {error}"))?;
@@ -1806,10 +1810,12 @@ fn run_fixed_gzip() -> Result<(), String> {
         capture.write(&format!("snapshot-strict/{label}.txt"), b"hard-error\n")?;
 
         let (port, server) = serve_one_entry(valid_empty.clone(), 0, 0)?;
-        let recovered = empty_network_response(&versionlist, &client_dir, port)?;
+        let recovered = empty_network_response(&versionlist, &client_dir, port);
         let served = server
             .join()
-            .map_err(|_| format!("fallback server panicked for {label}"))??;
+            .map_err(|_| format!("fallback server panicked for {label}"))?
+            .map_err(|error| format!("{label} fallback server: {error}"))?;
+        let recovered = recovered.map_err(|error| format!("{label} fallback client: {error}"))?;
         if served != (0, 0) {
             return Err(format!(
                 "fallback server served unexpected entry {served:?}"
