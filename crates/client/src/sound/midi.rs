@@ -289,8 +289,10 @@ mod rusty {
         }
 
         fn play_prepared(&mut self, song: PreparedSong, _volume: i32, _fading: bool) -> bool {
-            // Product playback remains one-shot; loop-enabled capture is
-            // available only through the test-support entry point.
+            // One-shot, like the native player behind Java `midisave`: a
+            // finished song reports `is_playing()` false, so the next
+            // `saveMidi(fading=true)` replaces the file immediately. Loop
+            // playback stays behind the `test-support` entry point.
             self.play_prepared_with_loop(song, false)
         }
 

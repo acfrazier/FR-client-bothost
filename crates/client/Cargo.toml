@@ -38,7 +38,12 @@ wgpu = "29"
 winit = { version = "0.30", optional = true }
 
 [dev-dependencies]
-# Match the host's serde 1.0.219 hold until its Deno/SWC runtime upgrade.
+# Client cargo tests serialize with the version the host ships: the host lock
+# keeps serde_json 1.0.143 because its serde stays at 1.0.219, so this pin
+# names that exact version. A caret resolves a newer serde_json on the next
+# update (1.0.154 needs serde_core 1.0.220+) and moves these tests off the
+# host's serialization group. Lift with the host's runtime track (274bot
+# docs/known-issues.toml, runtime-serialization-upgrade-held).
 serde_json = "=1.0.143"
 
 [target.'cfg(unix)'.dependencies]
