@@ -23,12 +23,12 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "render-test-hooks"))]
 pub(crate) fn begin_test_capture() {
     TEST_EVENTS.with_borrow_mut(|events| *events = Some(Vec::new()));
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "render-test-hooks"))]
 pub(crate) fn take_test_events() -> Vec<String> {
     TEST_EVENTS.with_borrow_mut(|events| events.take().expect("capture was started"))
 }
@@ -112,6 +112,7 @@ pub(super) fn emit(
     });
 }
 
+#[cfg(any(test, feature = "render-test-hooks"))]
 pub(super) const fn static_storage_bytes() -> usize {
     std::mem::size_of::<LazyLock<(Instant, u128)>>() + std::mem::size_of::<AtomicU64>()
 }
