@@ -38,7 +38,8 @@ wgpu = "29"
 winit = { version = "0.30", optional = true }
 
 [dev-dependencies]
-serde_json = "1.0.140"
+# Match the host's serde 1.0.219 hold until its Deno/SWC runtime upgrade.
+serde_json = "=1.0.143"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
