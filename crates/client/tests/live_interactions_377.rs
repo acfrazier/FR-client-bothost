@@ -795,6 +795,12 @@ fn terrain_click_guide_dialogue_and_progress() {
             c.chat_modal_id >= 0 && !c.resumed_pause_button && body(c) != previous
         });
     }
+    // The object-box text can precede the inventory update on the wire.
+    pump_until(&mut c, &mut r, 10, |c| {
+        body(c).contains("Pot of Flour")
+            && inventory_count(c, 2516) == 1
+            && inventory_count(c, 1929) == 1
+    });
     assert!(body(&c).contains("Pot of Flour"));
     assert_eq!(inventory_count(&c, 2516), 1);
     assert_eq!(inventory_count(&c, 1929), 1);
