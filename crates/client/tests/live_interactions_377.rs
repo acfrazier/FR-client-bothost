@@ -72,6 +72,14 @@ fn body(c: &Client) -> String {
         .join("\n")
 }
 
+fn tutorial_text(c: &Client) -> String {
+    c.ifaces_merged()
+        .filter(|i| i.layer_id == c.tut_com_id && !i.text.is_empty())
+        .map(|i| i.text)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn state(c: &Client) -> Value {
     let p = c.local_player.as_ref().unwrap();
     json!({"cycle":c.loop_cycle,"tile":tile(c),"fine_position":[p.x,p.z],
@@ -80,7 +88,19 @@ fn state(c: &Client) -> Value {
         "body":body(c),"progress_varp_406":c.var.get(406),"progress_server_406":c.var_serv.get(406),
         "hint":{"kind":c.hint_type,"npc":c.hint_npc,"tile":[c.hint_tile_x,c.hint_tile_z],"flash_on":c.loop_cycle % 20 < 10},
         "active_tab":c.active_icon,"flashing_tab":c.tut_flash_icon,
-        "bronze_hatchets":inventory_count(c,1351),"tinderboxes":inventory_count(c,590),"tutorial_logs":inventory_count(c,2511)})
+        "map_flag_generation":c.gens.map_flag,"minimap_flag":[c.minimap_flag_x,c.minimap_flag_z],
+        "instructors":c.npc_ids.iter().take(c.npc_count as usize).filter_map(|id| {
+            let npc = c.npc[*id as usize].as_ref()?;
+            matches!(npc.r#type, Some(942 | 943 | 952)).then(|| json!({"slot":id,"type":npc.r#type,
+                "tile":[npc.route_x[0]+c.map_build_base_x,npc.route_z[0]+c.map_build_base_z]}))
+        }).collect::<Vec<_>>(),
+        "bronze_hatchets":inventory_count(c,1351),"tinderboxes":inventory_count(c,590),"tutorial_logs":inventory_count(c,2511),
+        "tutorial_text":tutorial_text(c),"progress_segments":progress_segments(c),
+        "inventory":c.if_(3214).map(|i|json!({"objects":i.link_obj_type,"counts":i.link_obj_number})),
+        "raw_shrimps":inventory_count(c,2514),"burnt_shrimps":inventory_count(c,323),
+        "cooked_shrimps":inventory_count(c,315),"flour":inventory_count(c,2516),
+        "water":inventory_count(c,1929),"dough":inventory_count(c,2307),"bread":inventory_count(c,2309),
+        "stat_xp":c.stat_xp,"stat_levels":c.stat_base_level})
 }
 
 fn pump_until(
@@ -179,11 +199,21 @@ fn click_component(c: &mut Client, r: &mut Renderer, root: i32, target: i32, ori
 }
 
 fn save_stage(c: &mut Client, r: &mut Renderer, root: &Path, name: &str, stages: &mut Vec<Value>) {
+    // The packet pump is intentionally bounded per frame. A text predicate
+    // can match before the following TUT_OPEN/IF_SET* messages are consumed.
+    // Capture and take the next action only after two complete server epochs.
+    let generation = c.gens.player_info;
+    pump_until(c, r, 10, |c| c.gens.player_info >= generation + 2);
     let path = root.join(format!("rust-{name}.jpg"));
     screenshot(&path, r.mainredraw(c));
     let receipt = json!({"stage":name,"screenshot":path,"state":state(c)});
     eprintln!("377 interaction {receipt}");
     stages.push(receipt);
+    std::fs::write(
+        root.join("stages.json"),
+        serde_json::to_vec_pretty(stages).unwrap(),
+    )
+    .unwrap();
 }
 
 fn inventory_count(c: &Client, object: i32) -> i32 {
@@ -235,6 +265,13 @@ fn talk_to(c: &mut Client, npc_type: usize) -> i32 {
                 .is_some_and(|npc| npc.r#type == Some(npc_type))
         })
         .expect("server-populated tutorial instructor");
+    let npc = c.npc[slot as usize].as_ref().unwrap();
+    eprintln!(
+        "377 npc action {}",
+        json!({"slot":slot,"type":npc_type,"player":tile(c),
+        "npc_tile":[npc.route_x[0]+c.map_build_base_x,npc.route_z[0]+c.map_build_base_z],
+        "input":"production doAction(OP_NPC1) on the actual server-populated NPC slot"})
+    );
     c.menu_action[0] = MiniMenuAction::OP_NPC1;
     c.menu_param_a[0] = slot;
     c.menu_param_b[0] = 0;
@@ -303,6 +340,73 @@ fn operate_location(c: &mut Client, x: i32, z: i32, first_option: &str) -> Value
     c.menu_param_c[0] = target_z - c.map_build_base_z;
     c.doAction(0);
     eprintln!("377 location action {receipt}");
+    receipt
+}
+
+fn inventory_slot(c: &Client, object: i32) -> i32 {
+    c.if_(3214)
+        .and_then(|i| i.link_obj_type.as_ref())
+        .and_then(|objects| objects.iter().position(|id| *id == object + 1))
+        .expect("item must exist in the server-applied inventory") as i32
+}
+
+fn select_item(c: &mut Client, object: i32) -> Value {
+    let slot = inventory_slot(c, object);
+    c.menu_action[0] = MiniMenuAction::USEHELD_START;
+    c.menu_param_a[0] = object;
+    c.menu_param_b[0] = slot;
+    c.menu_param_c[0] = 3214;
+    c.doAction(0);
+    assert_eq!(c.use_mode, 1);
+    json!({"object":object,"slot":slot,"component":3214,"name":c.cache.objs[object as usize].name})
+}
+
+fn use_items(c: &mut Client, source: i32, target: i32) -> Value {
+    let source = select_item(c, source);
+    let slot = inventory_slot(c, target);
+    let receipt = json!({"source":source,"target":{"object":target,"slot":slot,"component":3214},
+        "input":"production doAction(USEHELD_START), doAction(USEHELD_ONHELD)"});
+    c.menu_action[0] = MiniMenuAction::USEHELD_ONHELD;
+    c.menu_param_a[0] = target;
+    c.menu_param_b[0] = slot;
+    c.menu_param_c[0] = 3214;
+    c.doAction(0);
+    assert_eq!(c.use_mode, 0);
+    eprintln!("377 item action {receipt}");
+    receipt
+}
+
+fn scene_location(c: &Client, location: i32) -> Option<(i32, i32, i32)> {
+    let player = tile(c);
+    (0..104)
+        .flat_map(|x| (0..104).map(move |z| (x, z)))
+        .filter_map(|(x, z)| {
+            [
+                c.world.wall_type(c.minusedlevel, x, z),
+                c.world.decor_type(c.minusedlevel, x, z),
+                c.world.scene_type(c.minusedlevel, x, z),
+                c.world.gd_type(c.minusedlevel, x, z),
+            ]
+            .into_iter()
+            .find(|code| *code != 0 && ((*code >> 14) & 0x7fff) == location)
+            .map(|code| (code, x + c.map_build_base_x, z + c.map_build_base_z))
+        })
+        .min_by_key(|(_, x, z)| (x - player.0).abs() + (z - player.1).abs())
+}
+
+fn use_item_on_location(c: &mut Client, object: i32, location: i32) -> Value {
+    let (code, x, z) = scene_location(c, location).expect("actual server-loaded scene location");
+    let source = select_item(c, object);
+    let receipt = json!({"source":source,"location":location,"typecode":code,"tile":[x,z],
+        "name":c.cache.locs[location as usize].name,
+        "input":"production doAction(USEHELD_START), doAction(USEHELD_ONLOC) on actual scene typecode"});
+    c.menu_action[0] = MiniMenuAction::USEHELD_ONLOC;
+    c.menu_param_a[0] = code;
+    c.menu_param_b[0] = x - c.map_build_base_x;
+    c.menu_param_c[0] = z - c.map_build_base_z;
+    c.doAction(0);
+    assert_eq!(c.use_mode, 0);
+    eprintln!("377 item-location action {receipt}");
     receipt
 }
 
@@ -545,6 +649,153 @@ fn terrain_click_guide_dialogue_and_progress() {
     save_stage(&mut c, &mut r, &root, "progress-transition", &mut stages);
     continue_chat(&mut c, &mut r);
     pump_until(&mut c, &mut r, 10, |c| c.chat_modal_id == -1);
+
+    let mut item_actions = Vec::new();
+    let firemaking_xp = c.stat_xp[11];
+    item_actions.push(use_items(&mut c, 590, 2511));
+    pump_until(&mut c, &mut r, 30, |c| {
+        inventory_count(c, 2511) == 1
+            && c.stat_xp[11] > firemaking_xp
+            && c.tut_flash_icon == 1
+            && scene_location(c, 3038).is_some()
+    });
+    save_stage(&mut c, &mut r, &root, "fire-lit", &mut stages);
+    click(&mut c, &mut r, 584, 187, 1);
+    pump_until(&mut c, &mut r, 10, |c| {
+        c.active_icon == 1
+            && c.tut_flash_icon == -1
+            && tutorial_text(c).contains("These are your stats")
+            && c.var.get(406) == Some(&2)
+    });
+    save_stage(&mut c, &mut r, &root, "skills-open", &mut stages);
+    talk_to(&mut c, 943);
+    pump_until(&mut c, &mut r, 20, |c| {
+        body(c).contains("There's nothing like a good fire")
+    });
+    save_stage(&mut c, &mut r, &root, "fishing-instruction", &mut stages);
+    continue_chat(&mut c, &mut r);
+    pump_until(&mut c, &mut r, 10, |c| {
+        !c.resumed_pause_button && body(c).contains("Net") && inventory_count(c, 303) == 1
+    });
+    save_stage(&mut c, &mut r, &root, "fishing-net", &mut stages);
+    continue_chat(&mut c, &mut r);
+    pump_until(&mut c, &mut r, 10, |c| c.chat_modal_id == -1);
+    click(&mut c, &mut r, 660, 187, 1);
+    let fishing_slot = talk_to(&mut c, 952);
+    let fishing_xp = c.stat_xp[10];
+    pump_until(&mut c, &mut r, 30, |c| {
+        inventory_count(c, 2514) == 1
+            && c.stat_xp[10] > fishing_xp
+            && tutorial_text(c).contains("Cooking your shrimp")
+    });
+    save_stage(&mut c, &mut r, &root, "first-raw-shrimp", &mut stages);
+    // The lesson explicitly asks for a new fire after fishing. Use the
+    // remaining naturally chopped log at the current pond-side position.
+    item_actions.push(use_items(&mut c, 590, 2511));
+    pump_until(&mut c, &mut r, 30, |c| {
+        inventory_count(c, 2511) == 0
+            && scene_location(c, 3038).is_some()
+            && c.var.get(406) == Some(&3)
+    });
+    save_stage(&mut c, &mut r, &root, "cooking-fire", &mut stages);
+    item_actions.push(use_item_on_location(&mut c, 2514, 3038));
+    pump_until(&mut c, &mut r, 20, |c| {
+        inventory_count(c, 2514) == 0
+            && inventory_count(c, 323) == 1
+            && tutorial_text(c).contains("Burning your shrimp")
+    });
+    save_stage(&mut c, &mut r, &root, "burnt-shrimp", &mut stages);
+    talk_to(&mut c, 952);
+    pump_until(&mut c, &mut r, 30, |c| {
+        inventory_count(c, 2514) == 1 && tutorial_text(c).contains("Burning your shrimp")
+    });
+    save_stage(&mut c, &mut r, &root, "second-raw-shrimp", &mut stages);
+    let cooking_xp = c.stat_xp[7];
+    item_actions.push(use_item_on_location(&mut c, 2514, 3038));
+    pump_until(&mut c, &mut r, 20, |c| {
+        inventory_count(c, 2514) == 0
+            && inventory_count(c, 315) == 1
+            && c.stat_xp[7] > cooking_xp
+            && tutorial_text(c).contains("Well done, you've just cooked")
+            && c.hint_type == 2
+    });
+    save_stage(&mut c, &mut r, &root, "cooked-shrimp", &mut stages);
+    let (gate_x, gate_z) = (c.hint_tile_x, c.hint_tile_z);
+    let gate = operate_location(&mut c, gate_x, gate_z, "Open");
+    pump_until(&mut c, &mut r, 20, |c| {
+        c.hint_type == 2
+            && (c.hint_tile_x, c.hint_tile_z) != (gate_x, gate_z)
+            && c.var.get(406) == Some(&4)
+    });
+    save_stage(&mut c, &mut r, &root, "survival-gate", &mut stages);
+    let (chef_x, chef_z) = (c.hint_tile_x, c.hint_tile_z);
+    // Content hints (6,12), immediately west of the actual (7,12) wall
+    // placement in m48_48.jm2. Select the loaded door, not the hint tile.
+    let (_, door_x, door_z) = scene_location(&c, 3017).expect("actual Master Chef door");
+    assert!((door_x - chef_x).abs() <= 1 && (door_z - chef_z).abs() <= 1);
+    let chef_door = json!({"server_hint":[chef_x,chef_z],
+        "action":operate_location(&mut c, door_x, door_z, "Open")});
+    pump_until(&mut c, &mut r, 30, |c| {
+        c.hint_type == 1
+            && c.npc
+                .get(c.hint_npc as usize)
+                .and_then(Option::as_ref)
+                .is_some_and(|npc| npc.r#type == Some(942))
+            && c.var.get(406) == Some(&5)
+    });
+    save_stage(&mut c, &mut r, &root, "chef-door", &mut stages);
+    let chef_slot = talk_to(&mut c, 942);
+    pump_until(&mut c, &mut r, 20, |c| body(c).contains("I am Lev"));
+    for (index, expected) in [
+        "I am Lev",
+        "I already know how to cook",
+        "HA HA HA",
+        "no fine meal is complete",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert!(body(&c).contains(expected), "chef page: {}", body(&c));
+        save_stage(
+            &mut c,
+            &mut r,
+            &root,
+            &format!("chef-dialogue-{index}"),
+            &mut stages,
+        );
+        let previous = body(&c);
+        continue_chat(&mut c, &mut r);
+        pump_until(&mut c, &mut r, 10, |c| {
+            c.chat_modal_id >= 0 && !c.resumed_pause_button && body(c) != previous
+        });
+    }
+    assert!(body(&c).contains("Pot of Flour"));
+    assert_eq!(inventory_count(&c, 2516), 1);
+    assert_eq!(inventory_count(&c, 1929), 1);
+    save_stage(&mut c, &mut r, &root, "chef-ingredients", &mut stages);
+    continue_chat(&mut c, &mut r);
+    pump_until(&mut c, &mut r, 10, |c| {
+        c.chat_modal_id == -1 && tutorial_text(c).contains("Making dough")
+    });
+    item_actions.push(use_items(&mut c, 1929, 2516));
+    pump_until(&mut c, &mut r, 10, |c| {
+        inventory_count(c, 2516) == 0
+            && inventory_count(c, 1929) == 0
+            && inventory_count(c, 2307) == 1
+            && tutorial_text(c).contains("Cooking dough")
+            && c.var.get(406) == Some(&5)
+    });
+    save_stage(&mut c, &mut r, &root, "dough-mixed", &mut stages);
+    item_actions.push(use_item_on_location(&mut c, 2307, 3039));
+    pump_until(&mut c, &mut r, 20, |c| {
+        inventory_count(c, 2307) == 0
+            && inventory_count(c, 2309) == 1
+            && tutorial_text(c).contains("your first loaf of bread")
+            && c.var.get(406) == Some(&6)
+            && c.var_serv.get(406) == Some(&6)
+    });
+    save_stage(&mut c, &mut r, &root, "bread-baked", &mut stages);
+    let final_state = state(&c);
     c.menu_action[0] = MiniMenuAction::IF_BUTTON;
     c.menu_param_c[0] = 2458;
     c.doAction(0);
@@ -559,7 +810,21 @@ fn terrain_click_guide_dialogue_and_progress() {
     let exit = format!("{}", c.take_session_exit_reason().unwrap());
     assert!(exit.contains("server_logout"));
     let packets = outbound.0.lock().unwrap();
-    for opcode in [6, 19, 28, 79, 112, 119, 163, 181, 226, 247, 248] {
+    for opcode in [
+        6,
+        19,
+        28,
+        79,
+        112,
+        119,
+        163,
+        181,
+        226,
+        247,
+        248,
+        ClientProt377::OPHELDU.id,
+        ClientProt377::OPLOCU.id,
+    ] {
         assert!(
             packets.iter().any(|p| p["opcode"] == opcode),
             "missing required opcode{opcode}: {packets:?}"
@@ -568,7 +833,8 @@ fn terrain_click_guide_dialogue_and_progress() {
     assert!(packets.iter().filter(|p| p["opcode"] == 226).count() >= 6);
     let receipt = json!({"engine_dir":engine,"user":user,"revision":377,"movement":{"before":before,"after":after,"click":[x,y],"initial_player_info":tick,"fine_destination":fine_target},
         "guide_slot":guide,"survival_slot":survival_slot,"dialogue_pages":pages,
-        "locations":[door,first_tree,second_tree],"progress":{"varp":406,"before":progress_before,
+        "fishing_slot":fishing_slot,"chef_slot":chef_slot,"item_actions":item_actions,"final_state":final_state,
+        "locations":[door,first_tree,second_tree,gate,chef_door],"progress":{"varp":406,"before":progress_before,
         "after":progress_after,"before_segments":segments,"after_segments":after_segments,"overlay":8680,
         "meaning":"actual script writes stage 40, then refreshes overlay to 1 + floor(40 * 20 / 670) = 2; one filled segment; no varp seeding"},
         "stages":stages,"outbound":*packets,"logout":exit});
@@ -577,5 +843,5 @@ fn terrain_click_guide_dialogue_and_progress() {
         serde_json::to_vec_pretty(&receipt).unwrap(),
     )
     .unwrap();
-    eprintln!("PASS: terrain click, Guide arrow, dialogue, door, backpack, two real chops, server varp406 1->2, visible filled segment, server logout");
+    eprintln!("PASS: natural Guide, firemaking, stats, fishing, burnt/cooked shrimp, chef ingredients, dough, bread, server varp406 1->6, server logout");
 }
