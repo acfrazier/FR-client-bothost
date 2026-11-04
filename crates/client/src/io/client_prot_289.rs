@@ -150,6 +150,14 @@ pub fn map_client_prot(revision: super::ClientRevision, p274: ClientProt) -> Cli
     use super::ClientRevision;
     match revision {
         ClientRevision::R274 => p274,
+        ClientRevision::R377 => match p274.id {
+            x if x == ClientProt::NO_TIMEOUT.id => super::ClientProt377::NO_TIMEOUT,
+            x if x == ClientProt::MAP_BUILD_COMPLETE.id => super::ClientProt377::MAP_BUILD_COMPLETE,
+            x if x == ClientProt::IF_BUTTON.id => super::ClientProt377::IF_BUTTON,
+            other => panic!(
+                "R377 outbound fail-closed: packet {other} is outside the captured login cohort"
+            ),
+        },
         ClientRevision::R289 => match p274.id {
             x if x == ClientProt::NO_TIMEOUT.id => ClientProt289::NO_TIMEOUT,
             x if x == ClientProt::IDLE_TIMER.id => ClientProt289::IDLE_TIMER,
