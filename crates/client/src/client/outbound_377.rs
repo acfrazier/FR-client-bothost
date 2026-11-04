@@ -267,6 +267,25 @@ pub(crate) fn oploc2_377(packet: &mut Packet, x: i32, z: i32, location: i32) {
     packet.p2(x);
     p2_alt2(packet, z);
 }
+/// Emit Java `OPOBJ3`: transformed object type, transformed scene x, then
+/// transformed scene z.
+///
+/// Java: `Client.java:10065-10070`.
+pub(crate) fn opobj3_377(packet: &mut Packet, object_type: i32, x: i32, z: i32) {
+    packet.p1_enc(ClientProt377::OPOBJ3.id);
+    p2_alt3(packet, object_type);
+    p2_alt3(packet, x);
+    p2_alt2(packet, z);
+}
+/// Emit Java `ANTICHEAT_OPLOGIC4` before an OPOBJ3 at its threshold.
+///
+/// Java: `Client.java:10056-10064`.
+pub(crate) fn anticheat_oplogic4_377(packet: &mut Packet) {
+    packet.p1_enc(ClientProt377::ANTICHEAT_OPLOGIC4.id);
+    packet.p3(11257922);
+}
+
+
 /// Emit Java `OPLOCU`: selected item on a location.
 ///
 /// Java: `Client.java:9770-9779`.
@@ -324,6 +343,14 @@ pub(crate) fn opnpc2_377(packet: &mut Packet, npc_index: i32) {
     packet.p1_enc(ClientProt377::OPNPC2.id);
     p2_alt2(packet, npc_index);
 }
+/// Emit Java `OPNPC3` with the transformed NPC index.
+///
+/// Java: `Client.java:9975-9978`.
+pub(crate) fn opnpc3_377(packet: &mut Packet, npc_index: i32) {
+    packet.p1_enc(ClientProt377::OPNPC3.id);
+    p2_alt3(packet, npc_index);
+}
+
 
 /// Emit Java `OPNPCT`: transformed selected component, then transformed NPC index.
 ///
@@ -343,6 +370,16 @@ pub(crate) fn opheld2_377(packet: &mut Packet, object_id: i32, slot: i32, compon
     p2_alt1(packet, object_id);
     p2_alt2(packet, slot);
 }
+/// Emit Java `OPHELD5` for dropping one inventory object.
+///
+/// Java: `Client.java:10141-10147`.
+pub(crate) fn opheld5_377(packet: &mut Packet, object_id: i32, slot: i32, component_id: i32) {
+    packet.p1_enc(ClientProt377::OPHELD5.id);
+    p2_alt1(packet, slot);
+    p2_alt3(packet, object_id);
+    p2_alt3(packet, component_id);
+}
+
 
 /// Emit Java `INV_BUTTON1`: transformed object id, component id, then slot.
 ///
@@ -353,6 +390,21 @@ pub(crate) fn inv_button1_377(packet: &mut Packet, object_id: i32, slot: i32, co
     packet.p2(component_id);
     packet.p2(slot);
 }
+/// Emit Java `INV_BUTTON2` for shop Buy-1 / Sell-1.
+///
+/// Java: `Client.java:10101-10107`.
+pub(crate) fn inv_button2_377(
+    packet: &mut Packet,
+    object_id: i32,
+    slot: i32,
+    component_id: i32,
+) {
+    packet.p1_enc(ClientProt377::INV_BUTTON2.id);
+    p2_alt2(packet, slot);
+    p2_alt1(packet, object_id);
+    p2_alt1(packet, component_id);
+}
+
 
 /// Emit Java `RESUME_PAUSEBUTTON`: plain component id.
 ///
@@ -989,6 +1041,108 @@ mod tests {
     }
 
     #[test]
+    fn new_menu_actions_route_to_377_and_preserve_legacy_layouts() {
+        let mut client = client_with_revision(ClientRevision::R377);
+        client.local_player = Some(ClientPlayer::at(5, 5));
+        client.npc[42] = Some(Box::new(ClientNpc::at(5, 5)));
+        set_menu_action(&mut client, MiniMenuAction::OP_NPC3, 42, 0, 0);
+        client.doAction(0);
+        assert_eq!(
+            &client.out.data()[client.out.pos - 3..client.out.pos],
+            &[13, 0xaa, 0]
+        );
+
+        let mut client = client_with_revision(ClientRevision::R377);
+        client.local_player = Some(ClientPlayer::at(5, 5));
+        set_menu_action(&mut client, MiniMenuAction::OP_OBJ3, 0x1234, 5, 5);
+        client.doAction(0);
+        assert_eq!(
+            &client.out.data()[client.out.pos - 7..client.out.pos],
+            &[71, 0xb4, 0x12, 0x85, 0, 0, 0x85]
+        );
+        assert_eq!(client.oplogic4, 1);
+
+        let mut threshold = client_with_revision(ClientRevision::R377);
+        threshold.local_player = Some(ClientPlayer::at(5, 5));
+        threshold.oplogic4 = 83;
+        set_menu_action(&mut threshold, MiniMenuAction::OP_OBJ3, 0x1234, 5, 5);
+        threshold.doAction(0);
+        assert_eq!(
+            &threshold.out.data()[threshold.out.pos - 11..threshold.out.pos],
+            &[222, 0xab, 0xc8, 0x42, 71, 0xb4, 0x12, 0x85, 0, 0, 0x85]
+        );
+        assert_eq!(threshold.oplogic4, 0);
+
+
+        let mut client = client_with_revision(ClientRevision::R377);
+        set_menu_action(&mut client, MiniMenuAction::OP_HELD5, 0x1234, 0x2345, 0x3456);
+        client.doAction(0);
+        assert_eq!(
+            &client.out.data()[..client.out.pos],
+            &[4, 0x45, 0x23, 0xb4, 0x12, 0xd6, 0x34]
+        );
+        assert_eq!(
+            (client.selected_item, client.selected_com_id, client.selected_area),
+            (0x2345, 0x3456, 2)
+        );
+
+        let mut client = client_with_revision(ClientRevision::R377);
+        client.oplogic6 = 132;
+        set_menu_action(&mut client, MiniMenuAction::INV_BUTTON2, 0x1234, 0x2345, 0x3456);
+        client.doAction(0);
+        assert_eq!(
+            &client.out.data()[..client.out.pos],
+            &[177, 0x23, 0xc5, 0x34, 0x12, 0x56, 0x34]
+        );
+        assert_eq!(client.oplogic6, 132);
+        assert_eq!(
+            (client.selected_item, client.selected_com_id, client.selected_area),
+            (0x2345, 0x3456, 2)
+        );
+
+        for (revision, npc3, obj3, held5, inv2) in [
+            (ClientRevision::R274, 223, 108, 42, 82),
+            (ClientRevision::R289, 178, 110, 79, 111),
+        ] {
+            let mut client = client_with_revision(revision);
+            client.local_player = Some(ClientPlayer::at(5, 5));
+            client.npc[42] = Some(Box::new(ClientNpc::at(5, 5)));
+            set_menu_action(&mut client, MiniMenuAction::OP_NPC3, 42, 0, 0);
+            client.doAction(0);
+            assert_eq!(
+                &client.out.data()[client.out.pos - 3..client.out.pos],
+                &[npc3, 0, 42]
+            );
+
+            let mut client = client_with_revision(revision);
+            client.local_player = Some(ClientPlayer::at(5, 5));
+            set_menu_action(&mut client, MiniMenuAction::OP_OBJ3, 0x1234, 5, 5);
+            client.doAction(0);
+            assert_eq!(
+                &client.out.data()[client.out.pos - 7..client.out.pos],
+                &[obj3, 0, 5, 0, 5, 0x12, 0x34]
+            );
+            assert_eq!(client.oplogic4, 0);
+
+            let mut client = client_with_revision(revision);
+            set_menu_action(&mut client, MiniMenuAction::OP_HELD5, 0x1234, 0x2345, 0x3456);
+            client.doAction(0);
+            assert_eq!(
+                &client.out.data()[..client.out.pos],
+                &[held5, 0x12, 0x34, 0x23, 0x45, 0x34, 0x56]
+            );
+
+            let mut client = client_with_revision(revision);
+            set_menu_action(&mut client, MiniMenuAction::INV_BUTTON2, 0x1234, 0x2345, 0x3456);
+            client.doAction(0);
+            assert_eq!(
+                &client.out.data()[..client.out.pos],
+                &[inv2, 0x12, 0x34, 0x23, 0x45, 0x34, 0x56]
+            );
+        }
+    }
+
+    #[test]
     fn do_action_run_and_combat_buttons_and_close_use_revision_packet_ids() {
         for action in [MiniMenuAction::TOGGLE_BUTTON, MiniMenuAction::SELECT_BUTTON] {
             let mut client = client_with_revision(ClientRevision::R377);
@@ -1149,6 +1303,46 @@ mod tests {
         assert_eq!(ClientProt377::MOVE_GAMECLICK.length, -1);
         assert_eq!(ClientProt377::MOVE_MINIMAPCLICK.length, -1);
         assert_eq!(ClientProt377::MOVE_OPCLICK.length, -1);
+    }
+
+    #[test]
+    fn new_377_action_writers_match_java_packet_literals() {
+        // The byte transforms are Java Packet.p2_alt1/2/3
+        // (Packet.java:340-354), independently checked against each action.
+        let mut packet = Packet::alloc_outbound(1);
+        anticheat_oplogic4_377(&mut packet);
+        assert_eq!(&packet.data()[..packet.pos], &[222, 0xab, 0xc8, 0x42]);
+        assert_eq!(ClientProt377::ANTICHEAT_OPLOGIC4.length, 3);
+        packet.pos = 0;
+
+
+        opnpc3_377(&mut packet, 0x1234);
+        assert_eq!(&packet.data()[..packet.pos], &[13, 0xb4, 0x12]);
+        assert_eq!(ClientProt377::OPNPC3.length, 2);
+
+        packet.pos = 0;
+        opobj3_377(&mut packet, 0x1234, 0x2345, 0x3456);
+        assert_eq!(
+            &packet.data()[..packet.pos],
+            &[71, 0xb4, 0x12, 0xc5, 0x23, 0x34, 0xd6]
+        );
+        assert_eq!(ClientProt377::OPOBJ3.length, 6);
+
+        packet.pos = 0;
+        opheld5_377(&mut packet, 0x1234, 0x2345, 0x3456);
+        assert_eq!(
+            &packet.data()[..packet.pos],
+            &[4, 0x45, 0x23, 0xb4, 0x12, 0xd6, 0x34]
+        );
+        assert_eq!(ClientProt377::OPHELD5.length, 6);
+
+        packet.pos = 0;
+        inv_button2_377(&mut packet, 0x1234, 0x2345, 0x3456);
+        assert_eq!(
+            &packet.data()[..packet.pos],
+            &[177, 0x23, 0xc5, 0x34, 0x12, 0x56, 0x34]
+        );
+        assert_eq!(ClientProt377::INV_BUTTON2.length, 6);
     }
 
     #[test]
