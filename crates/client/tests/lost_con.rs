@@ -237,6 +237,7 @@ fn short_game_frame_does_not_constrain_later_login_seed() {
             let opcode = match revision {
                 ClientRevision::R274 => ServerProt::UPDATE_RUNENERGY,
                 ClientRevision::R289 => ServerProt289::UPDATE_RUNENERGY,
+                ClientRevision::R377 => 125,
             };
             let server = thread::spawn(move || {
                 let (mut game, _) = listener.accept().unwrap();
