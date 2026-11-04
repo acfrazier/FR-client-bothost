@@ -33,6 +33,46 @@ Rotated engine keys are read at runtime from `$ENGINE_DIR`.
    default; `BOT_CPU=1` is CpuPix3D. `client-play --window` stays the
    Java-shaped `Present` applet for fidelity.
 
+## Explicit revision 377
+
+Revision 274 remains the default. `--revision 289` retains the existing 289
+profile. `--revision 377` selects the separate 377 cache decoders, packet
+validation, and captured Fairy Ring login cohort. Other 377 packet families
+fail closed. This is not a complete revision-377 gameplay client.
+
+Use revision 377 only with Fairy Ring's local 377 engine. The orchestrator
+starts and stops that engine. Set `ENGINE_DIR` to that engine so runtime RSA
+key selection cannot use a different local engine. Supply a cache snapshot
+whose eight JAG CRCs match the engine's `/crc` response:
+
+```bash
+ENGINE_DIR=/path/to/fairy-ring-377-engine \
+  ./target/debug/client-play --revision 377 --host 127.0.0.1 \
+  --port 43595 --http-port 81 --cache /path/to/matched-377-cache \
+  --user t2a_example --pass 'test-password' --window --cpu
+```
+
+The ignored `live_login_377` test provides a bounded CPU-rendered proof. It
+requires `CLIENT_377_LIVE_DIR`, `CLIENT_377_RUNTIME_CACHE_DIR`, and a
+`CLIENT_377_LIVE_USER` name that starts with `t2a`. It logs in, saves the
+scene-2 frame, requests server logout through the real interface action,
+relogs, saves a second frame, and requests a second server logout. Its engine
+endpoints are fixed to localhost ports 81 and 43595.
+
+With the orchestrator's engine already running:
+
+```bash
+ENGINE_DIR=/path/to/fairy-ring-377-engine \
+CLIENT_377_RUNTIME_CACHE_DIR=/path/to/matched-377-cache \
+CLIENT_377_LIVE_DIR=/path/to/evidence \
+CLIENT_377_LIVE_USER=t2a_example \
+  cargo test -p client --no-default-features --test live_login_377 -- \
+  --ignored --nocapture --test-threads=1
+```
+
+The ignored proof uses password `t2apass` for its `t2a` account and explicitly
+enables drawing; ordinary headless clients keep the CPU-save draw gate off.
+
 ## Expected output (live proof, operator step — needs the Server running)
 
 - **Wrong key** (engine pem rotated but not visible as
