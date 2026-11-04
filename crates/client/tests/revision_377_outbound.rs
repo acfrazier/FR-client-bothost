@@ -95,8 +95,8 @@ fn unsupported_action_discards_whole_batch_and_closes_without_wire_bytes() {
     c.out.set_observer(Some(Arc::new(StrictObserver)));
     c.local_player = Some(ClientPlayer::at(5, 5));
     c.npc[7] = Some(Box::new(ClientNpc::at(5, 5)));
-    // OP_NPC2 is supported by its dedicated 377 writer; OP_NPC3 is not.
-    c.menu_action[0] = MiniMenuAction::OP_NPC3;
+    // OP_NPC2 and OP_NPC3 have dedicated 377 writers; OP_NPC4 remains rejected.
+    c.menu_action[0] = MiniMenuAction::OP_NPC4;
     c.menu_param_a[0] = 7;
     c.doAction(0);
     c.game_loop();
