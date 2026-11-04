@@ -1,8 +1,9 @@
-//! Standalone tests for the actual revision-377 interface decoder modules.
+//! Tests for the registered revision-377 interface decoder modules.
 //! They cover component fields, sparse storage, lazy reload, and a pinned real
 //! interface archive. The real cache gate follows `revision_377_stage1`.
 
-use client::{io, util};
+use client::config::{config_377, if_type_377};
+use client::io;
 use if_type_377::{
     parse_script_377, IfType377, InterfaceArchive377, ScriptOpcode377, ScriptParseError377,
 };
@@ -11,14 +12,6 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-#[expect(
-    dead_code,
-    reason = "standalone module registration keeps the full config archive API outside this interface test"
-)]
-#[path = "../src/config/config_377.rs"]
-mod config_377;
-#[path = "../src/config/if_type_377.rs"]
-mod if_type_377;
 #[path = "support/revision_377_interface_oracle.rs"]
 mod java_oracle;
 
