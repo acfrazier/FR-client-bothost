@@ -533,6 +533,17 @@ fn real_377_interface_archive_matches_pinned_bytes_and_scans_every_record() {
     assert_eq!(stats.input_bytes, member.len());
     assert_eq!(stats.declared_total, 19_269);
     assert_eq!(stats.record_count, 19_131);
+    assert!(
+        stats.unknown_script_opcode_counts.is_empty(),
+        "unknown revision-377 script opcodes: {:?}",
+        stats.unknown_script_opcode_counts
+    );
+    assert_eq!(
+        stats.malformed_script_count, 0,
+        "malformed revision-377 scripts"
+    );
+    assert_eq!(stats.script_count, 3_153);
+    assert_eq!(stats.script_word_count, 18_198);
     assert!(stats.record_count > 0);
     assert!(stats.occupied_slots > 0);
     assert!(stats.occupied_slots <= stats.declared_total);
