@@ -4203,6 +4203,8 @@ impl Client {
 
                 if self.revision.is_377() && action == MiniMenuAction::OP_NPC1 {
                     super::outbound_377::opnpc1_377(&mut self.out, a);
+                } else if self.revision.is_377() && action == MiniMenuAction::OP_NPC2 {
+                    super::outbound_377::opnpc2_377(&mut self.out, a);
                 } else {
                     let opcode = match action {
                         MiniMenuAction::OP_NPC1 => self.client_opcode(ClientProt::OPNPC1),
@@ -4254,9 +4256,13 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                self.out.p1_enc(self.client_opcode(ClientProt::OPNPCT));
-                self.out.p2(a);
-                self.out.p2(self.target_com_id);
+                if self.revision.is_377() {
+                    super::outbound_377::opnpct_377(&mut self.out, self.target_com_id, a);
+                } else {
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPNPCT));
+                    self.out.p2(a);
+                    self.out.p2(self.target_com_id);
+                }
             }
         }
 
@@ -4301,15 +4307,24 @@ impl Client {
         }
 
         if action == MiniMenuAction::OP_LOC2 {
-            self.oplogic1 += c;
-            if self.oplogic1 >= 139 {
-                self.out
-                    .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC1));
-                self.out.p4(0);
+            if self.revision().is_377() {
+                self.interact_with_loc(b, c, a, ClientProt377::OPLOC2.id);
+                super::outbound_377::oploc2_377(
+                    &mut self.out,
+                    b + self.map_build_base_x,
+                    c + self.map_build_base_z,
+                    (a >> 14) & 0x7fff,
+                );
+            } else {
+                self.oplogic1 += c;
+                if self.oplogic1 >= 139 {
+                    self.out
+                        .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC1));
+                    self.out.p4(0);
+                }
+                self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC2));
             }
-            self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC2));
         }
-
         if action == MiniMenuAction::OP_LOC3 {
             self.oplogic2 += 1;
             if self.oplogic2 >= 124 {
@@ -4536,33 +4551,36 @@ impl Client {
         {
             // TS 8956-8997: p2(obj) p2(slot) p2(com), then the selected
             // outline fields.
-            if action == MiniMenuAction::OP_HELD1 {
-                self.out.p1_enc(self.client_opcode(ClientProt::OPHELD1));
-            }
-            if action == MiniMenuAction::OP_HELD2 {
-                self.out.p1_enc(self.client_opcode(ClientProt::OPHELD2));
-            }
-            if action == MiniMenuAction::OP_HELD3 {
-                self.out.p1_enc(self.client_opcode(ClientProt::OPHELD3));
-            }
-            if action == MiniMenuAction::OP_HELD4 {
-                self.oplogic9 += 1;
-                if self.oplogic9 >= 116 {
-                    self.out
-                        .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC9));
-                    self.out.p3(13018169);
+            if self.revision.is_377() && action == MiniMenuAction::OP_HELD2 {
+                super::outbound_377::opheld2_377(&mut self.out, a, b, c);
+            } else {
+                if action == MiniMenuAction::OP_HELD1 {
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPHELD1));
                 }
-                self.out.p1_enc(self.client_opcode(ClientProt::OPHELD4));
+                if action == MiniMenuAction::OP_HELD2 {
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPHELD2));
+                }
+                if action == MiniMenuAction::OP_HELD3 {
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPHELD3));
+                }
+                if action == MiniMenuAction::OP_HELD4 {
+                    self.oplogic9 += 1;
+                    if self.oplogic9 >= 116 {
+                        self.out
+                            .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC9));
+                        self.out.p3(13018169);
+                    }
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPHELD4));
+                }
+                if action == MiniMenuAction::OP_HELD5 {
+                    self.out.p1_enc(self.client_opcode(ClientProt::OPHELD5));
+                }
+                self.out.p2(a);
+                self.out.p2(b);
+                self.out.p2(c);
             }
-            if action == MiniMenuAction::OP_HELD5 {
-                self.out.p1_enc(self.client_opcode(ClientProt::OPHELD5));
-            }
-            self.out.p2(a);
-            self.out.p2(b);
-            self.out.p2(c);
             self.mark_selected(b, c);
         }
-
         if action == MiniMenuAction::OP_HELD6 {
             let obj = self.cache.objs.get(a as usize).cloned().unwrap_or_default();
             // TS 8999-9010: a com-link count >= 100000 reports "<n> x <name>"
@@ -4674,32 +4692,36 @@ impl Client {
         {
             // TS 9096-9141: p2(obj) p2(slot) p2(com), then the selected
             // outline fields.
-            if action == MiniMenuAction::INV_BUTTON1 {
-                if (a & 0x3) == 0 {
-                    self.oplogic6 += 1;
+            if action == MiniMenuAction::INV_BUTTON1 && self.revision.is_377() {
+                super::outbound_377::inv_button1_377(&mut self.out, a, b, c);
+            } else {
+                if action == MiniMenuAction::INV_BUTTON1 {
+                    if (a & 0x3) == 0 {
+                        self.oplogic6 += 1;
+                    }
+                    if self.oplogic6 >= 133 {
+                        self.out
+                            .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC6));
+                        self.out.p2(6118);
+                    }
+                    self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON1));
                 }
-                if self.oplogic6 >= 133 {
-                    self.out
-                        .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_OPLOGIC6));
-                    self.out.p2(6118);
+                if action == MiniMenuAction::INV_BUTTON2 {
+                    self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON2));
                 }
-                self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON1));
+                if action == MiniMenuAction::INV_BUTTON3 {
+                    self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON3));
+                }
+                if action == MiniMenuAction::INV_BUTTON4 {
+                    self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON4));
+                }
+                if action == MiniMenuAction::INV_BUTTON5 {
+                    self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON5));
+                }
+                self.out.p2(a);
+                self.out.p2(b);
+                self.out.p2(c);
             }
-            if action == MiniMenuAction::INV_BUTTON2 {
-                self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON2));
-            }
-            if action == MiniMenuAction::INV_BUTTON3 {
-                self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON3));
-            }
-            if action == MiniMenuAction::INV_BUTTON4 {
-                self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON4));
-            }
-            if action == MiniMenuAction::INV_BUTTON5 {
-                self.out.p1_enc(self.client_opcode(ClientProt::INV_BUTTON5));
-            }
-            self.out.p2(a);
-            self.out.p2(b);
-            self.out.p2(c);
             self.mark_selected(b, c);
         }
 
@@ -4728,13 +4750,17 @@ impl Client {
         }
 
         if action == MiniMenuAction::TOGGLE_BUTTON {
-            self.out.p1_enc(self.client_opcode(ClientProt::IF_BUTTON));
-            self.out.p2(c);
+            if self.revision.is_377() {
+                super::outbound_377::if_button(&mut self.out, c);
+            } else {
+                self.out.p1_enc(self.client_opcode(ClientProt::IF_BUTTON));
+                self.out.p2(c);
+            }
             // An owned script copy: the varp writes below need `&mut self`
             // while the script is read (the view borrow would conflict).
             let script = self
                 .if_(c as usize)
-                .and_then(|com| com.scripts.as_ref().and_then(|s| s.first()).cloned());
+                .and_then(|com| com.scripts.as_ref().and_then(|s| s.first().cloned()));
             if let Some(script) = script {
                 // TS 9163-9169: scripts[0][0] == 5 flips varp scripts[0][1].
                 if script.first() == Some(&5) {
@@ -4748,14 +4774,18 @@ impl Client {
         }
 
         if action == MiniMenuAction::SELECT_BUTTON {
-            self.out.p1_enc(self.client_opcode(ClientProt::IF_BUTTON));
-            self.out.p2(c);
+            if self.revision.is_377() {
+                super::outbound_377::if_button(&mut self.out, c);
+            } else {
+                self.out.p1_enc(self.client_opcode(ClientProt::IF_BUTTON));
+                self.out.p2(c);
+            }
             let script = self
                 .if_(c as usize)
-                .and_then(|com| com.scripts.as_ref().and_then(|s| s.first()).cloned());
+                .and_then(|com| com.scripts.as_ref().and_then(|s| s.first().cloned()));
             let operand = self
                 .if_(c as usize)
-                .and_then(|com| com.script_operand.as_ref().and_then(|o| o.first()).copied());
+                .and_then(|com| com.script_operand.as_ref().and_then(|o| o.first().copied()));
             if let Some(script) = script {
                 // TS 9172-9183: scripts[0][0] == 5 sets varp scripts[0][1]
                 // to scriptOperand[0] when it differs.
@@ -7618,15 +7648,14 @@ impl Client {
         }
     }
 
-    /// `closeModal` from client-ts (10941-10958): send CLOSE_MODAL and
-    /// close the side and chat modals locally; `main_modal_id` is reset
-    /// like Java `closeModal` (Client.java 3353-3367). `resumed_pause_button`
-    /// is cleared like TS 10947/10954 (also written by the IF_* handlers);
-    /// the per-modal redraw flags mirror TS
-    /// `redrawSide`/`redrawIcons`/`redrawChat`. Not to be confused with the
-    /// incoming-server `apply_if_close`.
+    /// `closeModal` sends `CLOSE_MODAL` and clears the active modal state.
+    /// Revision 377 follows Java `closeInterfaces` at `Client.java:4567-4596`.
     fn close_modal(&mut self) {
-        self.out.p1_enc(self.client_opcode(ClientProt::CLOSE_MODAL));
+        if self.revision.is_377() {
+            super::outbound_377::close_modal_377(&mut self.out);
+        } else {
+            self.out.p1_enc(self.client_opcode(ClientProt::CLOSE_MODAL));
+        }
         if self.side_modal_id != -1 {
             self.side_modal_id = -1;
             self.redraw_side = true;
