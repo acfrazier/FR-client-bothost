@@ -42,7 +42,6 @@ pub type LevelHeightmaps = Vec<Vec<Vec<i32>>>;
 /// The sim half of the scene world. See the module docs for what stays
 /// here versus `render::world::RenderWorld`.
 pub struct World {
-    revision: ClientRevision,
     pub(crate) min_level: i32,
     pub(crate) max_tile_level: i32,
     pub(crate) max_tile_x: i32,
@@ -111,25 +110,6 @@ pub struct World {
 
 impl World {
     pub fn new(groundh: LevelHeightmaps, max_tile_z: i32, max_level: i32, max_tile_x: i32) -> Self {
-        Self::new_with_revision(
-            groundh,
-            max_tile_z,
-            max_level,
-            max_tile_x,
-            ClientRevision::R274,
-        )
-    }
-
-    /// Bind the scene's revision at construction, like its owning client.
-    /// Only 377 materializes empty base squares for Java's painter traversal;
-    /// the existing 274/289 sparse-scene behavior remains unchanged.
-    pub fn new_with_revision(
-        groundh: LevelHeightmaps,
-        max_tile_z: i32,
-        max_level: i32,
-        max_tile_x: i32,
-        revision: ClientRevision,
-    ) -> Self {
         let mut squares = Vec::with_capacity(max_level as usize);
         for _ in 0..max_level {
             let mut level = Vec::with_capacity(max_tile_x as usize);
@@ -139,7 +119,6 @@ impl World {
             squares.push(level);
         }
         World {
-            revision,
             min_level: 0,
             max_tile_level: max_level,
             max_tile_x,
@@ -200,8 +179,14 @@ impl World {
     }
 
     pub fn fill_base_level(&mut self, level: i32) {
+        self.fill_base_level_with_revision(level, ClientRevision::R274);
+    }
+
+    /// Keep Java's empty-square painter dependencies only for explicit 377
+    /// builds. Pass the revision at build time without enlarging every client.
+    pub fn fill_base_level_with_revision(&mut self, level: i32, revision: ClientRevision) {
         self.min_level = level;
-        if !self.revision.is_377() {
+        if !revision.is_377() {
             return;
         }
         // Java 377 World3D.method275: empty squares participate in the fill
@@ -1266,27 +1251,21 @@ mod size_tests {
 
     #[test]
     fn r377_base_fill_creates_empty_squares_and_preserves_existing_contents() {
-        let mut world = World::new_with_revision(
-            vec![vec![vec![0; 4]; 5]; 2],
-            3,
-            2,
-            4,
-            crate::io::ClientRevision::R377,
-        );
+        let mut world = World::new(vec![vec![vec![0; 4]; 5]; 2], 3, 2, 4);
         let mut occupied = Square::new(1, 1, 2);
         occupied.draw_level = 7;
         world.squares[1][1][2] = Some(Box::new(occupied));
 
-        world.fill_base_level(1);
+        world.fill_base_level_with_revision(1, crate::io::ClientRevision::R377);
         assert_eq!(world.min_level, 1);
         assert!(world.squares[1].iter().flatten().all(Option::is_some));
         assert!(world.squares[0].iter().flatten().all(Option::is_none));
         assert_eq!(world.square(1, 1, 2).unwrap().draw_level, 7);
 
-        world.fill_base_level(1);
+        world.fill_base_level_with_revision(1, crate::io::ClientRevision::R377);
         assert_eq!(world.square(1, 1, 2).unwrap().draw_level, 7);
         world.reset_map();
-        world.fill_base_level(1);
+        world.fill_base_level_with_revision(1, crate::io::ClientRevision::R377);
         assert!(world.squares[1].iter().flatten().all(Option::is_some));
     }
 
@@ -1296,9 +1275,8 @@ mod size_tests {
             crate::io::ClientRevision::R274,
             crate::io::ClientRevision::R289,
         ] {
-            let mut world =
-                World::new_with_revision(vec![vec![vec![0; 4]; 5]; 2], 3, 2, 4, revision);
-            world.fill_base_level(1);
+            let mut world = World::new(vec![vec![vec![0; 4]; 5]; 2], 3, 2, 4);
+            world.fill_base_level_with_revision(1, revision);
             assert_eq!(world.min_level, 1);
             assert!(world
                 .squares
