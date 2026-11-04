@@ -5,9 +5,11 @@
 //! `Client.ifaces`. The per-request model/sprite methods (`getModel`,
 //! `getSprite`, ...) need `dash3d`/`graphics` and land with Tasks 14/15.
 
+pub mod config_377;
 pub mod flo_type;
 pub mod idk_type;
 pub mod if_type;
+pub mod if_type_377;
 pub mod loc_type;
 pub mod npc_type;
 pub mod obj_type;
@@ -16,9 +18,11 @@ pub mod spot_type;
 pub mod varbit_type;
 pub mod varp_type;
 
+pub use config_377::Cache377;
 pub use flo_type::FloType;
 pub use idk_type::IdkType;
 pub use if_type::{IfType, IfTypeMut};
+pub use if_type_377::{IfType377, InterfaceArchive377};
 pub use loc_type::LocType;
 pub use npc_type::NpcType;
 pub use obj_type::ObjType;
