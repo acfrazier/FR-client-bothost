@@ -1,7 +1,7 @@
-//! Standalone revision-377 runtime for the captured Fairy Ring login cohort.
+//! Standalone revision-377 runtime for captured Fairy Ring login and guide-dialogue packets.
 //! Decode and resource validation finish before application. Unsupported families
 //! fail closed; none can enter a 274/289 wire handler. Java anchors are the
-//! corresponding `readPacket`, `readPlayerInfo`, and `readNpcInfo` operations.
+//! corresponding `readPacket`, entity-info, and interface packet handlers.
 use super::*;
 use crate::client::packet_377::{
     decode_packet_377,
@@ -68,18 +68,22 @@ impl Client {
         payload: &mut Packet,
     ) -> Result<(), String> {
         let opcode = u8::try_from(opcode).map_err(|_| "377 opcode outside byte range")?;
-        // This is the exact observed login/logout cohort, not a numeric alias table.
+        // This is the exact observed login/logout/dialogue cohort, not a numeric alias table.
         if !matches!(
             opcode,
-            5 | 10
+            2 | 5
+                | 10
                 | 13
                 | 29
                 | 40
                 | 49
                 | 50
+                | 61
                 | 63
                 | 71
+                | 82
                 | 90
+                | 109
                 | 113
                 | 125
                 | 126
@@ -88,6 +92,7 @@ impl Client {
                 | 157
                 | 158
                 | 159
+                | 162
                 | 182
                 | 199
                 | 201
@@ -98,7 +103,7 @@ impl Client {
                 | 251
         ) {
             return Err(format!(
-                "377 packet {opcode}: outside captured login cohort"
+                "377 packet {opcode}: outside captured runtime cohort"
             ));
         }
         let end = payload.frame_end().unwrap_or(payload.length());
@@ -224,6 +229,42 @@ impl Client {
             }
             O::Interface(operation) => {
                 match operation {
+                    I::OpenChat { component } => {
+                        self.if_anim_reset(component);
+                        self.observe_main_modal_close();
+                        if self.side_modal_id != -1 {
+                            self.side_modal_id = -1;
+                            self.redraw_side = true;
+                            self.redraw_icons = true;
+                        }
+                        self.chat_modal_id = component;
+                        self.main_modal_id = -1;
+                        self.redraw_chat = true;
+                        self.resumed_pause_button = false;
+                    }
+                    I::SetNpcHead { component, npc } => {
+                        if let Some(com) = self.iface_mut(component as usize) {
+                            com.model1_type = 2;
+                            com.model1_id = npc;
+                        }
+                    }
+                    I::SetAnim {
+                        component,
+                        sequence,
+                    } => {
+                        if let Some(com) = self.iface_mut(component as usize) {
+                            if com.model_anim != sequence || sequence == -1 {
+                                com.model_anim = sequence;
+                                com.anim_frame = 0;
+                                com.anim_cycle = 0;
+                            }
+                        }
+                    }
+                    I::SetHide { component, hidden } => {
+                        if let Some(com) = self.iface_mut(component as usize) {
+                            com.hide = hidden;
+                        }
+                    }
                     I::Close => self.apply_if_close(),
                     I::SetTab { tab, component } => {
                         self.side_icon[tab as usize] = component;
@@ -358,6 +399,11 @@ impl Client {
                 self.next_midi_song = song;
             }
             O::MinimapToggle(value) => self.minimap_state = value,
+            O::UnsetMapFlag => {
+                self.minimap_flag_x = 0;
+                self.try_move_path.clear();
+                p.map_flag = true;
+            }
             O::CameraReset => {
                 self.cinema_cam = false;
                 self.cam_shake.fill(false);
@@ -921,7 +967,7 @@ fn hit_377(
 mod tests {
     use super::*;
 
-    fn client() -> Client {
+    fn client_with_cache(cache: Cache) -> Client {
         let mut client = Client::from_shared_with_revision(
             ClientConfig {
                 host: "127.0.0.1".into(),
@@ -930,7 +976,7 @@ mod tests {
                 members: true,
                 lowmem: true,
             },
-            Arc::new(Cache::default()),
+            Arc::new(cache),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             ClientRevision::R377,
@@ -938,6 +984,10 @@ mod tests {
         client.ingame = true;
         client.local_player = Some(ClientPlayer::default());
         client
+    }
+
+    fn client() -> Client {
+        client_with_cache(Cache::default())
     }
 
     #[test]
@@ -952,9 +1002,139 @@ mod tests {
         assert_eq!(short.pos, 0);
         let mut valid_but_outside_cohort = Packet::new(vec![]);
         assert!(client
-            .dispatch_packet_377(61, &mut valid_but_outside_cohort)
+            .dispatch_packet_377(60, &mut valid_but_outside_cohort)
             .unwrap_err()
             .contains("outside captured"));
+    }
+
+    #[test]
+    fn dialogue_pages_apply_heads_animation_text_and_reset_continue_latch() {
+        let mut cache = Cache::default();
+        cache.npcs.push(Default::default());
+        cache.seqs.push(Default::default());
+        let mut client = client_with_cache(cache);
+
+        let page = IfType {
+            children: Some(vec![301]),
+            ..Default::default()
+        };
+        client.set_iface(300, page);
+        client.set_iface(301, IfType::default());
+        client.set_iface(302, IfType::default());
+        client.set_iface(303, IfType::default());
+        client.iface_mut(301).unwrap().model_anim = 7;
+        client.iface_mut(301).unwrap().anim_frame = 4;
+        client.iface_mut(301).unwrap().anim_cycle = 5;
+
+        let mut head = Packet::new(vec![0, 128, 45, 1]);
+        client.dispatch_packet_377(162, &mut head).unwrap();
+        let mut animation = Packet::new(vec![173, 1, 0, 128]);
+        client.dispatch_packet_377(2, &mut animation).unwrap();
+        let mut text =
+            Packet::new([vec![174, 1], b"Hello, adventurer!".to_vec(), vec![10]].concat());
+        client.dispatch_packet_377(232, &mut text).unwrap();
+        let mut hide = Packet::new(vec![1, 1, 45]);
+        client.dispatch_packet_377(82, &mut hide).unwrap();
+
+        let component = client.iface_mut(301).unwrap();
+        assert_eq!((component.model1_type, component.model1_id), (2, 0));
+        assert_eq!(
+            (
+                component.model_anim,
+                component.anim_frame,
+                component.anim_cycle
+            ),
+            (0, 0, 0)
+        );
+        assert!(client.iface_mut(301).unwrap().hide);
+        assert_eq!(client.iface_mut(302).unwrap().text, "Hello, adventurer!");
+
+        client.iface_mut(301).unwrap().anim_frame = 8;
+        client.iface_mut(301).unwrap().anim_cycle = 9;
+        client.main_modal_id = 40;
+        client.side_modal_id = 41;
+        client.chat_modal_id = 42;
+        client.resumed_pause_button = true;
+        let iface_generation = client.gens.iface;
+        let mut first_page = Packet::new(vec![1, 44]);
+        client.dispatch_packet_377(109, &mut first_page).unwrap();
+        assert_eq!(client.chat_modal_id, 300);
+        assert_eq!(client.main_modal_id, -1);
+        assert_eq!(client.side_modal_id, -1);
+        assert!(!client.resumed_pause_button);
+        assert_eq!(client.gens.iface, iface_generation + 1);
+        let component = client.iface_mut(301).unwrap();
+        assert_eq!((component.model1_type, component.model1_id), (2, 0));
+        assert_eq!(
+            (
+                component.model_anim,
+                component.anim_frame,
+                component.anim_cycle
+            ),
+            (0, 0, 0)
+        );
+
+        client.resumed_pause_button = true;
+        let mut second_page = Packet::new(vec![1, 47]);
+        client.dispatch_packet_377(109, &mut second_page).unwrap();
+        assert_eq!(client.chat_modal_id, 303);
+        assert!(!client.resumed_pause_button);
+    }
+
+    #[test]
+    fn invalid_dialogue_resource_fails_before_any_mutation() {
+        let mut cache = Cache::default();
+        cache.npcs.push(Default::default());
+        let mut client = client_with_cache(cache);
+        client.set_iface(301, IfType::default());
+        let component = client.iface_mut(301).unwrap();
+        component.model1_type = 4;
+        component.model1_id = 55;
+        component.model_anim = 7;
+        component.anim_frame = 8;
+        component.anim_cycle = 9;
+        client.main_modal_id = 40;
+        client.side_modal_id = 41;
+        client.chat_modal_id = 42;
+        client.resumed_pause_button = true;
+        client.ptype = 73;
+        let iface_generation = client.gens.iface;
+
+        let mut invalid_head = Packet::new(vec![0, 129, 45, 1]);
+        assert!(client.dispatch_packet_377(162, &mut invalid_head).is_err());
+
+        let component = client.iface_mut(301).unwrap();
+        assert_eq!((component.model1_type, component.model1_id), (4, 55));
+        assert_eq!(
+            (
+                component.model_anim,
+                component.anim_frame,
+                component.anim_cycle
+            ),
+            (7, 8, 9)
+        );
+        assert_eq!(client.main_modal_id, 40);
+        assert_eq!(client.side_modal_id, 41);
+        assert_eq!(client.chat_modal_id, 42);
+        assert!(client.resumed_pause_button);
+        assert_eq!(client.ptype, 73);
+        assert_eq!(invalid_head.pos, 0);
+        assert_eq!(client.gens.iface, iface_generation);
+    }
+
+    #[test]
+    fn unset_map_flag_clears_the_visible_route_and_publishes() {
+        let mut client = client();
+        client.minimap_flag_x = 12;
+        client.try_move_path = vec![(10, 20), (11, 20)];
+        let map_flag_generation = client.gens.map_flag;
+        let mut packet = Packet::new(vec![]);
+
+        client.dispatch_packet_377(61, &mut packet).unwrap();
+
+        assert_eq!(client.minimap_flag_x, 0);
+        assert!(client.try_move_path.is_empty());
+        assert_eq!(client.gens.map_flag, map_flag_generation + 1);
     }
 
     #[test]
@@ -1002,17 +1182,21 @@ mod tests {
         );
     }
 
-    #[test]
-    fn actual_engine_login_capture_replays_against_its_cache() {
-        let (Ok(cache_dir), Ok(capture)) = (
-            std::env::var("CLIENT_377_RUNTIME_CACHE_DIR"),
-            std::env::var("CLIENT_377_CAPTURE"),
-        ) else {
-            eprintln!("377 captured replay not provisioned: set CLIENT_377_RUNTIME_CACHE_DIR and CLIENT_377_CAPTURE");
-            return;
-        };
+    struct CaptureReplay377 {
+        client: Client,
+        frame_count: usize,
+        dialogue_pages: usize,
+        head_updates: usize,
+        animations: usize,
+        text_updates: usize,
+        hide_updates: usize,
+        map_flag_resets: usize,
+        interface_closes: usize,
+    }
+
+    fn replay_capture(cache_dir: &str, capture_path: &str, check_spawn: bool) -> CaptureReplay377 {
         let (cache, ifaces, overlays) =
-            Client::load_cache_revision(&cache_dir, true, ClientRevision::R377).unwrap();
+            Client::load_cache_revision(cache_dir, true, ClientRevision::R377).unwrap();
         let versionlist = JagFile::new(std::fs::read(format!("{cache_dir}/versionlist")).unwrap());
         let model_versions = versionlist.read("model_version").unwrap();
         let midi_versions = versionlist.read("midi_version").unwrap();
@@ -1050,7 +1234,7 @@ mod tests {
             ClientConfig {
                 host: "127.0.0.1".into(),
                 port: 43595,
-                cache_dir,
+                cache_dir: cache_dir.into(),
                 members: true,
                 lowmem: true,
             },
@@ -1062,10 +1246,28 @@ mod tests {
         client.ingame = true;
         client.local_player = Some(ClientPlayer::default());
         let capture: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(capture).unwrap()).unwrap();
+            serde_json::from_slice(&std::fs::read(capture_path).unwrap()).unwrap();
         let frames = capture["inbound"].as_array().unwrap();
+        let mut replay = CaptureReplay377 {
+            client,
+            frame_count: frames.len(),
+            dialogue_pages: 0,
+            head_updates: 0,
+            animations: 0,
+            text_updates: 0,
+            hide_updates: 0,
+            map_flag_resets: 0,
+            interface_closes: 0,
+        };
         for frame in frames {
             let opcode = frame["opcode"].as_u64().unwrap() as u8;
+            replay.dialogue_pages += (opcode == 109) as usize;
+            replay.head_updates += (opcode == 162) as usize;
+            replay.animations += (opcode == 2) as usize;
+            replay.text_updates += (opcode == 232) as usize;
+            replay.hide_updates += (opcode == 82) as usize;
+            replay.map_flag_resets += (opcode == 61) as usize;
+            replay.interface_closes += (opcode == 29) as usize;
             let bytes: Vec<u8> = frame["payload"]
                 .as_array()
                 .unwrap()
@@ -1073,7 +1275,7 @@ mod tests {
                 .map(|b| b.as_u64().unwrap() as u8)
                 .collect();
             let context = Context {
-                client: &client,
+                client: &replay.client,
                 models: &model_versions,
                 midi: &midi_versions,
             };
@@ -1082,28 +1284,89 @@ mod tests {
                 .validate(&context)
                 .unwrap()
                 .into_operation();
-            client.preflight_377(&operation).unwrap();
-            if opcode == 5 {
-                let local = client.local_player.as_ref().unwrap();
+            replay.client.preflight_377(&operation).unwrap();
+            let open_chat = matches!(&operation, O::Interface(I::OpenChat { .. }));
+            let close_interface = matches!(&operation, O::Interface(I::Close));
+            if open_chat {
+                replay.client.resumed_pause_button = true;
+            }
+            if check_spawn && opcode == 5 {
+                let local = replay.client.local_player.as_ref().unwrap();
                 assert!(local.ready);
                 assert_eq!(
                     (
-                        client.map_build_base_x + local.route_x[0],
-                        client.map_build_base_z + local.route_z[0]
+                        replay.client.map_build_base_x + local.route_x[0],
+                        replay.client.map_build_base_z + local.route_z[0]
                     ),
                     (3094, 3106)
                 );
-                assert!(client.npc_count > 0);
+                assert!(replay.client.npc_count > 0);
             }
-            if let Some(publication) = client.apply_operation_377(operation) {
-                publication.publish(&mut client.gens);
+            if let Some(publication) = replay.client.apply_operation_377(operation) {
+                publication.publish(&mut replay.client.gens);
+            }
+            if open_chat || close_interface {
+                assert!(!replay.client.resumed_pause_button);
+            }
+            if close_interface {
+                assert_eq!(replay.client.chat_modal_id, -1);
             }
         }
-        assert!(!client.ingame);
+        replay
+    }
+
+    #[test]
+    fn actual_engine_login_capture_replays_against_its_cache() {
+        let (Ok(cache_dir), Ok(capture)) = (
+            std::env::var("CLIENT_377_RUNTIME_CACHE_DIR"),
+            std::env::var("CLIENT_377_CAPTURE"),
+        ) else {
+            eprintln!(
+                "377 captured replay not provisioned: set CLIENT_377_RUNTIME_CACHE_DIR and CLIENT_377_CAPTURE"
+            );
+            return;
+        };
+        let mut replay = replay_capture(&cache_dir, &capture, true);
+        assert!(!replay.client.ingame);
         assert!(matches!(
-            client.take_session_exit_reason(),
+            replay.client.take_session_exit_reason(),
             Some(SessionExitReason::ServerLogout { .. })
         ));
-        eprintln!("377 replayed {} actual engine frames with actual cache references; no socket, asset delivery, or scene2 rendering claimed", frames.len());
+        eprintln!(
+            "377 replayed {} actual engine frames with actual cache references; no socket, asset delivery, or scene2 rendering claimed",
+            replay.frame_count
+        );
+    }
+
+    #[test]
+    fn actual_engine_interaction_capture_replays_dialogue_cohort() {
+        let (Ok(cache_dir), Ok(capture)) = (
+            std::env::var("CLIENT_377_RUNTIME_CACHE_DIR"),
+            std::env::var("CLIENT_377_INTERACTION_CAPTURE"),
+        ) else {
+            eprintln!(
+                "377 interaction replay not provisioned: set CLIENT_377_RUNTIME_CACHE_DIR and CLIENT_377_INTERACTION_CAPTURE"
+            );
+            return;
+        };
+        let mut replay = replay_capture(&cache_dir, &capture, false);
+        assert!(replay.dialogue_pages >= 5);
+        assert!(replay.head_updates > 0);
+        assert!(replay.animations > 0);
+        assert!(replay.text_updates > 0);
+        assert!(replay.hide_updates > 0);
+        assert!(replay.map_flag_resets > 0);
+        assert!(replay.interface_closes > 0);
+        assert_eq!(replay.client.chat_modal_id, -1);
+        assert!(!replay.client.resumed_pause_button);
+        assert!(!replay.client.ingame);
+        assert!(matches!(
+            replay.client.take_session_exit_reason(),
+            Some(SessionExitReason::ServerLogout { .. })
+        ));
+        eprintln!(
+            "377 replayed {} captured dialogue interaction frames; {} IF_OPENCHAT pages applied",
+            replay.frame_count, replay.dialogue_pages
+        );
     }
 }

@@ -8,15 +8,18 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+#[path = "support/live_engine_377.rs"]
+mod live_engine_377;
+
 #[derive(Default)]
 struct Outbound(Mutex<Vec<u8>>);
 impl PacketObserver for Outbound {
     fn packet_body_length(&self, opcode: u8) -> i16 {
-        match opcode {
-            40 | 6 => 0,
-            79 => 2,
-            _ => panic!("unexpected 377 outbound opcode {opcode}"),
-        }
+        client::io::ClientProt377::ALL
+            .iter()
+            .find(|packet| packet.id == i32::from(opcode))
+            .expect("outbound packet must be declared by Java 377")
+            .length as i16
     }
     fn packet_committed(&self, opcode: u8, _: usize) {
         eprintln!("377 outbound opcode={opcode}");
@@ -140,7 +143,7 @@ fn first_login_scene2_logout_relog_scene2() {
         !Path::new("/Volumes/dev-scratch/274bot-evidence/MAC-QUIET.lock").exists(),
         "quiet lock blocks live runs"
     );
-    std::fs::create_dir_all(&evidence).unwrap();
+    live_engine_377::require_engine(Path::new(&evidence), &user, &cache_dir);
     Renderer::set_prefer_gpu(false);
     let mut client = Client::new_with_revision_and_http_port(
         ClientConfig {
@@ -178,6 +181,10 @@ fn first_login_scene2_logout_relog_scene2() {
     assert!(packets.contains(&6));
     assert!(packets.contains(&40));
     assert_eq!(packets.iter().filter(|&&opcode| opcode == 79).count(), 2);
-    assert!(packets.iter().all(|opcode| [6, 40, 79].contains(opcode)));
+    assert!(packets.iter().all(|opcode| {
+        client::io::ClientProt377::ALL
+            .iter()
+            .any(|packet| packet.id == i32::from(*opcode))
+    }));
     eprintln!("377 live proof complete: scene2, IF_BUTTON/server logout, relog scene2, second clean logout; outbound={packets:?}");
 }
