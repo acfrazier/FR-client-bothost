@@ -95,9 +95,9 @@ fn named_inventory(c: &Client) -> Vec<Value> {
         .filter_map(|(slot, (&object_plus_one, &count))| {
             let object = object_plus_one - 1;
             (object >= 0 && count > 0).then(|| {
-                json!({\"slot\":slot,\"object\":object,
-                    \"name\":c.cache.objs.get(object as usize).map(|obj|obj.name.as_str()),
-                    \"count\":count})
+                json!({"slot":slot,"object":object,
+                    "name":c.cache.objs.get(object as usize).map(|obj|obj.name.as_str()),
+                    "count":count})
             })
         })
         .collect()
@@ -110,7 +110,7 @@ fn state(c: &Client) -> Value {
         "source":[p.src_x,p.h1,p.src_z],"position":[p.x,p.y,p.z],
         "start_cycle":p.t1,"end_cycle":p.t2,"target":p.target}))
     });
-    json!({"cycle":c.loop_cycle,"tile":tile(c),"fine_position":[p.x,p.z],
+    let mut snapshot = json!({"cycle":c.loop_cycle,"tile":tile(c),"fine_position":[p.x,p.z],
         "player_info_generation":c.gens.player_info,"varp_generation":c.gens.varp,
         "main_modal":c.main_modal_id,"chat_modal":c.chat_modal_id,"overlay":c.main_overlay_id,
         "body":body(c),"progress_varp_406":c.var.get(406),"progress_server_406":c.var_serv.get(406),
@@ -138,18 +138,50 @@ fn state(c: &Client) -> Value {
         "raw_shrimps":inventory_count(c,2514),"burnt_shrimps":inventory_count(c,323),
         "cooked_shrimps":inventory_count(c,315),"flour":inventory_count(c,2516),
         "water":inventory_count(c,1929),"dough":inventory_count(c,2307),"bread":inventory_count(c,2309),
-"plane":c.minusedlevel,"map_base":[c.map_build_base_x,c.map_build_base_z],
-        "camera":{"orbit_pitch":c.orbit_camera_pitch,"orbit_yaw":c.orbit_camera_yaw,
-            "orbit_x":c.orbit_camera_x,"orbit_z":c.orbit_camera_z,
-            "minimap_angle":c.macro_minimap_angle,"minimap_zoom":c.macro_minimap_zoom},
-        "cook_quest_varp":c.var.get(29),"cook_quest_server_varp":c.var_serv.get(29),
-        "main_interface":mainland_lesson_377::interface_components(c,c.main_modal_id),
-        "main_interface_text":mainland_lesson_377::interface_text(c,c.main_modal_id),
-        "side_interface":mainland_lesson_377::interface_components(c,c.side_modal_id),
-        "side_interface_text":mainland_lesson_377::interface_text(c,c.side_modal_id),
-        "ground_objects":mainland_lesson_377::ground_state(c),
-        "inventory_named":named_inventory(c),
-        "stat_xp":c.stat_xp,"stat_levels":c.stat_base_level})
+"stat_xp":c.stat_xp,"stat_levels":c.stat_base_level});
+    let fields = snapshot
+        .as_object_mut()
+        .expect("state snapshot is an object");
+    fields.insert("plane".into(), json!(c.minusedlevel));
+    fields.insert(
+        "map_base".into(),
+        json!([c.map_build_base_x, c.map_build_base_z]),
+    );
+    fields.insert(
+        "camera".into(),
+        json!({
+            "orbit_pitch": c.orbit_camera_pitch,
+            "orbit_yaw": c.orbit_camera_yaw,
+            "orbit_x": c.orbit_camera_x,
+            "orbit_z": c.orbit_camera_z,
+            "minimap_angle": c.macro_minimap_angle,
+            "minimap_zoom": c.macro_minimap_zoom
+        }),
+    );
+    fields.insert("cook_quest_varp".into(), json!(c.var.get(29)));
+    fields.insert("cook_quest_server_varp".into(), json!(c.var_serv.get(29)));
+    fields.insert(
+        "main_interface".into(),
+        json!(mainland_lesson_377::interface_components(c, c.main_modal_id)),
+    );
+    fields.insert(
+        "main_interface_text".into(),
+        json!(mainland_lesson_377::interface_text(c, c.main_modal_id)),
+    );
+    fields.insert(
+        "side_interface".into(),
+        json!(mainland_lesson_377::interface_components(c, c.side_modal_id)),
+    );
+    fields.insert(
+        "side_interface_text".into(),
+        json!(mainland_lesson_377::interface_text(c, c.side_modal_id)),
+    );
+    fields.insert(
+        "ground_objects".into(),
+        json!(mainland_lesson_377::ground_state(c)),
+    );
+    fields.insert("inventory_named".into(), json!(named_inventory(c)));
+    snapshot
 }
 
 fn pump_until(
@@ -911,7 +943,7 @@ fn terrain_click_guide_dialogue_and_progress() {
     eprintln!("PASS: natural Guide, firemaking, stats, fishing, burnt/cooked shrimp, chef ingredients, dough, bread, server varp406 1->6, server logout");
 }
 
-#[path = "support/tutorial_lesson_377.rs"]
-mod tutorial_lesson_377;
 #[path = "support/mainland_lesson_377.rs"]
 mod mainland_lesson_377;
+#[path = "support/tutorial_lesson_377.rs"]
+mod tutorial_lesson_377;
