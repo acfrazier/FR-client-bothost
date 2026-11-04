@@ -46,8 +46,8 @@ use crate::datastruct::LinkList;
 use crate::graphics::Pix3D;
 use crate::io::client_stream::{LoginCancel, StreamExitReason};
 use crate::io::{
-    ClientProt, ClientRevision, ClientStream, Isaac, JagFile, OnDemand, Packet, ServerProt,
-    ServerProt289,
+    ClientProt, ClientProt377, ClientRevision, ClientStream, Isaac, JagFile, OnDemand, Packet,
+    ServerProt, ServerProt289,
 };
 use crate::login_rsa;
 use crate::render::nav_debug::NavDebugPaint;
@@ -4281,7 +4281,17 @@ impl Client {
         }
 
         if action == MiniMenuAction::OP_LOC1 {
-            self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC1));
+            if self.revision().is_377() {
+                self.interact_with_loc(b, c, a, ClientProt377::OPLOC1.id);
+                super::outbound_377::oploc1_377(
+                    &mut self.out,
+                    b + self.map_build_base_x,
+                    c + self.map_build_base_z,
+                    (a >> 14) & 0x7fff,
+                );
+            } else {
+                self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC1));
+            }
         }
 
         if action == MiniMenuAction::OP_LOC2 {
@@ -4879,8 +4889,10 @@ impl Client {
         let shape = info & 0x1f;
         let angle = (info >> 6) & 0x3;
 
-        self.cyclelogic2 += 1;
-        if self.cyclelogic2 > 1086 {
+        if !self.revision().is_377() {
+            self.cyclelogic2 += 1;
+        }
+        if !self.revision().is_377() && self.cyclelogic2 > 1086 {
             self.cyclelogic2 = 0;
             self.out
                 .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC2));
@@ -4929,6 +4941,11 @@ impl Client {
         self.cross_y = self.shell.mouse_click_y;
         self.cross_mode = 2;
         self.cross_cycle = 0;
+        // Java 377's interaction helper only routes and sets the crosshair.
+        // Its action-specific packet is emitted by doAction after this call.
+        if self.revision().is_377() {
+            return true;
+        }
 
         self.out.p1_enc(opcode);
         self.out.p2(x + self.map_build_base_x);
