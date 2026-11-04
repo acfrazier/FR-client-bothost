@@ -601,9 +601,9 @@ impl Renderer {
             } else if client.cross_mode == 2 {
                 // Primary 289 J:1773-1778: count drawn op crosshairs only.
                 if client.revision().is_289() {
-                    client.outbound_289.cyclelogic5 += 1;
-                    if client.outbound_289.cyclelogic5 > 57 {
-                        client.outbound_289.cyclelogic5 = 0;
+                    client.outbound.legacy().cyclelogic5 += 1;
+                    if client.outbound.legacy().cyclelogic5 > 57 {
+                        client.outbound.legacy().cyclelogic5 = 0;
                         client.out.p1_enc(
                             client.client_opcode(crate::io::ClientProt::ANTICHEAT_CYCLELOGIC5),
                         );
@@ -670,6 +670,9 @@ impl Renderer {
                             Colour::YELLOW,
                         );
                     }
+                }
+                if client.revision().is_377() {
+                    client.system_update_packet_377();
                 }
             }
         }
@@ -828,13 +831,17 @@ impl Renderer {
         if let Some(player) = client.local_player.as_ref() {
             if player.x >> 7 == client.minimap_flag_x && player.z >> 7 == client.minimap_flag_z {
                 client.minimap_flag_x = 0;
-                client.cyclelogic6 += 1;
-                if client.cyclelogic6 > 122 {
-                    client.cyclelogic6 = 0;
-                    client
-                        .out
-                        .p1_enc(client.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC6));
-                    client.out.p1(62);
+                // Java 377 emits cyclelogic6 from chat-mode input, never
+                // from the arrival flag. Keep legacy arrival traffic isolated.
+                if !client.revision().is_377() {
+                    client.cyclelogic6 += 1;
+                    if client.cyclelogic6 > 122 {
+                        client.cyclelogic6 = 0;
+                        client
+                            .out
+                            .p1_enc(client.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC6));
+                        client.out.p1(62);
+                    }
                 }
             }
         }
@@ -1014,6 +1021,11 @@ impl Renderer {
                 self.world.set_sprite_model(world, index, model);
             }
         });
+
+        if client.revision().is_377() {
+            client.projectiles_packet_377();
+            return;
+        }
 
         // TS 4387-4413: `cyclelogic1` anticheat every 1175 cycles.
         self.cyclelogic1 += 1;
@@ -4278,6 +4290,12 @@ impl Renderer {
                     self.active_map_function_count += 1;
                 }
             }
+        }
+
+        // Java 377's cyclelogic3 belongs to the system-update overlay.
+        if client.revision().is_377() {
+            client.minimap_buffer_packet_377();
+            return;
         }
 
         self.cyclelogic3 += 1;
