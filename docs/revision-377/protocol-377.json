@@ -1,0 +1,2852 @@
+{
+  "revision": 377,
+  "source_pin": {
+    "repository": "https://github.com/LostCityRS/Client-Java",
+    "commit": "327880f6de74b40c420705bc42e4b34284885087",
+    "sha256": {
+      "src/main/java/jagex2/client/Client.java": "09f77c9540f2a2fa85cd9c4f158b5eff70baf0ae9d1c509478f53f6546f4cf6c",
+      "src/main/java/jagex2/io/Protocol.java": "6e7d6b49309217e120aaf69be23a5662ca89097168754e9ac67697695f6da52e",
+      "src/main/java/jagex2/io/Jagfile.java": "ca4dd7783f522ac9a69b975505a8bab650b7fcb45a9c17dc6ade22637cbb9f07",
+      "src/main/java/jagex2/io/OnDemand.java": "6dede5b2e9fa6a7ed71a77bdb1718b2465418e625a44803ae753d6faeab99c69"
+    }
+  },
+  "inbound": [
+    {
+      "id": 0,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 1,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 2,
+      "length": 4,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 3,
+      "length": 6,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 4,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 5,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 6,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 7,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 8,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 9,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 10,
+      "length": 3,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 11,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 12,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 13,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 14,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 15,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 16,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 17,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 18,
+      "length": 6,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 19,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 20,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 21,
+      "length": 6,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 22,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 23,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 24,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 25,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 26,
+      "length": 5,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 27,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 28,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 29,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 30,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 31,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 32,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 33,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 34,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 35,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 36,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 37,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 38,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 39,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 40,
+      "length": 2,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 41,
+      "length": 4,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 42,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 43,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 44,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 45,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 46,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 47,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 48,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 49,
+      "length": 6,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 50,
+      "length": 2,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 51,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 52,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 53,
+      "length": -2,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "g2"
+    },
+    {
+      "id": 54,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 55,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 56,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 57,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 58,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 59,
+      "length": 6,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 60,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 61,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 62,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 63,
+      "length": -1,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "g1"
+    },
+    {
+      "id": 64,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 65,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 66,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 67,
+      "length": 4,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 68,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 69,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 70,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 71,
+      "length": -2,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "g2"
+    },
+    {
+      "id": 72,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 73,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 74,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 75,
+      "length": 2,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 76,
+      "length": 23,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 77,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 78,
+      "length": 9,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 79,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 80,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 81,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 82,
+      "length": 3,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 83,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 84,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 85,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 86,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 87,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 88,
+      "length": 2,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 89,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 90,
+      "length": -2,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "g2"
+    },
+    {
+      "id": 91,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 92,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 93,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 94,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 95,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 96,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 97,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 98,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 99,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 100,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 101,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 102,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 103,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 104,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 105,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 106,
+      "length": 7,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 107,
+      "length": 5,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 108,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 109,
+      "length": 2,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 110,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 111,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 112,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 113,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 114,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 115,
+      "length": 6,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 116,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 117,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 118,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 119,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 120,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 121,
+      "length": 7,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 122,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 123,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 124,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 125,
+      "length": 1,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 126,
+      "length": 3,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 127,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 128,
+      "length": 4,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 129,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 130,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 131,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 132,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 133,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 134,
+      "length": -2,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "g2"
+    },
+    {
+      "id": 135,
+      "length": -1,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "g1"
+    },
+    {
+      "id": 136,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 137,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 138,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 139,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 140,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 141,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 142,
+      "length": 4,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 143,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 144,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 145,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 146,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 147,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 148,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 149,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 150,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 151,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 152,
+      "length": 4,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 153,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 154,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 155,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 156,
+      "length": 1,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 157,
+      "length": -1,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "g1"
+    },
+    {
+      "id": 158,
+      "length": 2,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 159,
+      "length": 2,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 160,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 161,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 162,
+      "length": 4,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 163,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 164,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 165,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 166,
+      "length": 6,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 167,
+      "length": 6,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 168,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 169,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 170,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 171,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 172,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 173,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 174,
+      "length": 2,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 175,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 176,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 177,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 178,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 179,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 180,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 181,
+      "length": 15,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 182,
+      "length": 3,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 183,
+      "length": -2,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "g2"
+    },
+    {
+      "id": 184,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 185,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 186,
+      "length": 8,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 187,
+      "length": 6,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 188,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 189,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 190,
+      "length": 2,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 191,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 192,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 193,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 194,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 195,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 196,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 197,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 198,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 199,
+      "length": 6,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 200,
+      "length": 4,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 201,
+      "length": 3,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 202,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 203,
+      "length": 14,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 204,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 205,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 206,
+      "length": -2,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "g2"
+    },
+    {
+      "id": 207,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 208,
+      "length": 3,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 209,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 210,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 211,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 212,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 213,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 214,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 215,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 216,
+      "length": 4,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 217,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 218,
+      "length": 4,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 219,
+      "length": 2,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 220,
+      "length": 2,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 221,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 222,
+      "length": 4,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 223,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 224,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 225,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 226,
+      "length": -2,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "g2"
+    },
+    {
+      "id": 227,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 228,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 229,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 230,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 231,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 232,
+      "length": -2,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "g2"
+    },
+    {
+      "id": 233,
+      "length": 1,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 234,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 235,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 236,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 237,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 238,
+      "length": 1,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 239,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 240,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 241,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 242,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 243,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 244,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 245,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 246,
+      "length": 2,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 247,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 248,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 249,
+      "length": 5,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 250,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 251,
+      "length": 1,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 252,
+      "length": 1,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 253,
+      "length": 4,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 254,
+      "length": 0,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    },
+    {
+      "id": 255,
+      "length": 2,
+      "source": "src/main/java/jagex2/io/Protocol.java:11-11",
+      "length_kind": "fixed"
+    }
+  ],
+  "unreachable_java_sizes": [
+    0
+  ],
+  "outbound": [
+    {
+      "name": "OPHELDU",
+      "id": 1,
+      "length": 12,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9924-9941",
+          "writes": [
+            "this.out.p2(var6)",
+            "this.out.p2_alt1(this.objSelectedSlot)",
+            "this.out.p2_alt1(this.objInterface)",
+            "this.out.p2_alt3(this.objSelectedInterface)",
+            "this.out.p2_alt2(var3)",
+            "this.out.p2_alt2(var4)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "INV_BUTTON1",
+      "id": 3,
+      "length": 6,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9782-9796",
+          "writes": [
+            "this.out.p2_alt2(var6)",
+            "this.out.p2(var4)",
+            "this.out.p2(var3)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPHELD5",
+      "id": 4,
+      "length": 6,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10143-10157",
+          "writes": [
+            "this.out.p2_alt1(var3)",
+            "this.out.p2_alt3(var6)",
+            "this.out.p2_alt3(var4)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "MAP_BUILD_COMPLETE",
+      "id": 6,
+      "length": 0,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:3500-3502",
+          "writes": []
+        }
+      ]
+    },
+    {
+      "name": "OPNPC5",
+      "id": 8,
+      "length": 2,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9997-9999",
+          "writes": [
+            "this.out.p2_alt1(var6)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPNPC3",
+      "id": 13,
+      "length": 2,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9976-9978",
+          "writes": [
+            "this.out.p2_alt3(var6)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "EVENT_MOUSE_CLICK",
+      "id": 19,
+      "length": 4,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:3123-3125",
+          "writes": [
+            "this.out.p4((var18 << 19) + (var19 << 20) + var17)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ANTICHEAT_CYCLELOGIC6",
+      "id": 22,
+      "length": 2,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:4561-4563",
+          "writes": [
+            "this.out.p2(38304)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPHELD2",
+      "id": 24,
+      "length": 6,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9859-9873",
+          "writes": [
+            "this.out.p2_alt1(var4)",
+            "this.out.p2_alt1(var6)",
+            "this.out.p2_alt2(var3)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "MOVE_GAMECLICK",
+      "id": 28,
+      "length": -1,
+      "length_derivation": "explicit p1 payload-length expression",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:7184-7186",
+          "writes": [
+            "this.out.p1(var34 + var34 + 3)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPPLAYERT",
+      "id": 31,
+      "length": 4,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10013-10016",
+          "writes": [
+            "this.out.p2(var6)",
+            "this.out.p2_alt1(this.activeSpellId)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPHELDT",
+      "id": 36,
+      "length": 8,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9944-9959",
+          "writes": [
+            "this.out.p2(this.activeSpellId)",
+            "this.out.p2_alt2(var4)",
+            "this.out.p2_alt2(var3)",
+            "this.out.p2_alt2(var6)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "NO_TIMEOUT",
+      "id": 40,
+      "length": 0,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:3409-3410",
+          "writes": []
+        },
+        {
+          "source": "src/main/java/jagex2/client/Client.java:3528-3547",
+          "writes": []
+        },
+        {
+          "source": "src/main/java/jagex2/client/Client.java:3547-3556",
+          "writes": []
+        },
+        {
+          "source": "src/main/java/jagex2/client/Client.java:3570-3596",
+          "writes": []
+        },
+        {
+          "source": "src/main/java/jagex2/client/Client.java:3624-3631",
+          "writes": []
+        },
+        {
+          "source": "src/main/java/jagex2/client/Client.java:3631-3650",
+          "writes": []
+        }
+      ]
+    },
+    {
+      "name": "OPNPC4",
+      "id": 42,
+      "length": 2,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9806-9808",
+          "writes": [
+            "this.out.p2_alt1(var6)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPPLAYER5",
+      "id": 45,
+      "length": 2,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9729-9731",
+          "writes": [
+            "this.out.p2_alt2(var6)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "MESSAGE_PUBLIC",
+      "id": 49,
+      "length": -1,
+      "length_derivation": "p1 length placeholder followed by psize1 backpatch",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:5037-5068",
+          "writes": [
+            "this.out.p1(0)",
+            "this.out.p1_alt2(colour)",
+            "this.out.p1_alt1(effect)",
+            "this.out.pdata(this.chatPacket.data, this.chatPacket.pos, 0)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPLOC3",
+      "id": 50,
+      "length": 6,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10194-10198",
+          "writes": [
+            "this.out.p2_alt2(this.sceneBaseTileZ + var4)",
+            "this.out.p2_alt1(var6 >> 14 & 0x7FFF)",
+            "this.out.p2_alt3(this.sceneBaseTileX + var3)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPOBJ4",
+      "id": 54,
+      "length": 6,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9852-9856",
+          "writes": [
+            "this.out.p2_alt2(var6)",
+            "this.out.p2_alt1(this.sceneBaseTileZ + var4)",
+            "this.out.p2(this.sceneBaseTileX + var3)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPLOC5",
+      "id": 55,
+      "length": 6,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10178-10182",
+          "writes": [
+            "this.out.p2_alt1(var6 >> 14 & 0x7FFF)",
+            "this.out.p2_alt1(this.sceneBaseTileZ + var4)",
+            "this.out.p2(this.sceneBaseTileX + var3)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "CLIENT_CHEAT",
+      "id": 56,
+      "length": -1,
+      "length_derivation": "explicit p1 payload-length expression",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:4972-4975",
+          "writes": [
+            "this.out.p1(this.chatTyped.length() - 1)",
+            "this.out.pjstr(this.chatTyped.substring(2))"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPNPCU",
+      "id": 57,
+      "length": 8,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9883-9888",
+          "writes": [
+            "this.out.p2(var6)",
+            "this.out.p2_alt1(this.objInterface)",
+            "this.out.p2_alt3(this.objSelectedInterface)",
+            "this.out.p2(this.objSelectedSlot)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPNPC2",
+      "id": 67,
+      "length": 2,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9742-9744",
+          "writes": [
+            "this.out.p2_alt2(var6)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPOBJ3",
+      "id": 71,
+      "length": 6,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10066-10070",
+          "writes": [
+            "this.out.p2_alt3(var6)",
+            "this.out.p2_alt3(this.sceneBaseTileX + var3)",
+            "this.out.p2_alt2(this.sceneBaseTileZ + var4)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "RESUME_P_COUNTDIALOG",
+      "id": 75,
+      "length": 4,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:4896-4898",
+          "writes": [
+            "this.out.p4(value)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPOBJ1",
+      "id": 77,
+      "length": 6,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10042-10046",
+          "writes": [
+            "this.out.p2_alt2(this.sceneBaseTileX + var3)",
+            "this.out.p2(this.sceneBaseTileZ + var4)",
+            "this.out.p2_alt3(var6)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "EVENT_HAS_WINDOW",
+      "id": 78,
+      "length": 4,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:3655-3657",
+          "writes": [
+            "this.out.p4(1057001181)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "IF_BUTTON",
+      "id": 79,
+      "length": 2,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9892-9901",
+          "writes": [
+            "this.out.p2(var4)"
+          ]
+        },
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10237-10239",
+          "writes": [
+            "this.out.p2(var4)"
+          ]
+        },
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10436-10447",
+          "writes": [
+            "this.out.p2(var4)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "EVENT_SYNTH_ERROR",
+      "id": 80,
+      "length": 2,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:3844-3846",
+          "writes": [
+            "this.out.p2(this.waveIds[var2] & 0x7FFF)"
+          ]
+        },
+        {
+          "source": "src/main/java/jagex2/client/Client.java:3848-3850",
+          "writes": [
+            "this.out.p2(-1)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPOBJT",
+      "id": 83,
+      "length": 8,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10471-10476",
+          "writes": [
+            "this.out.p2_alt1(var6)",
+            "this.out.p2(this.sceneBaseTileZ + var4)",
+            "this.out.p2_alt1(this.activeSpellId)",
+            "this.out.p2_alt3(this.sceneBaseTileX + var3)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "INV_BUTTON3",
+      "id": 91,
+      "length": 6,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10357-10371",
+          "writes": [
+            "this.out.p2_alt1(var6)",
+            "this.out.p2_alt3(var3)",
+            "this.out.p2(var4)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ANTICHEAT_OPLOGIC1",
+      "id": 95,
+      "length": 4,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10345-10348",
+          "writes": [
+            "this.out.p4(0)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPOBJ2",
+      "id": 100,
+      "length": 6,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10350-10354",
+          "writes": [
+            "this.out.p2(this.sceneBaseTileX + var3)",
+            "this.out.p2_alt2(this.sceneBaseTileZ + var4)",
+            "this.out.p2_alt3(var6)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPNPCT",
+      "id": 104,
+      "length": 4,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10027-10030",
+          "writes": [
+            "this.out.p2_alt2(this.activeSpellId)",
+            "this.out.p2_alt1(var6)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "CLOSE_MODAL",
+      "id": 110,
+      "length": 0,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:4569-4596",
+          "writes": []
+        }
+      ]
+    },
+    {
+      "name": "OPNPC1",
+      "id": 112,
+      "length": 2,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10457-10459",
+          "writes": [
+            "this.out.p2_alt1(var6)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPPLAYER4",
+      "id": 116,
+      "length": 2,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9819-9821",
+          "writes": [
+            "this.out.p2_alt1(var6)"
+          ]
+        },
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10084-10086",
+          "writes": [
+            "this.out.p2_alt1(this.playerIds[var35])"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "TUT_CLICKSIDE",
+      "id": 119,
+      "length": 1,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:5841-5843",
+          "writes": [
+            "this.out.p1(this.selectedTab)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "FRIENDLIST_ADD",
+      "id": 120,
+      "length": 8,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:12461-12463",
+          "writes": [
+            "this.out.p8(arg0)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "INV_BUTTOND",
+      "id": 123,
+      "length": 7,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:3257-3262",
+          "writes": [
+            "this.out.p2_alt3(this.hoveredSlot)",
+            "this.out.p1_alt1(mode)",
+            "this.out.p2_alt2(this.objDragInterfaceId)",
+            "this.out.p2_alt1(this.objDragSlot)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ANTICHEAT_OPLOGIC5",
+      "id": 126,
+      "length": 1,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9750-9753",
+          "writes": [
+            "this.out.p1(125)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPLOC4",
+      "id": 136,
+      "length": 6,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10261-10265",
+          "writes": [
+            "this.out.p2(this.sceneBaseTileX + var3)",
+            "this.out.p2_alt1(this.sceneBaseTileZ + var4)",
+            "this.out.p2(var6 >> 14 & 0x7FFF)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "EVENT_CAMERA_POSITION",
+      "id": 140,
+      "length": 4,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:3140-3143",
+          "writes": [
+            "this.out.p2_alt1(this.orbitCameraPitch)",
+            "this.out.p2_alt1(this.orbitCameraYaw)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "FRIENDLIST_DEL",
+      "id": 141,
+      "length": 8,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:12482-12485",
+          "writes": [
+            "this.out.p8(arg0)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPPLAYERU",
+      "id": 143,
+      "length": 8,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10290-10295",
+          "writes": [
+            "this.out.p2_alt1(this.objInterface)",
+            "this.out.p2_alt3(this.objSelectedSlot)",
+            "this.out.p2(this.objSelectedInterface)",
+            "this.out.p2_alt2(var6)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPLOCU",
+      "id": 152,
+      "length": 12,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9772-9779",
+          "writes": [
+            "this.out.p2_alt1(var6 >> 14 & 0x7FFF)",
+            "this.out.p2_alt1(this.objSelectedInterface)",
+            "this.out.p2_alt1(this.objInterface)",
+            "this.out.p2_alt1(this.sceneBaseTileZ + var4)",
+            "this.out.p2(this.objSelectedSlot)",
+            "this.out.p2_alt3(this.sceneBaseTileX + var3)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ANTICHEAT_OPLOGIC3",
+      "id": 157,
+      "length": 4,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9971-9974",
+          "writes": [
+            "this.out.p4(0)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "INV_BUTTON5",
+      "id": 158,
+      "length": 6,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10160-10174",
+          "writes": [
+            "this.out.p2_alt3(var3)",
+            "this.out.p2_alt3(var6)",
+            "this.out.p2_alt1(var4)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "IGNORELIST_DEL",
+      "id": 160,
+      "length": 8,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:12531-12534",
+          "writes": [
+            "this.out.p8(arg1)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPHELD3",
+      "id": 161,
+      "length": 6,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10201-10215",
+          "writes": [
+            "this.out.p2_alt3(var3)",
+            "this.out.p2_alt3(var6)",
+            "this.out.p2_alt1(var4)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "IDK_SAVEDESIGN",
+      "id": 163,
+      "length": 13,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:12032-12041",
+          "writes": [
+            "this.out.p1(this.designGender ? 0 : 1)",
+            "this.out.p1(this.designKits[var10])",
+            "this.out.p1(this.designColours[var11])"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ANTICHEAT_OPLOGIC2",
+      "id": 165,
+      "length": 1,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9700-9703",
+          "writes": [
+            "this.out.p1(206)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ANTICHEAT_CYCLELOGIC2",
+      "id": 168,
+      "length": 0,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:5746-5747",
+          "writes": []
+        }
+      ]
+    },
+    {
+      "name": "EVENT_MOUSE_MOVE",
+      "id": 171,
+      "length": -1,
+      "length_derivation": "p1 length placeholder followed by psize1 backpatch",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:3040-3095",
+          "writes": [
+            "this.out.p1(0)",
+            "this.out.p2((this.field595 << 12) + (var10 << 6) + var11)",
+            "this.out.p3((this.field595 << 19) + 8388608 + var9)",
+            "this.out.p4((this.field595 << 19) + -1073741824 + var9)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ANTICHEAT_CYCLELOGIC4",
+      "id": 173,
+      "length": 3,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:3748-3750",
+          "writes": [
+            "this.out.p3(2657152)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "CHAT_SETMODE",
+      "id": 176,
+      "length": 3,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:4522-4526",
+          "writes": [
+            "this.out.p1(this.chatPublicMode)",
+            "this.out.p1(this.chatPrivateMode)",
+            "this.out.p1(this.chatTradeMode)"
+          ]
+        },
+        {
+          "source": "src/main/java/jagex2/client/Client.java:4532-4536",
+          "writes": [
+            "this.out.p1(this.chatPublicMode)",
+            "this.out.p1(this.chatPrivateMode)",
+            "this.out.p1(this.chatTradeMode)"
+          ]
+        },
+        {
+          "source": "src/main/java/jagex2/client/Client.java:4542-4546",
+          "writes": [
+            "this.out.p1(this.chatPublicMode)",
+            "this.out.p1(this.chatPrivateMode)",
+            "this.out.p1(this.chatTradeMode)"
+          ]
+        },
+        {
+          "source": "src/main/java/jagex2/client/Client.java:4859-4863",
+          "writes": [
+            "this.out.p1(this.chatPublicMode)",
+            "this.out.p1(this.chatPrivateMode)",
+            "this.out.p1(this.chatTradeMode)"
+          ]
+        },
+        {
+          "source": "src/main/java/jagex2/client/Client.java:5068-5072",
+          "writes": [
+            "this.out.p1(this.chatPublicMode)",
+            "this.out.p1(this.chatPrivateMode)",
+            "this.out.p1(this.chatTradeMode)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "INV_BUTTON2",
+      "id": 177,
+      "length": 6,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10103-10117",
+          "writes": [
+            "this.out.p2_alt2(var3)",
+            "this.out.p2_alt1(var6)",
+            "this.out.p2_alt1(var4)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPLOC1",
+      "id": 181,
+      "length": 6,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10186-10190",
+          "writes": [
+            "this.out.p2_alt2(this.sceneBaseTileX + var3)",
+            "this.out.p2_alt1(this.sceneBaseTileZ + var4)",
+            "this.out.p2_alt1(var6 >> 14 & 0x7FFF)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "SEND_SNAPSHOT",
+      "id": 184,
+      "length": 10,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:12049-12053",
+          "writes": [
+            "this.out.p8(JString.toBase37(this.reportAbuseInput))",
+            "this.out.p1(var3 - 601)",
+            "this.out.p1(this.reportAbuseMuteOption ? 1 : 0)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "EVENT_APPLET_FOCUS",
+      "id": 187,
+      "length": 1,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:3149-3151",
+          "writes": [
+            "this.out.p1(1)"
+          ]
+        },
+        {
+          "source": "src/main/java/jagex2/client/Client.java:3157-3159",
+          "writes": [
+            "this.out.p1(0)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPPLAYER3",
+      "id": 194,
+      "length": 2,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10511-10513",
+          "writes": [
+            "this.out.p2_alt1(var6)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ANTICHEAT_CYCLELOGIC3",
+      "id": 197,
+      "length": 4,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:6696-6698",
+          "writes": [
+            "this.out.p4(0)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "IDLE_TIMER",
+      "id": 202,
+      "length": 0,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:3344-3345",
+          "writes": []
+        }
+      ]
+    },
+    {
+      "name": "OPHELD1",
+      "id": 203,
+      "length": 6,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9755-9769",
+          "writes": [
+            "this.out.p2_alt2(var4)",
+            "this.out.p2_alt1(var3)",
+            "this.out.p2_alt1(var6)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "RESUME_P_NAMEDIALOG",
+      "id": 206,
+      "length": 8,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:4917-4919",
+          "writes": [
+            "this.out.p8(JString.toBase37(this.chatbackInput))"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPLOCT",
+      "id": 210,
+      "length": 8,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9982-9987",
+          "writes": [
+            "this.out.p2(this.activeSpellId)",
+            "this.out.p2_alt1(var6 >> 14 & 0x7FFF)",
+            "this.out.p2_alt2(this.sceneBaseTileX + var3)",
+            "this.out.p2_alt1(this.sceneBaseTileZ + var4)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPOBJU",
+      "id": 211,
+      "length": 12,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10307-10314",
+          "writes": [
+            "this.out.p2_alt3(this.objSelectedSlot)",
+            "this.out.p2_alt2(this.objInterface)",
+            "this.out.p2_alt3(this.sceneBaseTileZ + var4)",
+            "this.out.p2_alt3(this.sceneBaseTileX + var3)",
+            "this.out.p2_alt1(this.objSelectedInterface)",
+            "this.out.p2_alt1(var6)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "MOVE_MINIMAPCLICK",
+      "id": 213,
+      "length": -1,
+      "length_derivation": "explicit p1 payload-length expression",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:7189-7191",
+          "writes": [
+            "this.out.p1(var34 + var34 + 3 + 14)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "IGNORELIST_ADD",
+      "id": 217,
+      "length": 8,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:12514-12516",
+          "writes": [
+            "this.out.p8(arg1)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ANTICHEAT_OPLOGIC4",
+      "id": 222,
+      "length": 3,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10061-10064",
+          "writes": [
+            "this.out.p3(11257922)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "RESUME_PAUSEBUTTON",
+      "id": 226,
+      "length": 2,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10254-10257",
+          "writes": [
+            "this.out.p2(var4)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "MESSAGE_PRIVATE",
+      "id": 227,
+      "length": -1,
+      "length_derivation": "p1 length placeholder followed by psize1 backpatch",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:4841-4859",
+          "writes": [
+            "this.out.p1(0)",
+            "this.out.p8(this.socialName37)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPHELD4",
+      "id": 228,
+      "length": 6,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9705-9719",
+          "writes": [
+            "this.out.p2_alt1(var3)",
+            "this.out.p2_alt2(var6)",
+            "this.out.p2(var4)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPOBJ5",
+      "id": 230,
+      "length": 6,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10276-10280",
+          "writes": [
+            "this.out.p2_alt1(var6)",
+            "this.out.p2_alt2(this.sceneBaseTileX + var3)",
+            "this.out.p2(this.sceneBaseTileZ + var4)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "INV_BUTTON4",
+      "id": 231,
+      "length": 6,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10396-10410",
+          "writes": [
+            "this.out.p2_alt3(var4)",
+            "this.out.p2_alt1(var3)",
+            "this.out.p2(var6)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPPLAYER2",
+      "id": 233,
+      "length": 2,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9911-9913",
+          "writes": [
+            "this.out.p2_alt2(var6)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPLOC2",
+      "id": 241,
+      "length": 6,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10389-10393",
+          "writes": [
+            "this.out.p2(var6 >> 14 & 0x7FFF)",
+            "this.out.p2(this.sceneBaseTileX + var3)",
+            "this.out.p2_alt2(this.sceneBaseTileZ + var4)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ANTICHEAT_CYCLELOGIC1",
+      "id": 244,
+      "length": -1,
+      "length_derivation": "p1 length placeholder followed by psize1 backpatch",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:6232-6248",
+          "writes": [
+            "this.out.p1(0)",
+            "this.out.p1(219)",
+            "this.out.p2(37745)",
+            "this.out.p1(61)",
+            "this.out.p2(43756)",
+            "this.out.p2((int) (Math.random() * 65536.0D))",
+            "this.out.p1((int) (Math.random() * 256.0D))",
+            "this.out.p2(51171)",
+            "this.out.p2(15808)",
+            "this.out.p1(97)",
+            "this.out.p1((int) (Math.random() * 256.0D))"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OPPLAYER1",
+      "id": 245,
+      "length": 2,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:9692-9694",
+          "writes": [
+            "this.out.p2_alt3(var6)"
+          ]
+        },
+        {
+          "source": "src/main/java/jagex2/client/Client.java:10089-10091",
+          "writes": [
+            "this.out.p2_alt3(this.playerIds[var35])"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "MOVE_OPCLICK",
+      "id": 247,
+      "length": -1,
+      "length_derivation": "explicit p1 payload-length expression",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:7194-7196",
+          "writes": [
+            "this.out.p1(var34 + var34 + 3)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ANTICHEAT_CYCLELOGIC5",
+      "id": 248,
+      "length": 0,
+      "length_derivation": "sum of pN writer widths, expanding literal-count for loops",
+      "sites": [
+        {
+          "source": "src/main/java/jagex2/client/Client.java:6170-6171",
+          "writes": []
+        }
+      ]
+    }
+  ]
+}

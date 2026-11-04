@@ -1,0 +1,44 @@
+{
+  "revision": 377,
+  "source_anchors": [
+    "src/main/java/jagex2/client/Client.java:7216-7266",
+    "src/main/java/jagex2/io/Protocol.java:11"
+  ],
+  "cases": [
+    {
+      "name": "fixed_logout",
+      "opcode": 5,
+      "frame_hex": "05",
+      "payload_hex": "",
+      "header_length": 1
+    },
+    {
+      "name": "fixed_rebuild_normal",
+      "opcode": 222,
+      "frame_hex": "de01020403",
+      "payload_hex": "01020403",
+      "header_length": 1
+    },
+    {
+      "name": "g1_message_game",
+      "opcode": 63,
+      "frame_hex": "3f0368690a",
+      "payload_hex": "68690a",
+      "header_length": 2
+    },
+    {
+      "name": "g2_player_info",
+      "opcode": 90,
+      "frame_hex": "5a00020000",
+      "payload_hex": "0000",
+      "header_length": 3
+    },
+    {
+      "name": "g2_region_pending",
+      "opcode": 53,
+      "frame_hex": "3500050102",
+      "payload_hex": null,
+      "header_length": 3
+    }
+  ]
+}
