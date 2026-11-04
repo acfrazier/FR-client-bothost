@@ -2139,7 +2139,13 @@ impl Client {
                 vec![vec![0u8; BuildArea::SIZE as usize]; BuildArea::SIZE as usize];
                 BuildArea::LEVELS as usize
             ],
-            world: World::new(groundh, BuildArea::SIZE, BuildArea::LEVELS, BuildArea::SIZE),
+            world: World::new_with_revision(
+                groundh,
+                BuildArea::SIZE,
+                BuildArea::LEVELS,
+                BuildArea::SIZE,
+                construction.revision,
+            ),
             collision: [
                 CollisionMap::new(),
                 CollisionMap::new(),
