@@ -77,7 +77,10 @@ fn state(c: &Client) -> Value {
     json!({"cycle":c.loop_cycle,"tile":tile(c),"fine_position":[p.x,p.z],
         "player_info_generation":c.gens.player_info,"varp_generation":c.gens.varp,
         "main_modal":c.main_modal_id,"chat_modal":c.chat_modal_id,"overlay":c.main_overlay_id,
-        "body":body(c),"progress_varp_406":c.var.get(406),"progress_server_406":c.var_serv.get(406)})
+        "body":body(c),"progress_varp_406":c.var.get(406),"progress_server_406":c.var_serv.get(406),
+        "hint":{"kind":c.hint_type,"npc":c.hint_npc,"tile":[c.hint_tile_x,c.hint_tile_z],"flash_on":c.loop_cycle % 20 < 10},
+        "active_tab":c.active_icon,"flashing_tab":c.tut_flash_icon,
+        "bronze_hatchets":inventory_count(c,1351),"tinderboxes":inventory_count(c,590),"tutorial_logs":inventory_count(c,2511)})
 }
 
 fn pump_until(
@@ -183,6 +186,126 @@ fn save_stage(c: &mut Client, r: &mut Renderer, root: &Path, name: &str, stages:
     stages.push(receipt);
 }
 
+fn inventory_count(c: &Client, object: i32) -> i32 {
+    let Some(inv) = c.if_(3214) else {
+        return 0;
+    };
+    match (&inv.link_obj_type, &inv.link_obj_number) {
+        (Some(types), Some(counts)) => types
+            .iter()
+            .zip(counts)
+            .filter(|(id, _)| **id == object + 1)
+            .map(|(_, count)| *count)
+            .sum(),
+        _ => 0,
+    }
+}
+
+fn progress_segments(c: &Client) -> Vec<Value> {
+    c.ifaces_merged()
+        .filter(|i| i.layer_id == 8680 && i.scripts.as_ref().is_some_and(|scripts|
+            scripts.iter().any(|script| script.as_slice() == [5, 406, 0])))
+        .map(|i| {
+            assert_eq!(i.script_comparator.as_deref(), Some(&[3][..]));
+            let value = Renderer::get_if_var(c, i.id, 0).expect("actual varp406 script evaluates");
+            let threshold = i.script_operand.as_ref().unwrap()[0];
+            json!({"component":i.id,"script_value":value,"threshold":threshold,"filled":value > threshold})
+        }).collect()
+}
+
+fn continue_chat(c: &mut Client, r: &mut Renderer) {
+    let root = c.chat_modal_id;
+    let button = c
+        .ifaces_merged()
+        .find(|i| i.layer_id == root && i.button_type == 6)
+        .expect("server-opened dialogue has a real continue button")
+        .id;
+    click_component(c, r, root, button, (17, 357));
+}
+
+fn talk_to(c: &mut Client, npc_type: usize) -> i32 {
+    let slot = c
+        .npc_ids
+        .iter()
+        .take(c.npc_count as usize)
+        .copied()
+        .find(|slot| {
+            c.npc[*slot as usize]
+                .as_ref()
+                .is_some_and(|npc| npc.r#type == Some(npc_type))
+        })
+        .expect("server-populated tutorial instructor");
+    c.menu_action[0] = MiniMenuAction::OP_NPC1;
+    c.menu_param_a[0] = slot;
+    c.menu_param_b[0] = 0;
+    c.menu_param_c[0] = 0;
+    c.doAction(0);
+    slot
+}
+
+fn location_typecode(c: &Client, x: i32, z: i32, first_option: &str) -> Option<i32> {
+    let (x, z) = (x - c.map_build_base_x, z - c.map_build_base_z);
+    if !(0..104).contains(&x) || !(0..104).contains(&z) {
+        return None;
+    }
+    [
+        c.world.wall_type(c.minusedlevel, x, z),
+        c.world.decor_type(c.minusedlevel, x, z),
+        c.world.scene_type(c.minusedlevel, x, z),
+        c.world.gd_type(c.minusedlevel, x, z),
+    ]
+    .into_iter()
+    .find(|code| {
+        *code != 0
+            && c.cache
+                .locs
+                .get(((code >> 14) & 0x7fff) as usize)
+                .is_some_and(|loc| loc.op.first().and_then(Option::as_deref) == Some(first_option))
+    })
+    .or_else(|| {
+        // The tutorial's 2x2 trees can be hinted on a non-anchor tile.
+        // Only select a real scene location whose footprint contains it.
+        for (dx, dz) in [(1, 0), (0, 1), (1, 1)] {
+            let (anchor_x, anchor_z) = (x - dx, z - dz);
+            if anchor_x < 0 || anchor_z < 0 {
+                continue;
+            }
+            let Some(scene) = c.world.get_scene(c.minusedlevel, anchor_x, anchor_z) else {
+                continue;
+            };
+            if scene.max_tile_x >= x
+                && scene.max_tile_z >= z
+                && c.cache.locs[((scene.typecode >> 14) & 0x7fff) as usize]
+                    .op
+                    .first()
+                    .and_then(Option::as_deref)
+                    == Some(first_option)
+            {
+                return Some(scene.typecode);
+            }
+        }
+        None
+    })
+}
+
+fn operate_location(c: &mut Client, x: i32, z: i32, first_option: &str) -> Value {
+    let code = location_typecode(c, x, z, first_option)
+        .expect("hint targets an actual server-loaded location with the requested first option");
+    let location = (code >> 14) & 0x7fff;
+    let target_x = c.map_build_base_x + (code & 0x7f);
+    let target_z = c.map_build_base_z + ((code >> 7) & 0x7f);
+    let receipt = json!({"hint_tile":[x,z],"tile":[target_x,target_z],"location":location,"typecode":code,
+        "name":c.cache.locs[location as usize].name,"option":first_option,
+        "input":"production doAction(OP_LOC1) on actual scene typecode"});
+    c.menu_action[0] = MiniMenuAction::OP_LOC1;
+    c.menu_param_a[0] = code;
+    c.menu_param_b[0] = target_x - c.map_build_base_x;
+    c.menu_param_c[0] = target_z - c.map_build_base_z;
+    c.doAction(0);
+    eprintln!("377 location action {receipt}");
+    receipt
+}
+
 #[test]
 #[ignore = "requires orchestrator-started Fairy Ring 377 engine on localhost:81/43595"]
 fn terrain_click_guide_dialogue_and_progress() {
@@ -230,6 +353,10 @@ fn terrain_click_guide_dialogue_and_progress() {
     let design = c.main_modal_id;
     click_component(&mut c, &mut r, design, 3651, (4, 4));
     pump_until(&mut c, &mut r, 10, |c| c.main_modal_id == -1);
+    pump_until(&mut c, &mut r, 10, |c| {
+        c.hint_type == 1 && c.loop_cycle % 20 < 10
+    });
+    save_stage(&mut c, &mut r, &root, "guide-hint", &mut stages);
     let before = tile(&c);
     let tick = c.gens.player_info;
     let local = c.local_player.as_ref().unwrap();
@@ -335,8 +462,7 @@ fn terrain_click_guide_dialogue_and_progress() {
     assert_eq!(c.var.get(406), Some(&1));
     assert_eq!(c.var_serv.get(406), Some(&1));
     assert_eq!(c.main_overlay_id, 8680);
-    let segments:Vec<Value>=c.ifaces_merged().filter(|i|i.layer_id==8680 && i.scripts.as_ref().is_some_and(|ss|ss.iter().any(|s|s.as_slice()==[5,406,0])))
-        .map(|i|json!({"component":i.id,"script_value":Renderer::get_if_var(&c,i.id,0),"threshold":i.script_operand.as_ref().and_then(|v|v.first())})).collect();
+    let segments = progress_segments(&c);
     assert_eq!(
         segments.len(),
         20,
@@ -345,6 +471,80 @@ fn terrain_click_guide_dialogue_and_progress() {
     assert!(segments.iter().all(|s| s["script_value"] == 1));
     assert!(body(&c).is_empty());
     save_stage(&mut c, &mut r, &root, "progress", &mut stages);
+    assert_eq!(segments.iter().filter(|s| s["filled"] == true).count(), 0);
+    let progress_before = state(&c);
+    let progress_generation = c.gens.varp;
+    assert_eq!(c.hint_type, 2, "Guide directs the player to the door");
+    let (door_x, door_z) = (c.hint_tile_x, c.hint_tile_z);
+    let door = operate_location(&mut c, door_x, door_z, "Open");
+    pump_until(&mut c, &mut r, 20, |c| {
+        c.hint_type == 1
+            && c.npc
+                .get(c.hint_npc as usize)
+                .and_then(Option::as_ref)
+                .is_some_and(|npc| npc.r#type == Some(943))
+    });
+    save_stage(&mut c, &mut r, &root, "door", &mut stages);
+    let survival_slot = talk_to(&mut c, 943);
+    pump_until(&mut c, &mut r, 20, |c| {
+        c.chat_modal_id >= 0 && body(c).contains("Brynna")
+    });
+    save_stage(&mut c, &mut r, &root, "survival-introduction", &mut stages);
+    continue_chat(&mut c, &mut r);
+    pump_until(&mut c, &mut r, 10, |c| {
+        !c.resumed_pause_button && body(c).contains("Bronze Hatchet")
+    });
+    save_stage(&mut c, &mut r, &root, "survival-tools", &mut stages);
+    continue_chat(&mut c, &mut r);
+    pump_until(&mut c, &mut r, 10, |c| {
+        c.chat_modal_id == -1 && c.tut_flash_icon == 3
+    });
+    save_stage(&mut c, &mut r, &root, "inventory-request", &mut stages);
+    // Java 377's real backpack tab hitbox; redraw sends TUT_CLICKSIDE 119.
+    click(&mut c, &mut r, 660, 187, 1);
+    pump_until(&mut c, &mut r, 10, |c| {
+        c.active_icon == 3
+            && c.tut_flash_icon == -1
+            && inventory_count(c, 1351) == 1
+            && inventory_count(c, 590) == 1
+            && c.hint_type == 2
+    });
+    save_stage(&mut c, &mut r, &root, "inventory-open", &mut stages);
+    let (tree_x, tree_z) = (c.hint_tile_x, c.hint_tile_z);
+    let first_tree = operate_location(&mut c, tree_x, tree_z, "Chop down");
+    pump_until(&mut c, &mut r, 30, |c| {
+        inventory_count(c, 2511) == 1
+            && c.chat_modal_id >= 0
+            && body(c).contains("You get some logs")
+    });
+    save_stage(&mut c, &mut r, &root, "first-logs", &mut stages);
+    continue_chat(&mut c, &mut r);
+    // This content branch sets stage 40 but refreshes progress only on the
+    // next successful chop. Wait for the real temporary stump to regrow.
+    pump_until(&mut c, &mut r, 30, |c| {
+        c.chat_modal_id == -1 && location_typecode(c, tree_x, tree_z, "Chop down").is_some()
+    });
+    let second_tree = operate_location(&mut c, tree_x, tree_z, "Chop down");
+    pump_until(&mut c, &mut r, 30, |c| {
+        inventory_count(c, 2511) == 2
+            && c.var.get(406) == Some(&2)
+            && c.var_serv.get(406) == Some(&2)
+            && body(c).contains("You get some logs")
+    });
+    assert!(c.gens.varp > progress_generation);
+    let progress_after = state(&c);
+    let after_segments = progress_segments(&c);
+    assert_eq!(after_segments.len(), 20);
+    assert_eq!(
+        after_segments
+            .iter()
+            .filter(|s| s["filled"] == true)
+            .count(),
+        1
+    );
+    save_stage(&mut c, &mut r, &root, "progress-transition", &mut stages);
+    continue_chat(&mut c, &mut r);
+    pump_until(&mut c, &mut r, 10, |c| c.chat_modal_id == -1);
     c.menu_action[0] = MiniMenuAction::IF_BUTTON;
     c.menu_param_c[0] = 2458;
     c.doAction(0);
@@ -359,7 +559,7 @@ fn terrain_click_guide_dialogue_and_progress() {
     let exit = format!("{}", c.take_session_exit_reason().unwrap());
     assert!(exit.contains("server_logout"));
     let packets = outbound.0.lock().unwrap();
-    for opcode in [6, 19, 28, 79, 112, 163, 226, 247, 248] {
+    for opcode in [6, 19, 28, 79, 112, 119, 163, 181, 226, 247, 248] {
         assert!(
             packets.iter().any(|p| p["opcode"] == opcode),
             "missing required opcode{opcode}: {packets:?}"
@@ -367,13 +567,15 @@ fn terrain_click_guide_dialogue_and_progress() {
     }
     assert!(packets.iter().filter(|p| p["opcode"] == 226).count() >= 6);
     let receipt = json!({"engine_dir":engine,"user":user,"revision":377,"movement":{"before":before,"after":after,"click":[x,y],"initial_player_info":tick,"fine_destination":fine_target},
-        "guide_slot":guide,"dialogue_pages":pages,"progress":{"varp":406,"value":1,"overlay":8680,"segments":segments,
-        "meaning":"1 + floor(tutorial * 20 / 670); stage 4 still has no filled segments; tutorial varp281 is not transmitted"},
+        "guide_slot":guide,"survival_slot":survival_slot,"dialogue_pages":pages,
+        "locations":[door,first_tree,second_tree],"progress":{"varp":406,"before":progress_before,
+        "after":progress_after,"before_segments":segments,"after_segments":after_segments,"overlay":8680,
+        "meaning":"actual script writes stage 40, then refreshes overlay to 1 + floor(40 * 20 / 670) = 2; one filled segment; no varp seeding"},
         "stages":stages,"outbound":*packets,"logout":exit});
     std::fs::write(
         root.join("rust-interactions.json"),
         serde_json::to_vec_pretty(&receipt).unwrap(),
     )
     .unwrap();
-    eprintln!("PASS: real terrain click, authoritative movement, guide, {pages} dialogue pages, varp406 progress, server logout");
+    eprintln!("PASS: terrain click, Guide arrow, dialogue, door, backpack, two real chops, server varp406 1->2, visible filled segment, server logout");
 }
