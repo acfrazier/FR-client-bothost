@@ -146,6 +146,9 @@ impl ClientProt289 {
 
 /// Map a 274 public [`ClientProt`] constant to the revision-selected row.
 /// R289 fails closed on any 274 constant that is not in the stage-3 table.
+/// R377 maps only identical-body shared writers; revision-specific bodies use
+/// `outbound_377`. A negative id rejects an unsupported writer before the client
+/// flushes its buffer, rather than panicking or sending a legacy packet.
 pub fn map_client_prot(revision: super::ClientRevision, p274: ClientProt) -> ClientProt {
     use super::ClientRevision;
     match revision {
@@ -154,9 +157,21 @@ pub fn map_client_prot(revision: super::ClientRevision, p274: ClientProt) -> Cli
             x if x == ClientProt::NO_TIMEOUT.id => super::ClientProt377::NO_TIMEOUT,
             x if x == ClientProt::MAP_BUILD_COMPLETE.id => super::ClientProt377::MAP_BUILD_COMPLETE,
             x if x == ClientProt::IF_BUTTON.id => super::ClientProt377::IF_BUTTON,
-            other => panic!(
-                "R377 outbound fail-closed: packet {other} is outside the captured login cohort"
-            ),
+            x if x == ClientProt::IDLE_TIMER.id => super::ClientProt377::IDLE_TIMER,
+            x if x == ClientProt::RESUME_PAUSEBUTTON.id => super::ClientProt377::RESUME_PAUSEBUTTON,
+            x if x == ClientProt::CLOSE_MODAL.id => super::ClientProt377::CLOSE_MODAL,
+            x if x == ClientProt::RESUME_P_COUNTDIALOG.id => {
+                super::ClientProt377::RESUME_P_COUNTDIALOG
+            }
+            x if x == ClientProt::TUT_CLICKSIDE.id => super::ClientProt377::TUT_CLICKSIDE,
+            x if x == ClientProt::IDK_SAVEDESIGN.id => super::ClientProt377::IDK_SAVEDESIGN,
+            x if x == ClientProt::CHAT_SETMODE.id => super::ClientProt377::CHAT_SETMODE,
+            x if x == ClientProt::FRIENDLIST_ADD.id => super::ClientProt377::FRIENDLIST_ADD,
+            x if x == ClientProt::FRIENDLIST_DEL.id => super::ClientProt377::FRIENDLIST_DEL,
+            x if x == ClientProt::IGNORELIST_ADD.id => super::ClientProt377::IGNORELIST_ADD,
+            x if x == ClientProt::IGNORELIST_DEL.id => super::ClientProt377::IGNORELIST_DEL,
+            x if x == ClientProt::CLIENT_CHEAT.id => super::ClientProt377::CLIENT_CHEAT,
+            _ => ClientProt { id: -1, length: 0 },
         },
         ClientRevision::R289 => match p274.id {
             x if x == ClientProt::NO_TIMEOUT.id => ClientProt289::NO_TIMEOUT,
