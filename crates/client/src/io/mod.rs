@@ -4,6 +4,8 @@ pub mod client_prot;
 pub use client_prot::ClientProt;
 pub mod client_prot_289;
 pub use client_prot_289::{map_client_prot, ClientProt289};
+pub mod client_prot_377;
+pub use client_prot_377::ClientProt377;
 pub mod client_stream;
 pub use client_stream::ClientStream;
 pub mod isaac;
@@ -15,7 +17,7 @@ pub use ondemand::{OnDemand, OnDemandProvider, OnDemandRequest};
 pub mod packet;
 pub use packet::{Packet, PacketObserver};
 pub mod revision;
-pub use revision::{ClientRevision, ServerProt289, SERVER_PROT_SIZES_289};
+pub use revision::{ClientRevision, ServerProt289, SERVER_PROT_SIZES_289, SERVER_PROT_SIZES_377};
 pub mod server_prot;
 pub use server_prot::{ServerProt, SERVER_PROT_SIZES};
 pub mod cache_289;
@@ -24,3 +26,5 @@ pub use cache_289::{
     write_synthetic_cache_dir, CacheArchiveKind, CacheManifest289, OfflineCacheLoad,
     CACHE_JAG_NAMES_289,
 };
+pub mod cache_377;
+pub use cache_377::{CacheArchive377, CacheLoadError377, CACHE_JAG_NAMES_377};
