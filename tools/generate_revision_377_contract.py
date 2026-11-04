@@ -93,6 +93,8 @@ def outbound_rows(text: str) -> list[dict]:
     blocks = pairs(code, "{", "}")
     parens = pairs(code, "(", ")")
     calls = list(re.finditer(r"this\.out\.p1isaac\((\d+)\)", code))
+    covered_writes = set()
+    fixed_methods = set()
     rows = {}
     for call in calls:
         opcode = int(call[1])
@@ -101,7 +103,11 @@ def outbound_rows(text: str) -> list[dict]:
         name = COMMENT_NAMES.get(comment, comment)
         if not re.fullmatch(r"[A-Z][A-Z0-9_]+", name):
             raise ValueError(f"unnamed outbound opcode {opcode}: {comment!r}")
-        _, end = enclosing(blocks, call.start())
+        begin, end = enclosing(blocks, call.start())
+        # A bare nested block is not an emitting branch. Its closing brace
+        # could hide the payload from this statement-list extractor.
+        if re.search(r"(?:\)|\b(?:else|try|finally))\s*$", code[:begin]) is None:
+            raise ValueError(f"unsupported opcode block in {name}")
         next_call = re.search(r"this\.out\.p1isaac\(", code[call.end():end])
         if next_call:
             end = call.end() + next_call.start()
@@ -111,6 +117,7 @@ def outbound_rows(text: str) -> list[dict]:
             start = call.end() + writer.start()
             close = parens[call.end() + writer.end() - 1]
             writers.append((writer[1], start, close + 1))
+            covered_writes.add(start)
         first_argument = ""
         if writers:
             first_argument = text[writers[0][1]:writers[0][2]].split("(", 1)[1][:-1].strip()
@@ -143,6 +150,13 @@ def outbound_rows(text: str) -> list[dict]:
                         multiplier *= int(loop[2])
                 length += int(width[1]) * multiplier
             derivation = "sum of pN writer widths, expanding literal-count for loops"
+            ancestors = sorted((begin, end) for begin, end in blocks.items()
+                               if begin < call.start() < end)
+            if len(ancestors) < 2:
+                raise ValueError(f"fixed packet outside a class method in {name}")
+            # The outer block is the Client class; its direct child is the
+            # emitting method. Do not silently drop writes after a branch.
+            fixed_methods.add(ancestors[1])
         fields = [text[start:end].strip() for writer, start, end in writers if writer != "psize1"]
         site = {"source": anchor(CLIENT, text, call.start(), end), "writes": fields}
         if opcode in rows:
@@ -152,6 +166,12 @@ def outbound_rows(text: str) -> list[dict]:
         else:
             rows[opcode] = {"name": name, "id": opcode, "length": length,
                             "length_derivation": derivation, "sites": [site]}
+    for writer in re.finditer(r"this\.out\.(?!p1isaac\b)\w+\(", code):
+        if writer.start() not in covered_writes and any(
+            begin < writer.start() < end for begin, end in fixed_methods
+        ):
+            line = text.count("\n", 0, writer.start()) + 1
+            raise ValueError(f"packet write outside opcode block in fixed-packet method at line {line}")
     if len({row["name"] for row in rows.values()}) != len(rows):
         raise ValueError("outbound names are not unique")
     return [rows[opcode] for opcode in sorted(rows)]
