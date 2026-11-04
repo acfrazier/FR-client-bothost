@@ -1,27 +1,17 @@
-//! Standalone 377 contract tests. Existing shared module lists stay unchanged.
+//! Revision-377 contract tests against the registered production modules.
 //!
-//! The included files are the actual product modules, not copies. These tests
+//! These tests
 //! prove metadata, shared JAG decoding and CRC admission, not network dispatch,
 //! config-record decoding, interface decoding, login or an in-game session.
 //! Set CLIENT_377_CACHE_DIR to the eight extracted real 377 JAGs used to
 //! generate fixtures/revision_377/cache.json. Only hosted CI may skip that asset.
 
-use client::io::{jagfile, packet, ClientProt};
+use client::io::{cache_377, ClientProt377, Packet, SERVER_PROT_SIZES_377};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
-#[path = "../src/io/cache_377.rs"]
-mod cache_377;
-#[path = "../src/io/client_prot_377.rs"]
-mod client_prot_377;
-#[path = "../src/io/server_prot_sizes_377.inc.rs"]
-mod server_prot_sizes_377;
-
 use cache_377::{load_archive, CacheArchive377, CacheLoadError377, CACHE_JAG_NAMES_377};
-use client_prot_377::ClientProt377;
-use packet::Packet;
-use server_prot_sizes_377::SERVER_PROT_SIZES_377;
 
 #[test]
 fn complete_tables_match_the_java_contract() {
