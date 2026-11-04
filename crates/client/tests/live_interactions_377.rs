@@ -1,5 +1,5 @@
 //! Explicit live UI proof against the already-running Fairy Ring 377 engine.
-//! Movement comes from a rendered terrain click, never from an assigned route.
+//! Movement comes from rendered terrain/minimap clicks, never an assigned route.
 use client::client::{Client, ClientConfig, ClientRevision, MiniMenuAction};
 use client::io::{ClientProt377, PacketObserver};
 use client::render::backend::FrameOutput;
@@ -82,6 +82,12 @@ fn tutorial_text(c: &Client) -> String {
 
 fn state(c: &Client) -> Value {
     let p = c.local_player.as_ref().unwrap();
+    let mut projectiles = Vec::new();
+    c.projectiles.for_each(|p| {
+        projectiles.push(json!({"spotanim":p.spotanim,
+        "source":[p.src_x,p.h1,p.src_z],"position":[p.x,p.y,p.z],
+        "start_cycle":p.t1,"end_cycle":p.t2,"target":p.target}))
+    });
     json!({"cycle":c.loop_cycle,"tile":tile(c),"fine_position":[p.x,p.z],
         "player_info_generation":c.gens.player_info,"varp_generation":c.gens.varp,
         "main_modal":c.main_modal_id,"chat_modal":c.chat_modal_id,"overlay":c.main_overlay_id,
@@ -97,6 +103,16 @@ fn state(c: &Client) -> Value {
         "bronze_hatchets":inventory_count(c,1351),"tinderboxes":inventory_count(c,590),"tutorial_logs":inventory_count(c,2511),
         "tutorial_text":tutorial_text(c),"progress_segments":progress_segments(c),
         "inventory":c.if_(3214).map(|i|json!({"objects":i.link_obj_type,"counts":i.link_obj_number})),
+        "side_modal":c.side_modal_id,
+        "inventories":c.ifaces_merged().filter(|i|i.link_obj_type.is_some()).map(|i|
+            json!({"component":i.id,"layer":i.layer_id,"objects":i.link_obj_type,"counts":i.link_obj_number})).collect::<Vec<_>>(),
+        "npcs":c.npc_ids.iter().take(c.npc_count as usize).filter_map(|id| {
+            let npc=c.npc[*id as usize].as_ref()?;
+            Some(json!({"slot":id,"type":npc.r#type,"tile":[npc.route_x[0]+c.map_build_base_x,npc.route_z[0]+c.map_build_base_z],
+                "health":npc.health,"total_health":npc.total_health,"combat_cycle":npc.combat_cycle}))
+        }).collect::<Vec<_>>(),
+        "projectiles":projectiles,
+        "chat":c.chat_text.iter().zip(&c.chat_type).take(8).map(|(text,kind)|json!({"text":text,"kind":kind})).collect::<Vec<_>>(),
         "raw_shrimps":inventory_count(c,2514),"burnt_shrimps":inventory_count(c,323),
         "cooked_shrimps":inventory_count(c,315),"flour":inventory_count(c,2516),
         "water":inventory_count(c,1929),"dough":inventory_count(c,2307),"bread":inventory_count(c,2309),
@@ -204,6 +220,16 @@ fn save_stage(c: &mut Client, r: &mut Renderer, root: &Path, name: &str, stages:
     // Capture and take the next action only after two complete server epochs.
     let generation = c.gens.player_info;
     pump_until(c, r, 10, |c| c.gens.player_info >= generation + 2);
+    capture_stage(c, r, root, name, stages);
+}
+
+fn capture_stage(
+    c: &mut Client,
+    r: &mut Renderer,
+    root: &Path,
+    name: &str,
+    stages: &mut Vec<Value>,
+) {
     let path = root.join(format!("rust-{name}.jpg"));
     screenshot(&path, r.mainredraw(c));
     let receipt = json!({"stage":name,"screenshot":path,"state":state(c)});
@@ -845,3 +871,6 @@ fn terrain_click_guide_dialogue_and_progress() {
     .unwrap();
     eprintln!("PASS: natural Guide, firemaking, stats, fishing, burnt/cooked shrimp, chef ingredients, dough, bread, server varp406 1->6, server logout");
 }
+
+#[path = "support/tutorial_lesson_377.rs"]
+mod tutorial_lesson_377;

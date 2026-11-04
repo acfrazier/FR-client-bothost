@@ -92,8 +92,10 @@ impl Client {
                 | 109
                 | 113
                 | 115
+                | 121
                 | 125
                 | 126
+                | 128
                 | 134
                 | 148
                 | 152
@@ -104,13 +106,17 @@ impl Client {
                 | 162
                 | 166
                 | 174
+                | 181
                 | 182
                 | 183
                 | 186
                 | 199
+                | 200
                 | 201
                 | 206
                 | 208
+                | 218
+                | 219
                 | 220
                 | 222
                 | 226
@@ -198,16 +204,28 @@ impl Client {
                                 | Z::LocDel { .. }
                                 | Z::ObjAdd { .. }
                                 | Z::ObjDel { .. }
+                                | Z::ObjCount { .. }
+                                | Z::MapProjAnim { .. }
                         )
                     }) =>
             {
-                return Err("377 zone outside tutorial location/object cohort".into())
+                return Err(format!(
+                    "377 zone outside tutorial location/object/projectile cohort: {frame:?}"
+                ))
             }
             O::Rebuild(Rebuild377::Instance { .. }) => {
                 return Err("377 instance rebuild not in captured cohort".into())
             }
             O::Interface(I::SetPlayerHead { .. }) if self.local_player.is_none() => {
                 return Err("377 player dialogue head without local player".into())
+            }
+            O::InventoryStopTransmit { component } => {
+                if self
+                    .if_(*component as usize)
+                    .is_none_or(|com| com.link_obj_type.is_none())
+                {
+                    return Err("377 stopped inventory has no object array".into());
+                }
             }
             O::InventoryFull { component, .. } | O::InventoryPartial { component, .. } => {
                 let valid = self.if_(*component as usize).is_some_and(|com| {
@@ -296,7 +314,9 @@ impl Client {
                         Z::LocAddChange { tile, .. }
                         | Z::LocDel { tile, .. }
                         | Z::ObjAdd { tile, .. }
-                        | Z::ObjDel { tile, .. } => tile,
+                        | Z::ObjDel { tile, .. }
+                        | Z::ObjCount { tile, .. }
+                        | Z::MapProjAnim { tile, .. } => tile,
                         _ => unreachable!("preflight rejects other zone operations"),
                     };
                     let x = self.zone_update_x + tile.x;
@@ -311,6 +331,28 @@ impl Client {
                                 .get_or_insert_with(|| Box::new(LinkList::new()))
                                 .push(ClientObj::new(*object, *count));
                             self.show_object(x, z);
+                        }
+                        Z::ObjCount {
+                            object,
+                            old_count,
+                            new_count,
+                            ..
+                        } => {
+                            // Java Client.java:8734-8753 matches the masked ID
+                            // and old count, updates only the first match, sorts.
+                            if let Some(objects) = &mut self.ground_obj[self.minusedlevel as usize]
+                                [x as usize][z as usize]
+                            {
+                                let mut node = objects.head();
+                                while let Some(obj) = node {
+                                    if obj.id == *object && obj.count == *old_count {
+                                        obj.count = *new_count;
+                                        break;
+                                    }
+                                    node = objects.next_node();
+                                }
+                                self.show_object(x, z);
+                            }
                         }
                         Z::ObjDel { object, .. } => {
                             // Java Client.java:8822-8842 removes only the first
@@ -330,6 +372,60 @@ impl Client {
                                     *cell = None;
                                 }
                                 self.show_object(x, z);
+                            }
+                        }
+                        Z::MapProjAnim {
+                            destination_x_offset,
+                            destination_z_offset,
+                            target,
+                            spotanim,
+                            source_height,
+                            destination_height,
+                            start_delay,
+                            end_delay,
+                            peak,
+                            arc,
+                            ..
+                        } => {
+                            // Java Client.java:8754-8777 consumes the 65535
+                            // sentinel and requires both endpoints in the scene.
+                            let (dx, dz) = (x + destination_x_offset, z + destination_z_offset);
+                            if let Some(spotanim) = spotanim
+                                .filter(|_| (0..104).contains(&dx) && (0..104).contains(&dz))
+                            {
+                                let (sx, sz, dx, dz) =
+                                    (x * 128 + 64, z * 128 + 64, dx * 128 + 64, dz * 128 + 64);
+                                let start = self.loop_cycle + start_delay;
+                                let mut projectile = ClientProj::new(
+                                    spotanim,
+                                    self.minusedlevel,
+                                    sx,
+                                    get_av_h(&self.groundh, &self.mapl, sx, sz, self.minusedlevel)
+                                        - source_height,
+                                    sz,
+                                    start,
+                                    self.loop_cycle + end_delay,
+                                    *peak,
+                                    *arc,
+                                    *target,
+                                    *destination_height,
+                                );
+                                projectile.set_target(
+                                    f64::from(dx),
+                                    f64::from(
+                                        get_av_h(
+                                            &self.groundh,
+                                            &self.mapl,
+                                            dx,
+                                            dz,
+                                            self.minusedlevel,
+                                        ) - destination_height,
+                                    ),
+                                    f64::from(dz),
+                                    start,
+                                );
+                                projectile.bind_seq(&self.cache);
+                                self.projectiles.push(projectile);
                             }
                         }
                         Z::LocAddChange {
@@ -416,6 +512,12 @@ impl Client {
                         let com = self.iface_mut(component as usize).unwrap();
                         com.model1_type = 3;
                         com.model1_id = head;
+                    }
+                    I::SetColour { component, rgb555 } => {
+                        // Java Client.java:7450-7458 expands five bits per channel.
+                        self.iface_mut(component as usize).unwrap().colour = ((rgb555 & 31) << 3)
+                            + (((rgb555 >> 10) & 31) << 19)
+                            + (((rgb555 >> 5) & 31) << 11);
                     }
                     I::SetObject {
                         component,
@@ -512,15 +614,49 @@ impl Client {
                         self.redraw_icons = true;
                         self.resumed_pause_button = false;
                     }
-                    I::SetText { component, text } => {
-                        let text = text_377(text);
-                        if let Some(com) = self.iface_mut(component as usize) {
-                            com.text = text;
+                    I::OpenMainSide { main, side } => {
+                        // Java Client.java:7741-7775 keeps unchanged layers.
+                        self.observe_main_modal_open();
+                        self.unload_interface_377(self.chat_modal_id);
+                        if self.chat_modal_id != -1 || self.dialog_input_open {
+                            self.redraw_chat = true;
                         }
-                        if self.ifaces[component as usize].as_ref().is_some_and(|com| {
-                            com.layer_id == self.side_icon[self.active_icon as usize]
-                        }) {
+                        self.chat_modal_id = -1;
+                        if self.main_modal_id != main {
+                            self.unload_interface_377(self.main_modal_id);
+                        }
+                        if self.side_modal_id != side {
+                            self.unload_interface_377(self.side_modal_id);
+                        }
+                        self.main_modal_id = main;
+                        self.side_modal_id = side;
+                        self.dialog_input_open = false;
+                        self.redraw_side = true;
+                        self.redraw_icons = true;
+                        self.resumed_pause_button = false;
+                    }
+                    I::SetScrollPos {
+                        component,
+                        position,
+                    } => {
+                        // Preserve Java's clamp order, including short layers.
+                        let view = self.if_(component as usize).unwrap();
+                        if view.r#type == ComponentType::TYPE_LAYER {
+                            let position = position.max(0).min(view.scroll_height - view.height);
+                            self.iface_mut(component as usize).unwrap().scroll_pos = position;
+                        }
+                    }
+                    I::SetText { component, text } => {
+                        let layer = self.if_(component as usize).unwrap().layer_id;
+                        self.iface_mut(component as usize).unwrap().text = text_377(text);
+                        if layer == self.side_icon[self.active_icon as usize] {
                             self.redraw_side = true;
+                        }
+                        // Java 8540-8549 mutates the visible component. Rust
+                        // caches chat pixels across packet-pump boundaries, so
+                        // a later text packet must invalidate its visible layer.
+                        if layer == self.chat_modal_id || layer == self.tut_com_id {
+                            self.redraw_chat = true;
                         }
                     }
                     _ => unreachable!("opcode cohort admits only captured interface operations"),
@@ -555,6 +691,16 @@ impl Client {
                 }
                 self.redraw_side = true;
                 self.observe_inventory_partial(component);
+                p.inv = true;
+            }
+            O::InventoryStopTransmit { component } => {
+                // Java Client.java:8414-8424 clears IDs, not quantities.
+                self.iface_mut(component as usize)
+                    .unwrap()
+                    .link_obj_type
+                    .as_mut()
+                    .unwrap()
+                    .fill(0);
                 p.inv = true;
             }
             O::Varp { id, value } => return Some(self.apply_varp_289(id, value)),
@@ -1288,6 +1434,80 @@ mod tests {
     }
 
     #[test]
+    fn tutorial_projectile_matches_java_and_rejects_invalid_frames_before_apply() {
+        let mut cache = Cache::default();
+        cache.spots.push(Default::default());
+        let mut client = client_with_cache(cache);
+        client.zone_update_x = 8;
+        client.zone_update_z = 16;
+        client.loop_cycle = 100;
+        // Java 8756-8768: tile(2,3), destination(+2,-1), NPC slot 0,
+        // spot 0, heights 3*4/5*4, delays 4/12, peak 16, arc 8.
+        let bytes = [0x23, 2, 255, 0, 1, 0, 0, 3, 5, 0, 4, 0, 12, 16, 8];
+        let generation = client.gens.scene;
+        for len in 0..bytes.len() {
+            let mut packet = Packet::new(bytes[..len].to_vec());
+            assert!(client.dispatch_packet_377(181, &mut packet).is_err());
+            assert_eq!(packet.pos, 0);
+            assert!(client.projectiles.head().is_none());
+            assert_eq!(client.gens.scene, generation);
+        }
+        let mut invalid = bytes;
+        invalid[6] = 1; // Missing spot resource.
+        let mut packet = Packet::new(invalid.to_vec());
+        assert!(client.dispatch_packet_377(181, &mut packet).is_err());
+        assert_eq!(packet.pos, 0);
+        assert!(client.projectiles.head().is_none());
+        assert_eq!(client.gens.scene, generation);
+        // A late invalid enclosed child cannot publish the earlier projectile
+        // or change the zone origin.
+        let mut enclosed = vec![24, 160, 181];
+        enclosed.extend(bytes);
+        enclosed.push(181);
+        enclosed.extend(invalid);
+        let mut packet = Packet::new(enclosed);
+        assert!(client.dispatch_packet_377(183, &mut packet).is_err());
+        assert_eq!(packet.pos, 0);
+        assert_eq!((client.zone_update_x, client.zone_update_z), (8, 16));
+        assert!(client.projectiles.head().is_none());
+        assert_eq!(client.gens.scene, generation);
+        let mut packet = Packet::new(bytes.to_vec());
+        client.dispatch_packet_377(181, &mut packet).unwrap();
+        assert_eq!(packet.pos, bytes.len());
+        let projectile = client.projectiles.head().unwrap();
+        assert_eq!((projectile.src_x, projectile.src_z), (1344, 2496));
+        assert_eq!((projectile.h1, projectile.h2), (-12, 20));
+        assert_eq!((projectile.t1, projectile.t2), (104, 112));
+        assert_eq!(
+            (projectile.angle, projectile.startpos, projectile.target),
+            (16, 8, 1)
+        );
+        assert_eq!(projectile.spotanim, 0);
+        assert!(projectile.velocity_x > 0.0 && projectile.velocity_z < 0.0);
+        assert!(projectile.acceleration_y.is_finite());
+        assert_eq!(client.gens.scene, generation + 1);
+    }
+
+    #[test]
+    fn tutorial_projectile_sentinel_and_outside_endpoints_are_consumed_without_entities() {
+        let mut cache = Cache::default();
+        cache.spots.push(Default::default());
+        let mut client = client_with_cache(cache);
+        for bytes in [
+            [
+                0x23, 2, 255, 0x7f, 0xff, 0xff, 0xff, 3, 5, 0, 4, 0, 12, 16, 8,
+            ],
+            [0x23, 127, 0, 0, 0, 0, 0, 3, 5, 0, 4, 0, 12, 16, 8],
+            [0x23, 0x80, 0, 0, 0, 0, 0, 3, 5, 0, 4, 0, 12, 16, 8],
+        ] {
+            let mut packet = Packet::new(bytes.to_vec());
+            client.dispatch_packet_377(181, &mut packet).unwrap();
+            assert_eq!(packet.pos, bytes.len());
+            assert!(client.projectiles.head().is_none());
+        }
+    }
+
+    #[test]
     fn tutorial_inventory_weight_is_signed_and_validates_before_apply() {
         let mut client = client();
         for (tab, redraw) in [(3, false), (12, true)] {
@@ -1420,13 +1640,72 @@ mod tests {
     }
 
     #[test]
-    fn enclosed_firemaking_batch_rejects_late_invalid_and_unsupported_children() {
+    fn tutorial_ground_count_matches_old_count_and_is_transactional() {
         let mut cache = Cache::default();
         cache.objs.push(Default::default());
         let mut client = client_with_cache(cache);
+        client.zone_update_x = 8;
+        client.zone_update_z = 16;
+        let mut objects = LinkList::new();
+        for count in [5, 5, 4] {
+            objects.push(ClientObj::new(0, count));
+        }
+        client.ground_obj[0][10][19] = Some(Box::new(objects));
+        fn counts(client: &mut Client) -> Vec<i32> {
+            let objects = client.ground_obj[0][10][19].as_mut().unwrap();
+            let mut values = Vec::new();
+            let mut node = objects.head();
+            while let Some(obj) = node {
+                values.push(obj.count);
+                node = objects.next_node();
+            }
+            values.sort_unstable();
+            values
+        }
+        // Java 8736-8747: packed tile, masked object 0, old 5, new 9.
+        let bytes = [0x23, 0x80, 0, 0, 5, 0, 9];
+        let generation = client.gens.scene;
+        for len in 0..bytes.len() {
+            let mut packet = Packet::new(bytes[..len].to_vec());
+            assert!(client.dispatch_packet_377(121, &mut packet).is_err());
+            assert_eq!(packet.pos, 0);
+            assert_eq!(counts(&mut client), [4, 5, 5]);
+            assert_eq!(client.gens.scene, generation);
+        }
+        let mut invalid = bytes;
+        invalid[1] = 0;
+        invalid[2] = 1;
+        let mut batch = vec![8, 144, 121];
+        batch.extend(bytes);
+        batch.push(121);
+        batch.extend(invalid);
+        let mut packet = Packet::new(batch);
+        assert!(client.dispatch_packet_377(183, &mut packet).is_err());
+        assert_eq!(packet.pos, 0);
+        assert_eq!(counts(&mut client), [4, 5, 5]);
+        assert_eq!(client.gens.scene, generation);
+        let mut packet = Packet::new(bytes.to_vec());
+        client.dispatch_packet_377(121, &mut packet).unwrap();
+        assert_eq!(packet.pos, bytes.len());
+        assert_eq!(counts(&mut client), [4, 5, 9]);
+        assert_eq!(client.gens.scene, generation + 1);
+        let mut no_match = Packet::new(vec![0x23, 0, 0, 0, 8, 0, 7]);
+        client.dispatch_packet_377(121, &mut no_match).unwrap();
+        assert_eq!(counts(&mut client), [4, 5, 9]);
+        let mut absent = Packet::new(vec![0x22, 0, 0, 0, 5, 0, 9]);
+        client.dispatch_packet_377(121, &mut absent).unwrap();
+        assert!(client.ground_obj[0][10][18].is_none());
+    }
+
+    #[test]
+    fn enclosed_firemaking_batch_rejects_late_invalid_and_unsupported_children() {
+        let mut cache = Cache::default();
+        cache.objs.push(Default::default());
+        cache.spots.push(Default::default());
+        let mut client = client_with_cache(cache);
         for suffix in [
-            vec![107, 0, 1, 221, 0, 129],    // invalid second object
-            vec![121, 35, 0, 0, 0, 1, 0, 2], // outside accepted apply cohort
+            vec![107, 0, 1, 221, 0, 129], // invalid second object
+            vec![59, 35, 0, 0, 0, 0, 2],  // valid resources, outside accepted apply cohort
         ] {
             let mut batch = vec![8, 144, 107, 0, 0, 221, 0, 129];
             batch.extend(suffix);
@@ -1554,6 +1833,49 @@ mod tests {
         client.dispatch_packet_377(109, &mut reopen).unwrap();
         assert_eq!(client.if_(301).unwrap().text, "decoded 301");
         assert_eq!(client.if_(221).unwrap().text, "decoded 221");
+    }
+
+    #[test]
+    fn late_text_packet_invalidates_only_its_visible_cached_layer() {
+        let mut client = client();
+        client.side_icon[3] = 300;
+        client.active_icon = 3;
+        client.chat_modal_id = 400;
+        client.tut_com_id = 500;
+        let bytes = [173, 1, b't', b'i', b'n', 10]; // component 301, Java g2_alt3.
+        for (layer, side, chat) in [
+            (300, true, false),
+            (400, false, true),
+            (500, false, true),
+            (600, false, false),
+        ] {
+            client.set_iface(
+                301,
+                IfType {
+                    layer_id: layer,
+                    ..Default::default()
+                },
+            );
+            client.redraw_side = false;
+            client.redraw_chat = false;
+            let generation = client.gens.iface;
+            let mut packet = Packet::new(bytes.to_vec());
+            client.dispatch_packet_377(232, &mut packet).unwrap();
+            assert_eq!(client.if_(301).unwrap().text, "tin");
+            assert_eq!((client.redraw_side, client.redraw_chat), (side, chat));
+            assert_eq!(client.gens.iface, generation + 1);
+        }
+        client.redraw_chat = false;
+        client.redraw_side = false;
+        let generation = client.gens.iface;
+        for len in 0..bytes.len() {
+            let mut packet = Packet::new(bytes[..len].to_vec());
+            assert!(client.dispatch_packet_377(232, &mut packet).is_err());
+            assert_eq!(packet.pos, 0);
+            assert_eq!(client.if_(301).unwrap().text, "tin");
+            assert!(!client.redraw_chat && !client.redraw_side);
+            assert_eq!(client.gens.iface, generation);
+        }
     }
 
     #[test]
@@ -1782,6 +2104,142 @@ mod tests {
         assert_eq!(client.ptype, 73);
         assert_eq!(invalid_head.pos, 0);
         assert_eq!(client.gens.iface, iface_generation);
+    }
+
+    #[test]
+    fn quest_colour_decodes_validates_then_applies_java_rgb555() {
+        let mut client = client();
+        client.set_iface(301, IfType::default());
+        client.iface_mut(301).unwrap().colour = 7;
+        let generation = client.gens.iface;
+        // IF_SETCOLOUR: component BE, RGB555 BE with biased low byte.
+        let mut valid = Packet::new(vec![1, 45, 0x7c, 0x80]);
+        client.dispatch_packet_377(218, &mut valid).unwrap();
+        assert_eq!(client.if_(301).unwrap().colour, 0xf80000);
+        assert_eq!(valid.pos, 4);
+        assert_eq!(client.gens.iface, generation + 1);
+        let mut channels = Packet::new(vec![1, 45, 0x04, 0xc3]);
+        client.dispatch_packet_377(218, &mut channels).unwrap();
+        assert_eq!(client.if_(301).unwrap().colour, 0x081018);
+        let generation = client.gens.iface;
+        for bytes in [vec![1, 46, 0x7c, 0x80], vec![1, 45, 0x7c]] {
+            let mut invalid = Packet::new(bytes);
+            assert!(client.dispatch_packet_377(218, &mut invalid).is_err());
+            assert_eq!(invalid.pos, 0);
+            assert_eq!(client.if_(301).unwrap().colour, 0x081018);
+            assert_eq!(client.gens.iface, generation);
+        }
+    }
+
+    #[test]
+    fn bank_main_side_validates_both_components_before_opening() {
+        let mut client = client();
+        client.set_iface(301, IfType::default());
+        client.set_iface(302, IfType::default());
+        client.main_modal_id = 17;
+        client.side_modal_id = 18;
+        client.chat_modal_id = 19;
+        client.dialog_input_open = true;
+        client.resumed_pause_button = true;
+        let generation = client.gens.iface;
+        for bytes in [vec![1, 173, 175, 1], vec![1, 173, 174]] {
+            let mut invalid = Packet::new(bytes);
+            assert!(client.dispatch_packet_377(128, &mut invalid).is_err());
+            assert_eq!(invalid.pos, 0);
+            assert_eq!(
+                (
+                    client.main_modal_id,
+                    client.side_modal_id,
+                    client.chat_modal_id
+                ),
+                (17, 18, 19)
+            );
+            assert!(client.resumed_pause_button && client.dialog_input_open);
+            assert_eq!(client.gens.iface, generation);
+        }
+        let mut valid = Packet::new(vec![1, 173, 174, 1]);
+        client.dispatch_packet_377(128, &mut valid).unwrap();
+        assert_eq!(
+            (
+                client.main_modal_id,
+                client.side_modal_id,
+                client.chat_modal_id
+            ),
+            (301, 302, -1)
+        );
+        assert!(!client.dialog_input_open && !client.resumed_pause_button);
+        assert!(client.redraw_chat && client.redraw_side && client.redraw_icons);
+        assert_eq!(client.gens.iface, generation + 1);
+    }
+
+    #[test]
+    fn bank_scroll_clamps_and_non_layer_is_unchanged() {
+        let mut client = client();
+        client.set_iface(
+            301,
+            IfType {
+                r#type: ComponentType::TYPE_LAYER,
+                height: 100,
+                ..Default::default()
+            },
+        );
+        client.iface_mut(301).unwrap().scroll_height = 300;
+        for (wire, expected) in [(150, 150), (500, 200)] {
+            let mut packet = Packet::new(vec![
+                1,
+                45,
+                (wire as u8).wrapping_add(128),
+                (wire >> 8) as u8,
+            ]);
+            client.dispatch_packet_377(200, &mut packet).unwrap();
+            assert_eq!(client.if_(301).unwrap().scroll_pos, expected);
+        }
+        let generation = client.gens.iface;
+        for bytes in [vec![1, 46, 128, 0], vec![1, 45, 128]] {
+            let mut packet = Packet::new(bytes);
+            assert!(client.dispatch_packet_377(200, &mut packet).is_err());
+            assert_eq!(packet.pos, 0);
+            assert_eq!(client.gens.iface, generation);
+            assert_eq!(client.if_(301).unwrap().scroll_pos, 200);
+        }
+        client.set_iface(302, IfType::default());
+        client.iface_mut(302).unwrap().scroll_pos = 27;
+        client
+            .dispatch_packet_377(200, &mut Packet::new(vec![1, 46, 128, 0]))
+            .unwrap();
+        assert_eq!(client.if_(302).unwrap().scroll_pos, 27);
+    }
+
+    #[test]
+    fn smithing_inventory_stop_clears_ids_but_keeps_java_counts() {
+        let mut client = client();
+        client.set_iface(301, IfType::default());
+        let inventory = client.iface_mut(301).unwrap();
+        inventory.link_obj_type = Some(vec![2, 3]);
+        inventory.link_obj_number = Some(vec![7, 8]);
+        let generation = client.gens.inv;
+        for bytes in [vec![46, 1], vec![45]] {
+            let mut packet = Packet::new(bytes);
+            assert!(client.dispatch_packet_377(219, &mut packet).is_err());
+            assert_eq!(packet.pos, 0);
+            assert_eq!(client.gens.inv, generation);
+            assert_eq!(
+                client.if_(301).unwrap().link_obj_type.as_deref(),
+                Some(&[2, 3][..])
+            );
+        }
+        let mut packet = Packet::new(vec![45, 1]);
+        client.dispatch_packet_377(219, &mut packet).unwrap();
+        assert_eq!(packet.pos, 2);
+        assert_eq!(
+            client.if_(301).unwrap().link_obj_type.as_deref(),
+            Some(&[0, 0][..])
+        );
+        assert_eq!(
+            client.if_(301).unwrap().link_obj_number.as_deref(),
+            Some(&[7, 8][..])
+        );
+        assert_eq!(client.gens.inv, generation + 1);
     }
 
     #[test]
