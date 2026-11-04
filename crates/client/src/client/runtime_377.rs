@@ -88,6 +88,7 @@ impl Client {
                 | 82
                 | 88
                 | 90
+                | 106
                 | 107
                 | 109
                 | 113
@@ -205,6 +206,7 @@ impl Client {
                                 | Z::ObjAdd { .. }
                                 | Z::ObjDel { .. }
                                 | Z::ObjCount { .. }
+                                | Z::ObjectReveal { .. }
                                 | Z::MapProjAnim { .. }
                         )
                     }) =>
@@ -316,6 +318,7 @@ impl Client {
                         | Z::ObjAdd { tile, .. }
                         | Z::ObjDel { tile, .. }
                         | Z::ObjCount { tile, .. }
+                        | Z::ObjectReveal { tile, .. }
                         | Z::MapProjAnim { tile, .. } => tile,
                         _ => unreachable!("preflight rejects other zone operations"),
                     };
@@ -325,8 +328,10 @@ impl Client {
                         continue;
                     }
                     match operation {
-                        Z::ObjAdd { object, count, .. } => {
-                            // Java Client.java:8717-8733: append and sort.
+                        // Java 8658: the receiver already has the private object.
+                        Z::ObjectReveal { receiver_id, .. } if *receiver_id == self.self_slot => {}
+                        Z::ObjAdd { object, count, .. } | Z::ObjectReveal { object, count, .. } => {
+                            // Java 8659-8666 and 8717-8733: append and sort.
                             self.ground_obj[self.minusedlevel as usize][x as usize][z as usize]
                                 .get_or_insert_with(|| Box::new(LinkList::new()))
                                 .push(ClientObj::new(*object, *count));
@@ -1695,6 +1700,120 @@ mod tests {
         let mut absent = Packet::new(vec![0x22, 0, 0, 0, 5, 0, 9]);
         client.dispatch_packet_377(121, &mut absent).unwrap();
         assert!(client.ground_obj[0][10][18].is_none());
+    }
+
+    #[test]
+    fn tutorial_object_reveal_matches_java_receiver_and_scene_guards() {
+        let mut cache = Cache::default();
+        cache.objs.resize_with(2, Default::default);
+        let mut client = client_with_cache(cache);
+        client.self_slot = 7;
+        client.zone_update_x = 8;
+        client.zone_update_z = 16;
+        // Java 8652-8657: tile (2,3), count 4, object 1, receiver 8.
+        let bytes = [163, 132, 0, 0, 129, 0, 136];
+        let generation = client.gens.scene;
+        for len in 0..bytes.len() {
+            let mut packet = Packet::new(bytes[..len].to_vec());
+            assert!(client.dispatch_packet_377(106, &mut packet).is_err());
+            assert_eq!(packet.pos, 0);
+            assert_eq!(client.gens.scene, generation);
+            assert!(client.ground_obj[0][10][19].is_none());
+        }
+        for invalid in [
+            vec![163, 132, 0, 0, 130, 0, 136],   // missing object 2
+            vec![163, 132, 0, 0, 129, 255, 126], // invalid receiver 65534
+        ] {
+            let mut packet = Packet::new(invalid);
+            assert!(client.dispatch_packet_377(106, &mut packet).is_err());
+            assert_eq!(packet.pos, 0);
+            assert_eq!(client.gens.scene, generation);
+            assert!(client.ground_obj[0][10][19].is_none());
+        }
+        let mut packet = Packet::new(bytes.to_vec());
+        client.dispatch_packet_377(106, &mut packet).unwrap();
+        assert_eq!(packet.pos, bytes.len());
+        assert_eq!(client.gens.scene, generation + 1);
+        assert_eq!(
+            client.world.ground_object_at(0, 10, 19).unwrap().top,
+            Some((1, 4))
+        );
+        // The owner already sees the private object. Do not duplicate it.
+        let mut owner = Packet::new(vec![163, 137, 0, 0, 129, 0, 135]);
+        client.dispatch_packet_377(106, &mut owner).unwrap();
+        assert_eq!(owner.pos, bytes.len());
+        let objects = client.ground_obj[0][10][19].as_mut().unwrap();
+        let obj = objects.head().unwrap();
+        assert_eq!((obj.id, obj.count), (1, 4));
+        assert!(objects.next_node().is_none());
+        // Java compares the broadcast sentinel with the PID like any receiver.
+        let mut broadcast = Packet::new(vec![163, 137, 0, 0, 129, 255, 127]);
+        client.dispatch_packet_377(106, &mut broadcast).unwrap();
+        assert_eq!(broadcast.pos, bytes.len());
+        let objects = client.ground_obj[0][10][19].as_mut().unwrap();
+        let mut counts = Vec::new();
+        let mut node = objects.head();
+        while let Some(obj) = node {
+            assert_eq!(obj.id, 1);
+            counts.push(obj.count);
+            node = objects.next_node();
+        }
+        counts.sort_unstable();
+        assert_eq!(counts, [4, 9]);
+        client.zone_update_x = 103;
+        client.zone_update_z = 103;
+        let mut outside = Packet::new(bytes.to_vec());
+        client.dispatch_packet_377(106, &mut outside).unwrap();
+        assert_eq!(outside.pos, bytes.len());
+        assert!(client.ground_obj[0][103][103].is_none());
+    }
+
+    #[test]
+    fn tutorial_enclosed_object_reveal_validates_whole_observed_batch() {
+        let mut cache = Cache::default();
+        cache.objs.resize_with(2531, Default::default);
+        let mut client = client_with_cache(cache);
+        client.self_slot = 7;
+        client.zone_update_x = 8;
+        client.zone_update_z = 16;
+        // Reconstructed from the decoded live frame: origin (64,64), tile
+        // (5,6), two count-1 objects 2530/2134, receiver 2. Not a raw capture.
+        let bytes = [
+            64, 192, 106, 214, 129, 0, 9, 98, 0, 130, 106, 214, 129, 0, 8, 214, 0, 130,
+        ];
+        let mut invalid_object = bytes;
+        invalid_object[14] = 10;
+        let mut invalid_receiver = bytes;
+        invalid_receiver[16] = 8;
+        invalid_receiver[17] = 128;
+        let generation = client.gens.scene;
+        for invalid in [
+            bytes[..17].to_vec(),
+            invalid_object.to_vec(),
+            invalid_receiver.to_vec(),
+        ] {
+            let mut packet = Packet::new(invalid);
+            assert!(client.dispatch_packet_377(183, &mut packet).is_err());
+            assert_eq!(packet.pos, 0);
+            assert_eq!(client.gens.scene, generation);
+            assert_eq!((client.zone_update_x, client.zone_update_z), (8, 16));
+            assert!(client.ground_obj[0][69][70].is_none());
+        }
+        let mut packet = Packet::new(bytes.to_vec());
+        client.dispatch_packet_377(183, &mut packet).unwrap();
+        assert_eq!(packet.pos, bytes.len());
+        assert_eq!((client.zone_update_x, client.zone_update_z), (64, 64));
+        assert_eq!(client.gens.scene, generation + 1);
+        let objects = client.ground_obj[0][69][70].as_mut().unwrap();
+        let mut values = Vec::new();
+        let mut node = objects.head();
+        while let Some(obj) = node {
+            values.push((obj.id, obj.count));
+            node = objects.next_node();
+        }
+        values.sort_unstable();
+        assert_eq!(values, [(2134, 1), (2530, 1)]);
+        assert!(client.world.ground_object_at(0, 69, 70).is_some());
     }
 
     #[test]
