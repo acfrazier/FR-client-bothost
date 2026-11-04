@@ -4084,7 +4084,24 @@ impl Client {
                     self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ2));
                 }
                 if action == MiniMenuAction::OP_OBJ3 {
-                    self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ3));
+                    if self.revision.is_377() {
+                        // Java 377's OPOBJ3-specific counter and optional preamble.
+                        if (a & 0x3) == 0 {
+                            self.oplogic4 += 1;
+                        }
+                        if self.oplogic4 >= 84 {
+                            super::outbound_377::anticheat_oplogic4_377(&mut self.out);
+                            self.oplogic4 = 0;
+                        }
+                        super::outbound_377::opobj3_377(
+                            &mut self.out,
+                            a,
+                            b + self.map_build_base_x,
+                            c + self.map_build_base_z,
+                        );
+                    } else {
+                        self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ3));
+                    }
                 }
                 if action == MiniMenuAction::OP_OBJ4 {
                     self.oplogic8 += c;
@@ -4105,9 +4122,11 @@ impl Client {
                     self.out.p1_enc(self.client_opcode(ClientProt::OPOBJ5));
                 }
 
-                self.out.p2(b + self.map_build_base_x);
-                self.out.p2(c + self.map_build_base_z);
-                self.out.p2(a);
+                if action != MiniMenuAction::OP_OBJ3 || !self.revision.is_377() {
+                    self.out.p2(b + self.map_build_base_x);
+                    self.out.p2(c + self.map_build_base_z);
+                    self.out.p2(a);
+                }
             }
         }
 
@@ -4199,6 +4218,8 @@ impl Client {
                     super::outbound_377::opnpc1_377(&mut self.out, a);
                 } else if self.revision.is_377() && action == MiniMenuAction::OP_NPC2 {
                     super::outbound_377::opnpc2_377(&mut self.out, a);
+                } else if self.revision.is_377() && action == MiniMenuAction::OP_NPC3 {
+                    super::outbound_377::opnpc3_377(&mut self.out, a);
                 } else {
                     let opcode = match action {
                         MiniMenuAction::OP_NPC1 => self.client_opcode(ClientProt::OPNPC1),
@@ -4544,10 +4565,12 @@ impl Client {
             || action == MiniMenuAction::OP_HELD4
             || action == MiniMenuAction::OP_HELD5
         {
-            // TS 8956-8997: p2(obj) p2(slot) p2(com), then the selected
-            // outline fields.
+            // The legacy path writes p2(obj), p2(slot), p2(com); Java 377's
+            // OPHELD2 and OPHELD5 writers use their transformed layouts.
             if self.revision.is_377() && action == MiniMenuAction::OP_HELD2 {
                 super::outbound_377::opheld2_377(&mut self.out, a, b, c);
+            } else if self.revision.is_377() && action == MiniMenuAction::OP_HELD5 {
+                super::outbound_377::opheld5_377(&mut self.out, a, b, c);
             } else {
                 if action == MiniMenuAction::OP_HELD1 {
                     self.out.p1_enc(self.client_opcode(ClientProt::OPHELD1));
@@ -4686,10 +4709,12 @@ impl Client {
             || action == MiniMenuAction::INV_BUTTON4
             || action == MiniMenuAction::INV_BUTTON5
         {
-            // TS 9096-9141: p2(obj) p2(slot) p2(com), then the selected
-            // outline fields.
+            // The legacy path writes p2(obj), p2(slot), p2(com); Java 377's
+            // INV_BUTTON1 and INV_BUTTON2 writers use their transformed layouts.
             if action == MiniMenuAction::INV_BUTTON1 && self.revision.is_377() {
                 super::outbound_377::inv_button1_377(&mut self.out, a, b, c);
+            } else if action == MiniMenuAction::INV_BUTTON2 && self.revision.is_377() {
+                super::outbound_377::inv_button2_377(&mut self.out, a, b, c);
             } else {
                 if action == MiniMenuAction::INV_BUTTON1 {
                     if (a & 0x3) == 0 {
