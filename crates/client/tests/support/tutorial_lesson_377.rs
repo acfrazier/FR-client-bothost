@@ -348,7 +348,7 @@ fn combat(
     save_stage(c, r, root, "melee-rat-killed", stages);
     let (code, _, _) = scene_location(c, 3022).expect("actual rat pit gate");
     actions.push(location_action(c, code, 0));
-    pump_until(c, r, 20, |c| tile(c).0 < 3111);
+    pump_until(c, r, 20, |c| tile(c).0 >= 3111);
     save_stage(c, r, root, "rat-pit-exit", stages);
     combat_ranged(c, r, root, stages, actions);
 }
