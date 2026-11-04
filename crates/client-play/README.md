@@ -37,9 +37,11 @@ Rotated engine keys are read at runtime from `$ENGINE_DIR`.
 
 Revision 274 remains the default. `--revision 289` retains the existing 289
 profile. `--revision 377` selects separate 377 cache decoders and validated
-Fairy Ring login, terrain movement, tutorial dialogue, doors, inventory tabs,
-woodcutting, firemaking, shrimp fishing/cooking, dough, bread, and progress
-operations. This is not a complete 377 gameplay client.
+Fairy Ring login, terrain movement, and natural Tutorial Island operations:
+dialogue, doors, inventory and quest tabs, woodcutting, firemaking, fishing,
+cooking, mining, smelting, smithing, equipment, melee and ranged combat,
+bank deposits/withdrawals, prayer/friends/ignore tabs, Wind Strike, and the
+instructor's mainland teleport. This is not a complete 377 gameplay client.
 
 Use revision 377 only with Fairy Ring's local 377 engine. The orchestrator
 starts and stops that engine. Set `ENGINE_DIR` to that engine so runtime RSA
@@ -83,9 +85,33 @@ CLIENT_377_LIVE_USER=t2a_example \
   --ignored --nocapture --test-threads=1
 ```
 
-For the interaction proof, select `--test live_interactions_377` in the same
-command and use a fresh `t2a` account. Set `CLIENT_377_QUIET_LOCK` to the
-operator's quiet-lock path when the environment requires it.
+For the initial interaction proof, select `--test live_interactions_377` and
+filter `terrain_click_guide_dialogue_and_progress` before `--ignored`; use a
+fresh `t2a` account. The natural continuation uses the same account after its
+server-acknowledged logout, not a seeded tutorial stage:
+
+```bash
+ENGINE_DIR=/path/to/fairy-ring-377-engine \
+CLIENT_377_RUNTIME_CACHE_DIR=/path/to/matched-377-cache \
+CLIENT_377_LIVE_DIR=/path/to/lesson-evidence \
+CLIENT_377_LIVE_USER=t2a_example \
+CLIENT_377_TUTORIAL_LESSON=quest \
+  cargo test -p client --no-default-features --test live_interactions_377 \
+  tutorial_lesson_377::natural_tutorial_lesson -- \
+  --exact --ignored --nocapture --test-threads=1
+```
+
+Select `quest`, `mining`, `combat`, `bank`, `prayer`, then `magic` in order.
+Each lesson requires the previous lesson's natural account state, saves
+per-step screenshots and `stages.json`, and writes `lesson.json` with real
+inventory/NPC/location inputs, outbound packets, and the server logout.
+The magic lesson ends at Lumbridge (3222,3222) with the tutorial overlay closed.
+Explicit resume selections (`quest-run`, `combat-ranged`, `combat-shoot`,
+`combat-confirm`, `bank-exit`, `magic-success`) require their already-received
+natural account states. They do not set tutorial variables or grant supplies.
+`combat-confirm` uses the remaining natural arrows against one additional rat
+to exercise the repaired projectile and ground-stack path after a disconnect.
+Set `CLIENT_377_QUIET_LOCK` to the operator's quiet-lock path when required.
 
 The `% Done` bar reads transmitted varp 406. The server-only tutorial stage
 is not transmitted in varp 281. The first Guide conversation reaches stage 4,
@@ -95,9 +121,12 @@ the overlay to 2, which fills the first segment. The proof checks a real
 server/applied varp transition from 1 to 2 and evaluates all 20 segment scripts.
 The later survival and chef steps reach transmitted progress values 3, 4, 5,
 and 6. Bread reaches stage 170 (`1 + floor(170 * 20 / 670) = 6`), with five
-filled segments. Every saved step includes tutorial text, both varp values,
-segment evaluations, inventory, and skill experience. No tutorial state or
-inventory is seeded.
+filled segments. The continuation reaches received progress 8 at the mine,
+11 at combat, 17 at the chapel, and 20 during magic; the mainland transition
+clears it to 0 and removes the overlay. Every saved step includes tutorial
+text, both varp values, segment evaluations, inventories, visible NPCs,
+projectiles, and skill experience. No tutorial state, inventory, or stats
+are seeded.
 
 The 377 renderer uses Java's separate hint sprites. A literal model-and-frame
 regression checks the tutorial banner against Client-Java 377. The current
@@ -105,6 +134,7 @@ pack's banner also overlaps the progress bar in Java; the renderer preserves
 that geometry rather than applying a client-only layout correction.
 Chat-interface replacement restores decoded non-inventory component state.
 Inventory components retain their contents, as in Java's component unload.
+Late text updates also invalidate their visible cached chat/tutorial layer.
 
 Ordinary 377 mouse, camera, focus, idle, and Java anticheat packets use their
 own encoders and trigger points. Shared writers are admitted only when their
