@@ -10,6 +10,7 @@ use crate::client::packet_377::{
     npc_info_377::{NpcInfo377, NpcUpdateBlock377 as N},
     player_info_377::{PlayerAppearance377, PlayerInfo377, PlayerUpdateBlock377 as P},
     rebuild_377::Rebuild377,
+    zone_377::ZoneOperation377 as Z,
     HintArrow377, Operation377 as O, PacketContext377, ReferenceKind377 as R,
 };
 use crate::dash3d::client_player::recol1d;
@@ -33,8 +34,8 @@ impl PacketContext377 for Client {
                 .is_some_and(|(v, _)| v != 0),
             R::Spotanim => index < self.cache.spots.len(),
             R::Location => index < self.cache.locs.len(),
-            // This cohort contains no synth/area-sound packets.
-            R::Sound => false,
+            // Java's fixed wave-delay table exists even in low-memory mode.
+            R::Sound => index < self.jagfx.delays.len(),
             R::Midi => self
                 .on_demand
                 .as_ref()
@@ -68,12 +69,14 @@ impl Client {
         payload: &mut Packet,
     ) -> Result<(), String> {
         let opcode = u8::try_from(opcode).map_err(|_| "377 opcode outside byte range")?;
-        // This is the exact observed login/logout/dialogue cohort, not a numeric alias table.
+        // Exact Java login, guide-dialogue and first survival-task cohort.
         if !matches!(
             opcode,
             2 | 5
                 | 10
                 | 13
+                | 21
+                | 26
                 | 29
                 | 40
                 | 49
@@ -81,25 +84,36 @@ impl Client {
                 | 61
                 | 63
                 | 71
+                | 75
                 | 82
+                | 88
                 | 90
                 | 109
                 | 113
+                | 115
                 | 125
                 | 126
+                | 134
                 | 148
+                | 152
                 | 156
                 | 157
                 | 158
                 | 159
                 | 162
+                | 166
+                | 174
                 | 182
+                | 183
+                | 186
                 | 199
                 | 201
+                | 206
                 | 220
                 | 222
                 | 226
                 | 232
+                | 238
                 | 251
         ) {
             return Err(format!(
@@ -173,16 +187,57 @@ impl Client {
                 return Err("377 tab exceeds runtime capacity".into())
             }
             O::Zone(frame)
-                if !frame.operations().is_empty() || !(0..4).contains(&self.minusedlevel) =>
+                if !(0..4).contains(&self.minusedlevel)
+                    || frame
+                        .operations()
+                        .iter()
+                        .any(|op| !matches!(op, Z::LocAddChange { .. } | Z::LocDel { .. })) =>
             {
-                return Err("377 zone outside captured origin-only cohort".into())
+                return Err("377 zone outside tutorial location cohort".into())
             }
             O::Rebuild(Rebuild377::Instance { .. }) => {
                 return Err("377 instance rebuild not in captured cohort".into())
             }
+            O::InventoryFull { component, .. } | O::InventoryPartial { component, .. } => {
+                let valid = self.if_(*component as usize).is_some_and(|com| {
+                    matches!(
+                        (&com.link_obj_type, &com.link_obj_number),
+                        (Some(types), Some(numbers)) if types.len() == numbers.len()
+                    )
+                });
+                if !valid {
+                    return Err("377 inventory arrays have different capacities".into());
+                }
+            }
             _ => {}
         }
         Ok(())
+    }
+
+    /// Java Component.unloadCom resets non-inventory children of a layer.
+    /// The immutable decoded table stays shared; only this client's overlay
+    /// returns to its decode template. No model or inventory table is copied.
+    fn unload_interface_377(&mut self, layer: i32) {
+        if layer == -1 {
+            return;
+        }
+        let Some(revision) = self.cache.revision_377.as_ref() else {
+            return;
+        };
+        let slots = Arc::make_mut(&mut self.ifaces_mut);
+        for (id, component) in self.ifaces.iter().enumerate() {
+            if component
+                .as_ref()
+                .is_some_and(|com| com.layer_id == layer && com.r#type != ComponentType::TYPE_INV)
+            {
+                if let (Some(slot), Some(initial)) = (
+                    slots.get_mut(id),
+                    revision.interfaces.initial_overlays.get(id),
+                ) {
+                    slot.clone_from(initial);
+                }
+            }
+        }
     }
 
     fn apply_operation_377(&mut self, operation: O<'_>) -> Option<R289Publication> {
@@ -225,6 +280,33 @@ impl Client {
                         }
                     }
                 }
+                for operation in frame.operations() {
+                    let (tile, shape, angle, location) = match operation {
+                        Z::LocAddChange {
+                            tile,
+                            shape,
+                            angle,
+                            location,
+                        } => (tile, *shape, *angle, *location),
+                        Z::LocDel { tile, shape, angle } => (tile, *shape, *angle, -1),
+                        _ => unreachable!("preflight rejects other zone operations"),
+                    };
+                    let x = self.zone_update_x + tile.x;
+                    let z = self.zone_update_z + tile.z;
+                    if (0..104).contains(&x) && (0..104).contains(&z) {
+                        self.loc_change_create(
+                            self.minusedlevel,
+                            x,
+                            z,
+                            LOC_SHAPE_TO_LAYER[shape as usize],
+                            location,
+                            shape,
+                            angle,
+                            0,
+                            -1,
+                        );
+                    }
+                }
                 p.scene = true;
             }
             O::Interface(operation) => {
@@ -233,20 +315,60 @@ impl Client {
                         self.if_anim_reset(component);
                         self.observe_main_modal_close();
                         if self.side_modal_id != -1 {
+                            self.unload_interface_377(self.side_modal_id);
                             self.side_modal_id = -1;
                             self.redraw_side = true;
                             self.redraw_icons = true;
+                        }
+                        self.unload_interface_377(self.main_modal_id);
+                        if self.chat_modal_id != component {
+                            self.unload_interface_377(self.chat_modal_id);
                         }
                         self.chat_modal_id = component;
                         self.main_modal_id = -1;
                         self.redraw_chat = true;
                         self.resumed_pause_button = false;
                     }
+                    I::SetPosition { component, x, y } => {
+                        let com = self.iface_mut(component as usize).unwrap();
+                        com.x = x;
+                        com.y = y;
+                    }
                     I::SetNpcHead { component, npc } => {
                         if let Some(com) = self.iface_mut(component as usize) {
                             com.model1_type = 2;
                             com.model1_id = npc;
                         }
+                    }
+                    I::SetObject {
+                        component,
+                        object,
+                        divisor,
+                    } => {
+                        if object == 65535 {
+                            self.iface_mut(component as usize).unwrap().model1_type = 0;
+                        } else {
+                            let obj = &self.cache.objs[object as usize];
+                            let (xan, yan, zoom) =
+                                (obj.xan2d, obj.yan2d, obj.zoom2d.wrapping_mul(100) / divisor);
+                            let com = self.iface_mut(component as usize).unwrap();
+                            com.model1_type = 4;
+                            com.model1_id = object;
+                            com.model_xan = xan;
+                            com.model_yan = yan;
+                            com.model_zoom = zoom;
+                        }
+                    }
+                    I::SetAngle {
+                        component,
+                        xan,
+                        yan,
+                        zoom,
+                    } => {
+                        let com = self.iface_mut(component as usize).unwrap();
+                        com.model_xan = xan;
+                        com.model_yan = yan;
+                        com.model_zoom = zoom;
                     }
                     I::SetAnim {
                         component,
@@ -265,25 +387,45 @@ impl Client {
                             com.hide = hidden;
                         }
                     }
-                    I::Close => self.apply_if_close(),
+                    I::Close => {
+                        self.unload_interface_377(self.side_modal_id);
+                        self.unload_interface_377(self.chat_modal_id);
+                        self.unload_interface_377(self.main_modal_id);
+                        self.apply_if_close();
+                    }
                     I::SetTab { tab, component } => {
+                        if self.side_icon[tab as usize] != component {
+                            self.unload_interface_377(self.side_icon[tab as usize]);
+                        }
                         self.side_icon[tab as usize] = component;
                         self.redraw_side = true;
                         self.redraw_icons = true;
                     }
+                    I::TutFlash { tab } => self.apply_tut_flash(tab),
                     I::OpenOverlay { component } => {
                         if component != -1 {
                             self.if_anim_reset(component);
                         }
+                        if self.main_overlay_id != component {
+                            self.unload_interface_377(self.main_overlay_id);
+                        }
                         self.main_overlay_id = component;
                     }
                     I::TutOpen { component } => {
+                        if self.tut_com_id != component {
+                            self.unload_interface_377(self.tut_com_id);
+                        }
                         self.tut_com_id = component;
                         self.redraw_chat = true;
                     }
                     I::OpenMain { component } => {
                         self.if_anim_reset(component);
                         self.observe_main_modal_open();
+                        self.unload_interface_377(self.side_modal_id);
+                        self.unload_interface_377(self.chat_modal_id);
+                        if self.main_modal_id != component {
+                            self.unload_interface_377(self.main_modal_id);
+                        }
                         self.main_modal_id = component;
                         self.side_modal_id = -1;
                         self.chat_modal_id = -1;
@@ -308,6 +450,36 @@ impl Client {
                 }
                 p.iface = true;
             }
+            O::InventoryFull { component, entries } => {
+                let inv = self.iface_mut(component as usize).unwrap();
+                let types = inv.link_obj_type.as_mut().unwrap();
+                let numbers = inv.link_obj_number.as_mut().unwrap();
+                let count = entries.len();
+                for (slot, entry) in entries.into_iter().enumerate() {
+                    types[slot] = entry.object_plus_one;
+                    numbers[slot] = entry.count;
+                }
+                types[count..].fill(0);
+                numbers[count..].fill(0);
+                self.redraw_side = true;
+                self.observe_inventory_full(component);
+                p.inv = true;
+            }
+            O::InventoryPartial { component, entries } => {
+                let inv = self.iface_mut(component as usize).unwrap();
+                let types = inv.link_obj_type.as_mut().unwrap();
+                let numbers = inv.link_obj_number.as_mut().unwrap();
+                for entry in entries {
+                    let slot = entry.slot as usize;
+                    if slot < types.len() {
+                        types[slot] = entry.entry.object_plus_one;
+                        numbers[slot] = entry.entry.count;
+                    }
+                }
+                self.redraw_side = true;
+                self.observe_inventory_partial(component);
+                p.inv = true;
+            }
             O::Varp { id, value } => return Some(self.apply_varp_289(id, value)),
             O::VarpSync => return Some(self.apply_varp_sync_289()),
             O::UpdateStat {
@@ -323,6 +495,13 @@ impl Client {
                     self.redraw_side = true;
                 }
                 self.runenergy = value;
+                p.stat = true;
+            }
+            O::RunWeight(value) => {
+                if self.active_icon == 12 {
+                    self.redraw_side = true;
+                }
+                self.runweight = value;
                 p.stat = true;
             }
             O::UpdatePid { members, slot } => {
@@ -382,6 +561,30 @@ impl Client {
                     self.player_op[(index - 1) as usize] =
                         (!text.eq_ignore_ascii_case("null")).then_some(text);
                     self.player_op_priority[(index - 1) as usize] = priority == 0;
+                }
+            }
+            O::SynthSound {
+                sound,
+                loops,
+                delay,
+            } => {
+                // Java Client.java:7303-7323. 65535 bypasses lowmem/mute.
+                if self.wave_count < 50
+                    && (delay == 65535 || self.wave_enabled && !self.config.lowmem)
+                {
+                    let slot = self.wave_count as usize;
+                    self.wave_ids[slot] = if delay == 65535 {
+                        i32::from(sound as i16)
+                    } else {
+                        sound
+                    };
+                    self.wave_loops[slot] = loops;
+                    self.wave_delay[slot] = if delay == 65535 {
+                        0
+                    } else {
+                        delay + self.jagfx.delays[sound as usize]
+                    };
+                    self.wave_count += 1;
                 }
             }
             O::MidiSong(song) => {
@@ -1005,6 +1208,276 @@ mod tests {
             .dispatch_packet_377(60, &mut valid_but_outside_cohort)
             .unwrap_err()
             .contains("outside captured"));
+    }
+
+    #[test]
+    fn tutorial_inventory_weight_is_signed_and_validates_before_apply() {
+        let mut client = client();
+        for (tab, redraw) in [(3, false), (12, true)] {
+            client.active_icon = tab;
+            client.redraw_side = false;
+            let generation = client.gens.stat;
+            let mut weight = Packet::new(vec![0xff, 0xfe]);
+            client.dispatch_packet_377(174, &mut weight).unwrap();
+            assert_eq!(client.runweight, -2);
+            assert_eq!(client.redraw_side, redraw);
+            assert_eq!(client.gens.stat, generation + 1);
+        }
+        let generation = client.gens.stat;
+        let mut short = Packet::new(vec![1]);
+        assert!(client.dispatch_packet_377(174, &mut short).is_err());
+        assert_eq!(client.runweight, -2);
+        assert_eq!(client.gens.stat, generation);
+        assert_eq!(short.pos, 0);
+    }
+
+    #[test]
+    fn large_tutorial_varp_validates_before_publishing() {
+        let mut cache = Cache::default();
+        cache.varps.resize_with(2, Default::default);
+        let mut client = client_with_cache(cache);
+        let generation = client.gens.varp;
+        // Java Client.java:7574 and Packet.java:414: g4_alt3, then g2_alt1.
+        let mut large = Packet::new(vec![0x34, 0x12, 0x78, 0x56, 1, 0]);
+        client.dispatch_packet_377(115, &mut large).unwrap();
+        assert_eq!(client.var_serv[1], 0x12345678);
+        assert_eq!(client.var[1], 0x12345678);
+        assert_eq!(client.gens.varp, generation + 1);
+        assert_eq!(large.pos, 6);
+
+        let generation = client.gens.varp;
+        for body in [
+            vec![0x34, 0x12, 0x78, 0x56, 2, 0],
+            vec![0x34, 0x12, 0x78, 0x56, 1],
+        ] {
+            let mut invalid = Packet::new(body);
+            assert!(client.dispatch_packet_377(115, &mut invalid).is_err());
+            assert_eq!(invalid.pos, 0);
+            assert_eq!(client.var_serv[1], 0x12345678);
+            assert_eq!(client.var[1], 0x12345678);
+            assert_eq!(client.gens.varp, generation);
+        }
+    }
+
+    #[test]
+    fn tutorial_location_packets_schedule_real_scene_changes_after_validation() {
+        let mut cache = Cache::default();
+        cache.locs.push(Default::default());
+        let mut client = client_with_cache(cache);
+        let mut origin = Packet::new(vec![248, 144]);
+        client.dispatch_packet_377(75, &mut origin).unwrap();
+        assert_eq!((client.zone_update_x, client.zone_update_z), (8, 16));
+        // shape 10, angle 1, loc 0 and zone offset (2,3).
+        let mut add = Packet::new(vec![215, 128, 0, 163]);
+        client.dispatch_packet_377(152, &mut add).unwrap();
+        {
+            let change = client.loc_changes.head().unwrap();
+            assert_eq!(
+                (change.level, change.layer, change.x, change.z),
+                (0, 2, 10, 19)
+            );
+            assert_eq!(
+                (change.new_type, change.new_shape, change.new_angle),
+                (0, 10, 1)
+            );
+        }
+        let generation = client.gens.scene;
+        let mut invalid = Packet::new(vec![215, 129, 0, 163]);
+        assert!(client.dispatch_packet_377(152, &mut invalid).is_err());
+        assert_eq!(client.gens.scene, generation);
+        let mut delete = Packet::new(vec![93, 87]);
+        client.dispatch_packet_377(88, &mut delete).unwrap();
+        let change = client.loc_changes.head().unwrap();
+        assert_eq!(
+            (change.new_type, change.new_shape, change.new_angle),
+            (-1, 10, 1)
+        );
+    }
+
+    #[test]
+    fn open_chat_unloads_replaced_layers_but_retains_inventory_and_same_chat() {
+        let mut client = client();
+        for (id, layer, kind) in [
+            (200, -1, ComponentType::TYPE_LAYER),
+            (201, 200, ComponentType::TYPE_TEXT),
+            (202, 200, ComponentType::TYPE_INV),
+            (210, -1, ComponentType::TYPE_LAYER),
+            (211, 210, ComponentType::TYPE_MODEL),
+            (220, -1, ComponentType::TYPE_LAYER),
+            (221, 220, ComponentType::TYPE_TEXT),
+            (300, -1, ComponentType::TYPE_LAYER),
+            (301, 300, ComponentType::TYPE_TEXT),
+        ] {
+            client.set_iface(
+                id,
+                IfType {
+                    id: id as i32,
+                    layer_id: layer,
+                    r#type: kind,
+                    ..Default::default()
+                },
+            );
+            client.iface_mut(id).unwrap().text = format!("decoded {id}");
+        }
+        client.iface_mut(202).unwrap().link_obj_type = Some(vec![0, 0]);
+        client.iface_mut(202).unwrap().link_obj_number = Some(vec![0, 0]);
+        Arc::get_mut(&mut client.cache).unwrap().revision_377 =
+            Some(Box::new(crate::config::CacheRevision377 {
+                config: Default::default(),
+                interfaces: crate::config::runtime_377::InterfaceFields377 {
+                    client_code_layers: Default::default(),
+                    type1_fields: Vec::new(),
+                    null_string_masks: Vec::new(),
+                    initial_overlays: client.ifaces_mut.as_ref().clone(),
+                },
+            }));
+        for id in [201, 211, 221, 301] {
+            let com = client.iface_mut(id).unwrap();
+            com.text = "live change".into();
+            com.anim_frame = 8;
+            com.anim_cycle = 9;
+            com.model1_id = 55;
+            com.hide = true;
+        }
+        client.iface_mut(202).unwrap().link_obj_type = Some(vec![11, 22]);
+        client.main_modal_id = 200;
+        client.side_modal_id = 210;
+        client.chat_modal_id = 220;
+        let mut open = Packet::new(vec![1, 44]);
+        client.dispatch_packet_377(109, &mut open).unwrap();
+        assert_eq!(client.chat_modal_id, 300);
+        assert_eq!((client.main_modal_id, client.side_modal_id), (-1, -1));
+        for id in [201, 211, 221] {
+            let com = client.if_(id).unwrap();
+            assert_eq!(com.text, format!("decoded {id}"));
+            assert_eq!((com.anim_frame, com.anim_cycle, com.model1_id), (0, 0, 0));
+            assert!(!com.hide);
+        }
+        assert_eq!(
+            client.if_(202).unwrap().link_obj_type.as_deref(),
+            Some(&[11, 22][..])
+        );
+        assert_eq!(client.if_(301).unwrap().text, "live change");
+        let mut same = Packet::new(vec![1, 44]);
+        client.dispatch_packet_377(109, &mut same).unwrap();
+        assert_eq!(client.if_(301).unwrap().text, "live change");
+        let mut reopen = Packet::new(vec![0, 220]);
+        client.dispatch_packet_377(109, &mut reopen).unwrap();
+        assert_eq!(client.if_(301).unwrap().text, "decoded 301");
+        assert_eq!(client.if_(221).unwrap().text, "decoded 221");
+    }
+
+    #[test]
+    fn survival_inventory_full_partial_and_validation_are_transactional() {
+        let mut cache = Cache::default();
+        cache.objs.resize_with(2, Default::default);
+        let mut client = client_with_cache(cache);
+        client.set_iface(300, IfType::default());
+        let inv = client.iface_mut(300).unwrap();
+        inv.link_obj_type = Some(vec![9; 3]);
+        inv.link_obj_number = Some(vec![9; 3]);
+        // Java 8065-8085: LE biased IDs, negated quantities, LE large count.
+        let mut full = Packet::new(vec![1, 44, 0, 2, 129, 0, 255, 130, 0, 1, 244, 1, 0, 0]);
+        client.dispatch_packet_377(206, &mut full).unwrap();
+        assert_eq!(
+            client.if_(300).unwrap().link_obj_type.as_deref(),
+            Some(&[1, 2, 0][..])
+        );
+        assert_eq!(
+            client.if_(300).unwrap().link_obj_number.as_deref(),
+            Some(&[1, 500, 0][..])
+        );
+        let generation = client.gens.inv;
+        let mut partial = Packet::new(vec![1, 44, 2, 0, 2, 4]);
+        client.dispatch_packet_377(134, &mut partial).unwrap();
+        assert_eq!(
+            client.if_(300).unwrap().link_obj_type.as_deref(),
+            Some(&[1, 2, 2][..])
+        );
+        assert_eq!(
+            client.if_(300).unwrap().link_obj_number.as_deref(),
+            Some(&[1, 500, 4][..])
+        );
+        assert!(client.gens.inv > generation);
+        let generation = client.gens.inv;
+        let mut invalid = Packet::new(vec![1, 44, 0, 0, 2, 9, 2, 0, 3, 1]);
+        assert!(client.dispatch_packet_377(134, &mut invalid).is_err());
+        assert_eq!(invalid.pos, 0);
+        assert_eq!(client.gens.inv, generation);
+        assert_eq!(
+            client.if_(300).unwrap().link_obj_number.as_deref(),
+            Some(&[1, 500, 4][..])
+        );
+    }
+
+    #[test]
+    fn survival_object_display_angles_and_tab_flash_match_java() {
+        let mut cache = Cache::default();
+        cache.objs.push(ObjType {
+            xan2d: 100,
+            yan2d: 200,
+            zoom2d: 2000,
+            ..Default::default()
+        });
+        let mut client = client_with_cache(cache);
+        client.set_iface(301, IfType::default());
+        let mut object = Packet::new(vec![0, 250, 0, 0, 173, 1]);
+        client.dispatch_packet_377(21, &mut object).unwrap();
+        let mut position = Packet::new(vec![10, 0, 236, 255, 1, 45]);
+        client.dispatch_packet_377(166, &mut position).unwrap();
+        assert_eq!(
+            (client.if_(301).unwrap().x, client.if_(301).unwrap().y),
+            (-20, 10)
+        );
+        let com = client.if_(301).unwrap();
+        assert_eq!((com.model1_type, com.model1_id), (4, 0));
+        assert_eq!(
+            (com.model_xan, com.model_yan, com.model_zoom),
+            (100, 200, 800)
+        );
+        let mut angle = Packet::new(vec![1, 172, 173, 1, 3, 104, 144, 1]);
+        client.dispatch_packet_377(186, &mut angle).unwrap();
+        let com = client.if_(301).unwrap();
+        assert_eq!(
+            (com.model_xan, com.model_yan, com.model_zoom),
+            (300, 400, 1000)
+        );
+        let mut invalid = Packet::new(vec![0, 0, 0, 0, 173, 1]);
+        assert!(client.dispatch_packet_377(21, &mut invalid).is_err());
+        assert_eq!(client.if_(301).unwrap().model_zoom, 1000);
+        client.active_icon = 3;
+        let mut flash = Packet::new(vec![3]);
+        client.dispatch_packet_377(238, &mut flash).unwrap();
+        assert_eq!((client.active_icon, client.tut_flash_icon), (1, 3));
+        assert!(client.redraw_side);
+    }
+
+    #[test]
+    fn synth_sound_respects_java_lowmem_and_sentinel_branches() {
+        let mut client = client();
+        let mut quiet = Packet::new(vec![0, 0, 1, 0, 18]);
+        client.dispatch_packet_377(26, &mut quiet).unwrap();
+        assert_eq!(client.wave_count, 0);
+        client.config.lowmem = false;
+        client.wave_enabled = true;
+        Arc::make_mut(&mut client.jagfx.delays)[0] = 7;
+        let mut sound = Packet::new(vec![0, 0, 2, 0, 18]);
+        client.dispatch_packet_377(26, &mut sound).unwrap();
+        assert_eq!(client.wave_count, 1);
+        assert_eq!(
+            (
+                client.wave_ids[0],
+                client.wave_loops[0],
+                client.wave_delay[0]
+            ),
+            (0, 2, 25)
+        );
+        client.config.lowmem = true;
+        client.wave_enabled = false;
+        let mut sentinel = Packet::new(vec![255, 255, 1, 255, 255]);
+        client.dispatch_packet_377(26, &mut sentinel).unwrap();
+        assert_eq!(client.wave_count, 2);
+        assert_eq!((client.wave_ids[1], client.wave_delay[1]), (-1, 0));
     }
 
     #[test]

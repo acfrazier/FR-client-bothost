@@ -138,7 +138,6 @@ pub const INTERFACE_NULL_OPTION_377: u8 = 1 << 4;
 pub const INTERFACE_NULL_IOP_377: u8 = 1 << 5;
 
 /// Interface decode side effects and component fields absent from `IfType`.
-#[derive(Debug)]
 pub struct InterfaceFields377 {
     /// Java Component static fields 728, 737 and 759 at scan completion.
     pub client_code_layers: ClientCodeLayers377,
@@ -147,6 +146,20 @@ pub struct InterfaceFields377 {
     /// Null-vs-empty Option<String> facts aligned by component ID. Missing
     /// components have a zero mask; set bits are defined by INTERFACE_NULL_*.
     pub null_string_masks: Vec<u8>,
+    /// Immutable decode overlays, shared by all clients. Java reloads these
+    /// values after `Component.unloadCom`; inventory components are retained.
+    pub initial_overlays: Vec<Option<Arc<IfTypeMut>>>,
+}
+
+impl std::fmt::Debug for InterfaceFields377 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InterfaceFields377")
+            .field("client_code_layers", &self.client_code_layers)
+            .field("type1_fields", &self.type1_fields)
+            .field("null_string_masks", &self.null_string_masks)
+            .field("initial_overlay_slots", &self.initial_overlays.len())
+            .finish()
+    }
 }
 
 /// Adapted runtime tables plus lossless, index-aligned 377-only facts.
@@ -294,13 +307,14 @@ pub fn adapt_cache_377(
     Ok(LoadedCache377 {
         cache,
         ifaces,
-        ifaces_mut,
         cache_fields_377,
         interface_fields_377: InterfaceFields377 {
             client_code_layers,
             type1_fields,
             null_string_masks,
+            initial_overlays: ifaces_mut.clone(),
         },
+        ifaces_mut,
     })
 }
 

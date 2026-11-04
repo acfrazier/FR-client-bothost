@@ -249,6 +249,16 @@ pub(crate) fn movement_377(
     true
 }
 
+/// Java Client.java:10183-10189: x is big-endian with a biased low byte,
+/// followed by little-endian z and location ID.
+pub(crate) fn oploc1_377(packet: &mut Packet, x: i32, z: i32, location: i32) {
+    packet.p1_enc(ClientProt377::OPLOC1.id);
+    packet.p1(x >> 8);
+    packet.p1(x.wrapping_add(128));
+    p2_alt1(packet, z);
+    p2_alt1(packet, location);
+}
+
 /// Emit Java `OPNPC1`: transformed NPC index.
 ///
 /// Java: `Client.java:10456-10459`.
@@ -604,6 +614,16 @@ mod tests {
         assert_eq!(ClientProt377::NO_TIMEOUT.length, 0);
         assert_eq!(ClientProt377::MAP_BUILD_COMPLETE.length, 0);
         assert_eq!(ClientProt377::IF_BUTTON.length, 2);
+    }
+
+    #[test]
+    fn first_location_action_matches_java_literal() {
+        let mut packet = Packet::alloc_outbound(1);
+        oploc1_377(&mut packet, 3098, 3107, 3014);
+        assert_eq!(
+            &packet.data()[..packet.pos],
+            &[181, 0x0c, 0x9a, 0x23, 0x0c, 0xc6, 0x0b]
+        );
     }
 
     #[test]
