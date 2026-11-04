@@ -37,8 +37,9 @@ Rotated engine keys are read at runtime from `$ENGINE_DIR`.
 
 Revision 274 remains the default. `--revision 289` retains the existing 289
 profile. `--revision 377` selects separate 377 cache decoders and validated
-Fairy Ring login, terrain movement, tutorial dialogue, door, inventory-tab,
-woodcutting, and progress operations. This is not a complete 377 gameplay client.
+Fairy Ring login, terrain movement, tutorial dialogue, doors, inventory tabs,
+woodcutting, firemaking, shrimp fishing/cooking, dough, bread, and progress
+operations. This is not a complete 377 gameplay client.
 
 Use revision 377 only with Fairy Ring's local 377 engine. The orchestrator
 starts and stops that engine. Set `ENGINE_DIR` to that engine so runtime RSA
@@ -63,8 +64,13 @@ server logout and relog. The interaction proof uses a rendered terrain click,
 accepts the initial design, captures the Guide's in-scene hint arrow, and
 continues through the skip choice and five welcome pages. It then opens the
 door, talks to the Survival Guide, clicks the requested backpack tab, and
-chops the indicated tree twice. It records screenshots and
-`rust-interactions.json` before a server-acknowledged logout.
+chops the indicated tree twice. It lights logs with a tinderbox, opens the
+skills tab, receives a net, catches shrimp, and cooks the required burnt and
+successful shrimp. It then enters the Master Chef's house, mixes water and
+flour, and bakes bread on the actual range. All actions use server-populated
+inventory slots, NPC slots, and scene locations through production menu dispatch.
+It records screenshots, per-step `stages.json`, and `rust-interactions.json`
+before a server-acknowledged logout.
 
 With the orchestrator's engine already running:
 
@@ -87,7 +93,11 @@ which still has zero filled segments (`1 + floor(4 * 20 / 670) = 1`).
 The first successful chop reaches stage 40. The next successful chop refreshes
 the overlay to 2, which fills the first segment. The proof checks a real
 server/applied varp transition from 1 to 2 and evaluates all 20 segment scripts.
-No tutorial state or inventory is seeded. Screenshots show both bar states.
+The later survival and chef steps reach transmitted progress values 3, 4, 5,
+and 6. Bread reaches stage 170 (`1 + floor(170 * 20 / 670) = 6`), with five
+filled segments. Every saved step includes tutorial text, both varp values,
+segment evaluations, inventory, and skill experience. No tutorial state or
+inventory is seeded.
 
 The 377 renderer uses Java's separate hint sprites. A literal model-and-frame
 regression checks the tutorial banner against Client-Java 377. The current
