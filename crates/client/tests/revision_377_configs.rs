@@ -1,15 +1,14 @@
-//! Executes the actual additive 377 modules without changing shared mod lists.
+//! Executes the registered revision-377 public config modules.
 //! The frozen oracle comes from compiling and calling untouched Client-Java 377.
 
-use client::{io, util};
+use client::config::config_377;
+use client::io;
 use io::JagFile;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::path::PathBuf;
 
-#[path = "../src/config/config_377.rs"]
-mod config_377;
 use config_377::*;
 #[path = "support/revision_377_oracle.rs"]
 mod oracle;
