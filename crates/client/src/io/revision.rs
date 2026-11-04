@@ -118,6 +118,10 @@ impl ServerProt289 {
 // `docs/revision-289/protocol-289.json` (primary pin 0c00ef24).
 include!("server_prot_sizes_289.inc.rs");
 
+// 377 `Protocol.SERVERPROT_LENGTH` lengths, generated from
+// `docs/revision-377/protocol-377.json` (primary pin 327880f6).
+include!("server_prot_sizes_377.inc.rs");
+
 #[cfg(test)]
 mod tests {
     use super::*;
