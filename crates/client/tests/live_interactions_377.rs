@@ -80,6 +80,28 @@ fn tutorial_text(c: &Client) -> String {
         .join("\n")
 }
 
+fn named_inventory(c: &Client) -> Vec<Value> {
+    let Some(inv) = c.if_(3214) else {
+        return Vec::new();
+    };
+    let (Some(objects), Some(counts)) = (inv.link_obj_type.as_ref(), inv.link_obj_number.as_ref())
+    else {
+        return Vec::new();
+    };
+    objects
+        .iter()
+        .zip(counts)
+        .enumerate()
+        .filter_map(|(slot, (&object_plus_one, &count))| {
+            let object = object_plus_one - 1;
+            (object >= 0 && count > 0).then(|| {
+                json!({\"slot\":slot,\"object\":object,
+                    \"name\":c.cache.objs.get(object as usize).map(|obj|obj.name.as_str()),
+                    \"count\":count})
+            })
+        })
+        .collect()
+}
 fn state(c: &Client) -> Value {
     let p = c.local_player.as_ref().unwrap();
     let mut projectiles = Vec::new();
@@ -116,6 +138,17 @@ fn state(c: &Client) -> Value {
         "raw_shrimps":inventory_count(c,2514),"burnt_shrimps":inventory_count(c,323),
         "cooked_shrimps":inventory_count(c,315),"flour":inventory_count(c,2516),
         "water":inventory_count(c,1929),"dough":inventory_count(c,2307),"bread":inventory_count(c,2309),
+"plane":c.minusedlevel,"map_base":[c.map_build_base_x,c.map_build_base_z],
+        "camera":{"orbit_pitch":c.orbit_camera_pitch,"orbit_yaw":c.orbit_camera_yaw,
+            "orbit_x":c.orbit_camera_x,"orbit_z":c.orbit_camera_z,
+            "minimap_angle":c.macro_minimap_angle,"minimap_zoom":c.macro_minimap_zoom},
+        "cook_quest_varp":c.var.get(29),"cook_quest_server_varp":c.var_serv.get(29),
+        "main_interface":mainland_lesson_377::interface_components(c,c.main_modal_id),
+        "main_interface_text":mainland_lesson_377::interface_text(c,c.main_modal_id),
+        "side_interface":mainland_lesson_377::interface_components(c,c.side_modal_id),
+        "side_interface_text":mainland_lesson_377::interface_text(c,c.side_modal_id),
+        "ground_objects":mainland_lesson_377::ground_state(c),
+        "inventory_named":named_inventory(c),
         "stat_xp":c.stat_xp,"stat_levels":c.stat_base_level})
 }
 
@@ -880,3 +913,5 @@ fn terrain_click_guide_dialogue_and_progress() {
 
 #[path = "support/tutorial_lesson_377.rs"]
 mod tutorial_lesson_377;
+#[path = "support/mainland_lesson_377.rs"]
+mod mainland_lesson_377;
