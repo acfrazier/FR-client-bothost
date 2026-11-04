@@ -2,7 +2,7 @@
 //! account after a server-acknowledged logout. No tutorial state is assigned.
 use super::*;
 
-fn tab(c: &mut Client, r: &mut Renderer, index: usize) {
+pub(super) fn tab(c: &mut Client, r: &mut Renderer, index: usize) {
     let (x, y) = match index {
         0 => (555, 187),
         2 => (612, 187),
@@ -479,7 +479,7 @@ fn combat_exit(
     save_stage(c, r, root, "bank-entry", stages);
 }
 
-fn close_main(c: &mut Client, r: &mut Renderer) {
+pub(super) fn close_main(c: &mut Client, r: &mut Renderer) {
     let main = c.main_modal_id;
     let close = c
         .ifaces_merged()
@@ -490,7 +490,7 @@ fn close_main(c: &mut Client, r: &mut Renderer) {
     pump_until(c, r, 10, |c| c.main_modal_id < 0 && c.side_modal_id < 0);
 }
 
-fn walk_to(c: &mut Client, r: &mut Renderer, target: (i32, i32), actions: &mut Vec<Value>) {
+pub(super) fn walk_to(c: &mut Client, r: &mut Renderer, target: (i32, i32), actions: &mut Vec<Value>) {
     // Match production minimap_loop's transform; its real pathfinder handles
     // intervening cave walls. No route or collision state is assigned.
     use client::graphics::Pix3D;
@@ -814,6 +814,92 @@ fn quest_run(
     save_stage(c, r, root, "mine-entry", stages);
 }
 
+fn chef_bread(
+    c: &mut Client,
+    r: &mut Renderer,
+    root: &Path,
+    stages: &mut Vec<Value>,
+    actions: &mut Vec<Value>,
+) {
+    assert_eq!(c.var.get(406), Some(&5), "server tutorial state is making dough");
+    assert_eq!(
+        c.var_serv.get(406),
+        Some(&5),
+        "the engine acknowledged the chef's natural tutorial progress"
+    );
+    assert!(
+        tutorial_text(c).contains("Making dough"),
+        "the server tutorial instruction matches the chef recipe"
+    );
+    assert_eq!(
+        inventory_count(c, 2516),
+        1,
+        "the chef supplied one pot of flour"
+    );
+    assert_eq!(
+        inventory_count(c, 1929),
+        1,
+        "the chef supplied one bucket of water"
+    );
+    save_stage(c, r, root, "chef-resume-supplies", stages);
+
+    // A disconnect may restore the chef's final item-box dialogue. Dismiss
+    // only server-rendered continue buttons, never a synthetic interface.
+    for page in 0..8 {
+        if c.chat_modal_id < 0 {
+            break;
+        }
+        let current = body(c);
+        let has_continue = c
+            .ifaces_merged()
+            .any(|i| i.layer_id == c.chat_modal_id && i.button_type == 6);
+        assert!(
+            has_continue,
+            "resumed chef dialogue has a real continue button: {current}"
+        );
+        save_stage(
+            c,
+            r,
+            root,
+            &format!("chef-resume-dialogue-{page}"),
+            stages,
+        );
+        continue_chat(c, r);
+        pump_until(c, r, 10, |c| {
+            c.chat_modal_id < 0 || !c.resumed_pause_button && body(c) != current
+        });
+    }
+    assert!(
+        c.chat_modal_id < 0,
+        "resumed chef dialogue ended before mixing: {}",
+        state(c)
+    );
+    assert_eq!(c.var.get(406), Some(&5));
+    assert_eq!(inventory_count(c, 2516), 1);
+    assert_eq!(inventory_count(c, 1929), 1);
+
+    actions.push(use_items(c, 1929, 2516));
+    pump_until(c, r, 20, |c| {
+        inventory_count(c, 2516) == 0
+            && inventory_count(c, 1929) == 0
+            && inventory_count(c, 2307) == 1
+            && tutorial_text(c).contains("Cooking dough")
+            && c.var.get(406) == Some(&5)
+            && c.var_serv.get(406) == Some(&5)
+    });
+    save_stage(c, r, root, "chef-resume-dough", stages);
+
+    actions.push(use_item_on_location(c, 2307, 3039));
+    pump_until(c, r, 30, |c| {
+        inventory_count(c, 2307) == 0
+            && inventory_count(c, 2309) == 1
+            && tutorial_text(c).contains("your first loaf of bread")
+            && c.var.get(406) == Some(&6)
+            && c.var_serv.get(406) == Some(&6)
+    });
+    save_stage(c, r, root, "chef-resume-bread", stages);
+}
+
 #[test]
 #[ignore = "requires orchestrator-started Fairy Ring 377 engine and naturally progressed t2a account"]
 fn natural_tutorial_lesson() {
@@ -856,6 +942,7 @@ fn natural_tutorial_lesson() {
     let mut actions = Vec::new();
     save_stage(&mut c, &mut r, &root, "lesson-start", &mut stages);
     match lesson.as_str() {
+        "chef-bread" => chef_bread(&mut c, &mut r, &root, &mut stages, &mut actions),
         "quest" => quest(&mut c, &mut r, &root, &mut stages, &mut actions),
         "quest-run" => quest_run(&mut c, &mut r, &root, &mut stages, &mut actions),
         "mining" => mining(&mut c, &mut r, &root, &mut stages, &mut actions),
