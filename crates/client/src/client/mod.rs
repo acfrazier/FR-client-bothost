@@ -14,6 +14,7 @@ pub mod game_shell;
 mod ground_trace_289;
 mod mouse_recorder_289;
 mod outbound_289;
+mod outbound_377;
 pub mod packet_377;
 pub use game_shell::GameShell;
 pub mod key_codes;
