@@ -4319,6 +4319,7 @@ impl Client {
                 self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOC2));
             }
         }
+
         if action == MiniMenuAction::OP_LOC3 {
             self.oplogic2 += 1;
             if self.oplogic2 >= 124 {
@@ -4575,6 +4576,7 @@ impl Client {
             }
             self.mark_selected(b, c);
         }
+
         if action == MiniMenuAction::OP_HELD6 {
             let obj = self.cache.objs.get(a as usize).cloned().unwrap_or_default();
             // TS 8999-9010: a com-link count >= 100000 reports "<n> x <name>"
@@ -4754,7 +4756,7 @@ impl Client {
             // while the script is read (the view borrow would conflict).
             let script = self
                 .if_(c as usize)
-                .and_then(|com| com.scripts.as_ref().and_then(|s| s.first().cloned()));
+                .and_then(|com| com.scripts.as_ref().and_then(|s| s.first()).cloned());
             if let Some(script) = script {
                 // TS 9163-9169: scripts[0][0] == 5 flips varp scripts[0][1].
                 if script.first() == Some(&5) {
@@ -4776,10 +4778,10 @@ impl Client {
             }
             let script = self
                 .if_(c as usize)
-                .and_then(|com| com.scripts.as_ref().and_then(|s| s.first().cloned()));
+                .and_then(|com| com.scripts.as_ref().and_then(|s| s.first()).cloned());
             let operand = self
                 .if_(c as usize)
-                .and_then(|com| com.script_operand.as_ref().and_then(|o| o.first().copied()));
+                .and_then(|com| com.script_operand.as_ref().and_then(|o| o.first()).copied());
             if let Some(script) = script {
                 // TS 9172-9183: scripts[0][0] == 5 sets varp scripts[0][1]
                 // to scriptOperand[0] when it differs.
@@ -7642,8 +7644,13 @@ impl Client {
         }
     }
 
-    /// `closeModal` sends `CLOSE_MODAL` and clears the active modal state.
-    /// Revision 377 follows Java `closeInterfaces` at `Client.java:4567-4596`.
+    /// `closeModal` from client-ts (10941-10958): send CLOSE_MODAL and
+    /// close the side and chat modals locally; `main_modal_id` is reset
+    /// like Java `closeModal` (Client.java 3353-3367). `resumed_pause_button`
+    /// is cleared like TS 10947/10954 (also written by the IF_* handlers);
+    /// the per-modal redraw flags mirror TS
+    /// `redrawSide`/`redrawIcons`/`redrawChat`. Not to be confused with the
+    /// incoming-server `apply_if_close`.
     fn close_modal(&mut self) {
         if self.revision.is_377() {
             super::outbound_377::close_modal_377(&mut self.out);
