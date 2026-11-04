@@ -493,6 +493,12 @@ impl Packet {
     }
 
     pub fn p1_enc(&mut self, opcode: i32) {
+        // A revision mapper may reject a legacy writer. The client latches
+        // that rejection and discards its whole pending batch before flushing.
+        // Do not advance ISAAC or ask an observer to decode an invalid opcode.
+        if opcode < 0 {
+            return;
+        }
         if self.has_observer() {
             self.finish_observation(true);
         }
