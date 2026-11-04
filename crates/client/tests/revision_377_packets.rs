@@ -6,18 +6,10 @@
 mod fields;
 #[path = "support/revision_377_packet_interfaces.rs"]
 mod interfaces;
-#[path = "../src/client/packet_377.rs"]
-mod packet_377;
 #[path = "support/revision_377_packet_zones.rs"]
 mod zones;
 
-// Stage-only registrations. After the shared export request lands, tests import
-// the library's sole io table and packet module instead of these registrations.
-#[path = "../src/io/server_prot_sizes_377.inc.rs"]
-mod server_prot_sizes_377;
-mod io {
-    pub use crate::server_prot_sizes_377::SERVER_PROT_SIZES_377;
-}
+use client::client::packet_377;
 
 use packet_377::{
     decode_packet_377, CameraTarget377, HintArrow377, InventoryEntry377, InventorySlot377,
