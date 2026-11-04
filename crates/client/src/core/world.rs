@@ -28,6 +28,7 @@
 use crate::dash3d::{
     Decor, GroundDecor, GroundObject, GroundStamp, LocLayer, Occlude, Sprite, Square, Wall,
 };
+use crate::io::ClientRevision;
 
 pub const OCCLUDER_LEVELS: usize = 4;
 pub const MAX_OCCLUDERS: usize = 500;
@@ -41,6 +42,7 @@ pub type LevelHeightmaps = Vec<Vec<Vec<i32>>>;
 /// The sim half of the scene world. See the module docs for what stays
 /// here versus `render::world::RenderWorld`.
 pub struct World {
+    revision: ClientRevision,
     pub(crate) min_level: i32,
     pub(crate) max_tile_level: i32,
     pub(crate) max_tile_x: i32,
@@ -109,6 +111,25 @@ pub struct World {
 
 impl World {
     pub fn new(groundh: LevelHeightmaps, max_tile_z: i32, max_level: i32, max_tile_x: i32) -> Self {
+        Self::new_with_revision(
+            groundh,
+            max_tile_z,
+            max_level,
+            max_tile_x,
+            ClientRevision::R274,
+        )
+    }
+
+    /// Bind the scene's revision at construction, like its owning client.
+    /// Only 377 materializes empty base squares for Java's painter traversal;
+    /// the existing 274/289 sparse-scene behavior remains unchanged.
+    pub fn new_with_revision(
+        groundh: LevelHeightmaps,
+        max_tile_z: i32,
+        max_level: i32,
+        max_tile_x: i32,
+        revision: ClientRevision,
+    ) -> Self {
         let mut squares = Vec::with_capacity(max_level as usize);
         for _ in 0..max_level {
             let mut level = Vec::with_capacity(max_tile_x as usize);
@@ -118,6 +139,7 @@ impl World {
             squares.push(level);
         }
         World {
+            revision,
             min_level: 0,
             max_tile_level: max_level,
             max_tile_x,
@@ -179,6 +201,17 @@ impl World {
 
     pub fn fill_base_level(&mut self, level: i32) {
         self.min_level = level;
+        if !self.revision.is_377() {
+            return;
+        }
+        // Java 377 World3D.method275: empty squares participate in the fill
+        // queue's adjacency ordering even though they emit no fragments.
+        for x in 0..self.max_tile_x {
+            for z in 0..self.max_tile_z {
+                self.squares[level as usize][x as usize][z as usize]
+                    .get_or_insert_with(|| Box::new(Square::new(level, x, z)));
+            }
+        }
     }
 
     pub fn push_down(&mut self, stx: i32, stz: i32) {
@@ -1229,6 +1262,51 @@ mod size_tests {
         }
         assert_eq!(n, 0, "empty plane must stay None holes, got {n}");
         assert_eq!(w.min_level, 0);
+    }
+
+    #[test]
+    fn r377_base_fill_creates_empty_squares_and_preserves_existing_contents() {
+        let mut world = World::new_with_revision(
+            vec![vec![vec![0; 4]; 5]; 2],
+            3,
+            2,
+            4,
+            crate::io::ClientRevision::R377,
+        );
+        let mut occupied = Square::new(1, 1, 2);
+        occupied.draw_level = 7;
+        world.squares[1][1][2] = Some(Box::new(occupied));
+
+        world.fill_base_level(1);
+        assert_eq!(world.min_level, 1);
+        assert!(world.squares[1].iter().flatten().all(Option::is_some));
+        assert!(world.squares[0].iter().flatten().all(Option::is_none));
+        assert_eq!(world.square(1, 1, 2).unwrap().draw_level, 7);
+
+        world.fill_base_level(1);
+        assert_eq!(world.square(1, 1, 2).unwrap().draw_level, 7);
+        world.reset_map();
+        world.fill_base_level(1);
+        assert!(world.squares[1].iter().flatten().all(Option::is_some));
+    }
+
+    #[test]
+    fn explicit_r274_and_r289_base_fill_keep_the_existing_sparse_behavior() {
+        for revision in [
+            crate::io::ClientRevision::R274,
+            crate::io::ClientRevision::R289,
+        ] {
+            let mut world =
+                World::new_with_revision(vec![vec![vec![0; 4]; 5]; 2], 3, 2, 4, revision);
+            world.fill_base_level(1);
+            assert_eq!(world.min_level, 1);
+            assert!(world
+                .squares
+                .iter()
+                .flatten()
+                .flatten()
+                .all(Option::is_none));
+        }
     }
 }
 
