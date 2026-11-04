@@ -69,7 +69,7 @@ impl Client {
         payload: &mut Packet,
     ) -> Result<(), String> {
         let opcode = u8::try_from(opcode).map_err(|_| "377 opcode outside byte range")?;
-        // Java login, guide-dialogue, survival and early cooking cohort.
+        // Java login, tutorial and Cook's Assistant mainland cohort.
         if !matches!(
             opcode,
             2 | 5
@@ -123,6 +123,7 @@ impl Client {
                 | 226
                 | 232
                 | 238
+                | 249
                 | 251
                 | 255
         ) {
@@ -828,6 +829,17 @@ impl Client {
                     }
                 }
                 self.next_midi_song = song;
+            }
+            O::MidiJingle { song, delay } => {
+                // Java Client.java:7424-7435 leaves the background song intact.
+                if self.midi_active && !self.config.lowmem {
+                    self.midi_song = song;
+                    self.midi_fading = false;
+                    if let Some(od) = &mut self.on_demand {
+                        od.request(2, song);
+                    }
+                    self.next_music_delay = delay;
+                }
             }
             O::MinimapToggle(value) => self.minimap_state = value,
             O::UnsetMapFlag => {
@@ -2080,6 +2092,90 @@ mod tests {
         client.dispatch_packet_377(238, &mut flash).unwrap();
         assert_eq!((client.active_icon, client.tut_flash_icon), (1, 3));
         assert!(client.redraw_side);
+    }
+
+    #[test]
+    fn quest_jingle_validates_then_obeys_java_lowmem_and_mute_guards() {
+        use std::io::Write;
+        // A whole-compressed versionlist keeps the actual OnDemand reference
+        // validator in the packet path without a cache or network dependency.
+        let files: [(&str, &[u8]); 8] = [
+            ("model_version", &[0, 1]),
+            ("anim_version", &[0, 1]),
+            ("midi_version", &[0, 1]),
+            ("map_version", &[0, 1]),
+            ("model_crc", &[0; 4]),
+            ("anim_crc", &[0; 4]),
+            ("midi_crc", &[0; 4]),
+            ("map_crc", &[0; 4]),
+        ];
+        let mut body = Packet::new(vec![0; 256]);
+        body.p2(files.len() as i32);
+        for (name, data) in files {
+            body.p4(JagFile::gen_hash(name));
+            body.p3(data.len() as i32);
+            body.p3(data.len() as i32);
+        }
+        for (_, data) in files {
+            body.pdata(data, 0, data.len());
+        }
+        let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
+        encoder.write_all(&body.data()[..body.pos]).unwrap();
+        let compressed = encoder.finish().unwrap();
+        let mut archive = Packet::new(vec![0; compressed.len() + 6]);
+        archive.p3(body.pos as i32);
+        archive.p3((compressed.len() - 4) as i32);
+        archive.pdata(&compressed[4..], 0, compressed.len() - 4);
+        let versionlist = JagFile::new(archive.data()[..archive.pos].to_vec());
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut od = OnDemand::new_with_revision(
+            &versionlist,
+            "127.0.0.1",
+            listener.local_addr().unwrap().port(),
+            "",
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            ClientRevision::R377,
+        )
+        .unwrap();
+        od.stop(); // Retain tables and the client queue, without a worker.
+        let mut client = client();
+        client.on_demand = Some(od);
+        client.midi_song = 7;
+        client.next_midi_song = 8;
+        client.next_music_delay = 9;
+        client.midi_fading = true;
+        let bytes = [0, 0, 0x34, 0x12, 0x56]; // song 0, delay 0x123456.
+        for invalid in (0..bytes.len())
+            .map(|len| bytes[..len].to_vec())
+            .chain([vec![1, 0, 0x34, 0x12, 0x56]])
+        {
+            let mut packet = Packet::new(invalid);
+            assert!(client.dispatch_packet_377(249, &mut packet).is_err());
+            assert_eq!(packet.pos, 0);
+            assert_eq!((client.midi_song, client.next_music_delay), (7, 9));
+            assert!(client.midi_fading);
+            assert_eq!(client.on_demand.as_ref().unwrap().remaining(), 0);
+        }
+        for (lowmem, active) in [(true, true), (false, false)] {
+            client.config.lowmem = lowmem;
+            client.midi_active = active;
+            let mut packet = Packet::new(bytes.to_vec());
+            client.dispatch_packet_377(249, &mut packet).unwrap();
+            assert_eq!(packet.pos, bytes.len());
+            assert_eq!((client.midi_song, client.next_music_delay), (7, 9));
+            assert!(client.midi_fading);
+            assert_eq!(client.on_demand.as_ref().unwrap().remaining(), 0);
+        }
+        client.config.lowmem = false;
+        client.midi_active = true;
+        let mut packet = Packet::new(bytes.to_vec());
+        client.dispatch_packet_377(249, &mut packet).unwrap();
+        assert_eq!(packet.pos, bytes.len());
+        assert_eq!(client.midi_song, 0);
+        assert_eq!(client.next_music_delay, 0x123456);
+        assert_eq!(client.next_midi_song, 8);
+        assert!(!client.midi_fading);
+        assert_eq!(client.on_demand.as_ref().unwrap().remaining(), 1);
     }
 
     #[test]
