@@ -641,6 +641,21 @@ impl<'a> AppearanceCursor377<'a> {
     }
 }
 
+/// Re-read the unchanged, previously validated reverse-order appearance cache.
+pub(crate) fn decode_cached_appearance_377(
+    wire: &[u8],
+) -> Result<PlayerAppearance377<'_>, PacketError377> {
+    let packet = PacketReader377::new(90, wire);
+    parse_appearance(
+        TransformedBytes377 {
+            wire,
+            transform: DataTransform377::Reverse,
+        },
+        &packet,
+        0,
+    )
+}
+
 fn parse_appearance<'a>(
     raw: TransformedBytes377<'a>,
     p: &PacketReader377<'_>,
