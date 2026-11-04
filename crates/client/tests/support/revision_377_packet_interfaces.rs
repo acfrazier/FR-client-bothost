@@ -60,7 +60,6 @@ impl PacketContext377 for TestPacketContext377 {
 
 fn assert_packet<'a>(opcode: u8, payload: &'a [u8], expected: InterfaceOperation377<'a>) {
     let decoded = decode_packet_377(opcode, payload).expect("decode complete Java frame");
-    assert!(matches!(decoded.operation(), Operation377::Interface(_)));
 
     // A validated wrapper, not the initial decoded packet, is the handoff.
     let validated = decoded
@@ -444,7 +443,10 @@ fn java_sentinels_and_noop_shapes_are_not_reinterpreted() {
     let mut full = Vec::new();
     put_g2_alt1(&mut full, 0xFFFF);
     put_g2_alt2(&mut full, 0x1234);
-    let decoded = decode_packet_377(253, &full).unwrap();
+    let decoded = decode_packet_377(253, &full)
+        .unwrap()
+        .validate(&TestPacketContext377::all_present())
+        .unwrap();
     assert_eq!(
         decoded.operation(),
         &Operation377::Interface(InterfaceOperation377::OpenFull {
@@ -492,10 +494,6 @@ fn signed_component_reads_keep_engine_high_bits_as_java_negative_ids() {
     put_g2b_alt1(&mut tut_open, -2345);
     let decoded = decode_packet_377(158, &tut_open).unwrap();
     assert_eq!(
-        decoded.operation(),
-        &Operation377::Interface(InterfaceOperation377::TutOpen { component: -2345 })
-    );
-    assert_eq!(
         decoded
             .validate(&TestPacketContext377::all_present())
             .unwrap_err()
@@ -509,10 +507,6 @@ fn signed_component_reads_keep_engine_high_bits_as_java_negative_ids() {
     let mut overlay = Vec::new();
     put_g2b(&mut overlay, -1234);
     let decoded = decode_packet_377(50, &overlay).unwrap();
-    assert_eq!(
-        decoded.operation(),
-        &Operation377::Interface(InterfaceOperation377::OpenOverlay { component: -1234 })
-    );
     assert_eq!(
         decoded
             .validate(&TestPacketContext377::all_present())

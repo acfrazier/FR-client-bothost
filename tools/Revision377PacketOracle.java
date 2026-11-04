@@ -25,6 +25,10 @@ public final class Revision377PacketOracle {
             for (int i = 0; i < bytes.length; i++) {
                 bytes[i] = (byte) Integer.parseInt(parts[0].substring(i * 2, i * 2 + 2), 16);
             }
+            if (parts[1].equals("player_info") || parts[1].equals("npc_info") || parts[1].equals("rebuild_region")) {
+                System.out.println(Revision377EntityOracle.inspect(parts[1], bytes));
+                continue;
+            }
             Packet packet = new Packet(bytes);
             StringBuilder out = new StringBuilder("{\"values\":[");
             boolean first = true;

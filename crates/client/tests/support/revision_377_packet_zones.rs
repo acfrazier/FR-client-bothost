@@ -6,8 +6,8 @@ use crate::packet_377::zone_377::{
     ZoneFrame377, ZoneOperation377, ZoneOperations377, ZoneTileOffset377, ALL_OPCODES_377,
 };
 use crate::packet_377::{
-    decode_packet_377, DecodedPacket377, Operation377, PacketContext377, PacketErrorKind377,
-    ReferenceKind377, ValidatedPacket377,
+    decode_packet_377, Operation377, PacketContext377, PacketErrorKind377, ReferenceKind377,
+    ValidatedPacket377,
 };
 
 struct TestPacketContext377 {
@@ -274,21 +274,24 @@ fn cases() -> Vec<ZoneCase> {
     ]
 }
 
-fn zone_frame<'a>(packet: &'a DecodedPacket377<'_>) -> &'a ZoneFrame377 {
+fn zone_frame<'a>(packet: &'a ValidatedPacket377<'_>) -> &'a ZoneFrame377 {
     match packet.operation() {
         Operation377::Zone(frame) => frame,
         other => panic!("expected zone operation, got {other:?}"),
     }
 }
 
-fn sole_operation<'a>(packet: &'a DecodedPacket377<'_>) -> &'a ZoneOperation377 {
+fn sole_operation<'a>(packet: &'a ValidatedPacket377<'_>) -> &'a ZoneOperation377 {
     let operations = zone_frame(packet).operations();
     assert_eq!(operations.len(), 1);
     &operations[0]
 }
 
-fn decoded_zone(opcode: u8, payload: &[u8]) -> DecodedPacket377<'_> {
-    let packet = decode_packet_377(opcode, payload).unwrap();
+fn decoded_zone(opcode: u8, payload: &[u8]) -> ValidatedPacket377<'_> {
+    let packet = decode_packet_377(opcode, payload)
+        .unwrap()
+        .validate(&TestPacketContext377::complete())
+        .unwrap();
     assert!(matches!(packet.operation(), Operation377::Zone(_)));
     packet
 }
@@ -353,9 +356,8 @@ fn all_zone_opcodes_and_frame_forms_decode_with_exact_origin_and_inline_singleto
     assert_eq!(zone_frame(&full).origin(), Some((17, 9)));
     assert!(zone_frame(&full).clear());
     assert!(zone_frame(&full).operations().is_empty());
-    let full = full.validate(&TestPacketContext377::complete()).unwrap();
     assert!(matches!(
-        zone_frame_validated(&full).operation_storage(),
+        zone_frame(&full).operation_storage(),
         ZoneOperations377::Empty
     ));
 
@@ -366,7 +368,6 @@ fn all_zone_opcodes_and_frame_forms_decode_with_exact_origin_and_inline_singleto
     assert_eq!(zone_frame(&partial).origin(), Some((18, 23)));
     assert!(!zone_frame(&partial).clear());
     assert!(zone_frame(&partial).operations().is_empty());
-    partial.validate(&TestPacketContext377::complete()).unwrap();
 
     let child = cases().into_iter().find(|case| case.opcode == 107).unwrap();
     let mut enclosed = vec![12];
@@ -381,7 +382,6 @@ fn all_zone_opcodes_and_frame_forms_decode_with_exact_origin_and_inline_singleto
         zone_frame(&packet).operation_storage(),
         ZoneOperations377::Enclosed(_)
     ));
-    packet.validate(&TestPacketContext377::complete()).unwrap();
 }
 
 #[test]
@@ -401,9 +401,6 @@ fn every_zone_subopcode_uses_the_same_field_parser_standalone_and_enclosed() {
             standalone_frame.operation_storage(),
             ZoneOperations377::Single(_)
         ));
-        standalone
-            .validate(&TestPacketContext377::complete())
-            .unwrap();
 
         let mut enclosed = vec![12];
         p1_alt1(&mut enclosed, 20);
@@ -413,7 +410,6 @@ fn every_zone_subopcode_uses_the_same_field_parser_standalone_and_enclosed() {
         let frame = zone_frame(&packet);
         assert_eq!(frame.origin(), Some((12, 20)), "opcode {opcode}");
         assert_eq!(sole_operation(&packet), &case.expected, "opcode {opcode}");
-        packet.validate(&TestPacketContext377::complete()).unwrap();
     }
 }
 
@@ -433,13 +429,6 @@ fn loc_anim_preserves_java_shape_eleven_to_ten_normalization() {
             sequence: 0x1234,
         }
     );
-}
-
-fn zone_frame_validated<'a>(packet: &'a ValidatedPacket377<'_>) -> &'a ZoneFrame377 {
-    match packet.operation() {
-        Operation377::Zone(frame) => frame,
-        other => panic!("expected validated zone operation, got {other:?}"),
-    }
 }
 
 #[test]
@@ -472,7 +461,6 @@ fn java_signed_edges_and_zone_specific_sentinels_are_preserved() {
             end_cycle: 2,
         }
     );
-    decoded.validate(&TestPacketContext377::complete()).unwrap();
 
     let mut projectile = vec![0x11, 0x80, 0x7f];
     p2(&mut projectile, -32_768);
@@ -481,9 +469,9 @@ fn java_signed_edges_and_zone_specific_sentinels_are_preserved() {
     p2(&mut projectile, 1);
     p2(&mut projectile, 2);
     projectile.extend_from_slice(&[3, 4]);
-    let projectile = decoded_zone(181, &projectile);
+    let decoded_projectile = decoded_zone(181, &projectile);
     assert!(matches!(
-        sole_operation(&projectile),
+        sole_operation(&decoded_projectile),
         ZoneOperation377::MapProjAnim {
             tile: ZoneTileOffset377 { x: 1, z: 1 },
             destination_x_offset: -128,
@@ -495,8 +483,9 @@ fn java_signed_edges_and_zone_specific_sentinels_are_preserved() {
             ..
         }
     ));
-    // The no-projectile sentinel suppresses both spot-animation and actor lookups.
-    projectile
+    // The no-projectile sentinel suppresses both asset and actor lookups.
+    decode_packet_377(181, &projectile)
+        .unwrap()
         .validate(&TestPacketContext377::missing(
             ReferenceKind377::Player,
             2047,
@@ -508,7 +497,7 @@ fn java_signed_edges_and_zone_specific_sentinels_are_preserved() {
     p2_alt3(&mut reveal, 1);
     p2_alt2(&mut reveal, 2);
     p2_alt2(&mut reveal, 65_535);
-    let reveal = decoded_zone(106, &reveal);
+    let reveal = decode_packet_377(106, &reveal).unwrap();
     reveal
         .validate(&TestPacketContext377::missing(
             ReferenceKind377::Player,
@@ -522,7 +511,7 @@ fn each_resource_and_actor_reference_is_checked_before_handoff() {
     for case in cases() {
         let opcode = case.opcode;
         for (kind, id) in required_references(&case.expected) {
-            let packet = decoded_zone(case.opcode, &case.body);
+            let packet = decode_packet_377(case.opcode, &case.body).unwrap();
             let error = packet
                 .validate(&TestPacketContext377::missing(kind, id))
                 .unwrap_err();
@@ -538,7 +527,7 @@ fn each_resource_and_actor_reference_is_checked_before_handoff() {
     p2(&mut npc_projectile, 16_384);
     p2(&mut npc_projectile, 5);
     npc_projectile.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0]);
-    let npc_projectile = decoded_zone(181, &npc_projectile);
+    let npc_projectile = decode_packet_377(181, &npc_projectile).unwrap();
     let error = npc_projectile
         .validate(&TestPacketContext377::missing(
             ReferenceKind377::NpcSlot,
@@ -574,7 +563,6 @@ fn malformed_second_enclosed_operation_fails_before_validated_handoff() {
     enclosed.push(second.opcode);
     enclosed.extend_from_slice(&second.body);
     let decoded = decode_packet_377(183, &enclosed).unwrap();
-    assert_eq!(zone_frame(&decoded).operations().len(), 2);
     let error = decoded
         .validate(&TestPacketContext377::missing(
             ReferenceKind377::Sequence,

@@ -7,6 +7,8 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { operationFields } from './revision_377_packet_fields.mjs';
+import { entityPayloads } from './revision_377_entity_corpus.mjs';
 
 const args = process.argv.slice(2);
 function option(name) {
@@ -34,8 +36,8 @@ const readStart = source.indexOf('public boolean readPacket()');
 const zoneStart = source.indexOf('public void readZonePacket(');
 const readBody = source.slice(readStart, zoneStart);
 const handlerIds = [...new Set([...readBody.matchAll(/this\.ptype == (\d+)/g)].map(m => Number(m[1])))].sort((a,b) => a-b);
-const deferred = [53,71,90,222];
-const covered = handlerIds.filter(id => !deferred.includes(id));
+const deferred = [];
+const covered = handlerIds;
 const sources = {};
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 function pin(base, relative, group) {
@@ -44,6 +46,9 @@ function pin(base, relative, group) {
 for (const relative of [javaPath, 'src/main/java/jagex2/io/Packet.java', 'src/main/java/jagex2/io/Protocol.java']) pin(java, relative, 'java');
 for (const relative of ['src/io/Packet.ts', 'src/network/game/server/ServerGameProt.ts', 'src/network/game/server/ServerGameZoneProt.ts', 'src/network/game/server/ServerGameMessageEncoder.ts', 'src/cache/config/Component.ts']) pin(engine, relative, 'engine');
 for (const relative of ['src/cache/wordenc/WordEnc.ts', 'src/wordenc/WordPack.ts', 'src/engine/CoordGrid.ts']) pin(engine, relative, 'engine');
+pin(java, 'src/main/java/jagex2/dash3d/ClientPlayer.java', 'java');
+for (const name of ['build','coord','grid','info','messages','npc','packet','player','prot','renderer','visibility']) pin(engine, `src/network/rsbuf/${name}.ts`, 'engine');
+pin(engine, 'src/network/game/server/model/RebuildRegion.ts', 'engine');
 function block(start) {
     const open = source.indexOf('{', start);
     let depth = 1, end = open + 1;
@@ -65,6 +70,9 @@ function javaBlock(id) {
 function javaReads(id, encoded) {
     const b = javaBlock(id);
     let reads = [...b.text.matchAll(/(?:this\.in|arg0)\.(g\w+)\(\)/g)].map(m => m[1]);
+    if (id === 53) return { reads:['rebuild_region'],anchor:`${javaPath}:8087-8304` };
+    if (id === 90) return { reads:['player_info'],anchor:`${javaPath}:9015-9362; src/main/java/jagex2/dash3d/ClientPlayer.java:332-395` };
+    if (id === 71) return { reads:['npc_info'],anchor:`${javaPath}:9365-9577` };
     // Java's original control flow, expanded for the concrete synthetic case.
     // Client.java:7499-7536 ignores reserved HINT_ARROW tails.
     if (id === 199) reads = encoded[0] >= 2 && encoded[0] <= 6 ? ['g1','g2','g2','g1'] : encoded[0] === 1 || encoded[0] === 10 ? ['g1','g2','rest'] : ['g1','rest'];
@@ -147,6 +155,7 @@ function safe(value) {
     if (value instanceof Uint8Array) return Buffer.from(value).toString('hex');
     return value;
 }
+const {payloads:entityData,expected:entityExpected} = await entityPayloads(async name => import(pathToFileURL(path.join(engine,`src/network/rsbuf/${name}.ts`)).href));
 const codecs = fs.readdirSync(path.join(engine, codecRoot)).filter(name => name.endsWith('Encoder.ts')).sort();
 for (const file of codecs) {
     const Encoder = await load(`${codecRoot}/${file}`);
@@ -159,6 +168,12 @@ for (const file of codecs) {
     if (id === 157) input.value = 'Trade';
     if (id === 249) input.delay = 0x123456;
     if (id === 199 || id === 3 || id === 167) { input.x = 34; input.z = 35; }
+    if (entityData.has(id)) input.bytes = entityData.get(id);
+    if (id === 53) input.templates = [
+        {level:0,zoneX:394,zoneZ:395,sourceLevel:2,sourceZoneX:401,sourceZoneZ:802,rotation:3},
+        {level:1,zoneX:400,zoneZ:401,sourceLevel:1,sourceZoneX:403,sourceZoneZ:806,rotation:1},
+        {level:3,zoneX:406,zoneZ:407,sourceLevel:3,sourceZoneX:401,sourceZoneZ:802,rotation:2},
+    ];
     const fields = {};
     const message = new Proxy(input, { get(target, key) {
         if (!(key in target)) throw new Error(`missing fixture field ${String(key)} for ${file}`);
@@ -189,20 +204,40 @@ for (const [opcode,name,payload_hex] of [[6,'PNameDialog',''],[41,'SoundArea','3
     const j=javaReads(opcode,Buffer.from(payload_hex,'hex'));
     cases.push({ name, opcode, origin:'Java-read-order literal', writes:[], payload_hex, ...j });
 }
+// Exercise every enclosed child, not only an empty container. Each child's
+// bytes come from its original engine encoder (or the declared Java-only case).
+const enclosed = cases.find(row => row.opcode === 183);
+const childIds = [203,106,142,107,121,181,41,59,152,208,88];
+const children = Buffer.concat(childIds.map(id => {
+    const row = cases.find(row => row.opcode === id);
+    return Buffer.concat([Buffer.from([id]),Buffer.from(row.payload_hex,'hex')]);
+}));
+const EnclosedEncoder = await load(`${codecRoot}/UpdateZonePartialEnclosedEncoder.ts`);
+const enclosedPacket = new Packet(new Uint8Array(65535));
+new EnclosedEncoder().encode(enclosedPacket, { ...values, data:children });
+enclosed.payload_hex = Buffer.from(enclosedPacket.data.slice(0,enclosedPacket.pos)).toString('hex');
+enclosed.fields.data = children.toString('hex');
+enclosed.writes[2].args = [children.toString('hex'),0,children.length];
+enclosed.estimated_length = enclosedPacket.pos;
+enclosed.children = childIds;
 cases.sort((a,b) => a.opcode-b.opcode);
 if (JSON.stringify(cases.map(c=>c.opcode)) !== JSON.stringify(covered)) throw new Error('incomplete or duplicate corpus');
 const classes=path.join(work,'classes');
 fs.mkdirSync(classes,{recursive:true});
-execFileSync('javac',['-d',classes,'-sourcepath',path.join(java,'src/main/java'),path.join(root,'tools/Revision377PacketOracle.java')],{stdio:['ignore','pipe','pipe']});
+execFileSync('javac',['-d',classes,'-sourcepath',path.join(java,'src/main/java'),path.join(root,'tools/Revision377PacketOracle.java'),path.join(root,'tools/Revision377EntityOracle.java')],{stdio:['ignore','pipe','pipe']});
 const input=cases.map(row=>`${row.payload_hex}\t${row.reads.join(',')}\n`).join('');
 const javaOutput=execFileSync('java',['-Dfile.encoding=UTF-8','-cp',classes,'Revision377PacketOracle'],{input,encoding:'utf8'}).trim().split('\n').map(line=>JSON.parse(line));
 for (let i=0;i<cases.length;i++) {
     const row=cases[i], result=javaOutput[i];
     if (result.consumed !== row.payload_hex.length/2) throw new Error(`Java under/over-consumed ${row.name}: ${result.consumed}`);
     row.java_values=result.values;
+    if (result.reads) {
+        row.reads = result.reads;
+        row.operation_fields = result.operation_fields;
+    }
     row.consumed=result.consumed;
     row.engine_scalar_checks = 0;
-    if (row.origin === 'original-engine-encoder') {
+    if (row.origin === 'original-engine-encoder' && !result.reads) {
         for (let j=0;j<row.reads.length && row.reads[j] !== 'rest';j++) {
             if (!row.writes[j]) throw new Error(`missing original encoder write ${row.name}:${j}`);
             const expected=javaWidth(row.reads[j],row.writes[j].args[0]);
@@ -210,10 +245,24 @@ for (let i=0;i<cases.length;i++) {
             row.engine_scalar_checks++;
         }
     }
+    if (entityExpected.has(row.opcode)) {
+        if (JSON.stringify(result.operation_fields) !== JSON.stringify(entityExpected.get(row.opcode))) throw new Error(`original entity producer/Java field mismatch ${row.name}`);
+        row.engine_structured_checks = 1;
+    }
+    if (row.opcode === 53) {
+        const templates = Array(676).fill(-1);
+        for (const t of row.fields.templates) {
+            const index = (t.level*13+t.zoneX-row.fields.zoneX+6)*13+t.zoneZ-row.fields.zoneZ+6;
+            templates[index]=(t.sourceLevel<<24)|(t.sourceZoneX<<14)|(t.sourceZoneZ<<3)|(t.rotation<<1);
+        }
+        if (JSON.stringify(result.operation_fields) !== JSON.stringify(['RebuildInstance',row.fields.zoneX,row.fields.zoneZ,templates])) throw new Error('original region encoder/Java field mismatch');
+        row.engine_structured_checks = 1;
+    }
 }
+for (const row of cases) row.operation_fields = operationFields(row,cases);
 const fixture={ revision:377, method:'Executed original engine encoders and untouched Java Packet readers; Client read control flow expanded for synthetic inputs, not a live capture.', source_sha256:sources, implemented_java_opcodes:handlerIds, covered_opcodes:covered, deferred_opcodes:deferred, cases };
 const bytes=JSON.stringify(fixture,(_key,value)=>typeof value==='bigint'?value.toString():value,2)+'\n';
 if (check) {
     if (fs.readFileSync(output,'utf8') !== bytes) throw new Error('stale original-engine/Java packet corpus');
 } else fs.writeFileSync(output,bytes);
-console.log(`PASS: ${covered.length}/${handlerIds.length} Java inbound handlers; ${cases.filter(c=>c.origin==='original-engine-encoder').length} original engine encoders; ${cases.length} complete original-Java primitive traces; ${cases.reduce((sum,row)=>sum+row.engine_scalar_checks,0)} engine-to-Java logical scalar comparisons; ${deferred.length} explicit deferred handlers`);
+console.log(`PASS: ${covered.length}/${handlerIds.length} Java inbound handlers; ${cases.filter(c=>c.origin==='original-engine-encoder').length} original engine encoders; ${cases.length} complete original-Java primitive traces; ${cases.reduce((sum,row)=>sum+row.engine_scalar_checks,0)} engine-to-Java logical scalar comparisons; ${cases.reduce((sum,row)=>sum+(row.engine_structured_checks??0),0)} complete entity/rebuild field comparisons; ${deferred.length} explicit deferred handlers`);

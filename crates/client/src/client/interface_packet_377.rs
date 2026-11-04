@@ -108,7 +108,10 @@ pub enum InterfaceOperation377<'a> {
 impl<'a> InterfaceOperation377<'a> {
     /// Decode one packet body. Unknown opcodes are left for another packet
     /// family; the packet root enforces exact body consumption.
-    pub fn decode(opcode: u8, p: &mut PacketReader377<'a>) -> Result<Option<Self>, PacketError377> {
+    pub(super) fn decode(
+        opcode: u8,
+        p: &mut PacketReader377<'a>,
+    ) -> Result<Option<Self>, PacketError377> {
         let operation = match opcode {
             166 => {
                 let y = p.g2b_alt1()?;

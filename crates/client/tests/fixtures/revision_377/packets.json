@@ -13,6 +13,19 @@
     "engine/src/cache/wordenc/WordEnc.ts": "378fdcf791c796c71fa3e79b0ae5001d5ab22636a9aafb3f9716b2bdc2ab80dd",
     "engine/src/wordenc/WordPack.ts": "bdfc246909f39dde639d5bdb2fd7d1d89211c67cec915992c030f1522ec5921b",
     "engine/src/engine/CoordGrid.ts": "1d2ae4ef19a9dc24dc2d29f4baf8fa0edadf352181d26d3c6b62125ee0a25346",
+    "java/src/main/java/jagex2/dash3d/ClientPlayer.java": "1da1965a2bf35819133b27b6ec9c27f8b4a43a33282689efd655f4c6bcacf1a1",
+    "engine/src/network/rsbuf/build.ts": "dff248a046fa2de7b2c2007880f14aacfa4fb735dfbe4215a3960ff0ecd11d12",
+    "engine/src/network/rsbuf/coord.ts": "95163248b26f229ebdd107f7ac497f1e393206cfb97fe68b3f91b9787b6a2468",
+    "engine/src/network/rsbuf/grid.ts": "a76963c5b7e022a15a95bc66efa089ad2056a6f10cc91477654cb0656e820998",
+    "engine/src/network/rsbuf/info.ts": "f1e2509b021cc803928325bdc3c1ccbc5e4a4c5949cb8d0754d33b941df72e6c",
+    "engine/src/network/rsbuf/messages.ts": "4c9b8969f3e11da688aacf37374a301c26dfd462f979de703dc6a284ab76c37a",
+    "engine/src/network/rsbuf/npc.ts": "e3be12b71a1d56ae641ac69f7535102b261ea88998e86c3d996751637156733c",
+    "engine/src/network/rsbuf/packet.ts": "fa531d161b751fd88aaff576d790c61435a5793c8f17f358d4f29cb0b34eff97",
+    "engine/src/network/rsbuf/player.ts": "18ef90a152b7ef0cd0467e9f9bb8f47e4027e66cbd201eee19efb53fba050c1c",
+    "engine/src/network/rsbuf/prot.ts": "cde92ae7321fe8a4935b707f23f0a5391b921805b985d6f90d86178f27dd6920",
+    "engine/src/network/rsbuf/renderer.ts": "dc0244158b603a05800c9ec8f2098f4631e282f2bdf2213fd9735fca8e7f1fe8",
+    "engine/src/network/rsbuf/visibility.ts": "4432cab4751d1b633607bd6ed69f0a4bc74a946ebbcc83fe8aed4cc4eda8f1e0",
+    "engine/src/network/game/server/model/RebuildRegion.ts": "16ed9497aa12c0694dc0c98484d884588c9c9702d6b12a391c772b76a11144a2",
     "engine/src/network/game/server/codec/CamLookAtEncoder.ts": "a5a9f5ba149009c37c07098ad3a10da72e1462582424d2be8e352cfd2767dfba",
     "engine/src/network/game/server/codec/CamMoveToEncoder.ts": "7b103991dc045ef53e5614bd3d0cfd42001c5a36f499c4fe98b7d3ddc1fa1de3",
     "engine/src/network/game/server/codec/CamResetEncoder.ts": "728bc2c510c4d87a716266b3c51a9728d2b13266f177cbd22808c0a0bd6b4e90",
@@ -54,11 +67,15 @@
     "engine/src/network/game/server/codec/MidiJingleEncoder.ts": "7b17cada1e9e3f41bd66dcbe744e2d744a5370f34b8e3a89db7cc564be8a0f4d",
     "engine/src/network/game/server/codec/MidiSongEncoder.ts": "c3d7f126ce126098b4d702592020dfdcab347ca13fee834991a62adc5a859907",
     "engine/src/network/game/server/codec/MinimapToggleEncoder.ts": "383bf9bdc1c570a8cd0af3b1e36df04d1e3793296efa2952e65f40322d387121",
+    "engine/src/network/game/server/codec/NpcInfoEncoder.ts": "46a576f85e2453dc60af8e7bcd548a08bd05dd7bfb351ecac9943c51696785db",
     "engine/src/network/game/server/codec/ObjAddEncoder.ts": "b8687cf366ff9dcb071643c050c3259f498a85f4d47c7d405208e87eae1b696e",
     "engine/src/network/game/server/codec/ObjCountEncoder.ts": "aec274750a381fff06e79e230722b4351f0cdf10a3664b0b68fccb92e656bfd5",
     "engine/src/network/game/server/codec/ObjDelEncoder.ts": "7701aa3f6c252e86ac7a2032e4b974aef5f6c9317b39c6625b005b742aaeeeb3",
     "engine/src/network/game/server/codec/ObjRevealEncoder.ts": "7b31eef76defb40f55d36472ac6464b3382fe75b880654c7402365f29057704d",
     "engine/src/network/game/server/codec/PCountDialogEncoder.ts": "f37e64bcfa18c693c554e12b4a5b56856697971dc4167104a8ba63b9560614d4",
+    "engine/src/network/game/server/codec/PlayerInfoEncoder.ts": "d23d23243402bf975af977303786436390f40a150e82f5f8ce601fee9910abdf",
+    "engine/src/network/game/server/codec/RebuildNormalEncoder.ts": "1a8a35569c744b144dd757aa9213ed2aa476ef0ed5db42e3ac436b1302628ef1",
+    "engine/src/network/game/server/codec/RebuildRegionEncoder.ts": "4009d4dd7fa47b234b702a237f72300c959125a928fe4ff4a62b8df645edefde",
     "engine/src/network/game/server/codec/ResetAnimsEncoder.ts": "58904d308f2eed74bc0557a6464dd9e226f9c3c468dd4c8cefefe7ac00015897",
     "engine/src/network/game/server/codec/ResetClientVarCacheEncoder.ts": "f854fa49f97f731ecfeac543d820f35f5c1e7f494a4dd8be4cc8d04c52dc1c47",
     "engine/src/network/game/server/codec/SetMultiwayEncoder.ts": "3665383faf43f4d724423711ae1a4302e33e444f4c26c70d0dbedfc22432a3ae",
@@ -175,16 +192,19 @@
     41,
     49,
     50,
+    53,
     58,
     59,
     61,
     63,
     67,
+    71,
     75,
     76,
     78,
     82,
     88,
+    90,
     106,
     107,
     109,
@@ -222,6 +242,7 @@
     218,
     219,
     220,
+    222,
     226,
     232,
     233,
@@ -233,12 +254,7 @@
     253,
     255
   ],
-  "deferred_opcodes": [
-    53,
-    71,
-    90,
-    222
-  ],
+  "deferred_opcodes": [],
   "cases": [
     {
       "name": "IfSetAnim",
@@ -275,7 +291,12 @@
         321
       ],
       "consumed": 4,
-      "engine_scalar_checks": 2
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "SetAnim",
+        4660,
+        321
+      ]
     },
     {
       "name": "CamMoveTo",
@@ -339,7 +360,15 @@
         101
       ],
       "consumed": 6,
-      "engine_scalar_checks": 5
+      "engine_scalar_checks": 5,
+      "operation_fields": [
+        "CameraMoveTo",
+        34,
+        35,
+        567,
+        23,
+        101
+      ]
     },
     {
       "name": "Logout",
@@ -354,7 +383,10 @@
       "anchor": "src/main/java/jagex2/client/Client.java:7567-7572",
       "java_values": [],
       "consumed": 0,
-      "engine_scalar_checks": 0
+      "engine_scalar_checks": 0,
+      "operation_fields": [
+        "Logout"
+      ]
     },
     {
       "name": "PNameDialog",
@@ -366,7 +398,10 @@
       "anchor": "src/main/java/jagex2/client/Client.java:7478-7486",
       "java_values": [],
       "consumed": 0,
-      "engine_scalar_checks": 0
+      "engine_scalar_checks": 0,
+      "operation_fields": [
+        "NameDialog"
+      ]
     },
     {
       "name": "IfSetTab",
@@ -403,7 +438,12 @@
         4660
       ],
       "consumed": 3,
-      "engine_scalar_checks": 2
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "SetTab",
+        3,
+        4660
+      ]
     },
     {
       "name": "ResetAnims",
@@ -418,7 +458,10 @@
       "anchor": "src/main/java/jagex2/client/Client.java:7342-7356",
       "java_values": [],
       "consumed": 0,
-      "engine_scalar_checks": 0
+      "engine_scalar_checks": 0,
+      "operation_fields": [
+        "ResetAnims"
+      ]
     },
     {
       "name": "IfSetRotation",
@@ -464,7 +507,12 @@
         65244
       ],
       "consumed": 6,
-      "engine_scalar_checks": 3
+      "engine_scalar_checks": 3,
+      "operation_fields": [
+        "SetRotation",
+        4660,
+        -2128347428
+      ]
     },
     {
       "name": "IfSetObject",
@@ -510,7 +558,13 @@
         4660
       ],
       "consumed": 6,
-      "engine_scalar_checks": 3
+      "engine_scalar_checks": 3,
+      "operation_fields": [
+        "SetObject",
+        4660,
+        17767,
+        150
+      ]
     },
     {
       "name": "SynthSound",
@@ -556,7 +610,13 @@
         7
       ],
       "consumed": 5,
-      "engine_scalar_checks": 3
+      "engine_scalar_checks": 3,
+      "operation_fields": [
+        "SynthSound",
+        456,
+        3,
+        7
+      ]
     },
     {
       "name": "IfClose",
@@ -571,7 +631,10 @@
       "anchor": "src/main/java/jagex2/client/Client.java:7591-7624",
       "java_values": [],
       "consumed": 0,
-      "engine_scalar_checks": 0
+      "engine_scalar_checks": 0,
+      "operation_fields": [
+        "Close"
+      ]
     },
     {
       "name": "UpdateZoneFullFollows",
@@ -610,7 +673,16 @@
         48
       ],
       "consumed": 2,
-      "engine_scalar_checks": 2
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "Zone",
+        [
+          48,
+          56
+        ],
+        true,
+        []
+      ]
     },
     {
       "name": "SoundArea",
@@ -630,7 +702,22 @@
         115
       ],
       "consumed": 4,
-      "engine_scalar_checks": 0
+      "engine_scalar_checks": 0,
+      "operation_fields": [
+        "Zone",
+        null,
+        false,
+        [
+          [
+            "SoundArea",
+            3,
+            5,
+            456,
+            7,
+            3
+          ]
+        ]
+      ]
     },
     {
       "name": "UpdateStat",
@@ -676,7 +763,13 @@
         123456
       ],
       "consumed": 6,
-      "engine_scalar_checks": 3
+      "engine_scalar_checks": 3,
+      "operation_fields": [
+        "UpdateStat",
+        3,
+        67,
+        123456
+      ]
     },
     {
       "name": "IfOpenOverlay",
@@ -704,7 +797,6876 @@
         4660
       ],
       "consumed": 2,
-      "engine_scalar_checks": 1
+      "engine_scalar_checks": 1,
+      "operation_fields": [
+        "OpenOverlay",
+        4660
+      ]
+    },
+    {
+      "name": "RebuildRegion",
+      "opcode": 53,
+      "origin": "original-engine-encoder",
+      "fields": {
+        "zoneX": 400,
+        "templates": [
+          {
+            "level": 0,
+            "zoneX": 394,
+            "zoneZ": 395,
+            "sourceLevel": 2,
+            "sourceZoneX": 401,
+            "sourceZoneZ": 802,
+            "rotation": 3
+          },
+          {
+            "level": 1,
+            "zoneX": 400,
+            "zoneZ": 401,
+            "sourceLevel": 1,
+            "sourceZoneX": 403,
+            "sourceZoneZ": 806,
+            "rotation": 1
+          },
+          {
+            "level": 3,
+            "zoneX": 406,
+            "zoneZ": 407,
+            "sourceLevel": 3,
+            "sourceZoneX": 401,
+            "sourceZoneZ": 802,
+            "rotation": 2
+          }
+        ],
+        "zoneZ": 401
+      },
+      "writes": [
+        {
+          "method": "p2_alt2",
+          "args": [
+            400
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            1
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            26,
+            40130838
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            1
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            26,
+            23386418
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            0
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            1,
+            1
+          ]
+        },
+        {
+          "method": "pBit",
+          "args": [
+            26,
+            56908052
+          ]
+        },
+        {
+          "method": "p2_alt2",
+          "args": [
+            401
+          ]
+        }
+      ],
+      "declared_length": -2,
+      "estimated_length": 99,
+      "payload_hex": "0110cc8b22c00000000000000000000000000000000000000000000000000000000000000159364c8000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001d91645000111",
+      "reads": [
+        "g2_alt2",
+        "accessBits",
+        "gBit:1",
+        "gBit:26",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:26",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:1",
+        "gBit:26",
+        "accessBytes",
+        "g2_alt2"
+      ],
+      "anchor": "src/main/java/jagex2/client/Client.java:8087-8304",
+      "java_values": [
+        400,
+        null,
+        1,
+        40130838,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        23386418,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        56908052,
+        null,
+        401
+      ],
+      "operation_fields": [
+        "RebuildInstance",
+        400,
+        401,
+        [
+          40130838,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          23386418,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          56908052
+        ]
+      ],
+      "consumed": 99,
+      "engine_scalar_checks": 0,
+      "engine_structured_checks": 1
     },
     {
       "name": "PCountDialog",
@@ -719,7 +7681,10 @@
       "anchor": "src/main/java/jagex2/client/Client.java:7865-7873",
       "java_values": [],
       "consumed": 0,
-      "engine_scalar_checks": 0
+      "engine_scalar_checks": 0,
+      "operation_fields": [
+        "CountDialog"
+      ]
     },
     {
       "name": "MapAnim",
@@ -774,7 +7739,22 @@
         7
       ],
       "consumed": 6,
-      "engine_scalar_checks": 4
+      "engine_scalar_checks": 4,
+      "operation_fields": [
+        "Zone",
+        null,
+        false,
+        [
+          [
+            "MapAnim",
+            3,
+            5,
+            456,
+            55,
+            7
+          ]
+        ]
+      ]
     },
     {
       "name": "UnsetMapFlag",
@@ -789,7 +7769,10 @@
       "anchor": "src/main/java/jagex2/client/Client.java:7734-7739",
       "java_values": [],
       "consumed": 0,
-      "engine_scalar_checks": 0
+      "engine_scalar_checks": 0,
+      "operation_fields": [
+        "UnsetMapFlag"
+      ]
     },
     {
       "name": "MessageGame",
@@ -817,7 +7800,11 @@
         "hello"
       ],
       "consumed": 6,
-      "engine_scalar_checks": 1
+      "engine_scalar_checks": 1,
+      "operation_fields": [
+        "MessageGame",
+        "hello"
+      ]
     },
     {
       "name": "CamShake",
@@ -872,7 +7859,224 @@
         23
       ],
       "consumed": 4,
-      "engine_scalar_checks": 4
+      "engine_scalar_checks": 4,
+      "operation_fields": [
+        "CameraShake",
+        4,
+        17,
+        19,
+        23
+      ]
+    },
+    {
+      "name": "NpcInfo",
+      "opcode": 71,
+      "origin": "original-engine-encoder",
+      "fields": {
+        "bytes": "054b58e743863f454dfff8ff01d917809382431d01c800ea0017616c6c206e7063206d61736b730a8b190d190141795b7d439d0883191119"
+      },
+      "writes": [
+        {
+          "method": "pdata",
+          "args": [
+            "054b58e743863f454dfff8ff01d917809382431d01c800ea0017616c6c206e7063206d61736b730a8b190d190141795b7d439d0883191119",
+            0,
+            56
+          ]
+        }
+      ],
+      "declared_length": -2,
+      "estimated_length": 56,
+      "payload_hex": "054b58e743863f454dfff8ff01d917809382431d01c800ea0017616c6c206e7063206d61736b730a8b190d190141795b7d439d0883191119",
+      "reads": [
+        "accessBits",
+        "gBit:8",
+        "gBit:1",
+        "gBit:1",
+        "gBit:2",
+        "gBit:1",
+        "gBit:2",
+        "gBit:3",
+        "gBit:1",
+        "gBit:1",
+        "gBit:2",
+        "gBit:3",
+        "gBit:3",
+        "gBit:1",
+        "gBit:1",
+        "gBit:2",
+        "gBit:14",
+        "gBit:1",
+        "gBit:5",
+        "gBit:5",
+        "gBit:1",
+        "gBit:13",
+        "gBit:14",
+        "accessBytes",
+        "g1",
+        "g2_alt2",
+        "g2_alt1",
+        "g1_alt1",
+        "g1_alt1",
+        "g1",
+        "g1_alt3",
+        "g2",
+        "g4_alt2",
+        "gjstr",
+        "g2_alt3",
+        "g2_alt1",
+        "g2",
+        "g1_alt3",
+        "g1_alt3",
+        "g1_alt3",
+        "g1",
+        "g1_alt2",
+        "g1",
+        "g2_alt3",
+        "g2_alt1"
+      ],
+      "anchor": "src/main/java/jagex2/client/Client.java:9365-9577",
+      "java_values": [
+        null,
+        5,
+        0,
+        1,
+        0,
+        1,
+        1,
+        5,
+        0,
+        1,
+        2,
+        1,
+        6,
+        0,
+        1,
+        3,
+        4321,
+        1,
+        3,
+        30,
+        1,
+        678,
+        16383,
+        null,
+        255,
+        345,
+        32791,
+        19,
+        2,
+        67,
+        99,
+        456,
+        1507562,
+        "all npc masks",
+        6411,
+        6413,
+        321,
+        7,
+        37,
+        3,
+        67,
+        99,
+        8,
+        6403,
+        6417
+      ],
+      "operation_fields": [
+        "NpcInfo",
+        5,
+        [
+          [
+            "Idle"
+          ],
+          [
+            "Extended"
+          ],
+          [
+            "Walk",
+            5,
+            false
+          ],
+          [
+            "Run",
+            1,
+            6,
+            false
+          ],
+          [
+            "Remove"
+          ]
+        ],
+        [
+          [
+            4321,
+            678,
+            -2,
+            3,
+            true,
+            true
+          ]
+        ],
+        [
+          [
+            [
+              "Old",
+              1
+            ],
+            255,
+            345,
+            32791,
+            [
+              19,
+              2,
+              67,
+              99
+            ],
+            [
+              456,
+              23,
+              234
+            ],
+            "all npc masks",
+            [
+              6411,
+              6413
+            ],
+            [
+              321,
+              7
+            ],
+            [
+              37,
+              3,
+              67,
+              99
+            ]
+          ],
+          [
+            [
+              "New",
+              4321
+            ],
+            8,
+            null,
+            null,
+            null,
+            null,
+            null,
+            [
+              6403,
+              6417
+            ],
+            null,
+            null
+          ]
+        ]
+      ],
+      "consumed": 56,
+      "engine_scalar_checks": 0,
+      "engine_structured_checks": 1
     },
     {
       "name": "UpdateZonePartialFollows",
@@ -911,7 +8115,16 @@
         56
       ],
       "consumed": 2,
-      "engine_scalar_checks": 2
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "Zone",
+        [
+          48,
+          56
+        ],
+        false,
+        []
+      ]
     },
     {
       "name": "LastLoginInfo",
@@ -1025,7 +8238,21 @@
         0
       ],
       "consumed": 23,
-      "engine_scalar_checks": 11
+      "engine_scalar_checks": 11,
+      "operation_fields": [
+        "LastLogin",
+        123,
+        0,
+        0,
+        0,
+        2345,
+        7,
+        2344,
+        29,
+        2130706433,
+        456,
+        0
+      ]
     },
     {
       "name": "UpdateFriendList",
@@ -1062,7 +8289,12 @@
         42
       ],
       "consumed": 9,
-      "engine_scalar_checks": 2
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "Friend",
+        "72623859790382856",
+        42
+      ]
     },
     {
       "name": "IfSetHide",
@@ -1099,7 +8331,12 @@
         4660
       ],
       "consumed": 3,
-      "engine_scalar_checks": 2
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "SetHide",
+        4660,
+        true
+      ]
     },
     {
       "name": "LocDel",
@@ -1137,7 +8374,374 @@
         43
       ],
       "consumed": 2,
-      "engine_scalar_checks": 2
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "Zone",
+        null,
+        false,
+        [
+          [
+            "LocDel",
+            3,
+            5,
+            10,
+            3
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "PlayerInfo",
+      "opcode": 90,
+      "origin": "original-engine-encoder",
+      "fields": {
+        "bytes": "f9ab302a5ac73817f63ffeff070141797e616c6c20706c61796572206d61736b730a8bec6326007b006a038097190b190d014800ea00172fd2044d0807060504030201ffff6900680067006600650064000504030201000000000000000000000a020501ff0201937ebd630405fe83922bff5bfd3d6306190319112fd2044d0807060504030201ffff6900680067006600650064000504030201000000000000000000000a020501ff0201"
+      },
+      "writes": [
+        {
+          "method": "pdata",
+          "args": [
+            "f9ab302a5ac73817f63ffeff070141797e616c6c20706c61796572206d61736b730a8bec6326007b006a038097190b190d014800ea00172fd2044d0807060504030201ffff6900680067006600650064000504030201000000000000000000000a020501ff0201937ebd630405fe83922bff5bfd3d6306190319112fd2044d0807060504030201ffff6900680067006600650064000504030201000000000000000000000a020501ff0201",
+            0,
+            171
+          ]
+        }
+      ],
+      "declared_length": -2,
+      "estimated_length": 171,
+      "payload_hex": "f9ab302a5ac73817f63ffeff070141797e616c6c20706c61796572206d61736b730a8bec6326007b006a038097190b190d014800ea00172fd2044d0807060504030201ffff6900680067006600650064000504030201000000000000000000000a020501ff0201937ebd630405fe83922bff5bfd3d6306190319112fd2044d0807060504030201ffff6900680067006600650064000504030201000000000000000000000a020501ff0201",
+      "reads": [
+        "accessBits",
+        "gBit:1",
+        "gBit:2",
+        "gBit:1",
+        "gBit:2",
+        "gBit:7",
+        "gBit:7",
+        "gBit:1",
+        "gBit:8",
+        "gBit:1",
+        "gBit:1",
+        "gBit:2",
+        "gBit:1",
+        "gBit:2",
+        "gBit:3",
+        "gBit:1",
+        "gBit:1",
+        "gBit:2",
+        "gBit:3",
+        "gBit:3",
+        "gBit:1",
+        "gBit:1",
+        "gBit:2",
+        "gBit:11",
+        "gBit:5",
+        "gBit:1",
+        "gBit:1",
+        "gBit:5",
+        "gBit:11",
+        "accessBytes",
+        "g1",
+        "g1",
+        "g2",
+        "g1_alt3",
+        "gjstr",
+        "g1_alt1",
+        "g1_alt2",
+        "g1_alt3",
+        "g1",
+        "g2",
+        "g2_alt2",
+        "g1",
+        "g2_alt2",
+        "g2",
+        "g2",
+        "g2_alt2",
+        "g4_alt2",
+        "g1",
+        "gdata_alt1:47",
+        "g1_alt1",
+        "g1_alt3",
+        "g1_alt2",
+        "g1",
+        "g2",
+        "g1_alt2",
+        "g1_alt1",
+        "gdata_alt2:3",
+        "g1_alt3",
+        "g1_alt2",
+        "g1_alt3",
+        "g1",
+        "g1",
+        "g2",
+        "g2",
+        "g1",
+        "gdata_alt1:47"
+      ],
+      "anchor": "src/main/java/jagex2/client/Client.java:9015-9362; src/main/java/jagex2/dash3d/ClientPlayer.java:332-395",
+      "java_values": [
+        null,
+        1,
+        3,
+        1,
+        2,
+        53,
+        51,
+        0,
+        5,
+        0,
+        1,
+        0,
+        1,
+        1,
+        5,
+        0,
+        1,
+        2,
+        1,
+        6,
+        0,
+        1,
+        3,
+        23,
+        30,
+        1,
+        1,
+        3,
+        2047,
+        null,
+        255,
+        7,
+        321,
+        7,
+        "~all player masks",
+        11,
+        20,
+        29,
+        38,
+        123,
+        234,
+        3,
+        32791,
+        6411,
+        6413,
+        456,
+        1507562,
+        47,
+        "0102ff0105020a000000000000000000000102030405006400650066006700680069ffff01020304050607084d04d2",
+        19,
+        2,
+        67,
+        99,
+        1029,
+        2,
+        3,
+        "12ab7f",
+        37,
+        3,
+        67,
+        99,
+        6,
+        6403,
+        6417,
+        47,
+        "0102ff0105020a000000000000000000000102030405006400650066006700680069ffff01020304050607084d04d2"
+      ],
+      "operation_fields": [
+        "PlayerInfo",
+        [
+          "Teleport",
+          true,
+          2,
+          51,
+          53,
+          false
+        ],
+        5,
+        [
+          [
+            "Idle"
+          ],
+          [
+            "Extended"
+          ],
+          [
+            "Walk",
+            5,
+            false
+          ],
+          [
+            "Run",
+            1,
+            6,
+            false
+          ],
+          [
+            "Remove"
+          ]
+        ],
+        [
+          [
+            23,
+            -2,
+            3,
+            true,
+            true
+          ]
+        ],
+        [
+          [
+            [
+              "Old",
+              1
+            ],
+            2047,
+            [
+              321,
+              7
+            ],
+            "~all player masks",
+            [
+              11,
+              20,
+              29,
+              38,
+              123,
+              234,
+              3
+            ],
+            32791,
+            [
+              6411,
+              6413
+            ],
+            [
+              456,
+              23,
+              234
+            ],
+            [
+              "0102ff0105020a000000000000000000000102030405006400650066006700680069ffff01020304050607084d04d2",
+              1,
+              2,
+              -1,
+              [
+                261,
+                522,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0
+              ],
+              null,
+              [
+                1,
+                2,
+                3,
+                4,
+                5
+              ],
+              [
+                100,
+                101,
+                102,
+                103,
+                104,
+                105,
+                null
+              ],
+              "72623859790382856",
+              77,
+              1234
+            ],
+            [
+              19,
+              2,
+              67,
+              99
+            ],
+            [
+              1029,
+              2,
+              "12ab7f"
+            ],
+            [
+              37,
+              3,
+              67,
+              99
+            ]
+          ],
+          [
+            [
+              "New",
+              23
+            ],
+            6,
+            null,
+            null,
+            null,
+            null,
+            [
+              6403,
+              6417
+            ],
+            null,
+            [
+              "0102ff0105020a000000000000000000000102030405006400650066006700680069ffff01020304050607084d04d2",
+              1,
+              2,
+              -1,
+              [
+                261,
+                522,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0
+              ],
+              null,
+              [
+                1,
+                2,
+                3,
+                4,
+                5
+              ],
+              [
+                100,
+                101,
+                102,
+                103,
+                104,
+                105,
+                null
+              ],
+              "72623859790382856",
+              77,
+              1234
+            ],
+            null,
+            null,
+            null
+          ]
+        ]
+      ],
+      "consumed": 171,
+      "engine_scalar_checks": 0,
+      "engine_structured_checks": 1
     },
     {
       "name": "ObjReveal",
@@ -1192,7 +8796,22 @@
         321
       ],
       "consumed": 7,
-      "engine_scalar_checks": 4
+      "engine_scalar_checks": 4,
+      "operation_fields": [
+        "Zone",
+        null,
+        false,
+        [
+          [
+            "ObjectReveal",
+            3,
+            5,
+            2345,
+            17767,
+            321
+          ]
+        ]
+      ]
     },
     {
       "name": "ObjAdd",
@@ -1238,7 +8857,21 @@
         2345
       ],
       "consumed": 5,
-      "engine_scalar_checks": 3
+      "engine_scalar_checks": 3,
+      "operation_fields": [
+        "Zone",
+        null,
+        false,
+        [
+          [
+            "ObjAdd",
+            3,
+            5,
+            17767,
+            2345
+          ]
+        ]
+      ]
     },
     {
       "name": "IfOpenChat",
@@ -1266,7 +8899,11 @@
         4660
       ],
       "consumed": 2,
-      "engine_scalar_checks": 1
+      "engine_scalar_checks": 1,
+      "operation_fields": [
+        "OpenChat",
+        4660
+      ]
     },
     {
       "name": "ResetClientVarCache",
@@ -1281,7 +8918,10 @@
       "anchor": "src/main/java/jagex2/client/Client.java:8527-8538",
       "java_values": [],
       "consumed": 0,
-      "engine_scalar_checks": 0
+      "engine_scalar_checks": 0,
+      "operation_fields": [
+        "VarpSync"
+      ]
     },
     {
       "name": "VarpLarge",
@@ -1318,7 +8958,12 @@
         291
       ],
       "consumed": 6,
-      "engine_scalar_checks": 2
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "Varp",
+        291,
+        -123456789
+      ]
     },
     {
       "name": "ObjCount",
@@ -1373,7 +9018,22 @@
         2345
       ],
       "consumed": 7,
-      "engine_scalar_checks": 4
+      "engine_scalar_checks": 4,
+      "operation_fields": [
+        "Zone",
+        null,
+        false,
+        [
+          [
+            "ObjCount",
+            3,
+            5,
+            17767,
+            1234,
+            2345
+          ]
+        ]
+      ]
     },
     {
       "name": "UpdateRunEnergy",
@@ -1401,7 +9061,11 @@
         73
       ],
       "consumed": 1,
-      "engine_scalar_checks": 1
+      "engine_scalar_checks": 1,
+      "operation_fields": [
+        "RunEnergy",
+        73
+      ]
     },
     {
       "name": "UpdatePid",
@@ -1438,7 +9102,12 @@
         1110
       ],
       "consumed": 3,
-      "engine_scalar_checks": 2
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "UpdatePid",
+        1,
+        1110
+      ]
     },
     {
       "name": "IfOpenMainSide",
@@ -1475,7 +9144,12 @@
         4662
       ],
       "consumed": 4,
-      "engine_scalar_checks": 2
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "OpenMainSide",
+        4661,
+        4662
+      ]
     },
     {
       "name": "UpdateInvPartial",
@@ -1588,7 +9262,28 @@
         65537
       ],
       "consumed": 19,
-      "engine_scalar_checks": 11
+      "engine_scalar_checks": 11,
+      "operation_fields": [
+        "InventoryPartial",
+        4660,
+        [
+          [
+            0,
+            124,
+            2
+          ],
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            128,
+            235,
+            65537
+          ]
+        ]
+      ]
     },
     {
       "name": "MessagePrivate",
@@ -1655,7 +9350,14 @@
         "61bb40"
       ],
       "consumed": 16,
-      "engine_scalar_checks": 3
+      "engine_scalar_checks": 3,
+      "operation_fields": [
+        "PrivateMessage",
+        "72623859790382856",
+        305419896,
+        3,
+        "61bb40"
+      ]
     },
     {
       "name": "LocAnim",
@@ -1702,7 +9404,22 @@
         53
       ],
       "consumed": 4,
-      "engine_scalar_checks": 3
+      "engine_scalar_checks": 3,
+      "operation_fields": [
+        "Zone",
+        null,
+        false,
+        [
+          [
+            "LocAnim",
+            3,
+            5,
+            10,
+            3,
+            321
+          ]
+        ]
+      ]
     },
     {
       "name": "CamReset",
@@ -1717,7 +9434,10 @@
       "anchor": "src/main/java/jagex2/client/Client.java:8441-8449",
       "java_values": [],
       "consumed": 0,
-      "engine_scalar_checks": 0
+      "engine_scalar_checks": 0,
+      "operation_fields": [
+        "CameraReset"
+      ]
     },
     {
       "name": "LocAddChange",
@@ -1764,7 +9484,22 @@
         53
       ],
       "consumed": 4,
-      "engine_scalar_checks": 3
+      "engine_scalar_checks": 3,
+      "operation_fields": [
+        "Zone",
+        null,
+        false,
+        [
+          [
+            "LocAddChange",
+            3,
+            5,
+            10,
+            3,
+            456
+          ]
+        ]
+      ]
     },
     {
       "name": "MinimapToggle",
@@ -1792,7 +9527,11 @@
         2
       ],
       "consumed": 1,
-      "engine_scalar_checks": 1
+      "engine_scalar_checks": 1,
+      "operation_fields": [
+        "MinimapToggle",
+        2
+      ]
     },
     {
       "name": "SetPlayerOp",
@@ -1838,7 +9577,13 @@
         0
       ],
       "consumed": 8,
-      "engine_scalar_checks": 3
+      "engine_scalar_checks": 3,
+      "operation_fields": [
+        "PlayerOption",
+        4,
+        "Trade",
+        0
+      ]
     },
     {
       "name": "TutOpen",
@@ -1866,7 +9611,11 @@
         4660
       ],
       "consumed": 2,
-      "engine_scalar_checks": 1
+      "engine_scalar_checks": 1,
+      "operation_fields": [
+        "TutOpen",
+        4660
+      ]
     },
     {
       "name": "IfOpenMain",
@@ -1894,7 +9643,11 @@
         4660
       ],
       "consumed": 2,
-      "engine_scalar_checks": 1
+      "engine_scalar_checks": 1,
+      "operation_fields": [
+        "OpenMain",
+        4660
+      ]
     },
     {
       "name": "IfSetNpcHead",
@@ -1931,7 +9684,12 @@
         4660
       ],
       "consumed": 4,
-      "engine_scalar_checks": 2
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "SetNpcHead",
+        4660,
+        13398
+      ]
     },
     {
       "name": "IfSetPosition",
@@ -1977,7 +9735,13 @@
         4660
       ],
       "consumed": 6,
-      "engine_scalar_checks": 3
+      "engine_scalar_checks": 3,
+      "operation_fields": [
+        "SetPosition",
+        4660,
+        -123,
+        -456
+      ]
     },
     {
       "name": "CamLookAt",
@@ -2041,7 +9805,15 @@
         101
       ],
       "consumed": 6,
-      "engine_scalar_checks": 5
+      "engine_scalar_checks": 5,
+      "operation_fields": [
+        "CameraLookAt",
+        34,
+        35,
+        567,
+        23,
+        101
+      ]
     },
     {
       "name": "UpdateRunWeight",
@@ -2069,7 +9841,11 @@
         -321
       ],
       "consumed": 2,
-      "engine_scalar_checks": 1
+      "engine_scalar_checks": 1,
+      "operation_fields": [
+        "RunWeight",
+        -321
+      ]
     },
     {
       "name": "MapProjAnim",
@@ -2189,7 +9965,29 @@
         67
       ],
       "consumed": 15,
-      "engine_scalar_checks": 11
+      "engine_scalar_checks": 11,
+      "operation_fields": [
+        "Zone",
+        null,
+        false,
+        [
+          [
+            "MapProjAnim",
+            3,
+            5,
+            -2,
+            3,
+            -321,
+            456,
+            28,
+            32,
+            123,
+            234,
+            45,
+            67
+          ]
+        ]
+      ]
     },
     {
       "name": "VarpSmall",
@@ -2226,7 +10024,12 @@
         -37
       ],
       "consumed": 3,
-      "engine_scalar_checks": 2
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "Varp",
+        291,
+        -37
+      ]
     },
     {
       "name": "UpdateZonePartialEnclosed",
@@ -2237,7 +10040,7 @@
         "originX": 3200,
         "zoneZ": 401,
         "originZ": 3200,
-        "data": ""
+        "data": "cb01c82b02b583006a4101047f007b6ab5a90945e701c18e0141ab356b4567cb09a97935456704d20929b535fe03febf01c80708007b00ea2d43293501c8733b3501c837000798d54801b5d045e7b5584b55"
       },
       "writes": [
         {
@@ -2255,28 +10058,149 @@
         {
           "method": "pdata",
           "args": [
-            "",
+            "cb01c82b02b583006a4101047f007b6ab5a90945e701c18e0141ab356b4567cb09a97935456704d20929b535fe03febf01c80708007b00ea2d43293501c8733b3501c837000798d54801b5d045e7b5584b55",
             0,
-            0
+            82
           ]
         }
       ],
       "declared_length": -2,
-      "estimated_length": 2,
-      "payload_hex": "30b8",
+      "estimated_length": 84,
+      "payload_hex": "30b8cb01c82b02b583006a4101047f007b6ab5a90945e701c18e0141ab356b4567cb09a97935456704d20929b535fe03febf01c80708007b00ea2d43293501c8733b3501c837000798d54801b5d045e7b5584b55",
       "reads": [
         "g1",
         "g1_alt1",
         "rest"
       ],
       "anchor": "src/main/java/jagex2/client/Client.java:7961-7971",
+      "children": [
+        203,
+        106,
+        142,
+        107,
+        121,
+        181,
+        41,
+        59,
+        152,
+        208,
+        88
+      ],
       "java_values": [
         48,
         56,
-        ""
+        "cb01c82b02b583006a4101047f007b6ab5a90945e701c18e0141ab356b4567cb09a97935456704d20929b535fe03febf01c80708007b00ea2d43293501c8733b3501c837000798d54801b5d045e7b5584b55"
       ],
-      "consumed": 2,
-      "engine_scalar_checks": 2
+      "consumed": 84,
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "Zone",
+        [
+          48,
+          56
+        ],
+        false,
+        [
+          [
+            "LocMerge",
+            3,
+            5,
+            10,
+            3,
+            456,
+            -2,
+            3,
+            -1,
+            4,
+            321,
+            123,
+            234
+          ],
+          [
+            "ObjectReveal",
+            3,
+            5,
+            2345,
+            17767,
+            321
+          ],
+          [
+            "LocAnim",
+            3,
+            5,
+            10,
+            3,
+            321
+          ],
+          [
+            "ObjAdd",
+            3,
+            5,
+            17767,
+            2345
+          ],
+          [
+            "ObjCount",
+            3,
+            5,
+            17767,
+            1234,
+            2345
+          ],
+          [
+            "MapProjAnim",
+            3,
+            5,
+            -2,
+            3,
+            -321,
+            456,
+            28,
+            32,
+            123,
+            234,
+            45,
+            67
+          ],
+          [
+            "SoundArea",
+            3,
+            5,
+            456,
+            7,
+            3
+          ],
+          [
+            "MapAnim",
+            3,
+            5,
+            456,
+            55,
+            7
+          ],
+          [
+            "LocAddChange",
+            3,
+            5,
+            10,
+            3,
+            456
+          ],
+          [
+            "ObjDel",
+            3,
+            5,
+            17767
+          ],
+          [
+            "LocDel",
+            3,
+            5,
+            10,
+            3
+          ]
+        ]
+      ]
     },
     {
       "name": "IfSetAngle",
@@ -2331,7 +10255,14 @@
         564
       ],
       "consumed": 8,
-      "engine_scalar_checks": 4
+      "engine_scalar_checks": 4,
+      "operation_fields": [
+        "SetAngle",
+        4660,
+        291,
+        564,
+        837
+      ]
     },
     {
       "name": "UpdateRebootTimer",
@@ -2359,7 +10290,11 @@
         123
       ],
       "consumed": 2,
-      "engine_scalar_checks": 1
+      "engine_scalar_checks": 1,
+      "operation_fields": [
+        "RebootTimer",
+        123
+      ]
     },
     {
       "name": "HintArrow",
@@ -2416,7 +10351,14 @@
         56
       ],
       "consumed": 6,
-      "engine_scalar_checks": 4
+      "engine_scalar_checks": 4,
+      "operation_fields": [
+        "HintTile",
+        4,
+        34,
+        35,
+        56
+      ]
     },
     {
       "name": "IfSetScrollPos",
@@ -2453,7 +10395,12 @@
         65080
       ],
       "consumed": 4,
-      "engine_scalar_checks": 2
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "SetScrollPos",
+        4660,
+        65080
+      ]
     },
     {
       "name": "ChatFilterSettings",
@@ -2499,7 +10446,13 @@
         0
       ],
       "consumed": 3,
-      "engine_scalar_checks": 3
+      "engine_scalar_checks": 3,
+      "operation_fields": [
+        "ChatFilter",
+        1,
+        2,
+        0
+      ]
     },
     {
       "name": "LocMerge",
@@ -2611,7 +10564,29 @@
         123
       ],
       "consumed": 14,
-      "engine_scalar_checks": 10
+      "engine_scalar_checks": 10,
+      "operation_fields": [
+        "Zone",
+        null,
+        false,
+        [
+          [
+            "LocMerge",
+            3,
+            5,
+            10,
+            3,
+            456,
+            -2,
+            3,
+            -1,
+            4,
+            321,
+            123,
+            234
+          ]
+        ]
+      ]
     },
     {
       "name": "UpdateInvFull",
@@ -4719,7 +12694,529 @@
         65537
       ],
       "consumed": 395,
-      "engine_scalar_checks": 261
+      "engine_scalar_checks": 261,
+      "operation_fields": [
+        "InventoryFull",
+        4660,
+        [
+          [
+            124,
+            2
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            235,
+            65537
+          ]
+        ]
+      ]
     },
     {
       "name": "ObjDel",
@@ -4756,7 +13253,20 @@
         53
       ],
       "consumed": 3,
-      "engine_scalar_checks": 2
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "Zone",
+        null,
+        false,
+        [
+          [
+            "ObjDel",
+            3,
+            5,
+            17767
+          ]
+        ]
+      ]
     },
     {
       "name": "IfSetModel",
@@ -4793,7 +13303,12 @@
         4660
       ],
       "consumed": 4,
-      "engine_scalar_checks": 2
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "SetModel",
+        4660,
+        9029
+      ]
     },
     {
       "name": "IfSetColour",
@@ -4830,7 +13345,12 @@
         17767
       ],
       "consumed": 4,
-      "engine_scalar_checks": 2
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "SetColour",
+        4660,
+        17767
+      ]
     },
     {
       "name": "UpdateInvStopTransmit",
@@ -4858,7 +13378,11 @@
         4660
       ],
       "consumed": 2,
-      "engine_scalar_checks": 1
+      "engine_scalar_checks": 1,
+      "operation_fields": [
+        "InventoryStopTransmit",
+        4660
+      ]
     },
     {
       "name": "MidiSong",
@@ -4886,7 +13410,53 @@
         234
       ],
       "consumed": 2,
-      "engine_scalar_checks": 1
+      "engine_scalar_checks": 1,
+      "operation_fields": [
+        "MidiSong",
+        234
+      ]
+    },
+    {
+      "name": "RebuildNormal",
+      "opcode": 222,
+      "origin": "original-engine-encoder",
+      "fields": {
+        "zoneZ": 401,
+        "zoneX": 400
+      },
+      "writes": [
+        {
+          "method": "p2",
+          "args": [
+            401
+          ]
+        },
+        {
+          "method": "p2_alt3",
+          "args": [
+            400
+          ]
+        }
+      ],
+      "declared_length": 4,
+      "estimated_length": 4,
+      "payload_hex": "01911001",
+      "reads": [
+        "g2",
+        "g2_alt3"
+      ],
+      "anchor": "src/main/java/jagex2/client/Client.java:8090-8095",
+      "java_values": [
+        401,
+        400
+      ],
+      "consumed": 4,
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "RebuildNormal",
+        400,
+        401
+      ]
     },
     {
       "name": "UpdateIgnoreList",
@@ -4925,7 +13495,14 @@
         "1234605616436508552"
       ],
       "consumed": 16,
-      "engine_scalar_checks": 2
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "IgnoreList",
+        [
+          "72623859790382856",
+          "1234605616436508552"
+        ]
+      ]
     },
     {
       "name": "IfSetText",
@@ -4962,7 +13539,12 @@
         "Fixture text"
       ],
       "consumed": 15,
-      "engine_scalar_checks": 2
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "SetText",
+        4660,
+        "Fixture text"
+      ]
     },
     {
       "name": "SetMultiway",
@@ -4990,7 +13572,11 @@
         1
       ],
       "consumed": 1,
-      "engine_scalar_checks": 1
+      "engine_scalar_checks": 1,
+      "operation_fields": [
+        "Multiway",
+        1
+      ]
     },
     {
       "name": "TutFlash",
@@ -5018,7 +13604,11 @@
         3
       ],
       "consumed": 1,
-      "engine_scalar_checks": 1
+      "engine_scalar_checks": 1,
+      "operation_fields": [
+        "TutFlash",
+        3
+      ]
     },
     {
       "name": "IfOpenSide",
@@ -5046,7 +13636,11 @@
         4660
       ],
       "consumed": 2,
-      "engine_scalar_checks": 1
+      "engine_scalar_checks": 1,
+      "operation_fields": [
+        "OpenSide",
+        4660
+      ]
     },
     {
       "name": "MidiJingle",
@@ -5083,7 +13677,12 @@
         1193046
       ],
       "consumed": 5,
-      "engine_scalar_checks": 2
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "MidiJingle",
+        234,
+        1193046
+      ]
     },
     {
       "name": "FriendlistLoaded",
@@ -5111,7 +13710,11 @@
         2
       ],
       "consumed": 1,
-      "engine_scalar_checks": 1
+      "engine_scalar_checks": 1,
+      "operation_fields": [
+        "FriendListLoaded",
+        2
+      ]
     },
     {
       "name": "IfSetTabActive",
@@ -5139,7 +13742,11 @@
         3
       ],
       "consumed": 1,
-      "engine_scalar_checks": 1
+      "engine_scalar_checks": 1,
+      "operation_fields": [
+        "SetTabActive",
+        3
+      ]
     },
     {
       "name": "IfOpenFull",
@@ -5176,7 +13783,12 @@
         4661
       ],
       "consumed": 4,
-      "engine_scalar_checks": 2
+      "engine_scalar_checks": 2,
+      "operation_fields": [
+        "OpenFull",
+        4663,
+        4661
+      ]
     },
     {
       "name": "IfSetPlayerHead",
@@ -5204,7 +13816,11 @@
         4660
       ],
       "consumed": 2,
-      "engine_scalar_checks": 1
+      "engine_scalar_checks": 1,
+      "operation_fields": [
+        "SetPlayerHead",
+        4660
+      ]
     }
   ]
 }
