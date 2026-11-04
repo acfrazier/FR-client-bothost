@@ -13,6 +13,7 @@ pub mod if_type_377;
 pub mod loc_type;
 pub mod npc_type;
 pub mod obj_type;
+pub mod runtime_377;
 pub mod seq_type;
 pub mod spot_type;
 pub mod varbit_type;
@@ -46,6 +47,14 @@ pub struct Cache {
     pub spots: Vec<SpotType>,
     pub varbits: Vec<VarBitType>,
     pub varps: Vec<VarpType>,
+    /// Lossless 377-only facts, absent for all existing revision loaders.
+    pub revision_377: Option<Box<CacheRevision377>>,
+}
+
+/// Revision-specific facts that have no field in the shared runtime tables.
+pub struct CacheRevision377 {
+    pub config: runtime_377::CacheFields377,
+    pub interfaces: runtime_377::InterfaceFields377,
 }
 
 impl Cache {
@@ -68,6 +77,7 @@ impl Cache {
             spots,
             varbits: VarBitType::unpack(jag),
             varps: VarpType::unpack(jag),
+            revision_377: None,
         }
     }
 
