@@ -16,6 +16,8 @@ pub enum ClientRevision {
     R274,
     /// Source-grounded 289 offline/live profile (explicit opt-in).
     R289,
+    /// Fairy Ring revision 377 (explicit standalone opt-in).
+    R377,
 }
 
 impl ClientRevision {
@@ -23,6 +25,7 @@ impl ClientRevision {
         match self {
             ClientRevision::R274 => 274,
             ClientRevision::R289 => 289,
+            ClientRevision::R377 => 377,
         }
     }
 
@@ -31,6 +34,7 @@ impl ClientRevision {
         match self {
             ClientRevision::R274 => &SERVER_PROT_SIZES,
             ClientRevision::R289 => &SERVER_PROT_SIZES_289,
+            ClientRevision::R377 => &SERVER_PROT_SIZES_377,
         }
     }
 
@@ -40,6 +44,10 @@ impl ClientRevision {
 
     pub fn is_289(self) -> bool {
         matches!(self, ClientRevision::R289)
+    }
+
+    pub fn is_377(self) -> bool {
+        matches!(self, ClientRevision::R377)
     }
 }
 
