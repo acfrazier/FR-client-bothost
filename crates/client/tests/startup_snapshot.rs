@@ -103,6 +103,7 @@ impl WorkerChild {
                 match revision {
                     ClientRevision::R274 => "274",
                     ClientRevision::R289 => "289",
+                    ClientRevision::R377 => "377",
                 },
             )
             .stdout(Stdio::piped())
