@@ -105,8 +105,8 @@ Select `quest`, `mining`, `combat`, `bank`, `prayer`, then `magic` in order.
 Each lesson requires the previous lesson's natural account state, saves
 per-step screenshots and `stages.json`, and writes `lesson.json` with real
 inventory/NPC/location inputs, outbound packets, and the server logout.
-The magic lesson walks back outside to the chicken cage before casting;
-the instructor's stone house can block a cast from the dialogue's final tile.
+The magic lesson approaches the chicken-facing window before casting;
+the instructor's dialogue tile can have a blocked line of sight.
 The magic lesson ends at Lumbridge (3222,3222) with the tutorial overlay closed.
 Explicit resume selections (`quest-run`, `combat-ranged`, `combat-shoot`,
 `combat-confirm`, `bank-exit`, `magic-success`) require their already-received
