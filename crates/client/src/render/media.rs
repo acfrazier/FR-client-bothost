@@ -9,7 +9,7 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::graphics::{Pix2D, Pix32, Pix8, PixFont, PixMap};
-use crate::io::JagFile;
+use crate::io::{ClientRevision, JagFile};
 
 /// The process-wide fonts + static media sprites, depacked once from the
 /// first cache dir that drew a frame. Everything here is immutable after
@@ -36,10 +36,11 @@ pub struct Media {
     /// `cross` (TS 1056-1058): the 8 click-crosshair frames from the
     /// `media` pack, `Pix32.depack('cross', i)`.
     pub cross: [Option<Pix32>; 8],
-    /// `hitmarks`/`headicons` from Java (256, 328): the damage hitmark and
-    /// overhead prayer sprites from the `media` jag.
     pub hitmarks: [Option<Pix32>; 20],
     pub headicons: [Option<Pix32>; 20],
+    /// The Java 377 hint-arrow sprites from `headicons_hint` (NPC arrow 0,
+    /// player arrow 1); distinct from the 274/289 `headicons` indices.
+    pub headicons_hint: [Option<Pix32>; 6],
     /// `invback`/`chatback`/`backbase1`/`backbase2`/`backhmid1`: the
     /// sprite plot sources for the interface and chat backgrounds.
     pub invback: Option<Pix8>,
@@ -118,6 +119,7 @@ impl Media {
             cross: [const { None }; 8],
             hitmarks: [const { None }; 20],
             headicons: [const { None }; 20],
+            headicons_hint: [const { None }; 6],
             invback: None,
             chatback: None,
             backbase1: None,
@@ -167,31 +169,31 @@ impl Media {
         EMPTY.get_or_init(|| Arc::new(Media::empty())).clone()
     }
 
-    /// The process copy, keyed by cache dir: the first head to draw on a
-    /// dir depacks once and every head on that dir clones the pointer (the
+    /// The process copy, keyed by cache dir and explicit revision: the first
+    /// head depacks once and every matching head clones the pointer (the
     /// one-copy-of-immutable rule — a second head never re-reads the
     /// jags). A test binary that mixes cache dirs (real pack vs no-pack
     /// temp dirs) gets its own copy per dir instead of poisoning the
     /// shared cell with the first dir's decode.
-    pub fn process(cache_dir: &str) -> Arc<Media> {
-        type MediaCell = Mutex<Option<(String, Arc<Media>)>>;
+    pub fn process(cache_dir: &str, revision: ClientRevision) -> Arc<Media> {
+        type MediaCell = Mutex<Option<(String, ClientRevision, Arc<Media>)>>;
         static MEDIA: OnceLock<MediaCell> = OnceLock::new();
         let cell = MEDIA.get_or_init(|| Mutex::new(None));
         let mut guard = cell.lock().unwrap();
-        if let Some((dir, media)) = &*guard {
-            if dir == cache_dir {
+        if let Some((dir, loaded_revision, media)) = &*guard {
+            if dir == cache_dir && *loaded_revision == revision {
                 return media.clone();
             }
         }
-        let media = Arc::new(Media::depack(cache_dir));
-        *guard = Some((cache_dir.to_string(), media.clone()));
+        let media = Arc::new(Media::depack(cache_dir, revision));
+        *guard = Some((cache_dir.to_string(), revision, media.clone()));
         media
     }
 
     /// The `title` jag fonts and every static `media` jag sprite
     /// (`prepare_game`/`prepare_title` from client-ts, moved to the shared
     /// copy). Runs once per process.
-    fn depack(cache_dir: &str) -> Media {
+    fn depack(cache_dir: &str, revision: ClientRevision) -> Media {
         let mut media = Media::empty();
 
         // Fonts + title content from the `title` jag, loaded once (TS
@@ -329,6 +331,11 @@ impl Media {
             }
             for i in 0..20 {
                 media.headicons[i] = Pix32::depack(&jag, "headicons", i as i32);
+            }
+            if revision.is_377() {
+                for i in 0..6 {
+                    media.headicons_hint[i] = Pix32::depack(&jag, "headicons_hint", i as i32);
+                }
             }
         }
 
