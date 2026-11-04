@@ -258,6 +258,15 @@ pub(crate) fn oploc1_377(packet: &mut Packet, x: i32, z: i32, location: i32) {
     p2_alt1(packet, z);
     p2_alt1(packet, location);
 }
+/// Emit Java `OPLOC2`: location id, scene x, then transformed scene z.
+///
+/// Java: `Client.java:10386-10392`.
+pub(crate) fn oploc2_377(packet: &mut Packet, x: i32, z: i32, location: i32) {
+    packet.p1_enc(ClientProt377::OPLOC2.id);
+    packet.p2(location);
+    packet.p2(x);
+    p2_alt2(packet, z);
+}
 /// Emit Java `OPLOCU`: selected item on a location.
 ///
 /// Java: `Client.java:9770-9779`.
@@ -306,6 +315,48 @@ pub(crate) fn opheldu_377(
 pub(crate) fn opnpc1_377(packet: &mut Packet, index: i32) {
     packet.p1_enc(ClientProt377::OPNPC1.id);
     p2_alt1(packet, index);
+}
+
+/// Emit Java `OPNPC2` with its transformed NPC index.
+///
+/// Java: `Client.java:9733-9744`.
+pub(crate) fn opnpc2_377(packet: &mut Packet, npc_index: i32) {
+    packet.p1_enc(ClientProt377::OPNPC2.id);
+    p2_alt2(packet, npc_index);
+}
+
+/// Emit Java `OPNPCT`: transformed selected component, then transformed NPC index.
+///
+/// Java: `Client.java:10018-10030`.
+pub(crate) fn opnpct_377(packet: &mut Packet, component_id: i32, npc_index: i32) {
+    packet.p1_enc(ClientProt377::OPNPCT.id);
+    p2_alt2(packet, component_id);
+    p2_alt1(packet, npc_index);
+}
+
+/// Emit Java `OPHELD2` for one inventory object.
+///
+/// Java: `Client.java:9857-9873`.
+pub(crate) fn opheld2_377(packet: &mut Packet, object_id: i32, slot: i32, component_id: i32) {
+    packet.p1_enc(ClientProt377::OPHELD2.id);
+    p2_alt1(packet, component_id);
+    p2_alt1(packet, object_id);
+    p2_alt2(packet, slot);
+}
+
+/// Emit Java `INV_BUTTON1`: transformed object id, component id, then slot.
+///
+/// Java: `Client.java:9780-9796`.
+pub(crate) fn inv_button1_377(
+    packet: &mut Packet,
+    object_id: i32,
+    slot: i32,
+    component_id: i32,
+) {
+    packet.p1_enc(ClientProt377::INV_BUTTON1.id);
+    p2_alt2(packet, object_id);
+    packet.p2(component_id);
+    packet.p2(slot);
 }
 
 /// Emit Java `RESUME_PAUSEBUTTON`: plain component id.
@@ -568,10 +619,57 @@ pub(crate) fn if_button(packet: &mut Packet, component_id: i32) {
     packet.p2(component_id);
 }
 
+/// Emit Java's bodyless `CLOSE_MODAL` packet from `closeInterfaces`.
+///
+/// Java: `Client.java:4567-4596`.
+pub(crate) fn close_modal_377(packet: &mut Packet) {
+    packet.p1_enc(ClientProt377::CLOSE_MODAL.id);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use super::super::{ClientConfig, ClientNpc, ClientPlayer, MiniMenuAction};
+    use crate::dash3d::LocShape;
+    use crate::io::{ClientProt, ClientRevision};
+
+    fn client_with_revision(revision: ClientRevision) -> Client {
+        Client::new_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                members: true,
+                lowmem: false,
+            },
+            revision,
+        )
+    }
+
+    fn set_menu_action(client: &mut Client, action: i32, a: i32, b: i32, c: i32) {
+        client.menu_action[0] = action;
+        client.menu_param_a[0] = a;
+        client.menu_param_b[0] = b;
+        client.menu_param_c[0] = c;
+    }
+
+    fn install_ground_decor(client: &mut Client, location_id: i32, x: i32, z: i32) -> i32 {
+        let typecode = location_id << 14;
+        client.world.set_ground_decor(
+            0,
+            x,
+            z,
+            0,
+            typecode,
+            LocShape::GROUND_DECOR,
+            0,
+            0,
+            0,
+            0,
+        );
+        typecode
+    }
     #[test]
     fn login_block_matches_java_377_literal() {
         // J:2701-2710 writes opcode 10, four seed words, signlink.uid,
@@ -693,6 +791,266 @@ mod tests {
             &[152, 0x34, 0x12, 0x45, 0x23, 0x56, 0x34, 0x67, 0x45, 0x56, 0x78, 0x09, 0x67]
         );
         assert_eq!(ClientProt377::OPLOCU.length, 12);
+    }
+
+    #[test]
+    fn tutorial_interaction_writers_match_java_377_literal_bytes() {
+        let mut packet = Packet::alloc_outbound(1);
+
+        oploc2_377(&mut packet, 0x2345, 0x3456, 0x1234);
+        assert_eq!(
+            &packet.data()[..packet.pos],
+            &[241, 0x12, 0x34, 0x23, 0x45, 0x34, 0xd6]
+        );
+        assert_eq!(ClientProt377::OPLOC2.length, 6);
+
+        packet.pos = 0;
+        opnpc2_377(&mut packet, 0x1234);
+        assert_eq!(&packet.data()[..packet.pos], &[67, 0x12, 0xb4]);
+        assert_eq!(ClientProt377::OPNPC2.length, 2);
+
+        packet.pos = 0;
+        opheld2_377(&mut packet, 0x1234, 0x2345, 0x3456);
+        assert_eq!(
+            &packet.data()[..packet.pos],
+            &[24, 0x56, 0x34, 0x34, 0x12, 0x23, 0xc5]
+        );
+        assert_eq!(ClientProt377::OPHELD2.length, 6);
+
+        packet.pos = 0;
+        inv_button1_377(&mut packet, 0x1234, 0x2345, 0x3456);
+        assert_eq!(
+            &packet.data()[..packet.pos],
+            &[3, 0x12, 0xb4, 0x34, 0x56, 0x23, 0x45]
+        );
+        assert_eq!(ClientProt377::INV_BUTTON1.length, 6);
+
+        packet.pos = 0;
+        opnpct_377(&mut packet, 0x3456, 0x1234);
+        assert_eq!(&packet.data()[..packet.pos], &[104, 0x34, 0xd6, 0x34, 0x12]);
+        assert_eq!(ClientProt377::OPNPCT.length, 4);
+
+        packet.pos = 0;
+        if_button(&mut packet, 0x3456);
+        assert_eq!(&packet.data()[..packet.pos], &[79, 0x34, 0x56]);
+        assert_eq!(ClientProt377::IF_BUTTON.length, 2);
+
+        packet.pos = 0;
+        close_modal_377(&mut packet);
+        assert_eq!(&packet.data()[..packet.pos], &[110]);
+        assert_eq!(ClientProt377::CLOSE_MODAL.length, 0);
+    }
+
+    #[test]
+    fn do_action_oploc2_uses_377_layout_without_274_anticheat() {
+        let mut client = client_with_revision(ClientRevision::R377);
+        let typecode = install_ground_decor(&mut client, 0x1234, 5, 5);
+        client.local_player = Some(ClientPlayer::at(5, 5));
+        client.oplogic1 = 138;
+        set_menu_action(&mut client, MiniMenuAction::OP_LOC2, typecode, 5, 5);
+
+        client.doAction(0);
+
+        let bytes = &client.out.data()[..client.out.pos];
+        assert_eq!(
+            &bytes[client.out.pos - 7..client.out.pos],
+            &[241, 0x12, 0x34, 0, 5, 0, 0x85]
+        );
+        assert_eq!(client.oplogic1, 138);
+        let legacy_anticheat = [
+            ClientProt::ANTICHEAT_OPLOGIC1.id as u8,
+            0,
+            0,
+            0,
+            0,
+        ];
+        assert!(!bytes
+            .windows(legacy_anticheat.len())
+            .any(|w| w == legacy_anticheat));
+
+        let mut legacy = client_with_revision(ClientRevision::R274);
+        let typecode = install_ground_decor(&mut legacy, 0x1234, 5, 5);
+        legacy.local_player = Some(ClientPlayer::at(5, 5));
+        legacy.oplogic1 = 138;
+        set_menu_action(&mut legacy, MiniMenuAction::OP_LOC2, typecode, 5, 5);
+
+        legacy.doAction(0);
+
+        let legacy_bytes = &legacy.out.data()[..legacy.out.pos];
+        assert!(legacy_bytes
+            .windows(5)
+            .any(|w| w == [ClientProt::ANTICHEAT_OPLOGIC1.id as u8, 0, 0, 0, 0]));
+        assert_eq!(
+            &legacy_bytes[legacy.out.pos - 7..legacy.out.pos],
+            &[ClientProt::OPLOC2.id as u8, 0, 5, 0, 5, 0x12, 0x34]
+        );
+    }
+
+    #[test]
+    fn do_action_npc2_and_spell_on_npc_keep_revision_specific_layouts() {
+        for (revision, opcode, transformed_index) in [
+            (ClientRevision::R377, 67, [0, 0xaa]),
+            (
+                ClientRevision::R274,
+                ClientProt::OPNPC2.id as u8,
+                [0, 42],
+            ),
+        ] {
+            let mut client = client_with_revision(revision);
+            client.local_player = Some(ClientPlayer::at(5, 5));
+            client.npc[42] = Some(Box::new(ClientNpc::at(5, 5)));
+            set_menu_action(&mut client, MiniMenuAction::OP_NPC2, 42, 0, 0);
+
+            client.doAction(0);
+
+            assert_eq!(
+                &client.out.data()[client.out.pos - 3..client.out.pos],
+                &[opcode, transformed_index[0], transformed_index[1]]
+            );
+        }
+
+        for (revision, expected) in [
+            (ClientRevision::R377, [104, 0x34, 0xd6, 42, 0]),
+            (
+                ClientRevision::R274,
+                [
+                    ClientProt::OPNPCT.id as u8,
+                    0,
+                    42,
+                    0x34,
+                    0x56,
+                ],
+            ),
+        ] {
+            let mut client = client_with_revision(revision);
+            client.local_player = Some(ClientPlayer::at(5, 5));
+            client.npc[42] = Some(Box::new(ClientNpc::at(5, 5)));
+            client.target_com_id = 0x3456;
+            set_menu_action(&mut client, MiniMenuAction::TGT_NPC, 42, 0, 0);
+
+            client.doAction(0);
+
+            assert_eq!(
+                &client.out.data()[client.out.pos - expected.len()..client.out.pos],
+                &expected
+            );
+        }
+    }
+
+    #[test]
+    fn do_action_held2_and_inventory_button1_keep_274_isolation() {
+        let mut client = client_with_revision(ClientRevision::R377);
+        set_menu_action(
+            &mut client,
+            MiniMenuAction::OP_HELD2,
+            0x1234,
+            0x2345,
+            0x3456,
+        );
+        client.doAction(0);
+        assert_eq!(
+            &client.out.data()[..client.out.pos],
+            &[24, 0x56, 0x34, 0x34, 0x12, 0x23, 0xc5]
+        );
+
+        let mut legacy = client_with_revision(ClientRevision::R274);
+        set_menu_action(
+            &mut legacy,
+            MiniMenuAction::OP_HELD2,
+            0x1234,
+            0x2345,
+            0x3456,
+        );
+        legacy.doAction(0);
+        assert_eq!(
+            &legacy.out.data()[..legacy.out.pos],
+            &[
+                ClientProt::OPHELD2.id as u8,
+                0x12,
+                0x34,
+                0x23,
+                0x45,
+                0x34,
+                0x56
+            ]
+        );
+
+        let mut client = client_with_revision(ClientRevision::R377);
+        client.oplogic6 = 132;
+        set_menu_action(
+            &mut client,
+            MiniMenuAction::INV_BUTTON1,
+            0x1234,
+            0x2345,
+            0x3456,
+        );
+        client.doAction(0);
+        assert_eq!(
+            &client.out.data()[..client.out.pos],
+            &[3, 0x12, 0xb4, 0x34, 0x56, 0x23, 0x45]
+        );
+        assert_eq!(client.oplogic6, 132);
+
+        let mut legacy = client_with_revision(ClientRevision::R274);
+        legacy.oplogic6 = 132;
+        set_menu_action(
+            &mut legacy,
+            MiniMenuAction::INV_BUTTON1,
+            0x1234,
+            0x2345,
+            0x3456,
+        );
+        legacy.doAction(0);
+        assert_eq!(
+            &legacy.out.data()[..legacy.out.pos],
+            &[
+                ClientProt::ANTICHEAT_OPLOGIC6.id as u8,
+                0x17,
+                0xe6,
+                ClientProt::INV_BUTTON1.id as u8,
+                0x12,
+                0x34,
+                0x23,
+                0x45,
+                0x34,
+                0x56
+            ]
+        );
+    }
+
+    #[test]
+    fn do_action_run_and_combat_buttons_and_close_use_revision_packet_ids() {
+        for action in [MiniMenuAction::TOGGLE_BUTTON, MiniMenuAction::SELECT_BUTTON] {
+            let mut client = client_with_revision(ClientRevision::R377);
+            set_menu_action(&mut client, action, 0, 0, 0x1234);
+            client.doAction(0);
+            assert_eq!(&client.out.data()[..client.out.pos], &[79, 0x12, 0x34]);
+
+            let mut legacy = client_with_revision(ClientRevision::R274);
+            set_menu_action(&mut legacy, action, 0, 0, 0x1234);
+            legacy.doAction(0);
+            assert_eq!(
+                &legacy.out.data()[..legacy.out.pos],
+                &[ClientProt::IF_BUTTON.id as u8, 0x12, 0x34]
+            );
+        }
+
+        let mut client = client_with_revision(ClientRevision::R377);
+        client.main_modal_id = 17;
+        set_menu_action(&mut client, MiniMenuAction::CLOSE_BUTTON, 0, 0, 0);
+        client.doAction(0);
+        assert_eq!(&client.out.data()[..client.out.pos], &[110]);
+        assert_eq!(client.main_modal_id, -1);
+
+        let mut legacy = client_with_revision(ClientRevision::R274);
+        legacy.main_modal_id = 17;
+        set_menu_action(&mut legacy, MiniMenuAction::CLOSE_BUTTON, 0, 0, 0);
+        legacy.doAction(0);
+        assert_eq!(
+            &legacy.out.data()[..legacy.out.pos],
+            &[ClientProt::CLOSE_MODAL.id as u8]
+        );
+        assert_eq!(legacy.main_modal_id, -1);
     }
 
     #[test]
