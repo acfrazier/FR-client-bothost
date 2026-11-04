@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Verify generated revision-377 metadata against Java, fixtures and the engine.
 
-The Java source is required. --engine-root adds an independent opcode/length
-cross-check against ClientGameProt.ts. --cache-dir checks the real JAG inputs
-and byte-for-byte regeneration as well. No product files are changed.
+The Java source is required and supplies every opcode and length on each run.
+--engine-root adds an independent cross-check against ClientGameProt.ts.
+--cache-dir also checks real JAG inputs and byte-for-byte regeneration.
+No product files are changed.
 """
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ import json
 import re
 from pathlib import Path
 
-from generate_revision_377_contract import products
+from generate_revision_377_contract import products, protocol_contract
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "docs/revision-377/protocol-377.json"
@@ -31,6 +32,7 @@ def verify(java: Path, engine: Path | None, cache: Path | None) -> str:
     for name, digest in contract["source_pin"]["sha256"].items():
         require(hashlib.sha256((java / name).read_bytes()).hexdigest() == digest,
                 f"Java source changed: {name}")
+    require(contract == protocol_contract(java), "protocol contract differs from Java source")
     protocol = (java / "src/main/java/jagex2/io/Protocol.java").read_text()
     array = protocol.split("SERVERPROT_LENGTH = new int[] {", 1)[1].split("}", 1)[0]
     java_sizes = [int(value) for value in array.split(",")]
@@ -81,7 +83,7 @@ def verify(java: Path, engine: Path | None, cache: Path | None) -> str:
     require([row["crc_slot"] for row in cache_fixture["archives"]] == list(range(1, 9)), "bad cache slots")
     require(sum(len(row["members"]) for row in cache_fixture["archives"]) > 0, "empty cache oracle")
 
-    checks = ["Java source hashes and complete opcode coverage", "Rust tables", "5 framing fixtures"]
+    checks = ["Java-derived lengths and complete opcode coverage", "Rust tables", "5 framing fixtures"]
     if engine is not None:
         path = engine / "src/network/game/client/ClientGameProt.ts"
         table = {int(opcode): int(size) for opcode, size in
