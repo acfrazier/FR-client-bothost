@@ -69,7 +69,7 @@ impl Client {
         payload: &mut Packet,
     ) -> Result<(), String> {
         let opcode = u8::try_from(opcode).map_err(|_| "377 opcode outside byte range")?;
-        // Exact Java login, guide-dialogue and first survival-task cohort.
+        // Java login, guide-dialogue, survival and early cooking cohort.
         if !matches!(
             opcode,
             2 | 5
@@ -88,6 +88,7 @@ impl Client {
                 | 82
                 | 88
                 | 90
+                | 107
                 | 109
                 | 113
                 | 115
@@ -109,12 +110,14 @@ impl Client {
                 | 199
                 | 201
                 | 206
+                | 208
                 | 220
                 | 222
                 | 226
                 | 232
                 | 238
                 | 251
+                | 255
         ) {
             return Err(format!(
                 "377 packet {opcode}: outside captured runtime cohort"
@@ -188,15 +191,23 @@ impl Client {
             }
             O::Zone(frame)
                 if !(0..4).contains(&self.minusedlevel)
-                    || frame
-                        .operations()
-                        .iter()
-                        .any(|op| !matches!(op, Z::LocAddChange { .. } | Z::LocDel { .. })) =>
+                    || frame.operations().iter().any(|op| {
+                        !matches!(
+                            op,
+                            Z::LocAddChange { .. }
+                                | Z::LocDel { .. }
+                                | Z::ObjAdd { .. }
+                                | Z::ObjDel { .. }
+                        )
+                    }) =>
             {
-                return Err("377 zone outside tutorial location cohort".into())
+                return Err("377 zone outside tutorial location/object cohort".into())
             }
             O::Rebuild(Rebuild377::Instance { .. }) => {
                 return Err("377 instance rebuild not in captured cohort".into())
+            }
+            O::Interface(I::SetPlayerHead { .. }) if self.local_player.is_none() => {
+                return Err("377 player dialogue head without local player".into())
             }
             O::InventoryFull { component, .. } | O::InventoryPartial { component, .. } => {
                 let valid = self.if_(*component as usize).is_some_and(|com| {
@@ -281,30 +292,78 @@ impl Client {
                     }
                 }
                 for operation in frame.operations() {
-                    let (tile, shape, angle, location) = match operation {
-                        Z::LocAddChange {
-                            tile,
-                            shape,
-                            angle,
-                            location,
-                        } => (tile, *shape, *angle, *location),
-                        Z::LocDel { tile, shape, angle } => (tile, *shape, *angle, -1),
+                    let tile = match operation {
+                        Z::LocAddChange { tile, .. }
+                        | Z::LocDel { tile, .. }
+                        | Z::ObjAdd { tile, .. }
+                        | Z::ObjDel { tile, .. } => tile,
                         _ => unreachable!("preflight rejects other zone operations"),
                     };
                     let x = self.zone_update_x + tile.x;
                     let z = self.zone_update_z + tile.z;
-                    if (0..104).contains(&x) && (0..104).contains(&z) {
-                        self.loc_change_create(
-                            self.minusedlevel,
-                            x,
-                            z,
-                            LOC_SHAPE_TO_LAYER[shape as usize],
-                            location,
+                    if !(0..104).contains(&x) || !(0..104).contains(&z) {
+                        continue;
+                    }
+                    match operation {
+                        Z::ObjAdd { object, count, .. } => {
+                            // Java Client.java:8717-8733: append and sort.
+                            self.ground_obj[self.minusedlevel as usize][x as usize][z as usize]
+                                .get_or_insert_with(|| Box::new(LinkList::new()))
+                                .push(ClientObj::new(*object, *count));
+                            self.show_object(x, z);
+                        }
+                        Z::ObjDel { object, .. } => {
+                            // Java Client.java:8822-8842 removes only the first
+                            // matching ID, then clears an empty stack and sorts.
+                            let cell = &mut self.ground_obj[self.minusedlevel as usize][x as usize]
+                                [z as usize];
+                            if let Some(objects) = cell {
+                                let mut node = objects.head();
+                                while let Some(obj) = node {
+                                    if obj.id == *object {
+                                        objects.unlink_last();
+                                        break;
+                                    }
+                                    node = objects.next_node();
+                                }
+                                if objects.head().is_none() {
+                                    *cell = None;
+                                }
+                                self.show_object(x, z);
+                            }
+                        }
+                        Z::LocAddChange {
                             shape,
                             angle,
-                            0,
-                            -1,
-                        );
+                            location,
+                            ..
+                        } => {
+                            self.loc_change_create(
+                                self.minusedlevel,
+                                x,
+                                z,
+                                LOC_SHAPE_TO_LAYER[*shape as usize],
+                                *location,
+                                *shape,
+                                *angle,
+                                0,
+                                -1,
+                            );
+                        }
+                        Z::LocDel { shape, angle, .. } => {
+                            self.loc_change_create(
+                                self.minusedlevel,
+                                x,
+                                z,
+                                LOC_SHAPE_TO_LAYER[*shape as usize],
+                                -1,
+                                *shape,
+                                *angle,
+                                0,
+                                -1,
+                            );
+                        }
+                        _ => unreachable!("preflight rejects other zone operations"),
                     }
                 }
                 p.scene = true;
@@ -339,6 +398,24 @@ impl Client {
                             com.model1_type = 2;
                             com.model1_id = npc;
                         }
+                    }
+                    I::SetPlayerHead { component } => {
+                        // Java Client.java:7905-7915 uses Java int arithmetic
+                        // for the appearance-based component model-cache key.
+                        let player = self.local_player.as_ref().unwrap();
+                        let head = if let Some(npc) = player.transmog {
+                            (npc as i32).wrapping_add(305419896)
+                        } else {
+                            (i32::from(player.appearance[11]) << 5)
+                                .wrapping_add(i32::from(player.appearance[8]) << 10)
+                                .wrapping_add(i32::from(player.appearance[0]) << 15)
+                                .wrapping_add(i32::from(player.colour[0]) << 25)
+                                .wrapping_add(i32::from(player.colour[4]) << 20)
+                                .wrapping_add(i32::from(player.appearance[1]))
+                        };
+                        let com = self.iface_mut(component as usize).unwrap();
+                        com.model1_type = 3;
+                        com.model1_id = head;
                     }
                     I::SetObject {
                         component,
@@ -1292,6 +1369,118 @@ mod tests {
             (change.new_type, change.new_shape, change.new_angle),
             (-1, 10, 1)
         );
+    }
+
+    #[test]
+    fn firemaking_ground_logs_add_delete_and_validate_transactionally() {
+        let mut cache = Cache::default();
+        cache.objs.resize_with(2, Default::default);
+        let mut client = client_with_cache(cache);
+        client.zone_update_x = 8;
+        client.zone_update_z = 16;
+        // Java g2(object), g1_alt2(tile 2,3), g2_alt2(count).
+        let mut add = Packet::new(vec![0, 1, 221, 0, 131]);
+        let generation = client.gens.scene;
+        client.dispatch_packet_377(107, &mut add).unwrap();
+        assert_eq!(client.gens.scene, generation + 1);
+        let objects = client.ground_obj[0][10][19].as_mut().unwrap();
+        let obj = objects.head().unwrap();
+        assert_eq!((obj.id, obj.count), (1, 3));
+        assert!(objects.next_node().is_none());
+        assert_eq!(
+            client.world.ground_object_at(0, 10, 19).unwrap().top,
+            Some((1, 3))
+        );
+
+        // A second same-ID node survives the first deletion.
+        let mut duplicate = Packet::new(vec![0, 1, 221, 0, 132]);
+        client.dispatch_packet_377(107, &mut duplicate).unwrap();
+        let generation = client.gens.scene;
+        for (opcode, bytes) in [
+            (107, vec![0, 2, 221, 0, 129]),
+            (107, vec![0, 1, 221, 0]),
+            (208, vec![0, 130, 163]),
+            (208, vec![0, 129]),
+        ] {
+            let mut invalid = Packet::new(bytes);
+            assert!(client.dispatch_packet_377(opcode, &mut invalid).is_err());
+            assert_eq!(invalid.pos, 0);
+            assert_eq!(client.gens.scene, generation);
+        }
+        // Deletion masks bit 15 and uses g1_alt1(tile).
+        let mut delete = Packet::new(vec![128, 129, 163]);
+        client.dispatch_packet_377(208, &mut delete).unwrap();
+        let objects = client.ground_obj[0][10][19].as_mut().unwrap();
+        assert_eq!(objects.head().unwrap().id, 1);
+        assert!(objects.next_node().is_none());
+        let mut delete = Packet::new(vec![0, 129, 163]);
+        client.dispatch_packet_377(208, &mut delete).unwrap();
+        assert!(client.ground_obj[0][10][19].is_none());
+        assert!(client.world.ground_object_at(0, 10, 19).is_none());
+    }
+
+    #[test]
+    fn enclosed_firemaking_batch_rejects_late_invalid_and_unsupported_children() {
+        let mut cache = Cache::default();
+        cache.objs.push(Default::default());
+        let mut client = client_with_cache(cache);
+        for suffix in [
+            vec![107, 0, 1, 221, 0, 129],    // invalid second object
+            vec![121, 35, 0, 0, 0, 1, 0, 2], // outside accepted apply cohort
+        ] {
+            let mut batch = vec![8, 144, 107, 0, 0, 221, 0, 129];
+            batch.extend(suffix);
+            let mut packet = Packet::new(batch);
+            let generation = client.gens.scene;
+            assert!(client.dispatch_packet_377(183, &mut packet).is_err());
+            assert_eq!(packet.pos, 0);
+            assert_eq!(client.gens.scene, generation);
+            assert_eq!((client.zone_update_x, client.zone_update_z), (0, 0));
+            assert!(client.ground_obj[0][10][19].is_none());
+        }
+        let mut packet = Packet::new(vec![8, 144, 107, 0, 0, 221, 0, 129, 208, 0, 128, 163]);
+        client.dispatch_packet_377(183, &mut packet).unwrap();
+        assert_eq!((client.zone_update_x, client.zone_update_z), (8, 16));
+        assert!(client.ground_obj[0][10][19].is_none());
+        assert!(client.world.ground_object_at(0, 10, 19).is_none());
+    }
+
+    #[test]
+    fn chef_player_dialogue_head_matches_java_hash_and_validates_before_apply() {
+        let mut client = client();
+        client.set_iface(301, IfType::default());
+        let player = client.local_player.as_mut().unwrap();
+        player.appearance[11] = 257;
+        player.appearance[8] = 258;
+        player.appearance[0] = 259;
+        player.appearance[1] = 260;
+        player.colour[0] = 2;
+        player.colour[4] = 3;
+        let mut packet = Packet::new(vec![173, 1]);
+        let generation = client.gens.iface;
+        client.dispatch_packet_377(255, &mut packet).unwrap();
+        assert_eq!(packet.pos, 2);
+        assert_eq!(client.gens.iface, generation + 1);
+        let component = client.if_(301).unwrap();
+        assert_eq!((component.model1_type, component.model1_id), (3, 79014180));
+        client.local_player.as_mut().unwrap().transmog = Some(943);
+        let mut packet = Packet::new(vec![173, 1]);
+        client.dispatch_packet_377(255, &mut packet).unwrap();
+        assert_eq!(client.if_(301).unwrap().model1_id, 305420839);
+        let generation = client.gens.iface;
+        for bytes in [vec![173], vec![128, 255]] {
+            let mut invalid = Packet::new(bytes);
+            assert!(client.dispatch_packet_377(255, &mut invalid).is_err());
+            assert_eq!(invalid.pos, 0);
+            assert_eq!(client.gens.iface, generation);
+            assert_eq!(client.if_(301).unwrap().model1_id, 305420839);
+        }
+        client.local_player = None;
+        let mut invalid = Packet::new(vec![173, 1]);
+        assert!(client.dispatch_packet_377(255, &mut invalid).is_err());
+        assert_eq!(invalid.pos, 0);
+        assert_eq!(client.gens.iface, generation);
+        assert_eq!(client.if_(301).unwrap().model1_id, 305420839);
     }
 
     #[test]

@@ -300,7 +300,6 @@ pub(crate) fn opheldu_377(
     p2_alt2(packet, target_interface);
 }
 
-
 /// Emit Java `OPNPC1`: transformed NPC index.
 ///
 /// Java: `Client.java:10456-10459`.
@@ -679,9 +678,7 @@ mod tests {
 
         assert_eq!(
             &packet.data()[..packet.pos],
-            &[
-                1, 0x12, 0x34, 0x45, 0x23, 0x56, 0x34, 0xe7, 0x45, 0xf8, 0x56, 0x89, 0x67,
-            ]
+            &[1, 0x12, 0x34, 0x45, 0x23, 0x56, 0x34, 0xe7, 0x45, 0x56, 0xf8, 0x67, 0x09]
         );
         assert_eq!(ClientProt377::OPHELDU.length, 12);
     }
@@ -693,18 +690,15 @@ mod tests {
 
         assert_eq!(
             &packet.data()[..packet.pos],
-            &[
-                152, 0x34, 0x12, 0x45, 0x23, 0x56, 0x34, 0x67, 0x45, 0x78, 0x56, 0x09, 0x67,
-            ]
+            &[152, 0x34, 0x12, 0x45, 0x23, 0x56, 0x34, 0x67, 0x45, 0x56, 0x78, 0x09, 0x67]
         );
         assert_eq!(ClientProt377::OPLOCU.length, 12);
     }
 
-
     #[test]
     fn use_held_on_held_do_action_routes_377_and_marks_target() {
-        use crate::io::ClientRevision;
         use super::super::{ClientConfig, MiniMenuAction};
+        use crate::io::ClientRevision;
 
         let mut client = Client::new_with_revision(
             ClientConfig {
@@ -723,25 +717,26 @@ mod tests {
         client.obj_com_id = 0x3456;
         client.obj_selected_slot = 0x2345;
         client.obj_selected_com_id = 0x4567;
+        client.use_mode = 1;
+        client.target_mode = 1;
 
         client.doAction(0);
 
         assert_eq!(
             &client.out.data()[..client.out.pos],
-            &[
-                1, 0x12, 0x34, 0x45, 0x23, 0x56, 0x34, 0xe7, 0x45, 0xf8, 0x56, 0x89, 0x67,
-            ]
+            &[1, 0x67, 0x89, 0x45, 0x23, 0x56, 0x34, 0xe7, 0x45, 0x56, 0xf8, 0x12, 0xb4]
         );
         assert_eq!(client.selected_cycle, 0);
-        assert_eq!(client.selected_interface, 0x6789);
+        assert_eq!(client.selected_com_id, 0x1234);
         assert_eq!(client.selected_item, 0x5678);
         assert_eq!(client.selected_area, 2);
+        assert_eq!((client.use_mode, client.target_mode), (0, 0));
     }
 
     #[test]
     fn use_held_on_held_keeps_274_wire_path() {
-        use crate::io::ClientRevision;
         use super::super::{ClientConfig, MiniMenuAction};
+        use crate::io::ClientRevision;
 
         let mut client = Client::new_with_revision(
             ClientConfig {
