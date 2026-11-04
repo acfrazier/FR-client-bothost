@@ -258,6 +258,48 @@ pub(crate) fn oploc1_377(packet: &mut Packet, x: i32, z: i32, location: i32) {
     p2_alt1(packet, z);
     p2_alt1(packet, location);
 }
+/// Emit Java `OPLOCU`: selected item on a location.
+///
+/// Java: `Client.java:9770-9779`.
+pub(crate) fn oplocu_377(
+    packet: &mut Packet,
+    location: i32,
+    selected_interface: i32,
+    item_id: i32,
+    z: i32,
+    selected_slot: i32,
+    x: i32,
+) {
+    packet.p1_enc(ClientProt377::OPLOCU.id);
+    p2_alt1(packet, location);
+    p2_alt1(packet, selected_interface);
+    p2_alt1(packet, item_id);
+    p2_alt1(packet, z);
+    packet.p2(selected_slot);
+    p2_alt3(packet, x);
+}
+
+/// Emit Java `OPHELDU`: selected item on another inventory item.
+///
+/// Java: `Client.java:9922-9940`.
+pub(crate) fn opheldu_377(
+    packet: &mut Packet,
+    target_item_id: i32,
+    selected_slot: i32,
+    item_id: i32,
+    selected_interface: i32,
+    target_slot: i32,
+    target_interface: i32,
+) {
+    packet.p1_enc(ClientProt377::OPHELDU.id);
+    packet.p2(target_item_id);
+    p2_alt1(packet, selected_slot);
+    p2_alt1(packet, item_id);
+    p2_alt3(packet, selected_interface);
+    p2_alt2(packet, target_slot);
+    p2_alt2(packet, target_interface);
+}
+
 
 /// Emit Java `OPNPC1`: transformed NPC index.
 ///
@@ -443,6 +485,11 @@ fn p2_alt1(packet: &mut Packet, value: i32) {
     packet.p1(value >> 8);
 }
 
+fn p2_alt2(packet: &mut Packet, value: i32) {
+    packet.p1(value >> 8);
+    packet.p1(value.wrapping_add(128));
+}
+
 fn p2_alt3(packet: &mut Packet, value: i32) {
     packet.p1(value.wrapping_add(128));
     packet.p1(value >> 8);
@@ -625,6 +672,34 @@ mod tests {
             &[181, 0x0c, 0x9a, 0x23, 0x0c, 0xc6, 0x0b]
         );
     }
+    #[test]
+    fn use_held_on_held_matches_java_377_literal() {
+        let mut packet = Packet::alloc_outbound(1);
+        opheldu_377(&mut packet, 0x1234, 0x2345, 0x3456, 0x4567, 0x5678, 0x6789);
+
+        assert_eq!(
+            &packet.data()[..packet.pos],
+            &[
+                1, 0x12, 0x34, 0x45, 0x23, 0x56, 0x34, 0xe7, 0x45, 0xf8, 0x56, 0x89, 0x67,
+            ]
+        );
+        assert_eq!(ClientProt377::OPHELDU.length, 12);
+    }
+
+    #[test]
+    fn use_held_on_location_matches_java_377_literal() {
+        let mut packet = Packet::alloc_outbound(1);
+        oplocu_377(&mut packet, 0x1234, 0x2345, 0x3456, 0x4567, 0x5678, 0x6789);
+
+        assert_eq!(
+            &packet.data()[..packet.pos],
+            &[
+                152, 0x34, 0x12, 0x45, 0x23, 0x56, 0x34, 0x67, 0x45, 0x78, 0x56, 0x09, 0x67,
+            ]
+        );
+        assert_eq!(ClientProt377::OPLOCU.length, 12);
+    }
+
 
     #[test]
     fn movement_writers_match_377_literal_bytes_and_lengths() {
