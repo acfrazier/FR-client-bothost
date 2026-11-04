@@ -4641,12 +4641,12 @@ impl Client {
             if self.revision().is_377() {
                 super::outbound_377::opheldu_377(
                     &mut self.out,
-                    c,
+                    a,
                     self.obj_selected_slot,
                     self.obj_com_id,
                     self.obj_selected_com_id,
                     b,
-                    a,
+                    c,
                 );
             } else {
                 self.out.p1_enc(self.client_opcode(ClientProt::OPHELDU));
