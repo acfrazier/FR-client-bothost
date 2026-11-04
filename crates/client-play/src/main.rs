@@ -1,6 +1,6 @@
 //! `client-play`: log into a local engine over TCP and run the client machine
-//! on the calling thread. Revision 274 is the default; pass `--revision 289`
-//! to opt into the source-grounded 289 profile. `--user/--pass`
+//! on the calling thread. Revision 274 is the default. Pass `--revision 289`
+//! or `--revision 377` for an explicit revision profile. `--user/--pass`
 //! skip title login; without them the title screen is the control plane.
 //! `--window` presents the 765×503 applet (feature `window`, highmem);
 //! omit it for headless (lowmem, bot-host default). `--lowmem`/`--highmem`
@@ -87,6 +87,7 @@ where
                 args.revision = match value(&mut it).ok_or(())?.as_str() {
                     "274" => ClientRevision::R274,
                     "289" => ClientRevision::R289,
+                    "377" => ClientRevision::R377,
                     _ => return Err(()),
                 };
             }
@@ -113,7 +114,7 @@ fn usage() -> ! {
     eprintln!(
         "usage: client-play [--user USER --pass PASS] \
          [--host HOST] [--port PORT] [--http-port PORT] [--cache DIR] \
-         [--revision 274|289] \
+         [--revision 274|289|377] \
          [--window] [--audio] [--cpu] [--lowmem|--highmem]"
     );
     std::process::exit(2);
@@ -284,6 +285,12 @@ mod tests {
         let args = parse_args_from(argv(&["--revision", "289", "--port", "1234"])).unwrap();
         assert_eq!(args.revision, ClientRevision::R289);
         assert_eq!(args.port, 1234);
+    }
+
+    #[test]
+    fn revision_accepts_377_explicitly() {
+        let args = parse_args_from(argv(&["--revision", "377"])).unwrap();
+        assert_eq!(args.revision, ClientRevision::R377);
     }
 
     #[test]
