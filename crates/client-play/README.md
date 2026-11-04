@@ -105,6 +105,9 @@ Select `quest`, `mining`, `combat`, `bank`, `prayer`, then `magic` in order.
 Each lesson requires the previous lesson's natural account state, saves
 per-step screenshots and `stages.json`, and writes `lesson.json` with real
 inventory/NPC/location inputs, outbound packets, and the server logout.
+Natural rat loot uses `OBJ_REVEAL` (106), including enclosed zone batches (183).
+The 377 path validates complete batches before applying their ground stacks.
+It preserves Java's receiver guard instead of duplicating the owner's stack.
 The magic lesson approaches the chicken-facing window before casting;
 the instructor's dialogue tile can have a blocked line of sight.
 The magic lesson ends at Lumbridge (3222,3222) with the tutorial overlay closed.
