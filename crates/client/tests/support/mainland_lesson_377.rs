@@ -1,6 +1,6 @@
 use super::*;
 
-const QUEST_COOK_VARP: i32 = 29;
+const QUEST_COOK_VARP: usize = 29;
 const COINS: i32 = 995;
 const BRONZE_DAGGER: i32 = 1205;
 const BRONZE_SWORD: i32 = 1277;
@@ -29,9 +29,7 @@ pub(super) fn interface_components(c: &Client, layer: i32) -> Vec<Value> {
     c.ifaces_merged()
         .filter(|i| {
             i.layer_id == layer
-                && (!i.text.is_empty()
-                    || !i.button_text.is_empty()
-                    || i.link_obj_type.is_some())
+                && (!i.text.is_empty() || !i.button_text.is_empty() || i.link_obj_type.is_some())
         })
         .map(|i| {
             json!({"component":i.id,"type":i.r#type,"button_type":i.button_type,
@@ -95,12 +93,7 @@ fn save_mainland_stage(
     .unwrap();
 }
 
-fn walk_route(
-    c: &mut Client,
-    r: &mut Renderer,
-    target: (i32, i32),
-    actions: &mut Vec<Value>,
-) {
+fn walk_route(c: &mut Client, r: &mut Renderer, target: (i32, i32), actions: &mut Vec<Value>) {
     for _ in 0..100 {
         let current = tile(c);
         let dx = target.0 - current.0;
@@ -116,7 +109,11 @@ fn walk_route(
         );
         tutorial_lesson_377::walk_to(c, r, next, actions);
     }
-    assert_eq!(tile(c), target, "minimap route reached its content waypoint");
+    assert_eq!(
+        tile(c),
+        target,
+        "minimap route reached its content waypoint"
+    );
 }
 
 fn loaded_location(
@@ -173,9 +170,9 @@ fn loaded_location(
             }
         }
     }
-    found.into_iter().min_by_key(|location| {
-        (location.x - player.0).abs() + (location.z - player.1).abs()
-    })
+    found
+        .into_iter()
+        .min_by_key(|location| (location.x - player.0).abs() + (location.z - player.1).abs())
 }
 
 fn operate_loaded_location(c: &mut Client, location: LoadedLocation) -> Value {
@@ -253,7 +250,14 @@ fn choose_chat_option(c: &mut Client, r: &mut Renderer, expected: &str) -> Value
                 && i.button_type != 0
                 && (i.button_text.contains(expected) || i.text.contains(expected))
         })
-        .map(|i| (i.id, i.button_type, i.text.to_string(), i.button_text.clone()))
+        .map(|i| {
+            (
+                i.id,
+                i.button_type,
+                i.text.to_string(),
+                i.button_text.clone(),
+            )
+        })
         .unwrap_or_else(|| panic!("real dialogue option {expected:?} exists: {}", body(c)));
     let receipt = json!({"component":component,"button_type":button_type,
         "text":text,"button_text":button_text,"option":expected,
@@ -276,7 +280,10 @@ fn dismiss_chat(c: &mut Client, r: &mut Renderer) {
         continue_chat(c, r);
         pump_until(c, r, 12, |c| c.chat_modal_id < 0 || body(c) != previous);
     }
-    assert!(c.chat_modal_id < 0, "server dialogue completed before next action");
+    assert!(
+        c.chat_modal_id < 0,
+        "server dialogue completed before next action"
+    );
 }
 
 fn shop_inventory_component(c: &Client, side: bool) -> (i32, Vec<i32>, Vec<i32>) {
@@ -294,12 +301,20 @@ fn shop_inventory_component(c: &Client, side: bool) -> (i32, Vec<i32>, Vec<i32>)
                 i.link_obj_number.as_ref().unwrap().to_vec(),
             )
         })
-        .unwrap_or_else(|| panic!("actual {} shop inventory component is open", if side { "player" } else { "stock" }))
+        .unwrap_or_else(|| {
+            panic!(
+                "actual {} shop inventory component is open",
+                if side { "player" } else { "stock" }
+            )
+        })
 }
 
 fn shop_side_player_inventory(c: &Client) -> i32 {
     let player = c.if_(3214).expect("player inventory exists");
-    let types = player.link_obj_type.as_deref().expect("player inventory slots");
+    let types = player
+        .link_obj_type
+        .as_deref()
+        .expect("player inventory slots");
     let counts = player
         .link_obj_number
         .as_deref()
@@ -323,7 +338,13 @@ fn shop_slot(types: &[i32], counts: &[i32], object: i32) -> i32 {
         .expect("actual shop or inventory item slot exists")
 }
 
-fn shop_inventory_button(c: &mut Client, component: i32, slot: i32, object: i32, option: &str) -> Value {
+fn shop_inventory_button(
+    c: &mut Client,
+    component: i32,
+    slot: i32,
+    object: i32,
+    option: &str,
+) -> Value {
     let receipt = json!({"object":object,"name":c.cache.objs[object as usize].name,
         "slot":slot,"component":component,"option":option,
         "input":"production doAction(INV_BUTTON2) on received shop inventory slot"});
@@ -392,7 +413,11 @@ fn cook_journal_row(c: &Client) -> (i32, i32, String) {
                     || i.text.to_ascii_lowercase().contains("cook"))
         })
         .expect("quest list exposes the real Cook quest component");
-    (row.id, row.colour, format!("{}{}", row.text, row.button_text))
+    (
+        row.id,
+        row.colour,
+        format!("{}{}", row.text, row.button_text),
+    )
 }
 
 fn open_cook_journal(
@@ -422,7 +447,6 @@ fn chat_contains(c: &Client, expected: &str) -> bool {
     c.chat_text.iter().any(|text| text.contains(expected))
 }
 
-
 fn climb_windmill(
     c: &mut Client,
     r: &mut Renderer,
@@ -433,8 +457,13 @@ fn climb_windmill(
 ) {
     let option = if up { "Climb-up" } else { "Climb-down" };
     let before = c.minusedlevel;
-    let location = loaded_location(c, "ladder", Some(option), Some((WINDMILL_FLOOR.0, WINDMILL_FLOOR.1, 14)))
-        .unwrap_or_else(|| panic!("windmill ladder has {option}: {}", state(c)));
+    let location = loaded_location(
+        c,
+        "ladder",
+        Some(option),
+        Some((WINDMILL_FLOOR.0, WINDMILL_FLOOR.1, 14)),
+    )
+    .unwrap_or_else(|| panic!("windmill ladder has {option}: {}", state(c)));
     actions.push(operate_loaded_location(c, location));
     pump_until(c, r, 30, |c| {
         if up {
@@ -455,7 +484,8 @@ fn climb_windmill(
 #[test]
 #[ignore = "requires orchestrator-started Fairy Ring 377 engine and naturally progressed Lumbridge t2a account"]
 fn natural_lumbridge_cook_quest_and_shop_377() {
-    let root = PathBuf::from(std::env::var("CLIENT_377_LIVE_DIR").expect("explicit evidence directory"));
+    let root =
+        PathBuf::from(std::env::var("CLIENT_377_LIVE_DIR").expect("explicit evidence directory"));
     let cache = std::env::var("CLIENT_377_RUNTIME_CACHE_DIR").expect("matched running cache");
     let user = std::env::var("CLIENT_377_LIVE_USER").expect("explicit t2a account");
     assert!(user.starts_with("t2a"));
@@ -485,12 +515,25 @@ fn natural_lumbridge_cook_quest_and_shop_377() {
     c.out.set_observer(Some(outbound.clone()));
     c.set_login_deadline(Instant::now() + Duration::from_secs(10));
     c.login(&user, "t2apass", false).unwrap();
-    pump_until(&mut c, &mut r, 90, |c| c.scene_state == 2 && c.npc_count > 0);
+    pump_until(&mut c, &mut r, 90, |c| {
+        c.scene_state == 2 && c.npc_count > 0
+    });
 
-    assert_eq!(c.minusedlevel, 0, "fresh mainland account is on Lumbridge ground floor");
-    assert_eq!(c.var.get(QUEST_COOK_VARP), Some(&0), "Cook quest starts naturally unstarted");
+    assert_eq!(
+        c.minusedlevel, 0,
+        "fresh mainland account is on Lumbridge ground floor"
+    );
+    assert_eq!(
+        c.var.get(QUEST_COOK_VARP),
+        Some(&0),
+        "Cook quest starts naturally unstarted"
+    );
     assert_eq!(c.var_serv.get(QUEST_COOK_VARP), Some(&0));
-    assert_eq!(inventory_count(&c, COINS), 0, "tutorial deposited the starter coins");
+    assert_eq!(
+        inventory_count(&c, COINS),
+        0,
+        "tutorial deposited the starter coins"
+    );
     assert_eq!(inventory_count(&c, BRONZE_DAGGER), 1);
     assert_eq!(inventory_count(&c, BRONZE_SWORD), 1);
     assert_eq!(inventory_count(&c, BUCKET_EMPTY), 1);
@@ -517,61 +560,101 @@ fn natural_lumbridge_cook_quest_and_shop_377() {
     save_mainland_stage(&mut c, &mut r, &root, "general-store-open", &mut stages);
 
     let side_inv = shop_side_player_inventory(&c);
-    let side_view = c.if_(side_inv).expect("actual transmitted shop-side inventory");
+    let side_view = c
+        .if_(side_inv as usize)
+        .expect("actual transmitted shop-side inventory");
     let dagger_slot = shop_slot(
         side_view.link_obj_type.as_deref().unwrap(),
         side_view.link_obj_number.as_deref().unwrap(),
         BRONZE_DAGGER,
     );
-    actions.push(shop_inventory_button(&mut c, side_inv, dagger_slot, BRONZE_DAGGER, "Sell 1"));
+    actions.push(shop_inventory_button(
+        &mut c,
+        side_inv,
+        dagger_slot,
+        BRONZE_DAGGER,
+        "Sell 1",
+    ));
     pump_until(&mut c, &mut r, 20, |c| {
         inventory_count(c, BRONZE_DAGGER) == 0 && inventory_count(c, COINS) > 0
     });
-    assert!(inventory_count(&c, COINS) > 0, "shop sale funds a later Buy 1 action");
-    save_mainland_stage(&mut c, &mut r, &root, "general-store-sold-dagger", &mut stages);
+    assert!(
+        inventory_count(&c, COINS) > 0,
+        "shop sale funds a later Buy 1 action"
+    );
+    save_mainland_stage(
+        &mut c,
+        &mut r,
+        &root,
+        "general-store-sold-dagger",
+        &mut stages,
+    );
 
     let (stock_inv, stock_types, stock_counts) = shop_inventory_component(&c, false);
     let bucket_slot = shop_slot(&stock_types, &stock_counts, BUCKET_EMPTY);
     let buckets_before_buy = inventory_count(&c, BUCKET_EMPTY);
     let coins_before_buy = inventory_count(&c, COINS);
-    actions.push(shop_inventory_button(&mut c, stock_inv, bucket_slot, BUCKET_EMPTY, "Buy 1"));
+    actions.push(shop_inventory_button(
+        &mut c,
+        stock_inv,
+        bucket_slot,
+        BUCKET_EMPTY,
+        "Buy 1",
+    ));
     pump_until(&mut c, &mut r, 20, |c| {
         inventory_count(c, BUCKET_EMPTY) == buckets_before_buy + 1
             && inventory_count(c, COINS) < coins_before_buy
     });
-    save_mainland_stage(&mut c, &mut r, &root, "general-store-bought-bucket", &mut stages);
+    save_mainland_stage(
+        &mut c,
+        &mut r,
+        &root,
+        "general-store-bought-bucket",
+        &mut stages,
+    );
 
     let side_inv = shop_side_player_inventory(&c);
-    let side_view = c.if_(side_inv).expect("actual transmitted shop-side inventory");
+    let side_view = c
+        .if_(side_inv as usize)
+        .expect("actual transmitted shop-side inventory");
     let bucket_slot = shop_slot(
         side_view.link_obj_type.as_deref().unwrap(),
         side_view.link_obj_number.as_deref().unwrap(),
         BUCKET_EMPTY,
     );
-    actions.push(shop_inventory_button(&mut c, side_inv, bucket_slot, BUCKET_EMPTY, "Sell 1"));
+    actions.push(shop_inventory_button(
+        &mut c,
+        side_inv,
+        bucket_slot,
+        BUCKET_EMPTY,
+        "Sell 1",
+    ));
     pump_until(&mut c, &mut r, 20, |c| {
         inventory_count(c, BUCKET_EMPTY) == buckets_before_buy
     });
-    save_mainland_stage(&mut c, &mut r, &root, "general-store-sold-bucket", &mut stages);
-    tutorial_lesson_377::close_main(&mut c, &mut r);
-    pump_until(&mut c, &mut r, 15, |c| c.main_modal_id < 0 && c.side_modal_id < 0);
-
-    let unstarted_journal = open_cook_journal(
+    save_mainland_stage(
         &mut c,
         &mut r,
         &root,
+        "general-store-sold-bucket",
         &mut stages,
-        "cook-journal-unstarted",
     );
-    assert!(
-        unstarted_journal["text"]
-            .as_str()
-            .unwrap()
-            .contains("I can start this quest by speaking")
-    );
+    tutorial_lesson_377::close_main(&mut c, &mut r);
+    pump_until(&mut c, &mut r, 15, |c| {
+        c.main_modal_id < 0 && c.side_modal_id < 0
+    });
+
+    let unstarted_journal =
+        open_cook_journal(&mut c, &mut r, &root, &mut stages, "cook-journal-unstarted");
+    assert!(unstarted_journal["text"]
+        .as_str()
+        .unwrap()
+        .contains("I can start this quest by speaking"));
     let unstarted_colour = unstarted_journal["row"]["colour"].clone();
     tutorial_lesson_377::close_main(&mut c, &mut r);
-    pump_until(&mut c, &mut r, 15, |c| c.main_modal_id < 0 && c.side_modal_id < 0);
+    pump_until(&mut c, &mut r, 15, |c| {
+        c.main_modal_id < 0 && c.side_modal_id < 0
+    });
 
     let cook_type = npc_type(&c, "cook", "Talk-to");
     actions.push(operate_npc(
@@ -596,49 +679,51 @@ fn natural_lumbridge_cook_quest_and_shop_377() {
     });
     save_mainland_stage(&mut c, &mut r, &root, "cook-quest-accepted", &mut stages);
     dismiss_chat(&mut c, &mut r);
-    let start_journal = open_cook_journal(
-        &mut c,
-        &mut r,
-        &root,
-        &mut stages,
-        "cook-journal-start",
-    );
-    assert!(start_journal["text"].as_str().unwrap().contains("birthday cake"));
+    let start_journal = open_cook_journal(&mut c, &mut r, &root, &mut stages, "cook-journal-start");
+    assert!(start_journal["text"]
+        .as_str()
+        .unwrap()
+        .contains("birthday cake"));
     assert!(start_journal["text"].as_str().unwrap().contains("egg"));
     let active_colour = start_journal["row"]["colour"].clone();
-    assert_ne!(unstarted_colour, active_colour, "quest-list colour changes to active");
+    assert_ne!(
+        unstarted_colour, active_colour,
+        "quest-list colour changes to active"
+    );
     tutorial_lesson_377::close_main(&mut c, &mut r);
-    pump_until(&mut c, &mut r, 15, |c| c.main_modal_id < 0 && c.side_modal_id < 0);
+    pump_until(&mut c, &mut r, 15, |c| {
+        c.main_modal_id < 0 && c.side_modal_id < 0
+    });
 
     // The cow-zone bounds are the content script's inzone() for Gillie
     // Groats; their center is a walkable waypoint into the Lumbridge farms.
     walk_route(&mut c, &mut r, COW_ZONE, &mut actions);
-    let egg_ground = ground_item(&c, EGG).or_else(|| {
-        let chicken_type = npc_type(&c, "chicken", "Attack");
-        let chicken = c
-            .npc_ids
-            .iter()
-            .take(c.npc_count as usize)
-            .copied()
-            .filter_map(|slot| {
-                let npc = c.npc[slot as usize].as_ref()?;
-                (npc.r#type == Some(chicken_type)).then_some((
-                    npc.route_x[0] + c.map_build_base_x,
-                    npc.route_z[0] + c.map_build_base_z,
-                ))
-            })
-            .min_by_key(|(x, z)| (x - tile(&c).0).abs() + (z - tile(&c).1).abs())
-            .expect("server-populated Lumbridge chicken is in the loaded farm scene");
-        walk_route(&mut c, &mut r, chicken, &mut actions);
-        let player = tile(&c);
-        pump_until(&mut c, &mut r, 90, |c| {
-            ground_item(c, EGG).is_some_and(|(x, z, _)| {
-                (x - player.0).abs() + (z - player.1).abs() <= 12
-            })
-        });
-        ground_item(&c, EGG)
-    })
-    .expect("the actual chicken-farm ground stack contains the quest egg");
+    let egg_ground = ground_item(&c, EGG)
+        .or_else(|| {
+            let chicken_type = npc_type(&c, "chicken", "Attack");
+            let chicken = c
+                .npc_ids
+                .iter()
+                .take(c.npc_count as usize)
+                .copied()
+                .filter_map(|slot| {
+                    let npc = c.npc[slot as usize].as_ref()?;
+                    (npc.r#type == Some(chicken_type)).then_some((
+                        npc.route_x[0] + c.map_build_base_x,
+                        npc.route_z[0] + c.map_build_base_z,
+                    ))
+                })
+                .min_by_key(|(x, z)| (x - tile(&c).0).abs() + (z - tile(&c).1).abs())
+                .expect("server-populated Lumbridge chicken is in the loaded farm scene");
+            walk_route(&mut c, &mut r, chicken, &mut actions);
+            let player = tile(&c);
+            pump_until(&mut c, &mut r, 90, |c| {
+                ground_item(c, EGG)
+                    .is_some_and(|(x, z, _)| (x - player.0).abs() + (z - player.1).abs() <= 12)
+            });
+            ground_item(&c, EGG)
+        })
+        .expect("the actual chicken-farm ground stack contains the quest egg");
     let (egg_x, egg_z, _) = egg_ground;
     assert_eq!(inventory_count(&c, EGG), 0);
     actions.push(pickup_ground_item(&mut c, EGG, egg_x, egg_z));
@@ -654,20 +739,22 @@ fn natural_lumbridge_cook_quest_and_shop_377() {
     });
     save_mainland_stage(&mut c, &mut r, &root, "dairy-cow-milk", &mut stages);
 
-    let journal_with_milk_egg = open_cook_journal(
-        &mut c,
-        &mut r,
-        &root,
-        &mut stages,
-        "cook-journal-milk-egg",
-    );
+    let journal_with_milk_egg =
+        open_cook_journal(&mut c, &mut r, &root, &mut stages, "cook-journal-milk-egg");
     let journal_text = journal_with_milk_egg["text"].as_str().unwrap();
     assert!(journal_text.contains("bucket of milk"));
     assert!(journal_text.contains("egg"));
     tutorial_lesson_377::close_main(&mut c, &mut r);
-    pump_until(&mut c, &mut r, 15, |c| c.main_modal_id < 0 && c.side_modal_id < 0);
+    pump_until(&mut c, &mut r, 15, |c| {
+        c.main_modal_id < 0 && c.side_modal_id < 0
+    });
 
-    walk_route(&mut c, &mut r, (WINDMILL_FLOOR.0, WINDMILL_FLOOR.1 - 3), &mut actions);
+    walk_route(
+        &mut c,
+        &mut r,
+        (WINDMILL_FLOOR.0, WINDMILL_FLOOR.1 - 3),
+        &mut actions,
+    );
     let wheat = loaded_location(&c, "wheat", Some("Pick"), None)
         .expect("loaded Lumbridge field has the real Pick option on wheat");
     actions.push(operate_loaded_location(&mut c, wheat));
@@ -683,9 +770,17 @@ fn natural_lumbridge_cook_quest_and_shop_377() {
     for _ in 0..2 {
         climb_windmill(&mut c, &mut r, &root, &mut stages, &mut actions, true);
     }
-    assert_eq!(c.minusedlevel, 2, "content hopper coordinate is on plane two");
-    let hopper = loaded_location(&c, "Hopper", None, Some((WINDMILL_FLOOR.0, WINDMILL_FLOOR.1, 16)))
-        .expect("server-loaded Lumbridge windmill hopper is on its content plane");
+    assert_eq!(
+        c.minusedlevel, 2,
+        "content hopper coordinate is on plane two"
+    );
+    let hopper = loaded_location(
+        &c,
+        "Hopper",
+        None,
+        Some((WINDMILL_FLOOR.0, WINDMILL_FLOOR.1, 16)),
+    )
+    .expect("server-loaded Lumbridge windmill hopper is on its content plane");
     let hopper_id = hopper.id;
     actions.push(use_item_on_location(&mut c, GRAIN, hopper_id as i32));
     pump_until(&mut c, &mut r, 25, |c| {
@@ -704,14 +799,25 @@ fn natural_lumbridge_cook_quest_and_shop_377() {
     pump_until(&mut c, &mut r, 25, |c| {
         chat_contains(c, "The grain slides down the chute")
     });
-    save_mainland_stage(&mut c, &mut r, &root, "windmill-controls-operated", &mut stages);
+    save_mainland_stage(
+        &mut c,
+        &mut r,
+        &root,
+        "windmill-controls-operated",
+        &mut stages,
+    );
 
     for _ in 0..2 {
         climb_windmill(&mut c, &mut r, &root, &mut stages, &mut actions, false);
     }
     assert_eq!(c.minusedlevel, 0);
-    let flour_bin = loaded_location(&c, "Flour bin", Some("Empty"), Some((WINDMILL_FLOOR.0, WINDMILL_FLOOR.1, 16)))
-        .expect("server flour-bin multiloc changed to its flour-filled form");
+    let flour_bin = loaded_location(
+        &c,
+        "Flour bin",
+        Some("Empty"),
+        Some((WINDMILL_FLOOR.0, WINDMILL_FLOOR.1, 16)),
+    )
+    .expect("server flour-bin multiloc changed to its flour-filled form");
     actions.push(operate_loaded_location(&mut c, flour_bin));
     pump_until(&mut c, &mut r, 25, |c| {
         inventory_count(c, POT_EMPTY) == 0 && inventory_count(c, POT_FLOUR) == 1
@@ -730,7 +836,9 @@ fn natural_lumbridge_cook_quest_and_shop_377() {
     assert!(journal_text.contains("egg"));
     assert!(journal_text.contains("pot of flour"));
     tutorial_lesson_377::close_main(&mut c, &mut r);
-    pump_until(&mut c, &mut r, 15, |c| c.main_modal_id < 0 && c.side_modal_id < 0);
+    pump_until(&mut c, &mut r, 15, |c| {
+        c.main_modal_id < 0 && c.side_modal_id < 0
+    });
 
     let cooking_xp_before = c.stat_xp[7];
     actions.push(operate_npc(
@@ -740,19 +848,21 @@ fn natural_lumbridge_cook_quest_and_shop_377() {
         "Talk-to",
     ));
     pump_until(&mut c, &mut r, 25, |c| {
-        c.chat_modal_id >= 0 && body(c).contains("How are you getting on with finding the ingredients")
+        c.chat_modal_id >= 0
+            && body(c).contains("How are you getting on with finding the ingredients")
     });
     save_mainland_stage(&mut c, &mut r, &root, "cook-hand-in-prompt", &mut stages);
     for _ in 0..8 {
         if c.var.get(QUEST_COOK_VARP) == Some(&2) && c.main_modal_id >= 0 {
             break;
         }
-        assert!(c.chat_modal_id >= 0, "server hand-in dialogue remains open before reward");
+        assert!(
+            c.chat_modal_id >= 0,
+            "server hand-in dialogue remains open before reward"
+        );
         continue_chat(&mut c, &mut r);
         pump_until(&mut c, &mut r, 15, |c| {
-            c.var.get(QUEST_COOK_VARP) == Some(&2)
-                || c.main_modal_id >= 0
-                || c.chat_modal_id < 0
+            c.var.get(QUEST_COOK_VARP) == Some(&2) || c.main_modal_id >= 0 || c.chat_modal_id < 0
         });
     }
     pump_until(&mut c, &mut r, 30, |c| {
@@ -772,21 +882,22 @@ fn natural_lumbridge_cook_quest_and_shop_377() {
     // Capture the completed journal and its real quest-list colour after the
     // server's completion queue opened the quest scroll.
     tutorial_lesson_377::close_main(&mut c, &mut r);
-    pump_until(&mut c, &mut r, 15, |c| c.main_modal_id < 0 && c.side_modal_id < 0);
-    let completed_journal = open_cook_journal(
-        &mut c,
-        &mut r,
-        &root,
-        &mut stages,
-        "cook-journal-complete",
-    );
+    pump_until(&mut c, &mut r, 15, |c| {
+        c.main_modal_id < 0 && c.side_modal_id < 0
+    });
+    let completed_journal =
+        open_cook_journal(&mut c, &mut r, &root, &mut stages, "cook-journal-complete");
     let completed_text = completed_journal["text"].as_str().unwrap();
     assert!(completed_text.contains("QUEST COMPLETE!"));
     assert!(completed_text.contains("lets me burn things less"));
-    assert_ne!(active_colour, completed_journal["row"]["colour"],
-        "quest-list colour changes again after server completion");
+    assert_ne!(
+        active_colour, completed_journal["row"]["colour"],
+        "quest-list colour changes again after server completion"
+    );
     tutorial_lesson_377::close_main(&mut c, &mut r);
-    pump_until(&mut c, &mut r, 15, |c| c.main_modal_id < 0 && c.side_modal_id < 0);
+    pump_until(&mut c, &mut r, 15, |c| {
+        c.main_modal_id < 0 && c.side_modal_id < 0
+    });
 
     // A naturally received tutorial sword is dropped with its inventory Drop
     // option and recovered from the server's real ground-object stack.
@@ -796,7 +907,11 @@ fn natural_lumbridge_cook_quest_and_shop_377() {
     pump_until(&mut c, &mut r, 25, |c| {
         inventory_count(c, BRONZE_SWORD) == 0
             && c.world
-                .ground_object_at(c.minusedlevel, drop_tile.0 - c.map_build_base_x, drop_tile.1 - c.map_build_base_z)
+                .ground_object_at(
+                    c.minusedlevel,
+                    drop_tile.0 - c.map_build_base_x,
+                    drop_tile.1 - c.map_build_base_z,
+                )
                 .is_some_and(|ground| {
                     [ground.top, ground.middle, ground.bottom]
                         .into_iter()
@@ -811,8 +926,16 @@ fn natural_lumbridge_cook_quest_and_shop_377() {
         drop_tile.0,
         drop_tile.1,
     ));
-    pump_until(&mut c, &mut r, 25, |c| inventory_count(c, BRONZE_SWORD) == 1);
-    save_mainland_stage(&mut c, &mut r, &root, "tutorial-sword-recovered", &mut stages);
+    pump_until(&mut c, &mut r, 25, |c| {
+        inventory_count(c, BRONZE_SWORD) == 1
+    });
+    save_mainland_stage(
+        &mut c,
+        &mut r,
+        &root,
+        "tutorial-sword-recovered",
+        &mut stages,
+    );
 
     let final_state = evidence_state(&c);
     c.menu_action[0] = MiniMenuAction::IF_BUTTON;
