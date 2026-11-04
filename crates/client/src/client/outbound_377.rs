@@ -347,12 +347,7 @@ pub(crate) fn opheld2_377(packet: &mut Packet, object_id: i32, slot: i32, compon
 /// Emit Java `INV_BUTTON1`: transformed object id, component id, then slot.
 ///
 /// Java: `Client.java:9780-9796`.
-pub(crate) fn inv_button1_377(
-    packet: &mut Packet,
-    object_id: i32,
-    slot: i32,
-    component_id: i32,
-) {
+pub(crate) fn inv_button1_377(packet: &mut Packet, object_id: i32, slot: i32, component_id: i32) {
     packet.p1_enc(ClientProt377::INV_BUTTON1.id);
     p2_alt2(packet, object_id);
     packet.p2(component_id);
@@ -656,18 +651,9 @@ mod tests {
 
     fn install_ground_decor(client: &mut Client, location_id: i32, x: i32, z: i32) -> i32 {
         let typecode = location_id << 14;
-        client.world.set_ground_decor(
-            0,
-            x,
-            z,
-            0,
-            typecode,
-            LocShape::GROUND_DECOR,
-            0,
-            0,
-            0,
-            0,
-        );
+        client
+            .world
+            .set_ground_decor(0, x, z, 0, typecode, LocShape::GROUND_DECOR, 0, 0, 0, 0);
         typecode
     }
     #[test]
@@ -857,13 +843,7 @@ mod tests {
             &[241, 0x12, 0x34, 0, 5, 0, 0x85]
         );
         assert_eq!(client.oplogic1, 138);
-        let legacy_anticheat = [
-            ClientProt::ANTICHEAT_OPLOGIC1.id as u8,
-            0,
-            0,
-            0,
-            0,
-        ];
+        let legacy_anticheat = [ClientProt::ANTICHEAT_OPLOGIC1.id as u8, 0, 0, 0, 0];
         assert!(!bytes
             .windows(legacy_anticheat.len())
             .any(|w| w == legacy_anticheat));
@@ -890,11 +870,7 @@ mod tests {
     fn do_action_npc2_and_spell_on_npc_keep_revision_specific_layouts() {
         for (revision, opcode, transformed_index) in [
             (ClientRevision::R377, 67, [0, 0xaa]),
-            (
-                ClientRevision::R274,
-                ClientProt::OPNPC2.id as u8,
-                [0, 42],
-            ),
+            (ClientRevision::R274, ClientProt::OPNPC2.id as u8, [0, 42]),
         ] {
             let mut client = client_with_revision(revision);
             client.local_player = Some(ClientPlayer::at(5, 5));
@@ -913,13 +889,7 @@ mod tests {
             (ClientRevision::R377, [104, 0x34, 0xd6, 42, 0]),
             (
                 ClientRevision::R274,
-                [
-                    ClientProt::OPNPCT.id as u8,
-                    0,
-                    42,
-                    0x34,
-                    0x56,
-                ],
+                [ClientProt::OPNPCT.id as u8, 0, 42, 0x34, 0x56],
             ),
         ] {
             let mut client = client_with_revision(revision);
