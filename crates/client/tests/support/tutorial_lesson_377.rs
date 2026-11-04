@@ -490,7 +490,12 @@ pub(super) fn close_main(c: &mut Client, r: &mut Renderer) {
     pump_until(c, r, 10, |c| c.main_modal_id < 0 && c.side_modal_id < 0);
 }
 
-pub(super) fn walk_to(c: &mut Client, r: &mut Renderer, target: (i32, i32), actions: &mut Vec<Value>) {
+pub(super) fn walk_to(
+    c: &mut Client,
+    r: &mut Renderer,
+    target: (i32, i32),
+    actions: &mut Vec<Value>,
+) {
     // Match production minimap_loop's transform; its real pathfinder handles
     // intervening cave walls. No route or collision state is assigned.
     use client::graphics::Pix3D;
@@ -821,7 +826,11 @@ fn chef_bread(
     stages: &mut Vec<Value>,
     actions: &mut Vec<Value>,
 ) {
-    assert_eq!(c.var.get(406), Some(&5), "server tutorial state is making dough");
+    assert_eq!(
+        c.var.get(406),
+        Some(&5),
+        "server tutorial state is making dough"
+    );
     assert_eq!(
         c.var_serv.get(406),
         Some(&5),
@@ -857,13 +866,7 @@ fn chef_bread(
             has_continue,
             "resumed chef dialogue has a real continue button: {current}"
         );
-        save_stage(
-            c,
-            r,
-            root,
-            &format!("chef-resume-dialogue-{page}"),
-            stages,
-        );
+        save_stage(c, r, root, &format!("chef-resume-dialogue-{page}"), stages);
         continue_chat(c, r);
         pump_until(c, r, 10, |c| {
             c.chat_modal_id < 0 || !c.resumed_pause_button && body(c) != current
