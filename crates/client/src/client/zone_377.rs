@@ -37,7 +37,10 @@ pub struct ZoneFrame377 {
 
 impl ZoneFrame377 {
     /// Decode one zone protocol packet, or return `None` for a foreign opcode.
-    pub fn decode(opcode: u8, p: &mut PacketReader377<'_>) -> Result<Option<Self>, PacketError377> {
+    pub(super) fn decode(
+        opcode: u8,
+        p: &mut PacketReader377<'_>,
+    ) -> Result<Option<Self>, PacketError377> {
         let frame = match opcode {
             40 => {
                 // Client.java:7884-7903, UPDATE_ZONE_FULL_FOLLOWS.

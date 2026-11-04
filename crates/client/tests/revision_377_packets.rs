@@ -2,6 +2,8 @@
 //! Golden frames run original engine encoders and untouched Java Packet readers.
 //! These tests prove decoding and validation, not runtime apply or a live login.
 
+#[path = "support/revision_377_packet_fields.rs"]
+mod fields;
 #[path = "support/revision_377_packet_interfaces.rs"]
 mod interfaces;
 #[path = "../src/client/packet_377.rs"]
@@ -9,10 +11,18 @@ mod packet_377;
 #[path = "support/revision_377_packet_zones.rs"]
 mod zones;
 
+// Stage-only registrations. After the shared export request lands, tests import
+// the library's sole io table and packet module instead of these registrations.
+#[path = "../src/io/server_prot_sizes_377.inc.rs"]
+mod server_prot_sizes_377;
+mod io {
+    pub use crate::server_prot_sizes_377::SERVER_PROT_SIZES_377;
+}
+
 use packet_377::{
     decode_packet_377, CameraTarget377, HintArrow377, InventoryEntry377, InventorySlot377,
     Operation377 as O, PacketContext377, PacketErrorKind377 as E, PacketReader377,
-    ReferenceKind377 as R, ALL_OPCODES_377, DEFERRED_OPCODES_377,
+    ReferenceKind377 as R, ALL_OPCODES_377,
 };
 use serde_json::{json, Value};
 use std::cell::Cell;
@@ -40,6 +50,12 @@ impl PacketContext377 for TestContext {
     }
     fn inventory_capacity(&self, _component: i32) -> Option<usize> {
         self.capacity
+    }
+    fn visible_player_count(&self) -> Option<usize> {
+        Some(5)
+    }
+    fn visible_npc_count(&self) -> Option<usize> {
+        Some(5)
     }
 }
 fn hex(bytes: &[u8]) -> String {
@@ -71,23 +87,45 @@ fn original_engine_frames_match_original_java_primitives_and_complete_dispatch()
     let fixture: Value =
         serde_json::from_str(include_str!("fixtures/revision_377/packets.json")).unwrap();
     assert_eq!(fixture["covered_opcodes"], json!(ALL_OPCODES_377));
-    assert_eq!(fixture["deferred_opcodes"], json!(DEFERRED_OPCODES_377));
+    assert_eq!(fixture["deferred_opcodes"], json!([]));
     let cases = fixture["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 71);
+    assert_eq!(cases.len(), 75);
     assert_eq!(
         cases
             .iter()
             .filter(|case| case["origin"] == "original-engine-encoder")
             .count(),
-        69
+        73
+    );
+    let enclosed = cases.iter().find(|case| case["opcode"] == 183).unwrap();
+    assert_eq!(
+        enclosed["operation_fields"][3].as_array().unwrap().len(),
+        11,
+        "the enclosed-zone corpus must exercise every child form"
     );
     for case in cases {
         let opcode = case["opcode"].as_u64().unwrap() as u8;
         let data = unhex(case["payload_hex"].as_str().unwrap());
         let mut reader = PacketReader377::new(opcode, &data);
         let mut values = Vec::new();
-        for method in case["reads"].as_array().unwrap() {
+        let mut methods = case["reads"].as_array().unwrap().iter();
+        while let Some(method) = methods.next() {
             let value = match method.as_str().unwrap() {
+                "accessBits" => {
+                    values.push(Value::Null);
+                    let mut bits = reader.bits();
+                    loop {
+                        let method = methods.next().unwrap().as_str().unwrap();
+                        if method == "accessBytes" {
+                            values.push(Value::Null);
+                            bits.access_bytes();
+                            break;
+                        }
+                        let width = method.strip_prefix("gBit:").unwrap().parse().unwrap();
+                        values.push(json!(bits.gbit(width).unwrap()));
+                    }
+                    continue;
+                }
                 "g1" => json!(reader.g1().unwrap()),
                 "g1b" => json!(reader.g1b().unwrap()),
                 "g1_alt1" => json!(reader.g1_alt1().unwrap()),
@@ -107,6 +145,7 @@ fn original_engine_frames_match_original_java_primitives_and_complete_dispatch()
                 "g4" => json!(reader.g4().unwrap()),
                 "g4_alt1" => json!(reader.g4_alt1().unwrap()),
                 "g4_alt3" => json!(reader.g4_alt3().unwrap()),
+                "g4_alt2" => json!(reader.g4_alt2().unwrap()),
                 "g8" => json!(reader.g8().unwrap().to_string()),
                 "gsmarts" => json!(reader.gsmarts().unwrap()),
                 "gjstr" => json!(std::str::from_utf8(reader.gjstr().unwrap()).unwrap()),
@@ -116,6 +155,16 @@ fn original_engine_frames_match_original_java_primitives_and_complete_dispatch()
                         rest.push(reader.g1().unwrap() as u8);
                     }
                     json!(hex(&rest))
+                }
+                other if other.starts_with("gdata_alt1:") || other.starts_with("gdata_alt2:") => {
+                    let (method, length) = other.split_once(':').unwrap();
+                    let raw = reader.take_bytes(length.parse().unwrap()).unwrap();
+                    let data = if method == "gdata_alt1" {
+                        raw.iter().copied().rev().collect::<Vec<_>>()
+                    } else {
+                        raw.iter().map(|v| v.wrapping_sub(128)).collect::<Vec<_>>()
+                    };
+                    json!(hex(&data))
                 }
                 other => panic!("unhandled Java primitive {other}"),
             };
@@ -134,9 +183,15 @@ fn original_engine_frames_match_original_java_primitives_and_complete_dispatch()
         assert_eq!(reader.remaining(), 0);
         let decoded = decode_packet_377(opcode, &data)
             .unwrap_or_else(|error| panic!("{}: {error}", case["name"]));
-        decoded
+        let validated = decoded
             .validate(&TestContext::default())
             .unwrap_or_else(|error| panic!("{}: {error}", case["name"]));
+        assert_eq!(
+            fields::operation(validated.operation()),
+            case["operation_fields"],
+            "{} decoded operation fields",
+            case["name"]
+        );
         // Every strict prefix is safe to inspect, even where a list prefix is a
         // complete shorter valid packet. No read can escape its supplied slice.
         for end in 0..data.len() {
@@ -152,7 +207,7 @@ fn original_engine_frames_match_original_java_primitives_and_complete_dispatch()
             );
         }
     }
-    println!("377 inbound: 71/75 Java handlers; 69 executed engine encoders; 71 complete Java primitive traces; 4 deferred handlers");
+    println!("377 inbound: 75/75 Java handlers; 73 executed engine encoders; 75 complete Java primitive traces and operation comparisons; 0 deferred handlers");
 }
 
 #[test]
@@ -293,7 +348,11 @@ fn inventories_preserve_id_plus_one_and_distinct_full_partial_transforms() {
     full.push(1);
     full.extend_from_slice(&65537_i32.to_le_bytes());
     assert_eq!(
-        decode_packet_377(206, &full).unwrap().operation(),
+        decode_packet_377(206, &full)
+            .unwrap()
+            .validate(&TestContext::default())
+            .unwrap()
+            .operation(),
         &O::InventoryFull {
             component: 0x1234,
             entries: vec![
@@ -318,7 +377,11 @@ fn inventories_preserve_id_plus_one_and_distinct_full_partial_transforms() {
     partial.push(255);
     partial.extend_from_slice(&(-123_i32).to_be_bytes());
     assert_eq!(
-        decode_packet_377(134, &partial).unwrap().operation(),
+        decode_packet_377(134, &partial)
+            .unwrap()
+            .validate(&TestContext::default())
+            .unwrap()
+            .operation(),
         &O::InventoryPartial {
             component: 0x1234,
             entries: vec![
@@ -493,7 +556,10 @@ fn last_login_preserves_all_fields_and_reserved_values() {
 fn hints_consume_ignored_fixed_tails_without_inventing_zero_constraints() {
     for kind in [0, 1, 2, 3, 4, 5, 6, 10, 255] {
         let data = [kind, 1, 2, 3, 4, 5];
-        let decoded = decode_packet_377(199, &data).unwrap();
+        let decoded = decode_packet_377(199, &data)
+            .unwrap()
+            .validate(&TestContext::default())
+            .unwrap();
         match decoded.operation() {
             O::Hint(HintArrow377::Npc { slot, padding })
             | O::Hint(HintArrow377::Player { slot, padding }) => {
@@ -521,7 +587,10 @@ fn hints_consume_ignored_fixed_tails_without_inventing_zero_constraints() {
 #[test]
 fn borrowed_text_private_body_and_ignore_names_do_not_copy_frame_storage() {
     let text = b"hello\n";
-    let packet = decode_packet_377(63, text).unwrap();
+    let packet = decode_packet_377(63, text)
+        .unwrap()
+        .validate(&TestContext::default())
+        .unwrap();
     let O::MessageGame(value) = packet.operation() else {
         panic!()
     };
@@ -529,12 +598,18 @@ fn borrowed_text_private_body_and_ignore_names_do_not_copy_frame_storage() {
     let bytes = [
         1, 2, 3, 4, 5, 6, 7, 8, 0x12, 0x34, 0x56, 0x78, 3, 0xab, 0xcd,
     ];
-    let packet = decode_packet_377(135, &bytes).unwrap();
+    let packet = decode_packet_377(135, &bytes)
+        .unwrap()
+        .validate(&TestContext::default())
+        .unwrap();
     assert!(
         matches!(packet.operation(),O::PrivateMessage {from:0x0102030405060708,message_id:0x12345678,staff_level:3,packed_body} if packed_body.as_ptr()==bytes[13..].as_ptr())
     );
     let names = [0xff; 8];
-    let packet = decode_packet_377(226, &names).unwrap();
+    let packet = decode_packet_377(226, &names)
+        .unwrap()
+        .validate(&TestContext::default())
+        .unwrap();
     let O::IgnoreList(list) = packet.operation() else {
         panic!()
     };
@@ -585,12 +660,7 @@ fn validation_and_framing_fail_before_an_applicable_handoff() {
         E::FrameTooLarge { maximum: 65535, .. }
     ));
     for opcode in 0..=255 {
-        if DEFERRED_OPCODES_377.contains(&opcode) {
-            assert_eq!(
-                decode_packet_377(opcode, &[]).unwrap_err().kind,
-                E::DeferredOpcode
-            );
-        } else if !ALL_OPCODES_377.contains(&opcode) {
+        if !ALL_OPCODES_377.contains(&opcode) {
             assert_eq!(
                 decode_packet_377(opcode, &[]).unwrap_err().kind,
                 E::UnknownOpcode
@@ -654,4 +724,39 @@ fn signed_and_mixed_endian_reader_edges_match_java_arithmetic() {
     let mut reader = PacketReader377::new(0, &[0x34, 0x12, 0x78, 0x56]);
     assert_eq!(reader.g4_alt3().unwrap(), 0x12345678);
     assert!(matches!(reader.g8().unwrap_err().kind, E::Truncated { .. }));
+}
+
+#[test]
+fn bit_reader_preserves_java_bit_order_alignment_and_failed_read_position() {
+    let mut reader = PacketReader377::new(53, &[0xac, 0x53, 0x12, 0x34, 0x56, 0x78]);
+    let mut bits = reader.bits();
+    assert_eq!(bits.gbit(0).unwrap(), 0);
+    assert_eq!(bits.gbit(3).unwrap(), 5);
+    assert_eq!(bits.gbit(7).unwrap(), 49);
+    assert_eq!(bits.gbit(6).unwrap(), 19);
+    assert_eq!(bits.bit_position(), 16);
+    assert_eq!(bits.gbit(32).unwrap(), 0x12345678);
+    let at_end = bits.bit_position();
+    assert!(matches!(
+        bits.gbit(1).unwrap_err().kind,
+        E::Truncated { .. }
+    ));
+    assert_eq!(bits.bit_position(), at_end);
+    bits.access_bytes();
+    assert_eq!(reader.remaining(), 0);
+
+    let mut reader = PacketReader377::new(53, &[0xff, 0xab]);
+    let mut bits = reader.bits();
+    assert_eq!(
+        bits.gbit(33).unwrap_err().kind,
+        E::InvalidValue("bit width")
+    );
+    assert_eq!(bits.bit_position(), 0);
+    assert_eq!(bits.gbit(1).unwrap(), 1);
+    bits.access_bytes();
+    assert_eq!(reader.position(), 1);
+    assert_eq!(reader.g1().unwrap(), 0xab);
+
+    let mut reader = PacketReader377::new(90, &[0x12, 0x34, 0x56, 0x78]);
+    assert_eq!(reader.g4_alt2().unwrap(), 0x56781234);
 }

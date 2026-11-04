@@ -15,30 +15,38 @@
 //! bytes are consumed explicitly, not required to be zero. Text remains borrowed
 //! bytes: Java `gjstr` uses the VM's default charset, not guaranteed UTF-8.
 //!
-//! Entity bitstreams (53/71/90/222 including rebuilds) belong to later slices and
-//! fail with `DeferredOpcode`; they are never accepted as opaque operations.
+//! Entity movement and rebuild operations preserve wire intent without applying
+//! actor, scene, asset-request, or lifecycle side effects.
 
+#[path = "entity_377.rs"]
+pub mod entity_377;
 #[path = "interface_packet_377.rs"]
 pub mod interface_packet_377;
+#[path = "npc_info_377.rs"]
+pub mod npc_info_377;
+#[path = "player_info_377.rs"]
+pub mod player_info_377;
+#[path = "rebuild_377.rs"]
+pub mod rebuild_377;
 #[path = "zone_377.rs"]
 pub mod zone_377;
 
-mod sizes {
-    include!("../io/server_prot_sizes_377.inc.rs");
-}
+use crate::io::SERVER_PROT_SIZES_377;
 
 use interface_packet_377::InterfaceOperation377;
+use npc_info_377::NpcInfo377;
+use player_info_377::PlayerInfo377;
+use rebuild_377::Rebuild377;
 use zone_377::ZoneFrame377;
 
-/// The complete set of handlers in Java `readPacket`, minus the four deferred
-/// entity/rebuild handlers. Zero-length table entries alone are not handlers.
+/// Every handler in Java `readPacket`. A zero-length size-table entry alone
+/// is not a handler declaration.
 pub const ALL_OPCODES_377: &[u8] = &[
-    2, 3, 5, 6, 10, 13, 18, 21, 26, 29, 40, 41, 49, 50, 58, 59, 61, 63, 67, 75, 76, 78, 82, 88,
-    106, 107, 109, 113, 115, 121, 125, 126, 128, 134, 135, 142, 148, 152, 156, 157, 158, 159, 162,
-    166, 167, 174, 181, 182, 183, 186, 190, 199, 200, 201, 203, 206, 208, 216, 218, 219, 220, 226,
-    232, 233, 238, 246, 249, 251, 252, 253, 255,
+    2, 3, 5, 6, 10, 13, 18, 21, 26, 29, 40, 41, 49, 50, 53, 58, 59, 61, 63, 67, 71, 75, 76, 78, 82,
+    88, 90, 106, 107, 109, 113, 115, 121, 125, 126, 128, 134, 135, 142, 148, 152, 156, 157, 158,
+    159, 162, 166, 167, 174, 181, 182, 183, 186, 190, 199, 200, 201, 203, 206, 208, 216, 218, 219,
+    220, 222, 226, 232, 233, 238, 246, 249, 251, 252, 253, 255,
 ];
-pub const DEFERRED_OPCODES_377: &[u8] = &[53, 71, 90, 222];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReferenceKind377 {
@@ -46,6 +54,7 @@ pub enum ReferenceKind377 {
     Object,
     Npc,
     Sequence,
+    IdentityKit,
     /// Actor-array index, distinct from an NPC definition ID.
     NpcSlot,
     Model,
@@ -65,6 +74,14 @@ pub enum ReferenceKind377 {
 pub trait PacketContext377 {
     fn contains(&self, kind: ReferenceKind377, id: i32) -> bool;
     fn inventory_capacity(&self, component: i32) -> Option<usize>;
+    /// Counts from the same immutable visible-list snapshot used during apply.
+    /// `None` means this context cannot admit entity updates.
+    fn visible_player_count(&self) -> Option<usize> {
+        None
+    }
+    fn visible_npc_count(&self) -> Option<usize> {
+        None
+    }
 }
 
 pub fn require_reference(
@@ -82,7 +99,6 @@ pub fn require_reference(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PacketErrorKind377 {
     UnknownOpcode,
-    DeferredOpcode,
     WrongSize { expected: usize, actual: usize },
     FrameTooLarge { maximum: usize, actual: usize },
     Truncated { needed: usize, remaining: usize },
@@ -117,10 +133,6 @@ pub struct DecodedPacket377<'a> {
     operation: Operation377<'a>,
 }
 impl<'a> DecodedPacket377<'a> {
-    /// Inspection only. Only `validate` produces an applicable handoff.
-    pub fn operation(&self) -> &Operation377<'a> {
-        &self.operation
-    }
     pub fn validate(
         self,
         context: &impl PacketContext377,
@@ -229,6 +241,9 @@ impl IgnoreNames377<'_> {
 pub enum Operation377<'a> {
     Interface(InterfaceOperation377<'a>),
     Zone(ZoneFrame377),
+    PlayerInfo(PlayerInfo377<'a>),
+    NpcInfo(NpcInfo377<'a>),
+    Rebuild(Rebuild377),
     InventoryFull {
         component: i32,
         entries: Vec<InventoryEntry377>,
@@ -316,6 +331,9 @@ impl Operation377<'_> {
         match self {
             Self::Interface(op) => op.validate(context),
             Self::Zone(frame) => frame.validate(context),
+            Self::PlayerInfo(info) => info.validate(context),
+            Self::NpcInfo(info) => info.validate(context),
+            Self::Rebuild(rebuild) => rebuild.validate(context),
             Self::InventoryFull { component, entries } => {
                 require_reference(context, R::Component, *component)?;
                 let capacity = context
@@ -389,13 +407,10 @@ pub fn decode_packet_377(
         offset: 0,
         kind,
     };
-    if DEFERRED_OPCODES_377.contains(&opcode) {
-        return Err(error(PacketErrorKind377::DeferredOpcode));
-    }
     if !ALL_OPCODES_377.contains(&opcode) {
         return Err(error(PacketErrorKind377::UnknownOpcode));
     }
-    let length = sizes::SERVER_PROT_SIZES_377[opcode as usize];
+    let length = SERVER_PROT_SIZES_377[opcode as usize];
     if length >= 0 && payload.len() != length as usize {
         return Err(error(PacketErrorKind377::WrongSize {
             expected: length as usize,
@@ -435,6 +450,9 @@ fn decode_other<'a>(
 ) -> Result<Operation377<'a>, PacketError377> {
     use Operation377 as O;
     Ok(match opcode {
+        53 | 222 => O::Rebuild(Rebuild377::decode(opcode, p)?),
+        71 => O::NpcInfo(NpcInfo377::decode(p)?),
+        90 => O::PlayerInfo(PlayerInfo377::decode(p)?),
         // Client.java:7303-7323. delay=65535 is an explicit alternate effect.
         26 => O::SynthSound {
             sound: p.g2()?,
@@ -643,6 +661,20 @@ impl<'a> PacketReader377<'a> {
             pos: 0,
         }
     }
+    /// Java Packet.java:238-265. Byte access resumes only after `access_bytes`.
+    pub fn bits(&mut self) -> BitReader377<'_, 'a> {
+        let bit_pos = self.pos * 8;
+        BitReader377 {
+            packet: self,
+            bit_pos,
+        }
+    }
+    pub fn take_bytes(&mut self, length: usize) -> Result<&'a [u8], PacketError377> {
+        self.require(length)?;
+        let bytes = &self.data[self.pos..self.pos + length];
+        self.pos += length;
+        Ok(bytes)
+    }
     pub fn position(&self) -> usize {
         self.pos
     }
@@ -745,6 +777,10 @@ impl<'a> PacketReader377<'a> {
     pub fn g4_alt1(&mut self) -> Result<i32, PacketError377> {
         Ok(i32::from_le_bytes(self.take()?))
     }
+    pub fn g4_alt2(&mut self) -> Result<i32, PacketError377> {
+        let [a, b, c, d] = self.take()?;
+        Ok(i32::from_be_bytes([c, d, a, b]))
+    }
     pub fn g4_alt3(&mut self) -> Result<i32, PacketError377> {
         let [a, b, c, d] = self.take()?;
         Ok(i32::from_be_bytes([b, a, d, c]))
@@ -768,5 +804,50 @@ impl<'a> PacketReader377<'a> {
             .ok_or_else(|| self.error(PacketErrorKind377::UnterminatedString))?;
         self.pos += length + 1;
         Ok(&self.data[start..start + length])
+    }
+}
+
+/// Borrowed MSB-first bit access. A failed read never advances beyond the frame.
+pub struct BitReader377<'p, 'a> {
+    packet: &'p mut PacketReader377<'a>,
+    bit_pos: usize,
+}
+impl BitReader377<'_, '_> {
+    pub fn bit_position(&self) -> usize {
+        self.bit_pos
+    }
+    pub fn remaining_bits(&self) -> usize {
+        self.packet.data.len() * 8 - self.bit_pos
+    }
+    pub fn gbit(&mut self, width: u8) -> Result<i32, PacketError377> {
+        if width > 32 {
+            return Err(self.packet.invalid("bit width"));
+        }
+        if self.remaining_bits() < width as usize {
+            return Err(PacketError377 {
+                opcode: self.packet.opcode,
+                offset: self.bit_pos / 8,
+                kind: PacketErrorKind377::Truncated {
+                    needed: (width as usize).div_ceil(8),
+                    remaining: self.remaining_bits() / 8,
+                },
+            });
+        }
+        let mut value = 0u32;
+        let mut remaining = width as usize;
+        while remaining != 0 {
+            let available = 8 - self.bit_pos % 8;
+            let take = available.min(remaining);
+            let shift = available - take;
+            let mask = (1u32 << take) - 1;
+            let part = (self.packet.data[self.bit_pos / 8] as u32 >> shift) & mask;
+            value = (value << take) | part;
+            self.bit_pos += take;
+            remaining -= take;
+        }
+        Ok(value as i32)
+    }
+    pub fn access_bytes(self) {
+        self.packet.pos = self.bit_pos.div_ceil(8);
     }
 }
