@@ -704,6 +704,10 @@ fn magic(
         inventory_count(c, 556) == 5 && inventory_count(c, 558) == 5
     });
     save_stage(c, r, root, "wind-strike-ready", stages);
+    // Follow the instruction to approach the outdoor cage: Terrova's stone
+    // house can block a cast made from the dialogue's final tile.
+    walk_to(c, r, (3134, 3095), actions);
+    save_stage(c, r, root, "chicken-approach", stages);
     actions.push(cast_wind_strike(c, r));
     pump_until(c, r, 30, |c| {
         tutorial_text(c).contains("Sadly it didn't have any effect")
