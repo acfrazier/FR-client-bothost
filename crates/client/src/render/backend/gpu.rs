@@ -1975,6 +1975,9 @@ impl RenderBackend for GpuBackend {
             let level = if core.cinema_cam {
                 r.roof_check2(core)
             } else {
+                if core.revision().is_377() {
+                    core.top_level_packet_377(core.cam_pitch);
+                }
                 r.roof_check(core)
             };
 
