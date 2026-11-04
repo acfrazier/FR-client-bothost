@@ -657,6 +657,8 @@ enum R289InterfaceOperation {
 mod actor_289;
 #[path = "misc_289.rs"]
 mod misc_289;
+#[path = "runtime_377.rs"]
+mod runtime_377;
 #[path = "zone_289.rs"]
 mod zone_289;
 
@@ -1668,10 +1670,11 @@ impl Client {
         // to files for tests without a web server.
         let jag_checksum = Self::get_jag_checksums(&config.host, http_port)
             .unwrap_or_else(|_| Self::read_jag_checksums(&config.cache_dir));
-        let (cache, ifaces, ifaces_mut, error_loading) = match Self::load_cache(&config.cache_dir) {
-            Ok((cache, ifaces, ifaces_mut)) => (cache, ifaces, Arc::new(ifaces_mut), false),
-            Err(()) => (Cache::default(), Vec::new(), Arc::new(Vec::new()), true),
-        };
+        let (cache, ifaces, ifaces_mut, error_loading) =
+            match Self::load_cache_revision(&config.cache_dir, config.lowmem, revision) {
+                Ok((cache, ifaces, ifaces_mut)) => (cache, ifaces, Arc::new(ifaces_mut), false),
+                Err(()) => (Cache::default(), Vec::new(), Arc::new(Vec::new()), true),
+            };
         let on_demand = Self::load_on_demand(&config, None, revision).unwrap_or(None);
         let mut client = Self::construct(
             config,
@@ -2504,6 +2507,27 @@ impl Client {
     /// `Cache::default()` with empty ifaces. A real cache missing the
     /// required `config` jag — or one whose bytes are not a valid jag
     /// (dummy test files) — is `Err`, which becomes `errorLoading`.
+    fn load_cache_revision(
+        cache_dir: &str,
+        lowmem: bool,
+        revision: ClientRevision,
+    ) -> Result<LoadedCache, ()> {
+        if revision.is_377() {
+            return crate::config::runtime_377::load_cache_377(cache_dir, lowmem)
+                .map(|mut loaded| {
+                    loaded.cache.revision_377 = Some(Box::new(crate::config::CacheRevision377 {
+                        config: loaded.cache_fields_377,
+                        interfaces: loaded.interface_fields_377,
+                    }));
+                    (loaded.cache, loaded.ifaces, loaded.ifaces_mut)
+                })
+                .map_err(|error| {
+                    eprintln!("377 cache: {error}");
+                });
+        }
+        Self::load_cache(cache_dir)
+    }
+
     fn load_cache(cache_dir: &str) -> Result<LoadedCache, ()> {
         let cache_present = JAG_FILES
             .iter()
@@ -2974,7 +2998,7 @@ impl Client {
         // intentional and must not be skipped.
         if !self.cache_from_shared {
             let cache_dir = self.session_cache_dir();
-            match Self::load_cache(&cache_dir) {
+            match Self::load_cache_revision(&cache_dir, self.config.lowmem, self.revision) {
                 Ok((cache, ifaces, ifaces_mut)) => {
                     self.cache = Arc::new(cache);
                     self.ifaces = Arc::new(ifaces);
@@ -3428,6 +3452,16 @@ impl Client {
     /// tests can pin the per-client uid in the wrapper bytes (the uid sits
     /// at offset 17, inside the block `rsaenc` ciphertexts).
     pub fn write_login_block(&mut self, seed: [i32; 4], username: &str, password: &str) {
+        if self.revision.is_377() {
+            super::outbound_377::write_login_block(
+                &mut self.out,
+                seed,
+                self.login_uid,
+                username,
+                password,
+            );
+            return;
+        }
         self.out.pos = 0;
         self.out.p1(10);
         self.out.p4(seed[0]);
@@ -3570,20 +3604,30 @@ impl Client {
             }
 
             let mut loginout = Packet::alloc(1);
-            if reconnect {
-                loginout.p1(18);
+            if self.revision.is_377() {
+                super::outbound_377::write_login_wrapper(
+                    &mut loginout,
+                    reconnect,
+                    self.config.lowmem,
+                    &self.jag_checksum,
+                    &self.out,
+                );
             } else {
-                loginout.p1(16);
+                if reconnect {
+                    loginout.p1(18);
+                } else {
+                    loginout.p1(16);
+                }
+                loginout.p1((self.out.pos + 36 + 1 + 1 + 2) as i32);
+                loginout.p1(255);
+                // 274 default / 289 explicit session profile (client.java:8378 p2 289).
+                loginout.p2(self.revision.as_i32());
+                loginout.p1(if self.config.lowmem { 1 } else { 0 });
+                for i in 0..9 {
+                    loginout.p4(self.jag_checksum[i]);
+                }
+                loginout.pdata(self.out.data(), 0, self.out.pos);
             }
-            loginout.p1((self.out.pos + 36 + 1 + 1 + 2) as i32);
-            loginout.p1(255);
-            // 274 default / 289 explicit session profile (client.java:8378 p2 289).
-            loginout.p2(self.revision.as_i32());
-            loginout.p1(if self.config.lowmem { 1 } else { 0 });
-            for i in 0..9 {
-                loginout.p4(self.jag_checksum[i]);
-            }
-            loginout.pdata(self.out.data(), 0, self.out.pos);
 
             self.out.random = Some(Isaac::new(&seed));
             for s in seed.iter_mut() {
@@ -4578,8 +4622,12 @@ impl Client {
                 notify = self.client_button(c);
             }
             if notify {
-                self.out.p1_enc(self.client_opcode(ClientProt::IF_BUTTON));
-                self.out.p2(c);
+                if self.revision.is_377() {
+                    super::outbound_377::if_button(&mut self.out, c);
+                } else {
+                    self.out.p1_enc(self.client_opcode(ClientProt::IF_BUTTON));
+                    self.out.p2(c);
+                }
             }
         }
 
@@ -5333,6 +5381,25 @@ impl Client {
     pub fn handle_packet(&mut self, ptype: i32, payload: &mut Packet) {
         let ptype1 = self.ptype1;
         let ptype2 = self.ptype2;
+        if self.revision.is_377() {
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                self.dispatch_packet_377(ptype, payload)
+            }));
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    eprintln!("{error}");
+                    self.record_session_exit(self.protocol_error("T2", ptype));
+                    self.logout();
+                }
+                Err(_) => {
+                    eprintln!("377 T2 - {ptype},{ptype1},{ptype2}");
+                    self.record_session_exit(self.protocol_error("T2", ptype));
+                    self.logout();
+                }
+            }
+            return;
+        }
         if self.revision.is_289() {
             self.r289_packet_reset = false;
             let result = catch_unwind(AssertUnwindSafe(|| {
@@ -12032,8 +12099,12 @@ impl Client {
 
         self.scene_state = 2;
         self.map_build();
-        self.out
-            .p1_enc(self.client_opcode(ClientProt::MAP_BUILD_COMPLETE));
+        if self.revision.is_377() {
+            super::outbound_377::map_build_complete(&mut self.out);
+        } else {
+            self.out
+                .p1_enc(self.client_opcode(ClientProt::MAP_BUILD_COMPLETE));
+        }
         0
     }
 
@@ -13039,7 +13110,11 @@ impl Client {
         // packet; the successful combined flush starts the next one-second
         // wall-clock interval.
         if self.last_outbound.elapsed() >= KEEPALIVE_INTERVAL {
-            self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
+            if self.revision.is_377() {
+                super::outbound_377::no_timeout(&mut self.out);
+            } else {
+                self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
+            }
         }
 
         let write_result = if let Some(stream) = self.stream.as_mut() {
