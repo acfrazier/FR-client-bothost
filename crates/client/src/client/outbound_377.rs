@@ -702,6 +702,74 @@ mod tests {
 
 
     #[test]
+    fn use_held_on_held_do_action_routes_377_and_marks_target() {
+        use crate::io::ClientRevision;
+        use super::super::{ClientConfig, MiniMenuAction};
+
+        let mut client = Client::new_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                members: true,
+                lowmem: false,
+            },
+            ClientRevision::R377,
+        );
+        client.menu_action[0] = MiniMenuAction::USEHELD_ONHELD;
+        client.menu_param_a[0] = 0x6789;
+        client.menu_param_b[0] = 0x5678;
+        client.menu_param_c[0] = 0x1234;
+        client.obj_com_id = 0x3456;
+        client.obj_selected_slot = 0x2345;
+        client.obj_selected_com_id = 0x4567;
+
+        client.doAction(0);
+
+        assert_eq!(
+            &client.out.data()[..client.out.pos],
+            &[
+                1, 0x12, 0x34, 0x45, 0x23, 0x56, 0x34, 0xe7, 0x45, 0xf8, 0x56, 0x89, 0x67,
+            ]
+        );
+        assert_eq!(client.selected_cycle, 0);
+        assert_eq!(client.selected_interface, 0x6789);
+        assert_eq!(client.selected_item, 0x5678);
+        assert_eq!(client.selected_area, 2);
+    }
+
+    #[test]
+    fn use_held_on_held_keeps_274_wire_path() {
+        use crate::io::ClientRevision;
+        use super::super::{ClientConfig, MiniMenuAction};
+
+        let mut client = Client::new_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                members: true,
+                lowmem: false,
+            },
+            ClientRevision::R274,
+        );
+        client.menu_action[0] = MiniMenuAction::USEHELD_ONHELD;
+        client.menu_param_a[0] = 0x6789;
+        client.menu_param_b[0] = 0x5678;
+        client.menu_param_c[0] = 0x1234;
+        client.obj_com_id = 0x3456;
+        client.obj_selected_slot = 0x2345;
+        client.obj_selected_com_id = 0x4567;
+
+        client.doAction(0);
+
+        assert_eq!(
+            &client.out.data()[1..client.out.pos],
+            &[0x67, 0x89, 0x56, 0x78, 0x12, 0x34, 0x34, 0x56, 0x23, 0x45, 0x45, 0x67]
+        );
+    }
+
+    #[test]
     fn movement_writers_match_377_literal_bytes_and_lengths() {
         let mut packet = Packet::alloc_outbound(1);
         assert!(movement_377(
