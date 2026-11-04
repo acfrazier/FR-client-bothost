@@ -369,7 +369,7 @@ impl Renderer {
         // The fonts + title content are the process-wide `Media` (task 6):
         // the first title draw decoded them once; each head re-plots its
         // own regions from the shared decodes.
-        self.media = Media::process(client.resource_cache_dir());
+        self.media = Media::process(client.resource_cache_dir(), client.revision());
         self.load_title_background();
         self.load_title_images();
 
@@ -381,7 +381,7 @@ impl Renderer {
     /// title and game draw, so an in-game client that never drew the title
     /// still has `p12` for the chat-mode labels.
     fn load_fonts(&mut self, client: &mut Client) {
-        self.media = Media::process(client.resource_cache_dir());
+        self.media = Media::process(client.resource_cache_dir(), client.revision());
     }
 
     /// `loadTitleBackground` from client-ts (1627): JPEG `title.dat` tiled
@@ -1555,9 +1555,15 @@ impl Renderer {
                         self.project_x = px;
                         self.project_y = py;
                         if self.project_x > -1 {
-                            if let Some(sprite) =
-                                self.media.headicons.get(2).and_then(|o| o.as_ref())
-                            {
+                            let hint = if client.revision().is_377() {
+                                self.media.headicons_hint[0].as_ref()
+                            } else {
+                                self.media
+                                    .headicons
+                                    .get(2)
+                                    .and_then(|sprite| sprite.as_ref())
+                            };
+                            if let Some(sprite) = hint {
                                 sprite.plot_sprite(&mut surface, px - 12, py - 28);
                             }
                         }
@@ -1597,9 +1603,15 @@ impl Renderer {
                         self.project_x = px;
                         self.project_y = py;
                         if self.project_x > -1 {
-                            if let Some(sprite) =
-                                self.media.headicons.get(7).and_then(|o| o.as_ref())
-                            {
+                            let hint = if client.revision().is_377() {
+                                self.media.headicons_hint[1].as_ref()
+                            } else {
+                                self.media
+                                    .headicons
+                                    .get(7)
+                                    .and_then(|sprite| sprite.as_ref())
+                            };
+                            if let Some(sprite) = hint {
                                 sprite.plot_sprite(&mut surface, px - 12, py - y);
                             }
                         }
