@@ -989,6 +989,45 @@ impl CheatSend {
     }
 }
 
+/// Mutually exclusive revision state. Legacy input remains inline; only an
+/// explicitly selected 377 client allocates the larger 377 telemetry state.
+/// The tagged slot preserves the established per-client memory footprint.
+pub(crate) enum OutboundState {
+    Legacy(super::outbound_289::Outbound289),
+    R377(Box<super::outbound_377::Outbound377>),
+}
+
+impl OutboundState {
+    fn new(revision: ClientRevision) -> Self {
+        if revision.is_377() {
+            Self::R377(Box::default())
+        } else {
+            Self::Legacy(Default::default())
+        }
+    }
+
+    pub(crate) fn legacy(&mut self) -> &mut super::outbound_289::Outbound289 {
+        match self {
+            Self::Legacy(state) => state,
+            Self::R377(_) => unreachable!("legacy input writer on a 377 session"),
+        }
+    }
+
+    fn r377(&self) -> &super::outbound_377::Outbound377 {
+        match self {
+            Self::R377(state) => state,
+            Self::Legacy(_) => unreachable!("377 input writer on a legacy session"),
+        }
+    }
+
+    pub(crate) fn r377_mut(&mut self) -> &mut super::outbound_377::Outbound377 {
+        match self {
+            Self::R377(state) => state,
+            Self::Legacy(_) => unreachable!("377 input writer on a legacy session"),
+        }
+    }
+}
+
 pub struct Client {
     pub shell: GameShell,
     /// The frame target the driver attaches (task 6 `PresentTarget`). `run`
@@ -1215,7 +1254,7 @@ pub struct Client {
     pub oplogic9: i32,
     pub cyclelogic2: i32,
     pub(crate) cyclelogic7_289: i32,
-    pub(crate) outbound_289: super::outbound_289::Outbound289,
+    pub(crate) outbound: OutboundState,
     /// `Client.cyclelogic6` from client-ts (a TS static, instance here):
     /// anticheat counter sent with `ANTICHEAT_CYCLELOGIC6` from
     /// `addPlayers` when the dest flag is cleared on arrival.
@@ -2045,7 +2084,8 @@ impl Client {
         let mut client = Client {
             shell: {
                 let mut shell = GameShell::new();
-                shell.telemetry_289 = construction.revision.is_289();
+                shell.telemetry_289 =
+                    construction.revision.is_289() || construction.revision.is_377();
                 shell.ground_trace =
                     super::ground_trace_289::GroundTrace::from_env(construction.revision.is_289());
                 if construction.revision.is_289() {
@@ -2181,7 +2221,7 @@ impl Client {
             oplogic9: 0,
             cyclelogic2: 0,
             cyclelogic7_289: 0,
-            outbound_289: Default::default(),
+            outbound: OutboundState::new(construction.revision),
             cyclelogic6: 0,
             report_abuse_input: String::new(),
             report_abuse_mute_option: false,
@@ -3424,12 +3464,15 @@ impl Client {
         };
         // Session baton carries the stream's revision with ISAAC/frame state
         // so size tables and dispatch cannot silently diverge midstream.
+        if self.revision.is_377() != other.revision.is_377() {
+            self.outbound = OutboundState::new(other.revision);
+        }
         self.revision = other.revision;
         if let Some(trace) = &mut self.shell.ground_trace {
             trace.complete("session_transfer");
         }
         self.shell.ground_trace = None;
-        self.shell.telemetry_289 = self.revision.is_289();
+        self.shell.telemetry_289 = self.revision.is_289() || self.revision.is_377();
         self.stream = Some(stream);
         self.random_in = other.random_in.take();
         let mut out = std::mem::replace(&mut other.out, Packet::alloc_outbound(1));
@@ -3694,6 +3737,8 @@ impl Client {
             })?;
             if self.revision.is_289() {
                 self.cold_login_input_289();
+            } else if self.revision.is_377() {
+                self.cold_login_input_377();
             }
             self.ingame = true;
             self.out.pos = 0;
@@ -3899,12 +3944,19 @@ impl Client {
         (x * BUILD_AREA_SIZE + z) as usize
     }
 
-    /// Revision-selected outbound opcode id. R274 keeps public ClientProt
-    /// constants; R289 maps through ClientProt289 (fail-closed on unmapped).
-    /// `pub(crate)` so render/draw paths share the same emit remap as
-    /// `client.rs` interact sites (stage-3 production gate).
+    /// Select only compatible shared writers. R377-specific bodies are emitted
+    /// by `outbound_377`; an unsupported legacy writer poisons the pending batch.
+    /// `game_loop` drops that entire batch and closes before any bytes are sent.
     pub(crate) fn client_opcode(&self, p: crate::io::ClientProt) -> i32 {
-        crate::io::map_client_prot(self.revision, p).id
+        let opcode = crate::io::map_client_prot(self.revision, p).id;
+        if opcode < 0 && self.outbound.r377().unmapped.get().is_none() {
+            eprintln!(
+                "377 unsupported outbound legacy opcode={}; discarding pending batch",
+                p.id
+            );
+            self.outbound.r377().unmapped.set(Some(p.id));
+        }
+        opcode
     }
 
     /// Walk `dir_map` from dest back to src, recording every tile, then
@@ -4149,15 +4201,19 @@ impl Client {
                 self.cross_mode = 2;
                 self.cross_cycle = 0;
 
-                let opcode = match action {
-                    MiniMenuAction::OP_NPC1 => self.client_opcode(ClientProt::OPNPC1),
-                    MiniMenuAction::OP_NPC2 => self.client_opcode(ClientProt::OPNPC2),
-                    MiniMenuAction::OP_NPC3 => self.client_opcode(ClientProt::OPNPC3),
-                    MiniMenuAction::OP_NPC4 => self.client_opcode(ClientProt::OPNPC4),
-                    _ => self.client_opcode(ClientProt::OPNPC5),
-                };
-                self.out.p1_enc(opcode);
-                self.out.p2(a);
+                if self.revision.is_377() && action == MiniMenuAction::OP_NPC1 {
+                    super::outbound_377::opnpc1_377(&mut self.out, a);
+                } else {
+                    let opcode = match action {
+                        MiniMenuAction::OP_NPC1 => self.client_opcode(ClientProt::OPNPC1),
+                        MiniMenuAction::OP_NPC2 => self.client_opcode(ClientProt::OPNPC2),
+                        MiniMenuAction::OP_NPC3 => self.client_opcode(ClientProt::OPNPC3),
+                        MiniMenuAction::OP_NPC4 => self.client_opcode(ClientProt::OPNPC4),
+                        _ => self.client_opcode(ClientProt::OPNPC5),
+                    };
+                    self.out.p1_enc(opcode);
+                    self.out.p2(a);
+                }
             }
         }
 
@@ -4685,9 +4741,13 @@ impl Client {
         if action == MiniMenuAction::PAUSE_BUTTON {
             // TS 9186-9191: RESUME_PAUSEBUTTON, not IF_BUTTON.
             if !self.resumed_pause_button {
-                self.out
-                    .p1_enc(self.client_opcode(ClientProt::RESUME_PAUSEBUTTON));
-                self.out.p2(c);
+                if self.revision.is_377() {
+                    super::outbound_377::resume_pausebutton_377(&mut self.out, c);
+                } else {
+                    self.out
+                        .p1_enc(self.client_opcode(ClientProt::RESUME_PAUSEBUTTON));
+                    self.out.p2(c);
+                }
                 self.resumed_pause_button = true;
             }
         }
@@ -5221,6 +5281,25 @@ impl Client {
                         ],
                     );
                 }
+            }
+
+            if self.revision.is_377() {
+                super::outbound_377::movement_377(
+                    &mut self.out,
+                    r#type,
+                    start_x + self.map_build_base_x,
+                    start_z + self.map_build_base_z,
+                    self.shell.key_held[5] == 1,
+                    (1..buffer_size).map(|i| {
+                        (
+                            self.route_x[length - i] - start_x,
+                            self.route_z[length - i] - start_z,
+                        )
+                    }),
+                );
+                self.minimap_flag_x = self.route_x[0];
+                self.minimap_flag_z = self.route_z[0];
+                return true;
             }
 
             match r#type {
@@ -7192,14 +7271,23 @@ impl Client {
         } else if client_code == CC_ACCEPT_DESIGN {
             // TS 11053-11065: IDK_SAVEDESIGN (id 125, length 13) carries
             // the gender byte, 7 kit bytes and 5 colour bytes.
-            self.out
-                .p1_enc(self.client_opcode(ClientProt::IDK_SAVEDESIGN));
-            self.out.p1(if self.idk_design_gender { 0 } else { 1 });
-            for i in 0..7 {
-                self.out.p1(self.idk_design_part[i]);
-            }
-            for i in 0..5 {
-                self.out.p1(self.idk_design_colour[i]);
+            if self.revision.is_377() {
+                super::outbound_377::idk_savedesign_377(
+                    &mut self.out,
+                    if self.idk_design_gender { 0 } else { 1 },
+                    &self.idk_design_part,
+                    &self.idk_design_colour,
+                );
+            } else {
+                self.out
+                    .p1_enc(self.client_opcode(ClientProt::IDK_SAVEDESIGN));
+                self.out.p1(if self.idk_design_gender { 0 } else { 1 });
+                for i in 0..7 {
+                    self.out.p1(self.idk_design_part[i]);
+                }
+                for i in 0..5 {
+                    self.out.p1(self.idk_design_colour[i]);
+                }
             }
             return true;
         } else if self.revision.is_289() && client_code == CC_REPORT_MUTE {
@@ -11132,9 +11220,9 @@ impl Client {
     pub fn handle_chat_input(&mut self) {
         if self.revision.is_289() {
             // J:10743-10750: count poll calls, not queued characters.
-            self.outbound_289.cyclelogic4 += 1;
-            if self.outbound_289.cyclelogic4 > 192 {
-                self.outbound_289.cyclelogic4 = 0;
+            self.outbound.legacy().cyclelogic4 += 1;
+            if self.outbound.legacy().cyclelogic4 > 192 {
+                self.outbound.legacy().cyclelogic4 = 0;
                 self.out
                     .p1_enc(self.client_opcode(ClientProt::ANTICHEAT_CYCLELOGIC4));
                 self.out.p1(232);
@@ -12917,6 +13005,8 @@ impl Client {
         // TS 2191-2192: the scene/minimap pass after the inbound reads.
         if self.revision.is_289() {
             self.input_packets_289();
+        } else if self.revision.is_377() {
+            self.input_packets_377();
         }
         // The SIM half runs here unconditionally — `check_scene` →
         // `map_build` (ground, collision, `MAP_BUILD_COMPLETE`,
@@ -12987,6 +13077,9 @@ impl Client {
         self.handle_main_if_clicks();
         self.handle_chat_if_clicks();
         self.chat_mode_loop();
+        if self.revision.is_377() {
+            self.chat_mode_packet_377();
+        }
         self.handle_chat_input();
         // consume the previous frame's `World` ground pick (TS 2310-2323)
         // into a MOVE_GAMECLICK walk, then the click passes
@@ -13118,12 +13211,16 @@ impl Client {
         // gets the Java 289 timer instead.
         if self.idle_timer_suppressed() {
             self.shell.idle_cycles = 0;
-        } else if self.revision.is_289() {
+        } else if self.revision.is_289() || self.revision.is_377() {
             self.shell.idle_cycles += 1;
             if self.shell.idle_cycles > 4500 {
                 self.shell.idle_cycles -= 500;
                 self.logout_timer = 250;
-                self.out.p1_enc(self.client_opcode(ClientProt::IDLE_TIMER));
+                if self.revision.is_377() {
+                    super::outbound_377::idle_timer_377(&mut self.out);
+                } else {
+                    self.out.p1_enc(self.client_opcode(ClientProt::IDLE_TIMER));
+                }
                 queued_local_idle_request = true;
             }
         }
@@ -13148,6 +13245,15 @@ impl Client {
                 super::outbound_377::no_timeout(&mut self.out);
             } else {
                 self.out.p1_enc(self.client_opcode(ClientProt::NO_TIMEOUT));
+            }
+        }
+
+        if self.revision.is_377() {
+            if let Some(opcode) = self.outbound.r377().unmapped.take() {
+                self.out.pos = 0;
+                self.record_session_exit(self.protocol_error("unsupported_outbound_377", opcode));
+                self.logout();
+                return;
             }
         }
 
