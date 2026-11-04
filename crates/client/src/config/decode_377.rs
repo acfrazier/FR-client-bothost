@@ -2,6 +2,11 @@
 //!
 //! Unlike the network Packet, this cursor borrows each dat/idx record. It does
 //! not copy indexed records or allocate a packet for each definition.
+//!
+//! Intentional testing-client deviation: family decoders reject unknown opcodes
+//! instead of Java's print-and-continue or silent-ignore behavior, and `finish`
+//! rejects trailing bytes instead of ignoring them or only logging a mismatch.
+//! The complete malformed-input policy and Java anchors are in `config_377`.
 
 use std::fmt;
 
@@ -102,7 +107,9 @@ impl<'a> Reader377<'a> {
             .position(|&b| b == 10)
             .ok_or_else(|| self.error(DecodeErrorKind377::UnexpectedEof))?;
         let bytes = self.take(len + 1)?;
-        // Packet.gjstr uses one Java character per unsigned cache byte.
+        // Deliberate Latin-1 byte mapping. Java Packet.java:212-216 uses the
+        // platform default charset; the real-cache strings are ASCII, where
+        // these conversions agree.
         Ok(bytes[..len].iter().map(|&b| char::from(b)).collect())
     }
     pub fn gjstrraw(&mut self) -> Result<Vec<u8>, DecodeError377> {
@@ -112,6 +119,8 @@ impl<'a> Reader377<'a> {
             .ok_or_else(|| self.error(DecodeErrorKind377::UnexpectedEof))?;
         Ok(self.take(len + 1)?[..len].to_vec())
     }
+    /// Enforce the testing client's strict end check, not Java's permissive
+    /// trailing-byte behavior (VarbitType.java:54-56 only logs a mismatch).
     pub fn finish(&self) -> Result<(), DecodeError377> {
         let remaining = self.data.len() - self.pos;
         if remaining == 0 {

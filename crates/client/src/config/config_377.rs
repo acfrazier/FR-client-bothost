@@ -5,6 +5,22 @@
 //! NpcType.java:289-302, ObjType.java:246-259). All records are decoded here,
 //! rather than Java's twenty-entry loc/npc and ten-entry obj caches. Model building,
 //! morph selection and rendering are not part of this archive decoder.
+//!
+//! # Intentional malformed-input deviation from Java
+//!
+//! Every family decoder returns `UnknownOpcode` instead of continuing past an
+//! unknown code. Java Seq/Flo/Idk/SpotAnim/Varp/Varbit print a diagnostic and
+//! continue (for example, SeqType.java:161-164); Loc/Npc/Obj silently ignore the
+//! code (LocType.java:384-527, NpcType.java:127-219, ObjType.java:339-444).
+//! This testing client's fail-closed policy prevents unknown payload bytes from
+//! being mistaken for subsequent fields or records.
+//!
+//! Likewise, `Reader377::finish` rejects trailing bytes in each indexed record
+//! and every startup-used dat/idx member. Java does not enforce those ends;
+//! VarbitType.java:54-56 only prints its load-mismatch diagnostic. Either error
+//! aborts `Cache377::unpack` without returning a partial cache. Valid-cache
+//! decoding is compared with Java; malformed-input behavior is intentionally
+//! stricter, not claimed as literal Java conformance.
 
 #[path = "decode_377.rs"]
 pub mod decode_377;
