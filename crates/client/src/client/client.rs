@@ -4348,12 +4348,24 @@ impl Client {
             self.out.p2(self.target_com_id);
         }
 
-        if action == MiniMenuAction::USEHELD_ONLOC
-            && self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOCU))
-        {
-            self.out.p2(self.obj_com_id);
-            self.out.p2(self.obj_selected_slot);
-            self.out.p2(self.obj_selected_com_id);
+        if action == MiniMenuAction::USEHELD_ONLOC {
+            if self.revision().is_377() {
+                if self.interact_with_loc(b, c, a, ClientProt377::OPLOCU.id) {
+                    super::outbound_377::oplocu_377(
+                        &mut self.out,
+                        (a >> 14) & 0x7fff,
+                        self.obj_selected_com_id,
+                        self.obj_com_id,
+                        c + self.map_build_base_z,
+                        self.obj_selected_slot,
+                        b + self.map_build_base_x,
+                    );
+                }
+            } else if self.interact_with_loc(b, c, a, self.client_opcode(ClientProt::OPLOCU)) {
+                self.out.p2(self.obj_com_id);
+                self.out.p2(self.obj_selected_slot);
+                self.out.p2(self.obj_selected_com_id);
+            }
         }
 
         if PLAYER_OP_ACTIONS.contains(&action) {
@@ -4632,13 +4644,25 @@ impl Client {
         }
 
         if action == MiniMenuAction::USEHELD_ONHELD {
-            self.out.p1_enc(self.client_opcode(ClientProt::OPHELDU));
-            self.out.p2(a);
-            self.out.p2(b);
-            self.out.p2(c);
-            self.out.p2(self.obj_com_id);
-            self.out.p2(self.obj_selected_slot);
-            self.out.p2(self.obj_selected_com_id);
+            if self.revision().is_377() {
+                super::outbound_377::opheldu_377(
+                    &mut self.out,
+                    c,
+                    self.obj_selected_slot,
+                    self.obj_com_id,
+                    self.obj_selected_com_id,
+                    b,
+                    a,
+                );
+            } else {
+                self.out.p1_enc(self.client_opcode(ClientProt::OPHELDU));
+                self.out.p2(a);
+                self.out.p2(b);
+                self.out.p2(c);
+                self.out.p2(self.obj_com_id);
+                self.out.p2(self.obj_selected_slot);
+                self.out.p2(self.obj_selected_com_id);
+            }
             self.mark_selected(b, c);
         }
 
