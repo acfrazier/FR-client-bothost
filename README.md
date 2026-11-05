@@ -117,8 +117,9 @@ mapscene and mapfunction images, with 72 and 70 images loaded. Its player
 PK, prayer and hint icons remain separate, and its minimap supports the
 fifth (team) dot and multiway overlay. The default 274 profile and the
 274/289 sprite paths keep their existing tables and behavior.
-The PK and prayer indices use signed bytes. The equipment-team value uses
-an unsigned byte, preserving the existing inline player layout.
+The PK and prayer indices use signed bytes. The equipment-team value and
+legacy headicon bitmask use unsigned bytes, preserving the existing inline
+player layout and all wire values.
 
 The optional mainland proof in `live_interactions_377` continues a naturally
 completed tutorial account. It selects revision 377 explicitly, walks to
