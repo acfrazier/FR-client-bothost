@@ -285,7 +285,6 @@ pub(crate) fn anticheat_oplogic4_377(packet: &mut Packet) {
     packet.p3(11257922);
 }
 
-
 /// Emit Java `OPLOCU`: selected item on a location.
 ///
 /// Java: `Client.java:9770-9779`.
@@ -351,7 +350,6 @@ pub(crate) fn opnpc3_377(packet: &mut Packet, npc_index: i32) {
     p2_alt3(packet, npc_index);
 }
 
-
 /// Emit Java `OPNPCT`: transformed selected component, then transformed NPC index.
 ///
 /// Java: `Client.java:10018-10030`.
@@ -380,7 +378,6 @@ pub(crate) fn opheld5_377(packet: &mut Packet, object_id: i32, slot: i32, compon
     p2_alt3(packet, component_id);
 }
 
-
 /// Emit Java `INV_BUTTON1`: transformed object id, component id, then slot.
 ///
 /// Java: `Client.java:9780-9796`.
@@ -393,18 +390,12 @@ pub(crate) fn inv_button1_377(packet: &mut Packet, object_id: i32, slot: i32, co
 /// Emit Java `INV_BUTTON2` for shop Buy-1 / Sell-1.
 ///
 /// Java: `Client.java:10101-10107`.
-pub(crate) fn inv_button2_377(
-    packet: &mut Packet,
-    object_id: i32,
-    slot: i32,
-    component_id: i32,
-) {
+pub(crate) fn inv_button2_377(packet: &mut Packet, object_id: i32, slot: i32, component_id: i32) {
     packet.p1_enc(ClientProt377::INV_BUTTON2.id);
     p2_alt2(packet, slot);
     p2_alt1(packet, object_id);
     p2_alt1(packet, component_id);
 }
-
 
 /// Emit Java `RESUME_PAUSEBUTTON`: plain component id.
 ///
@@ -1073,22 +1064,37 @@ mod tests {
         );
         assert_eq!(threshold.oplogic4, 0);
 
-
         let mut client = client_with_revision(ClientRevision::R377);
-        set_menu_action(&mut client, MiniMenuAction::OP_HELD5, 0x1234, 0x2345, 0x3456);
+        set_menu_action(
+            &mut client,
+            MiniMenuAction::OP_HELD5,
+            0x1234,
+            0x2345,
+            0x3456,
+        );
         client.doAction(0);
         assert_eq!(
             &client.out.data()[..client.out.pos],
             &[4, 0x45, 0x23, 0xb4, 0x12, 0xd6, 0x34]
         );
         assert_eq!(
-            (client.selected_item, client.selected_com_id, client.selected_area),
+            (
+                client.selected_item,
+                client.selected_com_id,
+                client.selected_area
+            ),
             (0x2345, 0x3456, 2)
         );
 
         let mut client = client_with_revision(ClientRevision::R377);
         client.oplogic6 = 132;
-        set_menu_action(&mut client, MiniMenuAction::INV_BUTTON2, 0x1234, 0x2345, 0x3456);
+        set_menu_action(
+            &mut client,
+            MiniMenuAction::INV_BUTTON2,
+            0x1234,
+            0x2345,
+            0x3456,
+        );
         client.doAction(0);
         assert_eq!(
             &client.out.data()[..client.out.pos],
@@ -1096,7 +1102,11 @@ mod tests {
         );
         assert_eq!(client.oplogic6, 132);
         assert_eq!(
-            (client.selected_item, client.selected_com_id, client.selected_area),
+            (
+                client.selected_item,
+                client.selected_com_id,
+                client.selected_area
+            ),
             (0x2345, 0x3456, 2)
         );
 
@@ -1125,7 +1135,13 @@ mod tests {
             assert_eq!(client.oplogic4, 0);
 
             let mut client = client_with_revision(revision);
-            set_menu_action(&mut client, MiniMenuAction::OP_HELD5, 0x1234, 0x2345, 0x3456);
+            set_menu_action(
+                &mut client,
+                MiniMenuAction::OP_HELD5,
+                0x1234,
+                0x2345,
+                0x3456,
+            );
             client.doAction(0);
             assert_eq!(
                 &client.out.data()[..client.out.pos],
@@ -1133,7 +1149,13 @@ mod tests {
             );
 
             let mut client = client_with_revision(revision);
-            set_menu_action(&mut client, MiniMenuAction::INV_BUTTON2, 0x1234, 0x2345, 0x3456);
+            set_menu_action(
+                &mut client,
+                MiniMenuAction::INV_BUTTON2,
+                0x1234,
+                0x2345,
+                0x3456,
+            );
             client.doAction(0);
             assert_eq!(
                 &client.out.data()[..client.out.pos],
@@ -1314,7 +1336,6 @@ mod tests {
         assert_eq!(&packet.data()[..packet.pos], &[222, 0xab, 0xc8, 0x42]);
         assert_eq!(ClientProt377::ANTICHEAT_OPLOGIC4.length, 3);
         packet.pos = 0;
-
 
         opnpc3_377(&mut packet, 0x1234);
         assert_eq!(&packet.data()[..packet.pos], &[13, 0xb4, 0x12]);
