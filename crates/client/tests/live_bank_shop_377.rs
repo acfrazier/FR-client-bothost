@@ -15,6 +15,7 @@ mod live_engine_377;
 const USER: &str = "t2as11rv1";
 const COINS: i32 = 995;
 const BUCKET: i32 = 1925;
+const SHOP_OBJECT: i32 = 2347; // Hammer: the real general-store stock has five.
 const WITHDRAW_X: i32 = 7;
 const DEPOSIT_X: i32 = 3;
 const MIN_SHOP_COINS: i32 = 100;
@@ -163,12 +164,11 @@ fn component_items(c: &Client, component: i32) -> Vec<Value> {
         .iter()
         .zip(counts)
         .enumerate()
-        .filter_map(|(slot, (&object_plus_one, &count))| {
-            (object_plus_one > 0 && count > 0).then(|| {
-                let object = object_plus_one - 1;
-                json!({"slot":slot,"object":object,"count":count,
-                    "name":c.cache.objs.get(object as usize).map(|item|item.name.as_str())})
-            })
+        .filter(|(_, (object_plus_one, count))| **object_plus_one > 0 && **count > 0)
+        .map(|(slot, (&object_plus_one, &count))| {
+            let object = object_plus_one - 1;
+            json!({"slot":slot,"object":object,"count":count,
+                "name":c.cache.objs.get(object as usize).map(|item|item.name.as_str())})
         })
         .collect()
 }
@@ -426,6 +426,62 @@ fn close_main(c: &mut Client, r: &mut Renderer) {
     pump_until(c, r, 10, |c| c.gens.player_info >= generation + 2);
 }
 
+fn walk_waypoint(
+    c: &mut Client,
+    r: &mut Renderer,
+    requested: (i32, i32),
+    actions: &mut Vec<Value>,
+) {
+    pump_until(c, r, 30, |c| c.scene_state == 2);
+    let before = tile(c);
+    let player = c.local_player.as_ref().unwrap();
+    let (x, z) = (player.route_x[0], player.route_z[0]);
+    assert!(c.tryMove(
+        x,
+        z,
+        requested.0 - c.map_build_base_x,
+        requested.1 - c.map_build_base_z,
+        true,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    ));
+    let endpoint = *c
+        .try_move_path
+        .last()
+        .expect("production path has an endpoint");
+    let target = (
+        endpoint.0 + c.map_build_base_x,
+        endpoint.1 + c.map_build_base_z,
+    );
+    assert!(
+        (target.0 - requested.0)
+            .abs()
+            .max((target.1 - requested.1).abs())
+            <= 1
+    );
+    pump_until(c, r, 45, |c| tile(c) == target);
+    actions.push(
+        json!({"walk_from":before,"requested":requested,"arrived":tile(c),
+        "input":"production Client::tryMove game-click pathfinder; received player position"}),
+    );
+}
+
+const SHOP_ROUTE: &[(i32, i32)] = &[
+    (3095, 3250),
+    (3110, 3250),
+    (3125, 3250),
+    (3140, 3250),
+    (3155, 3250),
+    (3170, 3250),
+    (3185, 3250),
+    (3200, 3250),
+    (3210, 3247),
+];
+
 fn npc_slot(c: &Client, name: &str, option: &str) -> i32 {
     let player = tile(c);
     c.npc_ids
@@ -607,9 +663,18 @@ fn bank_shop_amount_drag_live_377() {
             && inventory_count(c, BUCKET) > 0
     });
     let start_tile = tile(&c);
+    let mut actions = Vec::new();
+    if (start_tile.0 - 3092).abs().max((start_tile.1 - 3243).abs()) > 15 {
+        assert!((start_tile.0 - 3150).abs() <= 80 && (start_tile.1 - 3250).abs() <= 20);
+        for &waypoint in SHOP_ROUTE.iter().rev().skip(1) {
+            walk_waypoint(&mut c, &mut r, waypoint, &mut actions);
+        }
+        walk_waypoint(&mut c, &mut r, (3092, 3243), &mut actions);
+    }
     assert!(
-        (start_tile.0 - 3092).abs().max((start_tile.1 - 3243).abs()) <= 15,
-        "coordinated account starts near Draynor bank: {start_tile:?}"
+        (tile(&c).0 - 3092).abs().max((tile(&c).1 - 3243).abs()) <= 15,
+        "coordinated account arrives near Draynor bank: {:?}",
+        tile(&c)
     );
     if std::env::var("CLIENT_377_BANK_SHOP_PREPARE").as_deref() == Ok("1") {
         c.set_cheat_admission(client::client::CheatAdmission::Granted);
@@ -640,13 +705,12 @@ fn bank_shop_amount_drag_live_377() {
     );
     assert!(
         inventory_count(&c, BUCKET) >= 5,
-        "fixture has five empty buckets for actual Sell-5"
+        "fixture has empty buckets for the inventory drag"
     );
     assert!(
         inventory_count(&c, COINS) >= MIN_SHOP_COINS,
         "fixture has enough of its own coins for the shop Buy-5"
     );
-    let mut actions = Vec::new();
     let mut stages = Vec::new();
     capture_stage(&mut c, &mut r, &root, "connected-before-bank", &mut stages);
     let bank_npc = npc_slot(&c, "Banker", "Bank");
@@ -859,6 +923,9 @@ fn bank_shop_amount_drag_live_377() {
     actions.push(json!({"operation":"inventory item drag","result":drag}));
     capture_stage(&mut c, &mut r, &root, "bank-inventory-drag", &mut stages);
     close_main(&mut c, &mut r);
+    for &waypoint in SHOP_ROUTE {
+        walk_waypoint(&mut c, &mut r, waypoint, &mut actions);
+    }
 
     let shopkeeper = npc_slot(&c, "Shop keeper", "Trade");
     actions.push(operate_npc(
@@ -870,17 +937,17 @@ fn bank_shop_amount_drag_live_377() {
     pump_until(&mut c, &mut r, 30, |c| {
         c.main_modal_id >= 0
             && c.side_modal_id >= 0
-            && interface_text(c, c.main_modal_id).contains("Draynor General Store")
+            && interface_text(c, c.main_modal_id).contains("Lumbridge General Store")
     });
-    assert!(interface_text(&c, c.main_modal_id).contains("Draynor General Store"));
+    assert!(interface_text(&c, c.main_modal_id).contains("Lumbridge General Store"));
     let stock_component = inventory_component(&c, c.main_modal_id);
     let shop_player_component = side_player_inventory(&c);
-    let stock_before_buy = count_component(&c, stock_component, BUCKET);
+    let stock_before_buy = count_component(&c, stock_component, SHOP_OBJECT);
     assert!(
         stock_before_buy >= 5,
-        "actual Draynor shop stock offers Buy-5"
+        "actual Lumbridge shop stock offers Buy-5"
     );
-    let buckets_before_buy = inventory_count(&c, BUCKET);
+    let items_before_buy = inventory_count(&c, SHOP_OBJECT);
     let coins_before_buy = inventory_count(&c, COINS);
     assert!(coins_before_buy >= MIN_SHOP_COINS);
     let free_slots = c
@@ -892,59 +959,66 @@ fn bank_shop_amount_drag_live_377() {
         free_slots >= 5,
         "fixture leaves five inventory slots for Buy-5"
     );
-    capture_stage(&mut c, &mut r, &root, "draynor-shop-open", &mut stages);
+    capture_stage(&mut c, &mut r, &root, "lumbridge-shop-open", &mut stages);
 
     let start = packet_count(&outbound);
     let shop_root = c.main_modal_id;
-    let bucket_stock_slot = slot_for(&c, stock_component, BUCKET);
+    let shop_stock_slot = slot_for(&c, stock_component, SHOP_OBJECT);
     let (opcode, action) = invoke_inventory_option(
         &mut c,
         &mut r,
         shop_root,
         stock_component,
-        bucket_stock_slot,
-        BUCKET,
+        shop_stock_slot,
+        SHOP_OBJECT,
         "Buy 5",
     );
     pump_until(&mut c, &mut r, 20, |c| {
-        inventory_count(c, BUCKET) == buckets_before_buy + 5
+        inventory_count(c, SHOP_OBJECT) == items_before_buy + 5
             && inventory_count(c, COINS) < coins_before_buy
-            && count_component(c, stock_component, BUCKET) == stock_before_buy - 5
+            && count_component(c, stock_component, SHOP_OBJECT) == stock_before_buy - 5
     });
     assert_packet_since(&outbound, start, opcode);
     actions.push(json!({"operation":"shop Buy-5","menu":action,
-        "buckets":[buckets_before_buy,inventory_count(&c,BUCKET)],
+        "items":[items_before_buy,inventory_count(&c,SHOP_OBJECT)],
         "coins":[coins_before_buy,inventory_count(&c,COINS)],
-        "stock":[stock_before_buy,count_component(&c,stock_component,BUCKET)]}));
-    capture_stage(&mut c, &mut r, &root, "draynor-shop-buy-5", &mut stages);
+        "stock":[stock_before_buy,count_component(&c,stock_component,SHOP_OBJECT)]}));
+    capture_stage(&mut c, &mut r, &root, "lumbridge-shop-buy-5", &mut stages);
 
-    let buckets_before_sell = inventory_count(&c, BUCKET);
+    let items_before_sell = inventory_count(&c, SHOP_OBJECT);
     let coins_before_sell = inventory_count(&c, COINS);
-    let stock_before_sell = count_component(&c, stock_component, BUCKET);
+    let stock_before_sell = count_component(&c, stock_component, SHOP_OBJECT);
     let start = packet_count(&outbound);
     let side_root = c.side_modal_id;
-    let bucket_inventory_slot = slot_for(&c, shop_player_component, BUCKET);
+    let shop_inventory_slot = slot_for(&c, shop_player_component, SHOP_OBJECT);
     let (opcode, action) = invoke_inventory_option(
         &mut c,
         &mut r,
         side_root,
         shop_player_component,
-        bucket_inventory_slot,
-        BUCKET,
+        shop_inventory_slot,
+        SHOP_OBJECT,
         "Sell 5",
     );
+    // The engine shop formula floors a one-coin hammer's resale value to zero.
+    // Require that exact balance as well as both received item-count changes.
     pump_until(&mut c, &mut r, 20, |c| {
-        inventory_count(c, BUCKET) == buckets_before_sell - 5
-            && inventory_count(c, COINS) > coins_before_sell
-            && count_component(c, stock_component, BUCKET) == stock_before_sell + 5
+        inventory_count(c, SHOP_OBJECT) == items_before_sell - 5
+            && inventory_count(c, COINS) == coins_before_sell
+            && count_component(c, stock_component, SHOP_OBJECT) == stock_before_sell + 5
     });
     assert_packet_since(&outbound, start, opcode);
     actions.push(json!({"operation":"shop Sell-5","menu":action,
-        "buckets":[buckets_before_sell,inventory_count(&c,BUCKET)],
+        "items":[items_before_sell,inventory_count(&c,SHOP_OBJECT)],
         "coins":[coins_before_sell,inventory_count(&c,COINS)],
-        "stock":[stock_before_sell,count_component(&c,stock_component,BUCKET)]}));
-    capture_stage(&mut c, &mut r, &root, "draynor-shop-sell-5", &mut stages);
+        "stock":[stock_before_sell,count_component(&c,stock_component,SHOP_OBJECT)]}));
+    capture_stage(&mut c, &mut r, &root, "lumbridge-shop-sell-5", &mut stages);
     close_main(&mut c, &mut r);
+    for &waypoint in SHOP_ROUTE.iter().rev().skip(1) {
+        walk_waypoint(&mut c, &mut r, waypoint, &mut actions);
+    }
+    walk_waypoint(&mut c, &mut r, (3092, 3243), &mut actions);
+    capture_stage(&mut c, &mut r, &root, "returned-draynor", &mut stages);
     assert!(
         c.ingame,
         "account remains connected after bank and shop proof"
@@ -960,9 +1034,9 @@ fn bank_shop_amount_drag_live_377() {
             "bank_after":bank_coins_after,"inventory_after_bank":inventory_coins_after_bank,
             "withdraw10":10,"withdraw_x":WITHDRAW_X,"deposit10":10,"deposit_x":DEPOSIT_X,
             "inventory_net":WITHDRAW_X-DEPOSIT_X,"bank_net":DEPOSIT_X-WITHDRAW_X},
-        "shop":{"npc":"Draynor General Store Shop keeper","object":BUCKET,
+        "shop":{"npc":"Lumbridge General Store Shop keeper","object":SHOP_OBJECT,
             "buy5":5,"sell5":5,"coins_after":inventory_count(&c,COINS),
-            "buckets_after":inventory_count(&c,BUCKET)},
+            "items_after":inventory_count(&c,SHOP_OBJECT)},
         "actions":actions,
         "stages":stages,
         "interventions":interventions,
