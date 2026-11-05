@@ -352,7 +352,6 @@ impl Media {
                     media.headicons_hint[i] = Pix32::depack(&jag, "headicons_hint", i as i32);
                 }
             }
-
         }
 
         media
